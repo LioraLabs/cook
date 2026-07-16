@@ -4,18 +4,23 @@ sidebar:
   order: 10
 ---
 # 10. Cross-recipe references [#xref]
-> **Normative.** This chapter defines *name references*: the surface by which one recipe refers to another. It covers three syntactic forms — dep-list references (`recipe A: B`), bare placeholders (`$<B>`), and accessor placeholders (`$<B.stem>`) — and specifies their resolution, expansion, and effect on the dependency graph. The formal grammar of the placeholders is given in App. A; this chapter specifies their meaning.
+> **Normative.** This chapter defines *name references*: the mechanism by which one recipe refers to another. It specifies in full the three **syntactic** forms — dep-list references (`recipe A: B`), bare placeholders (`$<B>`), and accessor placeholders (`$<B.stem>`) — giving their resolution, expansion, and effect on the dependency graph. A fourth surface, the register-phase `cook.require_recipe` call (§{lua.cook-require-recipe}), is a name reference too and carries the same dependency implications (§{xref.dep-implications}), but it is a Lua API rather than surface syntax: it is enumerated in §{xref.name-references} and specified at §{lua.cook-require-recipe}, not here. The formal grammar of the placeholders is given in App. A; this chapter specifies their meaning.
 
 ## 10.1. Name references [#xref.name-references]
-A **name reference** is the sole mechanism by which a recipe refers to another recipe. A name reference MAY appear in one of three surfaces:
+A **name reference** is the sole mechanism by which a recipe refers to another recipe. A name reference MAY appear in one of four surfaces:
 
 | Surface | Location | Form |
 |---|---|---|
 | Dep-list | Recipe header `: …` (§{recipes.dep-list}) | `NAME` |
 | Bare placeholder | Any step template string | `$<NAME>` |
 | Accessor placeholder | `cook` step output pattern (§{steps.cook-single}, §{steps.cook-multi}) | `$<NAME.ACCESSOR>` |
+| Register-phase call | Inside a recipe body, register phase (§{lua.cook-require-recipe}) | `cook.require_recipe("NAME")` |
 
-All three surfaces share the resolution rules of §{xref.resolution} and the dependency implications of §{xref.dep-implications}. Expansion behaviour differs by surface: dep-list references have no template expansion; bare placeholders expand per §{xref.string-substitution}; accessor placeholders drive iteration per §{xref.dep-driven}.
+All four surfaces share the dependency implications of §{xref.dep-implications}: each one *names* its referent, which is what makes it a name reference and what establishes the cross-recipe edge. §{exec.cross-recipe-ordering} enumerates the same four.
+
+The first three are surface syntax and additionally share the resolution rules of §{xref.resolution}. Their expansion behaviour differs by surface: dep-list references have no template expansion; bare placeholders expand per §{xref.string-substitution}; accessor placeholders drive iteration per §{xref.dep-driven}.
+
+The fourth is not surface syntax but a register-phase Lua API, so this chapter enumerates it without specifying it: it has no grammar in App. A and no template expansion, it resolves its argument against the bare declared names of the current registration pass rather than through §{xref.resolution}'s placeholder cascade, and its resolution, ordering guarantee, and error contract are given in §{lua.cook-require-recipe}. It is listed here because the category this section defines — name references, and nothing else — is what §{xref.dep-implications} draws its edges from, and a list of surfaces that could not express this one would put the two sections in contradiction.
 
 ## 10.2. Resolution [#xref.resolution]
 A conforming implementation MUST resolve a placeholder `$<TOKEN>` (defined in §{phl.token}) by applying these steps in order; first match wins:
@@ -119,7 +124,7 @@ The `$<libmath>` reference in `app`'s shell body expands at register time to `"b
 - **Name reference ⇒ cross-recipe edge.** A name reference to recipe `B` appearing in any step or dep-list of recipe **or chore** `A` establishes a cross-recipe dependency from `A` to `B`, observable through execution ordering (§{exec.phases}). In particular, `B` MUST join the build closure of any invocation that reaches `A`: a chore step referencing `$<B>` runs only after `B` has built, with no explicit `: B` dep-list entry required (CS-0121).
 - **Granularity.** A dep-list reference (`recipe A: B`) MUST be interpreted at whole-recipe granularity: every unit of `A` waits for every unit of `B`. A placeholder reference (`$<B>` or `$<B.ACCESSOR>`) in a specific step of `A` MAY be refined by the implementation to a per-unit edge from that step's unit(s) to the unit(s) of `B` that produced the referenced output items. Coarse edges are always conformant; fine-grained refinement is an optimisation available to placeholder-sourced edges only.
 - **Validation and cycles.** An implementation MUST validate that the named recipe is defined in scope before the execute phase begins, and MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
-- **Only name references create edges.** A string equal to another recipe's output path, appearing as a literal in an `ingredients` line, does NOT establish a cross-recipe edge. An implementation MUST NOT infer an edge from path-string equality. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. See rationale B.5.N.
+- **Only name references create edges.** A string equal to another recipe's output path does NOT establish a cross-recipe edge, wherever that literal appears: in an `ingredients` line, in a `cook` step's output pattern, or in the `inputs[]` / `outputs[]` entries of `cook.add_unit` (§{lua.add-unit}). All are literal path surfaces and none of them are name references. An implementation MUST NOT infer an edge from path-string equality on any of them. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. Note that not inferring an edge is not the same as staying silent: where such a match would otherwise become a silent read-after-write race, and the implementation can detect it from the source alone, the implementation rejects the build with a diagnostic rather than synthesising the missing ordering — see §{exec.read-after-write}, which states that rule and enumerates the surfaces it covers. That enumeration is narrower than this prohibition: this bullet binds every literal surface listed above, whether or not a match on it is detectable. See §{rationale.name-reference-evidence}.
 
 ## 10.7. The `env.` placeholder namespace [#xref.env-namespace]
 

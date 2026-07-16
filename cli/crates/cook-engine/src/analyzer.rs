@@ -51,7 +51,7 @@ pub struct RecipeInfo {
 /// `cook-luagen` and composed into the DAG separately; they do not flow
 /// through this adjacency map. Path-string equality between an ingredient
 /// and another recipe's cook-output is opaque and does NOT produce an
-/// edge — see Cook Standard § 5.6 and rationale B.5.N.
+/// edge — see Cook Standard §10.6 and rationale App. C.16.1.
 fn build_adjacency<'a>(
     recipes: &'a BTreeMap<String, RecipeInfo>,
 ) -> Result<BTreeMap<&'a str, BTreeSet<&'a str>>, GraphError> {
@@ -835,7 +835,7 @@ mod tests {
 
     #[test]
     fn test_dependency_edges_no_implicit_via_serves() {
-        // Path-match implicit-dep has been removed (see § 5.6 / B.5.N).
+        // Path-match implicit-dep has been removed (see §10.6 / App. C.16.1).
         // Ingredient/serves string overlap MUST NOT produce an edge through
         // `dependency_edges`; unreachable recipes MUST NOT appear in the map.
         let mut recipes = BTreeMap::new();

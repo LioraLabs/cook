@@ -113,6 +113,11 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // §22.7 cook.recipe_name semantic rule (register-time validation):
   ['recipe-name-outside-recipe-body-rejected',
    '§22.7 cook.recipe_name — outside-a-recipe-body detection, register-time semantic'],
+  // CS-0144: a `cook.require_recipe(name)` call in a `register` block is an
+  // ordinary bare module call syntactically; only the register-phase
+  // body-slot check knows there is no enclosing recipe body.
+  ['require-recipe-outside-recipe-body-rejected',
+   '§22.8 cook.require_recipe — outside-a-recipe-body detection, register-time semantic'],
   // §7.1.1 chore-parameter semantic rules — Rust parser enforces;
   // tree-sitter accepts any ordering / count / reserved-name shape.
   // The dot-ban and the no-default-on-variadic rule ARE syntactic and

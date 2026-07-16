@@ -2626,3 +2626,1257 @@ recipe deal
     assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
     assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
 }
+
+// -----------------------------------------------------------------------
+// cook.require_recipe() tests (Standard §22.8, CS-0144)
+// -----------------------------------------------------------------------
+
+/// Build a minimal Lua VM with `cook.require_recipe` wired against a
+/// caller-supplied body slot, pre-stamped as if a recipe body named
+/// `current_recipe_bare` were already active — mirroring the stamp
+/// `engine.rs` performs immediately before invoking a recipe body. Lets the
+/// accumulator (`dynamic_requires`) and the self-reference check be
+/// exercised directly: `dynamic_requires` isn't surfaced anywhere else yet
+/// (forcing/merging into `requires` is a later task), so there is no
+/// observable side effect to assert on through the full `register_cookfile`
+/// pipeline. Mirrors the existing `make_unit_api_lua` scaffold below.
+fn require_recipe_vm(current_recipe_bare: &str) -> (mlua::Lua, SharedBodySlot) {
+    let lua = mlua::Lua::new();
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    let mut body = BodyCaptureState::new();
+    body.current_recipe = Some(current_recipe_bare.to_string());
+    body.current_recipe_bare = Some(current_recipe_bare.to_string());
+    let body_slot: SharedBodySlot = std::rc::Rc::new(std::cell::RefCell::new(Some(body)));
+    // A no-op forcer: this scaffold exercises the guard rails and the
+    // accumulator, all of which sit ahead of the forcing, and there is no
+    // driver here to force against. It must be present rather than absent —
+    // the body slot is stamped as active, so an empty forcer cell would
+    // (correctly) hard-error as a missing driver. The end-to-end tests below
+    // drive the real driver through `register_cookfile`.
+    let forcer: crate::context::SharedRecipeForcer = std::rc::Rc::new(std::cell::RefCell::new(
+        Some(std::rc::Rc::new(|_: &mlua::Lua, _: &str| Ok(()))),
+    ));
+    crate::context::register_require_recipe_api(&lua, body_slot.clone(), forcer).unwrap();
+    (lua, body_slot)
+}
+
+/// A top-level call (outside any recipe body — the body slot is `None`
+/// during top-level load) is a hard error naming the API and citing the
+/// spec. Mirrors `recipe_name_errors_outside_recipe_body`.
+#[test]
+fn require_recipe_errors_outside_recipe_body_top_level() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.require_recipe("anything")
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "top-level call must error");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// A surface `register` block lowers to top-level Lua that runs before the
+/// body-invocation loop opens the body slot, so a call there must also hard
+/// error — same underlying `body_slot`/`current_recipe` `None` signal as
+/// the top-level case, exercised through the real surface parser + codegen
+/// this time rather than hand-written Lua.
+#[test]
+fn require_recipe_errors_outside_recipe_body_register_block() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.require_recipe("build")
+
+recipe build
+    cook "out.txt" {
+        echo build > $<out>
+    }
+"#;
+    let result = register_surface(dir.path(), cookfile);
+    assert!(result.is_err(), "a register block call must error");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// A non-string argument is rejected outright — matched on the raw Lua
+/// value (CS-0143's `parse_origin_meta` precedent), never coerced. An
+/// integer must NOT be silently turned into its decimal string.
+#[test]
+fn require_recipe_rejects_non_string_argument() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe(42)"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("`name`") && err.contains("must be a string"), "error must name the field and accepted form; got: {err}");
+    assert!(!err.contains("42"), "the integer must not be coerced into the message; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// An empty string is rejected — an empty dependency name is never
+/// meaningful.
+#[test]
+fn require_recipe_rejects_empty_string() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe("")"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("non-empty"), "error must reject the empty string; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// Self-reference — the argument equals the enclosing recipe's own bare
+/// name — is a hard error naming the recipe, distinct from the general
+/// cycle-detection path (a one-element cycle deserves its own message).
+#[test]
+fn require_recipe_rejects_self_reference() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe("build")"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// Two calls naming the same recipe record exactly one entry, in the order
+/// first seen.
+#[test]
+fn require_recipe_dedups_repeated_names() {
+    let (lua, slot) = require_recipe_vm("build");
+    lua.load(
+        r#"
+        cook.require_recipe("a")
+        cook.require_recipe("b")
+        cook.require_recipe("a")
+    "#,
+    )
+    .exec()
+    .unwrap();
+    let got = slot.borrow().as_ref().unwrap().dynamic_requires.clone();
+    assert_eq!(got, vec!["a".to_string(), "b".to_string()], "must dedup while preserving first-seen order");
+}
+
+/// The critical regression guard: `current_recipe` holds the QUALIFIED
+/// name (`engine.rs` stamps `body.current_recipe = Some(qualified_name)`),
+/// but `cook.require_recipe`'s argument is bare (the settled design
+/// ruling). Registering `build` under a qualified prefix (`lib.build`) and
+/// then calling `cook.require_recipe("build")` (bare) from inside its own
+/// body MUST still be caught as a self-reference — comparing against the
+/// qualified `current_recipe` instead of `current_recipe_bare` would make
+/// this silently pass (dynamic_requires would just gain a stray "build"
+/// entry and register_cookfile would return Ok).
+#[test]
+fn require_recipe_self_reference_detected_under_qualified_prefix() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_qualified_prefix("lib".to_string());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.require_recipe("build")
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(
+        result.is_err(),
+        "self-reference must be caught even under a qualified prefix (bare-vs-qualified mix-up would silently pass)"
+    );
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
+}
+
+/// A dependency on a DIFFERENT recipe, called from inside a real recipe
+/// body reached via the full `register_cookfile` pipeline (not the
+/// low-level VM scaffold), must not error — proves the guard rails don't
+/// false-positive on the ordinary case.
+#[test]
+fn require_recipe_accepts_distinct_recipe_name() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.require_recipe("other")
+    cook.exec("echo hi", 1)
+end)
+cook.recipe("other", {}, function()
+    cook.exec("echo other", 1)
+end)
+"#;
+    let result = register_one(rt, lua_src, "build");
+    assert_eq!(result.units.len(), 1, "require_recipe must not itself capture a unit");
+}
+
+// -----------------------------------------------------------------------
+// cook.require_recipe() — forcing, the edge, and the skip arms
+// (Standard §22.8, CS-0144)
+// -----------------------------------------------------------------------
+
+/// Lower a surface Cookfile and register it against an explicit build
+/// target. `register_surface`'s no-target sibling can't reach the
+/// `target_recipe.is_some()` skip arms at all.
+fn register_surface_target(
+    dir: &std::path::Path,
+    cookfile: &str,
+    target: &str,
+) -> Result<RegisteredCookfile, RegisterError> {
+    let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
+    let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
+        .expect("fixture must lower");
+    let rt = make_registry(dir).with_target_argv(target.to_string(), vec![]);
+    register_cookfile(rt, &lua_src, None)
+}
+
+/// Pull the `requires` recorded for `name` off the registered set.
+fn requires_of(registered: &RegisteredCookfile, name: &str) -> Vec<String> {
+    registered
+        .names
+        .iter()
+        .find(|r| r.name == name)
+        .unwrap_or_else(|| panic!("recipe {name:?} not registered"))
+        .requires
+        .clone()
+}
+
+/// Assert the single shell command captured for `name`.
+fn only_shell_cmd(registered: &RegisteredCookfile, name: &str) -> String {
+    let units = &registered
+        .units_by_recipe
+        .get(name)
+        .unwrap_or_else(|| panic!("recipe {name:?} has no units entry"))
+        .units;
+    assert_eq!(units.len(), 1, "recipe {name:?} must capture exactly one unit");
+    match &units[0].payload {
+        WorkPayload::Shell { cmd, .. } => cmd.clone(),
+        other => panic!("expected Shell payload for {name:?}, got: {other:?}"),
+    }
+}
+
+/// THE headline case — the finding this whole API exists to fix.
+///
+/// `consumer` is declared FIRST and carries no static dep on `producer`, so
+/// registration order (dependency-driven, never declaration order) would run
+/// its body first and `cook.import("producer")` would return **nil, silently**
+/// — the maker would then emit a link line missing the library. The
+/// `cook.require_recipe("producer")` call is the *only* thing that forces
+/// `producer`'s body to completion first, so the export is observable when the
+/// call returns.
+#[test]
+fn require_recipe_forces_producer_body_so_import_resolves() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.require_recipe("producer")
+    local info = cook.import("producer")
+    cook.exec("link " .. tostring(info and info.lib_path or "NIL"), 1)
+end)
+cook.recipe("producer", {}, function()
+    cook.export("producer", { lib_path = "build/libproducer.a" })
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "consumer"),
+        "link build/libproducer.a",
+        "cook.import must resolve to producer's export, not nil — the register-order \
+         guarantee is what makes this differ from \"link NIL\""
+    );
+}
+
+/// A body is evaluated at most once per pass: two requirers of the same
+/// recipe, plus the seed loop's own visit of it, yield exactly one
+/// evaluation.
+#[test]
+fn require_recipe_evaluates_forced_body_exactly_once() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.runs = 0
+cook.recipe("a", {}, function() cook.require_recipe("shared") end)
+cook.recipe("b", {}, function() cook.require_recipe("shared") end)
+cook.recipe("shared", {}, function()
+    _G.runs = _G.runs + 1
+    cook.exec("shared run " .. _G.runs, 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "shared"),
+        "shared run 1",
+        "shared's body must be evaluated exactly once despite two requirers plus the seed loop"
+    );
+}
+
+/// Both re-entrancy hazards at once. A nested invocation shares the single
+/// `body_slot` and rebinds the Lua `recipe` global, so without save/restore
+/// the callee's units land in the caller's recipe and the caller sees
+/// `recipe.name == "producer"` after the call returns.
+#[test]
+fn require_recipe_restores_caller_body_slot_and_recipe_global() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.exec("before " .. recipe.name, 1)
+    cook.require_recipe("producer")
+    cook.exec("after " .. recipe.name, 2)
+end)
+cook.recipe("producer", {}, function()
+    cook.exec("producer body", 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    let consumer = &registered.units_by_recipe.get("consumer").unwrap().units;
+    let cmds: Vec<&str> = consumer
+        .iter()
+        .map(|u| match &u.payload {
+            WorkPayload::Shell { cmd, .. } => cmd.as_str(),
+            other => panic!("expected Shell, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        cmds,
+        vec!["before consumer", "after consumer"],
+        "the caller's units and its `recipe` global must survive the nested invocation"
+    );
+    assert_eq!(only_shell_cmd(&registered, "producer"), "producer body");
+}
+
+/// The edge lands in `RegisteredRecipePub.requires` — the single source of
+/// truth the engine's analyzer builds the closure from — and dedups against
+/// a static dep naming the same recipe.
+#[test]
+fn require_recipe_edge_merges_into_requires_deduped_against_static_dep() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {requires = {"producer"}}, function()
+    cook.require_recipe("producer")
+    cook.require_recipe("extra")
+end)
+cook.recipe("producer", {}, function() end)
+cook.recipe("extra", {}, function() end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        requires_of(&registered, "consumer"),
+        vec!["producer".to_string(), "extra".to_string()],
+        "static + dynamic must merge to ONE producer entry, static order first"
+    );
+}
+
+/// Every `cook.recipe` registration completes before any body runs, so a
+/// name that isn't registered is definitively unknown at call time.
+#[test]
+fn require_recipe_unknown_name_errors_with_fix_hint() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.require_recipe("produsers")
+end)
+cook.recipe("producer", {}, function() end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("an unregistered name must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("produsers"), "error must name the unknown recipe; got: {err}");
+    assert!(err.contains("consumer"), "error must name the requiring recipe; got: {err}");
+    assert!(err.contains("producer"), "fix hint must list the closest registered name; got: {err}");
+}
+
+/// Forcing is synchronous, so a dynamic cycle would recurse without bound.
+/// It must surface as a rendered cycle path, not a stack overflow.
+#[test]
+fn require_recipe_dynamic_cycle_errors_with_path() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("framework", {}, function() cook.require_recipe("idLib") end)
+cook.recipe("idLib", {}, function() cook.require_recipe("framework") end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("a dynamic cycle must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(
+        err.contains("framework -> idLib -> framework"),
+        "error must render the cycle path; got: {err}"
+    );
+}
+
+/// A Cookfile that never calls the API keeps the pre-existing body order:
+/// the seed loop still walks the static topo sort.
+#[test]
+fn body_order_unchanged_without_require_recipe_calls() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("z", {}, function() end)
+cook.recipe("a", {requires = {"z"}}, function() end)
+cook.recipe("m", {}, function() end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    let order: Vec<&str> = registered.names.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["z", "a", "m"],
+        "static topo order (z before a; m last) must be untouched"
+    );
+}
+
+/// Skip arm 1 — parametric chore, a target IS requested but this isn't it and
+/// the chore isn't statically reachable from it. A forced chore is reachable
+/// by definition, so it must run with empty argv (§7.5.1) and register its
+/// units, not skip to zero.
+#[test]
+fn require_recipe_forces_parametric_chore_when_target_requested() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "gen"),
+        "generate world",
+        "a forced parametric chore must be invoked with empty argv, not skipped"
+    );
+    assert_eq!(requires_of(&registered, "app"), vec!["gen".to_string()]);
+}
+
+/// Skip arm 2 — parametric chore, NO target requested. Gated only on
+/// `target_recipe.is_none() && Chore && params`, never on reachability, so a
+/// fix that only touches arm 1 leaves this hole open. This is the arm
+/// `cook list`, `cook dag`, and the default test harness all take.
+#[test]
+fn require_recipe_forces_parametric_chore_with_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "gen"),
+        "generate world",
+        "a forced parametric chore must be invoked with empty argv on the no-target path too"
+    );
+}
+
+/// Skip arm 1, SEEDED FIRST. The two tests above pass on a driver that
+/// conflates "body ran" with "body was deliberately skipped", but only by an
+/// accident of naming: the seed loop walks a `BTreeMap::keys()` topo sort —
+/// LEXICOGRAPHIC — so `app` precedes `gen` and the force always lands before
+/// the seed visit. Rename the chore `agen` and the accident reverses: the
+/// seed loop reaches it FIRST with `forced = false`, it hits the skip arm,
+/// and a `Visited`-marking driver then short-circuits the later force to
+/// `Ok(())` — zero units registered while the edge still places `agen` in the
+/// build closure, the exact state §22.8 declares expressly non-conforming.
+#[test]
+fn require_recipe_forces_parametric_chore_seeded_before_its_requirer() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "agen"),
+        "generate world",
+        "a deliberate skip must not satisfy a later force: the seed loop reaches `agen` \
+         first (it sorts before `app`), so the force has to RE-invoke the skipped body"
+    );
+    assert_eq!(requires_of(&registered, "app"), vec!["agen".to_string()]);
+}
+
+/// Skip arm 2, SEEDED FIRST — the no-target twin of the test above, the arm
+/// `cook list` and `cook dag` take.
+#[test]
+fn require_recipe_forces_parametric_chore_seeded_before_its_requirer_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "agen"),
+        "generate world",
+        "the skip-then-force order must be rescued on the no-target path too"
+    );
+}
+
+/// A re-invoked skip arm must not double-register. `register_skipped` already
+/// pushed `agen` into `names` and `units_by_recipe`; the forced re-invocation
+/// registers it again, and without dedup the recipe appears twice in the
+/// discovered set (§22.6) with the second `names` entry shadowing nothing and
+/// confusing every listing surface.
+#[test]
+fn require_recipe_reinvoked_skip_arm_registers_exactly_one_entry() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    let entries: Vec<&str> = registered
+        .names
+        .iter()
+        .map(|r| r.name.as_str())
+        .filter(|n| *n == "agen")
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "a skipped-then-forced recipe must yield ONE registered entry, not one per \
+         invocation; got: {:?}",
+        registered.names.iter().map(|r| &r.name).collect::<Vec<_>>()
+    );
+}
+
+/// Shared by the parametric-chore skip-arm tests: `app` (a plain recipe, the
+/// only viable target) forces the parametric chore `chore_name`, which neither
+/// statically requires nor is required by it. `chore_name` is a parameter
+/// precisely because the seed loop's order is lexicographic — a fixture that
+/// only ever names the chore `gen` can never exercise the seeded-first case.
+fn parametric_chore_fixture(chore_name: &str) -> String {
+    format!(
+        r#"
+cook.recipe("app", {{}}, function()
+    cook.require_recipe("{chore_name}")
+end)
+cook.__register_surface_chore("{chore_name}",
+    {{requires = {{}}, __line = 5,
+     __params = {{ {{ kind = "defaulted_string", name = "who", default = "world" }} }}}},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#
+    )
+}
+
+/// Skip arm 3 — a probe-sourced `for_each` recipe that isn't statically
+/// reachable from the target had its feeding probe skipped by the pre-pass,
+/// so its body's `cook.probes.get` cannot resolve. Forcing it is a hard error
+/// with a fix hint, NOT a silent registration of zero units (which would let
+/// register and engine disagree about what got built).
+#[test]
+fn require_recipe_on_unreachable_probe_for_each_errors_with_fix_hint() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("items", { inputs = {}, produce = [[ return {{id = "x"}} ]] })
+    cook.recipe("app", {}, function()
+        cook.require_recipe("fan")
+    end)
+
+recipe fan
+    ingredients items
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s' "$<in.id>" > $<out>
+    }
+"#;
+    let err = register_surface_target(dir.path(), cookfile, "app")
+        .expect_err("forcing an unreachable probe-sourced for_each recipe must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("fan"), "error must name the recipe; got: {err}");
+    assert!(
+        err.contains("for_each") && err.contains("probe"),
+        "error must state the reason; got: {err}"
+    );
+    assert!(
+        err.contains(": fan"),
+        "fix hint must tell the author to add a static `: fan` dep to the requiring recipe's \
+         header; got: {err}"
+    );
+}
+
+/// Skip arm 3, SEEDED FIRST. The same lexicographic accident that hides the
+/// parametric-chore holes also defeats this arm's DESIGNED hard error: name
+/// the `for_each` recipe `afan` and the seed loop reaches it before `app`,
+/// marks the skip as a completed visit, and the later force short-circuits to
+/// `Ok(())` — the diagnostic never fires and `app` links against a recipe that
+/// registered nothing.
+#[test]
+fn require_recipe_on_probe_for_each_seeded_first_still_errors() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("items", { inputs = {}, produce = [[ return {{id = "x"}} ]] })
+    cook.recipe("app", {}, function()
+        cook.require_recipe("afan")
+    end)
+
+recipe afan
+    ingredients items
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s' "$<in.id>" > $<out>
+    }
+"#;
+    let err = register_surface_target(dir.path(), cookfile, "app")
+        .expect_err(
+            "a deliberate skip must not satisfy a later force: `afan` seeds before `app`, \
+             so the arm-3 error has to fire on the force",
+        )
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("afan"), "error must name the recipe; got: {err}");
+    assert!(
+        err.contains("for_each") && err.contains("probe"),
+        "error must state the reason; got: {err}"
+    );
+}
+
+/// CRITICAL — the rebind hole. `local rr = cook.require_recipe` at top level
+/// is ordinary Lua (`local sh = cook.sh` is idiomatic), and the top-level
+/// chunk runs BEFORE the driver exists. An alias therefore captures whatever
+/// closure was installed at API-install time; if that closure carries its own
+/// forcer by value, the alias holds a forcer-less one that still passes the
+/// guard rail and still accumulates the edge — recording the dependency
+/// WITHOUT the forcing that makes it mean anything. `cook.import` then
+/// returns nil, silently, which is the precise failure this API exists to
+/// eliminate.
+#[test]
+fn require_recipe_aliased_at_top_level_still_forces() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+local rr = cook.require_recipe
+cook.recipe("consumer", {}, function()
+    rr("producer")
+    local info = cook.import("producer")
+    cook.exec("link " .. tostring(info and info.lib_path or "NIL"), 1)
+end)
+cook.recipe("producer", {}, function()
+    cook.export("producer", { lib_path = "build/libP.a" })
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "consumer"),
+        "link build/libP.a",
+        "an aliased `cook.require_recipe` must force exactly as the un-aliased call does; \
+         \"link NIL\" means the alias recorded the edge but skipped the forcing"
+    );
+    assert_eq!(
+        requires_of(&registered, "consumer"),
+        vec!["producer".to_string()],
+        "the alias must record the edge too"
+    );
+}
+
+/// A force error swallowed by `pcall` must not poison the visit map. The
+/// driver marks a body `Visiting` on the way in; if the error path leaves that
+/// mark behind, the seed loop's own later visit sees it and reports a
+/// one-element "cycle" that does not exist — while the real failure, already
+/// swallowed by the `pcall`, is gone for good. The build then fails with a
+/// fabricated diagnostic pointing at the wrong problem.
+#[test]
+fn require_recipe_force_error_swallowed_by_pcall_surfaces_real_error_not_a_cycle() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    pcall(function() cook.require_recipe("prod") end)
+    cook.exec("consumer ran", 1)
+end)
+cook.recipe("prod", {}, function()
+    error("boom: the real failure")
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("prod's body raises, so the pass must fail")
+        .to_string();
+    assert!(
+        err.contains("boom: the real failure"),
+        "the REAL error must survive the pcall-swallowed force; got: {err}"
+    );
+    assert!(
+        !err.contains("cycle"),
+        "a swallowed force must not fabricate a cycle out of the abandoned `Visiting` \
+         mark; got: {err}"
+    );
+}
+
+/// The OTHER half of `VisitState::Failed`: a body that raised MUST NOT re-run,
+/// and the original error MUST be replayed verbatim on the second force.
+///
+/// Sibling of the test above, which pins the "don't leave `Visiting` behind"
+/// half. Clearing the entry on failure instead of recording `Failed` would also
+/// avoid the fabricated cycle, so that test alone does not distinguish the two
+/// designs — this one does. §22.8: "A recipe body MUST be evaluated at most
+/// once per registration pass", with no exemption for a body that raised, and
+/// a `pcall`-swallowed force is exactly how a second force becomes reachable.
+///
+/// `flaky` succeeds on a second evaluation and fails on its first, so a re-run
+/// is directly observable: `runs` reaches 2 and the replayed error goes `nil`.
+#[test]
+fn require_recipe_failed_body_is_not_re_evaluated_and_replays_original_error() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    // `consumer` sorts before `flaky`, so the seed loop reaches it first and
+    // both forces happen from inside its body. It reports what it observed by
+    // raising, which is the only channel out of a pass that must fail anyway.
+    let lua_src = r#"
+local runs = 0
+cook.recipe("consumer", {}, function()
+    local ok1 = pcall(function() cook.require_recipe("flaky") end)
+    local ok2, err2 = pcall(function() cook.require_recipe("flaky") end)
+    error("PROBE runs=" .. runs .. " ok1=" .. tostring(ok1)
+          .. " ok2=" .. tostring(ok2) .. " err2=[" .. tostring(err2) .. "]")
+end)
+cook.recipe("flaky", {}, function()
+    runs = runs + 1
+    if runs == 1 then error("boom: only the first evaluation fails") end
+    cook.exec("flaky re-ran", 1)
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("flaky's body raises, so the pass must fail")
+        .to_string();
+    assert!(
+        err.contains("runs=1"),
+        "the failed body MUST NOT be re-evaluated by the second force (§22.8 at-most-once); \
+         `runs=2` means `Failed` cleared the entry instead of recording it. Got: {err}"
+    );
+    assert!(
+        err.contains("ok1=false") && err.contains("ok2=false"),
+        "both forces must fail — the second inherits the first's failure rather than \
+         succeeding on a re-run; got: {err}"
+    );
+    assert!(
+        err.contains("boom: only the first evaluation fails"),
+        "the second force MUST replay the ORIGINAL error verbatim, not swallow it and not \
+         report a fabricated one; got: {err}"
+    );
+}
+
+/// A cycle whose two edges have DIFFERENT sources — `aaa : bbb` static, plus
+/// `bbb`'s body forcing `aaa` — MUST be rejected with the cycle PATH rendered.
+/// §22.8: the cycle is in the edges "taken together with all other cross-recipe
+/// edges". Leaving it to the engine's analyzer would not discharge that:
+/// `GraphError::CycleDetected` names one node, renders no path, and is scoped
+/// to the target's closure — so `cook list` would see nothing at all.
+///
+/// The driver's `Visiting` arm is what raises it, since `ensure_static_requires`
+/// makes the driver walk STATIC edges too: the seed loop marks `bbb` `Visiting`
+/// (the static sort puts a dep before its dependent), `bbb`'s body forces `aaa`,
+/// and `aaa`'s static dep on `bbb` recurses straight back into the `Visiting`
+/// mark — yielding `cook.require_recipe: dependency cycle: bbb -> aaa -> bbb`.
+/// Step 12a's merged-`requires` sort would also catch it, but never gets the
+/// chance; it is a guard, not the live path (see `engine.rs` step 12a).
+#[test]
+fn require_recipe_mixed_static_dynamic_cycle_errors_with_path() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("aaa", {requires = {"bbb"}}, function() end)
+cook.recipe("bbb", {}, function() cook.require_recipe("aaa") end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("a static+dynamic cycle must be rejected at register phase")
+        .to_string();
+    assert!(
+        err.contains("aaa") && err.contains("bbb"),
+        "the diagnostic must render the cycle path across both recipes; got: {err}"
+    );
+    assert!(
+        err.contains("->"),
+        "the diagnostic must render the cycle as a PATH, not name a single node; got: {err}"
+    );
+}
+
+/// A forced body must not jump ahead of its OWN static `requires`.
+///
+/// The seed loop's `topo` order puts `tools` before `gen` (`gen : tools`), and
+/// a driver that leans on that order for correctness is fine right up until a
+/// force bypasses the seed loop: `app` sorts first, its body forces `gen`, and
+/// `gen`'s body then runs at seed index 0 — before `tools` has been reached at
+/// seed index 1. `gen`'s own `cook.import("tools")` resolves **nil**, so the
+/// mislink is PARTIAL: the force itself worked (`app` does see `gen`'s export)
+/// while `gen` silently linked against nothing. That is worse than an outright
+/// failure, and it is the exact silent-failure class §22.8 exists to kill.
+///
+/// The fix makes `ensure_invoked` a proper DFS over the requires graph, which
+/// demotes `topo` from "load-bearing for correctness" to "deterministic tie-break
+/// among independent recipes".
+#[test]
+fn require_recipe_forced_body_evaluates_its_own_static_requires_first() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    // Seed order is what let this through, so pin it explicitly: the static
+    // sort of {app: [], gen: [tools], tools: []} is [app, tools, gen] — `app`
+    // (the forcer) lands BEFORE `tools` (the forced recipe's own dep).
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+    local g = cook.import("gen")
+    cook.exec("app " .. tostring(g and g.out or "NIL"), 1)
+end)
+cook.recipe("gen", {requires = {"tools"}}, function()
+    local t = cook.import("tools")
+    cook.export("gen", { out = "gen-using-" .. tostring(t and t.bin or "NIL") })
+end)
+cook.recipe("tools", {}, function()
+    cook.export("tools", { bin = "protoc" })
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "app"),
+        "app gen-using-protoc",
+        "forcing `gen` must also guarantee `gen`'s own declared dep `tools` is evaluated \
+         first — otherwise `gen`'s cook.import(\"tools\") is nil and the mislink is silent \
+         (\"app gen-using-NIL\")"
+    );
+}
+
+/// The same defect without any `cook.import` in the picture: the ordering
+/// itself is wrong, not some import artifact. `ccc` forces `ddd`, `ddd : eee`,
+/// and the static sort is [ccc, eee, ddd] — so a force that ignores `ddd`'s
+/// own dep list runs `ddd` at seed index 0, leaving `eee` unevaluated at the
+/// moment `ddd`'s body observes the world.
+#[test]
+fn require_recipe_forced_body_static_dep_runs_before_it_in_raw_eval_order() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.order = {}
+cook.recipe("ccc", {}, function()
+    cook.require_recipe("ddd")
+end)
+cook.recipe("ddd", {requires = {"eee"}}, function()
+    table.insert(_G.order, "ddd")
+    cook.exec("seen " .. table.concat(_G.order, ","), 1)
+end)
+cook.recipe("eee", {}, function()
+    table.insert(_G.order, "eee")
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "ddd"),
+        "seen eee,ddd",
+        "`eee` must have run by the time the forced `ddd`'s body observes eval order; \
+         a force that skips its own static deps yields \"seen ddd\""
+    );
+}
+
+/// Recursing into static `requires` must not evaluate anything twice. `ddd` is
+/// reached three ways — forced directly by `ccc`, pulled in as `bbb`'s static
+/// dep, and visited by the seed loop — and §22.8's at-most-once rule holds
+/// across all of them. A naive "invoke my deps, then me" that forgets to
+/// consult the visit map would run `ddd` once per inbound edge.
+#[test]
+fn require_recipe_static_dep_forced_by_two_requirers_evaluates_once() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.runs = 0
+cook.recipe("aaa", {}, function()
+    cook.require_recipe("bbb")
+    cook.require_recipe("ddd")
+end)
+cook.recipe("bbb", {requires = {"ddd"}}, function() end)
+cook.recipe("ccc", {}, function()
+    cook.require_recipe("ddd")
+end)
+cook.recipe("ddd", {}, function()
+    _G.runs = _G.runs + 1
+    cook.exec("ddd run " .. _G.runs, 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "ddd"),
+        "ddd run 1",
+        "a recipe reached as a forced target, as a forced requirer's static dep, and by \
+         the seed loop must still be evaluated exactly once"
+    );
+}
+
+/// The DFS must carry the force DOWN the static chain, not just to its first
+/// hop. `app` forces `gen`; `gen : agen` where `agen` is a parametric chore
+/// that every skip arm declines to invoke unless `forced`. `agen` sorts before
+/// `app`, so the seed loop reaches and skips it first. If the recursion visits
+/// `agen` un-forced, the skip stands, `agen` registers zero units — while the
+/// `gen : agen` edge still puts it in the build closure. Register and engine
+/// then disagree about what got built, which is the same non-conformance the
+/// direct-force case already forbids.
+#[test]
+fn require_recipe_force_propagates_through_static_dep_to_skipped_chore() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+end)
+cook.recipe("gen", {requires = {"agen"}}, function() end)
+cook.__register_surface_chore("agen",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "agen"),
+        "generate world",
+        "the force must reach `agen` THROUGH `gen`'s static dep list: a transitively \
+         forced recipe is in the build closure just as surely as a directly forced one"
+    );
+}
+
+/// The `Visited` short-circuit must still propagate `forced` INTO static deps.
+///
+/// Seed order is a test parameter, not a fixture detail — so the names here are
+/// chosen to make the bug fire, and the previous round's test is the reason the
+/// point needs restating. `require_recipe_force_propagates_through_static_dep_
+/// to_skipped_chore` named its forcer `app`: `app` sorts BEFORE `gen`, so `gen`
+/// was still unvisited when the force arrived, the force took the `None` arm,
+/// and the propagation ran. Rename the forcer `zzz` and the accident reverses.
+///
+/// `topo` is seeded from `BTreeMap::keys()` — LEXICOGRAPHIC — so
+/// {achore: [], bbb: [achore], zzz: []} seeds [achore, bbb, zzz]:
+///   1. `achore` — parametric chore, un-forced, unreachable → skip arm, `Skipped`.
+///   2. `bbb` — its static dep `achore` is visited un-forced (the skip stands,
+///      correctly: nothing has forced anything yet); `bbb`'s body runs →`Visited`.
+///   3. `zzz` — body forces `bbb`, which is already `Visited`, so the force
+///      returns `Ok(())` BEFORE `ensure_static_requires` — and `achore` is
+///      never rescued.
+///
+/// `achore` then registers zero units while `zzz -> bbb -> achore` sits in the
+/// build closure the engine builds from `requires`: the register/execute
+/// disagreement §22.8 calls expressly non-conforming, and silent.
+#[test]
+fn require_recipe_force_reaches_static_deps_of_already_visited_recipe() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("zzz".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "a force arriving at an ALREADY-VISITED recipe must still push `forced` down into \
+         that recipe's static deps: `bbb` ran un-forced at seed time, so `achore`'s skip \
+         has never been reconsidered, and only the force can stand it down"
+    );
+}
+
+/// The same hole on the no-target path — the one `cook list`, `cook dag`, and
+/// most tests take. Skip arm 2 is gated on `target_recipe.is_none()`, never on
+/// reachability, so a fix verified only against arm 1 leaves this open.
+///
+/// Names as above and for the same reason: `zzz` sorts after `bbb`, so `bbb` is
+/// already `Visited` when the force lands.
+#[test]
+fn require_recipe_force_reaches_static_deps_of_already_visited_recipe_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "the already-visited force hole must be closed on the no-target path too"
+    );
+}
+
+/// Skip arm 3 reached THROUGH an already-`Visited` recipe. This is the
+/// silent-swallow case, and the sharpest evidence the hole is real: arm 3's
+/// error is DESIGNED — forcing an unreachable probe-sourced `for_each` cannot
+/// be rescued, so it must be a hard failure. The existing arm-3 tests both
+/// force `afan` directly. Route the force through `bbb` (which the seed loop
+/// has already evaluated un-forced, because `zzz` sorts after it) and the
+/// designed diagnostic simply never fires: the pass SUCCEEDS with `afan` at
+/// zero units while `zzz -> bbb -> afan` is in the build closure.
+///
+/// `afan` is named to sort first (it must be seeded and skipped before anything
+/// forces it); `zzz` is named to sort last (so `bbb` is `Visited`, not `None`,
+/// at force time). Rename `zzz` to `app` and the bug cannot fire.
+#[test]
+fn require_recipe_probe_for_each_reached_via_visited_recipe_still_errors() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("items", { inputs = {}, produce = [[ return {{id = "x"}} ]] })
+    cook.recipe("zzz", {}, function()
+        cook.require_recipe("bbb")
+    end)
+    cook.recipe("bbb", {requires = {"afan"}}, function() end)
+
+recipe afan
+    ingredients items
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s' "$<in.id>" > $<out>
+    }
+"#;
+    let err = register_surface_target(dir.path(), cookfile, "zzz")
+        .expect_err(
+            "arm 3's designed hard error must still fire when the force reaches `afan` \
+             through an already-visited `bbb`; swallowing it registers `afan` at zero \
+             units while the edge still builds it",
+        )
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("afan"), "error must name the recipe; got: {err}");
+    assert!(
+        err.contains("for_each") && err.contains("probe"),
+        "error must state the reason; got: {err}"
+    );
+    assert!(
+        err.contains(": afan"),
+        "fix hint must survive the transitive route; got: {err}"
+    );
+}
+
+/// The shape an author actually writes: `web` forces `assets` (a dynamic edge —
+/// `web` needs `assets`' export), and `assets : codegen`. No contrived naming:
+/// `web` genuinely sorts after `assets`, so `assets` is already `Visited` when
+/// the force lands and `codegen` — a parametric chore — is never stood down.
+/// `codegen` registers zero units and ships a `web` build with nothing
+/// generated.
+#[test]
+fn require_recipe_force_reaches_codegen_under_realistic_web_assets_names() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("web".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("web", {}, function()
+    cook.require_recipe("assets")
+end)
+cook.recipe("assets", {requires = {"codegen"}}, function() end)
+cook.__register_surface_chore("codegen",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "lang", default = "ts" } }},
+    function(__cook_params)
+        cook.exec("codegen " .. __cook_params.lang, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "codegen"),
+        "codegen ts",
+        "`web` forces `assets`, `assets : codegen` — `codegen` is in the build closure, so \
+         it must register its units; `web` sorting after `assets` must not decide that"
+    );
+}
+
+/// The propagation must CHAIN through consecutive already-visited recipes, not
+/// stop at the first hop. Found by auditing the new arm rather than by a
+/// report: it recurses through `ensure_static_requires`, so depth ought to fall
+/// out for free — but "ought to" is what produced three rounds of this bug, and
+/// the arm is only correct if `Visited { forced: false }` reached FROM the
+/// propagation re-enters it rather than short-circuiting.
+///
+/// Names, again, chosen so the bug fires: {achore, bbb: [ccc], ccc: [achore],
+/// zzz} seeds [achore, ccc, bbb, zzz], so `ccc` AND `bbb` are both already
+/// `Visited { forced: false }` when `zzz`'s force lands, and the rescue of
+/// `achore` has to travel `zzz` -> `bbb` -> `ccc` -> `achore` through two
+/// consecutive hits of the new arm.
+#[test]
+fn require_recipe_force_propagates_through_a_chain_of_visited_recipes() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"ccc"}}, function() end)
+cook.recipe("ccc", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "forcing is transitive to the whole static closure, not one hop: the engine builds \
+         the closure from `requires`, so `zzz -> bbb -> ccc -> achore` puts `achore` in it"
+    );
+}
+
+/// Cookfile fixture shared by the pair of tests below: `mid` statically
+/// requires `achore` (a parametric chore), and `achore`'s body forces `mid`
+/// back — a mixed static/dynamic cycle in the same shape as
+/// `require_recipe_mixed_static_dynamic_cycle_errors_with_path`, except
+/// `achore` is gated behind the parametric-chore skip arm, so the cycle is
+/// invisible to the ordinary un-forced seed pass (its body never runs) and
+/// only surfaces once something forces `mid`. `forcer_name` is that
+/// something; it is a parameter, not a fixture detail, because the whole
+/// point of both tests is which internal arm the forcer's name routes into.
+fn mid_achore_cycle_fixture(forcer_name: &str) -> String {
+    format!(
+        r#"
+cook.recipe("{forcer_name}", {{}}, function()
+    cook.require_recipe("mid")
+end)
+cook.recipe("mid", {{requires = {{"achore"}}}}, function() end)
+cook.__register_surface_chore("achore",
+    {{requires = {{}}, __line = 5,
+     __params = {{ {{ kind = "defaulted_string", name = "who", default = "world" }} }}}},
+    function(__cook_params)
+        cook.require_recipe("mid")
+    end)
+"#
+    )
+}
+
+/// Pull the `X -> Y -> X` path out of a `cook.require_recipe` cycle
+/// diagnostic and normalize it to a canonical rotation: drop the repeated
+/// closing node, then rotate to start at the lexicographically smallest
+/// name. A cycle has no privileged starting point — which node the
+/// `Visiting` check happens to catch first is an implementation accident,
+/// not part of the cycle's identity — so two renderings of the SAME cycle
+/// that merely start at different nodes must compare equal once normalized.
+fn canonical_cycle_path(err: &str) -> Vec<String> {
+    let marker = "dependency cycle: ";
+    let start = err
+        .find(marker)
+        .unwrap_or_else(|| panic!("no cycle marker in: {err}"))
+        + marker.len();
+    let rest = &err[start..];
+    let end = rest
+        .find(". Forcing is synchronous")
+        .unwrap_or_else(|| panic!("no cycle terminator in: {err}"));
+    let mut nodes: Vec<String> = rest[..end].split("->").map(|s| s.trim().to_string()).collect();
+    assert!(
+        nodes.len() > 1 && nodes.first() == nodes.last(),
+        "a cycle path must repeat its first node at the end; got: {nodes:?}"
+    );
+    nodes.pop();
+    let min_idx = nodes
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, n)| n.as_str())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    nodes.rotate_left(min_idx);
+    nodes
+}
+
+/// The `Visited { forced: false }` arm's `ensure_static_requires` re-walk
+/// does not push `name` onto `self.path` before recursing, while the normal
+/// (`None`-state) body path does (the `path.borrow_mut().push` right before
+/// `visit_requires_then_body`). `self.path` is exactly what the `Visiting`
+/// arm reads to render a cycle, so a cycle discovered THROUGH the
+/// already-visited arm renders with a link missing from the stack — and here
+/// that missing link is `mid` itself, so the diagnostic collapses to
+/// `achore -> achore`: a one-element self-cycle `achore` never actually has
+/// (it requires nothing; `mid` is the one with the static `requires`). That
+/// is precisely the fabricated-cycle shape `VisitState::Failed` exists to
+/// prevent elsewhere in this driver, and it violates §22.8's MUST to render
+/// the cycle PATH, not name one node.
+///
+/// `zzz` is the forcer's name FOR A REASON, not a placeholder: `topo` seeds
+/// lexicographically from `BTreeMap::keys()`, so `{achore, mid, zzz}` seeds
+/// `[achore, mid, zzz]` — `mid` is visited un-forced (`Visited { forced:
+/// false }`) before `zzz`'s turn arrives, so `zzz`'s force lands on the
+/// buggy `Visited { forced: false }` arm rather than the normal `None` one.
+/// A forcer sorting before `mid` (see the `app` control below) can never
+/// reach this arm, which is exactly why four prior rounds of this bug family
+/// were missed: every fixture happened to pick a name ordering that took the
+/// innocent path.
+#[test]
+fn require_recipe_force_through_already_visited_recipe_renders_full_cycle() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("zzz"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(
+        !err.contains("achore -> achore"),
+        "must not render a one-element self-cycle on `achore` — `achore` requires nothing; \
+         `mid` is the missing link the buggy arm dropped off `self.path`; got: {err}"
+    );
+    assert_eq!(
+        canonical_cycle_path(&err),
+        vec!["achore".to_string(), "mid".to_string()],
+        "the diagnostic must render the real 2-node cycle across BOTH recipes; got: {err}"
+    );
+}
+
+/// Control for the test above, pinning §22.8's "the already-evaluated case
+/// and the not-yet-evaluated case MUST be brought to the same result": the
+/// IDENTICAL cycle (`mid : achore`, `achore`'s body forcing `mid`), but the
+/// forcer is named `app` instead of `zzz`. `{achore, app, mid}` seeds
+/// `[achore, app, mid]` — `app` sorts BEFORE `mid`, so `mid` is still `None`
+/// when `app`'s body forces it, and the force takes the normal (`None`-state)
+/// body path rather than the `Visited { forced: false }` arm the test above
+/// exercises. That is the arm that already pushes `mid` onto `self.path`
+/// correctly, so it is the reference behaviour the buggy arm must match.
+///
+/// The two renderings are not required to be the same STRING — `mid` sits at
+/// a different point on the invocation stack in each case, so a correct
+/// implementation can legitimately catch the cycle at either node and start
+/// the printed path there — but they MUST be the same cycle once rotation is
+/// normalized away. That equality is what actually pins the spec's "brought
+/// to the same result": an author who renames only the forcer must not see
+/// the diagnostic change out from under a Cookfile that did not change.
+#[test]
+fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_case() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("app"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    let canonical = canonical_cycle_path(&err);
+    assert_eq!(
+        canonical,
+        vec!["achore".to_string(), "mid".to_string()],
+        "the diagnostic must render the real 2-node cycle across BOTH recipes; got: {err}"
+    );
+
+    // Same logical cycle, forcer sorted the other way — must normalize to
+    // the identical cycle as the `zzz` case above (Standard §22.8).
+    let dir2 = TempDir::new().unwrap();
+    let rt2 = make_registry(dir2.path());
+    let zzz_err = register_cookfile(rt2, &mid_achore_cycle_fixture("zzz"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert_eq!(
+        canonical,
+        canonical_cycle_path(&zzz_err),
+        "the already-evaluated (`zzz`) and not-yet-evaluated (`app`) cases must be brought \
+         to the same result (Standard §22.8); app err: {err}, zzz err: {zzz_err}"
+    );
+}

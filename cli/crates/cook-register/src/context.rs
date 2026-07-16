@@ -116,6 +116,152 @@ pub fn register_recipe_name_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<
     Ok(())
 }
 
+/// Forces the named recipe's body to be evaluated to completion, and
+/// reports the failure as a Lua error if it cannot be.
+///
+/// Supplied by `engine.rs`'s body-invocation driver, which owns the
+/// re-entrant visit. An `Rc` rather than a `Box` so `require_recipe_fn` can
+/// clone the forcer out of its cell and DROP the borrow before calling it:
+/// forcing re-enters that same closure via the callee's body, which borrows
+/// the cell again.
+pub type RecipeForcer = Rc<dyn Fn(&Lua, &str) -> Result<(), mlua::Error>>;
+
+/// The forcer cell `cook.require_recipe` reads at call time.
+///
+/// A CELL, not a value, because of an ordering fact that has already caused
+/// one silent-failure bug: the top-level Lua chunk runs BEFORE the
+/// body-invocation driver exists, so any forcer passed by value at
+/// API-install time is necessarily forcer-less. Re-registering the function
+/// once the driver exists does not fix that — `local rr = cook.require_recipe`
+/// at top level is ordinary Lua (`local sh = cook.sh` is idiomatic), and the
+/// alias keeps the closure it captured, forcer and all. ONE closure reading a
+/// cell filled in later is what makes an alias and a fresh `cook.` lookup
+/// behave identically.
+///
+/// Empty forever on VMs with no driver at all (`list_names`), and on the
+/// `register_cookfile` VM until `engine.rs` fills it. Every call reachable
+/// before then is outside a recipe body, so the guard rail fires first — but
+/// an empty cell reached from INSIDE a body is a hard error, never a silent
+/// no-op (§22.8: the forcing MUST NOT degrade to a silent skip).
+pub type SharedRecipeForcer = Rc<RefCell<Option<RecipeForcer>>>;
+
+/// Register `cook.require_recipe(name)` on the cook global table (Standard
+/// §22.8, CS-0144).
+///
+/// Declares that the enclosing recipe's register-phase body depends on
+/// another recipe, named BARE — the same unqualified namespace the
+/// `requires` metadata field and the surface `recipe A : B` dep-list use.
+/// Two effects, in order: `force` evaluates `name`'s body to completion
+/// (the register-order guarantee — everything that body exports is
+/// observable once this call returns), then the name accumulates into
+/// `BodyCaptureState.dynamic_requires` (order-preserving, de-duplicated),
+/// which `engine.rs` merges into the caller's `requires` at body drain.
+///
+/// Sibling to `register_recipe_name_api` immediately above: same
+/// registration pattern, same "only inside a recipe body" error voice,
+/// reading the same `body_slot`/`current_recipe` `None` signal — one check
+/// covers every outside-a-body caller (top level, a `register` block, and
+/// a `for_each`-feeding probe's `produce` on the register VM).
+pub fn register_require_recipe_api(
+    lua: &Lua,
+    body_slot: SharedBodySlot,
+    force: SharedRecipeForcer,
+) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let require_recipe_fn = lua.create_function(move |lua, name: LuaValue| {
+        // Validate against the caller's body state, then drop the borrow
+        // *before* forcing: `force` re-enters this very closure via the
+        // callee's body, and swaps the body slot out from under us.
+        let name = {
+            let slot = body_slot.borrow();
+            let body = match slot.as_ref() {
+                Some(body) if body.current_recipe.is_some() => body,
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "cook.require_recipe: no enclosing recipe is active; call `cook.require_recipe(name)` only from inside a recipe body (Standard \u{00a7}22.8, CS-0144)",
+                    ))
+                }
+            };
+
+            // CS-0143's `parse_origin_meta` precedent: match on the raw Lua
+            // value so a numeric argument is rejected outright rather than
+            // coerced to its decimal string.
+            let name = match name {
+                LuaValue::String(s) => s.to_string_lossy().to_string(),
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "cook.require_recipe: `name` must be a string, got {} (Standard \u{00a7}22.8, CS-0144)",
+                        other.type_name()
+                    )))
+                }
+            };
+            if name.is_empty() {
+                return Err(mlua::Error::runtime(
+                    "cook.require_recipe: `name` must be a non-empty string, got an empty string (Standard \u{00a7}22.8, CS-0144)",
+                ));
+            }
+
+            // Bare-to-bare self-reference check. `current_recipe_bare` is
+            // stamped alongside `current_recipe` at the same point in
+            // `engine.rs`, so it is guaranteed `Some` here — see its doc on
+            // why comparing against `current_recipe` (qualified) instead
+            // would silently never fire under an import prefix.
+            let current_bare = body
+                .current_recipe_bare
+                .clone()
+                .expect("current_recipe_bare stamped alongside current_recipe");
+            if current_bare == name {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.require_recipe: recipe \"{name}\" cannot require itself (Standard \u{00a7}22.8, CS-0144)"
+                )));
+            }
+            name
+        };
+
+        // The register-order guarantee. Unconditional even for a name
+        // already in `dynamic_requires` — the driver's visit map is what
+        // makes a repeat call a no-op, and routing every call through it
+        // keeps "already evaluated" one decision in one place.
+        //
+        // Cloned out of the cell so the borrow is released before the call:
+        // `force` re-enters this closure via the callee's body, which reads
+        // the cell again.
+        let forcer = force.borrow().clone();
+        match forcer {
+            Some(force) => force(lua, &name)?,
+            // Unreachable via any path that exists today — the guard rail
+            // above already rejected every outside-a-body caller, and inside
+            // a body the driver has long since filled the cell. It is an
+            // error rather than a `()` because the silent alternative is the
+            // exact defect this API exists to eliminate: the edge below would
+            // still be recorded, so the recipe would join the build closure
+            // while its export stayed unobservable and `cook.import` returned
+            // nil. A future VM that installs the API without a driver must
+            // fail loudly here, not mislink.
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.require_recipe: cannot force recipe \"{name}\": no body-invocation \
+                     driver is available on this register-phase VM. This is an implementation \
+                     fault, not a Cookfile error; please report it (Standard \u{00a7}22.8, CS-0144)"
+                )))
+            }
+        }
+
+        // The slot the driver restored on the way out is the caller's
+        // again, so this lands the edge on the right recipe.
+        let mut slot = body_slot.borrow_mut();
+        let body = slot
+            .as_mut()
+            .expect("body slot restored by the driver before force returns");
+        if !body.dynamic_requires.contains(&name) {
+            body.dynamic_requires.push(name);
+        }
+        Ok(())
+    })?;
+    cook.set("require_recipe", require_recipe_fn)?;
+    Ok(())
+}
+
 /// Resolve a glob pattern into a sorted set of relative file paths.
 ///
 /// Matches whose final (symlink-resolved) metadata is a directory are

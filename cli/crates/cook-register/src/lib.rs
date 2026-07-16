@@ -289,6 +289,25 @@ pub struct BodyCaptureState {
     /// Used by `cook.add_test` to default `suite` to the enclosing
     /// recipe's name when the caller omits the field (CS-0061 §3.2).
     pub current_recipe: Option<String>,
+    /// The BARE (unqualified) name of the recipe currently executing in
+    /// the register phase — the local `topo`-order name, stamped alongside
+    /// `current_recipe` (which is qualified) at the same point in
+    /// `engine.rs`. `cook.require_recipe`'s self-reference check (Standard
+    /// §22.8, CS-0144) MUST compare against this field, not
+    /// `current_recipe`: the API's argument is bare per the settled design
+    /// ruling, so comparing it against the qualified `current_recipe`
+    /// would make the self-check silently never fire under an import
+    /// prefix. The `None`/unstamped signal is shared with `current_recipe`
+    /// and unaffected by this field — only the self-comparison and the
+    /// cycle-path rendering (`BodyDriver::path` in `engine.rs`) need the bare
+    /// form.
+    pub current_recipe_bare: Option<String>,
+    /// Recipe names accumulated by `cook.require_recipe` calls within the
+    /// current recipe body (Standard §22.8, CS-0144). Order-preserving,
+    /// de-duplicated by the API itself. This field is only the accumulator:
+    /// `engine.rs` drains it after each body returns, forcing each named
+    /// recipe's body and merging the names into that recipe's `requires`.
+    pub dynamic_requires: Vec<String>,
 }
 
 impl BodyCaptureState {
@@ -307,6 +326,8 @@ impl BodyCaptureState {
             pending_member_dep_input_paths: Vec::new(),
             current_chore_active: false,
             current_recipe: None,
+            current_recipe_bare: None,
+            dynamic_requires: Vec::new(),
             chore_param_prelude: String::new(),
         }
     }

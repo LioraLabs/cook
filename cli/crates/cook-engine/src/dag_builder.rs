@@ -103,13 +103,20 @@ fn compute_consumed_probe_keys(
 /// **Unified-call contract (SHI-222).** The caller passes _every_ reachable
 /// recipe in a single invocation; cross-recipe edges (both coarse `deps` and
 /// fine-grained `dep_edges`) are resolved intra-call against the running
-/// `recipe_leaves` accumulator. A recipe that references a dep name not
-/// present in the passed slice will silently get no edge for that dep, so
-/// the caller is responsible for ensuring closure under dep edges and for
-/// passing recipes in topological order. The old wave-based call-site hid
-/// this property externally by passing one wave per call; the unified-DAG
-/// path collapses to a single call. See `tests/unified_dag_build.rs` for the
+/// `recipe_leaves` accumulator, so the caller is responsible for passing
+/// recipes in topological order. The old wave-based call-site hid this
+/// property externally by passing one wave per call; the unified-DAG path
+/// collapses to a single call. See `tests/unified_dag_build.rs` for the
 /// integration pin.
+///
+/// A `dep_edges` entry that names a recipe absent from the passed slice is
+/// rejected up front with [`EngineError::DanglingDepEdge`] — this channel is
+/// not analyzer-validated upstream the way `deps`/`requires` is, so
+/// `build_dag` is the last chance to catch it (see the pre-walk check at the
+/// top of this function). A `deps`/`requires` entry naming an unknown recipe
+/// is a different story: `cook_register`'s analyzer rejects it before
+/// `build_dag` ever runs, so an absent `cross_deps` lookup below is already
+/// unreachable on the live path and is left unchecked here.
 ///
 /// Performs plan-time validation that no two non-dep-related recipes declare
 /// the same canonical output path. If two recipes with no recipe-level
@@ -131,6 +138,37 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
     // silently; reject the plan.
     if let Some(err) = detect_output_collisions(&recipe_units) {
         return Err(err);
+    }
+
+    // ── Pre-walk: dep_edges closure validation ──────────────────────────────
+    // `dep_edges` (populated by `cook.dep_output` / `$<sigil>` refs) is a
+    // separate, older channel from `requires`/`deps`: nothing upstream
+    // validates its recipe names the way `cook_register`'s analyzer rejects
+    // an unknown `requires` name before `build_dag` ever runs. Left
+    // unchecked, an entry naming a recipe absent from `recipe_units`
+    // silently produced no edge for that dep (see the `ru.dep_edges` lookup
+    // in the unit loop below) instead of raising a diagnostic.
+    //
+    // This check walks the full slice up front, against the complete set of
+    // recipe names present in the call — NOT against `recipe_leaves` below,
+    // which is an intra-call accumulator populated only as the topo-ordered
+    // slice is walked. Checking against `recipe_leaves` per-unit would
+    // false-positive on any dep_edges target not yet reached in topo order;
+    // checking the full name set up front avoids that entanglement and
+    // correctly treats "present in the slice but zero units" (a legitimate
+    // `Some(empty)` leaf set) as distinct from "absent from the slice"
+    // (the genuine error).
+    let known_recipe_names: BTreeSet<&str> =
+        recipe_units.iter().map(|ru| ru.recipe_name.as_str()).collect();
+    for ru in &recipe_units {
+        for (_, dep_name) in &ru.dep_edges {
+            if !known_recipe_names.contains(dep_name.as_str()) {
+                return Err(EngineError::DanglingDepEdge {
+                    referring_recipe: ru.recipe_name.clone(),
+                    dep_name: dep_name.clone(),
+                });
+            }
+        }
     }
 
     let mut dag = Dag::new();
@@ -202,6 +240,14 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // prerequisite recipes finish. They do NOT participate in the
         // sequential `barrier` because they are inserted up-front, before
         // any `ru.units` are walked.
+        //
+        // Asymmetry note: unlike `ru.dep_edges` (validated by the pre-walk
+        // check above), a `ru.deps` entry naming a recipe absent from
+        // `recipe_leaves` is not diagnosed here. `deps` lowers from
+        // `requires`, which `cook_register`'s analyzer (`build_adjacency`)
+        // already rejects when it names an unknown recipe — so on the live
+        // path this lookup missing is already impossible, and a redundant
+        // check here would only duplicate that upstream validation.
         let mut cross_deps_for_synth: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
             if let Some(leaves) = recipe_leaves.get(dep_name) {
@@ -314,6 +360,12 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
 
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
+        //
+        // Asymmetry note: same as `cross_deps_for_synth` above — a `ru.deps`
+        // entry naming a recipe absent from `recipe_leaves` is not diagnosed
+        // here because `deps` is analyzer-validated upstream (unlike
+        // `ru.dep_edges`, which the pre-walk check at the top of this
+        // function now validates).
         let mut cross_deps: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
             if let Some(leaves) = recipe_leaves.get(dep_name) {
@@ -663,6 +715,192 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
     }
 
     Ok(())
+}
+
+/// §16.1.2 read-after-write rule: a literal `outputs[]` entry of recipe `A`
+/// equal to a literal `inputs[]` entry of recipe `B`, both in the current
+/// build closure, with no ordering path `B → A`, is rejected at plan time.
+///
+/// **A diagnostic, NOT an inferred edge.** §10.6 is explicit that only name
+/// references create edges and that an implementation MUST NOT infer an edge
+/// from path-string equality. So this function rejects the plan and
+/// synthesises nothing — the author must name the producer.
+///
+/// # Why the predicate is DIRECTED (and §16.1.1's is not)
+///
+/// [`detect_output_collisions`] (§16.1.1, write-write) builds an UNDIRECTED
+/// recipe graph and passes any connected pair. That is correct there: two
+/// recipes writing the same path race, and EITHER ordering serialises the
+/// race, so any path suffices.
+///
+/// Read-after-write is asymmetric. Only `B requires A` — producer first — is
+/// correct. The reverse path, `A requires B`, orders the consumer BEFORE the
+/// write: that is not an ambiguous race that scheduling might happen to win,
+/// but a DETERMINISTIC stale/missing read, strictly worse than the unordered
+/// case. An undirected predicate would wave it through as "dep-related,
+/// fine". So this function deliberately does NOT reuse `connected()`; it uses
+/// [`requires_transitively`] and passes only when `B` transitively requires
+/// `A`. Every other configuration, the reverse path included, diagnoses.
+///
+/// # Why the check is CLOSURE-scoped (and §22.1.2's is not)
+///
+/// The caller passes the build closure, not the whole workspace. A literal
+/// output is not build-owned, so `cook producer && cook consumer` is a
+/// legitimate sequential workflow and MUST NOT be rejected — with only
+/// `consumer` in the closure there is no producer to compare against and this
+/// function stays silent. §22.1.2's glob rule is workspace-wide precisely
+/// because terminality there is an OWNERSHIP claim, which holds regardless of
+/// what is being built. (`tests/raw_path_cross_recipe_edge.rs` pins the
+/// out-of-closure case; a workspace-wide check here would turn it red.)
+///
+/// Terminal (glob / directory) outputs are [`check_globbed_output_cross_recipe_edges`]'s
+/// business and are skipped here so the two rules never double-report.
+///
+/// # Precedence over §16.1.1
+///
+/// §16.1.2 states normatively that where a closure violates BOTH this rule and
+/// §16.1.1, the §16.1.1 collision is what must be reported: with two unordered
+/// writers of one path, the producer this scan names is arbitrary (whichever
+/// `BTreeSet` yields first), and the fix it advises would silence the
+/// read-after-write while leaving the write-write race intact.
+///
+/// This function nonetheless runs BEFORE [`detect_output_collisions`] (which
+/// opens [`build_dag`]), and that is deliberate, not an oversight. The
+/// ordering is unobservable here: [`detect_output_collisions`] is undirected
+/// over a graph that INCLUDES the requested target, so every recipe in a
+/// single-target closure is connected to the target and therefore to every
+/// other member — it cannot return `Some` for any closure `run_inner` builds.
+/// There is nothing for this check to mask. Adding a pre-pass to "fix" the
+/// order would buy an inert scan. If §16.1.1's predicate is ever narrowed so
+/// it can fire on a real closure, the precedence must be pinned at that point.
+///
+/// # Which surfaces this can actually see
+///
+/// Detection needs a SOURCE-DECLARED path — one fixed by the Cookfile text,
+/// not by what is on disk. `cook.add_unit`'s `inputs[]`/`outputs[]` and `cook`
+/// step output literals qualify. An `ingredients` literal does NOT: it is a
+/// glob resolved against the filesystem at register time (§21.2.1), so an
+/// absent artifact matches zero files and reaches `input_paths` as nothing at
+/// all. Covering it would invert the rule — silent on the cold build that
+/// actually races, loud only once a stale artifact already exists. §16.1.2's
+/// enumeration is therefore closed over the two surfaces above, and Note
+/// 16.1.2.2 records the exclusion. (§10.6's *prohibition* still covers
+/// `ingredients` literals; that is a rule about what must not happen and
+/// needs no detection.)
+pub(crate) fn check_literal_read_after_write(
+    recipe_units: &[RecipeUnits],
+) -> Result<(), EngineError> {
+    // canonical path -> recipes declaring it as a LITERAL output.
+    let mut producers_by_path: BTreeMap<PathBuf, BTreeSet<&str>> = BTreeMap::new();
+    for ru in recipe_units {
+        for unit in &ru.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            for output in &meta.output_paths {
+                // §22.1.2 owns terminal outputs — do not double-report.
+                if cook_fingerprint::is_terminal_output(output) {
+                    continue;
+                }
+                producers_by_path
+                    .entry(ru.working_dir.join(output))
+                    .or_default()
+                    .insert(ru.recipe_name.as_str());
+            }
+        }
+    }
+
+    if producers_by_path.is_empty() {
+        return Ok(());
+    }
+
+    // DIRECTED recipe graph: name -> the recipes it requires.
+    //
+    // Direction convention: an entry "A requires B" means B executes BEFORE A
+    // (`build_adjacency` sets `deps[name] = info.requires`, and `visit()`
+    // recurses into deps before pushing the node). So an edge here points
+    // from a recipe to something that runs earlier, and "B transitively
+    // requires A" is exactly the ordering this rule demands.
+    //
+    // Both cross-recipe channels count as ordering: coarse `deps` (the
+    // recipe-header colon list, into which the analyzer also folds
+    // `cook.require_recipe`) and fine-grained `dep_edges` (`$<sigil>` /
+    // `cook.dep_output`). Both are name references, so both are §10.6 edges.
+    let mut requires: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for ru in recipe_units {
+        let entry = requires.entry(ru.recipe_name.as_str()).or_default();
+        for dep in &ru.deps {
+            entry.insert(dep.as_str());
+        }
+        for (_, dep_name) in &ru.dep_edges {
+            entry.insert(dep_name.as_str());
+        }
+    }
+
+    for ru in recipe_units {
+        for unit in &ru.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            for input in &meta.input_paths {
+                // A glob/dir input expands at execute time — not a literal
+                // path match, and not this rule's business.
+                if cook_fingerprint::is_terminal_output(input) {
+                    continue;
+                }
+                let canonical = ru.working_dir.join(input);
+                let Some(producers) = producers_by_path.get(&canonical) else {
+                    continue;
+                };
+                for producer in producers {
+                    // A recipe's own units are already ordered within the
+                    // recipe; reading your own output is not a race.
+                    if *producer == ru.recipe_name.as_str() {
+                        continue;
+                    }
+                    if requires_transitively(&requires, ru.recipe_name.as_str(), producer) {
+                        continue;
+                    }
+                    return Err(EngineError::LiteralReadAfterWrite {
+                        producer: (*producer).to_string(),
+                        consumer: ru.recipe_name.clone(),
+                        path: input.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// BFS reachability over the DIRECTED recipe `requires` graph: does `from`
+/// transitively require `to`?
+///
+/// Deliberately NOT [`connected`] — see [`check_literal_read_after_write`] for
+/// why §16.1.2 needs a directed predicate where §16.1.1 wants an undirected
+/// one. Do not "unify" the two.
+fn requires_transitively(graph: &BTreeMap<&str, BTreeSet<&str>>, from: &str, to: &str) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    queue.push_back(from);
+    seen.insert(from);
+    while let Some(node) = queue.pop_front() {
+        if node == to {
+            return true;
+        }
+        if let Some(deps) = graph.get(node) {
+            for d in deps {
+                if seen.insert(*d) {
+                    queue.push_back(*d);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Detect non-dep-related recipes that declare the same canonical output path.
@@ -1186,6 +1424,113 @@ mod tests {
         assert_eq!(dag.len(), 2);
         // build's unit depends on setup's unit via coarse deps
         assert_eq!(dag.node(1).remaining_deps(), 1);
+    }
+
+    /// A `dep_edges` entry naming a recipe absent from the slice passed to
+    /// `build_dag` must raise `EngineError::DanglingDepEdge` naming both the
+    /// referring recipe and the dep, instead of silently vanishing.
+    ///
+    /// This is defensive hardening, not a live-path regression test: on the
+    /// live path a `$<sigil>` ref merges into `requires` too (codegen's
+    /// `unified_requires_field`), and `requires` is analyzer-validated
+    /// before `build_dag` ever runs — so this condition is unreachable from
+    /// a Cookfile today. We construct `RecipeUnits` directly to exercise the
+    /// defensive check.
+    #[test]
+    fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("gcc -o app main.c libmath.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            // "libmath" is never passed to build_dag — outside the closure.
+            dep_edges: vec![(0, "libmath".into())],
+            probes: vec![],
+        };
+
+        let err = build_dag(vec![app]).expect_err(
+            "dep_edges entry naming an out-of-closure recipe must error, not vanish silently",
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("app"), "message must name the referring recipe: {msg}");
+        assert!(msg.contains("libmath"), "message must name the dep: {msg}");
+        assert!(
+            msg.contains(": libmath"),
+            "message must hint at the recipe-header fix: {msg}"
+        );
+        assert!(
+            msg.contains("cook.require_recipe(\"libmath\")"),
+            "message must hint at the cook.require_recipe fix: {msg}"
+        );
+        match err {
+            EngineError::DanglingDepEdge { referring_recipe, dep_name } => {
+                assert_eq!(referring_recipe, "app");
+                assert_eq!(dep_name, "libmath");
+            }
+            other => panic!("expected DanglingDepEdge, got: {other:?}"),
+        }
+    }
+
+    /// A `dep_edges` entry naming a recipe that IS present in the slice but
+    /// contributes zero units (its leaf set is `Some(empty)`, not absent)
+    /// must NOT diagnose — this is the "distinguish absent from empty" case
+    /// the pre-walk validation exists to get right.
+    #[test]
+    fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
+        let noop = RecipeUnits {
+            recipe_name: "noop".into(),
+            deps: vec![],
+            units: vec![], // zero units — legitimate, not an absence
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("gcc -o app main.c"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![(0, "noop".into())],
+            probes: vec![],
+        };
+
+        // noop must be passed ahead of app to respect the topo-order
+        // contract build_dag relies on for recipe_leaves.
+        let dag = build_dag(vec![noop, app]).expect(
+            "an in-closure zero-unit dep must not diagnose — Some(empty) is legitimate",
+        );
+        // Only app's single unit produces a node; noop contributes none.
+        assert_eq!(dag.len(), 1);
+        assert_eq!(
+            dag.node(0).remaining_deps(),
+            0,
+            "no leaves to depend on since noop's leaf set is empty, not absent"
+        );
     }
 
     #[test]
