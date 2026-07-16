@@ -105,6 +105,9 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    '§22.5 cook.probe — duplicate-key detection, register-time semantic'],
   ['probe-unresolved-require',
    '§22.5 cook.probe — unresolved require detection, register-time semantic'],
+  // §22.7 cook.recipe_name semantic rule (register-time validation):
+  ['recipe-name-outside-recipe-body-rejected',
+   '§22.7 cook.recipe_name — outside-a-recipe-body detection, register-time semantic'],
   // §7.1.1 chore-parameter semantic rules — Rust parser enforces;
   // tree-sitter accepts any ordering / count / reserved-name shape.
   // The dot-ban and the no-default-on-variadic rule ARE syntactic and
