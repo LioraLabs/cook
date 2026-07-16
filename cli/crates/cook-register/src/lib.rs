@@ -299,13 +299,14 @@ pub struct BodyCaptureState {
     /// would make the self-check silently never fire under an import
     /// prefix. The `None`/unstamped signal is shared with `current_recipe`
     /// and unaffected by this field — only the self-comparison and the
-    /// (future) cycle-path rendering need the bare form.
+    /// cycle-path rendering (`BodyDriver::path` in `engine.rs`) need the bare
+    /// form.
     pub current_recipe_bare: Option<String>,
     /// Recipe names accumulated by `cook.require_recipe` calls within the
     /// current recipe body (Standard §22.8, CS-0144). Order-preserving,
-    /// de-duplicated by the API itself. A later task forces each named
-    /// recipe's body and merges these into `requires` edges; this field is
-    /// only the accumulator.
+    /// de-duplicated by the API itself. This field is only the accumulator:
+    /// `engine.rs` drains it after each body returns, forcing each named
+    /// recipe's body and merging the names into that recipe's `requires`.
     pub dynamic_requires: Vec<String>,
 }
 

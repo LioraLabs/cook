@@ -3308,17 +3308,73 @@ end)
     );
 }
 
+/// The OTHER half of `VisitState::Failed`: a body that raised MUST NOT re-run,
+/// and the original error MUST be replayed verbatim on the second force.
+///
+/// Sibling of the test above, which pins the "don't leave `Visiting` behind"
+/// half. Clearing the entry on failure instead of recording `Failed` would also
+/// avoid the fabricated cycle, so that test alone does not distinguish the two
+/// designs — this one does. §22.8: "A recipe body MUST be evaluated at most
+/// once per registration pass", with no exemption for a body that raised, and
+/// a `pcall`-swallowed force is exactly how a second force becomes reachable.
+///
+/// `flaky` succeeds on a second evaluation and fails on its first, so a re-run
+/// is directly observable: `runs` reaches 2 and the replayed error goes `nil`.
+#[test]
+fn require_recipe_failed_body_is_not_re_evaluated_and_replays_original_error() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    // `consumer` sorts before `flaky`, so the seed loop reaches it first and
+    // both forces happen from inside its body. It reports what it observed by
+    // raising, which is the only channel out of a pass that must fail anyway.
+    let lua_src = r#"
+local runs = 0
+cook.recipe("consumer", {}, function()
+    local ok1 = pcall(function() cook.require_recipe("flaky") end)
+    local ok2, err2 = pcall(function() cook.require_recipe("flaky") end)
+    error("PROBE runs=" .. runs .. " ok1=" .. tostring(ok1)
+          .. " ok2=" .. tostring(ok2) .. " err2=[" .. tostring(err2) .. "]")
+end)
+cook.recipe("flaky", {}, function()
+    runs = runs + 1
+    if runs == 1 then error("boom: only the first evaluation fails") end
+    cook.exec("flaky re-ran", 1)
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("flaky's body raises, so the pass must fail")
+        .to_string();
+    assert!(
+        err.contains("runs=1"),
+        "the failed body MUST NOT be re-evaluated by the second force (§22.8 at-most-once); \
+         `runs=2` means `Failed` cleared the entry instead of recording it. Got: {err}"
+    );
+    assert!(
+        err.contains("ok1=false") && err.contains("ok2=false"),
+        "both forces must fail — the second inherits the first's failure rather than \
+         succeeding on a re-run; got: {err}"
+    );
+    assert!(
+        err.contains("boom: only the first evaluation fails"),
+        "the second force MUST replay the ORIGINAL error verbatim, not swallow it and not \
+         report a fabricated one; got: {err}"
+    );
+}
+
 /// A cycle whose two edges have DIFFERENT sources — `aaa : bbb` static, plus
-/// `bbb`'s body forcing `aaa` — is invisible to the driver's `Visiting` check:
-/// at force time `aaa` is not on the invocation stack (the seed loop runs
-/// `bbb` first, since the static sort puts a dep before its dependent), so
-/// nothing recurses and the pass returns Ok. §22.8 nonetheless makes this a
-/// MUST: the cycle is in the edges "taken together with all other cross-recipe
-/// edges", and the implementation MUST reject the Cookfile with a diagnostic
-/// rendering the cycle PATH. Leaving it to the engine's analyzer does not
-/// discharge that: `GraphError::CycleDetected` names one node, renders no
-/// path, and is scoped to the target's closure — so `cook list` sees nothing
-/// at all.
+/// `bbb`'s body forcing `aaa` — MUST be rejected with the cycle PATH rendered.
+/// §22.8: the cycle is in the edges "taken together with all other cross-recipe
+/// edges". Leaving it to the engine's analyzer would not discharge that:
+/// `GraphError::CycleDetected` names one node, renders no path, and is scoped
+/// to the target's closure — so `cook list` would see nothing at all.
+///
+/// The driver's `Visiting` arm is what raises it, since `ensure_static_requires`
+/// makes the driver walk STATIC edges too: the seed loop marks `bbb` `Visiting`
+/// (the static sort puts a dep before its dependent), `bbb`'s body forces `aaa`,
+/// and `aaa`'s static dep on `bbb` recurses straight back into the `Visiting`
+/// mark — yielding `cook.require_recipe: dependency cycle: bbb -> aaa -> bbb`.
+/// Step 12a's merged-`requires` sort would also catch it, but never gets the
+/// chance; it is a guard, not the live path (see `engine.rs` step 12a).
 #[test]
 fn require_recipe_mixed_static_dynamic_cycle_errors_with_path() {
     let dir = TempDir::new().unwrap();

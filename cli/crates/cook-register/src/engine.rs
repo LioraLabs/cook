@@ -457,25 +457,12 @@ pub fn register_cookfile(
 
     // 12a. (Standard §22.8, CS-0144) Cycle detection over the MERGED
     //      `requires` — static dep-lists plus every edge the bodies just
-    //      declared — which is what makes §22.8's "taken together with all
-    //      other cross-recipe edges" true. §22.8 makes rendering the cycle
-    //      PATH a MUST; the engine's own analyzer is not a substitute, since
-    //      it names a single node, renders no path, and only looks inside the
-    //      target's closure (so `cook list` would see nothing at all).
-    //
-    //      DEFENCE IN DEPTH as of the deps-first fix. The driver now recurses
-    //      into each recipe's local static `requires` as well as its dynamic
-    //      edges, so its `Visiting` check walks the whole merged graph and
-    //      catches every cycle in it — including the MIXED shape (`A : B`
-    //      static plus `B`'s body forcing `A`) that originally motivated this
-    //      step, and which the driver genuinely could not see back when it
-    //      recursed on dynamic edges alone. Disabling this block leaves the
-    //      whole suite green. It is retained anyway: its redundancy rests on
-    //      the driver traversing EVERY edge source that can reach `names`, an
-    //      invariant a future edge source could quietly break — and the
-    //      failure mode if it does is a silently accepted cycle, which is the
-    //      class of bug this ticket exists to kill. The cost is one sort over
-    //      an in-memory map, once per pass.
+    //      declared. Redundant today: the driver traverses every edge source
+    //      that can reach the merged `requires`, because `force()` runs before
+    //      the edge is recorded, so its `Visiting` check already catches every
+    //      cycle here. Retained as a cheap guard (one in-memory sort per pass;
+    //      it can only ever reject) because the failure mode if a future edge
+    //      source bypasses the driver is a silently accepted cycle.
     {
         let merged: BTreeMap<String, Vec<String>> = names
             .iter()
