@@ -121,8 +121,12 @@ recipe consumer : middle
          still forward producer's leaves so consumer waits on producer:\n{combined}"
     );
 
-    // Positive ordering evidence: producer's unit is reported as having
-    // completed before consumer's unit in the log, not merely "exit 0".
+    // Positive ordering evidence: producer's unit line appears before
+    // consumer's unit line in the log, not merely "exit 0". `str::find`
+    // returns the first occurrence of each, so this only shows producer's
+    // line came first — it is not by itself proof of completion ordering.
+    // The nonce-equality check below is what actually proves consumer read
+    // producer's output rather than a stale or racing write.
     let producer_at = combined
         .find("producer/gen.a")
         .unwrap_or_else(|| panic!("producer unit never ran:\n{combined}"));

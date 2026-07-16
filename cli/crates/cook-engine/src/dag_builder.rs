@@ -18,18 +18,14 @@
 //! Leaf pass-through (empty barrier):
 //! - A recipe's "leaves" (what downstream recipes depend on via `deps` /
 //!   `dep_edges`) are normally its final sequential barrier. But when a
-//!   recipe finishes its unit loop with an EMPTY barrier, it forwards its
-//!   own `deps`' leaves instead of registering an empty set. The rule is
-//!   "empty barrier ⇒ forward", not "zero units ⇒ forward": keep both the
-//!   code and this comment phrased that way so they cannot drift apart.
-//!   Non-exhaustive list of ways a barrier ends up empty despite non-empty
-//!   `units`: all units were demand-pruned probes (§22.5.7); or all units
-//!   were probes that survived pruning but were consumed by a consumer
-//!   elsewhere — probes never advance the barrier either way (see the
-//!   barrier-update match below), so a recipe whose only units are
-//!   probes forwards `cross_deps` but not its own probe node(s); this is
-//!   harmless in practice since probe→consumer edges are wired per-recipe,
-//!   not through the leaf set. This makes a unit-less meta-target
+//!   recipe finishes its unit loop with an EMPTY barrier — because it has
+//!   zero units, or because its only units were all demand-pruned probes
+//!   (§22.5.7; an all-probe recipe's `consumed` set is seeded only from
+//!   non-probe units in the same recipe, so every probe is necessarily
+//!   pruned) — it forwards its own `deps`' leaves instead of registering
+//!   an empty set. The rule is "empty barrier ⇒ forward", not "zero units
+//!   ⇒ forward": keep both the code and this comment phrased that way so
+//!   they cannot drift apart. This makes a unit-less meta-target
 //!   (`recipe middle : producer` with no body) transparent to ordering
 //!   instead of severing the chain — a chain of such recipes forwards the
 //!   original producer's leaves transitively, by induction over the
@@ -610,9 +606,9 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // barrier, but when that barrier is EMPTY, forward `cross_deps`
         // instead (the union of this recipe's own `deps`' leaves, computed
         // above). The trigger is "empty barrier", not "zero units" — see
-        // the module doc comment's "Leaf pass-through" section for the
-        // (non-exhaustive) list of ways a non-empty `units` still ends the
-        // loop with an empty barrier, all of which must forward too, so a
+        // the module doc comment's "Leaf pass-through" section for the list
+        // of ways a non-empty `units` still ends the loop with an empty
+        // barrier, all of which must forward too, so a
         // downstream root unit still reaches the real upstream work instead
         // of silently losing the edge. `cross_deps` is itself already a
         // forwarded/transitive set by induction (every recipe earlier in
