@@ -246,6 +246,167 @@ fn standalone_builtin_warns_for_dynamic_recipe_once() {
     );
 }
 
+/// A recipe registered with an `origin` field renders `(from ...)` after its
+/// existing `  recipe NAME` line.
+#[test]
+fn annotated_recipe_renders_origin() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "register\n    \
+         cook.recipe(\"web:build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function() end)\n",
+    );
+
+    let out = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        out.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("web:build"))
+        .unwrap_or_else(|| panic!("expected a web:build line; stdout:\n{stdout}"));
+    assert_eq!(line, "  recipe web:build  (from cook_pnpm.workspace)");
+}
+
+/// A plain, unannotated `recipe build` sharing the Cookfile with an annotated
+/// recipe must render exactly as it does today: no padding, no trailing
+/// space, unaffected by the annotation column computed from the *other*
+/// line. Asserted against the exact stdout line (not a whole-stdout
+/// substring check), because once annotations exist elsewhere in the output
+/// a `contains` check on a short name like "build" is fragile against
+/// sibling recipe names.
+#[test]
+fn unannotated_sibling_of_annotated_recipe_has_no_trailing_space() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "register\n    \
+         cook.recipe(\"web:build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function() end)\n\
+         \n\
+         recipe build\n",
+    );
+
+    let out = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        out.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let line = stdout
+        .lines()
+        .find(|l| l == &"  recipe build")
+        .unwrap_or_else(|| panic!("expected an exact '  recipe build' line; stdout:\n{stdout}"));
+    assert_eq!(line, "  recipe build");
+}
+
+/// Two annotated recipes of differing name length have their `(from` at the
+/// same column: the annotation column is the max rendered width of
+/// `{name}{suffix}` across *annotated* entries only, plus a two-space
+/// gutter.
+#[test]
+fn annotated_recipes_align_origin_column() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "register\n    \
+         cook.recipe(\"web:build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function() end)\n    \
+         cook.recipe(\"cc:config-header\", {requires = {}, origin = \"cook_cc.config_header\"}, function() end)\n",
+    );
+
+    let out = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        out.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let build_line = stdout
+        .lines()
+        .find(|l| l.contains("web:build"))
+        .unwrap_or_else(|| panic!("expected a web:build line; stdout:\n{stdout}"));
+    let header_line = stdout
+        .lines()
+        .find(|l| l.contains("cc:config-header"))
+        .unwrap_or_else(|| panic!("expected a cc:config-header line; stdout:\n{stdout}"));
+
+    let build_col = build_line.find("(from").expect("build line has annotation");
+    let header_col = header_line.find("(from").expect("header line has annotation");
+    assert_eq!(
+        build_col, header_col,
+        "annotations must align to the same column; stdout:\n{stdout}"
+    );
+    assert_eq!(build_line, "  recipe web:build         (from cook_pnpm.workspace)");
+    assert_eq!(header_line, "  recipe cc:config-header  (from cook_cc.config_header)");
+}
+
+/// A workspace with zero annotated recipes must produce output
+/// byte-identical to today: no annotation-column computation may leak into
+/// the plain rendering path.
+#[test]
+fn all_unannotated_workspace_output_is_unchanged() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "chore greet caller who=\"world\"\n    echo \"$<who>\"\n\
+         \n\
+         recipe build\n",
+    );
+
+    let out = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        out.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    assert_eq!(
+        stdout,
+        "  chore  greet caller who=\"world\"\n  recipe build\n",
+        "all-unannotated output must be byte-identical to the pre-annotation renderer",
+    );
+}
+
+/// `list` and `menu` remain byte-equal even when annotations are present.
+#[test]
+fn list_and_menu_byte_equal_with_annotations() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "register\n    \
+         cook.recipe(\"web:build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function() end)\n\
+         \n\
+         recipe build\n",
+    );
+
+    let list = run_cook(tmp.path(), &["list"]);
+    assert!(
+        list.status.success(),
+        "cook list failed: stderr={}",
+        String::from_utf8_lossy(&list.stderr),
+    );
+    let menu = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        menu.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&menu.stderr),
+    );
+
+    let list_stdout = String::from_utf8(list.stdout).expect("utf-8 stdout");
+    let menu_stdout = String::from_utf8(menu.stdout).expect("utf-8 stdout");
+    assert_eq!(
+        list_stdout, menu_stdout,
+        "cook list must render exactly what cook menu renders, annotations included"
+    );
+    assert!(
+        list_stdout.contains("(from cook_pnpm.workspace)"),
+        "alias must inherit menu's annotation rendering; stdout:\n{list_stdout}"
+    );
+}
+
 #[test]
 fn qualified_imported_recipe_does_not_collide_with_builtin() {
     let tmp = TempDir::new().expect("tempdir");

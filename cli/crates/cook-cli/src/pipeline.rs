@@ -1292,23 +1292,49 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
         .map_err(pipeline_error_to_cook_error)?;
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
-    for r in &names {
-        let suffix = if r.params.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " {}",
-                r.params
-                    .iter()
-                    .map(|p| p.display_token())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
+    // Pass 1: compute `{name}{suffix}` per entry, and the annotation column
+    // (the max rendered width of `{name}{suffix}` across *annotated* entries
+    // only, plus a two-space minimum gutter). Unannotated entries never
+    // contribute to this width and are printed unchanged in pass 2.
+    let mut annotated_width: Option<usize> = None;
+    let rendered: Vec<(String, &cook_engine::cook_register::RegisteredRecipePub)> = names
+        .iter()
+        .map(|r| {
+            let suffix = if r.params.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " {}",
+                    r.params
+                        .iter()
+                        .map(|p| p.display_token())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            };
+            let name_and_suffix = format!("{}{suffix}", r.name);
+            if r.origin.is_some() {
+                let width = name_and_suffix.chars().count();
+                annotated_width = Some(annotated_width.map_or(width, |w| w.max(width)));
+            }
+            (name_and_suffix, r)
+        })
+        .collect();
+
+    // Pass 2: print.
+    for (name_and_suffix, r) in &rendered {
+        let label = match r.kind {
+            cook_engine::cook_register::RecipeKind::Recipe => "recipe ",
+            cook_engine::cook_register::RecipeKind::Chore => "chore  ",
         };
-        let name = &r.name;
-        match r.kind {
-            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
-            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
+        match (&r.origin, annotated_width) {
+            (Some(origin), Some(width)) => {
+                let gutter = width - name_and_suffix.chars().count() + 2;
+                println!("  {label}{name_and_suffix}{:gutter$}(from {origin})", "");
+            }
+            _ => {
+                println!("  {label}{name_and_suffix}");
+            }
         }
     }
 
