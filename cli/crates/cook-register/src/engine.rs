@@ -720,7 +720,20 @@ impl BodyDriver {
             // The body is NOT re-run: §22.8 says at most once per pass, and it
             // already ran to completion. Only `forced` is pushed down.
             Some(VisitState::Visited { forced: false }) => {
-                self.ensure_static_requires(lua, name, true)?;
+                // `name` pushed onto `self.path` around the walk, mirroring the
+                // normal (`None`-state) body path a few lines down: `self.path`
+                // is what the `Visiting` arm renders a cycle from, and without
+                // this push a cycle reached back through THIS arm is missing
+                // `name` off the stack. `name` itself is never marked
+                // `Visiting` (see below), so `path` is the only record of it
+                // being mid-walk — drop the push and a mixed static/dynamic
+                // cycle reached this way collapses to a fabricated one-element
+                // self-cycle on whichever dep the recursion re-enters,
+                // regardless of it having nothing to do with `name`.
+                self.path.borrow_mut().push(name.to_string());
+                let result = self.ensure_static_requires(lua, name, true);
+                self.path.borrow_mut().pop();
+                result?;
                 // Recorded only on success, matching every other terminal-state
                 // write here: if the propagation raised (arm 3's designed error
                 // is the live case), leaving `name` at `forced: false` means a

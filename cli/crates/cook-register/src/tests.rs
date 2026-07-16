@@ -3676,3 +3676,151 @@ cook.__register_surface_chore("achore",
          the closure from `requires`, so `zzz -> bbb -> ccc -> achore` puts `achore` in it"
     );
 }
+
+/// Cookfile fixture shared by the pair of tests below: `mid` statically
+/// requires `achore` (a parametric chore), and `achore`'s body forces `mid`
+/// back — a mixed static/dynamic cycle in the same shape as
+/// `require_recipe_mixed_static_dynamic_cycle_errors_with_path`, except
+/// `achore` is gated behind the parametric-chore skip arm, so the cycle is
+/// invisible to the ordinary un-forced seed pass (its body never runs) and
+/// only surfaces once something forces `mid`. `forcer_name` is that
+/// something; it is a parameter, not a fixture detail, because the whole
+/// point of both tests is which internal arm the forcer's name routes into.
+fn mid_achore_cycle_fixture(forcer_name: &str) -> String {
+    format!(
+        r#"
+cook.recipe("{forcer_name}", {{}}, function()
+    cook.require_recipe("mid")
+end)
+cook.recipe("mid", {{requires = {{"achore"}}}}, function() end)
+cook.__register_surface_chore("achore",
+    {{requires = {{}}, __line = 5,
+     __params = {{ {{ kind = "defaulted_string", name = "who", default = "world" }} }}}},
+    function(__cook_params)
+        cook.require_recipe("mid")
+    end)
+"#
+    )
+}
+
+/// Pull the `X -> Y -> X` path out of a `cook.require_recipe` cycle
+/// diagnostic and normalize it to a canonical rotation: drop the repeated
+/// closing node, then rotate to start at the lexicographically smallest
+/// name. A cycle has no privileged starting point — which node the
+/// `Visiting` check happens to catch first is an implementation accident,
+/// not part of the cycle's identity — so two renderings of the SAME cycle
+/// that merely start at different nodes must compare equal once normalized.
+fn canonical_cycle_path(err: &str) -> Vec<String> {
+    let marker = "dependency cycle: ";
+    let start = err
+        .find(marker)
+        .unwrap_or_else(|| panic!("no cycle marker in: {err}"))
+        + marker.len();
+    let rest = &err[start..];
+    let end = rest
+        .find(". Forcing is synchronous")
+        .unwrap_or_else(|| panic!("no cycle terminator in: {err}"));
+    let mut nodes: Vec<String> = rest[..end].split("->").map(|s| s.trim().to_string()).collect();
+    assert!(
+        nodes.len() > 1 && nodes.first() == nodes.last(),
+        "a cycle path must repeat its first node at the end; got: {nodes:?}"
+    );
+    nodes.pop();
+    let min_idx = nodes
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, n)| n.as_str())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    nodes.rotate_left(min_idx);
+    nodes
+}
+
+/// The `Visited { forced: false }` arm's `ensure_static_requires` re-walk
+/// does not push `name` onto `self.path` before recursing, while the normal
+/// (`None`-state) body path does (the `path.borrow_mut().push` right before
+/// `visit_requires_then_body`). `self.path` is exactly what the `Visiting`
+/// arm reads to render a cycle, so a cycle discovered THROUGH the
+/// already-visited arm renders with a link missing from the stack — and here
+/// that missing link is `mid` itself, so the diagnostic collapses to
+/// `achore -> achore`: a one-element self-cycle `achore` never actually has
+/// (it requires nothing; `mid` is the one with the static `requires`). That
+/// is precisely the fabricated-cycle shape `VisitState::Failed` exists to
+/// prevent elsewhere in this driver, and it violates §22.8's MUST to render
+/// the cycle PATH, not name one node.
+///
+/// `zzz` is the forcer's name FOR A REASON, not a placeholder: `topo` seeds
+/// lexicographically from `BTreeMap::keys()`, so `{achore, mid, zzz}` seeds
+/// `[achore, mid, zzz]` — `mid` is visited un-forced (`Visited { forced:
+/// false }`) before `zzz`'s turn arrives, so `zzz`'s force lands on the
+/// buggy `Visited { forced: false }` arm rather than the normal `None` one.
+/// A forcer sorting before `mid` (see the `app` control below) can never
+/// reach this arm, which is exactly why four prior rounds of this bug family
+/// were missed: every fixture happened to pick a name ordering that took the
+/// innocent path.
+#[test]
+fn require_recipe_force_through_already_visited_recipe_renders_full_cycle() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("zzz"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(
+        !err.contains("achore -> achore"),
+        "must not render a one-element self-cycle on `achore` — `achore` requires nothing; \
+         `mid` is the missing link the buggy arm dropped off `self.path`; got: {err}"
+    );
+    assert_eq!(
+        canonical_cycle_path(&err),
+        vec!["achore".to_string(), "mid".to_string()],
+        "the diagnostic must render the real 2-node cycle across BOTH recipes; got: {err}"
+    );
+}
+
+/// Control for the test above, pinning §22.8's "the already-evaluated case
+/// and the not-yet-evaluated case MUST be brought to the same result": the
+/// IDENTICAL cycle (`mid : achore`, `achore`'s body forcing `mid`), but the
+/// forcer is named `app` instead of `zzz`. `{achore, app, mid}` seeds
+/// `[achore, app, mid]` — `app` sorts BEFORE `mid`, so `mid` is still `None`
+/// when `app`'s body forces it, and the force takes the normal (`None`-state)
+/// body path rather than the `Visited { forced: false }` arm the test above
+/// exercises. That is the arm that already pushes `mid` onto `self.path`
+/// correctly, so it is the reference behaviour the buggy arm must match.
+///
+/// The two renderings are not required to be the same STRING — `mid` sits at
+/// a different point on the invocation stack in each case, so a correct
+/// implementation can legitimately catch the cycle at either node and start
+/// the printed path there — but they MUST be the same cycle once rotation is
+/// normalized away. That equality is what actually pins the spec's "brought
+/// to the same result": an author who renames only the forcer must not see
+/// the diagnostic change out from under a Cookfile that did not change.
+#[test]
+fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_case() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("app"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    let canonical = canonical_cycle_path(&err);
+    assert_eq!(
+        canonical,
+        vec!["achore".to_string(), "mid".to_string()],
+        "the diagnostic must render the real 2-node cycle across BOTH recipes; got: {err}"
+    );
+
+    // Same logical cycle, forcer sorted the other way — must normalize to
+    // the identical cycle as the `zzz` case above (Standard §22.8).
+    let dir2 = TempDir::new().unwrap();
+    let rt2 = make_registry(dir2.path());
+    let zzz_err = register_cookfile(rt2, &mid_achore_cycle_fixture("zzz"), None)
+        .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
+        .to_string();
+    assert_eq!(
+        canonical,
+        canonical_cycle_path(&zzz_err),
+        "the already-evaluated (`zzz`) and not-yet-evaluated (`app`) cases must be brought \
+         to the same result (Standard §22.8); app err: {err}, zzz err: {zzz_err}"
+    );
+}
