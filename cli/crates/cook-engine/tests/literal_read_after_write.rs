@@ -444,3 +444,153 @@ fn same_recipe_output_then_input_does_not_fire() {
     let (ok, combined) = run_cook(tmp.path(), "solo");
     assert!(ok, "a recipe reading its own output MUST NOT fire:\n{combined}");
 }
+
+// ---------------------------------------------------------------------------
+// The Standard's worked example, pinned as executable truth
+// ---------------------------------------------------------------------------
+
+/// **Example 16.1.2, verbatim.** A normative section's example must be
+/// executable truth, not illustration — so the Standard's example is pinned
+/// here rather than paraphrased. Keep this fixture byte-for-byte in step with
+/// the `cook` block in §16.1.2; if you change one, change the other.
+///
+/// The example as first drafted was NOT diagnosed: its consumer read
+/// `build/gen.a` only from shell-body text (`cook "out.bin" { cp build/gen.a
+/// $<out> }`), which is not a declared input surface, so the rule's own
+/// precondition — "`B` declares that same canonical path as a literal input
+/// entry" — never held. It executed and died on `cp: cannot stat`, the exact
+/// pre-existing failure §16.1.2 exists to replace, while the section claimed
+/// "Building `all` MUST be rejected at plan time". This test exists so that
+/// cannot silently recur.
+///
+/// Note the artifact is ABSENT: this is a cold build closure. That is the
+/// point — detection reads source-declared paths, never filesystem state
+/// (Note 16.1.1), and the cold build is the case that actually races.
+#[test]
+fn standard_example_16_1_2_is_diagnosed_verbatim() {
+    let tmp = setup(
+        r#"recipe producer
+    cook "build/gen.a" { mkdir -p build && printf 'a' > $<out> }
+
+recipe consumer
+    cook.add_unit({
+        inputs  = { "build/gen.a" },
+        outputs = { "out.bin" },
+        command = "cp build/gen.a out.bin",
+    })
+
+recipe all: producer consumer
+"#,
+    );
+
+    let (ok, combined) = run_cook(tmp.path(), "all");
+    assert_diagnosed(ok, &combined);
+    assert!(
+        !tmp.path().join("out.bin").exists(),
+        "the example MUST be rejected, not reordered:\n{combined}"
+    );
+}
+
+/// Example 16.1.2's reverse-dep paragraph, pinned: `recipe producer: consumer`
+/// MUST still be rejected. The path exists but runs the wrong way.
+#[test]
+fn standard_example_16_1_2_reverse_dep_still_diagnosed() {
+    let tmp = setup(
+        r#"recipe producer: consumer
+    cook "build/gen.a" { mkdir -p build && printf 'a' > $<out> }
+
+recipe consumer
+    cook.add_unit({
+        inputs  = { "build/gen.a" },
+        outputs = { "out.bin" },
+        command = "cp build/gen.a out.bin",
+    })
+
+recipe all: producer consumer
+"#,
+    );
+
+    let (ok, combined) = run_cook(tmp.path(), "all");
+    assert_diagnosed(ok, &combined);
+}
+
+/// Example 16.1.2's repair paragraph, pinned: naming the producer from the
+/// consumer fixes it, and the build then actually produces the artifact.
+#[test]
+fn standard_example_16_1_2_repaired_by_naming_producer() {
+    let tmp = setup(
+        r#"recipe producer
+    cook "build/gen.a" { mkdir -p build && printf 'a' > $<out> }
+
+recipe consumer: producer
+    cook.add_unit({
+        inputs  = { "build/gen.a" },
+        outputs = { "out.bin" },
+        command = "cp build/gen.a out.bin",
+    })
+
+recipe all: producer consumer
+"#,
+    );
+
+    let (ok, combined) = run_cook(tmp.path(), "all");
+    assert!(ok, "naming the producer MUST repair the example:\n{combined}");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("out.bin")).unwrap(),
+        "a",
+        "the repaired build MUST order the write before the read:\n{combined}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The narrowed scope — `ingredients` literals are NOT covered (Note 16.1.2.2)
+// ---------------------------------------------------------------------------
+
+/// **§16.1.2 does not cover `ingredients`-sourced literals, and this pins that
+/// exclusion as deliberate.**
+///
+/// An `ingredients` pattern is a filesystem glob resolved against disk at
+/// register time (§21.2.1); a literal is just a glob with no metacharacters.
+/// On a COLD build `build/gen.a` does not exist, so the pattern matches ZERO
+/// files, contributes no input entry, and there is nothing for the rule to
+/// compare — it stays silent and the build fails at runtime instead.
+///
+/// This test asserts that silence on purpose. Detection here would be
+/// INVERTED: quiet on the cold build where the race lives, loud only once a
+/// stale artifact already sat on disk (see the sibling test below, which pins
+/// the other half of the A/B). A check whose sensitivity depends on the
+/// filesystem state it is meant to protect is worse than no check, and it
+/// would contradict Note 16.1.1's "source, not filesystem state" principle.
+///
+/// If you make this fire, you have changed §16.1.2's scope — Note 16.1.2.2 and
+/// CS-0144 must change with it. §10.6's PROHIBITION is untouched either way:
+/// no edge is inferred from this path match, which is what the
+/// `raw_path_cross_recipe_edge.rs` tripwire guards.
+#[test]
+fn ingredients_sourced_literal_is_not_covered_on_cold_build() {
+    let tmp = setup(
+        r#"recipe producer
+        cook.add_unit({
+            inputs  = { "src.c" },
+            outputs = { "build/gen.a" },
+            command = "mkdir -p build && cp src.c build/gen.a",
+        })
+
+recipe consumer
+    ingredients "build/gen.a"
+    cook "out.bin" { cp $<in> $<out> }
+
+recipe all : producer consumer
+"#,
+    );
+
+    let (ok, combined) = run_cook(tmp.path(), "all");
+    assert!(!ok, "the cold build still fails on its own terms:\n{combined}");
+    assert!(
+        !combined.contains("read-after-write with no ordering edge"),
+        "§16.1.2 MUST NOT claim to cover an `ingredients`-sourced literal: on \
+         a cold build the glob matches 0 files and no input entry exists. If \
+         this fires, the rule's scope changed and Note 16.1.2.2 / CS-0144 are \
+         now wrong:\n{combined}"
+    );
+}

@@ -755,6 +755,38 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
 ///
 /// Terminal (glob / directory) outputs are [`check_globbed_output_cross_recipe_edges`]'s
 /// business and are skipped here so the two rules never double-report.
+///
+/// # Precedence over §16.1.1
+///
+/// §16.1.2 states normatively that where a closure violates BOTH this rule and
+/// §16.1.1, the §16.1.1 collision is what must be reported: with two unordered
+/// writers of one path, the producer this scan names is arbitrary (whichever
+/// `BTreeSet` yields first), and the fix it advises would silence the
+/// read-after-write while leaving the write-write race intact.
+///
+/// This function nonetheless runs BEFORE [`detect_output_collisions`] (which
+/// opens [`build_dag`]), and that is deliberate, not an oversight. The
+/// ordering is unobservable here: [`detect_output_collisions`] is undirected
+/// over a graph that INCLUDES the requested target, so every recipe in a
+/// single-target closure is connected to the target and therefore to every
+/// other member — it cannot return `Some` for any closure `run_inner` builds.
+/// There is nothing for this check to mask. Adding a pre-pass to "fix" the
+/// order would buy an inert scan. If §16.1.1's predicate is ever narrowed so
+/// it can fire on a real closure, the precedence must be pinned at that point.
+///
+/// # Which surfaces this can actually see
+///
+/// Detection needs a SOURCE-DECLARED path — one fixed by the Cookfile text,
+/// not by what is on disk. `cook.add_unit`'s `inputs[]`/`outputs[]` and `cook`
+/// step output literals qualify. An `ingredients` literal does NOT: it is a
+/// glob resolved against the filesystem at register time (§21.2.1), so an
+/// absent artifact matches zero files and reaches `input_paths` as nothing at
+/// all. Covering it would invert the rule — silent on the cold build that
+/// actually races, loud only once a stale artifact already exists. §16.1.2's
+/// enumeration is therefore closed over the two surfaces above, and Note
+/// 16.1.2.2 records the exclusion. (§10.6's *prohibition* still covers
+/// `ingredients` literals; that is a rule about what must not happen and
+/// needs no detection.)
 pub(crate) fn check_literal_read_after_write(
     recipe_units: &[RecipeUnits],
 ) -> Result<(), EngineError> {
