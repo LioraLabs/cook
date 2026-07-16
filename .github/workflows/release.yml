@@ -1,0 +1,221 @@
+name: release
+
+# Cuts a release for all four supported hosts: {linux, darwin} x {amd64, arm64}.
+#
+# Every job builds natively. This is deliberate, not laziness about cross
+# compilation: cli/.cargo/config.toml adds -rdynamic (Linux) / -export_dynamic
+# (macOS) so C rocks can dlopen lua_* symbols out of the cook binary, and cargo
+# silently drops those conditional rustflags the moment --target is passed
+# (see cook_modules/dist.lua for the long version). Native hosts keep the
+# rustflags, and dist.check_exports gates on the symbols actually being there.
+#
+# The Linux jobs build inside ubuntu:20.04 to pin the glibc floor at 2.31, so
+# releases run on Debian 11, RHEL 9 and Amazon Linux 2023. Building on the
+# runner image directly would raise the floor to whatever that image ships.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. v0.5.0 (builds + uploads artifacts, publishes nothing)"
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-22.04
+            container: "ubuntu:20.04"
+          - os: linux
+            arch: arm64
+            runner: ubuntu-22.04-arm
+            container: "ubuntu:20.04"
+          # macos-13 was retired 2025-12-04; macos-15-intel is the last x86_64
+          # macOS image and is scheduled to go away in August 2027.
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-14
+
+    steps:
+      # Must precede checkout: without git, actions/checkout silently falls back
+      # to downloading a tarball and the tree lands with no .git directory.
+      - name: Install container toolchain
+        if: matrix.os == 'linux'
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates git pkg-config
+
+      - uses: actions/checkout@v4
+
+      - name: Trust the workspace
+        if: matrix.os == 'linux'
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -eux
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -vV
+
+      # The tag is no longer the only place the version lives: it must agree with
+      # [workspace.package] version in cli/Cargo.toml, which is what the binary
+      # compiles in via CARGO_PKG_VERSION. Without this check a tag can ship a
+      # binary that self-reports something else -- which is exactly how every
+      # release through v0.4.1 came to report 0.1.0.
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          case "$VERSION" in v*) ;; *) VERSION="v${VERSION}" ;; esac
+
+          MANIFEST=$(grep -m1 '^version = ' cli/Cargo.toml | sed -E 's/^version = "(.*)".*/\1/')
+          if [ "$VERSION" != "v${MANIFEST}" ]; then
+            echo "::error::version ${VERSION} disagrees with cli/Cargo.toml [workspace.package] version ${MANIFEST}. Bump the manifest and re-tag, so the binary does not self-report the wrong version."
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building ${VERSION}"
+
+      # `cook package` is a chore in the repo's own Cookfile, so packaging needs a
+      # cook binary first. dist.package re-runs this exact cargo command, which
+      # cargo then resolves as a no-op.
+      - name: Bootstrap cook
+        shell: bash
+        run: |
+          set -eux
+          (cd cli && cargo build --release -p cook-cli)
+
+      # Passing the host triple explicitly keeps dist.package on its target==host
+      # branch (the native, rustflags-preserving one).
+      - name: Package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+          ./cli/target/release/cook package "${{ steps.resolve.outputs.version }}" "$TRIPLE"
+
+      # Guards the contract getcook-sh's index.sh depends on: it downloads this
+      # exact filename, and unpacks expecting bin/cook at the archive root.
+      - name: Check artifact matches installer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARBALL="cli/target/dist/cook-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          test -f "$TARBALL" || { echo "::error::expected ${TARBALL}"; exit 1; }
+          test -f "${TARBALL}.sha256" || { echo "::error::expected ${TARBALL}.sha256"; exit 1; }
+          tar -tzf "$TARBALL" | grep -qx './bin/cook' || {
+            echo "::error::${TARBALL} has no ./bin/cook at its root"; exit 1; }
+
+      - name: Report glibc floor
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          objdump -T cli/target/release/cook 2>/dev/null \
+            | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' \
+            | sort -uV | tail -1 | sed 's/^/max GLIBC symbol required: /'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cook-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            cli/target/dist/*.tar.gz
+            cli/target/dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    # Tags publish; workflow_dispatch is a dry run that stops at artifacts.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Merge checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          cd dist
+
+          # Each host wrote a .sha256 sibling holding "<hash>  <bare tarball>".
+          # index.sh reads the merged file with awk '$2 == tarball', so plain
+          # concatenation is the whole job.
+          cat ./*.tar.gz.sha256 | sort -k2 > "cook-${VERSION}-checksums.txt"
+          rm -f ./*.tar.gz.sha256
+
+          for t in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            f="cook-${VERSION}-${t}.tar.gz"
+            test -f "$f" || { echo "::error::missing ${f}"; exit 1; }
+            grep -q "  ${f}\$" "cook-${VERSION}-checksums.txt" || {
+              echo "::error::${f} absent from checksums"; exit 1; }
+          done
+
+          echo "--- checksums ---"
+          cat "cook-${VERSION}-checksums.txt"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+
+          # index.sh resolves "latest" through the /releases/latest redirect,
+          # which skips prereleases -- so a v1.2.3-rc1 tag must not become latest.
+          PRERELEASE=""
+          case "$VERSION" in *-*) PRERELEASE="--prerelease" ;; esac
+
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$VERSION" \
+            --generate-notes \
+            $PRERELEASE \
+            "dist/cook-${VERSION}-linux-amd64.tar.gz" \
+            "dist/cook-${VERSION}-linux-arm64.tar.gz" \
+            "dist/cook-${VERSION}-darwin-amd64.tar.gz" \
+            "dist/cook-${VERSION}-darwin-arm64.tar.gz" \
+            "dist/cook-${VERSION}-checksums.txt"

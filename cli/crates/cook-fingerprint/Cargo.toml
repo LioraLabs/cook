@@ -1,6 +1,6 @@
 [package]
 name = "cook-fingerprint"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Fingerprint and cache-key computation for the Cook build system"
 

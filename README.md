@@ -421,7 +421,7 @@ builds your recipe, `cook test` runs the test runner — so the escape is
 discoverable instead of a surprise. `cook test <TAB>` offers recipes and
 namespaces but never chores, because a chore is not a valid test scope.
 
-Completing runs your Cookfile's register phase — the same work as `cook list`,
+Completing runs your Cookfile's register phase — the same work as `cook menu`,
 a few milliseconds, no recipe bodies and no probe queries. In a directory with
 no Cookfile, or one that does not parse, completion falls back to the built-in
 subcommands rather than reporting an error.
@@ -443,7 +443,8 @@ A few more surfaces worth knowing about:
 - `cook affected --since=<ref>` lists the recipes affected by a Git diff.
 - `cook dag [recipe]` opens an interactive graph viewer.
 - `cook logs` browses archived output from parallel builds.
-- `cook list` prints recipe and chore names for shell pipelines.
+- `cook menu` (alias: `cook list`) prints every recipe and chore, with each
+  chore's parameters, so the invocation shape is discoverable.
 - `cook modules install|remove|update|list|search` manages LuaRocks modules.
 - Tree-sitter queries provide Cookfile highlighting and editor support.
 

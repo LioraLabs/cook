@@ -1,6 +1,6 @@
 [package]
 name = "cook-progress"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Terminal progress rendering with composable primitives"
 

@@ -21,7 +21,8 @@ freshly-built `cook` binary.
 
     cargo test -p cook-cli --test surface_conformance -- --nocapture
 
-or `cook e2e` from `cli/`, or as part of `cook check` from the repo root.
+or `cook e2e` from `cli/`, or as part of `cook test` from the repo root
+(`cook test` runs the whole `cargo test` suite, which includes this one).
 To run a single fixture, filter by substring:
 
     COOK_SURFACE_FIXTURE=<substring> cargo test -p cook-cli --test surface_conformance -- --nocapture

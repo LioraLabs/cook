@@ -597,8 +597,7 @@ collides with a subcommand.
 |---|---|
 | `cook` / `cook <recipe> [preset]` | run a recipe (default `build`), optionally with a config `@preset` |
 | `cook init` | scaffold a starter Cookfile and `.gitignore` |
-| `cook menu` | list recipes and chores (human-readable) |
-| `cook list` | list names one per line for pipelines (`--recipes-only`, `--chores-only`) |
+| `cook menu` / `cook list` | list recipes and chores, with each chore's parameters |
 | `cook test [scope]` | run tests (`--filter`, `--fail-fast`, `--rerun-failed`, `--report-json`, `--report-junit`) |
 | `cook serve [recipe]` | watch ingredients and re-run on change |
 

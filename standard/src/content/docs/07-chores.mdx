@@ -52,7 +52,7 @@ chore deploy target host="prod.example.com"
 
 `deploy` declares a required parameter `target` and a defaulted-string parameter `host`. Invoking `cook deploy production` binds `target="production"` and `host="prod.example.com"`.
 
-**Introspection (informative).** A declared `param_list` is part of a chore's observable interface. A conforming implementation's human-readable workspace listing (e.g. `cook menu`) SHOULD surface each chore's declared parameters alongside its name — rendering a required parameter as its bare name, a defaulted-string parameter as `NAME="default"`, a required variadic as `NAME...`, and an optional variadic as `[NAME...]` — so the invocation shape is discoverable without opening the Cookfile. The machine-readable listing (`cook list`) remains bare names only. This is a presentation affordance, not a language-surface rule.
+**Introspection (informative).** A declared `param_list` is part of a chore's observable interface. A conforming implementation's human-readable workspace listing (e.g. `cook menu`) SHOULD surface each chore's declared parameters alongside its name — rendering a required parameter as its bare name, a defaulted-string parameter as `NAME="default"`, a required variadic as `NAME...`, and an optional variadic as `[NAME...]` — so the invocation shape is discoverable without opening the Cookfile. The reference implementation spells this listing `cook menu`, with `cook list` as an alias for it; both render identically. This is a presentation affordance, not a language-surface rule.
 
 ## 7.1.2. Parameter binding inside the body [#chores.param-binding]
 

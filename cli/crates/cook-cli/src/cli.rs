@@ -112,13 +112,12 @@ pub enum Cmd {
     /// List all recipes (and chores) in the workspace.
     Menu,
 
-    /// Print recipe and chore names, one per line, for shell pipelines.
+    /// Alias for `menu`: list all recipes (and chores) in the workspace.
     ///
-    /// Machine-readable counterpart of `cook menu`: no decoration, no kind
-    /// prefix, no column padding — each line is exactly the name you'd type
-    /// on the CLI. Designed for `cook list | fzf | xargs -r cook` and
-    /// similar shell pipelines.
-    List(ListArgs),
+    /// Kept as its own variant rather than a clap alias so that `built_in_name`
+    /// can report the spelling the user actually typed — a recipe named `list`
+    /// must be named as `list` in the shadowing notice, not as `menu`.
+    List,
 
     /// Manage cook modules — install, remove, update, list, search rocks.
     Modules(ModulesArgs),
@@ -167,7 +166,7 @@ impl Cmd {
         match self {
             Cmd::Init => Some("init"),
             Cmd::Menu => Some("menu"),
-            Cmd::List(_) => Some("list"),
+            Cmd::List => Some("list"),
             Cmd::Modules(_) => Some("modules"),
             Cmd::Test(_) => Some("test"),
             Cmd::Dag(_) => Some("dag"),
@@ -208,24 +207,13 @@ impl Cmd {
             Cmd::Why(a) => a.recipe.as_deref(),
             Cmd::Init
             | Cmd::Menu
-            | Cmd::List(_)
+            | Cmd::List
             | Cmd::Modules(_)
             | Cmd::Logs(_)
             | Cmd::EmitLua
             | Cmd::Recipe(_) => None,
         }
     }
-}
-
-#[derive(clap::Args, Debug, Clone)]
-pub struct ListArgs {
-    /// Restrict output to recipes only (mutually exclusive with --chores-only).
-    #[arg(long = "recipes-only", conflicts_with = "chores_only")]
-    pub recipes_only: bool,
-
-    /// Restrict output to chores only (mutually exclusive with --recipes-only).
-    #[arg(long = "chores-only", conflicts_with = "recipes_only")]
-    pub chores_only: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -416,45 +404,18 @@ mod tests {
     }
 
     #[test]
-    fn list_subcommand_no_flags() {
-        match parse(&["list"]).cmd {
-            Some(Cmd::List(args)) => {
-                assert!(!args.recipes_only);
-                assert!(!args.chores_only);
-            }
-            other => panic!("expected Cmd::List, got {other:?}"),
-        }
+    fn list_subcommand_takes_no_args() {
+        assert!(matches!(parse(&["list"]).cmd, Some(Cmd::List)));
     }
 
     #[test]
-    fn list_subcommand_recipes_only() {
-        match parse(&["list", "--recipes-only"]).cmd {
-            Some(Cmd::List(args)) => {
-                assert!(args.recipes_only);
-                assert!(!args.chores_only);
-            }
-            other => panic!("expected Cmd::List, got {other:?}"),
+    fn list_subcommand_rejects_removed_filter_flags() {
+        for flag in ["--recipes-only", "--chores-only"] {
+            assert!(
+                Cli::try_parse_from(["cook", "list", flag]).is_err(),
+                "{flag} was removed along with the bare-name listing"
+            );
         }
-    }
-
-    #[test]
-    fn list_subcommand_chores_only() {
-        match parse(&["list", "--chores-only"]).cmd {
-            Some(Cmd::List(args)) => {
-                assert!(!args.recipes_only);
-                assert!(args.chores_only);
-            }
-            other => panic!("expected Cmd::List, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn list_subcommand_rejects_both_flags() {
-        let result = Cli::try_parse_from(["cook", "list", "--recipes-only", "--chores-only"]);
-        assert!(
-            result.is_err(),
-            "--recipes-only and --chores-only must be mutually exclusive"
-        );
     }
 
     #[test]

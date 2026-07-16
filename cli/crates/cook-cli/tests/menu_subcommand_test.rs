@@ -1,9 +1,10 @@
 //! Integration smoke test for `cook menu`.
 //!
-//! `cook menu` is the human-readable counterpart of `cook list`: it prints
-//! `  recipe NAME` / `  chore  NAME [params...]` lines, where the chore
-//! params render via `ChoreParamMeta::display_token()`. Neither `menu` nor
-//! `list` invoke any recipe body, so no cache isolation is needed here.
+//! `cook menu` is the workspace listing: it prints `  recipe NAME` /
+//! `  chore  NAME [params...]` lines, where the chore params render via
+//! `ChoreParamMeta::display_token()`. `cook list` is an alias for it and
+//! shares the renderer. Neither invokes any recipe body, so no cache
+//! isolation is needed here.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -64,10 +65,11 @@ fn menu_shows_chore_params_and_bare_recipe() {
     );
 }
 
-/// `cook list` (the machine-readable counterpart) must print the bare
-/// names only — no kind label, no params — for the same Cookfile.
+/// `cook list` is an alias for `cook menu`: same renderer, byte-identical
+/// output. It once printed bare names for shell pipelines; that second render
+/// path is gone, and tab completion is the name-discovery surface now.
 #[test]
-fn list_shows_bare_names_no_params() {
+fn list_is_an_alias_for_menu() {
     let tmp = TempDir::new().expect("tempdir");
     write_cookfile(
         tmp.path(),
@@ -76,19 +78,29 @@ fn list_shows_bare_names_no_params() {
          recipe build\n",
     );
 
-    let out = run_cook(tmp.path(), &["list"]);
+    let list = run_cook(tmp.path(), &["list"]);
     assert!(
-        out.status.success(),
+        list.status.success(),
         "cook list failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&list.stderr),
+    );
+    let menu = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        menu.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&menu.stderr),
     );
 
-    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
-    let mut lines: Vec<&str> = stdout.lines().collect();
-    lines.sort();
-    // Bare names only, no kind label, no params, no decoration — order
-    // between recipe/chore lines isn't asserted here (that's list_subcommand_test.rs's job).
-    assert_eq!(lines, vec!["build", "greet"]);
+    let list_stdout = String::from_utf8(list.stdout).expect("utf-8 stdout");
+    let menu_stdout = String::from_utf8(menu.stdout).expect("utf-8 stdout");
+    assert_eq!(
+        list_stdout, menu_stdout,
+        "cook list must render exactly what cook menu renders"
+    );
+    assert!(
+        list_stdout.contains("chore  greet caller who=\"world\""),
+        "alias must inherit menu's kind label and params suffix; stdout:\n{list_stdout}"
+    );
 }
 
 #[test]

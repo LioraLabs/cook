@@ -1,6 +1,6 @@
 [package]
 name = "cook-cache"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Build artifact cache backend for the Cook build system"
 

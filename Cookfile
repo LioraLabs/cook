@@ -1,42 +1,3 @@
-# Cookfile for the Cook project itself.
-#
-# Sub-projects each have their own Cookfile; this file imports them and
-# wires up the cross-cutting umbrella + release chores.
-#
-# Top-level chores:
-#   cook check        — pre-commit umbrella: cli build/test/conformance,
-#                       ts test/conformance, standard build/lint.
-#   cook package      — assemble the redistributable tarball (lua + luarocks
-#                       + cook + checksums) into cli/target/dist/. Routes
-#                       through cook_modules/dist.lua → dist.package.
-#   cook release VERSION
-#                     — cut a host-target release: build via cook package,
-#                       tag the commit, push to origin, upload tarball +
-#                       checksums to the LioraLabs/cook GitHub release.
-#                       Routes through cook_modules/release.lua → release.cut.
-#                       Idempotent: re-running on the same VERSION from
-#                       another host appends that host's tarball + checksum
-#                       line to the existing release.
-#                       Usage: cook release v0.4.0
-#   cook bump-claim [VERSION]
-#                     — after a Standard cut, mirror the version into
-#                       every in-repo claim site (cook-lang Rust constant
-#                       + 3 markdown files + tree-sitter-cook grammar.js
-#                       header, package.json + tree-sitter.json description).
-#                       Routes through cook_modules/release.lua → release.bump_claim.
-#                       VERSION defaults to the contents of standard/VERSION.
-#
-# Sub-Cookfile chores reachable directly via their import alias:
-#   cli.build            cli.test            cli.conformance
-#   standard.build       standard.lint       standard.host       standard.preview
-#   standard.against-tag
-#   ts.generate          ts.test             ts.conformance
-#   ts.wasm              ts.nvim-install
-#
-# Daily-loop commands like `cook cli.build` and `cook cli.test` are
-# typed with their full namespace — no top-level aliases (refactor Rule 1:
-# no single-alias forwards).
-
 import cli ./cli
 import standard ./standard
 import ts ./tree-sitter-cook
@@ -44,13 +5,14 @@ import ts ./tree-sitter-cook
 use dist
 use release
 
-chore check: cli.build cli.test cli.conformance cli.e2e ts.generate ts.test ts.conformance standard.build standard.lint
+# Sub-project chores keep their namespace (`cook cli.build`) — no top-level
+# single-alias forwards.
 
+# `target` is a Rust host triple and MUST equal the build host: cargo drops the
+# conditional rustflags that export Lua symbols for C rocks the moment
+# --target is passed. See cook_modules/dist.lua.
 chore package version target
     > dist.package(version, target)
-
-chore release version
-    > release.cut(version)
 
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
     > release.bump_claim(version)

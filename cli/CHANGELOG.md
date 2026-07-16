@@ -1,5 +1,29 @@
 # Cook CLI changelog
 
+## v0.5.0 — unreleased
+
+Claims Cook Standard v0.14.
+
+### Changed
+
+- **`cook list` is now an alias for `cook menu`.** It previously printed bare
+  names, one per line, as a machine-readable surface for pipelines such as
+  `cook list | fzf | xargs -r cook`. Shell tab completion now covers name
+  discovery, so the second render path earned nothing and has been removed:
+  `cook list` prints exactly what `cook menu` prints, including each chore's
+  parameters. A recipe named `list` is still reported by name in the
+  shadowing notice, and is still buildable as `cook +list`.
+- **`cook --version` now reports the release version.** Every crate previously
+  hardcoded `0.1.0`, so every published binary self-reported `0.1.0` regardless
+  of its tag. The version is now single-sourced from `[workspace.package]` in
+  `cli/Cargo.toml`, and the release workflow refuses to build when the pushed
+  tag disagrees with it.
+
+### Removed
+
+- **`cook list --recipes-only` / `--chores-only`.** Both filtered the bare
+  listing that no longer exists. `cook menu` renders the kind of every entry.
+
 ## v0.4.1 — 2026-05-23
 
 Claims Cook Standard v0.11.

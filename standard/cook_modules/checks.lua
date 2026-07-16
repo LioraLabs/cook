@@ -5,9 +5,15 @@
 --   * checks.against_tag(version)   — verify cook-lang against the conformance corpus
 --                                     materialized from the cs-standard/<version> git tag.
 --
--- These functions execute synchronously during the register phase via
--- cook.sh / fs.* / Lua patterns. They are not work units — they fail
--- the recipe directly via error() if a check does not pass.
+-- `lint_keywords` is a target-maker: called from a recipe body, it registers a
+-- test unit (cook.add_test, §22.4) on the enclosing recipe, so `cook test`
+-- reports it and an unchanged corpus does not re-scan. `suite` defaults to the
+-- enclosing recipe's qualified name, and the normative glob set stays the
+-- module's business — the recipe declares no ingredients.
+--
+-- `against_tag` still executes synchronously during the register phase via
+-- cook.sh / fs.* — it is not a work unit and fails the chore directly via
+-- error().
 
 local checks = {}
 
@@ -53,7 +59,7 @@ local function scan_file_for_keywords(path_)
     return hits
 end
 
-function checks.lint_keywords()
+local function normative_files()
     local files = {}
     for _, glob in ipairs(NORMATIVE_GLOBS) do
         for _, p in ipairs(fs.glob(glob)) do
@@ -61,6 +67,24 @@ function checks.lint_keywords()
         end
     end
     table.sort(files)
+    return files
+end
+
+-- Register-phase. Call from inside a recipe body: cook.add_test attaches the
+-- unit to the enclosing recipe and has no body slot to attach to at top level.
+-- `inputs` keys the scan, so editing a non-normative chapter does not re-run it.
+function checks.lint_keywords()
+    cook.add_test({
+        lua_code = 'require("checks").scan_keywords()',
+        inputs = normative_files(),
+    })
+end
+
+-- Execute-phase half, reached via the `lua_code` above. It re-requires the
+-- module because `use`-bound globals are register-phase only. Raising a Lua
+-- error is how a lua_code test reports failure (§22.4).
+function checks.scan_keywords()
+    local files = normative_files()
 
     local files_with_hits = 0
     for _, f in ipairs(files) do

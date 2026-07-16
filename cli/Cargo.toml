@@ -16,3 +16,10 @@ members = [
     "crates/cook-cli",
 ]
 resolver = "2"
+
+# Single source of truth for the released CLI version. `cook --version` reads
+# this via CARGO_PKG_VERSION, and the release workflow refuses to build unless
+# the pushed tag matches it — so a tag can never again ship a binary that
+# self-reports a different version.
+[workspace.package]
+version = "0.5.0"

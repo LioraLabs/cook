@@ -44,10 +44,10 @@ cd apps/web
 cook build          # web's own build — cache hit, nothing re-runs
 cook theme.build    # web's own import stays addressable
 cook web.build      # ERROR: recipe not found — the root's alias never leaks in
-cook list           # prints: build, theme.build  (bare member view)
+cook menu           # prints: build, theme.build  (the member view)
 ```
 
-Compare with `cook list` at the root, which prints the qualified view
+Compare with `cook menu` at the root, which prints the qualified view
 (`build`, `web.build`, `web.theme.build`, `tools.build`).
 
 ### 3. Hop deeper — upward discovery from a non-Cookfile directory

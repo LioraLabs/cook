@@ -1,6 +1,6 @@
 [package]
 name = "cook-lua-stdlib"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Shared Cook Lua API surface (fs.*, path.*, cook.platform.*) used by both the register-phase and execute-phase Lua VMs"
 

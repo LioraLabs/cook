@@ -17,7 +17,7 @@ use cook_cli::modules;
 use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
-    cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run,
+    cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_menu, cmd_run,
     cmd_serve, cmd_test, cmd_why, resolve_project_root, set_invoked_builtin,
     warn_if_builtin_shadows_recipe,
 };
@@ -105,7 +105,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         None => cmd_run(&globals, "build", &[], None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
-        Some(Cmd::List(args)) => cmd_list(&globals, &args),
+        Some(Cmd::List) => cmd_menu(&globals),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),

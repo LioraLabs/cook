@@ -197,7 +197,7 @@ recipe __internal_helper
         "module-internal recipe was offered: {got:?}"
     );
 
-    // Hidden from completion, but not removed from the CLI: `cook list` still
+    // Hidden from completion, but not removed from the CLI: `cook menu` still
     // prints it and it still builds.
     let run = Command::new(COOK)
         .current_dir(dir.path())

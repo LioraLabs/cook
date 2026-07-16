@@ -1319,53 +1319,6 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
 }
 
 // ---------------------------------------------------------------------------
-// cmd_list
-// ---------------------------------------------------------------------------
-
-/// Print recipe and chore names, one per line, with no decoration.
-///
-/// This is the machine-readable counterpart of `cmd_menu`: each line is
-/// exactly the name a user would pass back to `cook` (qualified with the
-/// import alias for workspace imports). Designed for shell pipelines such
-/// as `cook list | fzf | xargs -r cook`.
-///
-/// Backed by the cheap `cook_register::list_names` path through the
-/// pipeline-layer `list_workspace_names` helper, so Lua-registered recipes
-/// (e.g. `cook_cc.bin`) appear in the listing without invoking any recipe
-/// body or firing probe queries.
-///
-/// `--recipes-only` and `--chores-only` filter the output. They are
-/// mutually exclusive at the clap layer; this function trusts that.
-pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), CookError> {
-    // Defensive: clap enforces this with `conflicts_with`, but if a future
-    // refactor changes the dispatch the error here is still meaningful.
-    if args.recipes_only && args.chores_only {
-        return Err(CookError::Other(
-            "--recipes-only and --chores-only are mutually exclusive".to_string(),
-        ));
-    }
-
-    let want_recipes = !args.chores_only;
-    let want_chores = !args.recipes_only;
-
-    let workspace = load_workspace(globals)?;
-    let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
-        .map_err(pipeline_error_to_cook_error)?;
-    warn_if_invoked_builtin_is_registered(
-        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
-    );
-
-    for (name, kind, _params) in names {
-        let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);
-        if (is_chore && want_chores) || (!is_chore && want_recipes) {
-            println!("{name}");
-        }
-    }
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // cmd_init
 // ---------------------------------------------------------------------------
 

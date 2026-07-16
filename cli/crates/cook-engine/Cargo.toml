@@ -1,6 +1,6 @@
 [package]
 name = "cook-engine"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Build pipeline orchestrator for the Cook build system"
 

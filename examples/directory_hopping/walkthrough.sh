@@ -63,9 +63,9 @@ check "cook theme.build in apps/web (own import visible)" "$ok"
 rc=$?
 ok=no; [ "$rc" -ne 0 ] && ok=yes
 check "cook web.build in apps/web fails (root alias never leaks)" "$ok"
-out=$(cd apps/web && "$COOK" list 2>&1)
-ok=no; [ "$out" = "$(printf 'build\ntheme.build')" ] && ok=yes
-check "cook list in apps/web shows bare member view" "$ok"
+out=$(cd apps/web && "$COOK" menu 2>&1)
+ok=no; [ "$out" = "$(printf '  recipe build\n  recipe theme.build')" ] && ok=yes
+check "cook menu in apps/web shows the member view (no root alias)" "$ok"
 
 echo
 echo "--- 3. Upward discovery from a nested non-Cookfile dir ---"
