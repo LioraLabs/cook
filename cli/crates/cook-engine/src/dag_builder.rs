@@ -151,8 +151,8 @@ fn compute_consumed_probe_keys(
 /// final sequential barrier, but a recipe that ends its unit loop with an
 /// EMPTY barrier forwards its own `deps`' leaves instead of registering an
 /// empty set — see the "Leaf pass-through" section of the module doc comment
-/// at the top of this file (including the non-exhaustive list of ways a
-/// barrier ends up empty despite non-empty `units`). The trigger is "empty
+/// at the top of this file (including the ways a barrier ends up empty
+/// despite non-empty `units`). The trigger is "empty
 /// barrier", not "zero units". This keeps a unit-less meta-target
 /// (`recipe middle : producer`) transparent to downstream ordering instead
 /// of silently severing it.
