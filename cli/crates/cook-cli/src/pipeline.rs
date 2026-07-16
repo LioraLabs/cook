@@ -434,6 +434,19 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
              supported. either narrow '{upstream}' outputs[] to the specific file, or depend on \
              '{upstream}' via a requires edge (recipe {downstream}: {upstream})."
         )),
+        cook_engine::EngineError::LiteralReadAfterWrite {
+            producer,
+            consumer,
+            path,
+        } => CookError::Other(format!(
+            "read-after-write with no ordering edge: recipe '{consumer}' reads literal input \
+             '{path}', which recipe '{producer}' declares as a literal output — but '{consumer}' \
+             does not require '{producer}', so nothing orders the write before the read (a \
+             silent stale read under --jobs > 1). Path equality alone creates no ordering edge; \
+             name the producer explicitly: add `: {producer}` to the '{consumer}' recipe header, \
+             refer to the output as $<{producer}>, or call cook.require_recipe(\"{producer}\") \
+             from its body."
+        )),
         cook_engine::EngineError::DanglingDepEdge { referring_recipe, dep_name } => {
             CookError::Other(format!(
                 "recipe '{referring_recipe}' has a fine-grained dependency (dep_edges) on recipe \

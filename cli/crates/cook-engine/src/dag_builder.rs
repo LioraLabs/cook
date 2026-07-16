@@ -717,6 +717,160 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
     Ok(())
 }
 
+/// §16.1.2 read-after-write rule: a literal `outputs[]` entry of recipe `A`
+/// equal to a literal `inputs[]` entry of recipe `B`, both in the current
+/// build closure, with no ordering path `B → A`, is rejected at plan time.
+///
+/// **A diagnostic, NOT an inferred edge.** §10.6 is explicit that only name
+/// references create edges and that an implementation MUST NOT infer an edge
+/// from path-string equality. So this function rejects the plan and
+/// synthesises nothing — the author must name the producer.
+///
+/// # Why the predicate is DIRECTED (and §16.1.1's is not)
+///
+/// [`detect_output_collisions`] (§16.1.1, write-write) builds an UNDIRECTED
+/// recipe graph and passes any connected pair. That is correct there: two
+/// recipes writing the same path race, and EITHER ordering serialises the
+/// race, so any path suffices.
+///
+/// Read-after-write is asymmetric. Only `B requires A` — producer first — is
+/// correct. The reverse path, `A requires B`, orders the consumer BEFORE the
+/// write: that is not an ambiguous race that scheduling might happen to win,
+/// but a DETERMINISTIC stale/missing read, strictly worse than the unordered
+/// case. An undirected predicate would wave it through as "dep-related,
+/// fine". So this function deliberately does NOT reuse `connected()`; it uses
+/// [`requires_transitively`] and passes only when `B` transitively requires
+/// `A`. Every other configuration, the reverse path included, diagnoses.
+///
+/// # Why the check is CLOSURE-scoped (and §22.1.2's is not)
+///
+/// The caller passes the build closure, not the whole workspace. A literal
+/// output is not build-owned, so `cook producer && cook consumer` is a
+/// legitimate sequential workflow and MUST NOT be rejected — with only
+/// `consumer` in the closure there is no producer to compare against and this
+/// function stays silent. §22.1.2's glob rule is workspace-wide precisely
+/// because terminality there is an OWNERSHIP claim, which holds regardless of
+/// what is being built. (`tests/raw_path_cross_recipe_edge.rs` pins the
+/// out-of-closure case; a workspace-wide check here would turn it red.)
+///
+/// Terminal (glob / directory) outputs are [`check_globbed_output_cross_recipe_edges`]'s
+/// business and are skipped here so the two rules never double-report.
+pub(crate) fn check_literal_read_after_write(
+    recipe_units: &[RecipeUnits],
+) -> Result<(), EngineError> {
+    // canonical path -> recipes declaring it as a LITERAL output.
+    let mut producers_by_path: BTreeMap<PathBuf, BTreeSet<&str>> = BTreeMap::new();
+    for ru in recipe_units {
+        for unit in &ru.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            for output in &meta.output_paths {
+                // §22.1.2 owns terminal outputs — do not double-report.
+                if cook_fingerprint::is_terminal_output(output) {
+                    continue;
+                }
+                producers_by_path
+                    .entry(ru.working_dir.join(output))
+                    .or_default()
+                    .insert(ru.recipe_name.as_str());
+            }
+        }
+    }
+
+    if producers_by_path.is_empty() {
+        return Ok(());
+    }
+
+    // DIRECTED recipe graph: name -> the recipes it requires.
+    //
+    // Direction convention: an entry "A requires B" means B executes BEFORE A
+    // (`build_adjacency` sets `deps[name] = info.requires`, and `visit()`
+    // recurses into deps before pushing the node). So an edge here points
+    // from a recipe to something that runs earlier, and "B transitively
+    // requires A" is exactly the ordering this rule demands.
+    //
+    // Both cross-recipe channels count as ordering: coarse `deps` (the
+    // recipe-header colon list, into which the analyzer also folds
+    // `cook.require_recipe`) and fine-grained `dep_edges` (`$<sigil>` /
+    // `cook.dep_output`). Both are name references, so both are §10.6 edges.
+    let mut requires: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for ru in recipe_units {
+        let entry = requires.entry(ru.recipe_name.as_str()).or_default();
+        for dep in &ru.deps {
+            entry.insert(dep.as_str());
+        }
+        for (_, dep_name) in &ru.dep_edges {
+            entry.insert(dep_name.as_str());
+        }
+    }
+
+    for ru in recipe_units {
+        for unit in &ru.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            for input in &meta.input_paths {
+                // A glob/dir input expands at execute time — not a literal
+                // path match, and not this rule's business.
+                if cook_fingerprint::is_terminal_output(input) {
+                    continue;
+                }
+                let canonical = ru.working_dir.join(input);
+                let Some(producers) = producers_by_path.get(&canonical) else {
+                    continue;
+                };
+                for producer in producers {
+                    // A recipe's own units are already ordered within the
+                    // recipe; reading your own output is not a race.
+                    if *producer == ru.recipe_name.as_str() {
+                        continue;
+                    }
+                    if requires_transitively(&requires, ru.recipe_name.as_str(), producer) {
+                        continue;
+                    }
+                    return Err(EngineError::LiteralReadAfterWrite {
+                        producer: (*producer).to_string(),
+                        consumer: ru.recipe_name.clone(),
+                        path: input.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// BFS reachability over the DIRECTED recipe `requires` graph: does `from`
+/// transitively require `to`?
+///
+/// Deliberately NOT [`connected`] — see [`check_literal_read_after_write`] for
+/// why §16.1.2 needs a directed predicate where §16.1.1 wants an undirected
+/// one. Do not "unify" the two.
+fn requires_transitively(graph: &BTreeMap<&str, BTreeSet<&str>>, from: &str, to: &str) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    queue.push_back(from);
+    seen.insert(from);
+    while let Some(node) = queue.pop_front() {
+        if node == to {
+            return true;
+        }
+        if let Some(deps) = graph.get(node) {
+            for d in deps {
+                if seen.insert(*d) {
+                    queue.push_back(*d);
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Detect non-dep-related recipes that declare the same canonical output path.
 ///
 /// Returns `Some(EngineError::OutputCollision)` for the first colliding path

@@ -424,6 +424,35 @@ pub enum EngineError {
         pattern: String,
     },
 
+    /// §16.1.2 read-after-write: a recipe declares a literal `inputs[]` path
+    /// that another recipe in the same build closure declares as a literal
+    /// `outputs[]` path, with no ordering path from the consumer to the
+    /// producer. Per §10.6 path-string equality creates NO edge, so these two
+    /// recipes are unordered (or, worse, ordered backwards) and the read races
+    /// the write under `--jobs > 1`.
+    ///
+    /// This is a DIAGNOSTIC, not an inferred edge: the plan is rejected and no
+    /// ordering is synthesised — inferring one would reverse §10.6.
+    ///
+    /// The predicate is DIRECTED, unlike `OutputCollision`'s (§16.1.1): a
+    /// write-write collision is serialised by either ordering, but a read
+    /// after a write is only correct when the consumer requires the producer.
+    /// A reverse path (producer requires consumer) is not exculpatory — it
+    /// pins the read deterministically BEFORE the write.
+    #[error(
+        "read-after-write with no ordering edge: recipe '{consumer}' reads literal input \
+         '{path}', which recipe '{producer}' declares as a literal output — but '{consumer}' \
+         does not require '{producer}', so nothing orders the write before the read (a silent \
+         stale read under --jobs > 1). Path equality alone creates no ordering edge; name the \
+         producer explicitly: add `: {producer}` to the '{consumer}' recipe header, refer to \
+         the output as $<{producer}>, or call cook.require_recipe(\"{producer}\") from its body."
+    )]
+    LiteralReadAfterWrite {
+        producer: String,
+        consumer: String,
+        path: String,
+    },
+
     /// A `dep_edges` entry (the fine-grained cross-recipe channel populated
     /// by `cook.dep_output` / `$<sigil>` refs) names a recipe absent from
     /// the slice passed to `build_dag` — i.e. outside the build closure.

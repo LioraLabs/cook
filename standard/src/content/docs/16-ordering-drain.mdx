@@ -12,7 +12,7 @@ Cross-recipe ordering is established only by name references (§{xref} of this S
 - An implementation MUST validate that `B` is defined in scope before the execute phase begins, and MUST reject the Cookfile with a diagnostic naming `A` and `B` otherwise.
 - An implementation MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
 - A placeholder-sourced edge MAY be refined per §{xref.dep-implications}. A dep-list-sourced edge MUST NOT be refined.
-- No other source of cross-recipe ordering is defined. Specifically, string equality between an ingredient path literal of `A` and a cook output path literal of `B` does NOT establish an edge. See rationale B.5.N.
+- No other source of cross-recipe ordering is defined. Specifically, string equality between a path literal of `A` and an output path literal of `B` does NOT establish an edge. This holds for every literal path surface alike: `ingredients` line literals, `cook` step output literals, and the `inputs[]` / `outputs[]` entries of `cook.add_unit` (§{lua.add-unit}). Such a match between two recipes in one build closure is diagnosed, not ordered — see §{exec.read-after-write}. See rationale B.5.N.
 
 ### 16.1.1. Output-path uniqueness across recipes [#exec.output-uniqueness]
 
@@ -41,6 +41,40 @@ The Cookfile MUST be rejected at plan time. `writer_a` and `writer_b` both decla
 ### Note 16.1.1
 
 The check is plan-time, not execute-time: an implementation that defers detection until a write-write conflict occurs in the filesystem fails the requirement, because a successful first run can mask a race that fails on a subsequent run. The check looks at canonical paths derived from the source, not at filesystem state.
+
+### 16.1.2. Undeclared read-after-write across recipes [#exec.read-after-write]
+
+Where a recipe `A` declares a canonical path as a **literal** output entry, and a recipe `B` declares that same canonical path as a **literal** input entry, and both `A` and `B` are in the same build closure, the cross-recipe ordering rules of §{exec.cross-recipe-ordering} MUST establish an ordering path from `B` to `A` — that is, `B` MUST transitively require `A`. The literal entries in scope here are the `inputs[]` and `outputs[]` entries of `cook.add_unit` (§{lua.add-unit}), the path literals of `ingredients` lines, and the output path literals of `cook` steps.
+
+A conforming implementation MUST detect this condition at plan time, before any work unit of either recipe runs, and MUST reject the build with a diagnostic naming both recipes and the shared canonical path.
+
+**The implementation MUST reject; it MUST NOT synthesise an edge.** Repairing the ordering by inferring a dependency from the path match would reverse §{xref.dep-implications}, which states that only name references create edges and that an implementation MUST NOT infer an edge from path-string equality. This rule does not weaken that prohibition — it makes the author's unmet expectation loud instead of silent. The author supplies the missing edge by naming `A`.
+
+**The predicate is directed, and this is where §16.1.2 diverges from §16.1.1.** §16.1.1's predicate is undirected — it accepts an ordering path in *either* direction — because a write-write collision is serialised by either ordering: whichever recipe runs second wins, and the outcome is at least defined. Read-after-write is asymmetric. Only `B requires A` is correct, because only that ordering places the write before the read. The reverse path, `A requires B`, is not exculpatory: it orders the reader *before* the writer, which is not an ambiguous race that scheduling might happen to win but a **deterministic** stale-or-missing read — strictly worse than no ordering at all. An undirected predicate would classify that arrangement as "dep-related" and accept it. §16.1.2 therefore passes only when `B` transitively requires `A`; every other arrangement, the reverse path included, MUST be diagnosed. The two sibling rules use different predicates deliberately; this is not an inconsistency between them.
+
+**The rule is scoped to the build closure**, and this is where §16.1.2 diverges from §{lua.add-unit-output-globs}. A literal output is not build-owned: an author who runs `cook producer && cook consumer` — building `A`, then separately building `B` against the file `A` left on disk — is doing something legitimate, and an implementation MUST NOT reject `B` on the grounds that some recipe elsewhere in the workspace happens to declare the same literal path. The condition is a race only when both recipes are scheduled together, so only then is it diagnosed. §{lua.add-unit-output-globs} is workspace-wide by contrast because terminality there is an *ownership* claim over a pattern or directory, which holds regardless of what is currently being built.
+
+Terminal outputs — glob patterns and directory outputs — are the business of §{lua.add-unit-output-globs} and are outside this rule; an implementation MUST NOT report both conditions for the same pair.
+
+### Example 16.1.2
+
+```cook
+recipe producer
+    cook "build/gen.a" { cp $<in> $<out> }
+
+recipe consumer
+    cook "out.bin" { cp build/gen.a $<out> }
+
+recipe all: producer consumer
+```
+
+Building `all` MUST be rejected at plan time. `consumer` reads the literal path `build/gen.a`, which `producer` declares as a literal output, and both are in the closure — but `consumer` does not require `producer`, so nothing orders the write before the read. The diagnostic MUST name both `producer` and `consumer` and the path `build/gen.a`. Note that `recipe all: producer consumer` does **not** repair this: a dep-list is a set of prerequisites, not a sequence, and imposes no ordering *among* its own entries.
+
+Reversing the dep — `recipe producer: consumer` — MUST still be rejected, even though an ordering path now exists between the two recipes. That path runs the wrong way: `consumer` would read `build/gen.a` before `producer` writes it, on every run. The author repairs the Cookfile by naming `producer` from `consumer` (`recipe consumer: producer`, `$<producer>`, or `cook.require_recipe("producer")`) — not by adding an edge in whichever direction happens to silence the diagnostic.
+
+### Note 16.1.2
+
+Building `consumer` alone is not rejected: `producer` is not in that closure, so the rule does not apply. Such a build fails on its own terms when `build/gen.a` is absent, and succeeds when a previous `cook producer` left it in place — which is the workflow the closure scoping deliberately preserves.
 
 ## 16.2. Interactive step draining [#exec.interactive-drain]
 An **interactive unit** — a chore-body `shell_command` (§{steps.shell}), which is implicitly interactive by the chore default (§{chores.default-interactive}) — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
