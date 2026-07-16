@@ -2647,7 +2647,10 @@ fn require_recipe_vm(current_recipe_bare: &str) -> (mlua::Lua, SharedBodySlot) {
     body.current_recipe = Some(current_recipe_bare.to_string());
     body.current_recipe_bare = Some(current_recipe_bare.to_string());
     let body_slot: SharedBodySlot = std::rc::Rc::new(std::cell::RefCell::new(Some(body)));
-    crate::context::register_require_recipe_api(&lua, body_slot.clone()).unwrap();
+    // No forcer: this scaffold exercises the guard rails and the
+    // accumulator, all of which sit ahead of the forcing. The end-to-end
+    // tests below drive the real driver through `register_cookfile`.
+    crate::context::register_require_recipe_api(&lua, body_slot.clone(), None).unwrap();
     (lua, body_slot)
 }
 
@@ -2809,4 +2812,311 @@ end)
 "#;
     let result = register_one(rt, lua_src, "build");
     assert_eq!(result.units.len(), 1, "require_recipe must not itself capture a unit");
+}
+
+// -----------------------------------------------------------------------
+// cook.require_recipe() — forcing, the edge, and the skip arms
+// (Standard §22.8, CS-0144)
+// -----------------------------------------------------------------------
+
+/// Lower a surface Cookfile and register it against an explicit build
+/// target. `register_surface`'s no-target sibling can't reach the
+/// `target_recipe.is_some()` skip arms at all.
+fn register_surface_target(
+    dir: &std::path::Path,
+    cookfile: &str,
+    target: &str,
+) -> Result<RegisteredCookfile, RegisterError> {
+    let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
+    let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
+        .expect("fixture must lower");
+    let rt = make_registry(dir).with_target_argv(target.to_string(), vec![]);
+    register_cookfile(rt, &lua_src, None)
+}
+
+/// Pull the `requires` recorded for `name` off the registered set.
+fn requires_of(registered: &RegisteredCookfile, name: &str) -> Vec<String> {
+    registered
+        .names
+        .iter()
+        .find(|r| r.name == name)
+        .unwrap_or_else(|| panic!("recipe {name:?} not registered"))
+        .requires
+        .clone()
+}
+
+/// Assert the single shell command captured for `name`.
+fn only_shell_cmd(registered: &RegisteredCookfile, name: &str) -> String {
+    let units = &registered
+        .units_by_recipe
+        .get(name)
+        .unwrap_or_else(|| panic!("recipe {name:?} has no units entry"))
+        .units;
+    assert_eq!(units.len(), 1, "recipe {name:?} must capture exactly one unit");
+    match &units[0].payload {
+        WorkPayload::Shell { cmd, .. } => cmd.clone(),
+        other => panic!("expected Shell payload for {name:?}, got: {other:?}"),
+    }
+}
+
+/// THE headline case — the finding this whole API exists to fix.
+///
+/// `consumer` is declared FIRST and carries no static dep on `producer`, so
+/// registration order (dependency-driven, never declaration order) would run
+/// its body first and `cook.import("producer")` would return **nil, silently**
+/// — the maker would then emit a link line missing the library. The
+/// `cook.require_recipe("producer")` call is the *only* thing that forces
+/// `producer`'s body to completion first, so the export is observable when the
+/// call returns.
+#[test]
+fn require_recipe_forces_producer_body_so_import_resolves() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.require_recipe("producer")
+    local info = cook.import("producer")
+    cook.exec("link " .. tostring(info and info.lib_path or "NIL"), 1)
+end)
+cook.recipe("producer", {}, function()
+    cook.export("producer", { lib_path = "build/libproducer.a" })
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "consumer"),
+        "link build/libproducer.a",
+        "cook.import must resolve to producer's export, not nil — the register-order \
+         guarantee is what makes this differ from \"link NIL\""
+    );
+}
+
+/// A body is evaluated at most once per pass: two requirers of the same
+/// recipe, plus the seed loop's own visit of it, yield exactly one
+/// evaluation.
+#[test]
+fn require_recipe_evaluates_forced_body_exactly_once() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.runs = 0
+cook.recipe("a", {}, function() cook.require_recipe("shared") end)
+cook.recipe("b", {}, function() cook.require_recipe("shared") end)
+cook.recipe("shared", {}, function()
+    _G.runs = _G.runs + 1
+    cook.exec("shared run " .. _G.runs, 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "shared"),
+        "shared run 1",
+        "shared's body must be evaluated exactly once despite two requirers plus the seed loop"
+    );
+}
+
+/// Both re-entrancy hazards at once. A nested invocation shares the single
+/// `body_slot` and rebinds the Lua `recipe` global, so without save/restore
+/// the callee's units land in the caller's recipe and the caller sees
+/// `recipe.name == "producer"` after the call returns.
+#[test]
+fn require_recipe_restores_caller_body_slot_and_recipe_global() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.exec("before " .. recipe.name, 1)
+    cook.require_recipe("producer")
+    cook.exec("after " .. recipe.name, 2)
+end)
+cook.recipe("producer", {}, function()
+    cook.exec("producer body", 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    let consumer = &registered.units_by_recipe.get("consumer").unwrap().units;
+    let cmds: Vec<&str> = consumer
+        .iter()
+        .map(|u| match &u.payload {
+            WorkPayload::Shell { cmd, .. } => cmd.as_str(),
+            other => panic!("expected Shell, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        cmds,
+        vec!["before consumer", "after consumer"],
+        "the caller's units and its `recipe` global must survive the nested invocation"
+    );
+    assert_eq!(only_shell_cmd(&registered, "producer"), "producer body");
+}
+
+/// The edge lands in `RegisteredRecipePub.requires` — the single source of
+/// truth the engine's analyzer builds the closure from — and dedups against
+/// a static dep naming the same recipe.
+#[test]
+fn require_recipe_edge_merges_into_requires_deduped_against_static_dep() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {requires = {"producer"}}, function()
+    cook.require_recipe("producer")
+    cook.require_recipe("extra")
+end)
+cook.recipe("producer", {}, function() end)
+cook.recipe("extra", {}, function() end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        requires_of(&registered, "consumer"),
+        vec!["producer".to_string(), "extra".to_string()],
+        "static + dynamic must merge to ONE producer entry, static order first"
+    );
+}
+
+/// Every `cook.recipe` registration completes before any body runs, so a
+/// name that isn't registered is definitively unknown at call time.
+#[test]
+fn require_recipe_unknown_name_errors_with_fix_hint() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("consumer", {}, function()
+    cook.require_recipe("produsers")
+end)
+cook.recipe("producer", {}, function() end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("an unregistered name must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("produsers"), "error must name the unknown recipe; got: {err}");
+    assert!(err.contains("consumer"), "error must name the requiring recipe; got: {err}");
+    assert!(err.contains("producer"), "fix hint must list the closest registered name; got: {err}");
+}
+
+/// Forcing is synchronous, so a dynamic cycle would recurse without bound.
+/// It must surface as a rendered cycle path, not a stack overflow.
+#[test]
+fn require_recipe_dynamic_cycle_errors_with_path() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("framework", {}, function() cook.require_recipe("idLib") end)
+cook.recipe("idLib", {}, function() cook.require_recipe("framework") end)
+"#;
+    let err = register_cookfile(rt, lua_src, None)
+        .expect_err("a dynamic cycle must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(
+        err.contains("framework -> idLib -> framework"),
+        "error must render the cycle path; got: {err}"
+    );
+}
+
+/// A Cookfile that never calls the API keeps the pre-existing body order:
+/// the seed loop still walks the static topo sort.
+#[test]
+fn body_order_unchanged_without_require_recipe_calls() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("z", {}, function() end)
+cook.recipe("a", {requires = {"z"}}, function() end)
+cook.recipe("m", {}, function() end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    let order: Vec<&str> = registered.names.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["z", "a", "m"],
+        "static topo order (z before a; m last) must be untouched"
+    );
+}
+
+/// Skip arm 1 — parametric chore, a target IS requested but this isn't it and
+/// the chore isn't statically reachable from it. A forced chore is reachable
+/// by definition, so it must run with empty argv (§7.5.1) and register its
+/// units, not skip to zero.
+#[test]
+fn require_recipe_forces_parametric_chore_when_target_requested() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let registered = register_cookfile(rt, PARAMETRIC_CHORE_FIXTURE, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "gen"),
+        "generate world",
+        "a forced parametric chore must be invoked with empty argv, not skipped"
+    );
+    assert_eq!(requires_of(&registered, "app"), vec!["gen".to_string()]);
+}
+
+/// Skip arm 2 — parametric chore, NO target requested. Gated only on
+/// `target_recipe.is_none() && Chore && params`, never on reachability, so a
+/// fix that only touches arm 1 leaves this hole open. This is the arm
+/// `cook list`, `cook dag`, and the default test harness all take.
+#[test]
+fn require_recipe_forces_parametric_chore_with_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let registered = register_cookfile(rt, PARAMETRIC_CHORE_FIXTURE, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "gen"),
+        "generate world",
+        "a forced parametric chore must be invoked with empty argv on the no-target path too"
+    );
+}
+
+/// Shared by both parametric-chore skip-arm tests: `app` (a plain recipe, the
+/// only viable target) forces the parametric chore `gen`, which neither
+/// statically requires nor is required by it.
+const PARAMETRIC_CHORE_FIXTURE: &str = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+end)
+cook.__register_surface_chore("gen",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+
+/// Skip arm 3 — a probe-sourced `for_each` recipe that isn't statically
+/// reachable from the target had its feeding probe skipped by the pre-pass,
+/// so its body's `cook.probes.get` cannot resolve. Forcing it is a hard error
+/// with a fix hint, NOT a silent registration of zero units (which would let
+/// register and engine disagree about what got built).
+#[test]
+fn require_recipe_on_unreachable_probe_for_each_errors_with_fix_hint() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("items", { inputs = {}, produce = [[ return {{id = "x"}} ]] })
+    cook.recipe("app", {}, function()
+        cook.require_recipe("fan")
+    end)
+
+recipe fan
+    ingredients items
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s' "$<in.id>" > $<out>
+    }
+"#;
+    let err = register_surface_target(dir.path(), cookfile, "app")
+        .expect_err("forcing an unreachable probe-sourced for_each recipe must be a hard error")
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("fan"), "error must name the recipe; got: {err}");
+    assert!(
+        err.contains("for_each") && err.contains("probe"),
+        "error must state the reason; got: {err}"
+    );
+    assert!(
+        err.contains(": fan"),
+        "fix hint must tell the author to add a static `: fan` dep to the requiring recipe's \
+         header; got: {err}"
+    );
 }

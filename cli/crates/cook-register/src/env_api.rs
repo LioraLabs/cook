@@ -74,7 +74,11 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 /// The `n` declared names closest to `name` by edit distance (ties broken
 /// lexicographically for determinism).
-fn closest_declared(name: &str, declared: &[String], n: usize) -> Vec<String> {
+///
+/// Shared with `cook.require_recipe`'s unknown-name diagnostic (Standard
+/// §22.8, CS-0144), which suggests the closest registered recipe names the
+/// same way this suggests the closest declared env vars.
+pub(crate) fn closest_declared(name: &str, declared: &[String], n: usize) -> Vec<String> {
     let mut scored: Vec<(usize, &String)> =
         declared.iter().map(|d| (edit_distance(name, d), d)).collect();
     scored.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(y.1)));

@@ -190,9 +190,13 @@ impl RegisterSessionBuilder {
 /// 10. Drain the probe registry into `session_state.probes`.
 /// 11. Topologically sort registered recipes by `metadata.requires` (local
 ///     DFS; reports cycles via `RegisterError::DependencyCycle`).
-/// 12. Invoke each recipe body in topo order, opening a fresh
-///     `BodyCaptureState` immediately before the call and draining it
-///     back to `None` immediately after.
+/// 12. Invoke every recipe body via the re-entrant `BodyDriver`, opening a
+///     fresh `BodyCaptureState` immediately before each call and draining it
+///     back immediately after. Step 11's sort is the SEED order, not the
+///     authority: `cook.require_recipe` (Standard §22.8) lets a body declare
+///     a dependency edge while running, which a sort computed before any
+///     body ran cannot know — so the driver forces bodies on demand and
+///     merges the resulting edges into `requires` at drain.
 /// 13. Assemble `RegisteredCookfile { names, units_by_recipe, probes, final_env }`.
 ///
 /// `kind` on each `RegisteredRecipePub` is copied from the internal
@@ -205,6 +209,11 @@ pub fn register_cookfile(
     lua_source: &str,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
 ) -> Result<crate::RegisteredCookfile, RegisterError> {
+    // Shared with the body-invocation driver (step 12), which outlives this
+    // function's stack frame: the Lua closure backing `cook.require_recipe`
+    // holds it for as long as the VM does.
+    let builder = Rc::new(builder);
+
     // 1. Fresh Lua VM. unsafe_new() matches register_recipe — see the
     //    comment block there for the C-extension rationale.
     // SAFETY: mlua's unsafe_new() opens all Lua standard libraries; the
@@ -384,22 +393,241 @@ pub fn register_cookfile(
         builder.target_recipe.is_some(),
     )?;
 
-    // 12. Invoke each recipe body in topo order. The body slot is opened
-    //     immediately before the call and drained back to `None` afterwards
-    //     so a stray closure invocation between bodies fails cleanly rather
-    //     than silently appending to a stale body.
-    let mut units_by_recipe: BTreeMap<String, RecipeUnits> = BTreeMap::new();
-    let mut names: Vec<crate::RegisteredRecipePub> = Vec::with_capacity(topo.len());
+    // 12. Invoke every registered recipe body, demand-driven.
+    //
+    //     `topo` is the SEED order, not the authority: it is sorted from the
+    //     STATIC `requires` graph before any body runs, so it structurally
+    //     cannot know about an edge a body declares at run time via
+    //     `cook.require_recipe` (Standard §22.8, CS-0144). The driver's
+    //     re-entrant `ensure_invoked` is what actually orders the pass; the
+    //     seed loop just guarantees every recipe is reached. A Cookfile that
+    //     never calls the API therefore invokes bodies in exactly the old
+    //     order.
+    let driver = Rc::new(BodyDriver {
+        builder: builder.clone(),
+        recipes: recipes.clone(),
+        probe_registry: probe_registry.clone(),
+        session_state: session_state.clone(),
+        body_slot: body_slot.clone(),
+        reachable_from_target,
+        units_by_recipe: RefCell::new(BTreeMap::new()),
+        names: RefCell::new(Vec::with_capacity(topo.len())),
+        visit: RefCell::new(BTreeMap::new()),
+        path: RefCell::new(Vec::new()),
+    });
+
+    // Rebind `cook.require_recipe` now that the driver exists, replacing the
+    // forcer-less binding `install_remaining_apis` installed. Bodies read the
+    // function off the `cook` table at call time, so the swap is invisible to
+    // them — and the pre-pass, which ran above, still saw the binding that
+    // can only report the outside-a-body error.
+    {
+        let forcer_driver = driver.clone();
+        let forcer: crate::context::RecipeForcer =
+            Box::new(move |lua, name| forcer_driver.force(lua, name));
+        crate::context::register_require_recipe_api(&lua, body_slot.clone(), Some(forcer))?;
+    }
 
     for name in &topo {
+        driver.ensure_invoked(&lua, name, false)?;
+    }
+
+    let units_by_recipe = std::mem::take(&mut *driver.units_by_recipe.borrow_mut());
+    let names = std::mem::take(&mut *driver.names.borrow_mut());
+
+    // 12b. (COOK-64 §22.5.9) Static-input rule for `for_each` sources. Now
+    //      that every body has run and `units_by_recipe` holds the full set of
+    //      recipe outputs, reject any `for_each`-feeding probe that declares a
+    //      file input which is produced by a recipe in this Cookfile — a
+    //      build artifact is not statically evaluable (the pre-pass resolved
+    //      the probe before any recipe ran, so it could only have seen a
+    //      stale or absent file).
+    check_for_each_static_inputs(
+        &recipes.borrow(),
+        &probe_registry.borrow(),
+        &units_by_recipe,
+    )?;
+
+    // Flush module caches once at the end of the pass.
+    module_state.borrow().flush_all();
+
+    // 13. Probes view: BTreeMap keyed by probe key (deterministic).
+    //
+    // Source is the probe_registry (not session_state.probes) so that
+    // body-scope probes — registered during the recipe-body invocations
+    // in step 12, after the session_state drain in step 10 — are also
+    // included. The workspace-level probes map feeds the executor's
+    // probe-cache fast path (cli/crates/cook-engine/src/run.rs builds
+    // `probe_units_by_node` from this map); a body-scope probe that
+    // doesn't appear here would re-execute on every run instead of
+    // hitting the cache (CS-0074 §22.5.7).
+    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = probe_registry
+        .borrow()
+        .probes
+        .iter()
+        .map(|(key, reg)| (key.clone(), reg.probe.clone()))
+        .collect();
+
+    let warnings = builder.ingredient_warnings.borrow().clone();
+    Ok(crate::RegisteredCookfile {
+        names,
+        units_by_recipe,
+        probes,
+        final_env,
+        warnings,
+    })
+}
+
+/// Where a recipe's body sits in the current pass's demand-driven visit.
+#[derive(Clone, Copy, PartialEq)]
+enum VisitState {
+    /// Its body is on the invocation stack right now. Re-entering it is a
+    /// cycle — only reachable via `cook.require_recipe`, since the seed loop
+    /// visits at the top level where nothing is in flight.
+    Visiting,
+    /// Its body ran to completion. The register-order guarantee is already
+    /// satisfied; a repeat visit is a no-op.
+    Visited,
+}
+
+/// Step 12's body-invocation driver (Standard §22.8, CS-0144).
+///
+/// Owns everything the loop used to close over, plus the visit state that
+/// makes it re-entrant: `cook.require_recipe` forces a body *from inside
+/// another body*, so what was a flat loop is now a DFS whose edges are
+/// discovered as the bodies run.
+///
+/// Everything mutable lives behind a `RefCell` because the Lua closure
+/// backing `cook.require_recipe` holds an `Rc<BodyDriver>` and re-enters
+/// `ensure_invoked` mid-`func.call()`. No borrow of any of these cells — nor
+/// of `recipes` — may be held across a `func.call()` for the same reason.
+struct BodyDriver {
+    builder: Rc<RegisterSessionBuilder>,
+    recipes: Rc<RefCell<Vec<crate::capture::RegisteredRecipe>>>,
+    probe_registry: Rc<RefCell<ProbeRegistry>>,
+    session_state: SharedSessionCaptureState,
+    body_slot: SharedBodySlot,
+    /// Names reachable from `target_recipe` via the STATIC `requires` graph,
+    /// computed before any body ran — so it structurally cannot know a
+    /// dynamic edge. Every consumer below therefore also honours `forced`.
+    reachable_from_target: std::collections::BTreeSet<String>,
+    units_by_recipe: RefCell<BTreeMap<String, RecipeUnits>>,
+    names: RefCell<Vec<crate::RegisteredRecipePub>>,
+    visit: RefCell<BTreeMap<String, VisitState>>,
+    /// Bare names of the bodies currently on the invocation stack, innermost
+    /// last. Renders the cycle path.
+    path: RefCell<Vec<String>>,
+}
+
+impl BodyDriver {
+    /// The `cook.require_recipe` forcer: validate the name against the
+    /// registered set, then force. Everything here is dynamic-call-specific
+    /// diagnostics; the shared visit lives in `ensure_invoked`.
+    fn force(&self, lua: &Lua, name: &str) -> Result<(), mlua::Error> {
+        // The requiring recipe, for the diagnostics. Still the caller's body
+        // at this point — `ensure_invoked` swaps the slot, and hasn't run yet.
+        let requiring = self
+            .body_slot
+            .borrow()
+            .as_ref()
+            .and_then(|b| b.current_recipe_bare.clone())
+            .unwrap_or_default();
+
+        // Unknown name. Every `cook.recipe` registration completes before any
+        // body runs, so absence is definitive at call time — no need to defer
+        // to the engine's cross-cookfile analyzer.
+        let registered: Vec<String> = self.recipes.borrow().iter().map(|r| r.name.clone()).collect();
+        if !registered.iter().any(|r| r == name) {
+            let closest = crate::env_api::closest_declared(name, &registered, 3);
+            return Err(mlua::Error::runtime(format!(
+                "cook.require_recipe: recipe \"{name}\" (required by \"{requiring}\") is not \
+                 registered in this Cookfile. Closest registered names: {}. Check the spelling, \
+                 or register \"{name}\" before it is required (Standard \u{00a7}22.8, CS-0144)",
+                closest.join(", "),
+            )));
+        }
+
+        // The failure crosses back into Lua as a message, so a structured
+        // `RegisterError` variant raised beneath here degrades to
+        // `RegisterError::Lua` by the time the seed loop re-raises it. The
+        // diagnostic text — all the Standard's error contract and the CLI
+        // render — survives intact, which is why no variant-preserving
+        // side channel is worth its stale-state hazards.
+        self.ensure_invoked(lua, name, true)
+            .map_err(|e| mlua::Error::runtime(e.to_string()))
+    }
+
+    /// Evaluate `name`'s body to completion, unless it already ran this pass.
+    ///
+    /// `forced` distinguishes a `cook.require_recipe` call from the seed
+    /// loop's own visit. It is not cosmetic: every body-skip arm below is
+    /// gated (directly or not) on the STATIC reachability pre-pass, which
+    /// cannot see a dynamic edge — so a forced recipe that hit a skip arm
+    /// would register zero units while the engine, reading the very
+    /// `requires` edge this call records, still pulls it into the build
+    /// closure. Register and engine would then disagree about what got built.
+    fn ensure_invoked(&self, lua: &Lua, name: &str, forced: bool) -> Result<(), RegisterError> {
+        match self.visit.borrow().get(name) {
+            Some(VisitState::Visited) => return Ok(()),
+            Some(VisitState::Visiting) => {
+                // Only reachable from a dynamic call, so the diagnostic can
+                // name the API unconditionally. Mirrors
+                // `local_topological_sort`'s cycle rendering: the path from
+                // the recurring node, with that node repeated at the end.
+                let path = self.path.borrow();
+                let start = path.iter().position(|n| n == name).unwrap_or(0);
+                let mut cycle: Vec<String> = path[start..].to_vec();
+                cycle.push(name.to_string());
+                return Err(RegisterError::Lua(mlua::Error::runtime(format!(
+                    "cook.require_recipe: dependency cycle: {}. Forcing is synchronous, so this \
+                     would recurse without bound; break the cycle by removing one of the \
+                     `cook.require_recipe` calls on that path (Standard \u{00a7}22.8, CS-0144)",
+                    cycle.join(" -> "),
+                ))));
+            }
+            None => {}
+        }
+
+        self.visit.borrow_mut().insert(name.to_string(), VisitState::Visiting);
+        self.path.borrow_mut().push(name.to_string());
+
+        // Both re-entrancy hazards, saved across the nested invocation:
+        //   - the body slot is a single shared `Option<BodyCaptureState>`, so
+        //     without this the callee's units land in the caller's recipe;
+        //   - `setup_recipe_context` rebinds the Lua `recipe` global, so
+        //     without this the caller sees the callee's `recipe.name` after
+        //     the call returns.
+        // Both are no-ops at the top level (the slot is already `None` and
+        // the next seed iteration rebinds `recipe` regardless), so the
+        // no-`require_recipe` path is unchanged.
+        let saved_body = self.body_slot.borrow_mut().take();
+        let saved_recipe_global: LuaValue = lua.globals().get("recipe")?;
+
+        let result = self.invoke_body(lua, name, forced);
+
+        *self.body_slot.borrow_mut() = saved_body;
+        lua.globals().set("recipe", saved_recipe_global)?;
+        self.path.borrow_mut().pop();
+
+        result?;
+        self.visit.borrow_mut().insert(name.to_string(), VisitState::Visited);
+        Ok(())
+    }
+
+    /// Invoke one recipe body and drain its captures. Step 12's loop body,
+    /// verbatim but for the `forced` handling and the drain-time merge.
+    fn invoke_body(&self, lua: &Lua, name: &str, forced: bool) -> Result<(), RegisterError> {
+        let builder = &self.builder;
+
         // Open fresh body slot.
-        *body_slot.borrow_mut() = Some(BodyCaptureState::new());
+        *self.body_slot.borrow_mut() = Some(BodyCaptureState::new());
 
         // Look up the recipe entry. Borrow scope kept tight so we can mutate
-        // body_slot below without overlapping the recipes borrow.
+        // body_slot below without overlapping the recipes borrow — and so no
+        // borrow is live across the `func.call()`, which can re-enter.
         let (
             func_key_clone,
-            requires,
+            static_requires,
             source,
             kind,
             qualified_name,
@@ -419,11 +647,11 @@ pub fn register_cookfile(
             Option<String>,
         );
         {
-            let registry = recipes.borrow();
+            let registry = self.recipes.borrow();
             let recipe = registry
                 .iter()
-                .find(|r| &r.name == name)
-                .ok_or_else(|| RegisterError::RecipeNotFound(name.clone()))?;
+                .find(|r| r.name == name)
+                .ok_or_else(|| RegisterError::RecipeNotFound(name.to_string()))?;
 
             // COOK-64 §22.5.9 demand-driven rule: a probe-sourced `for_each`
             // recipe that is NOT reachable from the build target had its probe
@@ -431,14 +659,14 @@ pub fn register_cookfile(
             // error. Skip the body — the recipe is not being built — registering
             // it with no units, mirroring the parametric-sibling skip below.
             skip_for_each_body = builder.target_recipe.is_some()
-                && !reachable_from_target.contains(name)
+                && !self.reachable_from_target.contains(name)
                 && matches!(
                     recipe.for_each,
                     Some(crate::capture::ForEachDescriptor::Probe { .. })
                 );
 
             // Run recipe context setup (ingredient resolution).
-            setup_recipe_context(&lua, recipe, &builder.working_dir, &builder.workspace_root, &builder.ingredient_warnings)?;
+            setup_recipe_context(lua, recipe, &builder.working_dir, &builder.workspace_root, &builder.ingredient_warnings)?;
 
             // The `LuaRegistryKey` doesn't impl Clone, so we materialize the
             // function now and stash it for the call below; the registry
@@ -446,7 +674,7 @@ pub fn register_cookfile(
             let func: LuaFunction = lua.registry_value(&recipe.function)?;
             // Re-stash so we can drop the `registry` borrow before calling.
             func_key_clone = lua.create_registry_value(func)?;
-            requires = recipe.metadata.requires.clone();
+            static_requires = recipe.metadata.requires.clone();
             source = recipe.source;
             kind = recipe.kind;
             params_meta = recipe.metadata.params.clone();
@@ -462,53 +690,52 @@ pub fn register_cookfile(
             };
         }
 
-        // §22.5.9 demand-driven skip: a non-reachable probe-sourced `for_each`
-        // recipe registers with no units (its probe was not pre-evaluated).
+        // Skip arm 3 — a probe-sourced `for_each` recipe not statically
+        // reachable from the target.
         if skip_for_each_body {
+            if forced {
+                // Unlike the parametric-chore arms, forcing cannot rescue this
+                // one: the body needs a probe value the pre-pass never
+                // computed. Evaluating the probe lazily here IS feasible —
+                // `run_for_each_prepass` is a free function, and calling it
+                // with `reachable_from_target = {name}` and `has_target = true`
+                // would resolve exactly this driver's probe. It is declined on
+                // re-entrancy risk: that path holds `recipes` and
+                // `probe_registry` borrowed across `run_prepass_produce`'s Lua
+                // call, and its signature forces every caller into that shape,
+                // so a forced body that touched `cook.probe` or `cook.recipe`
+                // would hit a `BorrowMutError`. Erroring keeps register and
+                // engine agreeing about what got built; the static dep in the
+                // hint puts the recipe in `local_reachable_set`, so the
+                // pre-pass evaluates its probe and the force then succeeds.
+                lua.remove_registry_value(func_key_clone)?;
+                return Err(RegisterError::Lua(mlua::Error::runtime(format!(
+                    "cook.require_recipe: recipe \"{name}\" is a probe-sourced `for_each` recipe \
+                     that is not reachable from the build target, so its feeding probe was not \
+                     evaluated by the register pre-pass and its body cannot run. Add a static \
+                     `: {name}` dep to the requiring recipe's header so the pre-pass sees it \
+                     (Standard \u{00a7}22.8, CS-0144)"
+                ))));
+            }
             lua.remove_registry_value(func_key_clone)?;
-            let _ = body_slot.borrow_mut().take();
-            names.push(crate::RegisteredRecipePub {
-                name: name.clone(),
-                source,
-                kind,
-                requires: requires.clone(),
-                params: params_meta.clone(),
-                origin,
-            });
-            units_by_recipe.insert(
-                name.clone(),
-                RecipeUnits {
-                    recipe_name: name.clone(),
-                    deps: requires,
-                    units: vec![],
-                    step_groups: vec![],
-                    working_dir: builder.working_dir.clone(),
-                    env_vars: builder
-                        .env_vars
-                        .borrow()
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                    terminal_outputs: vec![],
-                    dep_edges: vec![],
-                    probes: vec![],
-                },
-            );
-            continue;
+            let _ = self.body_slot.borrow_mut().take();
+            self.register_skipped(name, source, kind, static_requires, params_meta, origin);
+            return Ok(());
         }
 
         // Stamp current_recipe on the body so cook.add_test defaults the
         // suite field correctly (CS-0061 §3.2). current_recipe_bare is
-        // stamped alongside it, from the same (bare) `name` the `topo`
-        // vec carries, for cook.require_recipe's self-reference check
-        // (Standard §22.8, CS-0144) — see BodyCaptureState::current_recipe_bare.
+        // stamped alongside it, from the same (bare) `name`, for
+        // cook.require_recipe's self-reference check and the cycle-path
+        // rendering (Standard §22.8, CS-0144) — see
+        // BodyCaptureState::current_recipe_bare.
         {
-            let mut slot = body_slot.borrow_mut();
+            let mut slot = self.body_slot.borrow_mut();
             let body = slot
                 .as_mut()
                 .expect("body slot just opened above");
             body.current_recipe = Some(qualified_name.clone());
-            body.current_recipe_bare = Some(name.clone());
+            body.current_recipe_bare = Some(name.to_string());
         }
 
         // Call the body. Any error short-circuits — earlier bodies' captures
@@ -527,14 +754,14 @@ pub fn register_cookfile(
         let is_target = builder
             .target_recipe
             .as_deref()
-            .map(|t| t == name.as_str())
+            .map(|t| t == name)
             .unwrap_or(false);
         if kind == crate::RecipeKind::Chore {
             if is_target {
                 // Targeted chore: bind argv and call with __cook_params.
                 let argv = &builder.target_argv;
                 let (bound, prelude) = build_chore_params_table(
-                    &lua,
+                    lua,
                     &params_meta,
                     argv,
                     name,
@@ -542,136 +769,56 @@ pub fn register_cookfile(
                 )?;
                 // Store the prelude on the body slot so cook.add_unit can
                 // prepend it to lua_code units captured in this chore body.
-                {
-                    let mut slot = body_slot.borrow_mut();
-                    if let Some(body) = slot.as_mut() {
-                        body.chore_param_prelude = prelude;
-                    }
-                }
+                self.set_chore_prelude(prelude);
                 func.call::<()>((bound,))
                     .map_err(RegisterError::Lua)?;
-            } else if builder.target_recipe.is_some() {
-                // A target was requested but this is NOT the target. Split
-                // on `reachable_from_target` (COOK-61): only chores that are
-                // actual deps of the target should run with empty argv; an
-                // unrelated parametric sibling must be skipped, same as the
-                // no-target case (a52063d). Without this split, every
-                // parametric sibling poisons every other-target invocation
-                // via `build_chore_params_table`'s required-param check.
-                //
-                // §7.5.1: dep-of-target parametric chores run with no argv
-                // supplied; required-no-default surfaces a configuration
-                // error here. Unreachable siblings get no such validation —
-                // they may declare any param shape.
-                let is_dep_of_target = reachable_from_target.contains(name);
-                if params_meta.is_empty() {
-                    // Paramless chore: cheap to invoke, captures units for
-                    // dep linkage when reachable and for enumeration tools
-                    // when not. Either way, the body is safe to call with
-                    // no argument — no `__cook_params` references.
-                    func.call::<()>(()).map_err(RegisterError::Lua)?;
-                } else if is_dep_of_target {
-                    let (bound, prelude) = build_chore_params_table(
-                        &lua,
-                        &params_meta,
-                        &[],
-                        name,
-                        source_line,
-                    )?;
-                    {
-                        let mut slot = body_slot.borrow_mut();
-                        if let Some(body) = slot.as_mut() {
-                            body.chore_param_prelude = prelude;
-                        }
-                    }
-                    func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
-                } else {
-                    // Parametric sibling not reachable from target — skip
-                    // body invocation, mirror the no-target / `cook list`
-                    // path: record an empty units entry so downstream stages
-                    // see the recipe in the registered set.
-                    lua.remove_registry_value(func_key_clone)?;
-                    let _ = body_slot.borrow_mut().take();
-                    names.push(crate::RegisteredRecipePub {
-                        name: name.clone(),
-                        source,
-                        kind,
-                        requires: requires.clone(),
-                        params: params_meta.clone(),
-                        origin,
-                    });
-                    units_by_recipe.insert(
-                        name.clone(),
-                        RecipeUnits {
-                            recipe_name: name.clone(),
-                            deps: requires,
-                            units: vec![],
-                            step_groups: vec![],
-                            working_dir: builder.working_dir.clone(),
-                            env_vars: builder
-                                .env_vars
-                                .borrow()
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                            terminal_outputs: vec![],
-                            dep_edges: vec![],
-                            probes: vec![],
-                        },
-                    );
-                    continue;
-                }
-            } else if !params_meta.is_empty() {
-                // No specific target requested (e.g. cook list, cook dag,
-                // or a test that doesn't set target_recipe) AND this chore
-                // declares parameters. Skip the body invocation for the same
-                // reason as the targeted-but-not-this-one case above: the
-                // body would raise a nil-index Lua error on its first
-                // `local NAME = __cook_params.NAME` prelude line. Paramless
-                // chores fall through to the regular `func.call::<()>(())`
-                // arm below (those bodies don't reference __cook_params, and
-                // capturing their units is useful for list/dag enumeration).
-                lua.remove_registry_value(func_key_clone)?;
-                let _ = body_slot.borrow_mut().take();
-                names.push(crate::RegisteredRecipePub {
-                    name: name.clone(),
-                    source,
-                    kind,
-                    requires: requires.clone(),
-                    params: params_meta.clone(),
-                    origin,
-                });
-                units_by_recipe.insert(
-                    name.clone(),
-                    RecipeUnits {
-                        recipe_name: name.clone(),
-                        deps: requires,
-                        units: vec![],
-                        step_groups: vec![],
-                        working_dir: builder.working_dir.clone(),
-                        env_vars: builder
-                            .env_vars
-                            .borrow()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
-                        terminal_outputs: vec![],
-                        dep_edges: vec![],
-                        probes: vec![],
-                    },
-                );
-                continue;
-            } else {
-                // No specific target, paramless chore — call normally. This
-                // path preserves the pre-COOK-36 behavior of capturing chore
-                // units during list/dag enumeration so tools can inspect them.
+            } else if params_meta.is_empty() {
+                // Paramless chore: cheap to invoke, captures units for dep
+                // linkage when reachable and for enumeration tools when not.
+                // Either way the body is safe to call with no argument — no
+                // `__cook_params` references. Covers both the targeted-but-
+                // not-this-one and the no-target cases.
                 func.call::<()>(()).map_err(RegisterError::Lua)?;
+            } else if forced || self.reachable_from_target.contains(name) {
+                // Skip arms 1 and 2, rescued. §7.5.1: a parametric chore that
+                // is a dep of the target runs with no argv supplied
+                // (required-no-default surfaces a legitimate register-time
+                // error here); an unrelated parametric sibling gets skipped by
+                // the arm below, which is also what the no-target path used to
+                // do unconditionally — `reachable_from_target` is empty when
+                // `target_recipe` is `None` (COOK-61, a52063d).
+                //
+                // A FORCED chore is a dep of the requiring recipe, hence
+                // reachable by definition, so it takes this same path on both
+                // the target and the no-target branch. Without the `forced`
+                // disjunct, `cook.require_recipe` on a parametric chore would
+                // silently register zero units — and the no-target branch is
+                // the one `cook list`, `cook dag`, and most tests take.
+                let (bound, prelude) = build_chore_params_table(
+                    lua,
+                    &params_meta,
+                    &[],
+                    name,
+                    source_line,
+                )?;
+                self.set_chore_prelude(prelude);
+                func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
+            } else {
+                // Parametric chore, neither targeted, reachable, nor forced —
+                // skip body invocation: the body would raise a nil-index Lua
+                // error on its first `local NAME = __cook_params.NAME` prelude
+                // line. Record an empty units entry so downstream stages still
+                // see the recipe in the registered set.
+                lua.remove_registry_value(func_key_clone)?;
+                let _ = self.body_slot.borrow_mut().take();
+                self.register_skipped(name, source, kind, static_requires, params_meta, origin);
+                return Ok(());
             }
         } else {
             // Normal recipe: validate that no argv was supplied (§7.1.2).
             if is_target && !builder.target_argv.is_empty() {
                 return Err(RegisterError::RecipeWithArgv {
-                    name: name.clone(),
+                    name: name.to_string(),
                     supplied: builder.target_argv.len(),
                 });
             }
@@ -682,10 +829,26 @@ pub fn register_cookfile(
         lua.remove_registry_value(func_key_clone)?;
 
         // Drain the body slot back to None.
-        let mut body = body_slot
+        let mut body = self
+            .body_slot
             .borrow_mut()
             .take()
             .expect("body slot populated above");
+
+        // The edge (Standard §22.8, CS-0144). Merged here, at drain, rather
+        // than read off the pre-body `static_requires` clone: the body only
+        // just accumulated `dynamic_requires`, so that clone is stale. Routing
+        // through `requires` is the whole design — it is the single source of
+        // truth the engine's analyzer builds the closure, validates unknown
+        // names, and detects cycles from, so the edge becomes indistinguishable
+        // from a `recipe A : B` dep-list entry. Dedup spans static + dynamic:
+        // a recipe carrying both must yield ONE entry.
+        let mut requires = static_requires;
+        for dep in &body.dynamic_requires {
+            if !requires.contains(dep) {
+                requires.push(dep.clone());
+            }
+        }
 
         // Patch the recipe_name on every unit's cache_meta. The closures in
         // register_unit_api / install_cook_api capture an empty recipe_name
@@ -703,7 +866,7 @@ pub fn register_cookfile(
         // actual recipe name, not "".
         for unit in &mut body.units {
             if let Some(meta) = unit.cache_meta.as_mut() {
-                meta.recipe_name = name.clone();
+                meta.recipe_name = name.to_string();
             }
         }
 
@@ -711,7 +874,7 @@ pub fn register_cookfile(
         // register_recipe runs, scoped to this recipe's units.
         {
             use std::collections::BTreeSet;
-            let probe_reg = probe_registry.borrow();
+            let probe_reg = self.probe_registry.borrow();
             let registered_keys: BTreeSet<&str> =
                 probe_reg.probes.keys().map(|s| s.as_str()).collect();
             for (idx, unit) in body.units.iter().enumerate() {
@@ -775,10 +938,10 @@ pub fn register_cookfile(
         // Each per-recipe RecipeUnits carries a clone of the session probe
         // set today; Phase 3 dedup will replace this with a session-level
         // probe view consumed off the RegisteredCookfile directly.
-        let probes = session_state.borrow().probes.clone();
+        let probes = self.session_state.borrow().probes.clone();
 
         let units = RecipeUnits {
-            recipe_name: name.clone(),
+            recipe_name: name.to_string(),
             deps: requires.clone(),
             units: body.units,
             step_groups: body.step_groups,
@@ -788,58 +951,69 @@ pub fn register_cookfile(
             dep_edges: body.dep_edges,
             probes,
         };
-        units_by_recipe.insert(name.clone(), units);
+        self.units_by_recipe.borrow_mut().insert(name.to_string(), units);
 
-        names.push(crate::RegisteredRecipePub {
-            name: name.clone(),
+        self.names.borrow_mut().push(crate::RegisteredRecipePub {
+            name: name.to_string(),
             source,
             kind,
             requires,
-            params: params_meta.clone(),
+            params: params_meta,
             origin,
         });
+        Ok(())
     }
 
-    // 12b. (COOK-64 §22.5.9) Static-input rule for `for_each` sources. Now
-    //      that every body has run and `units_by_recipe` holds the full set of
-    //      recipe outputs, reject any `for_each`-feeding probe that declares a
-    //      file input which is produced by a recipe in this Cookfile — a
-    //      build artifact is not statically evaluable (the pre-pass resolved
-    //      the probe before any recipe ran, so it could only have seen a
-    //      stale or absent file).
-    check_for_each_static_inputs(
-        &recipes.borrow(),
-        &probe_registry.borrow(),
-        &units_by_recipe,
-    )?;
+    /// Record a recipe whose body was skipped: no units, `requires` static
+    /// only (a body that never ran declared no dynamic edges). Shared by the
+    /// two surviving skip arms.
+    fn register_skipped(
+        &self,
+        name: &str,
+        source: crate::capture::RegistrationSource,
+        kind: crate::RecipeKind,
+        requires: Vec<String>,
+        params: Vec<crate::capture::ChoreParamMeta>,
+        origin: Option<String>,
+    ) {
+        self.names.borrow_mut().push(crate::RegisteredRecipePub {
+            name: name.to_string(),
+            source,
+            kind,
+            requires: requires.clone(),
+            params,
+            origin,
+        });
+        self.units_by_recipe.borrow_mut().insert(
+            name.to_string(),
+            RecipeUnits {
+                recipe_name: name.to_string(),
+                deps: requires,
+                units: vec![],
+                step_groups: vec![],
+                working_dir: self.builder.working_dir.clone(),
+                env_vars: self
+                    .builder
+                    .env_vars
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+                terminal_outputs: vec![],
+                dep_edges: vec![],
+                probes: vec![],
+            },
+        );
+    }
 
-    // Flush module caches once at the end of the pass.
-    module_state.borrow().flush_all();
-
-    // 13. Probes view: BTreeMap keyed by probe key (deterministic).
-    //
-    // Source is the probe_registry (not session_state.probes) so that
-    // body-scope probes — registered during the recipe-body invocations
-    // in step 12, after the session_state drain in step 10 — are also
-    // included. The workspace-level probes map feeds the executor's
-    // probe-cache fast path (cli/crates/cook-engine/src/run.rs builds
-    // `probe_units_by_node` from this map); a body-scope probe that
-    // doesn't appear here would re-execute on every run instead of
-    // hitting the cache (CS-0074 §22.5.7).
-    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = probe_registry
-        .borrow()
-        .probes
-        .iter()
-        .map(|(key, reg)| (key.clone(), reg.probe.clone()))
-        .collect();
-
-    Ok(crate::RegisteredCookfile {
-        names,
-        units_by_recipe,
-        probes,
-        final_env,
-        warnings: builder.ingredient_warnings.borrow().clone(),
-    })
+    /// Stash a chore's bound-parameter prelude on the open body slot so
+    /// `cook.add_unit` can prepend it to `lua_code` units.
+    fn set_chore_prelude(&self, prelude: String) {
+        let mut slot = self.body_slot.borrow_mut();
+        if let Some(body) = slot.as_mut() {
+            body.chore_param_prelude = prelude;
+        }
+    }
 }
 
 /// Build the `__cook_params` Lua table from declared parameter metadata and
@@ -1765,7 +1939,13 @@ fn install_remaining_apis(
     crate::export_api::register_export_api(lua, builder.export_store.clone())?;
     crate::test_api::register_test_api(lua, body_slot.clone())?;
     crate::context::register_recipe_name_api(lua, body_slot.clone())?;
-    crate::context::register_require_recipe_api(lua, body_slot.clone())?;
+    // Forcer-less: on `list_names` there is no body-invocation driver at
+    // all, and on `register_cookfile` the driver doesn't exist yet at
+    // API-install time. Every call reachable before `register_cookfile`
+    // rebinds this (top level, a `register` block, a `for_each`-feeding
+    // probe's `produce`) is outside a recipe body, so the guard rail fires
+    // first and the missing forcer is unobservable.
+    crate::context::register_require_recipe_api(lua, body_slot.clone(), None)?;
     crate::dep_output_api::register_dep_output_api(
         lua,
         builder.terminal_outputs.clone(),
