@@ -204,7 +204,7 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
 /// module, so this is a `cook.recipe`-scoped sibling rather than a reuse.
 fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
-        "cook.recipe: `{field}` must be {expected}, got {got} (CS-0127)"
+        "cook.recipe: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.3, CS-0127)"
     ))
 }
 
