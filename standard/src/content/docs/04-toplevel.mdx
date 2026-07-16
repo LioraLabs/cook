@@ -11,7 +11,7 @@ A Cookfile is parsed as a single top-level production, `cookfile`, consisting of
 
 A conforming implementation MUST drive parsing off the token stream produced by §{lexical}: each syntactic form listed above is selected by the classification of its leading token. Comments and blank lines MUST be accepted at any top-level position and MUST NOT affect the grammatical shape of the surrounding items. A `Content` token at the top level (§{lexical.line-prefixes}) is not a valid `toplevel_item` and MUST be rejected unless it matches the top-level `module_call` shape per §{toplevel.module-call}.
 
-A top-level `module_call` (§{toplevel.module-call}) is a column-0 `Content` line whose first token matches the module-call shape per §{grammar-appendix.steps} `module_call`. The classification rule mirrors the recipe-body cascade as it stood BEFORE CS-0072 — at top level, the rule now fires; in recipe bodies, the rule is removed per §{steps.dispatch} amendment.
+A top-level `module_call` (§{toplevel.module-call}) is a column-0 `Content` line whose first token matches the module-call shape per §{grammar-appendix.steps} `module_call`. The classification rule mirrors the recipe-body cascade: the rule fires at top level, and — since CS-0134 reinstated it as §{steps.dispatch} rule 6 — in recipe bodies as well. CS-0072 had removed the recipe-body rule; that removal is no longer in force.
 
 ### Note 4.1.1
 
@@ -121,4 +121,4 @@ Line 6's `cook_cc.bin("game", { …` is a top-level module_call. The opening `{`
 
 ### Note 4.4.1
 
-The recipe-body step-dispatch cascade in §{steps.dispatch} no longer includes the module_call rule as of CS-0072.
+The recipe-body step-dispatch cascade in §{steps.dispatch} includes the module_call rule as rule 6. CS-0072 had removed it; CS-0134 reinstated it when it made the recipe body purely declarative. The multi-line brace-balancing described above therefore applies in recipe-body position as well as at top level.
