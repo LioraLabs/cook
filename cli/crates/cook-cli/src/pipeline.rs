@@ -434,6 +434,14 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
              supported. either narrow '{upstream}' outputs[] to the specific file, or depend on \
              '{upstream}' via a requires edge (recipe {downstream}: {upstream})."
         )),
+        cook_engine::EngineError::DanglingDepEdge { referring_recipe, dep_name } => {
+            CookError::Other(format!(
+                "recipe '{referring_recipe}' has a fine-grained dependency (dep_edges) on recipe \
+                 '{dep_name}', which is not present in the build closure. Add `: {dep_name}` to \
+                 the '{referring_recipe}' recipe header, or call \
+                 cook.require_recipe(\"{dep_name}\") from its body."
+            ))
+        }
     }
 }
 

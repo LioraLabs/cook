@@ -423,6 +423,23 @@ pub enum EngineError {
         input: String,
         pattern: String,
     },
+
+    /// A `dep_edges` entry (the fine-grained cross-recipe channel populated
+    /// by `cook.dep_output` / `$<sigil>` refs) names a recipe absent from
+    /// the slice passed to `build_dag` — i.e. outside the build closure.
+    /// Unlike `requires` (which `cook_register`'s analyzer validates before
+    /// `build_dag` ever runs), nothing upstream checks `dep_edges` names, so
+    /// this entry previously vanished silently instead of raising an error.
+    #[error(
+        "recipe '{referring_recipe}' has a fine-grained dependency (dep_edges) on recipe \
+         '{dep_name}', which is not present in the build closure. Add `: {dep_name}` to the \
+         '{referring_recipe}' recipe header, or call cook.require_recipe(\"{dep_name}\") from \
+         its body."
+    )]
+    DanglingDepEdge {
+        referring_recipe: String,
+        dep_name: String,
+    },
 }
 
 /// Reported commands carry codegen's `set -e` prelude; strip it for display.

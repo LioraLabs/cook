@@ -103,13 +103,20 @@ fn compute_consumed_probe_keys(
 /// **Unified-call contract (SHI-222).** The caller passes _every_ reachable
 /// recipe in a single invocation; cross-recipe edges (both coarse `deps` and
 /// fine-grained `dep_edges`) are resolved intra-call against the running
-/// `recipe_leaves` accumulator. A recipe that references a dep name not
-/// present in the passed slice will silently get no edge for that dep, so
-/// the caller is responsible for ensuring closure under dep edges and for
-/// passing recipes in topological order. The old wave-based call-site hid
-/// this property externally by passing one wave per call; the unified-DAG
-/// path collapses to a single call. See `tests/unified_dag_build.rs` for the
+/// `recipe_leaves` accumulator, so the caller is responsible for passing
+/// recipes in topological order. The old wave-based call-site hid this
+/// property externally by passing one wave per call; the unified-DAG path
+/// collapses to a single call. See `tests/unified_dag_build.rs` for the
 /// integration pin.
+///
+/// A `dep_edges` entry that names a recipe absent from the passed slice is
+/// rejected up front with [`EngineError::DanglingDepEdge`] — this channel is
+/// not analyzer-validated upstream the way `deps`/`requires` is, so
+/// `build_dag` is the last chance to catch it (see the pre-walk check at the
+/// top of this function). A `deps`/`requires` entry naming an unknown recipe
+/// is a different story: `cook_register`'s analyzer rejects it before
+/// `build_dag` ever runs, so an absent `cross_deps` lookup below is already
+/// unreachable on the live path and is left unchecked here.
 ///
 /// Performs plan-time validation that no two non-dep-related recipes declare
 /// the same canonical output path. If two recipes with no recipe-level
@@ -131,6 +138,37 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
     // silently; reject the plan.
     if let Some(err) = detect_output_collisions(&recipe_units) {
         return Err(err);
+    }
+
+    // ── Pre-walk: dep_edges closure validation ──────────────────────────────
+    // `dep_edges` (populated by `cook.dep_output` / `$<sigil>` refs) is a
+    // separate, older channel from `requires`/`deps`: nothing upstream
+    // validates its recipe names the way `cook_register`'s analyzer rejects
+    // an unknown `requires` name before `build_dag` ever runs. Left
+    // unchecked, an entry naming a recipe absent from `recipe_units`
+    // silently produced no edge for that dep (see the `ru.dep_edges` lookup
+    // in the unit loop below) instead of raising a diagnostic.
+    //
+    // This check walks the full slice up front, against the complete set of
+    // recipe names present in the call — NOT against `recipe_leaves` below,
+    // which is an intra-call accumulator populated only as the topo-ordered
+    // slice is walked. Checking against `recipe_leaves` per-unit would
+    // false-positive on any dep_edges target not yet reached in topo order;
+    // checking the full name set up front avoids that entanglement and
+    // correctly treats "present in the slice but zero units" (a legitimate
+    // `Some(empty)` leaf set) as distinct from "absent from the slice"
+    // (the genuine error).
+    let known_recipe_names: BTreeSet<&str> =
+        recipe_units.iter().map(|ru| ru.recipe_name.as_str()).collect();
+    for ru in &recipe_units {
+        for (_, dep_name) in &ru.dep_edges {
+            if !known_recipe_names.contains(dep_name.as_str()) {
+                return Err(EngineError::DanglingDepEdge {
+                    referring_recipe: ru.recipe_name.clone(),
+                    dep_name: dep_name.clone(),
+                });
+            }
+        }
     }
 
     let mut dag = Dag::new();
@@ -202,6 +240,14 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // prerequisite recipes finish. They do NOT participate in the
         // sequential `barrier` because they are inserted up-front, before
         // any `ru.units` are walked.
+        //
+        // Asymmetry note: unlike `ru.dep_edges` (validated by the pre-walk
+        // check above), a `ru.deps` entry naming a recipe absent from
+        // `recipe_leaves` is not diagnosed here. `deps` lowers from
+        // `requires`, which `cook_register`'s analyzer (`build_adjacency`)
+        // already rejects when it names an unknown recipe — so on the live
+        // path this lookup missing is already impossible, and a redundant
+        // check here would only duplicate that upstream validation.
         let mut cross_deps_for_synth: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
             if let Some(leaves) = recipe_leaves.get(dep_name) {
@@ -314,6 +360,12 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
 
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
+        //
+        // Asymmetry note: same as `cross_deps_for_synth` above — a `ru.deps`
+        // entry naming a recipe absent from `recipe_leaves` is not diagnosed
+        // here because `deps` is analyzer-validated upstream (unlike
+        // `ru.dep_edges`, which the pre-walk check at the top of this
+        // function now validates).
         let mut cross_deps: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
             if let Some(leaves) = recipe_leaves.get(dep_name) {
@@ -1186,6 +1238,113 @@ mod tests {
         assert_eq!(dag.len(), 2);
         // build's unit depends on setup's unit via coarse deps
         assert_eq!(dag.node(1).remaining_deps(), 1);
+    }
+
+    /// A `dep_edges` entry naming a recipe absent from the slice passed to
+    /// `build_dag` must raise `EngineError::DanglingDepEdge` naming both the
+    /// referring recipe and the dep, instead of silently vanishing.
+    ///
+    /// This is defensive hardening, not a live-path regression test: on the
+    /// live path a `$<sigil>` ref merges into `requires` too (codegen's
+    /// `unified_requires_field`), and `requires` is analyzer-validated
+    /// before `build_dag` ever runs — so this condition is unreachable from
+    /// a Cookfile today. We construct `RecipeUnits` directly to exercise the
+    /// defensive check.
+    #[test]
+    fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("gcc -o app main.c libmath.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            // "libmath" is never passed to build_dag — outside the closure.
+            dep_edges: vec![(0, "libmath".into())],
+            probes: vec![],
+        };
+
+        let err = build_dag(vec![app]).expect_err(
+            "dep_edges entry naming an out-of-closure recipe must error, not vanish silently",
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("app"), "message must name the referring recipe: {msg}");
+        assert!(msg.contains("libmath"), "message must name the dep: {msg}");
+        assert!(
+            msg.contains(": libmath"),
+            "message must hint at the recipe-header fix: {msg}"
+        );
+        assert!(
+            msg.contains("cook.require_recipe(\"libmath\")"),
+            "message must hint at the cook.require_recipe fix: {msg}"
+        );
+        match err {
+            EngineError::DanglingDepEdge { referring_recipe, dep_name } => {
+                assert_eq!(referring_recipe, "app");
+                assert_eq!(dep_name, "libmath");
+            }
+            other => panic!("expected DanglingDepEdge, got: {other:?}"),
+        }
+    }
+
+    /// A `dep_edges` entry naming a recipe that IS present in the slice but
+    /// contributes zero units (its leaf set is `Some(empty)`, not absent)
+    /// must NOT diagnose — this is the "distinguish absent from empty" case
+    /// the pre-walk validation exists to get right.
+    #[test]
+    fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
+        let noop = RecipeUnits {
+            recipe_name: "noop".into(),
+            deps: vec![],
+            units: vec![], // zero units — legitimate, not an absence
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("gcc -o app main.c"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![(0, "noop".into())],
+            probes: vec![],
+        };
+
+        // noop must be passed ahead of app to respect the topo-order
+        // contract build_dag relies on for recipe_leaves.
+        let dag = build_dag(vec![noop, app]).expect(
+            "an in-closure zero-unit dep must not diagnose — Some(empty) is legitimate",
+        );
+        // Only app's single unit produces a node; noop contributes none.
+        assert_eq!(dag.len(), 1);
+        assert_eq!(
+            dag.node(0).remaining_deps(),
+            0,
+            "no leaves to depend on since noop's leaf set is empty, not absent"
+        );
     }
 
     #[test]
