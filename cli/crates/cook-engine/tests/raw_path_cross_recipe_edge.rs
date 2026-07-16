@@ -116,26 +116,35 @@ recipe consumer
         "consumer MUST fail: nothing schedules producer, so build/gen.a never exists.\n{combined}"
     );
 
-    // Assert the SPECIFIC failure — the producer's output was missing at the
-    // moment consumer ran — not merely that the run exited non-zero.
-    assert!(
-        combined.contains("cannot stat 'build/gen.a'"),
-        "must fail on the missing producer output specifically, not some other \
-         error (a register-time diagnostic here would mean the gap is now \
-         DIAGNOSED, which is itself a change worth a CS entry):\n{combined}"
-    );
-
     // The producer never ran: its declared output does not exist on disk.
+    // (We deliberately do NOT assert on the underlying `cp: cannot stat ...`
+    // wording here — that is GNU coreutils phrasing, differs on BSD/macOS,
+    // and shifts under LC_ALL. `!ok` above plus the on-disk absence check
+    // and the `!combined.contains("producer")` check below together already
+    // prove the run failed specifically because the producer never ran and
+    // never produced `build/gen.a` — not merely that the run exited
+    // non-zero, and not because of some unrelated error. A register-time
+    // diagnostic naming the producer would trip the `!contains("producer")`
+    // assertion below, which is itself a change worth a CS entry.)
     assert!(
         !wd.join("build/gen.a").exists(),
         "producer MUST NOT have run — if build/gen.a exists, raw-path ordering \
          now works and this test's premise (COOK-246) is obsolete:\n{combined}"
     );
 
-    // The closure is exactly one node — the producer was never pulled in.
-    assert!(
-        combined.contains("(1 nodes)"),
-        "consumer's closure MUST be 1 node (producer not scheduled):\n{combined}"
+    // Exactly one recipe was queued — the producer was never scheduled
+    // alongside the consumer. (`(1 nodes)` on the `queued` line is the
+    // per-recipe unit count, NOT the closure size, so it does not
+    // discriminate here: in `sigil_path_does_order_producer_before_consumer`
+    // below, BOTH recipes print `queued  (1 nodes)` even though that
+    // closure has two recipes. Counting `queued` lines does discriminate:
+    // that control run prints two of them.)
+    assert_eq!(
+        combined.matches("queued").count(),
+        1,
+        "exactly one recipe (consumer) MUST be queued to run — if a second \
+         `queued` line appears, the producer was scheduled and this test's \
+         premise (COOK-246) is obsolete:\n{combined}"
     );
     assert!(
         !combined.contains("producer"),

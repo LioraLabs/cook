@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        InlineLua code="cook_cc.lib({ sources = srcs(\"neo/idlib\"),\n                  includes = {\"neo\",\"neo/idlib\"},\n                  test = {\"neo/idlib/tests\"},\n                  needs = {\"sdl2\"} })"
+        InlineLua code="cook_cc.lib({ sources = srcs(\"neo/idlib\"),\n                  includes = {\"neo\",\"neo/idlib\"},\n                  test = {\"neo/idlib/tests\"},\n                  ingredients = {\"neo/idlib/gen\"},\n                  needs = {\"sdl2\"} })"
   chores:
   register_blocks: []
   top_level_module_calls: []
