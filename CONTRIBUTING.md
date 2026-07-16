@@ -9,7 +9,7 @@ The Cookfile language is defined by the Cook Standard in [`standard/`](standard/
 Any change that affects Cookfile surface syntax, execution semantics, the Cook Lua API, or the module system MUST:
 
 1. Update `standard/` in the same commit that modifies the implementation.
-2. Add one entry to `standard/src/content/docs/appendix/D-changes.mdx` with a new stable `CS-NNNN` ID, a one-line summary, the sections affected, and the commit reference.
+2. Add one entry to `standard/src/content/docs/appendix/E-changes.mdx` with a new stable `CS-NNNN` ID, a one-line summary, the sections affected, and the commit reference.
 3. If the grammar changes, update `standard/src/content/docs/appendix/A-grammar.mdx`.
 4. If the change is observable from a Cookfile, add at least one case to `standard/conformance/positive/` or `standard/conformance/negative/`.
 
@@ -59,7 +59,7 @@ The Rust parser claims a Cook Standard version via the `pub const COOK_STANDARD_
 The Standard uses `MAJOR.MINOR` versioning pre-1.0 (see [`§ 0.5`](standard/src/content/docs/00-introduction.mdx)). A *cut* publishes a new MINOR by performing three actions in a single commit on `main`:
 
 1. Bump `standard/VERSION` to the next MINOR (e.g. `0.2` → `0.3`).
-2. Add a new entry to the top of the App. D **Versions** index in `standard/src/content/docs/appendix/D-changes.mdx`, listing the CSes the cut covers and the cut date.
+2. Add a new entry to the top of the App. E **Versions** index in `standard/src/content/docs/appendix/E-changes.mdx`, listing the CSes the cut covers and the cut date.
 3. Set each batched CS body's `**Version:**` line to the new version.
 
 After the commit lands on `main`, tag it:
