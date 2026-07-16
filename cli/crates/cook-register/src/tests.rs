@@ -3339,3 +3339,145 @@ cook.recipe("bbb", {}, function() cook.require_recipe("aaa") end)
         "the diagnostic must render the cycle as a PATH, not name a single node; got: {err}"
     );
 }
+
+/// A forced body must not jump ahead of its OWN static `requires`.
+///
+/// The seed loop's `topo` order puts `tools` before `gen` (`gen : tools`), and
+/// a driver that leans on that order for correctness is fine right up until a
+/// force bypasses the seed loop: `app` sorts first, its body forces `gen`, and
+/// `gen`'s body then runs at seed index 0 — before `tools` has been reached at
+/// seed index 1. `gen`'s own `cook.import("tools")` resolves **nil**, so the
+/// mislink is PARTIAL: the force itself worked (`app` does see `gen`'s export)
+/// while `gen` silently linked against nothing. That is worse than an outright
+/// failure, and it is the exact silent-failure class §22.8 exists to kill.
+///
+/// The fix makes `ensure_invoked` a proper DFS over the requires graph, which
+/// demotes `topo` from "load-bearing for correctness" to "deterministic tie-break
+/// among independent recipes".
+#[test]
+fn require_recipe_forced_body_evaluates_its_own_static_requires_first() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    // Seed order is what let this through, so pin it explicitly: the static
+    // sort of {app: [], gen: [tools], tools: []} is [app, tools, gen] — `app`
+    // (the forcer) lands BEFORE `tools` (the forced recipe's own dep).
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+    local g = cook.import("gen")
+    cook.exec("app " .. tostring(g and g.out or "NIL"), 1)
+end)
+cook.recipe("gen", {requires = {"tools"}}, function()
+    local t = cook.import("tools")
+    cook.export("gen", { out = "gen-using-" .. tostring(t and t.bin or "NIL") })
+end)
+cook.recipe("tools", {}, function()
+    cook.export("tools", { bin = "protoc" })
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "app"),
+        "app gen-using-protoc",
+        "forcing `gen` must also guarantee `gen`'s own declared dep `tools` is evaluated \
+         first — otherwise `gen`'s cook.import(\"tools\") is nil and the mislink is silent \
+         (\"app gen-using-NIL\")"
+    );
+}
+
+/// The same defect without any `cook.import` in the picture: the ordering
+/// itself is wrong, not some import artifact. `ccc` forces `ddd`, `ddd : eee`,
+/// and the static sort is [ccc, eee, ddd] — so a force that ignores `ddd`'s
+/// own dep list runs `ddd` at seed index 0, leaving `eee` unevaluated at the
+/// moment `ddd`'s body observes the world.
+#[test]
+fn require_recipe_forced_body_static_dep_runs_before_it_in_raw_eval_order() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.order = {}
+cook.recipe("ccc", {}, function()
+    cook.require_recipe("ddd")
+end)
+cook.recipe("ddd", {requires = {"eee"}}, function()
+    table.insert(_G.order, "ddd")
+    cook.exec("seen " .. table.concat(_G.order, ","), 1)
+end)
+cook.recipe("eee", {}, function()
+    table.insert(_G.order, "eee")
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "ddd"),
+        "seen eee,ddd",
+        "`eee` must have run by the time the forced `ddd`'s body observes eval order; \
+         a force that skips its own static deps yields \"seen ddd\""
+    );
+}
+
+/// Recursing into static `requires` must not evaluate anything twice. `ddd` is
+/// reached three ways — forced directly by `ccc`, pulled in as `bbb`'s static
+/// dep, and visited by the seed loop — and §22.8's at-most-once rule holds
+/// across all of them. A naive "invoke my deps, then me" that forgets to
+/// consult the visit map would run `ddd` once per inbound edge.
+#[test]
+fn require_recipe_static_dep_forced_by_two_requirers_evaluates_once() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.runs = 0
+cook.recipe("aaa", {}, function()
+    cook.require_recipe("bbb")
+    cook.require_recipe("ddd")
+end)
+cook.recipe("bbb", {requires = {"ddd"}}, function() end)
+cook.recipe("ccc", {}, function()
+    cook.require_recipe("ddd")
+end)
+cook.recipe("ddd", {}, function()
+    _G.runs = _G.runs + 1
+    cook.exec("ddd run " .. _G.runs, 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "ddd"),
+        "ddd run 1",
+        "a recipe reached as a forced target, as a forced requirer's static dep, and by \
+         the seed loop must still be evaluated exactly once"
+    );
+}
+
+/// The DFS must carry the force DOWN the static chain, not just to its first
+/// hop. `app` forces `gen`; `gen : agen` where `agen` is a parametric chore
+/// that every skip arm declines to invoke unless `forced`. `agen` sorts before
+/// `app`, so the seed loop reaches and skips it first. If the recursion visits
+/// `agen` un-forced, the skip stands, `agen` registers zero units — while the
+/// `gen : agen` edge still puts it in the build closure. Register and engine
+/// then disagree about what got built, which is the same non-conformance the
+/// direct-force case already forbids.
+#[test]
+fn require_recipe_force_propagates_through_static_dep_to_skipped_chore() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+end)
+cook.recipe("gen", {requires = {"agen"}}, function() end)
+cook.__register_surface_chore("agen",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "agen"),
+        "generate world",
+        "the force must reach `agen` THROUGH `gen`'s static dep list: a transitively \
+         forced recipe is in the build closure just as surely as a directly forced one"
+    );
+}

@@ -408,9 +408,20 @@ pub fn register_cookfile(
     //     cannot know about an edge a body declares at run time via
     //     `cook.require_recipe` (Standard §22.8, CS-0144). The driver's
     //     re-entrant `ensure_invoked` is what actually orders the pass; the
-    //     seed loop just guarantees every recipe is reached. A Cookfile that
-    //     never calls the API therefore invokes bodies in exactly the old
-    //     order.
+    //     seed loop just guarantees every recipe is reached.
+    //
+    //     `ensure_invoked` recurses into BOTH edge kinds — a recipe's local
+    //     static `requires` and the dynamic edges its body declares — so it is
+    //     a full DFS over the requires graph and `topo` is NOT load-bearing for
+    //     correctness. It only pins a deterministic order among INDEPENDENT
+    //     recipes. That matters: any order that reaches every recipe would be
+    //     correct, so leaning on this one to have already evaluated a forced
+    //     recipe's static deps is exactly the assumption that let a forced body
+    //     jump ahead of its own dep list and read a nil export.
+    //
+    //     A Cookfile that never calls the API invokes bodies in exactly the old
+    //     order: `topo` already yields deps-first, so every recursion the driver
+    //     adds finds its target already visited and is a no-op.
     let driver = Rc::new(BodyDriver {
         builder: builder.clone(),
         recipes: recipes.clone(),
@@ -446,17 +457,25 @@ pub fn register_cookfile(
 
     // 12a. (Standard §22.8, CS-0144) Cycle detection over the MERGED
     //      `requires` — static dep-lists plus every edge the bodies just
-    //      declared. Re-running the step-11 sort is what makes §22.8's "taken
-    //      together with all other cross-recipe edges" true: step 11 sorted
-    //      the STATIC graph before any body ran, and the driver's `Visiting`
-    //      check only sees a cycle it actually recurses into. Neither catches
-    //      a MIXED cycle — `A : B` static plus `B`'s body forcing `A` — because
-    //      at force time `A` is not on the invocation stack, so the force
-    //      returns cleanly and the pass completes. The cycle is real
-    //      nonetheless, and §22.8 makes rendering its PATH a MUST; the
-    //      engine's own analyzer is not a substitute, since it names a single
-    //      node, renders no path, and only looks inside the target's closure
-    //      (so `cook list` would see nothing at all).
+    //      declared — which is what makes §22.8's "taken together with all
+    //      other cross-recipe edges" true. §22.8 makes rendering the cycle
+    //      PATH a MUST; the engine's own analyzer is not a substitute, since
+    //      it names a single node, renders no path, and only looks inside the
+    //      target's closure (so `cook list` would see nothing at all).
+    //
+    //      DEFENCE IN DEPTH as of the deps-first fix. The driver now recurses
+    //      into each recipe's local static `requires` as well as its dynamic
+    //      edges, so its `Visiting` check walks the whole merged graph and
+    //      catches every cycle in it — including the MIXED shape (`A : B`
+    //      static plus `B`'s body forcing `A`) that originally motivated this
+    //      step, and which the driver genuinely could not see back when it
+    //      recursed on dynamic edges alone. Disabling this block leaves the
+    //      whole suite green. It is retained anyway: its redundancy rests on
+    //      the driver traversing EVERY edge source that can reach `names`, an
+    //      invariant a future edge source could quietly break — and the
+    //      failure mode if it does is a silently accepted cycle, which is the
+    //      class of bug this ticket exists to kill. The cost is one sort over
+    //      an in-memory map, once per pass.
     {
         let merged: BTreeMap<String, Vec<String>> = names
             .iter()
@@ -690,22 +709,11 @@ impl BodyDriver {
         self.visit.borrow_mut().insert(name.to_string(), VisitState::Visiting);
         self.path.borrow_mut().push(name.to_string());
 
-        // Both re-entrancy hazards, saved across the nested invocation:
-        //   - the body slot is a single shared `Option<BodyCaptureState>`, so
-        //     without this the callee's units land in the caller's recipe;
-        //   - `setup_recipe_context` rebinds the Lua `recipe` global, so
-        //     without this the caller sees the callee's `recipe.name` after
-        //     the call returns.
-        // Both are no-ops at the top level (the slot is already `None` and
-        // the next seed iteration rebinds `recipe` regardless), so the
-        // no-`require_recipe` path is unchanged.
-        let saved_body = self.body_slot.borrow_mut().take();
-        let saved_recipe_global: LuaValue = lua.globals().get("recipe")?;
+        // Marked `Visiting` and pushed on `path` BEFORE the deps recursion, so
+        // a cycle through the static edges renders the same path as one through
+        // the dynamic ones.
+        let result = self.visit_requires_then_body(lua, name, forced);
 
-        let result = self.invoke_body(lua, name, forced);
-
-        *self.body_slot.borrow_mut() = saved_body;
-        lua.globals().set("recipe", saved_recipe_global)?;
         self.path.borrow_mut().pop();
 
         // Every exit records a terminal state, symmetric with the `path.pop()`
@@ -728,6 +736,98 @@ impl BodyDriver {
             }
         };
         self.visit.borrow_mut().insert(name.to_string(), outcome);
+        Ok(())
+    }
+
+    /// `name`'s own static `requires` first, then `name`'s body.
+    ///
+    /// Split out of `ensure_invoked` so that BOTH failure sources — a dep that
+    /// raised and a body that raised — land on the single terminal-state record
+    /// there. A dep failure must mark `name` `Failed` too: `name`'s body never
+    /// ran, so leaving `Visiting` behind would let the seed loop's later visit
+    /// read the abandoned mark as a cycle and fabricate a diagnostic over the
+    /// real one — the same hazard the body-error path already guards.
+    fn visit_requires_then_body(
+        &self,
+        lua: &Lua,
+        name: &str,
+        forced: bool,
+    ) -> Result<Outcome, RegisterError> {
+        self.ensure_static_requires(lua, name, forced)?;
+
+        // Both re-entrancy hazards, saved across the nested invocation:
+        //   - the body slot is a single shared `Option<BodyCaptureState>`, so
+        //     without this the callee's units land in the caller's recipe;
+        //   - `setup_recipe_context` rebinds the Lua `recipe` global, so
+        //     without this the caller sees the callee's `recipe.name` after
+        //     the call returns.
+        // Both are no-ops at the top level (the slot is already `None` and
+        // the next seed iteration rebinds `recipe` regardless), so the
+        // no-`require_recipe` path is unchanged. The deps recursion above needs
+        // no save/restore of its own — each nested `ensure_invoked` performs
+        // this same save/restore around its own body.
+        let saved_body = self.body_slot.borrow_mut().take();
+        let saved_recipe_global: LuaValue = lua.globals().get("recipe")?;
+
+        let result = self.invoke_body(lua, name, forced);
+
+        *self.body_slot.borrow_mut() = saved_body;
+        lua.globals().set("recipe", saved_recipe_global)?;
+        result
+    }
+
+    /// Evaluate every LOCAL static `requires` of `name` before `name`'s body.
+    ///
+    /// Without this the visit is not a DFS: it recurses only into the edges a
+    /// body declares via `cook.require_recipe`, and leans on the seed loop's
+    /// `topo` order to have already evaluated the static ones. A force bypasses
+    /// the seed loop, so when the requirer sorts before the forced recipe's own
+    /// static dep, the forced body ran before that dep — and its
+    /// `cook.import(dep)` returned nil. The mislink was PARTIAL (the force
+    /// itself worked), hence silent, which is the failure class §22.8 exists to
+    /// kill; it also contradicted §22.8's own "registration order within a pass
+    /// is dependency-driven".
+    ///
+    /// Recursing here makes `topo` non-load-bearing for correctness — it now
+    /// only pins a deterministic order among INDEPENDENT recipes — and closes
+    /// the merged-graph cycle hole as a side effect: with every static edge
+    /// walked, the `Visiting` check catches a mixed static/dynamic cycle at the
+    /// moment it is traversed (step 12a is retained as a belt-and-braces check;
+    /// see the note there).
+    ///
+    /// `forced` propagates: the engine's analyzer builds the build closure from
+    /// `requires`, so if `name` is in the closure then so is every recipe it
+    /// requires. A dep visited un-forced could hit a skip arm and register zero
+    /// units while the edge still had it built — the same register/engine
+    /// disagreement a direct force already refuses to allow.
+    ///
+    /// Refs absent from the local set are skipped, exactly as
+    /// `local_topological_sort` does: those are cross-Cookfile `requires`, and
+    /// the engine's cross-cookfile dep analyzer owns resolving them.
+    fn ensure_static_requires(
+        &self,
+        lua: &Lua,
+        name: &str,
+        forced: bool,
+    ) -> Result<(), RegisterError> {
+        // Cloned out, and the borrow dropped, before any recursion: the callee
+        // may register probes or re-enter through `cook.require_recipe`, and a
+        // live `recipes` borrow across that is a `BorrowMutError`.
+        let deps: Vec<String> = {
+            let registry = self.recipes.borrow();
+            match registry.iter().find(|r| r.name == name) {
+                Some(recipe) => recipe.metadata.requires.clone(),
+                // `invoke_body` raises the real `RecipeNotFound` a few lines
+                // on; don't pre-empt its diagnostic from here.
+                None => return Ok(()),
+            }
+        };
+        for dep in deps {
+            let local = self.recipes.borrow().iter().any(|r| r.name == dep);
+            if local {
+                self.ensure_invoked(lua, &dep, forced)?;
+            }
+        }
         Ok(())
     }
 
