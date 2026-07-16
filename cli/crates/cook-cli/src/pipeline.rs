@@ -1233,8 +1233,8 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|(_, kind, _)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
-            .map(|(name, _, _)| name)
+            .filter(|r| matches!(r.kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|r| r.name)
             .collect(),
     )
 }
@@ -1271,9 +1271,7 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
     let Ok(names) = pipeline::list_workspace_names(&workspace, None, &globals.set) else {
         return;
     };
-    warn_if_invoked_builtin_is_registered(
-        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
-    );
+    warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,24 +1290,23 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let workspace = load_workspace(globals)?;
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
-    warn_if_invoked_builtin_is_registered(
-        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
-    );
+    warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
-    for (name, kind, params) in &names {
-        let suffix = if params.is_empty() {
+    for r in &names {
+        let suffix = if r.params.is_empty() {
             String::new()
         } else {
             format!(
                 " {}",
-                params
+                r.params
                     .iter()
                     .map(|p| p.display_token())
                     .collect::<Vec<_>>()
                     .join(" ")
             )
         };
-        match kind {
+        let name = &r.name;
+        match r.kind {
             cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
             cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
         }
