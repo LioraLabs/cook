@@ -379,6 +379,12 @@ pub struct RegisteredRecipePub {
     /// so `cook menu` can render `chore greet caller who="world"` instead of
     /// a bare name.
     pub params: Vec<crate::capture::ChoreParamMeta>,
+    /// The module-qualified function name that minted this recipe (e.g.
+    /// `"cook_pnpm.workspace"`), when the author opted in via the
+    /// `cook.recipe(name, {origin = "..."}, body)` field. `None` when no
+    /// `origin` was supplied, and always `None` for surface (`recipe NAME` /
+    /// `chore NAME`) registrations — see `capture::parse_origin_meta`.
+    pub origin: Option<String>,
 }
 
 /// Whether a registered name is a normal recipe or a chore.

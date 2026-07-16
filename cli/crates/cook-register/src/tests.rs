@@ -1468,6 +1468,151 @@ fn list_names_returns_registrations_without_invoking_bodies() {
     assert_eq!(by_name["b"].kind, crate::RecipeKind::Recipe);
 }
 
+// -----------------------------------------------------------------------
+// CS-0143 — `cook.recipe` records an `origin` annotation.
+// -----------------------------------------------------------------------
+
+#[test]
+fn list_names_surfaces_origin_when_present() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    let lua_src = r#"
+        cook.recipe("workspace", {requires = {}, origin = "cook_pnpm.workspace"}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, lua_src).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].origin, Some("cook_pnpm.workspace".to_string()));
+}
+
+#[test]
+fn list_names_surfaces_none_origin_when_absent() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    let lua_src = r#"
+        cook.recipe("build", {requires = {}}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, lua_src).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].origin, None);
+}
+
+#[test]
+fn list_names_surface_recipe_never_carries_origin() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // A surface `recipe NAME` block lowers via `cook.__register_surface`,
+    // never `cook.recipe` — it structurally cannot carry an origin. This
+    // pins that guarantee: `parse_origin_meta` is only ever called from the
+    // `cook.recipe` closure, never from `parse_meta_lists` (shared with the
+    // surface paths).
+    let lua_src = r#"
+        cook.__register_surface("build",
+            {ingredients = {}, excludes = {}, requires = {}, __line = 7},
+            function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, lua_src).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].origin, None);
+}
+
+#[test]
+fn list_names_surface_chore_never_carries_origin() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // Same guarantee as the surface-recipe case, for the third registration
+    // path: `cook.__register_surface_chore` also shares `parse_meta_lists`
+    // and must never pick up an origin. Passing one explicitly proves the
+    // field is ignored on this path rather than merely absent from the
+    // fixture.
+    let lua_src = r#"
+        cook.__register_surface_chore("release",
+            {ingredients = {}, excludes = {}, requires = {}, params = {},
+             origin = "cook_pnpm.workspace", __line = 3},
+            function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, lua_src).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].kind, crate::RecipeKind::Chore);
+    assert_eq!(names[0].origin, None);
+}
+
+#[test]
+fn list_names_rejects_non_string_origin() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    let lua_src = r#"
+        cook.recipe("build", {requires = {}, origin = 42}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(builder, lua_src).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("origin"), "error must name the field: {msg}");
+    // The offending Lua type must be named, not merely the field. This also
+    // pins that `42` is rejected outright rather than silently coerced to
+    // "42" by mlua's `String: FromLua` impl — the CS-0127 hazard that
+    // `parse_origin_meta` matches on `LuaValue` specifically to avoid.
+    assert!(
+        msg.contains("integer"),
+        "error must name the offending type: {msg}"
+    );
+    assert!(
+        msg.contains("must be a string"),
+        "error must state the expected type: {msg}"
+    );
+}
+
+#[test]
+fn list_names_rejects_empty_string_origin() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // An empty string is a wrong-typed-adjacent authoring mistake: reject
+    // it with the same error class as a non-string origin (an origin that
+    // would render as `(from )` is worse than none at all).
+    let lua_src = r#"
+        cook.recipe("build", {requires = {}, origin = ""}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(builder, lua_src).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("origin"), "error must name the field: {msg}");
+    assert!(
+        msg.contains("non-empty string"),
+        "error must state the expected type: {msg}"
+    );
+}
+
+#[test]
+fn register_cookfile_propagates_origin_through_full_pass() {
+    use crate::{register_cookfile, RegisterSessionBuilder};
+
+    // origin must survive not only the no-body-invocation `list_names`
+    // path but also the full register pass (body invocation, unit capture,
+    // DAG discovery).
+    let lua_src = r#"
+        cook.recipe("workspace", {requires = {}, origin = "cook_pnpm.workspace"}, function()
+            cook.exec("echo hi", 0)
+        end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+    assert_eq!(registered.names.len(), 1);
+    assert_eq!(
+        registered.names[0].origin,
+        Some("cook_pnpm.workspace".to_string())
+    );
+}
+
 #[test]
 fn register_cookfile_accepts_top_level_probe() {
     use crate::{register_cookfile, RegisterSessionBuilder};

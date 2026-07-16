@@ -1,0 +1,33 @@
+# CS-0143: `cook list` annotates module-minted recipes with their `origin`,
+# while plain user recipes are printed unchanged.
+#
+# The Cookfile mixes all three categories:
+#   - plain user recipes/chore: `build`, `deploy`, `greet`
+#   - data-driven fan-out: web:build / api:build / docs-site:build, each
+#     minted from a `for` loop with origin = "cook_pnpm.workspace"
+#   - a support recipe: cc:config-header, minted once with
+#     origin = "cook_cc.config_header"
+#
+# The second [[run]] invokes the support recipe directly by name and
+# asserts it executes and produces output — encoding the ruling that
+# support recipes are ANNOTATED, NOT REFUSED: `cook cc:config-header`
+# must run exactly like any surface recipe (Standard §22.6 para 2).
+
+[[run]]
+args = ["list"]
+[run.assert]
+output_contains = [
+    "recipe build",
+    "recipe deploy",
+    "chore  greet caller who=\"world\"",
+    "recipe web:build         (from cook_pnpm.workspace)",
+    "recipe api:build         (from cook_pnpm.workspace)",
+    "recipe docs-site:build   (from cook_pnpm.workspace)",
+    "recipe cc:config-header  (from cook_cc.config_header)",
+]
+
+[[run]]
+args = ["cc:config-header"]
+[run.assert]
+exists = ["out/config.h"]
+contains = { "out/config.h" = "config.h rendered" }

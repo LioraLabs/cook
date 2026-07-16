@@ -1233,8 +1233,8 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|(_, kind, _)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
-            .map(|(name, _, _)| name)
+            .filter(|r| matches!(r.kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|r| r.name)
             .collect(),
     )
 }
@@ -1271,16 +1271,24 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
     let Ok(names) = pipeline::list_workspace_names(&workspace, None, &globals.set) else {
         return;
     };
-    warn_if_invoked_builtin_is_registered(
-        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
-    );
+    warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 }
 
 // ---------------------------------------------------------------------------
 // cmd_menu
 // ---------------------------------------------------------------------------
 
-/// Print recipe and chore names, one per kind-prefixed line.
+/// Print recipe and chore names, one per kind-prefixed line, annotating any
+/// recipe a module minted with the origin it declared (CS-0143):
+///
+/// ```text
+///   recipe build
+///   recipe web:build         (from cook_pnpm.workspace)
+///   recipe cc:config-header  (from cook_cc.config_header)
+/// ```
+///
+/// An annotation is attribution only — it never gates dispatch, so every
+/// name listed here runs when typed (Standard §22.6).
 ///
 /// Backed by the cheap `cook_register::list_names` path through the
 /// pipeline-layer `list_workspace_names` helper, so Lua-registered recipes
@@ -1292,26 +1300,63 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let workspace = load_workspace(globals)?;
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
-    warn_if_invoked_builtin_is_registered(
-        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
-    );
+    warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
-    for (name, kind, params) in &names {
-        let suffix = if params.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " {}",
-                params
-                    .iter()
-                    .map(|p| p.display_token())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
+    // Pass 1: render `{name}{suffix}` per entry.
+    let rendered: Vec<(String, &cook_engine::cook_register::RegisteredRecipePub)> = names
+        .iter()
+        .map(|r| {
+            let suffix = if r.params.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " {}",
+                    r.params
+                        .iter()
+                        .map(|p| p.display_token())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            };
+            (format!("{}{suffix}", r.name), r)
+        })
+        .collect();
+
+    // Pass 2: the annotation column — the max rendered width across
+    // *annotated* entries only. Unannotated entries never contribute, so a
+    // long user recipe name cannot push the `(from …)` column out, and a
+    // workspace with no annotations renders byte-identically to one from
+    // before annotations existed.
+    //
+    // Derived from `rendered` rather than accumulated during pass 1: this
+    // is what guarantees the `width - len` subtraction in pass 3 cannot
+    // underflow, since the max is taken over exactly the same strings, and
+    // exactly the same `origin.is_some()` subset, that pass 3 pads.
+    let annotated_width: Option<usize> = rendered
+        .iter()
+        .filter(|(_, r)| r.origin.is_some())
+        .map(|(name_and_suffix, _)| name_and_suffix.chars().count())
+        .max();
+
+    // Pass 3: print.
+    for (name_and_suffix, r) in &rendered {
+        let label = match r.kind {
+            cook_engine::cook_register::RecipeKind::Recipe => "recipe ",
+            cook_engine::cook_register::RecipeKind::Chore => "chore  ",
         };
-        match kind {
-            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
-            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
+        match (&r.origin, annotated_width) {
+            (Some(origin), Some(width)) => {
+                // `width` is the max over the annotated set, which includes
+                // this entry, so `width >= len` holds by construction.
+                let gutter = width - name_and_suffix.chars().count() + 2;
+                println!("  {label}{name_and_suffix}{:gutter$}(from {origin})", "");
+            }
+            // An annotated entry always contributes to `annotated_width`, so
+            // `(Some(_), None)` is unreachable; it degrades to the plain line
+            // rather than panicking on a listing surface.
+            _ => {
+                println!("  {label}{name_and_suffix}");
+            }
         }
     }
 

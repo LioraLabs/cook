@@ -1,0 +1,19 @@
+recipe build
+    cook "out/app.txt" {
+        echo "built" > "$<out>"
+    }
+
+recipe deploy : build
+
+chore greet caller who="world"
+    echo "hello $<who>"
+
+register
+    for _, pkg in ipairs({ "web", "api", "docs-site" }) do
+        cook.recipe(pkg .. ":build", { requires = {}, origin = "cook_pnpm.workspace" }, function()
+            cook.exec("echo building " .. pkg, 0)
+        end)
+    end
+    cook.recipe("cc:config-header", { requires = {}, origin = "cook_cc.config_header" }, function()
+        cook.exec("mkdir -p out && printf 'config.h rendered\\n' > out/config.h", 0)
+    end)

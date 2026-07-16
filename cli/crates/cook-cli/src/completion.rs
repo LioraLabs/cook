@@ -189,8 +189,8 @@ fn workspace_names() -> Vec<(String, RecipeKind)> {
     };
     names
         .into_iter()
-        .filter(|(name, _, _)| !is_module_internal(name))
-        .map(|(name, kind, _)| (name, kind))
+        .filter(|r| !is_module_internal(&r.name))
+        .map(|r| (r.name, r.kind))
         .collect()
 }
 
