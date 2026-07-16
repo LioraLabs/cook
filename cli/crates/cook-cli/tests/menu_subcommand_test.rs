@@ -407,6 +407,45 @@ fn list_and_menu_byte_equal_with_annotations() {
     );
 }
 
+/// An origin-annotated recipe minted inside an *imported* member lists under
+/// its workspace-qualified name, and the annotation column is measured over
+/// that qualified name — not the bare one it was registered with.
+///
+/// Pins the interaction between `list_workspace_names`' `{prefix}.{name}`
+/// rewrite (cook-engine/src/pipeline/registers.rs) and `cmd_menu`'s column:
+/// the rewrite happens before the width is taken, so a long prefix widens
+/// the gutter rather than pushing `(from …)` out of alignment.
+#[test]
+fn imported_member_origin_lists_under_qualified_name() {
+    let tmp = TempDir::new().expect("tempdir");
+    std::fs::create_dir(tmp.path().join("member")).expect("mkdir member");
+    write_cookfile(tmp.path(), "import sub ./member\n");
+    write_cookfile(
+        &tmp.path().join("member"),
+        "register\n    \
+         cook.recipe(\"pkg:build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function() end)\n",
+    );
+
+    let out = run_cook(tmp.path(), &["list"]);
+    assert!(
+        out.status.success(),
+        "cook list failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+
+    // The annotation must sit on the qualified line, and be measured off the
+    // qualified name — not the bare `pkg:build` it was registered with.
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("pkg:build"))
+        .unwrap_or_else(|| panic!("qualified line absent; stdout:\n{stdout}"));
+    assert_eq!(
+        line, "  recipe sub.pkg:build  (from cook_pnpm.workspace)",
+        "imported minted recipe must list qualified, annotated, gutter-aligned off the qualified name; stdout:\n{stdout}"
+    );
+}
+
 #[test]
 fn qualified_imported_recipe_does_not_collide_with_builtin() {
     let tmp = TempDir::new().expect("tempdir");

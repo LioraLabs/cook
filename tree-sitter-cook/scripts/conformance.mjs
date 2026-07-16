@@ -88,7 +88,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'App. A.2 recipe-vs-chore name collision — parse-time semantic, not syntactic'],
   ['recipe-name-collision-surface-vs-dynamic',
    'recipe name collision between surface and dynamic — register-time semantic'],
-  // CS-0127: `cook.recipe`'s `origin` metadata field is any Lua value
+  // CS-0143: `cook.recipe`'s `origin` metadata field is any Lua value
   // syntactically; only the register-phase `parse_origin_meta` check knows
   // it must be a (non-empty) string.
   ['recipe-origin-not-a-string',

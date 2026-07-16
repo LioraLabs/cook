@@ -1469,7 +1469,7 @@ fn list_names_returns_registrations_without_invoking_bodies() {
 }
 
 // -----------------------------------------------------------------------
-// COOK-247 Task 1 — `cook.recipe` records an `origin` annotation.
+// CS-0143 — `cook.recipe` records an `origin` annotation.
 // -----------------------------------------------------------------------
 
 #[test]

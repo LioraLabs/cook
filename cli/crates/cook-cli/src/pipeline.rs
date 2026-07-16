@@ -1278,7 +1278,17 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
 // cmd_menu
 // ---------------------------------------------------------------------------
 
-/// Print recipe and chore names, one per kind-prefixed line.
+/// Print recipe and chore names, one per kind-prefixed line, annotating any
+/// recipe a module minted with the origin it declared (CS-0143):
+///
+/// ```text
+///   recipe build
+///   recipe web:build         (from cook_pnpm.workspace)
+///   recipe cc:config-header  (from cook_cc.config_header)
+/// ```
+///
+/// An annotation is attribution only — it never gates dispatch, so every
+/// name listed here runs when typed (Standard §22.6).
 ///
 /// Backed by the cheap `cook_register::list_names` path through the
 /// pipeline-layer `list_workspace_names` helper, so Lua-registered recipes

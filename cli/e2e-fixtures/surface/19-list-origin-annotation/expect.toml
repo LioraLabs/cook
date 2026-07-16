@@ -1,5 +1,5 @@
-# Task 5 (end-to-end proof): `cook list` annotates module-minted recipes
-# with their `origin`, while plain user recipes are printed unchanged.
+# CS-0143: `cook list` annotates module-minted recipes with their `origin`,
+# while plain user recipes are printed unchanged.
 #
 # The Cookfile mixes all three categories:
 #   - plain user recipes/chore: `build`, `deploy`, `greet`

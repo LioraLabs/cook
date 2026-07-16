@@ -196,15 +196,22 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
     Ok((ingredients, excludes, requires))
 }
 
-/// Uniform register-phase type error for a `cook.recipe` field (CS-0127):
-/// a wrong-typed field is a hard error naming the field, the expected type,
+/// Uniform register-phase type error for a `cook.recipe` field: a
+/// wrong-typed field is a hard error naming the field, the expected type,
 /// and the received Lua type — never silently coerced to its default.
-/// Mirrors the `cook.add_unit` precedent (`unit_api.rs::type_err`), but that
-/// helper hardcodes the `cook.add_unit:` prefix and lives in a different
-/// module, so this is a `cook.recipe`-scoped sibling rather than a reuse.
+///
+/// Applies the field-typing discipline `cook.add_unit` established under
+/// CS-0127 to `cook.recipe`'s metadata table. The citation is CS-0143, not
+/// CS-0127: CS-0127 covers §22.1/§22.4/§22.5.7 and says nothing about
+/// `cook.recipe` or `origin`, so pointing a reader at it would send them to
+/// an entry that does not describe the error they hit. CS-0143 is the entry
+/// that specifies §22.3's `origin` key and this rejection.
+///
+/// Mirrors `unit_api.rs::type_err`, which hardcodes the `cook.add_unit:`
+/// prefix — hence a sibling rather than a reuse.
 fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
-        "cook.recipe: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.3, CS-0127)"
+        "cook.recipe: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.3, CS-0143)"
     ))
 }
 
@@ -217,10 +224,10 @@ fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
 ///
 /// - Absent, or explicitly `nil` → `Ok(None)`.
 /// - A non-empty Lua string → `Ok(Some(s))`.
-/// - An empty string → a CS-0127 error. An empty origin would render as
+/// - An empty string → a register error. An empty origin would render as
 ///   `(from )`, which is worse than no annotation at all, so it is treated
 ///   as a wrong-typed-adjacent authoring mistake rather than accepted.
-/// - Any other type (number, boolean, table, function) → a CS-0127 error
+/// - Any other type (number, boolean, table, function) → a register error
 ///   naming the field and the offending Lua type.
 ///
 /// Deliberately NOT folded into `parse_meta_lists`: that helper is shared

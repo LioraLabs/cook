@@ -1,4 +1,5 @@
-§22.3, CS-0127. `cook.recipe("build", {..., origin = 42}, fn)` parses
+§22.3, CS-0143 (applying the field-typing discipline CS-0127 established
+for `cook.add_unit`). `cook.recipe("build", {..., origin = 42}, fn)` parses
 cleanly — the `origin` field is just a metadata-table entry, syntactically
 indistinguishable from a string-valued one — but the register pass rejects
 it: `origin` must be a Lua string, not silently coerced from a number.
