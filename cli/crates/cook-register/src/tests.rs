@@ -2626,3 +2626,187 @@ recipe deal
     assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
     assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
 }
+
+// -----------------------------------------------------------------------
+// cook.require_recipe() tests (Standard §22.8, CS-0144)
+// -----------------------------------------------------------------------
+
+/// Build a minimal Lua VM with `cook.require_recipe` wired against a
+/// caller-supplied body slot, pre-stamped as if a recipe body named
+/// `current_recipe_bare` were already active — mirroring the stamp
+/// `engine.rs` performs immediately before invoking a recipe body. Lets the
+/// accumulator (`dynamic_requires`) and the self-reference check be
+/// exercised directly: `dynamic_requires` isn't surfaced anywhere else yet
+/// (forcing/merging into `requires` is a later task), so there is no
+/// observable side effect to assert on through the full `register_cookfile`
+/// pipeline. Mirrors the existing `make_unit_api_lua` scaffold below.
+fn require_recipe_vm(current_recipe_bare: &str) -> (mlua::Lua, SharedBodySlot) {
+    let lua = mlua::Lua::new();
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    let mut body = BodyCaptureState::new();
+    body.current_recipe = Some(current_recipe_bare.to_string());
+    body.current_recipe_bare = Some(current_recipe_bare.to_string());
+    let body_slot: SharedBodySlot = std::rc::Rc::new(std::cell::RefCell::new(Some(body)));
+    crate::context::register_require_recipe_api(&lua, body_slot.clone()).unwrap();
+    (lua, body_slot)
+}
+
+/// A top-level call (outside any recipe body — the body slot is `None`
+/// during top-level load) is a hard error naming the API and citing the
+/// spec. Mirrors `recipe_name_errors_outside_recipe_body`.
+#[test]
+fn require_recipe_errors_outside_recipe_body_top_level() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.require_recipe("anything")
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "top-level call must error");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// A surface `register` block lowers to top-level Lua that runs before the
+/// body-invocation loop opens the body slot, so a call there must also hard
+/// error — same underlying `body_slot`/`current_recipe` `None` signal as
+/// the top-level case, exercised through the real surface parser + codegen
+/// this time rather than hand-written Lua.
+#[test]
+fn require_recipe_errors_outside_recipe_body_register_block() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.require_recipe("build")
+
+recipe build
+    cook "out.txt" {
+        echo build > $<out>
+    }
+"#;
+    let result = register_surface(dir.path(), cookfile);
+    assert!(result.is_err(), "a register block call must error");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// A non-string argument is rejected outright — matched on the raw Lua
+/// value (CS-0143's `parse_origin_meta` precedent), never coerced. An
+/// integer must NOT be silently turned into its decimal string.
+#[test]
+fn require_recipe_rejects_non_string_argument() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe(42)"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("`name`") && err.contains("must be a string"), "error must name the field and accepted form; got: {err}");
+    assert!(!err.contains("42"), "the integer must not be coerced into the message; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// An empty string is rejected — an empty dependency name is never
+/// meaningful.
+#[test]
+fn require_recipe_rejects_empty_string() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe("")"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("non-empty"), "error must reject the empty string; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// Self-reference — the argument equals the enclosing recipe's own bare
+/// name — is a hard error naming the recipe, distinct from the general
+/// cycle-detection path (a one-element cycle deserves its own message).
+#[test]
+fn require_recipe_rejects_self_reference() {
+    let (lua, _slot) = require_recipe_vm("build");
+    let err = lua
+        .load(r#"cook.require_recipe("build")"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
+}
+
+/// Two calls naming the same recipe record exactly one entry, in the order
+/// first seen.
+#[test]
+fn require_recipe_dedups_repeated_names() {
+    let (lua, slot) = require_recipe_vm("build");
+    lua.load(
+        r#"
+        cook.require_recipe("a")
+        cook.require_recipe("b")
+        cook.require_recipe("a")
+    "#,
+    )
+    .exec()
+    .unwrap();
+    let got = slot.borrow().as_ref().unwrap().dynamic_requires.clone();
+    assert_eq!(got, vec!["a".to_string(), "b".to_string()], "must dedup while preserving first-seen order");
+}
+
+/// The critical regression guard: `current_recipe` holds the QUALIFIED
+/// name (`engine.rs` stamps `body.current_recipe = Some(qualified_name)`),
+/// but `cook.require_recipe`'s argument is bare (the settled design
+/// ruling). Registering `build` under a qualified prefix (`lib.build`) and
+/// then calling `cook.require_recipe("build")` (bare) from inside its own
+/// body MUST still be caught as a self-reference — comparing against the
+/// qualified `current_recipe` instead of `current_recipe_bare` would make
+/// this silently pass (dynamic_requires would just gain a stray "build"
+/// entry and register_cookfile would return Ok).
+#[test]
+fn require_recipe_self_reference_detected_under_qualified_prefix() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_qualified_prefix("lib".to_string());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.require_recipe("build")
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(
+        result.is_err(),
+        "self-reference must be caught even under a qualified prefix (bare-vs-qualified mix-up would silently pass)"
+    );
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
+}
+
+/// A dependency on a DIFFERENT recipe, called from inside a real recipe
+/// body reached via the full `register_cookfile` pipeline (not the
+/// low-level VM scaffold), must not error — proves the guard rails don't
+/// false-positive on the ordinary case.
+#[test]
+fn require_recipe_accepts_distinct_recipe_name() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.require_recipe("other")
+    cook.exec("echo hi", 1)
+end)
+cook.recipe("other", {}, function()
+    cook.exec("echo other", 1)
+end)
+"#;
+    let result = register_one(rt, lua_src, "build");
+    assert_eq!(result.units.len(), 1, "require_recipe must not itself capture a unit");
+}

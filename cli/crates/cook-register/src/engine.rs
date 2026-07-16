@@ -498,13 +498,17 @@ pub fn register_cookfile(
         }
 
         // Stamp current_recipe on the body so cook.add_test defaults the
-        // suite field correctly (CS-0061 §3.2).
+        // suite field correctly (CS-0061 §3.2). current_recipe_bare is
+        // stamped alongside it, from the same (bare) `name` the `topo`
+        // vec carries, for cook.require_recipe's self-reference check
+        // (Standard §22.8, CS-0144) — see BodyCaptureState::current_recipe_bare.
         {
             let mut slot = body_slot.borrow_mut();
             let body = slot
                 .as_mut()
                 .expect("body slot just opened above");
             body.current_recipe = Some(qualified_name.clone());
+            body.current_recipe_bare = Some(name.clone());
         }
 
         // Call the body. Any error short-circuits — earlier bodies' captures
@@ -1761,6 +1765,7 @@ fn install_remaining_apis(
     crate::export_api::register_export_api(lua, builder.export_store.clone())?;
     crate::test_api::register_test_api(lua, body_slot.clone())?;
     crate::context::register_recipe_name_api(lua, body_slot.clone())?;
+    crate::context::register_require_recipe_api(lua, body_slot.clone())?;
     crate::dep_output_api::register_dep_output_api(
         lua,
         builder.terminal_outputs.clone(),

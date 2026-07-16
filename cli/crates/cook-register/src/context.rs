@@ -116,6 +116,77 @@ pub fn register_recipe_name_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<
     Ok(())
 }
 
+/// Register `cook.require_recipe(name)` on the cook global table (Standard
+/// §22.8, CS-0144).
+///
+/// Declares that the enclosing recipe's register-phase body depends on
+/// another recipe, named BARE — the same unqualified namespace the
+/// `requires` metadata field and the surface `recipe A : B` dep-list use.
+/// Accumulates into `BodyCaptureState.dynamic_requires` (order-preserving,
+/// de-duplicated). This task owns only the API surface, its guard rails,
+/// and the accumulator; actually forcing the named recipe's body and
+/// merging the edge into `requires` is a later task.
+///
+/// Sibling to `register_recipe_name_api` immediately above: same
+/// registration pattern, same "only inside a recipe body" error voice,
+/// reading the same `body_slot`/`current_recipe` `None` signal — one check
+/// covers every outside-a-body caller (top level, a `register` block, and
+/// a `for_each`-feeding probe's `produce` on the register VM).
+pub fn register_require_recipe_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let require_recipe_fn = lua.create_function(move |_, name: LuaValue| {
+        let mut slot = body_slot.borrow_mut();
+        let body = match slot.as_mut() {
+            Some(body) if body.current_recipe.is_some() => body,
+            _ => {
+                return Err(mlua::Error::runtime(
+                    "cook.require_recipe: no enclosing recipe is active; call `cook.require_recipe(name)` only from inside a recipe body (Standard \u{00a7}22.8, CS-0144)",
+                ))
+            }
+        };
+
+        // CS-0143's `parse_origin_meta` precedent: match on the raw Lua
+        // value so a numeric argument is rejected outright rather than
+        // coerced to its decimal string.
+        let name = match name {
+            LuaValue::String(s) => s.to_string_lossy().to_string(),
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.require_recipe: `name` must be a string, got {} (Standard \u{00a7}22.8, CS-0144)",
+                    other.type_name()
+                )))
+            }
+        };
+        if name.is_empty() {
+            return Err(mlua::Error::runtime(
+                "cook.require_recipe: `name` must be a non-empty string, got an empty string (Standard \u{00a7}22.8, CS-0144)",
+            ));
+        }
+
+        // Bare-to-bare self-reference check. `current_recipe_bare` is
+        // stamped alongside `current_recipe` at the same point in
+        // `engine.rs`, so it is guaranteed `Some` here — see its doc on
+        // why comparing against `current_recipe` (qualified) instead would
+        // silently never fire under an import prefix.
+        let current_bare = body
+            .current_recipe_bare
+            .clone()
+            .expect("current_recipe_bare stamped alongside current_recipe");
+        if current_bare == name {
+            return Err(mlua::Error::runtime(format!(
+                "cook.require_recipe: recipe \"{name}\" cannot require itself (Standard \u{00a7}22.8, CS-0144)"
+            )));
+        }
+
+        if !body.dynamic_requires.contains(&name) {
+            body.dynamic_requires.push(name);
+        }
+        Ok(())
+    })?;
+    cook.set("require_recipe", require_recipe_fn)?;
+    Ok(())
+}
+
 /// Resolve a glob pattern into a sorted set of relative file paths.
 ///
 /// Matches whose final (symlink-resolved) metadata is a directory are
