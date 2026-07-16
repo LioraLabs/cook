@@ -304,12 +304,19 @@ pub fn register_workspace(
 }
 
 /// Run [`cook_register::list_names`] for every Cookfile in `workspace`
-/// (root + every import) and return the qualified name set with kinds.
+/// (root + every import) and return each discovered recipe with its
+/// registration metadata intact.
 ///
 /// Workspace-level counterpart to [`register_workspace`]: each import's
-/// names are prefixed with its qualified workspace prefix. This avoids
-/// invoking any recipe body and avoids firing probe queries — it's the
-/// cheap path used by `cook list` / `cook menu`.
+/// names are prefixed with its qualified workspace prefix (the `name`
+/// field is rewritten in place; every other field is passed through). This
+/// avoids invoking any recipe body and avoids firing probe queries — it's
+/// the cheap path used by `cook list` / `cook menu`.
+///
+/// Returns the full [`cook_register::RegisteredRecipePub`] rather than a
+/// name/kind projection: `cook list` renders the `origin` annotation a
+/// module attaches to a recipe it mints, so the listing path must not
+/// discard per-recipe metadata on the way out.
 pub fn list_workspace_names(
     workspace: &Workspace,
     config: Option<&str>,
