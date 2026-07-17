@@ -456,6 +456,11 @@ bytes are re-fingerprinted before use, so a corrupted or tampered store entry is
 treated as a miss and rebuilt. `--no-publish` (or `COOK_NO_PUBLISH=1`) makes a
 client read-only: it still fetches, never uploads.
 
+The shared store itself is a content-addressed directory: point `[cache]
+cache_dir` in `.cook/cloud.toml` at a path your team can reach and there is no
+server to run. See [Sharing a cache across a team](docs/shared-cache.md) for the
+setup, the toolchain-sealing step it depends on, and the operational edges.
+
 ## Dropping into Lua
 
 Most Cookfiles are pure surface syntax. Underneath, every Cookfile compiles to
@@ -551,9 +556,6 @@ Today's roster:
 - **`cook_pnpm`** — pnpm-driven JS/TS monorepos: Turborepo-style task pipelines
   running on cook's content-addressed graph, so a JS workspace gets the same
   caching and unified graph as everything else.
-- **`cook_ai`** — a small LLM module (`cook_ai.provider{...}` +
-  `cook_ai.prompt(...)`), pairing with the `nondet` disposition for
-  non-reproducible completions.
 
 `cook_rust` currently reserves the name and is not yet a working build
 integration.
