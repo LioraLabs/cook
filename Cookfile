@@ -30,13 +30,11 @@ probe readme:snippets
     ingredients "README.source" "assets/readme/code_svg.py"
     json { python3 assets/readme/code_svg.py snippets README.source }
 
-recipe readme-snippets
+recipe readme
     ingredients readme:snippets
     seal readme:tools
-    cook "assets/readme/snippet-$<in.name>.svg" { python3 assets/readme/code_svg.py render README.source $<in.name> light > $<out> }
-    cook "assets/readme/snippet-$<in.name>-dark.svg" { python3 assets/readme/code_svg.py render README.source $<in.name> dark > $<out> }
-
-recipe readme
-    ingredients "README.source" "assets/readme/code_svg.py"
-    seal readme:tools
-    cook "README.md" { : $<readme-snippets> && python3 assets/readme/code_svg.py compile README.source > $<out> }
+    cook "assets/readme/snippet-$<in.name>.svg" "assets/readme/snippet-$<in.name>-dark.svg" {
+        python3 assets/readme/code_svg.py render README.source $<in.name> light > assets/readme/snippet-$<in.name>.svg
+        python3 assets/readme/code_svg.py render README.source $<in.name> dark > assets/readme/snippet-$<in.name>-dark.svg
+    }
+    cook "README.md" { : $<file:README.source> $<file:assets/readme/code_svg.py> && python3 assets/readme/code_svg.py compile README.source > $<out> }
