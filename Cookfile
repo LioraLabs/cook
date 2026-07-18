@@ -27,8 +27,21 @@ probe readme:tools
     tools { python3 }
 
 probe readme:snippets
-    ingredients "README.source" "assets/readme/code_svg.py"
-    json { python3 assets/readme/code_svg.py snippets README.source }
+    ingredients "README.source"
+    >{
+        local src = fs.read("README.source")
+        local snippets = {}
+        for alt, lang, name, code in src:gmatch("<!%-%- alt: (.-) %-%->\n```(%w+) ([%w%-]+)\n(.-)\n```") do
+            snippets[#snippets + 1] = {
+                name = name,
+                lang = lang,
+                label = lang == "console" and "terminal" or "Cookfile",
+                alt = alt,
+                code = code,
+            }
+        end
+        return snippets
+    }
 
 recipe readme
     ingredients readme:snippets
