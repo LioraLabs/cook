@@ -17,6 +17,14 @@ chore package version target
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
     > release.bump_claim(version)
 
+# No default for `version` — defaulting to an existing tag (e.g. via
+# cook.git.head_tag()) makes rerunning a footgun. Pushing the tag fires the
+# 4-host CI build+publish matrix (.github/workflows/release.yml); this chore
+# only bumps [workspace.package] in cli/Cargo.toml, commits, tags, and pushes.
+# release.yml's tag==manifest guard is satisfied by construction.
+chore release version
+    > release.cut(version)
+
 # ── README generation ────────────────────────────────────────────────────
 # README.md is compiled from README.source: each annotated ```cook fence
 # renders to a light + dark SVG pair, then the compiler swaps fences for
