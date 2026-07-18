@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="noop" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=LuaBlock("cook.sh(\"true\")")
+  chores:
+  register_blocks: [RegisterBlock body="    cook.recipe(\"t\", {requires = {}}, function()\n        cook.add_test({lua_code = \"assert(true)\", inputs = {\"data.txt\"}, line = 2})\n    end)" line=1]
+  top_level_module_calls: []

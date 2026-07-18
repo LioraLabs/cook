@@ -880,14 +880,16 @@ pub fn register_unit_api(
             //
             // CS-0127 / CS-0153: the rewritten LuaChunk carries the
             // ALREADY-PARSED `step_kind` local (see above) rather than a
-            // hardcoded `StepKind::Cook`. `command` fields containing probe
-            // sigils are not exclusive to `cook` bodies — a `chore` body's
-            // command lowers the same literal-sigil way and passes
-            // `step_kind = "chore"`. Hardcoding `Cook` here would misreport
-            // a non-cook command's originating step kind (CS-0135: every
-            // step kind is sandboxed identically today, but the field
-            // remains load-bearing for diagnostics and any future step
-            // kind). Test bodies never reach this arm at all: since the
+            // hardcoded `StepKind::Cook`. In current codegen this arm is
+            // reached only by non-interactive `cook`-step commands (chore
+            // shell steps lower with `interactive = true`, see
+            // cook-luagen/src/recipe.rs, and become
+            // `WorkPayload::Interactive` before this match), so the local
+            // always holds the `Cook` default here — but a hand-authored
+            // module call may pass `step_kind = "chore"` directly, and the
+            // field remains load-bearing for diagnostics and any future
+            // step kind (CS-0135: every step kind is sandboxed identically
+            // today). Test bodies never reach this arm at all: since the
             // v1.0 language cut, codegen lowers test bodies exclusively
             // through `cook.add_test` (cli/crates/cook-luagen/src/test_step.rs),
             // which builds `WorkPayload::Test` directly — a payload variant

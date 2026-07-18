@@ -475,6 +475,34 @@ fn test_add_unit_rejects_step_kind_test() {
     assert!(err.contains("cook.add_test"), "got: {err}");
 }
 
+// CS-0153 §22.1: the surviving accepted values — `"cook"` and `"chore"` —
+// still register successfully, and the parsed kind lands on the LuaChunk
+// payload. Guards the accept arms so the `"test"` rejection above can't
+// silently widen.
+#[test]
+fn test_add_unit_accepts_step_kind_cook_and_chore() {
+    for (kind, expected) in [
+        ("cook", cook_contracts::StepKind::Cook),
+        ("chore", cook_contracts::StepKind::Chore),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let rt = make_registry(dir.path());
+        let lua_src = format!(
+            r#"
+cook.recipe("r", {{}}, function()
+    cook.add_unit({{ lua_code = "return 1", cache = false, step_kind = "{kind}" }})
+end)
+"#
+        );
+        let result = register_one(rt, &lua_src, "r");
+        assert_eq!(result.units.len(), 1);
+        match &result.units[0].payload {
+            WorkPayload::LuaChunk { step_kind, .. } => assert_eq!(*step_kind, expected),
+            other => panic!("expected LuaChunk payload for {kind:?}, got: {other:?}"),
+        }
+    }
+}
+
 #[test]
 fn test_add_unit_rejects_non_string_member() {
     let err = add_unit_reject(r#"command = "true", member = {}"#);
