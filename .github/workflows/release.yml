@@ -139,8 +139,16 @@ jobs:
           TARBALL="cli/target/dist/cook-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
           test -f "$TARBALL" || { echo "::error::expected ${TARBALL}"; exit 1; }
           test -f "${TARBALL}.sha256" || { echo "::error::expected ${TARBALL}.sha256"; exit 1; }
-          tar -tzf "$TARBALL" | grep -qx './bin/cook' || {
-            echo "::error::${TARBALL} has no ./bin/cook at its root"; exit 1; }
+          # List to a file, then grep the file: no pipeline, so no runner-
+          # specific pipe/SIGPIPE semantics can turn a good archive into a
+          # false negative — and the listing is in hand for the error report.
+          tar -tzf "$TARBALL" > /tmp/tarball-listing.txt
+          grep -qx './bin/cook' /tmp/tarball-listing.txt || {
+            echo "::error::${TARBALL} has no ./bin/cook at its root"
+            echo "--- entries: $(wc -l < /tmp/tarball-listing.txt) ---"
+            sed -n '1,40p' /tmp/tarball-listing.txt
+            echo "--- tar version ---"; tar --version | head -1
+            exit 1; }
 
       - name: Report glibc floor
         if: matrix.os == 'linux'
