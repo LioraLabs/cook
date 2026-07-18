@@ -16,7 +16,7 @@ pub struct Reporter {
     started: std::time::Instant,
     verbose: bool,
     style: style::Style,
-    namespaces_seen: BTreeSet<String>,
+    multi_ns: bool,
     label_meta: BTreeMap<String, LabelMeta>,
     header_printed: bool,
 }
@@ -42,10 +42,29 @@ impl Reporter {
             started: std::time::Instant::now(),
             verbose: globals.verbose,
             style: style::Style::new(colored),
-            namespaces_seen: BTreeSet::new(),
+            multi_ns: false,
             label_meta: BTreeMap::new(),
             header_printed: false,
         }
+    }
+
+    /// Fix the single- vs multi-namespace display decision from the run plan,
+    /// before any event streams in. Previously the reporter grew a namespace
+    /// set incrementally from `TestStarted` events and each outcome line
+    /// consulted it mid-stream, so the same workspace printed full names on a
+    /// parallel cold run and stripped ones on a fast cached run — and a mixed
+    /// run could strip only its earliest lines. Root-namespace recipes (no
+    /// dot) count as their own namespace so a root + import mix keeps
+    /// prefixes rather than colliding after the strip.
+    pub fn seed_run_namespaces<S: AsRef<str>>(&mut self, recipe_names: &[S]) {
+        let namespaces: BTreeSet<&str> = recipe_names
+            .iter()
+            .map(|n| {
+                let n = n.as_ref();
+                n.find('.').map(|i| &n[..i]).unwrap_or("")
+            })
+            .collect();
+        self.multi_ns = namespaces.len() > 1;
     }
 
     pub fn on_event(&mut self, evt: EngineEvent) {
@@ -54,11 +73,6 @@ impl Reporter {
                 if !self.header_printed {
                     println!("{}", self.style.bold("running tests"));
                     self.header_printed = true;
-                }
-                if id.0.contains('.') {
-                    if let Some(ns) = id.0.split('.').next() {
-                        self.namespaces_seen.insert(ns.to_string());
-                    }
                 }
                 self.label_meta.insert(id.0.clone(), LabelMeta {
                     recipe: recipe.clone(),
@@ -99,7 +113,7 @@ impl Reporter {
     }
 
     pub fn finish(&mut self, results: &[TestResult]) {
-        let multi_ns = self.namespaces_seen.len() > 1;
+        let multi_ns = self.multi_ns;
         // Pre-build labels keyed by TestId.0 so the failure renderer doesn't
         // need to reach into self.
         let labels: BTreeMap<String, String> = results.iter()
@@ -143,7 +157,7 @@ impl Reporter {
     }
 
     fn label_for(&self, test_id: &str) -> String {
-        let multi_ns = self.namespaces_seen.len() > 1;
+        let multi_ns = self.multi_ns;
         match self.label_meta.get(test_id) {
             Some(meta) => label::label(
                 &meta.recipe,
@@ -617,5 +631,32 @@ mod tests {
         let globals = crate::cli::Globals::default();
         let r = Reporter::new(&globals);
         assert_eq!(r.label_for("orphan:t"), "orphan:t");
+    }
+
+    #[test]
+    fn seed_multi_namespace_from_run_plan() {
+        let globals = crate::cli::Globals::default();
+        let mut r = Reporter::new(&globals);
+        r.seed_run_namespaces(&["menugen.check", "api.tests", "web.smoke"]);
+        assert!(r.multi_ns);
+    }
+
+    #[test]
+    fn seed_single_namespace_strips() {
+        let globals = crate::cli::Globals::default();
+        let mut r = Reporter::new(&globals);
+        r.seed_run_namespaces(&["web.smoke", "web.e2e"]);
+        assert!(!r.multi_ns);
+    }
+
+    #[test]
+    fn seed_root_counts_as_a_namespace() {
+        // A root recipe (no dot) mixed with an imported one is a
+        // multi-namespace run; stripping would collide "check" with
+        // "menugen.check".
+        let globals = crate::cli::Globals::default();
+        let mut r = Reporter::new(&globals);
+        r.seed_run_namespaces(&["check", "menugen.check"]);
+        assert!(r.multi_ns);
     }
 }
