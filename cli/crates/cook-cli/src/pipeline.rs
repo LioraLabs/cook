@@ -1049,7 +1049,13 @@ pub fn cmd_test(
         candidate_recipe_names
     };
 
-    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(globals)));
+    let reporter = {
+        let mut r = crate::test_reporter::Reporter::new(globals);
+        // Fix single- vs multi-namespace label display from the run plan, not
+        // from the order events happen to stream in (see seed_run_namespaces).
+        r.seed_run_namespaces(&candidate_recipe_names);
+        Arc::new(Mutex::new(r))
+    };
 
     // ── Drive the unified-DAG executor ───────────────────────────────────────
     // The `on_event` closure clones the reporter Arc. It MUST be dropped
