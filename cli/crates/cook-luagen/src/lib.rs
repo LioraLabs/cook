@@ -1,5 +1,5 @@
 mod cook_step;
-mod lua_env;
+pub mod lua_env;
 mod lua_string;
 mod probe;
 mod recipe;
