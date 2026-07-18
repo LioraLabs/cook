@@ -93,6 +93,11 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // it must be a (non-empty) string.
   ['recipe-origin-not-a-string',
    '§22.3 cook.recipe `origin` field type check — register-time semantic, not syntactic'],
+  // CS-0153: `cook.add_unit({step_kind = "test"})` is an ordinary spec-table
+  // field syntactically; only the register pass knows a test work unit is
+  // registrable solely through `cook.add_test` (§22.4).
+  ['add-unit-step-kind-test-rejected',
+   'CS-0153: step_kind = "test" on cook.add_unit — register-phase rejection, not syntactic'],
   // §28 cc-module semantic rules (§28.3 — execute-phase / probe-time
   // rejections; the Cookfile parses cleanly):
   ['cc-check-bad-flag',

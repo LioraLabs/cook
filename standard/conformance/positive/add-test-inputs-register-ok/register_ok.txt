@@ -1,0 +1,1 @@
+cook.add_test accepts `inputs` (array of string) — §22.4, CS-0153
