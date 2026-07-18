@@ -1,10 +1,15 @@
-# cook
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/logo-dark.svg">
+    <img src="assets/readme/logo.svg" width="440" alt="cook — a build system">
+  </picture>
+</p>
 
-**Build artifacts just like grandma used to make.**
+<p align="center"><b>Build artifacts just like grandma used to make.</b></p>
 
 Got a lot of chefs complicating your build pipeline: cargo, CMake, pnpm, a
-`scripts/` directory nobody will admit to writing? cook brings a kitchen with
-enough heat for all of them to play nicely.
+`scripts/` directory nobody will admit to writing? cook brings a kitchen with 
+enough heat to keep the whole crew moving in sync.
 
 cook is a declarative language and execution model for building software: one
 dependency graph where all of those chefs cook side by side. It takes the
@@ -27,47 +32,46 @@ Still curious? Keep reading.
 
 Say you're handed a pile of SVGs and you need to bake a PNG sprite sheet.
 
-```cook
-recipe sprite-sheet
-    ingredients "images/*.svg"
-    cook "build/sprites/$<in.stem>.png" { inkscape -z -e $<out> $<in> }
-    cook "build/spritesheet.json" "build/spritesheet.png" {
-        printf '%s\n' $<in> | texpack -o build/spritesheet
-    }
-```
-
-```console
-$ cook sprite-sheet      # rasterizes every SVG in parallel, then packs the sheet
-$ cook sprite-sheet      # cache hit across the board, the kitchen doesn't even turn on
-$ nvim images/enemy.svg  # give the enemy a bigger sword
-$ cook sprite-sheet      # re-rasterizes enemy.png, repacks the sheet, nothing else
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-sprite-dark.svg">
+  <img src="assets/readme/snippet-sprite.svg" alt="cook recipe sprite-sheet: ingredients are the images SVG glob; a cook step whose target uses a per-input accessor fans each SVG out to its own inkscape rasterize; a second cook step whose target has no accessor gathers every PNG into one texpack step producing spritesheet.png and spritesheet.json.">
+</picture>
 
 In five lines of cook we have a parallel asset pipeline with content-addressed
-caching and incremental execution. Let's break the recipe down.
+caching and incremental execution.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-run-dark.svg">
+  <img src="assets/readme/snippet-run.svg" alt="Terminal: the first cook sprite-sheet rasterizes every SVG in parallel then packs the sheet; a second run is a full cache hit; after editing enemy.svg, cook re-rasterizes only enemy.png and repacks the sheet, nothing else.">
+</picture>
+
+Let's break the recipe down.
 
 ### 1. Naming the dish
 
-```cook
-recipe sprite-sheet
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-name-dark.svg">
+  <img src="assets/readme/snippet-name.svg" alt="cook: the recipe declaration line, recipe sprite-sheet, which names the recipe.">
+</picture>
 
 Every recipe needs a name so the kitchen knows what it's preparing. `cook
 sprite-sheet` tells the engine to look at this instruction card.
 
 ### 2. Sourcing the pantry
 
-```cook
-    ingredients "images/*.svg"
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ingredients-dark.svg">
+  <img src="assets/readme/snippet-ingredients.svg" alt="cook: an ingredients line declaring the input glob images/*.svg.">
+</picture>
 
 cook gathers the raw ingredients and hashes their contents.
 
 ### 3. The prep work (the fan-out)
 
-```cook
-    cook "build/sprites/$<in.stem>.png" { inkscape -z -e $<out> $<in> }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-prep-dark.svg">
+  <img src="assets/readme/snippet-prep.svg" alt="cook: the fan-out cook step whose target uses a per-input accessor to rasterize each SVG to its own PNG with inkscape.">
+</picture>
 
 A `cook` step starts by declaring its target. Ours contains the `$<in.stem>`
 shape: `in` is the *in*coming ingredient, `stem` is its filename's stem.
@@ -77,11 +81,10 @@ cores, each with `$<in>` and `$<out>` resolved to its own file.
 
 ### 4. The bake (the aggregation)
 
-```cook
-    cook "build/spritesheet.json" "build/spritesheet.png" {
-        printf '%s\n' $<in> | texpack -o build/spritesheet
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-bake-dark.svg">
+  <img src="assets/readme/snippet-bake.svg" alt="cook: the gather cook step whose target has no accessor, piping every prepped PNG into texpack once to build the sprite sheet.">
+</picture>
 
 Notice `$<in.stem>` is missing from these targets. Static, uniform outputs
 tell cook this step *gathers*: it waits for every upstream PNG from the prep
@@ -116,15 +119,10 @@ cook does not quietly fold your machine, locale, or toolchain into every key.
 That keeps artifacts portable by default, and it makes *you* responsible for
 naming your real determinants. When the compiler matters, say so:
 
-```cook
-probe compiler
-    tools { cc }
-
-recipe app
-    ingredients "src/*.c"
-    seal compiler
-    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-seal-dark.svg">
+  <img src="assets/readme/snippet-seal.svg" alt="cook Cookfile: a probe named compiler declares the cc tool; a recipe app seals that compiler so its resolved identity is folded into each unit's cache key, then compiles each src/*.c file to an object.">
+</picture>
 
 `seal` folds the resolved compiler identity into each unit's key. The local
 cache and the shared store are addressed by that same key, so a teammate or a
@@ -138,17 +136,10 @@ rather than pretending the bytes are deterministic.
 Globs are only one source of fan-out. A **probe** is a named, cached value
 the graph can see, and recipes can iterate it:
 
-```cook
-probe services
-    ingredients "data/services.json"
-    json { cat data/services.json }
-
-recipe configs
-    ingredients services
-    cook "build/$<in.name>.conf" {
-        printf 'url = %s\n' "$<in.url>" > $<out>
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-probe-dark.svg">
+  <img src="assets/readme/snippet-probe.svg" alt="cook Cookfile: a probe named services reads data/services.json as JSON; a recipe configs iterates that probe, producing one build/NAME.conf file per record.">
+</picture>
 
 If `services.json` holds an array of records, `configs` runs once per record.
 Add a service and exactly one new unit builds; remove one and cook sweeps its
@@ -161,10 +152,10 @@ Deploying, cleaning, and opening interactive tools don't produce reproducible
 artifacts, so they don't belong in recipes. They're **chores**, and chores
 deliberately run every time, with a real TTY and real parameters:
 
-```cook
-chore deploy target: sprite-sheet
-    rsync -a build/ "$<target>/"
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-chore-dark.svg">
+  <img src="assets/readme/snippet-chore.svg" alt="cook Cookfile: a chore named deploy takes a target parameter, depends on sprite-sheet, and rsyncs the build directory to the target — running every time.">
+</picture>
 
 ```console
 $ cook deploy staging
@@ -179,14 +170,10 @@ not a place for run-every-time shell.
 Need imperative scripting? Here it is. A `>{ ... }` body runs Lua
 instead of shell commands, with the unit's resolved I/O in scope:
 
-```cook
-recipe upper
-    ingredients "src/*.txt"
-    cook "build/$<in.stem>.txt" >{
-        local text = fs.read(input)
-        fs.write(output, text:upper())
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-lua-dark.svg">
+  <img src="assets/readme/snippet-lua.svg" alt="cook Cookfile: a recipe upper whose cook step uses a Lua body, instead of shell, to read each input text file and write its uppercased contents to the output.">
+</picture>
 
 Most of cook's surface language is syntax sugar. Every Cookfile is lowered to Lua before execution, and `cook emit-lua` shows you exactly what yours compiles to.
 
