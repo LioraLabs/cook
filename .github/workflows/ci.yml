@@ -27,8 +27,8 @@ name: ci
 # it: it has no `needs:` and runs in parallel. It smoke-builds
 # examples/modules/sdl3-game (NOT the stale examples/sdl3-game) via
 # `cook_cc`'s cmake-compat finder, which means it needs network access --
-# `cook game` fetches module cook_cc 0.13.0-1 from rocks.usecook.com through
-# cook's bundled luarocks -- plus cmake and an SDL3 dev package.
+# `cook modules install` fetches module cook_cc 0.13.0-1 from rocks.usecook.com
+# through cook's bundled luarocks -- plus cmake and an SDL3 dev package.
 
 on:
   push:
@@ -78,9 +78,9 @@ jobs:
   # Independent of `test` (no `needs:`, runs in parallel): smoke-builds
   # examples/modules/sdl3-game, which exercises cook_cc's cmake-compat finder
   # strategy end to end (SDL3 ships SDL3Config.cmake but no .pc file). This
-  # needs network access -- `cook game` fetches module cook_cc 0.13.0-1 from
-  # rocks.usecook.com via cook's bundled luarocks -- plus cmake and an SDL3
-  # dev package, which is why this isn't folded into the `test` job above.
+  # needs network access -- `cook modules install` fetches cook_cc 0.13.0-1
+  # from rocks.usecook.com via cook's bundled luarocks -- plus cmake and an
+  # SDL3 dev package, which is why this isn't folded into the `test` job above.
   #
   # Linux runs inside debian:trixie, not ubuntu-latest directly: ubuntu-latest
   # (24.04) has no libsdl3-dev package yet, but Debian Trixie does (see
