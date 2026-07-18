@@ -1,453 +1,229 @@
-# cook
-
-**Build artifacts just like grandma used make.**
-
-cook is a build system that remembers what it has already done. It takes the
-friendly recipe ergonomics of [`just`](https://github.com/casey/just), keeps the
-dependency graph of [`make`](https://www.gnu.org/software/make/), trades
-tab-sensitive macros for real [Lua](https://www.lua.org/), and is frankly
-obsessive about not building the same thing twice. You describe artifacts in a
-`Cookfile`; cook turns those declarations into a dependency graph and runs only
-the parts whose inputs changed.
-
-```cook
-recipe assets
-    ingredients "images/*.png"
-    cook "build/$<in.stem>.webp" { cwebp -q 80 $<in> -o $<out> }
-    cook "build/manifest.txt"    { printf '%s\n' $<in> > $<out> }
-```
-
-```console
-$ cook assets                  # encodes every image, then writes the manifest
-$ cook assets                  # everything is cached — nothing re-encodes
-$ mogrify -resize 50% images/hero.png
-$ cook assets                  # re-encodes hero.webp, rebuilds the manifest, nothing else
-```
-
-That last line is the point. A recipe is a small pipeline: the first `cook` step
-turns each image into a WebP, and the second consumes those results—its `$<in>`
-is the collected output of the step before it—to write a manifest. cook
-fingerprints every step from the inputs you declared, so an identical build costs
-nothing, and changing one image re-encodes exactly that file and refreshes only
-the manifest that depends on it.
-
-The same model scales from a handful of assets to a game engine and its asset
-tools, or a polyglot monorepo built as one graph.
-
-## The shape of a Cookfile
-
-A **recipe** is a named bundle of build work. Its body is declarative: it lists
-ingredients, outputs, tests, cache determinants, and module calls—not arbitrary
-run-every-time shell commands.
-
-In the example above:
-
-- `ingredients` selects every PNG input.
-- The first `cook` step's output pattern contains `$<in.stem>`, so cook creates
-  one independent work unit per image; `$<in>` and `$<out>` are that unit's
-  resolved input and output.
-- The second `cook` step has no accessor in its output, so it runs once over the
-  whole set—its `$<in>` is the collected list of the first step's outputs. That
-  is how steps chain into a pipeline: cook tracks the edge between them and
-  caches each step on its own.
-- A command runs only when its fingerprint misses the cache.
-
-With no recipe name, cook runs the recipe named `build`. `cook menu` shows every
-recipe and chore available in the workspace.
-
-```console
-$ cook
-$ cook notes
-$ cook menu
-```
-
-Cookfiles are plans rather than scripts. cook first **registers** their declared
-work, builds a directed acyclic graph, and then **executes** the graph. Cycles
-and unknown dependencies fail before build work begins; independent units run
-in parallel.
-
-## Recipes form a graph
-
-Recipes can name ordering dependencies after a colon:
-
-```cook
-recipe compile
-    ingredients "src/*.c"
-    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-
-recipe link: compile
-    cook "build/app" { cc $<compile> -o $<out> }
-```
-
-`$<compile>` expands to `compile`'s outputs. It also creates a data dependency:
-`link` waits for those outputs and folds their contents into its own key. Since
-the reference already records the edge, the explicit `: compile` is optional
-here; use header dependencies when ordering matters but no artifact is read.
-
-Edit one source file and cook recompiles one object, then relinks. If an
-upstream unit reruns but produces identical bytes, the change stops propagating.
-
-Recipes may declare multiple outputs, and placeholders can select output
-indices or path components:
-
-```cook
-recipe bundle
-    ingredients "src/app.ts"
-    cook "dist/app.js" "dist/app.js.map" {
-        esbuild $<in> --bundle --sourcemap --outfile=$<out_1>
-    }
-```
-
-Useful placeholders include `$<in>`, `$<out>`, `$<out_1>`, and the input path
-accessors `$<in.stem>`, `$<in.name>`, `$<in.ext>`, and `$<in.dir>`. Ordinary
-shell syntax—`$VAR`, `${VAR}`, brace expansion, and awk expressions—passes
-through untouched.
-
-## Tests belong to the build
-
-A `test` step checks artifacts without producing another one:
-
-```cook
-recipe check
-    ingredients "tests/*.c"
-    cook "build/tests/$<in.stem>" { cc $<in> -o $<out> }
-    test { $<in> }
-```
-
-Test results are content-keyed to what they consume. Unchanged code does not
-need to be rebuilt or retested. `cook test` runs tests across the workspace and
-collects their results; failures do not hide unrelated failures that ran in
-parallel.
-
-```console
-$ cook test
-$ cook test apps.web
-$ cook test --affected --since=origin/main
-```
-
-The last command restricts testing to the graph slice affected by a Git diff.
-
-## Side effects are chores
-
-Deploying, publishing, cleaning, opening an interactive tool—these actions do
-not produce reproducible artifacts. They are **chores**, and chores deliberately
-run every time:
-
-```cook
-recipe assets
-    ingredients "images/*.png"
-    cook "build/$<in.stem>.webp" { cwebp -q 80 $<in> -o $<out> }
-
-chore deploy target: assets
-    rsync -a build/ "$<target>/"
-
-chore clean
-    rm -rf build .cook
-```
-
-```console
-$ cook deploy staging
-```
-
-The assets stay cached; deployment does not. Chores can accept required,
-defaulted, and variadic parameters, depend on recipes or other chores, and run
-interactive commands with a real terminal.
-
-## Data can shape the build
-
-File globs are only one source of fan-out. A **probe** produces a named, cached
-value that recipes and other probes can see:
-
-```cook
-probe services
-    ingredients "data/services.json"
-    json { cat data/services.json }
-
-recipe configs
-    ingredients services
-    cook "build/$<in.name>.conf" {
-        printf 'url=%s\n' "$<in.url>" > $<out>
-    }
-```
-
-If `services.json` contains an array of records, `configs` runs once per record.
-Add one service and cook creates one new unit; existing services remain cache
-hits. A downstream recipe iterating the same probe can join the matching output
-with `$<configs[in]>`.
-
-Probes can produce strings, lines, JSON values, or Lua values. Native probe
-forms can also observe environment variables and executable identities. This
-makes external determinants visible to the graph instead of hiding them in
-ambient machine state.
-
-## The cache is explicit
-
-Every cacheable unit has one content-addressed key derived from what its author
-declared: input contents, command text or Lua chunk, output paths, consulted
-configuration, dependency artifacts, and sealed probes.
-
-cook does **not** quietly include the machine, locale, or toolchain in every
-key. That keeps artifacts portable by default, but it also makes authors and
-modules responsible for declaring real determinants.
-
-```cook
-probe compiler
-    tools { cc }
-
-recipe app
-    ingredients "src/*.c"
-    seal compiler
-    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-```
-
-`seal compiler` deliberately folds the resolved compiler identity into each
-unit. Other per-step dispositions control storage and reproducibility:
-
-- `local` caches on this machine but never shares the artifact.
-- `pinned` is fetch-only; a cold miss is an error rather than a rebuild.
-- `nondet` records work whose output bytes are intrinsically non-reproducible,
-  such as an LLM response.
-
-The local cache and a shared store use the same key. A teammate or CI runner can
-reuse an artifact only when they independently compute that same key.
-
-Two commands make this model inspectable:
-
-- `cook why [recipe]` attributes every part of each key and reports hit or miss.
-- `cook cache verify [recipe]` reruns cached work and reports byte divergence,
-  helping find an undeclared input.
-
-Restored bytes are fingerprinted again before use, so a corrupt or tampered
-artifact is treated as a miss.
-
-## Configuration without invisible inputs
-
-A `config` block declares build knobs. Named blocks overlay the base when
-selected with `@name`:
-
-```cook
-config
-    env.MODE = os.getenv("MODE") or "debug"
-
-config release
-    env.MODE = "release"
-
-recipe app
-    ingredients "src/*.c"
-    cook "build/$<in.stem>.o" {
-        cc -DMODE=$<MODE> -c $<in> -o $<out>
-    }
-```
-
-```console
-$ cook app
-$ cook app @release
-$ cook --set MODE=tiny app
-```
-
-Only units that consult `$<MODE>` fold it into their key. An undeclared config
-placeholder is an error rather than an accidental read from the shell.
-
-## Shell when it is enough, Lua when it is not
-
-Most Cookfiles remain close to the commands they organize. When build logic
-needs tables, functions, loops, or libraries, cook exposes real
-[Lua](https://www.lua.org/) rather than growing a second programming language:
-
-```cook
-recipe upper
-    ingredients "src/*.txt"
-    cook "build/$<in.stem>.txt" >{
-        local text = fs.read(input)
-        fs.write(output, text:upper())
-    }
-```
-
-This Lua runs during execution with the unit's resolved inputs and outputs.
-Register-phase Lua can generate work directly through `cook.add_unit`,
-`cook.recipe`, `cook.probe`, and related APIs. `cook emit-lua` shows exactly how
-a Cookfile lowers to Lua.
-
-Large repositories can also split declarations across directories:
-
-```cook
-import api ./services/api
-import web ./apps/web
-
-recipe build: api.build web.build
-```
-
-Each subtree owns its Cookfile; imports preserve namespaces while joining one
-workspace-wide graph. cook can discover the nearest Cookfile from a nested
-directory without splitting the workspace cache.
-
-## Extending Cook
-
-cook's core is deliberately language-agnostic. It registers work, connects
-dependencies, fingerprints inputs, schedules units, and materializes artifacts.
-Knowledge of a compiler, package manager, or framework belongs in a **Cook
-module**.
-
-Modules are Lua packages distributed through
-[LuaRocks](https://luarocks.org/). Projects declare them in `cook.toml`:
-
-```toml
-[modules]
-cook_cc = "*"
-```
-
-```console
-$ cook modules install
-```
-
-cook installs the resolved tree under `cook_modules/` and pins exact versions
-in `cook.lock`, which should be committed. The release bundles Lua 5.4 and
-LuaRocks, so users do not need to coordinate a system Lua installation.
-
-A module can expose **target makers**: Lua functions that translate domain
-vocabulary into cook's underlying graph.
-
-```cook
-use cook_cc
-
-cook_cc.bin("game", {
-    sources = { "src/*.c" },
-    needs = { "SDL3" },
-})
-```
-
-`cook_cc` supplies C and C++ knowledge—compile and link units, toolchain probes,
-package discovery, transitive usage requirements, and
-`compile_commands.json`—while the core retains responsibility for graph and
-cache semantics. `cook_pnpm` applies the same model to pnpm workspaces and their
-topological task pipelines. `cook_ai` provides provider and prompt targets for
-non-reproducible LLM work.
-
-Projects can keep a module local or publish it as a rock. The
-[module-authoring contract](standard/src/content/docs/12-modules.mdx) defines
-how target makers declare work without compromising cache correctness.
-
-## What this looks like at scale
-
-The numbered [examples](examples/) grow from a single recipe through fan-out,
-tests, imports, cache policy, and deployment—each small and runnable, including
-a [data-driven fan-out](examples/05-data-fanout/) that builds one unit per record
-(the shape behind eval suites and per-scene rendering). Two repository-sized
-builds show why the ideas are worth composing:
-
-### A polyglot monorepo — cook-dogfood
-
-[cook-dogfood](https://github.com/LioraLabs/cook-dogfood) builds a .NET API, a
-TypeScript/pnpm web app, a Rust command-line tool, and generated cross-language
-contracts as one graph. Each subtree owns its own Cookfile and `import` connects
-them; a `stack:versions` probe folds the toolchain versions into the build, and
-lockfiles invalidate only the parts of the stack that actually consult them, so a
-change in one package doesn't rebuild the rest.
-
-### Doom 3 — dhewm3
-
-[dhewm3](https://github.com/LioraLabs/dhewm3) is a Cookfile for the dhewm3 Doom 3
-source port. It uses `cook_cc` to describe the engine, its static libraries, and
-generated configuration. Compiling a tool and running it are ordinary upstream
-and downstream nodes—not separate build systems joined by scripts.
-
-These are demonstrations, not special modes. They use the same recipes,
-ingredients, probes, references, and modules introduced above.
-
-## Install and try it
-
-cook currently supports Linux and macOS. Install the latest release with:
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/logo-dark.svg">
+    <img src="assets/readme/logo.svg" width="440" alt="cook — a build system">
+  </picture>
+</p>
+
+<p align="center"><b>Build artifacts just like grandma used to make.</b></p>
+
+Got a lot of chefs complicating your build pipeline: cargo, CMake, pnpm, a
+`scripts/` directory nobody will admit to writing? cook brings a kitchen with 
+enough heat to keep the whole crew moving in sync.
+
+cook is a declarative language and execution model for building software: one
+dependency graph where all of those chefs cook side by side. It takes the
+friendly recipe ergonomics of [`just`](https://github.com/casey/just), keeps
+the dependency graph of [`make`](https://www.gnu.org/software/make/), swaps macro-heavy configuration 
+for a Lua-backed declarative DSL, giving you an escape hatch to imperative scripting when 
+your pipelines call for it. You describe artifacts in a
+`Cookfile`; cook turns those declarations into a unified dependency graph and runs only the
+parts whose inputs changed.
+
+Heard enough?
 
 ```sh
 curl -fsSL https://getcook.sh | sh
 ```
 
-This creates a self-contained tree under `~/.cook/` containing the binary, Lua
-5.4, and LuaRocks. Re-run the command to update.
+Still curious? Keep reading.
+
+## Let's cook
+
+Say you're handed a pile of SVGs and you need to bake a PNG sprite sheet.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-sprite-dark.svg">
+  <img src="assets/readme/snippet-sprite.svg" alt="cook recipe sprite-sheet: ingredients are the images SVG glob; a cook step whose target uses a per-input accessor fans each SVG out to its own inkscape rasterize; a second cook step whose target has no accessor gathers every PNG into one texpack step producing spritesheet.png and spritesheet.json.">
+</picture>
+
+In five lines of cook we have a parallel asset pipeline with content-addressed
+caching and incremental execution.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-run-dark.svg">
+  <img src="assets/readme/snippet-run.svg" alt="Terminal: the first cook sprite-sheet rasterizes every SVG in parallel then packs the sheet; a second run is a full cache hit; after editing enemy.svg, cook re-rasterizes only enemy.png and repacks the sheet, nothing else.">
+</picture>
+
+Let's break the recipe down.
+
+### 1. Naming the dish
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-name-dark.svg">
+  <img src="assets/readme/snippet-name.svg" alt="cook: the recipe declaration line, recipe sprite-sheet, which names the recipe.">
+</picture>
+
+Every recipe needs a name so the kitchen knows what it's preparing. `cook
+sprite-sheet` tells the engine to look at this instruction card.
+
+### 2. Sourcing the pantry
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ingredients-dark.svg">
+  <img src="assets/readme/snippet-ingredients.svg" alt="cook: an ingredients line declaring the input glob images/*.svg.">
+</picture>
+
+cook gathers the raw ingredients and hashes their contents.
+
+### 3. The prep work (the fan-out)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-prep-dark.svg">
+  <img src="assets/readme/snippet-prep.svg" alt="cook: the fan-out cook step whose target uses a per-input accessor to rasterize each SVG to its own PNG with inkscape.">
+</picture>
+
+A `cook` step starts by declaring its target. Ours contains the `$<in.stem>`
+shape: `in` is the *in*coming ingredient, `stem` is its filename's stem.
+Because the target is different for every input, cook infers one independent
+unit of work per SVG. Fifty SVGs? Fifty parallelizable jobs spread across your
+cores, each with `$<in>` and `$<out>` resolved to its own file.
+
+### 4. The bake (the aggregation)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-bake-dark.svg">
+  <img src="assets/readme/snippet-bake.svg" alt="cook: the gather cook step whose target has no accessor, piping every prepped PNG into texpack once to build the sprite sheet.">
+</picture>
+
+Notice `$<in.stem>` is missing from these targets. Static, uniform outputs
+tell cook this step *gathers*: it waits for every upstream PNG from the prep
+step, then fires exactly once. Because texpack expects a 
+newline-separated list of files on standard input, we use printf to format 
+our incoming list of prepped files ($<in>) and pipe them directly into the tool.
+
+That's the core inference. An accessor in the target means fan out; no
+accessor means gather. You never write the loop or the join. The shape of your
+outputs tells cook the shape of the work, and every step is cached on its own,
+so the pipeline stays incremental at every stage.
+
+
+## Still hungry?
+
+Good. The sprite sheet was the appetizer. What follows are the design choices that make cook more than another task runner.
+
+### No mystery misses
+
+Every build tool promises caching. Almost none of them can tell you why you
+got a miss, and if you've run a content-addressed build at scale, you've lost
+an afternoon to exactly that. cook treats an unexplainable miss as a bug in
+the tool. `cook why` prints every determinant behind every unit's key with
+its hit or miss status, and on a shared-store miss it diffs your key against
+what the cached artifact was actually built from. `cook cache verify` re-runs
+cached work and reports byte divergence, which is how you catch an input you
+forgot to declare.
+
+### The key is what you declared, nothing else
+
+cook does not quietly fold your machine, locale, or toolchain into every key.
+That keeps artifacts portable by default, and it makes *you* responsible for
+naming your real determinants. When the compiler matters, say so:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-seal-dark.svg">
+  <img src="assets/readme/snippet-seal.svg" alt="cook Cookfile: a probe named compiler declares the cc tool; a recipe app seals that compiler so its resolved identity is folded into each unit's cache key, then compiles each src/*.c file to an object.">
+</picture>
+
+`seal` folds the resolved compiler identity into each unit's key. The local
+cache and the shared store are addressed by that same key, so a teammate or a
+CI runner reuses your artifact exactly when they'd have computed the same one.
+Even intrinsically non-reproducible work (an LLM response, say) has a
+disposition that says so: `nondet` records it once and reuses the recording
+rather than pretending the bytes are deterministic.
+
+### Data can shape the build
+
+Globs are only one source of fan-out. A **probe** is a named, cached value
+the graph can see, and recipes can iterate it:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-probe-dark.svg">
+  <img src="assets/readme/snippet-probe.svg" alt="cook Cookfile: a probe named services reads data/services.json as JSON; a recipe configs iterates that probe, producing one build/NAME.conf file per record.">
+</picture>
+
+If `services.json` holds an array of records, `configs` runs once per record.
+Add a service and exactly one new unit builds; remove one and cook sweeps its
+orphaned output. This is the shape behind eval suites, per-package monorepo
+tasks, and any build that's really "one job per row of some data."
+
+### Recipes build; chores do
+
+Deploying, cleaning, and opening interactive tools don't produce reproducible
+artifacts, so they don't belong in recipes. They're **chores**, and chores
+deliberately run every time, with a real TTY and real parameters:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-chore-dark.svg">
+  <img src="assets/readme/snippet-chore.svg" alt="cook Cookfile: a chore named deploy takes a target parameter, depends on sprite-sheet, and rsyncs the build directory to the target — running every time.">
+</picture>
 
 ```console
-$ cook --version
+$ cook deploy staging
 ```
 
-To build this checkout from source:
+The assets stay cached; the deployment doesn't. This split is the one thing to
+unlearn if you're coming from `make` or npm scripts: a recipe body is a plan,
+not a place for run-every-time shell.
+
+### Lua when shell isn't enough
+
+Need imperative scripting? Here it is. A `>{ ... }` body runs Lua
+instead of shell commands, with the unit's resolved I/O in scope:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-lua-dark.svg">
+  <img src="assets/readme/snippet-lua.svg" alt="cook Cookfile: a recipe upper whose cook step uses a Lua body, instead of shell, to read each input text file and write its uppercased contents to the output.">
+</picture>
+
+Most of cook's surface language is syntax sugar. Every Cookfile is lowered to Lua before execution, and `cook emit-lua` shows you exactly what yours compiles to.
+
+Underneath is a Lua interface backed by cook's runtime. Modules distributed through LuaRocks use that interface to teach cook about entire ecosystems.
+
+For example, cook_cc provides helpers for C and C++ projects, allowing them to participate in the same dependency graph as the rest of your codebase.
+
+## At scale
+
+Two repository-sized builds, using nothing but the pieces above. Same recipes,
+same ingredients, same probes and modules, no special modes.
+
+- [**cook-dogfood**](https://github.com/LioraLabs/cook-dogfood): a polyglot
+  monorepo. A .NET API, a TypeScript/pnpm web app, a Rust CLI, and generated
+  cross-language contracts, built as one graph. Each subtree owns its
+  Cookfile, `import` joins them.
+
+- [**dhewm3**](https://github.com/LioraLabs/dhewm3): the Doom 3 source port, built with `cook_cc` as a 427-node dependency graph.
+
+## Install and try it
+
+cook is a single Rust binary with a bundled Lua 5.4 and LuaRocks. No system
+Lua to match, no package manager to fight. Linux and macOS get the one-liner
+from the top of this page:
 
 ```sh
-cargo install --locked --path cli/crates/cook-cli
+curl -fsSL https://getcook.sh | sh
 ```
 
-Then make a scratch project:
+Or from source:
 
 ```sh
-mkdir hello-cook
-cd hello-cook
+cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
+```
+
+Then:
+
+```sh
+mkdir hello-cook && cd hello-cook
 cook init
 cook
 ```
 
-## Tab completion
-
-Completion is served by the `cook` binary itself, so it always matches the
-Cookfile in front of you: it completes your recipes and chores, not just the
-built-in subcommands. Add one line to your shell's startup file:
-
-```sh
-# ~/.config/fish/config.fish
-COMPLETE=fish cook | source
-
-# ~/.bashrc
-source <(COMPLETE=bash cook)
-
-# ~/.zshrc
-source <(COMPLETE=zsh cook)
-```
-
-`elvish` and `powershell` work the same way. Then:
-
-```console
-$ cook <TAB>
-build     recipe
-deploy    recipe
-clean     chore
-menu      List all recipes (and chores) in the workspace
-...
-
-$ cook build @<TAB>
-@release  preset
-```
-
-Completion knows the things that are easy to get wrong by hand. A recipe whose
-name collides with a built-in subcommand is offered `+`-escaped — `cook +test`
-builds your recipe, `cook test` runs the test runner — so the escape is
-discoverable instead of a surprise. `cook test <TAB>` offers recipes and
-namespaces but never chores, because a chore is not a valid test scope.
-
-Completing runs your Cookfile's register phase — the same work as `cook menu`,
-a few milliseconds, no recipe bodies and no probe queries. In a directory with
-no Cookfile, or one that does not parse, completion falls back to the built-in
-subcommands rather than reporting an error.
-
 ## Keep exploring
 
-- [The Cook Manual](document.md) is the complete, read-top-to-bottom guide to the
-  language and the CLI.
-- The runnable [examples](examples/) are arranged in learning order.
-- The [Cook Standard](standard/) is the authoritative language and execution
-  specification.
-- The [architecture notes](docs/architecture/) explain the reference
-  implementation.
-- [CONTRIBUTING.md](CONTRIBUTING.md) covers building and testing cook itself.
+- [**The Cook Manual**](document.md): the complete, read-top-to-bottom guide.
+- [**Examples**](examples/): runnable, arranged in learning order.
+- [**The Cook Standard**](standard/): the authoritative specification.
+- [**Sharing a cache across a team**](docs/shared-cache.md): the shared store is
+  a directory — point everyone at one path, no server to run.
 
-A few more surfaces worth knowing about:
-
-- `cook serve <recipe>` watches declared inputs and rebuilds what changes.
-- `cook affected --since=<ref>` lists the recipes affected by a Git diff.
-- `cook dag [recipe]` opens an interactive graph viewer.
-- `cook logs` browses archived output from parallel builds.
-- `cook menu` (alias: `cook list`) prints every recipe and chore, with each
-  chore's parameters, so the invocation shape is discoverable.
-- `cook modules install|remove|update|list|search` manages LuaRocks modules.
-- Tree-sitter queries provide Cookfile highlighting and editor support.
-
-The reference implementation currently claims **Cook Standard v0.14**. cook is
-pre-1.0 software: if this friendly tour and the Standard disagree, the Standard
-wins—and the README has a bug.
+cook is pre-1.0 software. If this friendly tour and the Standard disagree, the
+Standard wins, and the README has a bug.
