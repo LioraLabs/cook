@@ -63,7 +63,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential curl ca-certificates git pkg-config
+            build-essential curl ca-certificates git pkg-config unzip zip
 
       - uses: actions/checkout@v4
 
