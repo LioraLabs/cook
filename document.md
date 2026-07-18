@@ -382,9 +382,13 @@ probe services
 
 Producer forms: bare `{ shell }` (a string), `lines { shell }` (an array),
 `json { shell }` (structured), and `>{ lua }` (a Lua value that can read upstream
-probes via `cook.probes.get`). A `tools { cc }` probe records the resolved
-identity of an executable; an `envs { HOSTNAME }` probe records environment
-values. Probes can depend on other probes with the same colon syntax.
+probes via `cook.probes.get`). Three more forms record *determinants* rather
+than run commands: a `tools { cc }` probe records the resolved identity of an
+executable, an `envs { HOSTNAME }` probe records environment values, and a
+`files { "src/*.ts" !"src/gen/*.ts" }` probe records a file set as per-file
+content hashes (`ingredients` glob syntax; the value maps each matched path to
+its hash, so a change to any matched file — or adding or removing one — changes
+the value). Probes can depend on other probes with the same colon syntax.
 
 The payoff is **fan-out**: point a recipe's `ingredients` at a probe (bare name,
 not a quoted glob) and the recipe runs once per member. Record fields are
@@ -449,6 +453,22 @@ recipe misc
     cook "build/scratch.txt" { ./gen > $<out> } local    # cached locally, never shared
     cook "build/pinned.txt"  { ./gen > $<out> } pinned   # fetch-only; a cold miss is an error
     cook "build/blurb.txt"   { llm gen > $<out> } nondet # non-reproducible; reuse the recording
+```
+
+Sealing composes with the `files` producer to solve a common bind: a recipe
+whose `ingredients` line is already an iteration driver (a probe fan-out) has
+no place to declare the *other* files its command reads. Name them as a
+`files` probe and seal it — every unit's key now carries each file's hash, and
+`cook why` attributes a miss to the exact file that changed:
+
+```
+probe sources
+    files { "packages/*/src/*.ts" "packages/*/tsconfig.json" }
+
+recipe typecheck
+    ingredients packages                # the fan-out driver occupies this slot
+    seal sources                        # so the source files ride the key instead
+    cook "build/$<in.name>.stamp" { tsc -p $<in.dir> --noEmit && echo ok > $<out> }
 ```
 
 Unannotated steps publish after a run and fetch by key before running. Restored
