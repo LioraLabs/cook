@@ -526,7 +526,25 @@ where
         .filter_map(|node_idx| {
             let work_node = dag.node(node_idx).payload();
             if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
-                probe_units_by_key.get(key).map(|pu| (node_idx, pu.clone()))
+                // The payload key is Cookfile-local, but `RegisteredWorkspace
+                // .probes` keys imported-Cookfile probes workspace-qualified
+                // (registers.rs `qualify`). A probe unit always registers in
+                // the same Cookfile as its surrounding recipe, and recipe
+                // local names never contain '.', so the recipe's qualified
+                // prefix locates the entry. Without this, every imported-
+                // Cookfile probe missed its metadata here and silently lost
+                // fingerprint caching (always re-ran); CS-0148's `files`
+                // sentinel made the miss loud by reaching a worker as Lua.
+                let qualified = match work_node.recipe_name.rfind('.') {
+                    Some(idx) => {
+                        format!("{}.{}", &work_node.recipe_name[..idx], key)
+                    }
+                    None => key.clone(),
+                };
+                probe_units_by_key
+                    .get(&qualified)
+                    .or_else(|| probe_units_by_key.get(key))
+                    .map(|pu| (node_idx, pu.clone()))
             } else {
                 None
             }
