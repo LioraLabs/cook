@@ -1,0 +1,33 @@
+# Per-unit identity: two units that would collide under name/text-based
+# progress identity must still (a) attribute stdout to the correct unit and
+# (b) render as distinct completion lines.
+
+[[run]]
+args = ["twolines"]
+[run.assert]
+exists = ["out/first.txt", "out/second.txt"]
+# Each step's own stdout marker must be tagged with that step's own label —
+# not the sibling step's. At HEAD, `bridge_engine_to_progress_events`
+# attributes every OutputLine in a recipe to the lexicographically-last
+# interned node, so the second step's marker prints under the first step's
+# tag instead of its own.
+output_contains = [
+    "echo first > out/first.txt; echo MARKER_FIRST_LINE] MARKER_FIRST_LINE",
+    "cat out/first.txt > out/second.txt; echo MARKER_SECOND_LINE] MARKER_SECOND_LINE",
+]
+
+[[run]]
+args = ["fanout"]
+[run.assert]
+exists = ["out/alpha.done", "out/beta.done"]
+# Both fan-out members share an identical first command line ("echo
+# working"), so `WorkPayload::display_name()` collides for both — the
+# progress-side NodeId must still come from the executor's per-unit DAG
+# index, not the collided display string. At HEAD, the second member's
+# `NodeStarted` overwrites the first member's `NodeState` in `BuildState`
+# (same interned NodeId), so only one distinct per-member completion line
+# — never both — ever appears.
+output_contains = [
+    "fanout/alpha.done",
+    "fanout/beta.done",
+]

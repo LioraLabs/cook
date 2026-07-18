@@ -1,0 +1,10 @@
+recipe twolines
+    cook "out/first.txt" { echo first > $<out>; echo MARKER_FIRST_LINE }
+    cook "out/second.txt" { cat $<in> > $<out>; echo MARKER_SECOND_LINE }
+
+recipe fanout
+    ingredients "src/*.txt"
+    cook "out/$<in.stem>.done" {
+        echo working
+        cat $<in> > $<out>
+    }

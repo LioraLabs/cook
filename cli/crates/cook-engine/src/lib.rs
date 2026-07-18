@@ -189,6 +189,11 @@ pub enum EngineEvent {
     /// A work node has started executing.
     NodeStarted {
         recipe: String,
+        /// Executor DAG node index. Unique per run — the sole correct basis
+        /// for progress-side node identity. `node_name` is a display string
+        /// derived from command text and MAY collide across distinct units
+        /// (e.g. every Lua-chunk fan-out member displays as "lua").
+        unit: usize,
         node_name: String,
         artifact: Option<std::path::PathBuf>,
         fallback_label: String,
@@ -200,6 +205,8 @@ pub enum EngineEvent {
     /// A work node completed successfully.
     NodeCompleted {
         recipe: String,
+        /// See `NodeStarted::unit`.
+        unit: usize,
         node_name: String,
         elapsed: Duration,
         /// Mirrors the `kind` from the matching `NodeStarted` so the renderer
@@ -209,6 +216,8 @@ pub enum EngineEvent {
     /// A work node failed.
     NodeFailed {
         recipe: String,
+        /// See `NodeStarted::unit`.
+        unit: usize,
         node_name: String,
         elapsed: Duration,
         error: String,
@@ -216,6 +225,8 @@ pub enum EngineEvent {
     /// A work node was satisfied from cache (no execution needed).
     NodeCacheHit {
         recipe: String,
+        /// See `NodeStarted::unit`.
+        unit: usize,
         node_name: String,
         artifact: Option<std::path::PathBuf>,
     },
@@ -254,6 +265,16 @@ pub enum EngineEvent {
     /// variant that was never reachable.
     OutputLine {
         recipe: String,
+        /// See `NodeStarted::unit`. The sole basis for attributing this line
+        /// to the unit that produced it — the bridge previously had no unit
+        /// identity here and fell back to a recency heuristic that attributed
+        /// every line in a recipe to whichever node happened to sort last.
+        unit: usize,
+        /// Display name of the producing unit, carried so the bridge can
+        /// register a not-yet-seen unit (e.g. output forwarded from a
+        /// chore-window Lua chunk, which never gets its own `NodeStarted`)
+        /// with a real label instead of a blank/placeholder one.
+        node_name: String,
         line: String,
         stream: OutputStream,
     },

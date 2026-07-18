@@ -840,6 +840,7 @@ pub fn execute_dag(
                     event_tx,
                     EngineEvent::NodeCacheHit {
                         recipe: work_node.recipe_name.clone(),
+                        unit: id,
                         node_name: work_node.recipe_name.clone(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -934,6 +935,7 @@ pub fn execute_dag(
                             // Emit NodeCompleted so the recipe tracker counts this node.
                             emit(event_tx, EngineEvent::NodeCompleted {
                                 recipe: work_node.recipe_name.clone(),
+                                unit: id,
                                 node_name: test_name.clone(),
                                 elapsed: duration,
                                 kind: NodeKind::Test,
@@ -1007,6 +1009,7 @@ pub fn execute_dag(
                             event_tx,
                             EngineEvent::NodeCacheHit {
                                 recipe: work_node.recipe_name.clone(),
+                                unit: id,
                                 node_name: payload.display_name(),
                                 artifact: work_node.cache_meta.as_ref()
                                     .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -1051,6 +1054,7 @@ pub fn execute_dag(
                             event_tx,
                             EngineEvent::NodeFailed {
                                 recipe: work_node.recipe_name.clone(),
+                                unit: id,
                                 node_name: payload.display_name(),
                                 elapsed: std::time::Duration::ZERO,
                                 error: msg.clone(),
@@ -1073,6 +1077,7 @@ pub fn execute_dag(
                     event_tx,
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
+                        unit: id,
                         node_name: payload.display_name(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -1103,6 +1108,7 @@ pub fn execute_dag(
                         event_tx,
                         EngineEvent::NodeFailed {
                             recipe: work_node.recipe_name.clone(),
+                            unit: id,
                             node_name: payload.display_name(),
                             elapsed: std::time::Duration::ZERO,
                             error: err_msg.clone(),
@@ -1215,6 +1221,7 @@ pub fn execute_dag(
                                         event_tx,
                                         EngineEvent::NodeCacheHit {
                                             recipe: work_node.recipe_name.clone(),
+                                            unit: id,
                                             node_name: node_name.clone(),
                                             artifact: None,
                                         },
@@ -1345,6 +1352,7 @@ pub fn execute_dag(
                                     event_tx,
                                     EngineEvent::NodeStarted {
                                         recipe: work_node.recipe_name.clone(),
+                                        unit: id,
                                         node_name: node_name.clone(),
                                         artifact: None,
                                         fallback_label: node_name.clone(),
@@ -1355,6 +1363,7 @@ pub fn execute_dag(
                                     event_tx,
                                     EngineEvent::NodeCompleted {
                                         recipe: work_node.recipe_name.clone(),
+                                        unit: id,
                                         node_name: node_name.clone(),
                                         elapsed: started.elapsed(),
                                         kind: NodeKind::Cooked,
@@ -1399,6 +1408,7 @@ pub fn execute_dag(
                                 event_tx,
                                 EngineEvent::NodeFailed {
                                     recipe: work_node.recipe_name.clone(),
+                                    unit: id,
                                     node_name: node_name.clone(),
                                     elapsed: Duration::ZERO,
                                     error: err_msg.clone(),
@@ -1422,6 +1432,7 @@ pub fn execute_dag(
                     event_tx,
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
+                        unit: id,
                         node_name: node_name.clone(),
                         artifact: None,
                         fallback_label: node_name.clone(),
@@ -1452,6 +1463,7 @@ pub fn execute_dag(
                             event_tx,
                             EngineEvent::NodeCacheHit {
                                 recipe: work_node.recipe_name.clone(),
+                                unit: id,
                                 node_name: payload.display_name(),
                                 artifact: work_node.cache_meta.as_ref()
                                     .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -1496,6 +1508,7 @@ pub fn execute_dag(
                             event_tx,
                             EngineEvent::NodeFailed {
                                 recipe: work_node.recipe_name.clone(),
+                                unit: id,
                                 node_name: payload.display_name(),
                                 elapsed: Duration::ZERO,
                                 error: msg.clone(),
@@ -1524,6 +1537,7 @@ pub fn execute_dag(
                     event_tx,
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
+                        unit: id,
                         node_name: payload.display_name(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -1562,6 +1576,7 @@ pub fn execute_dag(
                         event_tx,
                         EngineEvent::NodeFailed {
                             recipe: work_node.recipe_name.clone(),
+                            unit: id,
                             node_name: payload.display_name(),
                             elapsed: Duration::ZERO,
                             error: err_msg.clone(),
@@ -1841,6 +1856,12 @@ pub fn execute_dag(
                                                         recipe: work_node
                                                             .recipe_name
                                                             .clone(),
+                                                        unit: id,
+                                                        node_name: work_node
+                                                            .payload
+                                                            .as_ref()
+                                                            .map(|p| p.display_name())
+                                                            .unwrap_or_default(),
                                                         line: line.clone(),
                                                         stream: *stream,
                                                     },
@@ -1990,6 +2011,7 @@ pub fn execute_dag(
                         &event_tx,
                         EngineEvent::NodeFailed {
                             recipe: chore_recipe.clone(),
+                            unit: window[k - 1],
                             node_name: chore_recipe.clone(),
                             elapsed: chore_elapsed,
                             error: summary.clone(),
@@ -2045,6 +2067,7 @@ pub fn execute_dag(
                         &event_tx,
                         EngineEvent::NodeStarted {
                             recipe: recipe_name.clone(),
+                            unit: id,
                             node_name: node_name.clone(),
                             artifact: work_node.cache_meta.as_ref()
                                 .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
@@ -2098,6 +2121,7 @@ pub fn execute_dag(
                             &event_tx,
                             EngineEvent::NodeCompleted {
                                 recipe: recipe_name.clone(),
+                                unit: id,
                                 node_name: node_name.clone(),
                                 elapsed: interactive_elapsed,
                                 // Interactive nodes are never test steps.
@@ -2156,6 +2180,7 @@ pub fn execute_dag(
                             &event_tx,
                             EngineEvent::NodeFailed {
                                 recipe: recipe_name.clone(),
+                                unit: id,
                                 node_name: node_name.clone(),
                                 elapsed: interactive_elapsed,
                                 error: err_msg.clone(),
@@ -2309,6 +2334,8 @@ pub fn execute_dag(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
+                        unit: result.id,
+                        node_name: result.node_name.clone(),
                         line: line.clone(),
                         stream: *stream,
                     },
@@ -2319,6 +2346,7 @@ pub fn execute_dag(
                 &event_tx,
                 EngineEvent::NodeCompleted {
                     recipe: recipe_name.clone(),
+                    unit: result.id,
                     node_name: result.node_name.clone(),
                     elapsed: Duration::ZERO,
                     kind: work_node
@@ -2449,6 +2477,8 @@ pub fn execute_dag(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
+                        unit: result.id,
+                        node_name: result.node_name.clone(),
                         line: line.clone(),
                         stream: *stream,
                     },
@@ -2541,6 +2571,7 @@ pub fn execute_dag(
                     &event_tx,
                     EngineEvent::NodeFailed {
                         recipe: recipe_name.clone(),
+                        unit: result.id,
                         node_name: result.node_name.clone(),
                         elapsed: Duration::ZERO,
                         error: err_msg.clone(),
@@ -2577,6 +2608,7 @@ pub fn execute_dag(
                     &event_tx,
                     EngineEvent::NodeFailed {
                         recipe: recipe_name.clone(),
+                        unit: result.id,
                         node_name: result.node_name.clone(),
                         elapsed: Duration::ZERO,
                         error: err_msg.clone(),
