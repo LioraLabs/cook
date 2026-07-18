@@ -1,0 +1,22 @@
+Cookfile
+  uses: [UseStatement module_name="m" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="alpha" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="m.mark(\"alpha\")"
+        Cook outputs=["build/alpha.out"] body=ShellBlock(["echo alpha > $<out>"])
+    Recipe name="beta" line=7
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="m.mark(\"beta\")"
+        Cook outputs=["build/beta.out"] body=ShellBlock(["echo beta > $<out>"])
+  chores:
+  register_blocks: [RegisterBlock body="    m.arm()" line=11]
+  top_level_module_calls: []

@@ -97,6 +97,12 @@ When a module's `init()` records state into `cook.probes` (§{lua.both}) during 
 
 When a module records transitive-link info via `cook.export` (§{lua.both}) at register time, an execute-phase recipe body that calls `cook.import` MUST observe the recorded info. [Pinned by CS-0071.]
 
+### 12.3.5. Register-completion callbacks [#mods.lifecycle.finalize]
+
+A module MAY queue work to run once, after every recipe body of the registration pass has been evaluated, by calling `cook.on_register_complete` (§{lua.cook-on-register-complete}) — from its top-level chunk, from `init()`, or from a target maker a recipe body calls. §{lua.cook-on-register-complete} is the authoritative definition of the callback's signature, ordering, and restrictions; this subsection situates it in the lifecycle this chapter defines.
+
+A module's top-level chunk and its `init()` function (§{mods.lifecycle.load-order}) run before any recipe body in the enclosing Cookfile registers — they are this lifecycle's **start**. A callback queued via `cook.on_register_complete` runs after every recipe body of the pass has registered — it is the lifecycle's **end**, the finalize counterpart to `init()`'s start. Where `init()` lets a module establish state before any recipe body could depend on it, a queued callback lets a module act on state recipe bodies accumulated while registering — state that, by construction, is not complete until the last body of the pass has run.
+
 ## 12.4. Built-in modules [#mods.builtin]
 A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§{rationale.modules}).
 
@@ -123,7 +129,7 @@ A module's top-level chunk and its `init()` function (§{mods.lifecycle}) run on
 
 A target maker invoked from a recipe body runs at register phase and MAY call the register-phase API (§{lua.reg}), including `cook.add_unit` (§{lua.add-unit}), `cook.step_group`, `cook.recipe`, and `cook.probe` (§{cat.probes.api}).
 
-Code a module records for later execution — a `>{ … }` body carried on a unit — runs at **execute phase**. Such code MAY call only the execute-phase API (§{lua.exe}) and the both-phase API (§{lua.both}); calling a register-only function from execute-phase Lua MUST raise a runtime error (§{rationale.execute-phase-api}). The both-phase API (§{lua.both}) is the only surface a module may call in either phase.
+Code a module records for later execution — a `>{ … }` body carried on a unit — runs at **execute phase**. Such code MAY call only the execute-phase API (§{lua.exe}) and the both-phase API (§{lua.both}); calling a register-only function from execute-phase Lua MUST raise a runtime error (§{rationale.execute-phase-api}). The both-phase API (§{lua.both}) is the only surface a module may call in either phase. A module MAY also queue work to run once every recipe body of the registration pass has registered, via `cook.on_register_complete` (§{lua.cook-on-register-complete}).
 
 ### 12.7.2. Registering work units [#mods.authoring.units]
 

@@ -1,0 +1,12 @@
+use m
+
+recipe alpha
+    m.mark("alpha")
+    cook "build/alpha.out" { echo alpha > $<out> }
+
+recipe beta
+    m.mark("beta")
+    cook "build/beta.out" { echo beta > $<out> }
+
+register
+    m.arm()
