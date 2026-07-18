@@ -1,7 +1,7 @@
 #!/bin/bash
 # Directory-hopping tour: upward Cookfile discovery, cwd-scoped bare names,
 # root-anchored cache keys, reserved `//` targets, `.cookroot` boundary.
-# (Standard §20.2, book §10.1.)
+# (Standard §20.2.)
 #
 # Each scenario asserts on cook's observable output. Exit status is the
 # number of failing scenarios.
