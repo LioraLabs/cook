@@ -171,6 +171,10 @@ The distribution mechanics — the `cook_modules/` search paths a published modu
 
 A recipe's name, and the fact that it is invocable, belong to the author of the Cookfile. A module is ordinarily a **step contributor**: it exposes target makers that a user-written `recipe` body calls to register work units (§{mods.authoring.units}), and the recipe those units belong to is one the user declared. A module SHOULD NOT call `cook.recipe` (§{lua.cook-recipe}) to mint a recipe the user did not ask for.
 
+This is a categorical MUST, not merely a SHOULD-NOT, for the ordinary case: a **single-target maker** — a target maker whose call contributes the units of exactly one target — MUST be a step contributor. It MUST be invoked from within a user-written `recipe` body, from which it derives that recipe's identity via `cook.recipe_name()` (§{lua.cook-recipe-name}), and it MUST NOT itself call `cook.recipe`. Only the two shapes below, neither of which is a single-target maker, are exempted from this MUST.
+
+Exports are orthogonal to this rule. Nothing in this subsection touches `cook.export` / `cook.import` semantics (§{lua.cook-export-import}): a target's exported transitive-link surface is a property of the target's own options, independent of which recipe owns the unit that produced it. A step contributor exports under the enclosing recipe's identity exactly as a minted recipe would — who owns the recipe and what the recipe exports are separate questions, and this subsection answers only the first.
+
 Two shapes legitimately require a module to mint recipes:
 
 - **Data-driven fan-out** — one call mints N recipes derived from data the module parses at register time, where neither N nor the names are knowable to the Cookfile author in advance (for example, one build recipe per member of a workspace manifest).
