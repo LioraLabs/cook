@@ -338,26 +338,38 @@ pub fn register_unit_api(
             Ok(LuaValue::Boolean(b)) => b,
             Ok(other) => return Err(type_err("cache", "a boolean", other.type_name())),
         };
-        // CS-0045 / CS-0127: the originating step kind drives the
+        // CS-0045 / CS-0127 / CS-0153: the originating step kind drives the
         // execute-phase sandbox policy on the resulting LuaChunk. Codegen
-        // omits the field for cook/test/chore bodies, all of which run
+        // omits the field for cook/chore bodies, both of which run
         // sandboxed to the project root — there is no unsandboxed step
         // kind (CS-0135 retired the `plate` step). The captured-unit
         // default is `cook` because that is the strictest policy. An
         // unrecognised string, or any non-string value, is a hard error
-        // rather than a silent fall-through to the default.
+        // rather than a silent fall-through to the default. `"test"` is
+        // rejected outright (CS-0153, §22.1): a test work unit is
+        // registrable only through `cook.add_test` (§22.4), which builds
+        // `WorkPayload::Test` directly rather than routing through this
+        // `step_kind` field — accepting `"test"` here would silently build
+        // a unit invisible to `cook test`.
         let step_kind: cook_contracts::StepKind = match tbl.get::<LuaValue>("step_kind") {
             Ok(LuaValue::Nil) | Err(_) => cook_contracts::StepKind::Cook,
             Ok(LuaValue::String(s)) => {
                 let sv = s.to_string_lossy().to_string();
                 match sv.as_str() {
-                    "test" => cook_contracts::StepKind::Test,
                     "chore" => cook_contracts::StepKind::Chore,
                     "cook" => cook_contracts::StepKind::Cook,
+                    "test" => {
+                        return Err(LuaError::runtime(
+                            "cook.add_unit: step_kind = \"test\" is not permitted — a test \
+                             work unit is registered with cook.add_test (\u{00a7}22.4); \
+                             step_kind accepts \"cook\" or \"chore\""
+                                .to_string(),
+                        ))
+                    }
                     _ => {
                         return Err(type_err(
                             "step_kind",
-                            "one of \"cook\", \"test\", \"chore\"",
+                            "one of \"cook\", \"chore\"",
                             &format!("{sv:?}"),
                         ))
                     }
@@ -866,16 +878,22 @@ pub fn register_unit_api(
             // execute time via cook.probes.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
             //
-            // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
-            // `step_kind` local (see above) rather than a hardcoded
-            // `StepKind::Cook`. `command` fields containing probe sigils are
-            // not exclusive to native `cook` bodies — a `test` body inside
-            // a `for_each` recipe lowers its command the same literal-sigil
-            // way (COOK-187 / CS-0122) and passes `step_kind = "test"`.
-            // Hardcoding `Cook` here would misreport a non-cook command's
-            // originating step kind (CS-0135: every step kind is sandboxed
-            // identically today, but the field remains load-bearing for
-            // diagnostics and any future step kind).
+            // CS-0127 / CS-0153: the rewritten LuaChunk carries the
+            // ALREADY-PARSED `step_kind` local (see above) rather than a
+            // hardcoded `StepKind::Cook`. `command` fields containing probe
+            // sigils are not exclusive to `cook` bodies — a `chore` body's
+            // command lowers the same literal-sigil way and passes
+            // `step_kind = "chore"`. Hardcoding `Cook` here would misreport
+            // a non-cook command's originating step kind (CS-0135: every
+            // step kind is sandboxed identically today, but the field
+            // remains load-bearing for diagnostics and any future step
+            // kind). Test bodies never reach this arm at all: since the
+            // v1.0 language cut, codegen lowers test bodies exclusively
+            // through `cook.add_test` (cli/crates/cook-luagen/src/test_step.rs),
+            // which builds `WorkPayload::Test` directly — a payload variant
+            // that carries no `StepKind` — and `step_kind = "test"` is now a
+            // hard register-phase rejection on this API (CS-0153, see
+            // above), so `StepKind::Test` is never constructed here.
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {

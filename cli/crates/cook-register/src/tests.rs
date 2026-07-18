@@ -462,6 +462,19 @@ fn test_add_unit_rejects_non_string_step_kind() {
     assert!(err.contains("step_kind"), "got: {err}");
 }
 
+// CS-0153 §22.1: `step_kind = "test"` is no longer an accepted value on
+// `cook.add_unit` — a test work unit is registrable only through
+// `cook.add_test` (§22.4). Silently accepting `step_kind = "test"` here
+// would build a unit invisible to `cook test` (WorkPayload::Test carries no
+// StepKind; only `cook.add_test` constructs that payload), letting a test
+// gate go green over a failing check.
+#[test]
+fn test_add_unit_rejects_step_kind_test() {
+    let err = add_unit_reject(r#"command = "true", step_kind = "test""#);
+    assert!(err.contains("step_kind"), "got: {err}");
+    assert!(err.contains("cook.add_test"), "got: {err}");
+}
+
 #[test]
 fn test_add_unit_rejects_non_string_member() {
     let err = add_unit_reject(r#"command = "true", member = {}"#);
