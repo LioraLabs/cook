@@ -799,6 +799,24 @@ pub fn register_unit_api(
             }
         }
 
+        // CS-0152: literal `cook.probes.get("key")` reads inside a Lua-code
+        // unit's body demand the probe automatically, mirroring the
+        // shell-side `$<key>` sigil auto-union above (and the seal-key
+        // union just above). A shell body's `probes` field is populated by
+        // scanning its command string for sigils; a Lua body had no
+        // equivalent surface, so a probe consumed ONLY from Lua code was
+        // never demand-scheduled ahead of the unit and read nil at execute
+        // time. Scanning here — statically, at capture time — closes that
+        // gap for the common literal-key case; non-literal reads still fall
+        // through to the execute-phase hard error.
+        if let Some(code) = &lua_code {
+            for k in cook_luagen::lua_env::scan_probe_reads(code) {
+                if !probes.contains(&k) {
+                    probes.push(k);
+                }
+            }
+        }
+
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
         let is_chore = {
@@ -1989,6 +2007,78 @@ mod tests {
         let state = body_ref(&capture_state);
         let u = state.units.first().expect("one unit");
         assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    /// CS-0152: a literal `cook.probes.get("key")` read inside a `lua_code`
+    /// unit body must be statically scanned and unioned into `probes` at
+    /// capture time, so the probe is demand-scheduled ahead of the unit
+    /// instead of reading nil at execute time.
+    #[test]
+    fn add_unit_lua_code_probe_get_call_captures_probes_field() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                lua_code = "local v = cook.probes.get(\"cc:zlib\")",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert_eq!(u.probes, vec!["cc:zlib"]);
+    }
+
+    /// An explicit `probes` list and scanned literal `cook.probes.get` keys
+    /// must union without duplicating an entry present in both.
+    #[test]
+    fn add_unit_lua_code_probe_get_unions_with_explicit_probes_without_dup() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                probes = { "cc:zlib" },
+                lua_code = "local a = cook.probes.get(\"cc:zlib\")\nlocal b = cook.probes.get(\"cc:compiler\")",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    /// A shell-command unit (no `lua_code`) must be unaffected by the new
+    /// scan — regression guard against the union firing on the wrong path.
+    #[test]
+    fn add_unit_shell_command_unit_unaffected_by_probe_scan() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                command = "echo 'cook.probes.get(\"cc:zlib\")'",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert!(u.probes.is_empty());
     }
 
     #[test]

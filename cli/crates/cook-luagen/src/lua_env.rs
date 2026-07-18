@@ -341,6 +341,201 @@ fn simple_unescape(s: &str) -> String {
     out
 }
 
+/// Scan `source` for static reads of `cook.probes.get("<KEY>")` (or the
+/// single-quoted form) and return the set of literal keys found (sorted,
+/// deduplicated).
+///
+/// # Why this exists
+///
+/// A shell-body unit's `probes` field is populated by scanning `$<key>`
+/// sigils in its command string (CS-0074), which demand-schedules the probe
+/// ahead of the unit and folds its key into the fingerprint. A Lua-body unit
+/// (`lua_code = "..."`, e.g. from a native `>{ … }` cook-step body) has no
+/// equivalent sigil surface: a literal `cook.probes.get("key")` call inside
+/// the body was previously invisible to the register-phase capture, so the
+/// probe was never demand-scheduled and the call read nil at execute time.
+/// The keys this scanner finds are unioned into the unit's `probes` field at
+/// the `cook.add_unit` capture site (see `unit_api.rs`), which routes them
+/// through the existing end-of-pass §22.5.6 machinery exactly like a key
+/// that arrived via the `probes = {...}` table or a `$<key>` sigil: an
+/// unknown key still produces the usual register-phase diagnostic, a known
+/// key gets a DAG edge, a fingerprint fold, and demand-driven scheduling.
+///
+/// # Matching rule
+///
+/// `cook.probes.get(` — optional whitespace — a double- or single-quoted
+/// short-string literal — optional whitespace — immediately followed by `)`
+/// or `,`. Requiring `)`/`,` right after the literal is what excludes
+/// concatenation: `cook.probes.get("a" .. b)` has a string literal as the
+/// first token, but that literal is not the WHOLE argument — the real key is
+/// dynamic, so collecting `"a"` would be wrong. Matching is scoped outside
+/// strings and comments exactly like [`scan_env_reads`] (see that function's
+/// docs for the comment/string-skipping approach, reused verbatim here).
+///
+/// # Skipped (by design)
+///
+/// - **Non-literal first argument** — `cook.probes.get(k)`,
+///   `cook.probes.get(some_fn())`. Not statically resolvable; falls through
+///   to the execute-phase hard error on an undeclared probe read.
+/// - **Concatenation** — `cook.probes.get("a" .. b)` (see above).
+/// - **`cook.probes.scope(...)` chains** — out of scope by design; only the
+///   literal `cook.probes.get` accessor is scanned.
+/// - Text inside comments or unrelated string literals (mirrors
+///   [`scan_env_reads`]).
+pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
+    let mut keys: BTreeSet<String> = BTreeSet::new();
+    let bytes = source.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        // ── Skip line comments: `-- … <newline>`.
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            // Long comment `--[[ … ]]` / `--[==[ … ]==]`.
+            if i + 2 < bytes.len() && bytes[i + 2] == b'[' {
+                let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 3..]);
+                if let Some(after_open_pos) = after_open {
+                    let close_marker = format!("]{}]", "=".repeat(eq_count));
+                    let from = i + 3 + after_open_pos;
+                    if let Some(rel) = source[from..].find(&close_marker) {
+                        i = from + rel + close_marker.len();
+                        continue;
+                    } else {
+                        return keys; // unterminated long comment — bail
+                    }
+                }
+            }
+            // Line comment.
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // ── Skip short strings.
+        if b == b'"' || b == b'\'' {
+            let quote = b;
+            i += 1;
+            while i < bytes.len() && bytes[i] != quote {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if i < bytes.len() {
+                i += 1; // closing quote
+            }
+            continue;
+        }
+
+        // ── Skip long strings `[[ … ]]` / `[==[ … ]==]`.
+        if b == b'[' {
+            let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 1..]);
+            if let Some(after_open_pos) = after_open {
+                let close_marker = format!("]{}]", "=".repeat(eq_count));
+                let from = i + 1 + after_open_pos;
+                if let Some(rel) = source[from..].find(&close_marker) {
+                    i = from + rel + close_marker.len();
+                    continue;
+                } else {
+                    return keys; // unterminated long string — bail
+                }
+            }
+        }
+
+        // ── Try to match `cook.probes.get` here.
+        const PREFIX: &[u8] = b"cook.probes.get";
+        if bytes_starts_with(bytes, i, PREFIX)
+            && !is_part_of_larger_identifier(bytes, i, PREFIX.len())
+        {
+            let after = i + PREFIX.len();
+
+            // Optional whitespace before `(`.
+            let mut j = after;
+            while j < bytes.len() && is_lua_space(bytes[j]) {
+                j += 1;
+            }
+
+            if j < bytes.len() && bytes[j] == b'(' {
+                // Optional whitespace before the argument.
+                let mut k = j + 1;
+                while k < bytes.len() && is_lua_space(bytes[k]) {
+                    k += 1;
+                }
+
+                if k < bytes.len() && (bytes[k] == b'"' || bytes[k] == b'\'') {
+                    let quote = bytes[k];
+                    let key_start = k + 1;
+                    let mut m = key_start;
+                    while m < bytes.len() && bytes[m] != quote {
+                        if bytes[m] == b'\\' && m + 1 < bytes.len() {
+                            m += 2;
+                        } else {
+                            m += 1;
+                        }
+                    }
+                    if m < bytes.len() && bytes[m] == quote {
+                        // Closing quote at `m`. Only collect when the
+                        // literal is immediately (modulo whitespace) the
+                        // WHOLE argument — i.e. followed by `)` or `,` —
+                        // which is what rules out `"a" .. b` concatenation.
+                        let mut n = m + 1;
+                        while n < bytes.len() && is_lua_space(bytes[n]) {
+                            n += 1;
+                        }
+                        if n < bytes.len() && (bytes[n] == b')' || bytes[n] == b',') {
+                            let key_raw = &source[key_start..m];
+                            let key = simple_unescape(key_raw);
+                            if !key.is_empty() {
+                                keys.insert(key);
+                            }
+                        }
+                        // Resume right after the closing quote (not after
+                        // `)`/`,`) regardless of whether we collected, so a
+                        // concatenation's trailing expression is still
+                        // scanned normally by the outer loop.
+                        i = m + 1;
+                        continue;
+                    }
+                    // Unterminated string literal in the call argument —
+                    // resume right after the opening quote so we don't spin.
+                    i = key_start;
+                    continue;
+                }
+                // Non-literal first argument (identifier, nested call,
+                // number, ...) — not statically resolvable. Resume right
+                // after `(` so anything later on the same line still scans.
+                i = j + 1;
+                continue;
+            }
+            // `cook.probes.get` not immediately followed by a call — e.g.
+            // passed around as a bare reference. Resume after the prefix.
+            i = after;
+            continue;
+        }
+
+        // ── Skip any identifier we encounter so we don't re-test for the
+        // `cook.probes.get` prefix inside an identifier.
+        if is_lua_ident_start(b) {
+            i = scan_lua_ident_end(bytes, i);
+            continue;
+        }
+
+        i += 1;
+    }
+
+    keys
+}
+
+/// True if `b` is Lua-insignificant horizontal-or-vertical whitespace
+/// (space, tab, CR, LF). Used to tolerate whitespace around `(` and around
+/// the string-literal argument in [`scan_probe_reads`].
+fn is_lua_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +726,129 @@ mod tests {
     fn write_then_read_records_only_read() {
         let src = "cook.env.WRITE = \"x\"\nlocal v = cook.env.READ";
         assert_eq!(keys(src), vec!["READ"]);
+    }
+
+    // ── scan_probe_reads ────────────────────────────────────────────────
+
+    fn probe_keys(src: &str) -> Vec<String> {
+        scan_probe_reads(src).into_iter().collect()
+    }
+
+    #[test]
+    fn probe_reads_empty_source_yields_no_keys() {
+        assert!(scan_probe_reads("").is_empty());
+    }
+
+    #[test]
+    fn probe_reads_double_quoted_key_collected() {
+        assert_eq!(
+            probe_keys(r#"local v = cook.probes.get("cc:zlib")"#),
+            vec!["cc:zlib"]
+        );
+    }
+
+    #[test]
+    fn probe_reads_single_quoted_key_collected() {
+        assert_eq!(
+            probe_keys("local v = cook.probes.get('cc:zlib')"),
+            vec!["cc:zlib"]
+        );
+    }
+
+    #[test]
+    fn probe_reads_whitespace_around_paren_tolerated() {
+        assert_eq!(
+            probe_keys("local v = cook.probes.get  (  \"cc:zlib\"  )"),
+            vec!["cc:zlib"]
+        );
+    }
+
+    #[test]
+    fn probe_reads_multiple_distinct_keys_collected() {
+        assert_eq!(
+            probe_keys(
+                r#"
+                local a = cook.probes.get("cc:zlib")
+                local b = cook.probes.get("cc:compiler")
+                "#
+            ),
+            vec!["cc:compiler".to_string(), "cc:zlib".to_string()]
+        );
+    }
+
+    #[test]
+    fn probe_reads_dedups_repeated_key() {
+        assert_eq!(
+            probe_keys(
+                r#"
+                local a = cook.probes.get("cc:zlib")
+                local b = cook.probes.get("cc:zlib")
+                "#
+            ),
+            vec!["cc:zlib"]
+        );
+    }
+
+    #[test]
+    fn probe_reads_ignores_comment_embedded_call() {
+        assert!(probe_keys("-- cook.probes.get(\"cc:zlib\")\n").is_empty());
+        assert!(probe_keys("--[[ cook.probes.get(\"cc:zlib\") ]]\n").is_empty());
+    }
+
+    #[test]
+    fn probe_reads_ignores_call_inside_unrelated_string_literal() {
+        let src = r#"local s = "cook.probes.get(\"cc:zlib\")""#;
+        assert!(probe_keys(src).is_empty());
+    }
+
+    #[test]
+    fn probe_reads_ignores_dynamic_key_argument() {
+        assert!(probe_keys("local v = cook.probes.get(k)").is_empty());
+    }
+
+    #[test]
+    fn probe_reads_ignores_concatenation_argument() {
+        // The first token after `(` is a string literal, but it's not the
+        // WHOLE argument — the real key is dynamic. Must not collect "a".
+        assert!(probe_keys(r#"local v = cook.probes.get("a" .. b)"#).is_empty());
+    }
+
+    #[test]
+    fn probe_reads_finds_key_after_ignored_concatenation() {
+        let src = r#"
+            local v = cook.probes.get("a" .. b)
+            local w = cook.probes.get("cc:zlib")
+        "#;
+        assert_eq!(probe_keys(src), vec!["cc:zlib"]);
+    }
+
+    #[test]
+    fn probe_reads_ignores_scope_chain() {
+        assert!(probe_keys(r#"cook.probes.scope("cc"):get("zlib")"#).is_empty());
+    }
+
+    #[test]
+    fn probe_reads_returns_sorted_keys() {
+        assert_eq!(
+            probe_keys(
+                r#"
+                local a = cook.probes.get("zz")
+                local b = cook.probes.get("aa")
+                local c = cook.probes.get("mm")
+                "#
+            ),
+            vec!["aa".to_string(), "mm".to_string(), "zz".to_string()]
+        );
+    }
+
+    #[test]
+    fn probe_reads_realistic_lua_body() {
+        let body = r#"
+            local f = io.open(output, "w")
+            local v = cook.probes.get("cc:zlib")
+            f:write("version=" .. tostring(v.version))
+            f:close()
+        "#;
+        assert_eq!(probe_keys(body), vec!["cc:zlib"]);
     }
 }
