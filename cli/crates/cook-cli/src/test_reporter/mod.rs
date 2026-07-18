@@ -1,6 +1,4 @@
 //! Terminal test reporter — live event accumulation + final summary block.
-//!
-//! Per docs/superpowers/specs/2026-05-07-test-runner-design.md §6.5.
 
 pub mod failures;
 pub mod label;

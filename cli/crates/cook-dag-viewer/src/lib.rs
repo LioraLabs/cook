@@ -1,6 +1,4 @@
 //! Terminal UI viewer for the Cook build DAG.
-//!
-//! See `docs/superpowers/specs/2026-05-05-dag-tui-viewer-design.md`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

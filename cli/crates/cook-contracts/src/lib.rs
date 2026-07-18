@@ -211,8 +211,7 @@ impl WorkPayload {
 ///   - Treat the file as an implicit restorable output: uploaded under
 ///     its own artifact key, restored on a hit-with-drifted-outputs check.
 ///
-/// The only currently supported `format` is `"make"`. See the design at
-/// `standard/specs/2026-05-04-discovered-inputs-design.md`.
+/// The only currently supported `format` is `"make"`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoveredInputs {
     pub from: String,

@@ -140,7 +140,5 @@ Cook is one process with one Lua state. Pure-Lua rocks are just `.lua` files tha
 
 ## See also
 
-- Parent architectural spec: `docs/superpowers/specs/2026-05-08-luarocks-modules-design.md` §"Rust-side changes" (the linker-flag rationale).
-- Phase 2 design: `docs/superpowers/specs/2026-05-09-luarocks-phase-2-design.md` §M2.2 (`check-exports` chore) and §M2.4 (the lua-cjson regression test).
 - Phase 2 commit: `ec32ad9`. The two-line `cli/.cargo/config.toml` edit and the gate-m2 chore are where the runtime-side wiring actually lives in the tree.
 - LuaRocks's macOS LDFLAGS handling: `share/cook/default-rocks-config.lua` (committed template) — the comment there explains the `-undefined dynamic_lookup` default.
