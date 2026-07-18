@@ -1,0 +1,72 @@
+name: ci
+
+# The verification gate for this repo: must go green on every push to main and
+# every pull request, no path filters -- this workflow IS the gate, not an
+# optimization layered on top of one.
+#
+# `cook test` (run below) fans out to every test unit the root Cookfile's
+# imports register:
+#   - cli.test        a full `cargo test` in cli/: both the cook-lang and
+#                      cook-cli conformance suites, plus vendor_completeness_test.rs
+#   - ts.test          tree-sitter-cook's own grammar corpus (`tree-sitter test`)
+#   - ts.conformance   tree-sitter-cook checked against the Cook Standard's
+#                      conformance corpus
+#   - standard.lint    engine-internal Lua keyword lint over standard/
+#
+# CI starts with no cook binary, so this workflow bootstraps one with a plain
+# `cargo build` before it can run `cook test` at all (same reason release.yml
+# has its own "Bootstrap cook" step).
+#
+# pnpm is deliberately absent: standard.build (the Astro docs site) is a build
+# chore, not a test unit, so it is out of scope for a test gate; standard.lint
+# runs pure Lua inside the engine and needs no external toolchain; ts.test and
+# ts.conformance need only the tree-sitter CLI (installed below) plus the node
+# binary ubuntu-latest already ships -- no node_modules install required.
+#
+# A second job (sdl3-game smoke) is expected to land here later as a sibling
+# under `jobs:` -- keep it that way rather than folding it into `test`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      # ubuntu-latest ships a Rust stable toolchain; there is no install step
+      # here on purpose -- if a runner image ever loses it, this must fail
+      # loudly rather than silently reaching for a fallback.
+      - name: Install tree-sitter CLI
+        shell: bash
+        run: npm install -g tree-sitter-cli@0.25.10
+
+      - name: Toolchain sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc -vV
+          tree-sitter --version
+
+      # `cook test` is itself a cook chore, so it needs a cook binary first.
+      - name: Build cook
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd cli && cargo build --release -p cook-cli)
+
+      - name: cook test
+        shell: bash
+        run: ./cli/target/release/cook test
