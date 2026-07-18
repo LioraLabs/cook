@@ -147,13 +147,23 @@ jobs:
           set -euo pipefail
           (cd cli && cargo build --release -p cook-cli)
 
-      # Chained in one step: the assert must run in the same cwd
-      # (examples/modules/sdl3-game) that the build step left, since a new
-      # step resets cwd back to $GITHUB_WORKSPACE.
+      # cook_modules/ is gitignored (build output of `cook modules install`,
+      # not source -- see .gitignore's `**/cook_modules/**`), so a fresh
+      # checkout never has it: cook.load_module has no fetch-on-demand
+      # fallback (cook-register/src/module_loader.rs only ever looks under
+      # ./cook_modules, erroring "module not found" otherwise), so this step
+      # must run before `cook game` can resolve `use cook_cc`.
+      # --accept-trust is the non-interactive TOFU consent this subcommand
+      # requires in CI (see `cook modules install --help`).
+      #
+      # Chained in one step with the build below: the assert must run in the
+      # same cwd (examples/modules/sdl3-game) that the build step left, since
+      # a new step resets cwd back to $GITHUB_WORKSPACE.
       - name: cook game (smoke build)
         shell: bash
         run: |
           set -euo pipefail
           cd examples/modules/sdl3-game
+          "$GITHUB_WORKSPACE"/cli/target/release/cook modules install --non-interactive --accept-trust
           "$GITHUB_WORKSPACE"/cli/target/release/cook game
           test -x build/bin/game
