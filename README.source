@@ -257,5 +257,12 @@ cook
 - [**Sharing a cache across a team**](docs/shared-cache.md): the shared store is
   a directory — point everyone at one path, no server to run.
 
+## Chef's note
+
+This README is itself a cook build: a probe reads [`README.source`](README.source)
+for the code snippets, a recipe fans out one light-and-dark render per snippet,
+and a gather step compiles the page. Edit one snippet and only its pair re-bakes.
+The recipe is at the bottom of the [`Cookfile`](Cookfile).
+
 cook is pre-1.0 software. If this friendly tour and the Standard disagree, the
 Standard wins, and the README has a bug.
