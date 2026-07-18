@@ -70,9 +70,24 @@ impl RocksDriver {
             "--tree".to_string(),
             self.tree_arg().to_string_lossy().into_owned(),
         ];
-        for idx in &self.indexes {
-            v.push("--server".to_string());
-            v.push(idx.clone());
+        // luarocks' `--server` is SINGLE-VALUED (last flag wins, in both the
+        // `--server url` and `--server=url` spellings), so emitting one flag
+        // per index never worked: only the last index was searched and every
+        // blessed-rock install failed with "No results matching query". Found
+        // launch night with cook_cc 0.14.0-1 live on rocks.usecook.com but
+        // uninstallable through cook. One `--server=` flag PREPENDS to
+        // luarocks' built-in default server list (luarocks.org + mirrors),
+        // which is exactly the blessed-index-first, public-fallback semantics
+        // we want — so emit the first non-default index and let the built-in
+        // defaults provide the fallback. A config with several private
+        // indexes is not expressible through the CLI flag; that needs a
+        // generated luarocks config file (follow-up).
+        if let Some(idx) = self
+            .indexes
+            .iter()
+            .find(|i| i.trim_end_matches('/') != "https://luarocks.org")
+        {
+            v.push(format!("--server={idx}"));
         }
         v
     }
@@ -89,10 +104,17 @@ impl RocksDriver {
     }
 
     pub fn install_locked(&self, locked: &LockedModule) -> Result<()> {
-        // Bypass luarocks's resolver — install directly from the pinned URL.
+        // Install by pinned NAME + EXACT VERSION through the resolver. The
+        // previous form passed `locked.source` (a git+https or tarball URL)
+        // as the package spec, which `luarocks install` cannot resolve at
+        // all ("No results matching query") — every locked reinstall from a
+        // fresh tree failed. The name@version pair IS the lock (integrity
+        // is recorded but not yet enforced); the server list pins where it
+        // resolves from.
         let mut argv = vec!["install".to_string()];
         argv.extend(self.base_argv());
-        argv.push(locked.source.clone());
+        argv.push(locked.name.clone());
+        argv.push(locked.version.clone());
         self.run(&argv)?;
         Ok(())
     }
@@ -272,16 +294,14 @@ mod tests {
         assert!(argv[tree_idx + 1].ends_with("cook_modules"));
         let server_args: Vec<&String> = argv
             .iter()
-            .enumerate()
-            .filter(|(i, _)| i > &0 && argv[i - 1] == "--server")
-            .map(|(_, v)| v)
+            .filter(|a| a.starts_with("--server="))
             .collect();
+        // Exactly ONE --server flag: luarocks' flag is single-valued
+        // (last-wins), and luarocks.org is already in its built-in default
+        // server list, so the blessed index is the only flag emitted.
         assert_eq!(
             server_args,
-            vec![
-                &"https://rocks.usecook.com".to_string(),
-                &"https://luarocks.org".to_string(),
-            ]
+            vec![&"--server=https://rocks.usecook.com".to_string()]
         );
         assert_eq!(argv.last().unwrap(), "cook_smoke");
         // Constraint "*" omitted from argv (passes through as no-constraint).
@@ -314,7 +334,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn install_locked_uses_pinned_url() {
+    fn install_locked_uses_pinned_name_and_version() {
         clear_fake_env();
         let prefix = fake_prefix();
         let project = tempfile::tempdir().expect("project");
@@ -335,7 +355,10 @@ mod tests {
         };
         driver.install_locked(&locked).expect("install_locked");
         let argv = read_argv_log(&log);
-        assert_eq!(argv.last().unwrap(), &locked.source);
+        // name + exact version, never the source URL (luarocks cannot
+        // resolve a git/tarball URL passed as a package spec).
+        assert_eq!(argv[argv.len() - 2], locked.name);
+        assert_eq!(argv.last().unwrap(), &locked.version);
         clear_fake_env();
     }
 
