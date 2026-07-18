@@ -1,6 +1,6 @@
 # Directory Hopping — run cook from anywhere in the workspace
 
-Demonstrates workspace ergonomics (Standard §20.2, book §10.1): upward
+Demonstrates workspace ergonomics (Standard §20.2): upward
 Cookfile discovery, cwd-scoped bare names, root-anchored cache keys, the
 reserved `//` target syntax, and the `.cookroot` workspace boundary.
 
