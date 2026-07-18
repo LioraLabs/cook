@@ -11,7 +11,6 @@
 --
 --   release.cut(version)         — bump manifest, commit, tag, push — CI
 --                                  builds and publishes (release.yml).
---                                  Register-phase only.
 
 local M = {}
 
@@ -144,7 +143,7 @@ function M.cut(version)
     if not version:match("^v") then version = "v" .. version end
     -- vX.Y.Z, optionally followed by a '-' prerelease suffix (e.g. v1.2.3-rc1).
     local core, suffix = version:match("^(v%d+%.%d+%.%d+)(.-)$")
-    if not core or not (suffix == "" or suffix:match("^%-")) then
+    if not core or not (suffix == "" or suffix:match("^%-[%w%.%-]+$")) then
         error("[release.cut] version '" .. version .. "' is not vX.Y.Z"
             .. " (with optional -suffix); pass --set VERSION=vX.Y.Z")
     end
@@ -159,7 +158,7 @@ function M.cut(version)
         error("[release.cut] " .. manifest_path .. " not found (call from repo root)")
     end
     local manifest_before = fs.read(manifest_path)
-    local current_version = manifest_before:match('version = "([^"]*)"')
+    local current_version = manifest_before:match('%[workspace%.package%]\nversion = "([^"]*)"')
 
     if current_version == bare_version then
         print("[release.cut] " .. manifest_path .. " already at " .. bare_version
@@ -167,8 +166,8 @@ function M.cut(version)
     else
         rewrite_file(
             manifest_path,
-            'version = "[^"]*"',
-            'version = "' .. bare_version .. '"',
+            '(%[workspace%.package%]\n)version = "[^"]*"',
+            '%1version = "' .. bare_version .. '"',
             "[workspace.package] version",
             "[release.cut]")
 
