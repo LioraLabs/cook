@@ -338,26 +338,38 @@ pub fn register_unit_api(
             Ok(LuaValue::Boolean(b)) => b,
             Ok(other) => return Err(type_err("cache", "a boolean", other.type_name())),
         };
-        // CS-0045 / CS-0127: the originating step kind drives the
+        // CS-0045 / CS-0127 / CS-0153: the originating step kind drives the
         // execute-phase sandbox policy on the resulting LuaChunk. Codegen
-        // omits the field for cook/test/chore bodies, all of which run
+        // omits the field for cook/chore bodies, both of which run
         // sandboxed to the project root — there is no unsandboxed step
         // kind (CS-0135 retired the `plate` step). The captured-unit
         // default is `cook` because that is the strictest policy. An
         // unrecognised string, or any non-string value, is a hard error
-        // rather than a silent fall-through to the default.
+        // rather than a silent fall-through to the default. `"test"` is
+        // rejected outright (CS-0153, §22.1): a test work unit is
+        // registrable only through `cook.add_test` (§22.4), which builds
+        // `WorkPayload::Test` directly rather than routing through this
+        // `step_kind` field — accepting `"test"` here would silently build
+        // a unit invisible to `cook test`.
         let step_kind: cook_contracts::StepKind = match tbl.get::<LuaValue>("step_kind") {
             Ok(LuaValue::Nil) | Err(_) => cook_contracts::StepKind::Cook,
             Ok(LuaValue::String(s)) => {
                 let sv = s.to_string_lossy().to_string();
                 match sv.as_str() {
-                    "test" => cook_contracts::StepKind::Test,
                     "chore" => cook_contracts::StepKind::Chore,
                     "cook" => cook_contracts::StepKind::Cook,
+                    "test" => {
+                        return Err(LuaError::runtime(
+                            "cook.add_unit: step_kind = \"test\" is not permitted — a test \
+                             work unit is registered with cook.add_test (\u{00a7}22.4); \
+                             step_kind accepts \"cook\" or \"chore\""
+                                .to_string(),
+                        ))
+                    }
                     _ => {
                         return Err(type_err(
                             "step_kind",
-                            "one of \"cook\", \"test\", \"chore\"",
+                            "one of \"cook\", \"chore\"",
                             &format!("{sv:?}"),
                         ))
                     }
@@ -799,6 +811,24 @@ pub fn register_unit_api(
             }
         }
 
+        // CS-0152: literal `cook.probes.get("key")` reads inside a Lua-code
+        // unit's body demand the probe automatically, mirroring the
+        // shell-side `$<key>` sigil auto-union above (and the seal-key
+        // union just above). A shell body's `probes` field is populated by
+        // scanning its command string for sigils; a Lua body had no
+        // equivalent surface, so a probe consumed ONLY from Lua code was
+        // never demand-scheduled ahead of the unit and read nil at execute
+        // time. Scanning here — statically, at capture time — closes that
+        // gap for the common literal-key case; non-literal reads still fall
+        // through to the execute-phase hard error.
+        if let Some(code) = &lua_code {
+            for k in cook_luagen::lua_env::scan_probe_reads(code) {
+                if !probes.contains(&k) {
+                    probes.push(k);
+                }
+            }
+        }
+
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
         let is_chore = {
@@ -866,16 +896,24 @@ pub fn register_unit_api(
             // execute time via cook.probes.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
             //
-            // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
-            // `step_kind` local (see above) rather than a hardcoded
-            // `StepKind::Cook`. `command` fields containing probe sigils are
-            // not exclusive to native `cook` bodies — a `test` body inside
-            // a `for_each` recipe lowers its command the same literal-sigil
-            // way (COOK-187 / CS-0122) and passes `step_kind = "test"`.
-            // Hardcoding `Cook` here would misreport a non-cook command's
-            // originating step kind (CS-0135: every step kind is sandboxed
-            // identically today, but the field remains load-bearing for
-            // diagnostics and any future step kind).
+            // CS-0127 / CS-0153: the rewritten LuaChunk carries the
+            // ALREADY-PARSED `step_kind` local (see above) rather than a
+            // hardcoded `StepKind::Cook`. In current codegen this arm is
+            // reached only by non-interactive `cook`-step commands (chore
+            // shell steps lower with `interactive = true`, see
+            // cook-luagen/src/recipe.rs, and become
+            // `WorkPayload::Interactive` before this match), so the local
+            // always holds the `Cook` default here — but a hand-authored
+            // module call may pass `step_kind = "chore"` directly, and the
+            // field remains load-bearing for diagnostics and any future
+            // step kind (CS-0135: every step kind is sandboxed identically
+            // today). Test bodies never reach this arm at all: since the
+            // v1.0 language cut, codegen lowers test bodies exclusively
+            // through `cook.add_test` (cli/crates/cook-luagen/src/test_step.rs),
+            // which builds `WorkPayload::Test` directly — a payload variant
+            // that carries no `StepKind` — and `step_kind = "test"` is now a
+            // hard register-phase rejection on this API (CS-0153, see
+            // above), so `StepKind::Test` is never constructed here.
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
@@ -1989,6 +2027,78 @@ mod tests {
         let state = body_ref(&capture_state);
         let u = state.units.first().expect("one unit");
         assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    /// CS-0152: a literal `cook.probes.get("key")` read inside a `lua_code`
+    /// unit body must be statically scanned and unioned into `probes` at
+    /// capture time, so the probe is demand-scheduled ahead of the unit
+    /// instead of reading nil at execute time.
+    #[test]
+    fn add_unit_lua_code_probe_get_call_captures_probes_field() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                lua_code = "local v = cook.probes.get(\"cc:zlib\")",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert_eq!(u.probes, vec!["cc:zlib"]);
+    }
+
+    /// An explicit `probes` list and scanned literal `cook.probes.get` keys
+    /// must union without duplicating an entry present in both.
+    #[test]
+    fn add_unit_lua_code_probe_get_unions_with_explicit_probes_without_dup() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                probes = { "cc:zlib" },
+                lua_code = "local a = cook.probes.get(\"cc:zlib\")\nlocal b = cook.probes.get(\"cc:compiler\")",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    /// A shell-command unit (no `lua_code`) must be unaffected by the new
+    /// scan — regression guard against the union firing on the wrong path.
+    #[test]
+    fn add_unit_shell_command_unit_unaffected_by_probe_scan() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                outputs = { "out.txt" },
+                command = "echo 'cook.probes.get(\"cc:zlib\")'",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert!(u.probes.is_empty());
     }
 
     #[test]

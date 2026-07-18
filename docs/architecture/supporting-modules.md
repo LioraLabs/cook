@@ -178,7 +178,7 @@ The `ProgressEvent` enum (`cli/crates/cook-progress/src/event.rs:106`) currently
 
 ### Renderers
 
-`cook-progress` exposes the `ProgressEvent` API and three renderers: `InlineRenderer` (cargo-style append-only event lines + sticky status line, default on TTY), `PlainRenderer` (append-only text, default off-TTY), and `JsonWriter` (one event per line, opt-in via `--output=json`). The inline renderer is built from two decoupled components — `EventWriter` for verb-prefixed event lines and `StatusLine` for a single redrawn bottom-of-terminal status line — coordinated through a shared stderr lock. See `docs/superpowers/specs/2026-05-03-cook-progress-cargo-style-design.md` for the full design.
+`cook-progress` exposes the `ProgressEvent` API and three renderers: `InlineRenderer` (cargo-style append-only event lines + sticky status line, default on TTY), `PlainRenderer` (append-only text, default off-TTY), and `JsonWriter` (one event per line, opt-in via `--output=json`). The inline renderer is built from two decoupled components — `EventWriter` for verb-prefixed event lines and `StatusLine` for a single redrawn bottom-of-terminal status line — coordinated through a shared stderr lock.
 
 Selected by the driver based on flags + environment:
 
@@ -230,18 +230,19 @@ Recipe and node names are sanitized to `[a-zA-Z0-9._-]` when used as path compon
 
 ### `cook logs` built-in
 
-Text-only reader of `.cook/logs/`. No TUI.
+Reads `.cook/logs/` and launches the `cook-logs` TUI (tree of recipes/nodes, output pane, search, build picker); any invocation falls back to a plain-text summary when stdout isn't a TTY (piped output, CI).
 
 ```
-cook logs                          # list recent builds (newest first)
-cook logs <recipe>                 # dump every node log for a recipe from most recent build
-cook logs <recipe>:<node>          # dump one node's log
-cook logs <selector> --build <id>  # pick a specific build
-cook logs --failed                 # grep events.jsonl for "node-failed" entries
+cook logs                 # TUI on the latest build (plain-text summary if non-TTY)
+cook logs <build_id>      # open a specific build (directory name under .cook/logs/)
+cook logs -n <N>          # open the Nth most recent build (1 = latest)
+cook logs --last-failed   # open the most recent build with a non-zero exit code
+cook logs --theme mono    # parsed but not yet wired to the logs TUI (always auto)
 ```
+
+`<build_id>`, `-n`, and `--last-failed` are mutually exclusive selectors.
 
 ### Not in scope (follow-up)
 
-- Full TUI (`cook recap`, `u` hot-swap). Tracked separately.
 - Remote recap / web viewer of `events.jsonl`.
 - OTLP / metrics exporter.

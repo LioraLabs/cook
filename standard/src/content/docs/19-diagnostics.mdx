@@ -36,7 +36,7 @@ The process exit status is the machine-readable summary of an invocation: contin
 - `cook cache verify` MUST exit non-zero when it reports any divergence or verification error (§{exec.cache.verify}).
 - An invocation that cannot reach execution — a lexical or syntactic error, a register-phase error, an unknown recipe — MUST exit non-zero.
 
-The specific non-zero values are implementation-defined. The reference implementation's taxonomy (`cli/crates/cook-cli/src/error.rs`, `CookError::exit_code`) is the RECOMMENDED mapping:
+The specific non-zero values are implementation-defined. The reference implementation's taxonomy (`cli/crates/cook-cli/src/error.rs`, `CookError::exit_code` — informative) is the RECOMMENDED mapping:
 
 | Exit status | Class | Meaning |
 |---|---|---|

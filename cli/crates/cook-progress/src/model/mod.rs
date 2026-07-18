@@ -1,4 +1,4 @@
-//! Pure state model — see docs/superpowers/specs/2026-04-20-cook-indicatif-rewrite-design.md
+//! Pure state model for build/recipe/node progress tracking.
 pub mod build;
 pub mod node;
 pub mod recipe;

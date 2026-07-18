@@ -18,10 +18,10 @@ impl<W: Write + Send> PlainRenderer<W> {
         state.recipes.get(&recipe).map(|r| r.name.clone()).unwrap_or_else(|| format!("recipe#{}", recipe.raw()))
     }
 
-    /// Clean, never-empty label for a node: the node's `display()` (artifact
-    /// basename, or a cleaned command token — never raw `set -e`-prefixed
-    /// multi-line command text) when the node is present in state; a
-    /// recipe-qualified placeholder on a lookup miss, so the label is never
+    /// Clean, never-empty label for a node: the node's `display()` (its own
+    /// full declared output path, or a cleaned command token — never raw
+    /// `set -e`-prefixed multi-line command text) when the node is present
+    /// in state; a placeholder on a lookup miss, so the label is never
     /// blank (the `report/` bug).
     fn node_display(&self, state: &BuildState, recipe: &RecipeId, node: &crate::event::NodeId) -> String {
         state.recipes.get(recipe)
@@ -109,10 +109,9 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             }
             ProgressEvent::NodeOutput { recipe, node, line, stream } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
+                // Same label as the completion line (own full output path,
+                // or a clean fallback) — not the raw node name/command text.
+                let nname = self.node_display(state, recipe, node);
                 let tag = match stream {
                     Stream::Stdout => "",
                     Stream::Stderr => "(stderr) ",
@@ -242,13 +241,17 @@ mod tests {
 
     #[test]
     fn node_output_prefix_includes_recipe_and_node() {
+        // The live-stdout tag must use the node's own full output path
+        // (its `display()` label) — not its raw node name/command text.
         let mut state = BuildState::new();
         state.apply(&ProgressEvent::BuildStarted {
             recipes: topo(&[(0, "lib", 1)]), total_nodes: 1,
         });
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
-            name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            name: "lvm.c".into(),
+            artifact: Some(std::path::PathBuf::from("build/obj/lvm.o")),
+            fallback_label: "x".into(),
             kind: crate::event::NodeKind::Cooked,
         });
         let ev = ProgressEvent::NodeOutput {
@@ -261,15 +264,17 @@ mod tests {
             r.handle(&state, &ev).unwrap();
         }
         let s = String::from_utf8(buf).unwrap();
-        assert!(s.contains("[lib/lvm.c]"), "got: {s}");
+        assert!(s.contains("[lib/build/obj/lvm.o]"), "got: {s}");
         assert!(s.contains("(stderr)"), "got: {s}");
         assert!(s.contains("warning: unused"), "got: {s}");
     }
 
     #[test]
-    fn cache_hit_line_uses_artifact_basename_not_raw_command() {
-        // The dominant second-run all-cached case must show the clean output
-        // basename, not the raw shell command that produced it (item 1).
+    fn cache_hit_line_uses_full_output_path_not_raw_command() {
+        // The dominant second-run all-cached case must show the unit's own
+        // full declared output path, not the raw shell command that
+        // produced it (item 1) and not just the output's basename — the
+        // distinguishing directory segment must survive.
         let mut state = BuildState::new();
         state.apply(&ProgressEvent::BuildStarted {
             recipes: topo(&[(0, "build", 1)]), total_nodes: 1,
@@ -293,7 +298,7 @@ mod tests {
             r.handle(&state, &ev).unwrap();
         }
         let s = String::from_utf8(buf).unwrap();
-        assert!(s.contains("build/alpha.count"), "got: {s}");
+        assert!(s.contains("build/build/counts/alpha.count"), "got: {s}");
         assert!(s.contains("cached"), "got: {s}");
         assert!(!s.contains("wc -w"), "raw command leaked into label: {s}");
     }

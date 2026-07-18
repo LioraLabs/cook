@@ -16,7 +16,7 @@
 ] @keyword
 
 (producer
-  ["json" "lines" "tools" "envs"] @keyword)
+  ["json" "lines" "tools" "envs" "files"] @keyword)
 
 (share_mod) @keyword.modifier
 

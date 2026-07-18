@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use cook_contracts::{OutputStream, StepKind, WorkPayload};
 use crate::store::ProbeValueStore;
@@ -73,6 +74,17 @@ pub struct WorkResult {
     /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
     /// `None` for all non-probe units. Wired end-to-end by Task G.
     pub probe_output: Option<ProbeOutput>,
+    /// Wall-clock span of the actual work-item execution, measured by the
+    /// worker around the `execute_work_item` dispatch (queue wait
+    /// excluded). Mirrors the existing `TestOutput.duration` measurement
+    /// approach, generalised to every payload kind so a plain (non-test)
+    /// unit's completion line can report real elapsed time instead of a
+    /// hardcoded zero. Individual `execute_*` helpers set this to
+    /// `Duration::ZERO` in their returned literals; `worker_loop`
+    /// overwrites it with the measured span for every outcome (success,
+    /// failure, and the worker-panic recovery path) before sending the
+    /// result, so the placeholder value never reaches the engine.
+    pub duration: Duration,
 }
 
 pub struct WorkerPool {
@@ -340,10 +352,18 @@ fn worker_loop(
                 let work_id = work.id;
                 let recipe_name = work.recipe_name.clone();
                 let node_name = work.payload.display_name();
+                // Measured span = actual execution only. The queue wait
+                // already ended when this item was popped above, and the
+                // per-item context setup just above (recipe/cwd/env/sandbox,
+                // package-path refresh) is worker bookkeeping, not queued
+                // idle time, so starting the clock here — immediately
+                // around the dispatch — is the honest per-unit number
+                // (same intent as `TestOutput.duration`'s `start.elapsed()`).
+                let exec_start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     execute_work_item(&lua, &work, &work.working_dir, &work.env_vars)
                 }));
-                let result = match result {
+                let mut result = match result {
                     Ok(r) => r,
                     Err(panic_payload) => {
                         let msg = panic_payload_to_string(&panic_payload);
@@ -357,9 +377,11 @@ fn worker_loop(
                             node_name,
                             output_lines: Vec::new(),
                             probe_output: None,
+                            duration: Duration::ZERO,
                         }
                     }
                 };
+                result.duration = exec_start.elapsed();
                 let _ = tx.send(result);
             }
         }
@@ -678,12 +700,32 @@ fn register_worker_cook_table(
     Ok(())
 }
 
+/// CS-0152: build the runtime error `cook.probes.get`/scoped `get` raise
+/// when `key` (already the full, scope-prefixed key if applicable) has
+/// never been materialised in the probe-value store. Shared by the
+/// unscoped and scoped `get` implementations so the two diagnostics stay
+/// in lockstep.
+fn probe_not_materialised_error(key: &str) -> mlua::Error {
+    mlua::Error::runtime(format!(
+        "cook.probes.get(\"{key}\"): probe value not materialised — this step never \
+         demanded probe '{key}'. Reference the probe in this step (a $<key> sigil in a \
+         shell body, or probes = {{...}} on cook.add_unit), declare it in the probe's \
+         `inputs.requires` (when reading from a probe produce body), or seal it \
+         (seal {{ \"{key}\" }}) so it is scheduled before this step runs."
+    ))
+}
+
 /// Install `cook.probes.{get,set,scope}` on the execute-phase VM
-/// (Standard §6.3.4, CS-0070, CS-0074).
+/// (Standard §6.3.4, CS-0070, CS-0074, CS-0152).
 ///
 /// `cook.probes.get(key)` reads from the `SharedProbeValueStore` — the same
-/// store the engine writes into when a probe unit completes (§22.5.7).
-/// Returns `nil` when the key has not been populated.
+/// store the engine writes into when a probe unit completes (§22.5.8
+/// `[#cat.probes.exec]`). A key that was never materialised (the step never
+/// demanded the probe) is a hard error (CS-0152): silently returning `nil`
+/// let real misses masquerade as legitimate probe-absent results. A key that
+/// IS present whose canonical JSON payload is `null` still decodes to Lua
+/// `nil` with no error — that boundary is load-bearing for probe produce
+/// bodies (`cook.probes.get(KEY) or { ... }`).
 ///
 /// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
 /// it raises a runtime error directing the author to use `cook.probe` instead.
@@ -697,7 +739,7 @@ fn install_execute_phase_cook_probes(
 ) -> mlua::Result<()> {
     let cache_tbl = lua.create_table()?;
 
-    // cook.probes.get(key) → value | nil
+    // cook.probes.get(key) → value | hard error on unmaterialised key (CS-0152)
     let store_for_get = probe_store.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
@@ -708,7 +750,7 @@ fn install_execute_phase_cook_probes(
                     )))?;
                 crate::probe_value::json_to_lua(lua, &jv)
             }
-            None => Ok(mlua::Value::Nil),
+            None => Err(probe_not_materialised_error(&key)),
         }
     })?;
     cache_tbl.set("get", get_fn)?;
@@ -741,7 +783,7 @@ fn install_execute_phase_cook_probes(
                         )))?;
                     crate::probe_value::json_to_lua(lua, &jv)
                 }
-                None => Ok(mlua::Value::Nil),
+                None => Err(probe_not_materialised_error(&full)),
             }
         })?;
         scoped.set("get", scoped_get)?;
@@ -1154,6 +1196,7 @@ fn execute_work_item(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             }
         }
         WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, lua_code, .. } => {
@@ -1186,6 +1229,7 @@ fn execute_work_item(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
     }
 }
@@ -1219,6 +1263,7 @@ fn execute_shell(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
         Ok(output) => {
             let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
@@ -1249,6 +1294,7 @@ fn execute_shell(
                     node_name,
                     output_lines,
                     probe_output: None,
+                    duration: Duration::ZERO,
                 }
             } else {
                 let code = output.status.code().unwrap_or(1);
@@ -1266,6 +1312,7 @@ fn execute_shell(
                     node_name,
                     output_lines,
                     probe_output: None,
+                    duration: Duration::ZERO,
                 }
             }
         }
@@ -1304,6 +1351,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1319,6 +1367,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1336,6 +1385,7 @@ fn execute_probe(
             key: key.to_string(),
             bytes,
         }),
+        duration: Duration::ZERO,
     }
 }
 
@@ -1424,6 +1474,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
         Err(e) => WorkResult {
             id,
@@ -1433,6 +1484,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
     }
 }
@@ -1526,6 +1578,7 @@ fn execute_lua_test(
         node_name,
         output_lines,
         probe_output: None,
+        duration: Duration::ZERO,
     }
 }
 
@@ -1579,6 +1632,7 @@ fn execute_test(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1669,6 +1723,7 @@ fn execute_test(
         node_name,
         output_lines,
         probe_output: None,
+        duration: Duration::ZERO,
     }
 }
 
@@ -2485,25 +2540,108 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // CS-0070 / CS-0074 regressions: execute-phase VM cook.probes surface.
+    // CS-0070 / CS-0074 / CS-0152 regressions: execute-phase VM
+    // cook.probes surface.
     //
-    // CS-0074 changes: cook.probes.get reads from the SharedProbeValueStore
-    // (populated by upstream probe units); cook.probes.set is deprecated
-    // and raises on the execute-phase VM.
+    // cook.probes.get reads from the SharedProbeValueStore (populated by
+    // upstream probe units); a never-materialised key is a hard error
+    // (CS-0152), while a stored `null` value still decodes to Lua nil
+    // with no error. cook.probes.set is deprecated and raises on the
+    // execute-phase VM (CS-0074).
     // -----------------------------------------------------------------
 
-    /// CS-0070 / CS-0074: `cook.probes.get(key)` on a key not in the
-    /// probe-value store MUST return nil (§22.5.7).
+    /// CS-0152: `cook.probes.get(key)` on a key that was never
+    /// materialised in the probe-value store MUST raise a runtime error
+    /// naming the key and pointing at how to demand it (§22.5.8), rather
+    /// than silently returning nil.
     #[test]
-    fn cook_probes_get_returns_nil_for_missing_key() {
+    fn cook_probes_get_errors_for_missing_key() {
         let code = r#"
             local v = cook.probes.get("never_set")
-            assert(v == nil, "expected nil, got "..tostring(v))
         "#;
         let result = run_lua_chunk_in_worker(code);
         assert!(
+            !result.success,
+            "cook.probes.get for a never-materialised key must raise, not return nil"
+        );
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("never_set"),
+            "error must name the missing key; got: {err}"
+        );
+        assert!(
+            err.contains("not materialised"),
+            "error must say the value was not materialised; got: {err}"
+        );
+    }
+
+    /// CS-0152: `cook.probes.scope(label).get(key)` on a miss MUST raise,
+    /// naming the FULL scoped key (`"<label>:<key>"`), matching the
+    /// unscoped diagnostic.
+    #[test]
+    fn cook_probes_scope_get_errors_for_missing_key() {
+        let code = r#"
+            local scoped = cook.probes.scope("cc")
+            local v = scoped.get("missing")
+        "#;
+        let result = run_lua_chunk_in_worker(code);
+        assert!(
+            !result.success,
+            "scoped cook.probes.get for a never-materialised key must raise, not return nil"
+        );
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("cc:missing"),
+            "error must name the full scoped key 'cc:missing'; got: {err}"
+        );
+        assert!(
+            err.contains("not materialised"),
+            "error must say the value was not materialised; got: {err}"
+        );
+    }
+
+    /// CS-0152: a key that IS present in the probe-value store whose
+    /// canonical JSON payload is `null` MUST still decode to Lua `nil`
+    /// with NO error — value-was-null is not the same thing as
+    /// never-materialised. cook_cc finder produce bodies rely on this
+    /// (`cook.probes.get(KEY) or { ... }`).
+    #[test]
+    fn cook_probes_get_returns_nil_for_stored_null_without_error() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        {
+            let bytes = cook_contracts::probe_value::encode_canonical_json(&serde_json::Value::Null);
+            pool.probe_value_store().insert("cc:absent_tool", bytes);
+        }
+
+        let code = r#"
+            local v = cook.probes.get("cc:absent_tool")
+            assert(v == nil, "expected nil for stored null, got "..tostring(v))
+        "#;
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
+                line: 0,
+            },
+            recipe_name: "rec".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+        assert!(
             result.success,
-            "cook.probes.get for missing key must return nil; got error: {:?}",
+            "cook.probes.get on a stored-null key must return nil without error; got error: {:?}",
             result.error
         );
     }

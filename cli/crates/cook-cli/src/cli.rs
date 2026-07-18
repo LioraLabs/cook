@@ -18,7 +18,7 @@ use crate::modules::cli::ModulesArgs;
 #[derive(Parser, Debug)]
 #[command(
     name = "cook",
-    about = "A modern build system with Lua",
+    about = "A declarative build system for polyglot projects",
     after_help = "Run `cook <recipe>` to execute a recipe (defaults to 'build').\n\
                   Use `cook +<recipe>` to invoke a recipe whose name collides with a built-in subcommand."
 )]

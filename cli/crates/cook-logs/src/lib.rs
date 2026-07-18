@@ -1,6 +1,4 @@
 //! Terminal UI viewer for Cook build logs.
-//!
-//! See `docs/superpowers/specs/2026-05-10-cook-logs-tui-design.md`.
 
 pub mod error;
 pub mod input;

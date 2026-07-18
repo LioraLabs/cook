@@ -1,4 +1,3 @@
-local cjson = require("cjson")
 
 local M = {}
 
@@ -47,7 +46,7 @@ function M.write()
             end
         end
     end
-    fs.write("compile_commands.json", cjson.encode(entries) .. "\n")
+    fs.write("compile_commands.json", require("cjson").encode(entries) .. "\n")
 end
 
 return M

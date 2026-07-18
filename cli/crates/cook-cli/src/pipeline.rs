@@ -107,7 +107,21 @@ fn bridge_engine_to_progress_events(
         use std::collections::BTreeMap;
 
         let mut recipe_ids: BTreeMap<String, RecipeId> = BTreeMap::new();
-        let mut node_ids: BTreeMap<(String, String), NodeId> = BTreeMap::new();
+        // Keyed by (recipe, executor DAG node index) — the engine's `unit`
+        // field is unique per run, so this is a correct identity even when
+        // two units display identical text (same-shaped steps, or N Lua
+        // fan-out members that all `display_name() == "lua"`). The prior
+        // scheme keyed by (recipe, node_name STRING) collapsed all such
+        // units onto one NodeId and overwrote one another's NodeState.
+        let mut node_ids: BTreeMap<(String, usize), NodeId> = BTreeMap::new();
+        // `NodeSkipped` / `InteractiveStart` / `InteractiveEnd` are out of
+        // scope for the per-unit identity fix (they carry no `unit` field —
+        // §22.8 interactive/chore windows and cancellation fan-out aren't
+        // the display-collision bug this bridges): keep the old name-keyed
+        // interning for exactly these three so `InteractiveStart`/`End`
+        // (which already share one `node_name` per window) keep resolving
+        // to the same `NodeId` pair they always have.
+        let mut interactive_node_ids: BTreeMap<(String, String), NodeId> = BTreeMap::new();
         let mut next_recipe: u32 = 0;
         let mut next_node: u32 = 0;
 
@@ -125,19 +139,42 @@ fn bridge_engine_to_progress_events(
             id
         }
 
+        /// Find-or-create the stable `NodeId` for one `(recipe, unit)` pair.
+        /// Order-independent: whichever event mentions a given unit first
+        /// mints its `NodeId`; every later event for the same unit — whether
+        /// `NodeStarted`, `NodeCompleted`, or `OutputLine` — resolves to the
+        /// same id regardless of arrival order relative to sibling units.
         fn intern_node(
             recipe: &str,
-            node: &str,
-            node_ids: &mut BTreeMap<(String, String), NodeId>,
+            unit: usize,
+            node_ids: &mut BTreeMap<(String, usize), NodeId>,
             next_node: &mut u32,
         ) -> NodeId {
-            let key = (recipe.to_string(), node.to_string());
+            let key = (recipe.to_string(), unit);
             if let Some(id) = node_ids.get(&key) {
                 return *id;
             }
             let id = NodeId::new(*next_node);
             *next_node += 1;
             node_ids.insert(key, id);
+            id
+        }
+
+        /// Legacy name-keyed interning, retained only for the three events
+        /// this task doesn't touch (see `interactive_node_ids` above).
+        fn intern_interactive_node(
+            recipe: &str,
+            node: &str,
+            interactive_node_ids: &mut BTreeMap<(String, String), NodeId>,
+            next_node: &mut u32,
+        ) -> NodeId {
+            let key = (recipe.to_string(), node.to_string());
+            if let Some(id) = interactive_node_ids.get(&key) {
+                return *id;
+            }
+            let id = NodeId::new(*next_node);
+            *next_node += 1;
+            interactive_node_ids.insert(key, id);
             id
         }
 
@@ -222,13 +259,14 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeStarted {
                     recipe,
+                    unit,
                     node_name,
                     artifact,
                     fallback_label,
                     kind,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::NodeStarted {
                         recipe: rid,
                         node: nid,
@@ -240,12 +278,13 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeCompleted {
                     recipe,
-                    node_name,
+                    unit,
+                    node_name: _,
                     elapsed,
                     kind,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::NodeCompleted {
                         recipe: rid,
                         node: nid,
@@ -255,12 +294,13 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeFailed {
                     recipe,
-                    node_name,
+                    unit,
+                    node_name: _,
                     elapsed,
                     error,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::NodeFailed {
                         recipe: rid,
                         node: nid,
@@ -270,11 +310,12 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeCacheHit {
                     recipe,
+                    unit,
                     node_name,
                     artifact,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::NodeCacheHit {
                         recipe: rid,
                         node: nid,
@@ -284,7 +325,7 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
                     cook_progress::ProgressEvent::NodeSkipped {
                         recipe: rid,
                         node: nid,
@@ -294,18 +335,33 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::OutputLine {
                     recipe,
+                    unit,
+                    node_name,
                     line,
                     stream,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    // OutputLine does not yet carry a node id at the engine level. Attribute to the
-                    // most recently interned node in the same recipe; if none, use sentinel MAX.
-                    let nid = node_ids
-                        .iter()
-                        .rev()
-                        .find(|((r, _), _)| r == &recipe)
-                        .map(|(_, id)| *id)
-                        .unwrap_or_else(|| NodeId::new(u32::MAX));
+                    // The engine's `unit` is the executor DAG node index —
+                    // unique per run — so interning by (recipe, unit) is
+                    // correct regardless of arrival order relative to sibling
+                    // units. If this is the first event ever seen for this
+                    // unit (e.g. output forwarded from a chore-window Lua
+                    // chunk, which never gets its own `NodeStarted`),
+                    // register it with a real label via a synthetic
+                    // `NodeStarted` so renderers/log-store don't fall back to
+                    // a blank/placeholder name.
+                    let is_new_unit = !node_ids.contains_key(&(recipe.clone(), unit));
+                    let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
+                    if is_new_unit {
+                        let _ = progress_tx.send(cook_progress::ProgressEvent::NodeStarted {
+                            recipe: rid,
+                            node: nid,
+                            name: node_name.clone(),
+                            artifact: None,
+                            fallback_label: node_name,
+                            kind: cook_progress::NodeKind::Cooked,
+                        });
+                    }
                     // CS-0035: map cook-contracts::OutputStream → cook-progress::Stream
                     // (the wire-format enum). The two enums are isomorphic; this
                     // is the renderer-side adapter, not a value mutation.
@@ -326,7 +382,7 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::InteractiveStart { recipe, node_name, chore_step_count } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
                     cook_progress::ProgressEvent::InteractiveStart {
                         recipe: rid,
                         node: nid,
@@ -343,7 +399,7 @@ fn bridge_engine_to_progress_events(
                     failed_step,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
                     cook_progress::ProgressEvent::InteractiveEnd {
                         recipe: rid,
                         node: nid,

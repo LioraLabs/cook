@@ -1,8 +1,7 @@
 # Cache Benchmarks
 
 Verification fixture for the SHI-140 cache cloud-readiness work. Each recipe
-exercises one cache invariant from `standard/specs/2026-05-01-cache-cloud-readiness-design.md`.
-Run `verify.sh` to exercise the matrix.
+exercises one cache invariant. Run `verify.sh` to exercise the matrix.
 
 ## Files
 

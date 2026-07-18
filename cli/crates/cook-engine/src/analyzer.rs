@@ -350,7 +350,7 @@ pub fn find_full_prefix(
 /// regardless of whether it is reachable from any target.
 ///
 /// Used by `cook test` to discover all test_step units across the
-/// workspace per docs/superpowers/specs/2026-05-07-test-runner-design.md §4.1.
+/// workspace.
 pub fn register_workspace_for_test(
     project_root: &Path,
 ) -> Result<BTreeMap<String, RecipeInfo>, GraphError> {

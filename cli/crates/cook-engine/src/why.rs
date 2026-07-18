@@ -199,7 +199,16 @@ pub fn explain(
             cook_contracts::Sharing::Shared => Disposition::Unannotated,
         };
         units.push(WhyUnit {
-            recipe_name: meta.recipe_name.clone(),
+            // NOTE: intentionally `node.recipe_name` (the workspace-qualified
+            // key the unit was found under in `units_by_recipe`/`RecipeUnits`,
+            // e.g. `api.compile`), NOT `meta.recipe_name` — `CacheMeta`'s copy
+            // stays the Cookfile-LOCAL declaration name by design (§20.2.3;
+            // it feeds the StepEntry index name and cache-key namespace, so
+            // must never be repointed at the qualified name). Using the local
+            // name here would misattribute an imported dependency's unit to
+            // its bare local name (or, when it collides with the querying
+            // recipe's own name, to the wrong recipe entirely).
+            recipe_name: node.recipe_name.clone(),
             cache_key: meta.cache_key.clone(),
             key_hex,
             disposition,

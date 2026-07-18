@@ -2,8 +2,9 @@ import type { Root, Element, Text } from 'hast';
 import { visit } from 'unist-util-visit';
 
 // Clause-number prefix at start of heading text. N is a digit run or a
-// single uppercase letter; optional .M[.K] subsection numbers.
-const CLAUSE_RE = /^([0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.(\s|$)/;
+// single uppercase letter; optional .M[.K[.J]] subsection numbers (4 levels
+// of depth, for parity with clauses.ts HEADING_RE).
+const CLAUSE_RE = /^([0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+(?:\.[0-9]+)?)?)?\.(\s|$)/;
 
 // Trailing [#slug] marker. Slug grammar: chapter.leaf with dash-separated
 // words; one or more dotted segments (bare chapter also accepted).

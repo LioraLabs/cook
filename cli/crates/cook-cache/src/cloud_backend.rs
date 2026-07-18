@@ -1,10 +1,6 @@
 //! `CloudBackend` — sync HTTP client implementing `CacheBackend` over a
 //! v1 wire protocol against the Cook Cloud artifact server.
 //!
-//! See `standard/specs/2026-05-04-cache-cloud-backend-skeleton-design.md`
-//! (CS-0058) for the protocol design — endpoints, header set, status code
-//! mapping, retry policy.
-//!
 //! ## Wire protocol summary
 //!
 //! All paths versioned under `/v1/`. Bearer-token auth on every request.

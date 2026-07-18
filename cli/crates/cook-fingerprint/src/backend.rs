@@ -21,8 +21,7 @@ pub type CloudKey = [u8; 32];
 /// Defaults are tuned for cloud-grade workloads: 30s per-call timeout,
 /// 3 retries with exponential backoff from 100ms to 5s, and a 1 GiB cap
 /// on a single artifact's size. Users override via `[cloud]` knobs in
-/// `.cook/cloud.toml` (cf. design spec
-/// `standard/specs/2026-05-04-cache-backend-config-design.md`).
+/// `.cook/cloud.toml`.
 #[derive(Debug, Clone)]
 pub struct BackendConfig {
     /// Per-network-call timeout. Honored by network backends; ignored by

@@ -405,6 +405,7 @@ dependencies = [
  "globset",
  "humantime",
  "notify",
+ "regex",
  "serde",
  "serde_json",
  "serial_test",
