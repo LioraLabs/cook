@@ -25,6 +25,10 @@ fi
 
 is_language_surface() {
   case "$1" in
+    # Markdown under watched paths is documentation, not language surface
+    # (crate READMEs, CONFORMANCE.md). A doc-only fix must not need the
+    # bypass — the bypass is for judged non-language changes to CODE.
+    *.md)                         return 1 ;;
     cli/crates/cook-lang/*)       return 0 ;;
     cli/crates/cook-luagen/*)     return 0 ;;
     cli/crates/cook-register/*)   return 0 ;;

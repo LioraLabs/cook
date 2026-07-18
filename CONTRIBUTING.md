@@ -43,6 +43,8 @@ The hook's goal is to make language impact visible at commit time. If you're mak
 - `tree-sitter-cook/grammar.js` — tree-sitter grammar (claims Cook Standard v0.14)
 - `tree-sitter-cook/src/**` — tree-sitter externals
 
+Markdown files under these paths (crate READMEs, `CONFORMANCE.md`) are documentation, not language surface; the hook exempts `*.md`.
+
 If you add a new crate that contributes to language surface, update both this list and the hook.
 
 ### Conformance
