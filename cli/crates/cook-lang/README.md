@@ -9,7 +9,7 @@ This crate claims **Cook Standard v0.14**.
 The claim lives in `src/lib.rs`:
 
 ```rust
-pub const COOK_STANDARD_VERSION: &str = "0.13";
+pub const COOK_STANDARD_VERSION: &str = "0.14";
 ```
 
 To verify the claim, run the conformance harness:
