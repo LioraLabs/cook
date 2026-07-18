@@ -1,6 +1,12 @@
 use cook_cc
 
-cook_cc.bin("game", {
-    sources = { "src/main.c" },
-    needs   = { "SDL3" },
-})
+# cook_cc 0.13: probes are declared at top level with uses(); in-body `needs`
+# only references them. Makers are step contributors called inside a recipe —
+# the target name comes from the enclosing `recipe`, not a maker argument.
+cook_cc.uses("SDL3")
+
+recipe game
+    cook_cc.bin({
+        sources = { "src/main.c" },
+        needs   = { "SDL3" },
+    })
