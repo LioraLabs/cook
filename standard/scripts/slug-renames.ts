@@ -106,6 +106,23 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'steps.plate-not-sandboxed':       null,
 
   'intro.conformance':               'conf.criteria',
+
+  // Keyword-safe rename: these hyphen segments are bare JS reserved words
+  // (`export`, `import`, `in`), which acorn rejects when the MDX pipeline
+  // parses a `§{...}` cross-reference as a JS expression before
+  // remark-slug-xrefs can collapse it back to text.
+  'lua.cook-export':                 'lua.cook-exports',
+  'lua.cook-export-import':          'lua.cook-exports-imports',
+  'lua.cook-import':                 'lua.cook-imports',
+  'rationale.member-index-in':       'rationale.member-index',
+
+  // Acorn-safe rename: a hyphen directly followed by a leading-zero digit
+  // run (e.g. `cs-0024`) parses as `cs - 0024`, and `0024` is an invalid
+  // legacy-octal numeric literal in the strict/module-mode JS grammar the
+  // MDX pipeline uses for `§{...}` expressions — same acorn-before-remark
+  // ordering issue as the entries above, different trigger.
+  'changes.cs-0022':                 'changes.cs0022',
+  'changes.cs-0024':                 'changes.cs0024',
 };
 
 export function resolveRename(retired: string): string | null | undefined {

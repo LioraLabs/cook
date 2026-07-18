@@ -149,7 +149,7 @@ A determinant a module detects MUST be modelled as a probe input so its fingerpr
 
 The sanctioned read of a probe value is `cook.probes.get(key)` (§{lua.cook-probes-get}); on the execute-phase VM it reads the per-run probe-value store. A `$<key>` or `$<key.field>` placeholder in a command desugars to exactly this read (§{cat.probes.templates}), so a module MAY consume a probe either textually in a command or programmatically in a `>{ … }` body.
 
-A module publishes a target's transitive-link information with `cook.export` and reads a dependency's with `cook.import` (§{lua.cook-export-import}); it reads a dependency recipe's outputs with `cook.dep_output` / `cook.dep_output_list` (§{lua.cook-dep-output}) or the equivalent `$<NAME>` surface. All are both-phase (§{lua.both}). The register-phase key/value methods `cook.probes.set` and `cook.probes.scope` are deprecated (§{lua.cook-probes-set}); a new module SHOULD use `cook.probe` for memoised values rather than a hand-managed store.
+A module publishes a target's transitive-link information with `cook.export` and reads a dependency's with `cook.import` (§{lua.cook-exports-imports}); it reads a dependency recipe's outputs with `cook.dep_output` / `cook.dep_output_list` (§{lua.cook-dep-output}) or the equivalent `$<NAME>` surface. All are both-phase (§{lua.both}). The register-phase key/value methods `cook.probes.set` and `cook.probes.scope` are deprecated (§{lua.cook-probes-set}); a new module SHOULD use `cook.probe` for memoised values rather than a hand-managed store.
 
 ### 12.7.5. Seal policy [#mods.authoring.seal]
 
@@ -179,7 +179,7 @@ A recipe's name, and the fact that it is invocable, belong to the author of the 
 
 This is a categorical MUST, not merely a SHOULD-NOT, for the ordinary case: a **single-target maker** — a target maker whose call contributes the units of exactly one target — MUST be a step contributor. It MUST be invoked from within a user-written `recipe` body, from which it derives that recipe's identity via `cook.recipe_name()` (§{lua.cook-recipe-name}), and it MUST NOT itself call `cook.recipe`. Only the two shapes below, neither of which is a single-target maker, are exempted from this MUST.
 
-Exports are orthogonal to this rule. Nothing in this subsection touches `cook.export` / `cook.import` semantics (§{lua.cook-export-import}): a target's exported transitive-link surface is a property of the target's own options, independent of which recipe owns the unit that produced it. A step contributor exports under the enclosing recipe's identity exactly as a minted recipe would — who owns the recipe and what the recipe exports are separate questions, and this subsection answers only the first.
+Exports are orthogonal to this rule. Nothing in this subsection touches `cook.export` / `cook.import` semantics (§{lua.cook-exports-imports}): a target's exported transitive-link surface is a property of the target's own options, independent of which recipe owns the unit that produced it. A step contributor exports under the enclosing recipe's identity exactly as a minted recipe would — who owns the recipe and what the recipe exports are separate questions, and this subsection answers only the first.
 
 Two shapes legitimately require a module to mint recipes:
 

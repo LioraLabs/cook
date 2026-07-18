@@ -353,3 +353,58 @@ chore keyword-lines
     (shell_command (shell_content))
     (shell_command (shell_content))
     (shell_command (shell_content))))
+
+================
+Files producer with includes and an exclude (CS-0148)
+================
+
+probe srcs
+    files { "src/*.ts" "config/*.json" !"src/gen/*.ts" }
+
+---
+
+(source_file
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      (glob_list
+        (glob_pattern
+          (string))
+        (glob_pattern
+          (string))
+        (glob_pattern
+          (string))))))
+
+================
+Files producer combined with ingredients is rejected (CS-0148)
+================
+
+probe srcs
+    ingredients "other/*.c"
+    files { "src/*.ts" }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (import_name)
+    (lua_code)))
+
+================
+Empty files glob-list is rejected
+================
+
+probe empty-files
+    files { }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      name: (identifier))))

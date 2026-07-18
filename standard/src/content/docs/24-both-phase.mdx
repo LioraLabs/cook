@@ -89,19 +89,19 @@ Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations 
 
 Scopes are conventionally named after the module that owns them (e.g. `cook_cc:toolchain`, `cook_cc:find:raylib`) to prevent key collisions between modules.
 
-## 24.5. `cook.export` and `cook.import` [#lua.cook-export-import]
+## 24.5. `cook.export` and `cook.import` [#lua.cook-exports-imports]
 **Phase.** Both. [Pinned by CS-0071.]
 
 `cook.export` and `cook.import` are the Cook-managed transitive-link-info channel used by target makers (e.g. `cc.bin`/`cc.lib` per §{cat.cc.transitive}) to publish a target's outward-facing fields and by consumers to read them.
 
-### 24.5.1. `cook.export` [#lua.cook-export]
+### 24.5.1. `cook.export` [#lua.cook-exports]
 **Signature.** `cook.export(name: string, info: table) -> nil`
 
 Records that the target named `name` exposes the fields in `info`. The `info` table's shape is conventionally established by the publisher's module documentation; for `cc` targets the conventional shape is documented in §{cat.cc.transitive}. The Standard does not constrain `info`'s shape beyond requiring it to be a Lua table.
 
 A conforming implementation MUST persist the exported value in a way that subsequent `cook.import(name)` calls (in either phase, within the same Cookfile evaluation) return the exported value.
 
-### 24.5.2. `cook.import` [#lua.cook-import]
+### 24.5.2. `cook.import` [#lua.cook-imports]
 **Signature.** `cook.import(name: string) -> table?`
 
 Returns the table previously published for `name` via `cook.export`, or `nil` if no export has occurred.

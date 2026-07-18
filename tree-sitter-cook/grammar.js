@@ -191,7 +191,8 @@ module.exports = grammar({
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body ::= ingredients_step? producer NEWLINE
+    //   probe_body ::= "files" glob_list NEWLINE
+    //                | ingredients_step? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
     //                | ("tools" | "envs") name_list
     //                | exec_lua_block
@@ -203,16 +204,41 @@ module.exports = grammar({
     // scan_shell_content, plus `is_toplevel_keyword`), and the probe body
     // itself contains no `shell_command`, so it terminates naturally at
     // the next column-0 top-level item once `producer` closes.
+    //
+    // CS-0148: a `files` producer MUST NOT combine with a preceding
+    // `ingredients_step` (§22.5.2, A-grammar A.3.2). This is encoded
+    // syntactically, not just semantically: the `files` form is a
+    // separate first alternative of the top-level choice below, so an
+    // `ingredients` line followed by `files { … }` cannot reduce through
+    // that branch (no `ingredients_step` slot precedes it) and instead
+    // falls into the `producer` branch, where `files` is not a valid
+    // producer keyword — producing an ERROR node.
     probe: ($) =>
       seq(
         $.probe_header,
         $._newline,
         repeat(choice($._newline, $.comment)),
-        optional(seq(
-          $.ingredients_step,
-          repeat(choice($._newline, $.comment)),
-        )),
-        $.producer,
+        choice(
+          alias($.files_producer, $.producer),
+          seq(
+            optional(seq(
+              $.ingredients_step,
+              repeat(choice($._newline, $.comment)),
+            )),
+            $.producer,
+          ),
+        ),
+      ),
+
+    // `files` is a contextual keyword recognised only in this probe-body
+    // position (mirrors `tools`/`envs`/`json`/`lines` in `producer`
+    // below). Aliased to `$.producer` so the tree shape stays uniform
+    // with the other producer kinds (a single `producer` node per probe).
+    files_producer: ($) =>
+      seq(
+        "files",
+        $.glob_list,
+        $._newline,
       ),
 
     probe_header: ($) =>
@@ -272,6 +298,28 @@ module.exports = grammar({
         alias($._lua_ident, $.identifier),
         repeat(seq(optional(","), alias($._lua_ident, $.identifier))),
         "}",
+      ),
+
+    // A.3.2 `glob_list` — same brace shape as `name_list` (comma/whitespace
+    // separated, single physical line), holding quoted glob patterns with
+    // an optional `!` exclude prefix instead of bare IDENTs. Mirrors
+    // `name_list`'s convention of requiring the first entry syntactically
+    // (an empty `{}` MISSES the first `glob_pattern`, matching how an
+    // empty `tools {}`/`envs {}` is rejected above): the A-grammar prose
+    // (§22.5.2) requires a conforming implementation to reject an empty
+    // `glob_list`.
+    glob_list: ($) =>
+      seq(
+        "{",
+        $.glob_pattern,
+        repeat(seq(optional(","), $.glob_pattern)),
+        "}",
+      ),
+
+    glob_pattern: ($) =>
+      choice(
+        $.string,
+        seq("!", $.string),
       ),
 
     // ── Recipe body ────────────────────────────────────────────

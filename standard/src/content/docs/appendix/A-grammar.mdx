@@ -117,10 +117,10 @@ probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
 PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_.\-]*/   /* CS-0131: matches BARE_IDENTIFIER's inner charset */
-probe_body       ::= ingredients_step? producer NEWLINE
+probe_body       ::= "files" glob_list NEWLINE
+                   | ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
                    | ("tools" | "envs") name_list
-                   | "files" glob_list
                    | exec_lua_block
 name_list        ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
 glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
@@ -129,7 +129,7 @@ glob_pattern     ::= "!"? STRING
 
 `ingredients_step` is defined in §{grammar-appendix.steps}; `shell_block` and `exec_lua_block` are also defined there (the body-dispatch tests `>{` before `{`).
 
-**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, `envs`, and `files` are contextual keywords recognised only in this probe-producer position. A `files` producer MUST NOT be combined with an `ingredients_step` (CS-0148; §{cat.probes.decl}).
+**Probe body (normative).** A `probe_body` is either a bare `files` glob list, which admits no `ingredients_step`, or an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, `envs`, and `files` are contextual keywords recognised only in this probe-body position. A `files` producer MUST NOT be combined with an `ingredients_step` (CS-0148; §{cat.probes.decl}) — the grammar above encodes this exclusivity structurally rather than as a post-hoc semantic check.
 
 **Source-list kinds (normative).** The `tools` and `envs` forms take a
 `name_list` — a brace-delimited, comma/whitespace-separated list of bare `IDENT`
