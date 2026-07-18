@@ -254,3 +254,108 @@ fn extract_input_hash(manifest: &str, path: &str) -> String {
     let end = rest.find('"').expect("recorded hash must be quote-terminated");
     rest[..end].to_string()
 }
+
+// ---------------------------------------------------------------------------
+// Import-fixture attribution: a unit belonging to an IMPORTED recipe must be
+// attributed to its workspace-qualified name (`api.compile`), never to its
+// bare local declaration name (`compile`) — which, worse, can collide with
+// the querying recipe's own name when the two happen to share one.
+// ---------------------------------------------------------------------------
+
+const ROOT_COOKFILE: &str = r#"
+import api ./api
+
+recipe build: api.compile
+    cook "build/top.txt" {
+        mkdir -p build
+        echo top > $<out>
+    }
+"#;
+
+const API_COOKFILE: &str = r#"
+recipe compile
+    cook "build/api-build.stamp" {
+        mkdir -p build
+        echo stamp > $<out>
+    }
+"#;
+
+/// Init a tempdir workspace with a root Cookfile importing `./api`, isolated
+/// from the host-wide `~/.cache/cook/cloud` shared-cache store (same
+/// isolation pattern as `init_workspace`) so this test never depends on, or
+/// pollutes, host state.
+fn init_import_workspace() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cook")).unwrap();
+    let shared = dir.path().join(".cook/shared-cache");
+    fs::write(
+        dir.path().join(".cook/cloud.toml"),
+        format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+    )
+    .unwrap();
+    fs::write(dir.path().join("Cookfile"), ROOT_COOKFILE).unwrap();
+    fs::create_dir_all(dir.path().join("api")).unwrap();
+    fs::write(dir.path().join("api/Cookfile"), API_COOKFILE).unwrap();
+    dir
+}
+
+#[test]
+fn cook_why_attributes_imported_unit_to_its_qualified_recipe_name() {
+    let dir = init_import_workspace();
+
+    // Build once so both units take a local hit on the subsequent `why`.
+    let build = run_cook(dir.path(), &["build"]);
+    assert!(
+        build.status.success(),
+        "build failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr),
+    );
+    assert!(
+        dir.path().join("build/top.txt").exists(),
+        "root recipe should have produced build/top.txt"
+    );
+    assert!(
+        dir.path().join("api/build/api-build.stamp").exists(),
+        "imported recipe should have produced api/build/api-build.stamp"
+    );
+
+    let why = run_cook(dir.path(), &["why", "build"]);
+    assert!(
+        why.status.success(),
+        "why failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&why.stdout),
+        String::from_utf8_lossy(&why.stderr),
+    );
+    let out = String::from_utf8_lossy(&why.stdout);
+
+    // The imported dependency's unit is attributed to its workspace-qualified
+    // recipe name, `api.compile` — never the bare local declaration name
+    // `compile`, and never the querying recipe's own name `build`.
+    assert!(
+        out.contains("api.compile :: build/api-build.stamp"),
+        "expected the imported unit attributed to `api.compile`; got:\n{out}"
+    );
+    assert!(
+        !out.contains("\ncompile :: "),
+        "must NOT attribute the imported unit to its bare local name `compile`; got:\n{out}"
+    );
+
+    // The root recipe's own unit keeps its (unqualified, since it lives at
+    // the workspace root) attribution unchanged.
+    assert!(
+        out.contains("build :: build/top.txt"),
+        "expected the root unit attributed to `build`; got:\n{out}"
+    );
+
+    // Cache keys / HIT status / all other fields are unaffected by the
+    // attribution fix: the dep unit is still a clean local hit with a key.
+    let dep_line = out
+        .lines()
+        .find(|l| l.starts_with("api.compile :: "))
+        .unwrap_or_else(|| panic!("expected an `api.compile ::` line; got:\n{out}"));
+    assert!(
+        dep_line.contains("[HIT (local)]") && dep_line.contains("key "),
+        "expected the dep unit's line to show a local-hit status and key; got:\n{dep_line}"
+    );
+}

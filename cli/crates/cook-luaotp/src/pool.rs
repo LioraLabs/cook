@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use cook_contracts::{OutputStream, StepKind, WorkPayload};
 use crate::store::ProbeValueStore;
@@ -73,6 +74,17 @@ pub struct WorkResult {
     /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
     /// `None` for all non-probe units. Wired end-to-end by Task G.
     pub probe_output: Option<ProbeOutput>,
+    /// Wall-clock span of the actual work-item execution, measured by the
+    /// worker around the `execute_work_item` dispatch (queue wait
+    /// excluded). Mirrors the existing `TestOutput.duration` measurement
+    /// approach, generalised to every payload kind so a plain (non-test)
+    /// unit's completion line can report real elapsed time instead of a
+    /// hardcoded zero. Individual `execute_*` helpers set this to
+    /// `Duration::ZERO` in their returned literals; `worker_loop`
+    /// overwrites it with the measured span for every outcome (success,
+    /// failure, and the worker-panic recovery path) before sending the
+    /// result, so the placeholder value never reaches the engine.
+    pub duration: Duration,
 }
 
 pub struct WorkerPool {
@@ -340,10 +352,18 @@ fn worker_loop(
                 let work_id = work.id;
                 let recipe_name = work.recipe_name.clone();
                 let node_name = work.payload.display_name();
+                // Measured span = actual execution only. The queue wait
+                // already ended when this item was popped above, and the
+                // per-item context setup just above (recipe/cwd/env/sandbox,
+                // package-path refresh) is worker bookkeeping, not queued
+                // idle time, so starting the clock here — immediately
+                // around the dispatch — is the honest per-unit number
+                // (same intent as `TestOutput.duration`'s `start.elapsed()`).
+                let exec_start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     execute_work_item(&lua, &work, &work.working_dir, &work.env_vars)
                 }));
-                let result = match result {
+                let mut result = match result {
                     Ok(r) => r,
                     Err(panic_payload) => {
                         let msg = panic_payload_to_string(&panic_payload);
@@ -357,9 +377,11 @@ fn worker_loop(
                             node_name,
                             output_lines: Vec::new(),
                             probe_output: None,
+                            duration: Duration::ZERO,
                         }
                     }
                 };
+                result.duration = exec_start.elapsed();
                 let _ = tx.send(result);
             }
         }
@@ -1174,6 +1196,7 @@ fn execute_work_item(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             }
         }
         WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, lua_code, .. } => {
@@ -1206,6 +1229,7 @@ fn execute_work_item(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
     }
 }
@@ -1239,6 +1263,7 @@ fn execute_shell(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
         Ok(output) => {
             let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
@@ -1269,6 +1294,7 @@ fn execute_shell(
                     node_name,
                     output_lines,
                     probe_output: None,
+                    duration: Duration::ZERO,
                 }
             } else {
                 let code = output.status.code().unwrap_or(1);
@@ -1286,6 +1312,7 @@ fn execute_shell(
                     node_name,
                     output_lines,
                     probe_output: None,
+                    duration: Duration::ZERO,
                 }
             }
         }
@@ -1324,6 +1351,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1339,6 +1367,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1356,6 +1385,7 @@ fn execute_probe(
             key: key.to_string(),
             bytes,
         }),
+        duration: Duration::ZERO,
     }
 }
 
@@ -1444,6 +1474,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
         Err(e) => WorkResult {
             id,
@@ -1453,6 +1484,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            duration: Duration::ZERO,
         },
     }
 }
@@ -1546,6 +1578,7 @@ fn execute_lua_test(
         node_name,
         output_lines,
         probe_output: None,
+        duration: Duration::ZERO,
     }
 }
 
@@ -1599,6 +1632,7 @@ fn execute_test(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                duration: Duration::ZERO,
             };
         }
     };
@@ -1689,6 +1723,7 @@ fn execute_test(
         node_name,
         output_lines,
         probe_output: None,
+        duration: Duration::ZERO,
     }
 }
 
