@@ -311,7 +311,7 @@ pub fn register_cookfile(
     // forever. One closure over a late-filled cell is what keeps the alias and
     // a fresh `cook.` lookup indistinguishable (Standard §22.8, CS-0144).
     let recipe_forcer: crate::context::SharedRecipeForcer = Rc::new(RefCell::new(None));
-    // Standard §22.9, CS-0148: the `cook.on_register_complete` finalizer
+    // Standard §22.9, CS-0149: the `cook.on_register_complete` finalizer
     // queue for this pass. Created here, alongside the forcer cell, for the
     // same reason: `install_remaining_apis` needs it at install time (step
     // 5b, below), but nothing drains it until step 12c, well after the
@@ -492,7 +492,7 @@ pub fn register_cookfile(
         &units_by_recipe,
     )?;
 
-    // 12c. (Standard §22.9, CS-0148) Drain the `cook.on_register_complete`
+    // 12c. (Standard §22.9, CS-0149) Drain the `cook.on_register_complete`
     //      finalizer queue. Sits exactly here — after 12a/12b, before
     //      `flush_all` below — for two reasons pulling in opposite
     //      directions on the same boundary:
@@ -556,7 +556,7 @@ pub fn register_cookfile(
                      register pass's recipe set is already closed by the time any callback \
                      runs — the new recipe's body would never be evaluated this pass. Move \
                      the registration before cook.on_register_complete is called (Standard \
-                     \u{00a7}22.9, CS-0148)",
+                     \u{00a7}22.9, CS-0149)",
                 )));
             }
             if post_probes > pre_probes {
@@ -565,7 +565,7 @@ pub fn register_cookfile(
                      register pass's probe set is already closed by the time any callback \
                      runs — the new probe would never be evaluated this pass. Move the \
                      registration before cook.on_register_complete is called (Standard \
-                     \u{00a7}22.9, CS-0148)",
+                     \u{00a7}22.9, CS-0149)",
                 )));
             }
         }
@@ -2363,7 +2363,7 @@ fn install_remaining_apis(
     // during the top-level chunk sees the driver appear exactly as a fresh
     // `cook.require_recipe` lookup does (Standard §22.8, CS-0144).
     crate::context::register_require_recipe_api(lua, body_slot.clone(), recipe_forcer)?;
-    // Standard §22.9, CS-0148: installs `cook.on_register_complete`, which
+    // Standard §22.9, CS-0149: installs `cook.on_register_complete`, which
     // only queues onto `finalizer_queue` — `register_cookfile`'s step 12c
     // drains it after every recipe body has run; `list_names` never drains
     // it at all (see the comment at its call site).

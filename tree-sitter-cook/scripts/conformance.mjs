@@ -118,12 +118,12 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // body-slot check knows there is no enclosing recipe body.
   ['require-recipe-outside-recipe-body-rejected',
    '§22.8 cook.require_recipe — outside-a-recipe-body detection, register-time semantic'],
-  // CS-0148: `cook.recipe(...)` called from inside a callback queued via
+  // CS-0149: `cook.recipe(...)` called from inside a callback queued via
   // `cook.on_register_complete` is an ordinary register-phase Lua call
   // syntactically; only the register-phase finalizer-drain step (which
   // knows the recipe set is already closed) rejects it.
   ['on-register-complete-mints-recipe-rejected',
-   'CS-0148: cook.recipe from a queued finalizer callback — register-phase rejection, not syntactic'],
+   'CS-0149: cook.recipe from a queued finalizer callback — register-phase rejection, not syntactic'],
   // §7.1.1 chore-parameter semantic rules — Rust parser enforces;
   // tree-sitter accepts any ordering / count / reserved-name shape.
   // The dot-ban and the no-default-on-variadic rule ARE syntactic and

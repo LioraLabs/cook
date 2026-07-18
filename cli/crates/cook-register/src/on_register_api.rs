@@ -1,5 +1,5 @@
 //! Register-phase `cook.on_register_complete(fn)` binding (Standard §22.9,
-//! CS-0148).
+//! CS-0149).
 //!
 //! `cook.on_register_complete` only queues `fn` here — it does not run it.
 //! The queue is drained by `engine.rs`'s `register_cookfile`, at step 12c,
@@ -24,17 +24,17 @@ use std::rc::Rc;
 pub type SharedFinalizerQueue = Rc<RefCell<Vec<mlua::Function>>>;
 
 /// Uniform register-phase type error for `cook.on_register_complete`'s sole
-/// argument (Standard §22.9, CS-0148): a non-function value is a hard error
+/// argument (Standard §22.9, CS-0149): a non-function value is a hard error
 /// naming the API, the accepted type, and the received Lua type — never
 /// silently coerced or discarded. Mirrors `test_api::type_err`.
 fn type_err(got: &str) -> LuaError {
     LuaError::runtime(format!(
-        "cook.on_register_complete: `fn` must be a function, got {got} (Standard \u{00a7}22.9, CS-0148)"
+        "cook.on_register_complete: `fn` must be a function, got {got} (Standard \u{00a7}22.9, CS-0149)"
     ))
 }
 
 /// Register `cook.on_register_complete(fn)` on the cook global table
-/// (Standard §22.9, CS-0148).
+/// (Standard §22.9, CS-0149).
 ///
 /// `fn` MUST be a Lua function; anything else is rejected via [`type_err`].
 /// A conforming `fn` is appended to `queue` and returns — no other work
@@ -106,7 +106,7 @@ cook.on_register_complete(function() end)
         // a bare integer literal like `42` is an mlua `Integer`.
         assert!(err.contains("integer"), "got: {err}");
         assert!(err.contains("22.9"), "got: {err}");
-        assert!(err.contains("CS-0148"), "got: {err}");
+        assert!(err.contains("CS-0149"), "got: {err}");
     }
 
     #[test]

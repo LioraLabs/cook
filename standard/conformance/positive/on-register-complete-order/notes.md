@@ -1,4 +1,4 @@
-Pins CS-0148 / Standard §22.9: `cook.on_register_complete` callbacks run exactly once, after every recipe body of the pass has registered, in the order they were queued.
+Pins CS-0149 / Standard §22.9: `cook.on_register_complete` callbacks run exactly once, after every recipe body of the pass has registered, in the order they were queued.
 
 `cook_modules/m.lua` accumulates state across the two recipe bodies (`alpha`, `beta` — each a bare `module_call` per §{steps.dispatch} rule 6) into a module-local table, then a top-level `register` block calls `m.arm()`, which queues two callbacks via `cook.on_register_complete`. The top-level chunk (and therefore `m.arm()`) runs before any recipe body is invoked (§22.6's discovery/dispatch split), so this fixture cannot pass by accident of call-site ordering — the callbacks can only observe both marks because the finalizer queue drains strictly after the body-invocation loop, not because `m.arm()` happened to run late.
 

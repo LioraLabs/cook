@@ -3882,7 +3882,7 @@ fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_
 }
 
 // -----------------------------------------------------------------------
-// CS-0148 (Standard §22.9): `cook.on_register_complete` — a finalizer queue
+// CS-0149 (Standard §22.9): `cook.on_register_complete` — a finalizer queue
 // drained once, after every recipe body of the pass has run and the pass's
 // whole-graph validation has completed. Typed-argument-error coverage lives
 // in `on_register_api.rs`'s own `#[cfg(test)]`; these drive the real
