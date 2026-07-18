@@ -3880,3 +3880,232 @@ fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_
          to the same result (Standard §22.8); app err: {err}, zzz err: {zzz_err}"
     );
 }
+
+// -----------------------------------------------------------------------
+// CS-0149 (Standard §22.9): `cook.on_register_complete` — a finalizer queue
+// drained once, after every recipe body of the pass has run and the pass's
+// whole-graph validation has completed. Typed-argument-error coverage lives
+// in `on_register_api.rs`'s own `#[cfg(test)]`; these drive the real
+// `register_cookfile` pass end to end.
+// -----------------------------------------------------------------------
+
+/// Two callbacks queued in the top-level chunk run after both recipe
+/// bodies, and in the order they were queued. The assertions live INSIDE
+/// Lua (the VM is gone by the time `register_cookfile` returns), so a
+/// violation raises and fails the pass — the test only needs to check
+/// `is_ok()`.
+#[test]
+fn on_register_complete_runs_after_both_bodies_in_registration_order() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+_G.__order = {}
+cook.recipe("a", {}, function()
+    _G.__a_ran = true
+    cook.exec("echo a", 1)
+end)
+cook.recipe("b", {}, function()
+    _G.__b_ran = true
+    cook.exec("echo b", 1)
+end)
+cook.on_register_complete(function()
+    if not (_G.__a_ran and _G.__b_ran) then
+        error("callback 1 ran before both recipe bodies had been evaluated")
+    end
+    table.insert(_G.__order, 1)
+end)
+cook.on_register_complete(function()
+    if not (_G.__a_ran and _G.__b_ran) then
+        error("callback 2 ran before both recipe bodies had been evaluated")
+    end
+    table.insert(_G.__order, 2)
+    if #_G.__order ~= 2 or _G.__order[1] ~= 1 or _G.__order[2] ~= 2 then
+        error("callbacks did not run in registration order: " .. table.concat(_G.__order, ","))
+    end
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+}
+
+/// Each callback fires exactly once across the pass: a counter incremented
+/// by the first callback must read exactly 1 from a later one.
+#[test]
+fn on_register_complete_callback_fires_exactly_once() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+_G.__count = 0
+cook.on_register_complete(function()
+    _G.__count = _G.__count + 1
+end)
+cook.on_register_complete(function()
+    if _G.__count ~= 1 then
+        error("expected the first callback to have fired exactly once, count=" .. tostring(_G.__count))
+    end
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+}
+
+/// A callback that itself calls `cook.on_register_complete` re-queues: the
+/// newly queued callback must still run this pass (drain-until-empty), not
+/// be dropped when the outer loop's snapshot of the queue's original length
+/// is exhausted. Verified via `fs.write`, observable after the VM is gone.
+#[test]
+fn on_register_complete_requeued_callback_runs_this_pass() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    cook.on_register_complete(function()
+        fs.write("requeued.txt", "ran")
+    end)
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+    let content = fs::read_to_string(dir.path().join("requeued.txt"))
+        .expect("requeued callback should have run and written the file");
+    assert_eq!(content, "ran");
+}
+
+/// A callback calling `cook.recipe(...)` is a hard error (Standard §22.9):
+/// the body-invocation pass has already closed the recipe set, so a
+/// recipe minted here would never have its body evaluated this pass. Must
+/// not be a silent no-op — the pass fails and the error names the API.
+#[test]
+fn on_register_complete_callback_recipe_registration_rejected() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    cook.recipe("late", {}, function() end)
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "expected Err, got Ok");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.on_register_complete"), "got: {err}");
+    assert!(err.contains("recipe"), "got: {err}");
+}
+
+/// Same ban, for `cook.probe(...)`.
+#[test]
+fn on_register_complete_callback_probe_registration_rejected() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    cook.probe("late_probe", { produce = "return 1" })
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "expected Err, got Ok");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.on_register_complete"), "got: {err}");
+    assert!(err.contains("probe"), "got: {err}");
+}
+
+/// A callback runs outside the dynamic extent of any recipe body, so a
+/// body-scoped API called from it raises that API's ordinary
+/// outside-a-recipe-body error — no special-casing needed for this one.
+#[test]
+fn on_register_complete_callback_add_unit_outside_body_rejected() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    cook.add_unit({ command = "echo x", inputs = {}, output = "x" })
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "expected Err, got Ok");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("cook.add_unit called outside a recipe body"),
+        "got: {err}"
+    );
+}
+
+/// An error raised by a callback fails the registration pass with that
+/// error, exactly as an error from a recipe body would.
+#[test]
+fn on_register_complete_callback_error_fails_pass() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    error("boom")
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "expected Err, got Ok");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("boom"), "got: {err}");
+}
+
+/// Consumer-contract test (Note 22.9.1's motivating case): a recipe body
+/// exports a value; a callback imports it, calls `cook.sh`, and `fs.write`s
+/// a file derived from the imported value into the working dir.
+#[test]
+fn on_register_complete_consumer_contract_export_import_sh_fs_write() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("lib", {}, function()
+    cook.export("lib", { path = "build/lib.a" })
+    cook.exec("echo lib", 1)
+end)
+cook.on_register_complete(function()
+    local info = cook.import("lib")
+    cook.sh("true")
+    fs.write("summary.txt", info.path)
+end)
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+    let content = fs::read_to_string(dir.path().join("summary.txt")).unwrap();
+    assert_eq!(content, "build/lib.a");
+}
+
+/// `list_names` — the cheap name-only discovery surface — accepts a
+/// `cook.on_register_complete` call (it is register-phase Lua like any
+/// other) but MUST NOT be required to drain the queue: it invokes no
+/// recipe body, and a callback can't register a recipe (see above), so
+/// nothing it reports depends on having run one.
+#[test]
+fn list_names_never_drains_on_register_complete_queue() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("a", {}, function()
+    cook.exec("echo a", 1)
+end)
+cook.on_register_complete(function()
+    error("must not run")
+end)
+"#;
+    let result = list_names(rt, lua_src);
+    assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+    assert_eq!(result.unwrap().len(), 1);
+}

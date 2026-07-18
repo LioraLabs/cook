@@ -3,18 +3,12 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="libfoo" line=3
+    Recipe name="libfoo" line=5
       deps: []
       ingredients: []
       excludes: []
       steps:
-        InlineLua code="cook_cc.lib(\"foo\", { sources = { \"src/foo.c\" } })"
-    Recipe name="compile-commands" line=6
-      deps: ["libfoo"]
-      ingredients: []
-      excludes: []
-      steps:
-        InlineLua code="cook_cc.compile_commands()"
+        InlineLua code="cook_cc.lib({ sources = { \"src/foo.c\" } })"
   chores:
   register_blocks: []
-  top_level_module_calls: []
+  top_level_module_calls: [TopLevelModuleCall code="cook_cc.compile_commands()" line=3]

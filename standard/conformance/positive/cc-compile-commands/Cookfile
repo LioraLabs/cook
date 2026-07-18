@@ -1,7 +1,6 @@
 use cook_cc
 
-recipe libfoo
-    cook_cc.lib("foo", { sources = { "src/foo.c" } })
+cook_cc.compile_commands()
 
-recipe compile-commands: libfoo
-    cook_cc.compile_commands()
+recipe libfoo
+    cook_cc.lib({ sources = { "src/foo.c" } })

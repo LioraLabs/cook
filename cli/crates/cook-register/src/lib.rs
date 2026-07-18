@@ -12,6 +12,7 @@ pub mod export_api;
 pub mod file_ref;
 pub mod module_cache;
 pub mod module_loader;
+pub mod on_register_api;
 pub mod probe_api;
 pub mod probe_value;
 pub mod test_api;

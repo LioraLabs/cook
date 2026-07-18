@@ -311,6 +311,13 @@ pub fn register_cookfile(
     // forever. One closure over a late-filled cell is what keeps the alias and
     // a fresh `cook.` lookup indistinguishable (Standard §22.8, CS-0144).
     let recipe_forcer: crate::context::SharedRecipeForcer = Rc::new(RefCell::new(None));
+    // Standard §22.9, CS-0149: the `cook.on_register_complete` finalizer
+    // queue for this pass. Created here, alongside the forcer cell, for the
+    // same reason: `install_remaining_apis` needs it at install time (step
+    // 5b, below), but nothing drains it until step 12c, well after the
+    // top-level chunk and every recipe body have queued into it.
+    let finalizer_queue: crate::on_register_api::SharedFinalizerQueue =
+        Rc::new(RefCell::new(Vec::new()));
     let module_state = install_remaining_apis(
         &lua,
         &builder,
@@ -318,6 +325,7 @@ pub fn register_cookfile(
         cache_ctx.as_ref(),
         prepass_store.clone(),
         recipe_forcer.clone(),
+        finalizer_queue.clone(),
     )?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
@@ -483,6 +491,85 @@ pub fn register_cookfile(
         &probe_registry.borrow(),
         &units_by_recipe,
     )?;
+
+    // 12c. (Standard §22.9, CS-0149) Drain the `cook.on_register_complete`
+    //      finalizer queue. Sits exactly here — after 12a/12b, before
+    //      `flush_all` below — for two reasons pulling in opposite
+    //      directions on the same boundary:
+    //
+    //      * AFTER 12a/12b: those two checks are what "the recipe and unit
+    //        set is closed" MEANS in this pass. A callback that ran before
+    //        either could observe a units_by_recipe / probe_registry that
+    //        the merged-cycle or for_each static-input check would still
+    //        reject, or race a `cook.recipe`/`cook.probe` call against a
+    //        validation pass not yet run over the very state it just
+    //        mutated — so callbacks must see a pass that has ALREADY been
+    //        accepted, not one still being decided.
+    //
+    //      * BEFORE `flush_all`: module-held per-VM state must still be live
+    //        when a callback runs, and any mutation a callback makes to it
+    //        must be visible to the flush that commits it into the
+    //        register→execute handoff. Draining after the flush would let
+    //        a callback's `cook.load_module`-returned state mutations go
+    //        uncommitted.
+    //
+    //      Drain-until-empty, not a fixed-length pass over the queue as it
+    //      stood when this loop started: §22.9 lets a callback itself call
+    //      `cook.on_register_complete`, and the newly queued callback MUST
+    //      still run this pass, in append order. An index cursor (rather
+    //      than `Vec::drain` up front) is what makes that safe — the vec
+    //      can grow while we're mid-walk.
+    {
+        let mut cursor = 0usize;
+        loop {
+            let next = finalizer_queue.borrow().get(cursor).cloned();
+            let callback = match next {
+                Some(cb) => cb,
+                None => break,
+            };
+            cursor += 1;
+
+            // §22.9: "Recipe and probe registration is rejected." A
+            // callback runs after the body-invocation loop above has
+            // already closed the recipe and unit sets — a `cook.recipe` or
+            // `cook.probe` call reached from here would never have its
+            // body evaluated in this pass, so accepting it would silently
+            // reproduce the exact register/execute disagreement §22.8's
+            // forcing rules exist to prevent. Both `cook.recipe` and
+            // `cook.probe` still WORK when called from a callback (neither
+            // API checks `body_slot`, and body_slot is legitimately `None`
+            // here just as it is at top level) — so this is enforced by
+            // snapshotting each registry's size around the call and
+            // rejecting growth afterward, rather than by teaching either
+            // installer about finalizer callbacks.
+            let pre_recipes = recipes.borrow().len();
+            let pre_probes = probe_registry.borrow().probes.len();
+
+            let call_result: LuaResult<()> = callback.call(());
+            call_result.map_err(RegisterError::Lua)?;
+
+            let post_recipes = recipes.borrow().len();
+            let post_probes = probe_registry.borrow().probes.len();
+            if post_recipes > pre_recipes {
+                return Err(RegisterError::Lua(mlua::Error::runtime(
+                    "cook.on_register_complete: a callback called cook.recipe, but the \
+                     register pass's recipe set is already closed by the time any callback \
+                     runs — the new recipe's body would never be evaluated this pass. Move \
+                     the registration before cook.on_register_complete is called (Standard \
+                     \u{00a7}22.9, CS-0149)",
+                )));
+            }
+            if post_probes > pre_probes {
+                return Err(RegisterError::Lua(mlua::Error::runtime(
+                    "cook.on_register_complete: a callback called cook.probe, but the \
+                     register pass's probe set is already closed by the time any callback \
+                     runs — the new probe would never be evaluated this pass. Move the \
+                     registration before cook.on_register_complete is called (Standard \
+                     \u{00a7}22.9, CS-0149)",
+                )));
+            }
+        }
+    }
 
     // Flush module caches once at the end of the pass.
     module_state.borrow().flush_all();
@@ -2164,6 +2251,14 @@ pub fn list_names(
         // body, so every `cook.require_recipe` call it can reach is outside
         // one and stops at the guard rail before the cell is consulted.
         Rc::new(RefCell::new(None)),
+        // Finalizer queue created fresh and never drained: per §22.9,
+        // "Discovery surfaces MAY skip the queue" — `list_names` invokes no
+        // recipe body, and a callback can't register a recipe (that call is
+        // rejected wherever it IS drained), so the discovered set this
+        // returns cannot depend on having run one. The call itself must
+        // still be accepted as ordinary register-phase Lua, hence installing
+        // the API rather than leaving `cook.on_register_complete` undefined.
+        Rc::new(RefCell::new(Vec::new())),
     )?;
 
     // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
@@ -2222,6 +2317,7 @@ fn install_remaining_apis(
     cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
     prepass: crate::module_loader::SharedPrepassStore,
     recipe_forcer: crate::context::SharedRecipeForcer,
+    finalizer_queue: crate::on_register_api::SharedFinalizerQueue,
 ) -> Result<SharedModuleLoaderState, RegisterError> {
     // Sandbox + fs/path/platform API. Project root falls back to
     // working_dir when no CacheContext is present.
@@ -2267,6 +2363,11 @@ fn install_remaining_apis(
     // during the top-level chunk sees the driver appear exactly as a fresh
     // `cook.require_recipe` lookup does (Standard §22.8, CS-0144).
     crate::context::register_require_recipe_api(lua, body_slot.clone(), recipe_forcer)?;
+    // Standard §22.9, CS-0149: installs `cook.on_register_complete`, which
+    // only queues onto `finalizer_queue` — `register_cookfile`'s step 12c
+    // drains it after every recipe body has run; `list_names` never drains
+    // it at all (see the comment at its call site).
+    crate::on_register_api::register_on_register_complete(lua, finalizer_queue)?;
     crate::dep_output_api::register_dep_output_api(
         lua,
         builder.terminal_outputs.clone(),
