@@ -291,8 +291,18 @@ fn resolve_namespaced_dep(
     None
 }
 
-/// Find the full dotted prefix for a canonical import path by walking
-/// the namespace chain back to root. E.g., root→backend→proto = "backend.proto".
+/// Find the full dotted prefix for a canonical import path.
+/// E.g., root→backend→proto = "backend.proto".
+///
+/// When the same directory is reachable through more than one import chain
+/// (§11.5 diamond dedup), the canonical prefix is the **shortest alias chain
+/// from the workspace root**, with ties broken by declaration order. This is a
+/// breadth-first walk from the root, so a directory the root imports directly
+/// is always named by the root's own alias — which §20.2 requires to stay
+/// addressable — and the name cannot change because an unrelated import was
+/// added or reordered elsewhere in the workspace (CS-0147; previously the last
+/// edge to insert into a reverse map won, making names declaration-order
+/// dependent).
 pub fn find_full_prefix(
     namespace_map: &[NamespaceEntry],
     root_dir: &Path,
@@ -300,30 +310,36 @@ pub fn find_full_prefix(
 ) -> String {
     let root_canonical =
         std::fs::canonicalize(root_dir).unwrap_or_else(|_| root_dir.to_path_buf());
-
-    // Build reverse map: child_canonical → (parent_canonical, name)
-    let mut parent_map: BTreeMap<&Path, (&Path, &str)> = BTreeMap::new();
-    for (parent, name, target) in namespace_map {
-        parent_map.insert(target.as_path(), (parent.as_path(), name.as_str()));
+    if canonical_path == root_canonical {
+        return String::new();
     }
 
-    let mut segments = Vec::new();
-    let mut current = canonical_path;
-    loop {
-        if current == root_canonical {
-            break;
-        }
-        match parent_map.get(current) {
-            Some(&(parent, name)) => {
-                segments.push(name.to_string());
-                current = parent;
+    let mut named: BTreeMap<&Path, String> = BTreeMap::new();
+    let mut frontier: Vec<(&Path, String)> =
+        vec![(root_canonical.as_path(), String::new())];
+    while !frontier.is_empty() {
+        let mut next: Vec<(&Path, String)> = Vec::new();
+        for (dir, prefix) in &frontier {
+            for (parent, alias, target) in namespace_map {
+                if parent.as_path() != *dir
+                    || target.as_path() == root_canonical.as_path()
+                    || named.contains_key(target.as_path())
+                {
+                    continue;
+                }
+                let child_prefix = if prefix.is_empty() {
+                    alias.clone()
+                } else {
+                    format!("{prefix}.{alias}")
+                };
+                named.insert(target.as_path(), child_prefix.clone());
+                next.push((target.as_path(), child_prefix));
             }
-            None => break,
         }
+        frontier = next;
     }
 
-    segments.reverse();
-    segments.join(".")
+    named.get(canonical_path).cloned().unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +605,66 @@ recipe test_only\n\
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ns(edges: &[(&str, &str, &str)]) -> Vec<NamespaceEntry> {
+        edges
+            .iter()
+            .map(|(p, a, t)| (PathBuf::from(p), a.to_string(), PathBuf::from(t)))
+            .collect()
+    }
+
+    #[test]
+    fn prefix_linear_chain() {
+        let map = ns(&[("/r", "backend", "/r/backend"), ("/r/backend", "proto", "/r/proto")]);
+        assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/proto")), "backend.proto");
+        assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/backend")), "backend");
+    }
+
+    #[test]
+    fn prefix_diamond_prefers_root_direct_alias() {
+        // Root imports a directly AND b, where b also imports a. The root's own
+        // alias must name a, regardless of declaration order (§20.2: the entry
+        // Cookfile's imports remain addressable under their declared aliases).
+        let direct_first = ns(&[
+            ("/r", "a", "/r/a"),
+            ("/r", "b", "/r/b"),
+            ("/r/b", "a", "/r/a"),
+        ]);
+        assert_eq!(find_full_prefix(&direct_first, Path::new("/r"), Path::new("/r/a")), "a");
+
+        let direct_last = ns(&[
+            ("/r", "b", "/r/b"),
+            ("/r/b", "a", "/r/a"),
+            ("/r", "a", "/r/a"),
+        ]);
+        assert_eq!(find_full_prefix(&direct_last, Path::new("/r"), Path::new("/r/a")), "a");
+    }
+
+    #[test]
+    fn prefix_diamond_equal_depth_breaks_ties_by_declaration_order() {
+        // lib is reachable via x and y at the same depth; x is declared first.
+        let map = ns(&[
+            ("/r", "x", "/r/x"),
+            ("/r", "y", "/r/y"),
+            ("/r/x", "lib", "/r/lib"),
+            ("/r/y", "lib", "/r/lib"),
+        ]);
+        assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")), "x.lib");
+    }
+
+    #[test]
+    fn prefix_diamond_shortest_chain_wins_over_deeper() {
+        // lib is reachable at depth 1 via root's own alias and at depth 2 via b;
+        // the shorter chain must win even though b's edge is processed later in
+        // a child-first walk.
+        let map = ns(&[
+            ("/r", "b", "/r/b"),
+            ("/r/b", "mid", "/r/mid"),
+            ("/r/mid", "lib", "/r/lib"),
+            ("/r", "direct", "/r/lib"),
+        ]);
+        assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")), "direct");
+    }
 
     fn info(
         ingredients: Vec<&str>,
