@@ -244,7 +244,15 @@ If never called, the implementation MUST auto-detect a compiler via PATH probing
 cc.compile_commands()
 ```
 
-Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.probes` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
+`cc.compile_commands()` is a **top-level register-phase call**, invoked at column 0 like `cc.uses`, `cc.toolchain`, and `cc.config_header`. It MUST queue — via `cook.on_register_complete` (§{lua.cook-on-register-complete}) — a run-once finalizer that renders `compile_commands.json` in the current working directory from the complete known-target set, after every recipe body of the registration pass has been evaluated. The call itself mints no recipe.
+
+The rendered database MUST include one entry per source per registered target, for **every** registered target regardless of link closure or dispatch reachability, and MUST NOT require any ordering dependency of the author. The output MUST be valid JSON parseable by clangd and equivalent tools.
+
+Repeat top-level `cc.compile_commands()` calls MUST be idempotent: at most one finalizer is queued per registration pass, producing one write of `compile_commands.json` per pass.
+
+A `cc.compile_commands()` call made from inside a recipe body MUST be rejected with a register-phase error naming the top-level form. (This is a hard break from the pre-0.14 recipe-body invocation.)
+
+The finalizer runs on the register-phase VM after the registration pass has closed the target set (§{lua.cook-on-register-complete}), so its inputs MUST be sourced from the implementation's module-held known-target state — live per §22.9 when the callback fires — and from `cook.import`'s per-target `compile_info`. The completeness guarantee is by construction: the finalizer snapshots the module-held target state only once every recipe body has registered its targets, so no target can be missing from the database.
 
 ### 28.3.12. cc.register_finder [#cat.cc.register-finder]
 
