@@ -16,3 +16,27 @@ chore package version target
 
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
     > release.bump_claim(version)
+
+# ── README generation ────────────────────────────────────────────────────
+# README.md is compiled from README.source: each annotated ```cook fence
+# renders to a light + dark SVG pair, then the compiler swaps fences for
+# <picture> blocks. One probe record per fence — edit one snippet and only
+# its two SVGs re-render before the README recompiles.
+
+probe readme:tools
+    tools { python3 }
+
+probe readme:snippets
+    ingredients "README.source" "assets/readme/code_svg.py"
+    json { python3 assets/readme/code_svg.py snippets README.source }
+
+recipe readme-snippets
+    ingredients readme:snippets
+    seal readme:tools
+    cook "assets/readme/snippet-$<in.name>.svg" { python3 assets/readme/code_svg.py render README.source $<in.name> light > $<out> }
+    cook "assets/readme/snippet-$<in.name>-dark.svg" { python3 assets/readme/code_svg.py render README.source $<in.name> dark > $<out> }
+
+recipe readme
+    ingredients "README.source" "assets/readme/code_svg.py"
+    seal readme:tools
+    cook "README.md" { : $<readme-snippets> && python3 assets/readme/code_svg.py compile README.source > $<out> }
