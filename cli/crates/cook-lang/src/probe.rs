@@ -74,6 +74,16 @@ pub(crate) fn parse_probe(
                     }
                     let (p, new_pos) =
                         parse_producer(text, tok.line, tokens, pos, source_lines)?;
+                    // A `files` producer's glob set IS its file-input
+                    // fingerprint set (CS-0148); a separate `ingredients`
+                    // line would declare a second, divergable one.
+                    if matches!(p, ProbeProduce::Files { .. })
+                        && (!ingredients.is_empty() || !excludes.is_empty())
+                    {
+                        return Err(ParseError::Parse { line: tok.line,
+                            message: "probe: a `files` producer declares its own file set; \
+                                a separate `ingredients` line is not allowed".into() });
+                    }
                     producer = Some(p); pos = new_pos;
                     continue;
                 }
@@ -81,7 +91,7 @@ pub(crate) fn parse_probe(
             _other => {
                 return Err(ParseError::Parse { line: tok.line,
                     message: "probe body: only `ingredients` and a producer \
-                        (`{ … }`, `json`/`lines`/`tools`/`envs`, or `>{ … }`) are allowed here"
+                        (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
                         .into() });
             }
         }
@@ -144,6 +154,87 @@ fn parse_source_name_list(
         });
     }
     Ok(names)
+}
+
+/// Parse a `files` brace glob list: `{ "a/*.c" !"a/gen/*.c" }` →
+/// (globs, excludes). Each pattern is a quoted string following `ingredients`
+/// syntax (`!"…"` excludes). The list MUST be on one physical line and MUST
+/// contain at least one include glob. The `{ … }` here is a GLOB LIST, not a
+/// shell/Lua body.
+fn parse_files_glob_list(
+    body_src: &str,
+    line: usize,
+) -> Result<(Vec<String>, Vec<String>), ParseError> {
+    let s = body_src.trim_start();
+    let inner = s
+        .strip_prefix('{')
+        .and_then(|t| t.trim_end().strip_suffix('}'))
+        .ok_or_else(|| ParseError::Parse {
+            line,
+            message: "files: expected a brace glob list `{ \"a/*.c\" !\"a/gen/*.c\" }` on one line"
+                .into(),
+        })?;
+    let mut globs = Vec::new();
+    let mut excludes = Vec::new();
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        let is_exc = rest.starts_with('!');
+        if is_exc {
+            rest = rest[1..].trim_start();
+        }
+        let Some(r) = rest.strip_prefix('"') else {
+            return Err(ParseError::Parse {
+                line,
+                message: format!(
+                    "files: expected a quoted glob (`\"…\"` or `!\"…\"`), found: {rest}"
+                ),
+            });
+        };
+        let Some(end) = r.find('"') else {
+            return Err(ParseError::Parse {
+                line,
+                message: "files: unterminated quoted glob".into(),
+            });
+        };
+        let pat = &r[..end];
+        if is_exc {
+            excludes.push(pat.to_string());
+        } else {
+            globs.push(pat.to_string());
+        }
+        rest = r[end + 1..].trim_start_matches(',').trim_start();
+    }
+    if globs.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: "files: expected at least one quoted glob in `{ … }`".into(),
+        });
+    }
+    Ok((globs, excludes))
+}
+
+/// Finish a `files` producer: reject a `>{ … }` Lua block (a glob list, not a
+/// body), parse the brace glob list, and advance past this physical line.
+fn finish_files_list(
+    tail: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+) -> Result<(ProbeProduce, usize), ParseError> {
+    let t = tail.trim_start();
+    if t.starts_with('>') {
+        return Err(ParseError::Parse {
+            line,
+            message: "files: `{ \"glob\", … }` is a GLOB LIST, not a body; a `>{ … }` Lua block is not valid here"
+                .into(),
+        });
+    }
+    let (globs, excludes) = parse_files_glob_list(t, line)?;
+    let mut new_pos = current_pos + 1;
+    while new_pos < tokens.len() && tokens[new_pos].line <= line {
+        new_pos += 1;
+    }
+    Ok((ProbeProduce::Files { globs, excludes }, new_pos))
 }
 
 /// Finish a `tools`/`envs` producer: reject a `>{ … }` Lua block (a body, not a
@@ -211,9 +302,10 @@ fn finish_typed_shell(
 ///   lines { … }      shell block  -> array of stdout lines
 ///   tools { cc, ld } name list    -> cached toolset fingerprint
 ///   envs  { CFLAGS } name list    -> cached env-set fingerprint
+///   files { "a/*.c" } glob list   -> per-file content-hash manifest (CS-0148)
 ///   >{ … }           Lua block    -> structured value (the block's `return`)
 ///
-/// `json`/`lines`/`tools`/`envs` are contextual keywords, valid only in this
+/// `json`/`lines`/`tools`/`envs`/`files` are contextual keywords, valid only in this
 /// probe-body position. A bare `{ … }`/`>{ … }` opener never matches a leading
 /// keyword, so detection is unambiguous.
 pub(crate) fn parse_producer(
@@ -230,6 +322,10 @@ pub(crate) fn parse_producer(
     }
     if let Some(tail) = strip_keyword(text, "envs") {
         return finish_source_list(tail, line, tokens, current_pos, "envs");
+    }
+    // Glob-list producer: the braces hold a quoted GLOB LIST, not a body.
+    if let Some(tail) = strip_keyword(text, "files") {
+        return finish_files_list(tail, line, tokens, current_pos);
     }
     // Typed shell producers: the braces hold a shell block, typed.
     if let Some(tail) = strip_keyword(text, "json") {

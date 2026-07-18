@@ -3374,6 +3374,27 @@ fn probe_tools_lowers_with_command_v_and_sha256() {
 }
 
 #[test]
+fn probe_files_lowers_to_inputs_and_sentinel() {
+    let cf = make_probe_cf(ProbeProduce::Files {
+        globs: vec!["src/*.ts".into(), "config/*.json".into()],
+        excludes: vec!["src/gen/*.ts".into()],
+    });
+    let lua = generate(&cf);
+    // The re-run TRIGGER: the glob set resolves at register time into
+    // inputs.files so the fingerprint folds each file's content hash.
+    assert!(
+        lua.contains(r#"files = cook.resolve_ingredients({"src/*.ts", "config/*.json"}, {"src/gen/*.ts"})"#),
+        "lua:\n{lua}"
+    );
+    // The VALUE: the reserved sentinel (CS-0148) — never dispatched as Lua;
+    // the engine synthesises the manifest from the same resolved pairs.
+    assert!(
+        lua.contains("@files-manifest"),
+        "lua:\n{lua}"
+    );
+}
+
+#[test]
 fn probe_env_lowers_with_cook_env_reads() {
     let cf = make_probe_cf(ProbeProduce::Envs(vec!["SDKROOT".into(), "CC".into()]));
     let lua = generate(&cf);

@@ -34,11 +34,12 @@ two or more producers; contains two or more `ingredients`; or contains an
 `inputs.requires` (§{cat.probes.inputs}).
 
 A **producer** has no introducer keyword: the producer KIND leads, and the
-braces are that kind's body. There are six forms — a bare shell block `{ … }`, a
+braces are that kind's body. There are seven forms — a bare shell block `{ … }`, a
 `json`-typed shell block, a `lines`-typed shell block, a `tools` name list, an
-`envs` name list, and a `>{ … }` Lua block (specified below). The tokens `json`,
-`lines`, `tools`, and `envs` are **contextual keywords** recognised only in this
-probe-producer position; elsewhere they are ordinary identifiers.
+`envs` name list, a `files` glob list, and a `>{ … }` Lua block (specified
+below). The tokens `json`, `lines`, `tools`, `envs`, and `files` are
+**contextual keywords** recognised only in this probe-producer position;
+elsewhere they are ordinary identifiers.
 
 A probe's `ingredients` declares its **file-input fingerprint set** — NOT an
 iteration driver. A probe yields one value and never fans out; the
@@ -112,13 +113,36 @@ value is determined by the producer form:
   the environment values fingerprint the probe — an `envs` probe is a named,
   cached, shareable env-set fingerprint, the env-twin of `tools`. A conforming
   implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua block.
+- `files { "GLOB" !"GLOB" … }` (glob list, CS-0148): the brace content is a
+  whitespace/comma-separated LIST of quoted glob patterns following
+  `ingredients` pattern syntax (`!"…"` excludes; §{steps.ingredients}), NOT a
+  shell or Lua body. The glob set is the probe's **file-input fingerprint
+  set**: it resolves to a concrete file set whose per-file content hashes
+  populate `inputs.files` (§{cat.probes.inputs}), exactly as an `ingredients`
+  line would. The probe value is a JSON object keyed by each resolved file's
+  workspace-relative path, each entry the lowercase-hex content hash of that
+  file — the same hashes the fingerprint's FILES section folds, so the re-run
+  trigger and the value cannot diverge, and the value contains no
+  machine-specific absolute paths (it stays portable across a shared store,
+  §{exec.cache.single-key}). A file that cannot be read at value time folds as
+  the literal string `"<missing>"`, mirroring §{cat.probes.inputs}'s
+  missing-file fold. Adding, removing, or editing a matched file changes the
+  value and therefore the key of every unit that seals this probe — `files` is
+  the file-set twin of `tools`, and the idiomatic way to name a set of files
+  as a sealable determinant when they are not the consuming recipe's
+  iteration driver. A conforming implementation MUST reject an empty list
+  (`{ }`), an unquoted entry, and a `>{ … }` Lua block. A `files` probe MUST
+  NOT also declare an `ingredients` line — the glob set IS its file-input
+  fingerprint set, and a second, independently editable set could silently
+  diverge from it; a conforming implementation MUST reject the combination
+  with a parse-time diagnostic.
 
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
 implementation MUST reject either applied to a `>{ … }` Lua-block producer with a
 register-phase diagnostic, since a Lua block already returns a structured value.
-The `tools` and `envs` kinds take a brace NAME LIST, not a body; a conforming
-implementation MUST reject a `>{ … }` Lua block (or any body form) supplied where
-a name list is required.
+The `tools` and `envs` kinds take a brace NAME LIST, and the `files` kind a
+brace GLOB LIST, not a body; a conforming implementation MUST reject a `>{ … }`
+Lua block (or any body form) supplied where a name or glob list is required.
 
 **Coexistence.** The native `probe` declaration and the register-phase
 `cook.probe()` API register into one probe table within a register pass; a key
@@ -139,9 +163,17 @@ the header dependency list becomes `inputs.requires`; `ingredients` (globs and
 wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
 one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
 → `cook.json_decode`). The `tools`/`envs` name lists become `inputs.tools` /
-`inputs.env` determinant declarations. Because the fingerprint folds the
-`opts.produce` source string (§{cat.probes.inputs}), editing a shell command or
-changing the producer kind changes the lowered string and therefore
+`inputs.env` determinant declarations. A `files` glob list lowers to
+`inputs.files` (register-time glob resolution, as for `ingredients`) with the
+reserved `opts.produce` string `"@files-manifest"` — not executable Lua (a bare
+`@` is a Lua syntax error, so no hand-written produce body collides with it);
+the engine intercepts that sentinel and synthesises the value directly from the
+resolved `inputs.files` pairs instead of dispatching a worker, which is what
+guarantees the value and the fingerprint's FILES section are computed from the
+same bytes. A `cook.probe()` caller MAY pass the sentinel with its own
+`inputs.files` to obtain the same synthesised manifest. Because the fingerprint
+folds the `opts.produce` source string (§{cat.probes.inputs}), editing a shell
+command or changing the producer kind changes the lowered string and therefore
 re-fingerprints; the fingerprint algorithm itself is unchanged.
 
 ## 22.5.3. The `cook.probe` API [#cat.probes.api]

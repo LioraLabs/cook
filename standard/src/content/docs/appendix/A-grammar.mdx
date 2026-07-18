@@ -120,21 +120,28 @@ PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_.\-]*/   /* CS-0131: matches BARE_IDENTI
 probe_body       ::= ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
                    | ("tools" | "envs") name_list
+                   | "files" glob_list
                    | exec_lua_block
 name_list        ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
+glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
+glob_pattern     ::= "!"? STRING
 ```
 
 `ingredients_step` is defined in §{grammar-appendix.steps}; `shell_block` and `exec_lua_block` are also defined there (the body-dispatch tests `>{` before `{`).
 
-**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, and `envs` are contextual keywords recognised only in this probe-producer position.
+**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, `envs`, and `files` are contextual keywords recognised only in this probe-producer position. A `files` producer MUST NOT be combined with an `ingredients_step` (CS-0148; §{cat.probes.decl}).
 
 **Source-list kinds (normative).** The `tools` and `envs` forms take a
 `name_list` — a brace-delimited, comma/whitespace-separated list of bare `IDENT`
-names — NOT a `shell_block` or `exec_lua_block`. A conforming implementation MUST
-reject an empty `name_list`, a name that is not an `IDENT`, and a body (in
-particular a `>{ … }` `exec_lua_block`) supplied where a `name_list` is required
-(§{cat.probes.decl}). The `name_list` is written on a single physical line
-(unlike a multi-line `shell_block`).
+names — and the `files` form a `glob_list` — the same brace shape holding quoted
+glob patterns with optional `!` exclude prefixes (`ingredients` pattern syntax,
+§{steps.ingredients}) — NOT a `shell_block` or `exec_lua_block`. A conforming
+implementation MUST reject an empty `name_list` or `glob_list` (a `glob_list`
+MUST contain at least one include pattern), a `name_list` entry that is not an
+`IDENT`, a `glob_list` entry that is not a quoted `STRING`, and a body (in
+particular a `>{ … }` `exec_lua_block`) supplied where a name or glob list is
+required (§{cat.probes.decl}). Both list forms are written on a single physical
+line (unlike a multi-line `shell_block`).
 
 **Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
 

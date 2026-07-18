@@ -16,6 +16,34 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// The reserved `produce` string of a `files { … }` probe (CS-0148). Not
+/// executable Lua (a bare `@` is a syntax error), so no hand-written produce
+/// body can collide with it. The engine intercepts a probe whose
+/// `produce_source` equals this sentinel and synthesises its value from the
+/// probe's resolved `inputs.files` — the same path→content-hash pairs the
+/// fingerprint's FILES section folds — instead of dispatching a worker, so
+/// the re-run trigger and the value can never drift.
+pub const FILES_MANIFEST_PRODUCE: &str = "@files-manifest";
+
+/// Build the canonical value bytes of a `files { … }` probe (CS-0148): a JSON
+/// object mapping each workspace-relative path to the lowercase hex of its
+/// content hash, or the literal `"<missing>"` when the file could not be read
+/// (all-zero hash, mirroring §22.5.4's missing-file fold). Encoded via
+/// [`encode_canonical_json`], so the bytes are store-canonical.
+pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
+    let mut map = serde_json::Map::new();
+    for (path, hash) in files {
+        let v = if hash == &[0u8; 32] {
+            JsonValue::String("<missing>".to_string())
+        } else {
+            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            JsonValue::String(hex)
+        };
+        map.insert(path.clone(), v);
+    }
+    encode_canonical_json(&JsonValue::Object(map))
+}
+
 /// Render a validated probe value (§22.5.5) to its canonical bytes:
 /// pretty-printed JSON, 2-space indent, object keys sorted bytewise,
 /// UTF-8, exactly one trailing LF. These bytes are the value's single
@@ -143,6 +171,36 @@ pub fn write_probe_file(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── files-manifest tests (CS-0148) ──────────────────────────────────────
+
+    #[test]
+    fn files_manifest_sorts_keys_and_hex_encodes() {
+        let files = vec![
+            ("b.txt".to_string(), [0xabu8; 32]),
+            ("a.txt".to_string(), [0x01u8; 32]),
+        ];
+        let text = String::from_utf8(encode_files_manifest(&files)).unwrap();
+        let a = text.find("a.txt").unwrap();
+        let b = text.find("b.txt").unwrap();
+        assert!(a < b, "keys must sort bytewise: {text}");
+        assert!(text.contains(&"ab".repeat(32)), "hex encoding: {text}");
+        assert!(text.ends_with("}\n"), "canonical trailing LF: {text:?}");
+    }
+
+    #[test]
+    fn files_manifest_folds_missing_as_literal() {
+        let files = vec![("gone.txt".to_string(), [0u8; 32])];
+        let text = String::from_utf8(encode_files_manifest(&files)).unwrap();
+        assert!(text.contains("<missing>"), "{text}");
+    }
+
+    #[test]
+    fn files_sentinel_is_not_valid_lua() {
+        // The interception contract: no hand-written produce body can equal
+        // the sentinel, because the sentinel cannot lex as Lua.
+        assert!(FILES_MANIFEST_PRODUCE.starts_with('@'));
+    }
 
     // ── canonical-JSON tests ─────────────────────────────────────────────────
 
