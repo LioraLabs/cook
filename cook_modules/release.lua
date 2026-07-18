@@ -9,22 +9,11 @@
 --                                  tree-sitter.json description).
 --                                  Both-phase: pure fs.* + string.
 --
---   release.cut(version)         — cut a host-target release: build cook
---                                  via `cook package`, tag the commit,
---                                  push to origin, and upload the host's
---                                  tarball + a merged release-wide
---                                  checksums file to the LioraLabs/cook
---                                  GitHub release. Idempotent across
---                                  machines: re-running on the same
---                                  VERSION from a different host appends
---                                  that host's artifact and rebuilds the
---                                  canonical checksums file.
+--   release.cut(version)         — bump manifest, commit, tag, push — CI
+--                                  builds and publishes (release.yml).
 --                                  Register-phase only.
 
 local M = {}
-
-local REPO = "LioraLabs/cook"
-local DIST = "cli/target/dist"
 
 -- pcall wrapper: cook.sh raises on non-zero; we want a boolean for control
 -- flow. On failure, returns (false, err) where `err` is the cook.sh error
@@ -47,14 +36,15 @@ local function read_version_default()
     return rstrip(fs.read("standard/VERSION"))
 end
 
-local function rewrite_file(path, pattern, replacement, label)
+local function rewrite_file(path, pattern, replacement, label, err_prefix)
+    err_prefix = err_prefix or "release.bump_claim"
     if not fs.exists(path) then
-        error("release.bump_claim: " .. label .. " not found at " .. path)
+        error(err_prefix .. ": " .. label .. " not found at " .. path)
     end
     local before = fs.read(path)
     local after, n = before:gsub(pattern, replacement)
     if n == 0 then
-        error("release.bump_claim: pattern not found in " .. path
+        error(err_prefix .. ": pattern not found in " .. path
             .. " (claim site may have moved; check the regex)")
     end
     fs.write(path, after)
@@ -127,37 +117,6 @@ local function preflight_clean_tree()
     end
 end
 
-local function preflight_gh_auth()
-    local ok = try_sh("gh auth status >/dev/null 2>&1")
-    if not ok then
-        error("[release.cut] gh CLI not authenticated; run 'gh auth login'")
-    end
-end
-
-local function host_target()
-    local triple = rstrip(cook.sh("rustc -vV | sed -n 's/host: //p'"))
-    if triple == "" then
-        error("[release.cut] could not resolve rustc host triple")
-    end
-    local os_id
-    if triple:find("apple%-darwin") then os_id = "darwin"
-    elseif triple:find("linux") then os_id = "linux"
-    else
-        error("[release.cut] unsupported host OS in '" .. triple
-            .. "' (Phase 1: linux, darwin)")
-    end
-
-    local arch
-    if triple:find("^x86_64%-") then arch = "amd64"
-    elseif triple:find("^aarch64%-") then arch = "arm64"
-    else
-        error("[release.cut] unsupported host arch in '" .. triple
-            .. "' (Phase 1: amd64, arm64)")
-    end
-
-    return triple, os_id, arch
-end
-
 local function ensure_tag(version)
     local has_local = try_sh("git rev-parse --verify --quiet '" .. version .. "'")
     if has_local then
@@ -175,61 +134,6 @@ local function ensure_tag(version)
     end
 end
 
-local function reconcile_sums(version, sums_name, host_line, tarball_name)
-    -- mktemp under target/ rather than /tmp: CS-0045 sandboxes fs.* in
-    -- chore-step Lua bodies to paths under the project root, so any later
-    -- fs.exists / fs.read / fs.write on the merged-sums file would error
-    -- if the dir lived under /tmp. The bash heredoc this function replaced
-    -- did everything inside the shell so it didn't hit the sandbox.
-    local sums_dir = rstrip(cook.sh("mktemp -d -p target cook-release-cut-XXXXXX"))
-    local sums_path = sums_dir .. "/" .. sums_name
-
-    local exists = try_sh(string.format(
-        "gh release view '%s' --repo %s >/dev/null 2>&1", version, REPO))
-
-    if exists then
-        -- Pull the current sums; ignore failure (file may not be present yet).
-        try_sh(string.format(
-            "gh release download '%s' --repo %s --pattern '%s' -O '%s' 2>/dev/null",
-            version, REPO, sums_name, sums_path))
-    end
-
-    -- Drop any prior line for THIS host's tarball, append new, sort.
-    local lines = {}
-    if fs.exists(sums_path) and fs.size(sums_path) > 0 then
-        for line in fs.read(sums_path):gmatch("[^\n]+") do
-            local fname = line:match("^%S+%s+(%S+)$")
-            if fname ~= tarball_name then
-                table.insert(lines, line)
-            end
-        end
-    end
-    table.insert(lines, host_line)
-    table.sort(lines, function(a, b)
-        return (a:match("%s(%S+)$") or "") < (b:match("%s(%S+)$") or "")
-    end)
-    fs.write(sums_path, table.concat(lines, "\n") .. "\n")
-
-    return sums_path, exists
-end
-
-local function upload(version, tarball_path, sums_path, release_exists)
-    if release_exists then
-        print("[release.cut] release exists; merging into existing artifacts")
-        cook.sh(string.format(
-            "gh release upload '%s' --repo %s --clobber '%s' '%s'",
-            version, REPO, tarball_path, sums_path))
-    else
-        print("[release.cut] creating release " .. version)
-        local notes = "Phase 1 install layout. Host targets uploaded as cuts arrive "
-            .. "from each machine; remaining targets land via CI follow-up "
-            .. "(see SHI-176 M1.2b)."
-        cook.sh(string.format(
-            "gh release create '%s' --repo %s --title 'cook %s' --notes %q '%s' '%s'",
-            version, REPO, version, notes, tarball_path, sums_path))
-    end
-end
-
 -- ── cut ─────────────────────────────────────────────────────────────────────
 
 function M.cut(version)
@@ -238,44 +142,48 @@ function M.cut(version)
     end
     -- Canonicalise: ensure leading 'v'.
     if not version:match("^v") then version = "v" .. version end
+    -- vX.Y.Z, optionally followed by a '-' prerelease suffix (e.g. v1.2.3-rc1).
+    local core, suffix = version:match("^(v%d+%.%d+%.%d+)(.-)$")
+    if not core or not (suffix == "" or suffix:match("^%-")) then
+        error("[release.cut] version '" .. version .. "' is not vX.Y.Z"
+            .. " (with optional -suffix); pass --set VERSION=vX.Y.Z")
+    end
 
     print("[release.cut] version: " .. version)
 
     preflight_clean_tree()
-    preflight_gh_auth()
 
-    local triple, os_id, arch = host_target()
-    print(string.format("[release.cut] host: %s → %s-%s", triple, os_id, arch))
-
-    local tarball_name = string.format("cook-%s-%s-%s.tar.gz", version, os_id, arch)
-    local sums_name = string.format("cook-%s-checksums.txt", version)
-    local tarball_path = DIST .. "/" .. tarball_name
-
-    print("[release.cut] packaging via cook package...")
-    cook.sh("rm -rf " .. DIST)
-    cook.sh(string.format(
-        "cook package %s %s", version, triple))
-
-    if not fs.exists(tarball_path) then
-        error("[release.cut] expected tarball not found at " .. tarball_path)
+    local bare_version = version:gsub("^v", "")
+    local manifest_path = "cli/Cargo.toml"
+    if not fs.exists(manifest_path) then
+        error("[release.cut] " .. manifest_path .. " not found (call from repo root)")
     end
-    if not fs.exists(tarball_path .. ".sha256") then
-        error("[release.cut] expected sha256 not found at " .. tarball_path .. ".sha256")
+    local manifest_before = fs.read(manifest_path)
+    local current_version = manifest_before:match('version = "([^"]*)"')
+
+    if current_version == bare_version then
+        print("[release.cut] " .. manifest_path .. " already at " .. bare_version
+            .. "; skipping bump+commit (rerun)")
+    else
+        rewrite_file(
+            manifest_path,
+            'version = "[^"]*"',
+            'version = "' .. bare_version .. '"',
+            "[workspace.package] version",
+            "[release.cut]")
+
+        print("[release.cut] syncing cli/Cargo.lock...")
+        cook.sh("(cd cli && cargo update --workspace --offline)")
+
+        cook.sh(string.format(
+            "git add cli/Cargo.toml cli/Cargo.lock && git commit -m 'release: %s'",
+            version))
     end
 
-    local host_line = rstrip(fs.read(tarball_path .. ".sha256"))
-    if host_line == "" then
-        error("[release.cut] empty .sha256 sibling at " .. tarball_path .. ".sha256")
-    end
-
+    cook.sh("git push origin HEAD")
     ensure_tag(version)
 
-    local sums_path, release_exists = reconcile_sums(
-        version, sums_name, host_line, tarball_name)
-
-    upload(version, tarball_path, sums_path, release_exists)
-
-    print("[release.cut] done: " .. tarball_name .. " on " .. REPO .. "@" .. version)
+    print("[release.cut] done: tag " .. version .. " pushed — release.yml will build and publish")
 end
 
 return M
