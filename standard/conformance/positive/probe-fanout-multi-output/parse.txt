@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="art" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("cards")
+        Cook outputs=["o/$<in.id>.svg", "o/$<in.id>-dark.svg"] body=ShellBlock(["gen $<in.id>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="cards" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["cat data/cards.json"]

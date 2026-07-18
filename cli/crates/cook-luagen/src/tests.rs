@@ -3177,6 +3177,26 @@ fn for_each_probe_cook_fans_out_per_member() {
 }
 
 #[test]
+fn for_each_probe_cook_multi_output_declares_all_outputs() {
+    // A fan-out cook step with TWO accessor targets must declare BOTH on
+    // each member's unit (outputs = {…}, matching the glob-driven OneToMany
+    // arm). Previously outputs[1..] were silently dropped: the unit
+    // registered only the first output and reconciliation swept the second
+    // as an orphan.
+    let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" { gen $<in.id> }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let lua = generate(&cookfile);
+    assert!(lua.contains("local _cook_outs = {"),
+        "missing multi-output table, got:\n{lua}");
+    assert!(lua.contains("outputs = _cook_outs"),
+        "unit must declare all outputs, got:\n{lua}");
+    assert!(lua.contains("-dark.svg"),
+        "second output template must be expanded, got:\n{lua}");
+    assert!(!lua.contains("output = _cook_out,"),
+        "single-output field must not appear for a multi-output step, got:\n{lua}");
+}
+
+#[test]
 fn for_each_probe_ref_passes_through_verbatim() {
     // COOK-190: no codegen-side `:` split — the register pre-pass resolves
     // key-vs-field against the probe registry and stores the member array

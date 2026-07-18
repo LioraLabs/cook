@@ -623,20 +623,33 @@ pub(crate) fn generate_for_each_cook_step(
         )
     };
 
-    // CS-0101 compute-then-emit: expand the output path and body BEFORE
+    // CS-0101 compute-then-emit: expand the output paths and body BEFORE
     // pushing the member-loop header so file-ref hoists precede the loop.
     //
-    // Output path: member sigils + literals, no probe-deferral (the output
-    // path is a register-time value).
+    // Output paths: member sigils + literals, no probe-deferral (the output
+    // path is a register-time value). EVERY declared output expands per
+    // member — a multi-output fan-out step declares them all on one unit
+    // (`outputs = {…}`), matching the glob-driven OneToMany arm. Previously
+    // only outputs[0] registered; the rest were silently dropped and later
+    // swept as orphans by stale-output reconciliation.
     let mut consulted = ConsultedEnv::new();
-    let (out_expr, _) = crate::template::expand_for_each_template(
-        cook_step.outputs[0].as_str(),
-        &ctx,
-        &mut consulted,
-        &mut file_refs,
-        crate::template::ProbeLowering::CacheGet,
-    )
-    .unwrap_or_else(sigil_err);
+    let out_exprs: Vec<String> = cook_step
+        .outputs
+        .iter()
+        .map(|pat| {
+            crate::template::expand_for_each_template(
+                pat.as_str(),
+                &ctx,
+                &mut consulted,
+                &mut file_refs,
+                crate::template::ProbeLowering::CacheGet,
+            )
+            .unwrap_or_else(sigil_err)
+            .0
+        })
+        .collect();
+    let multi = out_exprs.len() > 1;
+    let out_field = if multi { "outputs = _cook_outs" } else { "output = _cook_out" };
 
     let add_unit_line = match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
@@ -654,8 +667,8 @@ pub(crate) fn generate_for_each_cook_step(
             // expand_command_template's doc comment for the rationale).
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",
-                cmd_concat, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{inputs = {{}}, {}, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",
+                out_field, cmd_concat, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
             )
         }
         Some(Body::LuaBlock(code)) => {
@@ -664,15 +677,15 @@ pub(crate) fn generate_for_each_cook_step(
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
-                code_literal, env_keys, disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{inputs = {{}}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
+                out_field, code_literal, env_keys, disposition_field(&cook_step.disposition)
             )
         }
         None => {
             // Declaration-only: one declared output per member, no command.
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, member = cook.member_to_string(item){}}})\n",
-                disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{inputs = {{}}, {}, member = cook.member_to_string(item){}}})\n",
+                out_field, disposition_field(&cook_step.disposition)
             )
         }
     };
@@ -681,12 +694,21 @@ pub(crate) fn generate_for_each_cook_step(
         out.push_str(&file_refs.hoist_lines("    "));
     }
     out.push_str("    for _, item in ipairs(_items) do\n");
-    out.push_str(&format!("        local _cook_out = {}\n", out_expr));
+    if multi {
+        out.push_str("        local _cook_outs = {\n");
+        for expr in &out_exprs {
+            out.push_str(&format!("            {},\n", expr));
+        }
+        out.push_str("        };\n");
+    } else {
+        out.push_str(&format!("        local _cook_out = {}\n", out_exprs[0]));
+    }
     out.push_str(&add_unit_line);
 
     out.push_str(&format!(
-        "        table.insert(_cook_outputs_{}, _cook_out)\n",
-        index
+        "        table.insert(_cook_outputs_{}, {})\n",
+        index,
+        if multi { "_cook_outs[1]" } else { "_cook_out" }
     ));
     out.push_str("    end\n");
 }
