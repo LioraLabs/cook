@@ -1,0 +1,7 @@
+recipe noop
+    test >{ cook.sh("true") }
+
+register
+    cook.on_register_complete(function()
+        cook.recipe("late", {requires = {}}, function() end)
+    end)

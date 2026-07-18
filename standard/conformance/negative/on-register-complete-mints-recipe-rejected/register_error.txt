@@ -1,0 +1,1 @@
+cook.on_register_complete: a callback called cook.recipe, but the register pass's recipe set is already closed by the time any callback runs
