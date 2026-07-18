@@ -1,0 +1,20 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="check" line=4
+      deps: []
+      ingredients: ["src/main.ts"]
+      excludes: []
+      steps:
+        Cook outputs=["build/check.stamp"] body=ShellBlock(["echo ok > $<out>"]) disposition=[local=false pinned=false record=false seal=["srcs"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="srcs" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Files globs=["src/*.ts", "config/*.json"] excludes=["src/gen/*.ts"]

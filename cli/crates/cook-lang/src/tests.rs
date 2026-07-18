@@ -1656,6 +1656,61 @@ fn produce_envs_invalid_name_is_error() {
     assert!(format!("{err}").contains("name"), "got: {err}");
 }
 
+// ── CS-0148: files glob-list producer ─────────────────────────────────
+
+#[test]
+fn produce_files_parses_glob_list() {
+    let cf = parse("probe srcs\n    files { \"src/*.ts\" \"tsconfig.json\" }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(
+        p.produce,
+        crate::ast::ProbeProduce::Files {
+            globs: vec!["src/*.ts".into(), "tsconfig.json".into()],
+            excludes: vec![],
+        }
+    );
+}
+
+#[test]
+fn produce_files_parses_excludes() {
+    let cf = parse("probe srcs\n    files { \"src/*.ts\" !\"src/gen/*.ts\" }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(
+        p.produce,
+        crate::ast::ProbeProduce::Files {
+            globs: vec!["src/*.ts".into()],
+            excludes: vec!["src/gen/*.ts".into()],
+        }
+    );
+}
+
+#[test]
+fn produce_files_empty_list_is_error() {
+    let err = parse("probe srcs\n    files {  }\n").unwrap_err();
+    assert!(format!("{err}").contains("at least one"), "got: {err}");
+}
+
+#[test]
+fn produce_files_bare_ident_is_error() {
+    let err = parse("probe srcs\n    files { src }\n").unwrap_err();
+    assert!(format!("{err}").contains("quoted"), "got: {err}");
+}
+
+#[test]
+fn produce_files_lua_block_is_error() {
+    let err = parse("probe srcs\n    files >{ return {} }\n").unwrap_err();
+    assert!(format!("{err}").contains("GLOB LIST"), "got: {err}");
+}
+
+#[test]
+fn produce_files_with_ingredients_line_is_error() {
+    let err = parse(
+        "probe srcs\n    ingredients \"other/*.c\"\n    files { \"src/*.ts\" }\n",
+    )
+    .unwrap_err();
+    assert!(format!("{err}").contains("ingredients"), "got: {err}");
+}
+
 // ── COOK-67 Task 3: probe declaration parser ────────────────────────
 
 #[test]

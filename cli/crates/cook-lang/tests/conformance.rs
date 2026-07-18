@@ -284,6 +284,11 @@ fn format_probe(p: &Probe) -> String {
         }
         ProbeProduce::Tools(names) => format!("Tools names={}", repr_list(names)),
         ProbeProduce::Envs(names) => format!("Envs names={}", repr_list(names)),
+        ProbeProduce::Files { globs, excludes } => format!(
+            "Files globs={} excludes={}",
+            repr_list(globs),
+            repr_list(excludes)
+        ),
     };
     format!(
         "    Probe name={} line={}\n      deps: {}\n      ingredients: {}\n      excludes: {}\n      produce: {}",

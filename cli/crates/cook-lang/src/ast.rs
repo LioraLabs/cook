@@ -120,6 +120,13 @@ pub enum ProbeProduce {
     /// env-var names (NOT a shell body). The value is `{ NAME = value_or_nil,
     /// … }`; reading the env records the consulted-env determinant (COOK-164).
     Envs(Vec<String>),
+    /// `files { "src/*.ts" !"src/gen/*.ts" }` — the brace content is a LIST of
+    /// quoted glob patterns (NOT a shell body), `!"…"` excluding, following
+    /// `ingredients` pattern syntax. The expanded file set self-fingerprints
+    /// and the value is `{ [path] = content_hash, … }` — per-file identity as
+    /// a sealable determinant (CS-0148). A `files` probe MUST NOT also declare
+    /// an `ingredients` line: the glob set IS its file-input fingerprint set.
+    Files { globs: Vec<String>, excludes: Vec<String> },
 }
 
 /// How a shell-block probe's stdout becomes the probe value (§22.5).

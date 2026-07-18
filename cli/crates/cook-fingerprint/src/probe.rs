@@ -67,7 +67,22 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
     let Ok(path) = which::which(name) else {
         return [0u8; 32];
     };
-    hash_file(&path)
+    // Per-run memo keyed by resolved path. The same tool is fingerprinted
+    // once per probe NODE (five recipes sealing one `web:tools` probe hash
+    // its binaries five times), and a binary like node is ~60MB — without
+    // this, an all-cached workspace build spends seconds re-hashing the
+    // same toolchain. One run = one process, so a process-wide memo cannot
+    // go stale across builds.
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<HashMap<std::path::PathBuf, [u8; 32]>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(h) = memo.lock().unwrap().get(&path) {
+        return *h;
+    }
+    let h = hash_file(&path);
+    memo.lock().unwrap().insert(path, h);
+    h
 }
 
 fn hash_file(path: &Path) -> [u8; 32] {
