@@ -2348,7 +2348,10 @@ pub fn execute_dag(
                     recipe: recipe_name.clone(),
                     unit: result.id,
                     node_name: result.node_name.clone(),
-                    elapsed: Duration::ZERO,
+                    // Real per-unit wall time measured by the worker around
+                    // execution (queue wait excluded) — see
+                    // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                    elapsed: result.duration,
                     kind: work_node
                         .payload
                         .as_ref()
@@ -2573,7 +2576,10 @@ pub fn execute_dag(
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        elapsed: Duration::ZERO,
+                        // Real per-unit wall time measured by the worker
+                        // around execution (queue wait excluded) — see
+                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        elapsed: result.duration,
                         error: err_msg.clone(),
                     },
                 );
@@ -2610,7 +2616,10 @@ pub fn execute_dag(
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        elapsed: Duration::ZERO,
+                        // Real per-unit wall time measured by the worker
+                        // around execution (queue wait excluded) — see
+                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        elapsed: result.duration,
                         error: err_msg.clone(),
                     },
                 );
