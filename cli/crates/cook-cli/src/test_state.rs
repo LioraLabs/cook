@@ -13,8 +13,6 @@
 //!
 //! `load_failed_set` returns the subset of TestIds whose last-run outcome was
 //! `failed`, `blocked`, or `timed_out` — the set `--rerun-failed` should re-run.
-//!
-//! Per docs/superpowers/specs/2026-05-07-test-runner-design.md §4.7.
 
 use std::collections::BTreeSet;
 use std::path::Path;

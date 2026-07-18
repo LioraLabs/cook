@@ -1,7 +1,4 @@
 //! Verb vocabulary for the inline event renderer.
-//!
-//! See `docs/superpowers/specs/2026-05-03-cook-progress-cargo-style-design.md`,
-//! "Verb vocabulary" section.
 
 use crate::event::NodeKind;
 

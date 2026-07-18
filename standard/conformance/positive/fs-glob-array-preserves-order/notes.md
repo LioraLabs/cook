@@ -5,7 +5,5 @@ behavioral rule itself is locked by the unit test
 `cook-lua-stdlib::fs_api`.
 
 This fixture's value is in the Cookfile shape: it mirrors the Doom 3
-demo's platform-source pattern (see
-`docs/superpowers/specs/2026-05-19-doom3-demo-roadmap-design.md` §4 and
-§1.3) so a future reader can grep for `fs.glob({` in conformance/ to find
-the canonical use.
+demo's platform-source pattern so a future reader can grep for
+`fs.glob({` in conformance/ to find the canonical use.

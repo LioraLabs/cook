@@ -9,8 +9,6 @@
 //! The wave loop in the old call-site hid this property externally because
 //! each call saw only one wave; this test pins it from outside the crate so
 //! a future refactor cannot regress the contract.
-//!
-//! Phase 4 Task 4.2 of `standard/plans/2026-05-18-unified-register-and-dag-plan.md`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

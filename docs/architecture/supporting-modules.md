@@ -178,7 +178,7 @@ The `ProgressEvent` enum (`cli/crates/cook-progress/src/event.rs:106`) currently
 
 ### Renderers
 
-`cook-progress` exposes the `ProgressEvent` API and three renderers: `InlineRenderer` (cargo-style append-only event lines + sticky status line, default on TTY), `PlainRenderer` (append-only text, default off-TTY), and `JsonWriter` (one event per line, opt-in via `--output=json`). The inline renderer is built from two decoupled components — `EventWriter` for verb-prefixed event lines and `StatusLine` for a single redrawn bottom-of-terminal status line — coordinated through a shared stderr lock. See `docs/superpowers/specs/2026-05-03-cook-progress-cargo-style-design.md` for the full design.
+`cook-progress` exposes the `ProgressEvent` API and three renderers: `InlineRenderer` (cargo-style append-only event lines + sticky status line, default on TTY), `PlainRenderer` (append-only text, default off-TTY), and `JsonWriter` (one event per line, opt-in via `--output=json`). The inline renderer is built from two decoupled components — `EventWriter` for verb-prefixed event lines and `StatusLine` for a single redrawn bottom-of-terminal status line — coordinated through a shared stderr lock.
 
 Selected by the driver based on flags + environment:
 

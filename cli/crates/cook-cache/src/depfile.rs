@@ -1,5 +1,5 @@
-//! Make-format depfile parser. See the design at
-//! `standard/specs/2026-05-04-discovered-inputs-design.md` §4.3.
+//! Make-format depfile parser, for the `.d`-style dependency files emitted
+//! by `discovered_inputs` (target: prerequisite prerequisite ...).
 
 use std::io;
 use std::path::Path;
@@ -35,7 +35,7 @@ impl std::error::Error for DepfileError {
 
 /// Parse a Make-format depfile. Returns paths in input order, deduped.
 ///
-/// Filter rules (see design §4.3):
+/// Filter rules:
 ///   - Strip the leading target text up to and including the first `:`.
 ///   - Join continuation lines (`\\\n` and `\\\r\n`).
 ///   - Skip entries beginning with `/` (absolute paths).

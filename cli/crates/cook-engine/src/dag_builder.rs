@@ -1041,9 +1041,6 @@ fn connected(graph: &BTreeMap<String, BTreeSet<String>>, a: &str, b: &str) -> bo
 /// `dep_edges` is a slice of `(unit_index, output_path)` tuples meaning:
 /// "unit at `unit_index` depends on the output at `output_path`". A
 /// non-test unit that produces `output_path` is pulled into the slice.
-///
-/// Phase 3 of the runner pipeline per
-/// docs/superpowers/specs/2026-05-07-test-runner-design.md §4.3.
 pub fn build_test_slice(
     units: &[cook_contracts::CapturedUnit],
     dep_edges: &[(usize, String)],
