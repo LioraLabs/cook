@@ -25,6 +25,10 @@ fi
 
 is_language_surface() {
   case "$1" in
+    # Markdown under watched paths is documentation, not language surface
+    # (crate READMEs, CONFORMANCE.md). A doc-only fix must not need the
+    # bypass — the bypass is for judged non-language changes to CODE.
+    *.md)                         return 1 ;;
     cli/crates/cook-lang/*)       return 0 ;;
     cli/crates/cook-luagen/*)     return 0 ;;
     cli/crates/cook-register/*)   return 0 ;;
@@ -83,19 +87,19 @@ MSG
   exit 1
 fi
 
-# Second arm: warn when D-changes.mdx grows a new CS-NNNN entry without
+# Second arm: warn when E-changes.mdx grows a new CS-NNNN entry without
 # growing standard/conformance/. Most language CSes ship a corpus case;
 # spec-only CSes (rendering, navigation) legitimately don't, and can
 # bypass this warning with COOK_STANDARD_BYPASS=1.
 
-dchanges_path="standard/src/content/docs/appendix/D-changes.mdx"
-dchanges_changed=0
+echanges_path="standard/src/content/docs/appendix/E-changes.mdx"
+echanges_changed=0
 conformance_grew=0
 
 while IFS= read -r path; do
   [ -z "$path" ] && continue
-  if [ "$path" = "$dchanges_path" ]; then
-    dchanges_changed=1
+  if [ "$path" = "$echanges_path" ]; then
+    echanges_changed=1
   fi
   case "$path" in
     standard/conformance/*) conformance_grew=1 ;;
@@ -104,13 +108,13 @@ done <<EOF
 $staged
 EOF
 
-if [ "$dchanges_changed" = "1" ]; then
+if [ "$echanges_changed" = "1" ]; then
   # Only warn if the diff adds at least one new "## CS-NNNN" heading.
-  added_cs="$(git diff --cached -- "$dchanges_path" \
+  added_cs="$(git diff --cached -- "$echanges_path" \
     | grep -E '^\+##[[:space:]]+CS-[0-9]{4}' || true)"
   if [ -n "$added_cs" ] && [ "$conformance_grew" = "0" ]; then
     cat >&2 <<'MSG'
-warning: this commit adds a CS entry to D-changes.mdx without growing standard/conformance/.
+warning: this commit adds a CS entry to E-changes.mdx without growing standard/conformance/.
 
 Most language-surface CSes should ship at least one positive or negative
 conformance case. Spec-only CSes (rendering plugins, doc cleanups,
