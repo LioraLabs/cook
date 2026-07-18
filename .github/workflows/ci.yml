@@ -1,0 +1,169 @@
+name: ci
+
+# The verification gate for this repo: must go green on every push to main and
+# every pull request, no path filters -- this workflow IS the gate, not an
+# optimization layered on top of one.
+#
+# `cook test` (run below) fans out to every test unit the root Cookfile's
+# imports register:
+#   - cli.test        a full `cargo test` in cli/: both the cook-lang and
+#                      cook-cli conformance suites, plus vendor_completeness_test.rs
+#   - ts.test          tree-sitter-cook's own grammar corpus (`tree-sitter test`)
+#   - ts.conformance   tree-sitter-cook checked against the Cook Standard's
+#                      conformance corpus
+#   - standard.lint    engine-internal Lua keyword lint over standard/
+#
+# CI starts with no cook binary, so this workflow bootstraps one with a plain
+# `cargo build` before it can run `cook test` at all (same reason release.yml
+# has its own "Bootstrap cook" step).
+#
+# pnpm is deliberately absent: standard.build (the Astro docs site) is a build
+# chore, not a test unit, so it is out of scope for a test gate; standard.lint
+# runs pure Lua inside the engine and needs no external toolchain; ts.test and
+# ts.conformance need only the tree-sitter CLI (installed below) plus the node
+# binary ubuntu-latest already ships -- no node_modules install required.
+#
+# The second job below (sdl3-game) is a sibling of `test`, not a step inside
+# it: it has no `needs:` and runs in parallel. It smoke-builds
+# examples/modules/sdl3-game (NOT the stale examples/sdl3-game) via
+# `cook_cc`'s cmake-compat finder, which means it needs network access --
+# `cook modules install` fetches module cook_cc 0.13.0-1 from rocks.usecook.com
+# through cook's bundled luarocks -- plus cmake and an SDL3 dev package.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      # ubuntu-latest ships a Rust stable toolchain; there is no install step
+      # here on purpose -- if a runner image ever loses it, this must fail
+      # loudly rather than silently reaching for a fallback.
+      - name: Install tree-sitter CLI
+        shell: bash
+        run: npm install -g tree-sitter-cli@0.25.10
+
+      - name: Toolchain sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc -vV
+          tree-sitter --version
+
+      # `cook test` is itself a cook chore, so it needs a cook binary first.
+      - name: Build cook
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd cli && cargo build --release -p cook-cli)
+
+      - name: cook test
+        shell: bash
+        run: ./cli/target/release/cook test
+
+  # Independent of `test` (no `needs:`, runs in parallel): smoke-builds
+  # examples/modules/sdl3-game, which exercises cook_cc's cmake-compat finder
+  # strategy end to end (SDL3 ships SDL3Config.cmake but no .pc file). This
+  # needs network access -- `cook modules install` fetches cook_cc 0.13.0-1
+  # from rocks.usecook.com via cook's bundled luarocks -- plus cmake and an
+  # SDL3 dev package, which is why this isn't folded into the `test` job above.
+  #
+  # Linux runs inside debian:trixie, not ubuntu-latest directly: ubuntu-latest
+  # (24.04) has no libsdl3-dev package yet, but Debian Trixie does (see
+  # examples/modules/sdl3-game/README.md). macOS gets SDL3 via Homebrew, and
+  # cmake + a Rust toolchain are already on the macos-14 image.
+  sdl3-game:
+    name: sdl3-game (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            container: "debian:trixie"
+          - os: macos
+            runner: macos-14
+
+    steps:
+      # Must precede checkout: without git, actions/checkout silently falls
+      # back to downloading a tarball and the tree lands with no .git
+      # directory (mirrors release.yml's container job).
+      - name: Install container toolchain
+        if: matrix.os == 'linux'
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates git pkg-config cmake libsdl3-dev
+
+      - name: Install SDL3
+        if: matrix.os == 'macos'
+        run: brew install sdl3
+
+      - uses: actions/checkout@v4
+
+      - name: Trust the workspace
+        if: matrix.os == 'linux'
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -eux
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -vV
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      - name: Build cook
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd cli && cargo build --release -p cook-cli)
+
+      # cook_modules/ is gitignored (build output of `cook modules install`,
+      # not source -- see .gitignore's `**/cook_modules/**`), so a fresh
+      # checkout never has it: cook.load_module has no fetch-on-demand
+      # fallback (cook-register/src/module_loader.rs only ever looks under
+      # ./cook_modules, erroring "module not found" otherwise), so this step
+      # must run before `cook game` can resolve `use cook_cc`.
+      # --accept-trust is the non-interactive TOFU consent this subcommand
+      # requires in CI (see `cook modules install --help`).
+      #
+      # Chained in one step with the build below: the assert must run in the
+      # same cwd (examples/modules/sdl3-game) that the build step left, since
+      # a new step resets cwd back to $GITHUB_WORKSPACE.
+      - name: cook game (smoke build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd examples/modules/sdl3-game
+          "$GITHUB_WORKSPACE"/cli/target/release/cook modules install --non-interactive --accept-trust
+          "$GITHUB_WORKSPACE"/cli/target/release/cook game
+          test -x build/bin/game
