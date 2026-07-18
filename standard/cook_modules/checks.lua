@@ -1,7 +1,7 @@
 -- standard/cook_modules/checks.lua
 --
 -- Repo-local checks for the Cook Standard:
---   * checks.lint_keywords()        — flag lowercase RFC 2119 keywords in normative chapters.
+--   * checks.lint_keywords()        — flag lowercase RFC 2119 keywords in normative chapters (skips fenced blocks and inline code).
 --   * checks.against_tag(version)   — verify cook-lang against the conformance corpus
 --                                     materialized from the cs-standard/<version> git tag.
 --
@@ -36,8 +36,10 @@ local KEYWORD_PATTERNS = {
 }
 
 local function line_matches_keyword(line)
+    -- Strip inline code spans (single backticks) before pattern matching
+    local stripped = line:gsub("`[^`]*`", "")
     for _, pat in ipairs(KEYWORD_PATTERNS) do
-        if line:find(pat) then return true end
+        if stripped:find(pat) then return true end
     end
     return false
 end
