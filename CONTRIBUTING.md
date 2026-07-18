@@ -1,5 +1,13 @@
 # Contributing to Cook
 
+## AI-assisted contributions
+
+Cook is developed with heavy AI assistance, and AI-assisted contributions are
+welcome. The bar is identical regardless of authorship: the spec-first rule
+below applies, the test and conformance gates must pass, and behavior changes
+are verified end-to-end — not proofread. You own what you submit; "the model
+wrote it" is not a review response.
+
 ## The Cook Standard
 
 The Cookfile language is defined by the Cook Standard in [`standard/`](standard/). The Standard is the authoritative reference for the language. The Rust parser in `cli/crates/cook-lang/` is the current reference implementation; it is the de-facto authority for any Cookfile construct whose Standard chapter is presently a `NORMATIVE-TODO` stub.
