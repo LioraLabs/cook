@@ -164,10 +164,9 @@ impl EventWriter {
             ProgressEvent::NodeOutput { recipe, node, line, stream } => {
                 if !self.opts.verbose { return Ok(false); }
                 let rname = recipe_name(state, *recipe);
-                let nlabel = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.label().to_string())
-                    .unwrap_or_else(|| format!("node#{}", node.raw()));
+                // Same label as the completion line (own full output path,
+                // or a clean fallback) — not the raw node name/command text.
+                let nlabel = node_display(state, *recipe, *node);
                 let tag = match stream { Stream::Stderr => " (stderr)", _ => "" };
                 writeln!(out, "[{rname}/{nlabel}]{tag} {line}")?;
                 Ok(true)
@@ -362,7 +361,8 @@ mod tests {
         };
         let opts = EventWriterOptions { colored: false, ..Default::default() };
         let out = render_one(&state, &ev, opts);
-        assert_eq!(out, "    Compiled lib/lvm.o in 0.88s\n");
+        // Full declared output path, not the artifact basename.
+        assert_eq!(out, "    Compiled lib/build/obj/liblua/lvm.o in 0.88s\n");
     }
 
     #[test]
@@ -469,11 +469,15 @@ mod tests {
 
     #[test]
     fn verbose_emits_node_output_lines() {
+        // The live-stdout tag must use the node's own full output path
+        // (its `display()` label) — not its raw node name/command text.
         let mut state = empty_state();
         state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
-            name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            name: "lvm.c".into(),
+            artifact: Some("build/obj/lvm.o".into()),
+            fallback_label: "x".into(),
             kind: NodeKind::Compile,
         });
         let ev = ProgressEvent::NodeOutput {
@@ -482,7 +486,7 @@ mod tests {
         };
         let opts = EventWriterOptions { colored: false, verbose: true, ..Default::default() };
         let out = render_one(&state, &ev, opts);
-        assert_eq!(out, "[lib/lvm.c] (stderr) warning: unused\n");
+        assert_eq!(out, "[lib/build/obj/lvm.o] (stderr) warning: unused\n");
     }
 
     #[test]

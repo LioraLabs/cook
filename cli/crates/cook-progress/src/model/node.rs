@@ -43,18 +43,20 @@ impl NodeState {
         }
     }
 
-    /// Basename of `artifact` if set; otherwise the first whitespace-separated token
-    /// of `fallback_label` (stripped of a leading `$ `). An `@N` token (an
-    /// interactive step keyed by source line) is returned as-is.
+    /// The unit's own declared output path (relative to the project root,
+    /// in full — the distinguishing directory segment, e.g. `packages/` or
+    /// `build/`, is never dropped) if `artifact` is set; otherwise a clean
+    /// fallback derived from `fallback_label` (stripped of a leading `$ `).
+    /// An `@N` token (an interactive step keyed by source line) and a
+    /// `probe:<key>` token are returned as-is; any other bare command token
+    /// is `$`-prefixed to mark it as raw command text rather than a path.
     pub fn display(&self) -> String {
         if let Some(artifact) = &self.artifact {
-            if let Some(base) = artifact.file_name().and_then(|s| s.to_str()) {
-                return base.to_string();
-            }
+            return artifact.to_string_lossy().into_owned();
         }
         let stripped = self.fallback_label.trim_start_matches("$ ").trim_start();
         let first = stripped.split_whitespace().next().unwrap_or("?");
-        if first.starts_with('@') {
+        if first.starts_with('@') || first.starts_with("probe:") {
             first.to_string()
         } else {
             format!("${first}")
@@ -63,7 +65,7 @@ impl NodeState {
 
     /// Raw node name (e.g. "lvm.c"), for log-line prefixes like
     /// `[recipe/<label>] line`. Distinct from `display()`, which prefers the
-    /// artifact basename and is used for verb lines.
+    /// unit's own full output path and is used for verb lines.
     pub fn label(&self) -> &str {
         &self.name
     }
@@ -74,14 +76,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_uses_artifact_basename() {
+    fn display_uses_full_artifact_path() {
         let n = NodeState::new(
             NodeId::new(0),
             "lvm.c".into(),
             Some("build/obj/liblua/lvm.o".into()),
             "clang -c lvm.c".into(),
         );
-        assert_eq!(n.display(), "lvm.o");
+        assert_eq!(n.display(), "build/obj/liblua/lvm.o");
     }
 
     #[test]
@@ -102,14 +104,43 @@ mod tests {
     }
 
     #[test]
-    fn display_uses_artifact_basename_nested_path() {
+    fn display_uses_full_artifact_path_nested() {
         let n = NodeState::new(
             NodeId::new(3),
             "alpha".into(),
             Some("build/counts/alpha.count".into()),
             "wc -w < a.txt > alpha.count".into(),
         );
-        assert_eq!(n.display(), "alpha.count");
+        assert_eq!(n.display(), "build/counts/alpha.count");
+    }
+
+    #[test]
+    fn display_preserves_distinguishing_directory_segment() {
+        // Real sighting: two units differ only by a leading directory
+        // segment (e.g. one lives under packages/, the other doesn't).
+        // Basename-only display collided them into the same label.
+        let n = NodeState::new(
+            NodeId::new(5),
+            "app".into(),
+            Some("packages/app.stamp".into()),
+            "touch packages/app.stamp".into(),
+        );
+        assert_eq!(n.display(), "packages/app.stamp");
+    }
+
+    #[test]
+    fn display_probe_fallback_keeps_probe_key_style() {
+        // Probes have no declared outputs (artifact is always None), so
+        // display() falls back to the label — which must render as
+        // `probe:<key>`, not `$probe:<key>` (the raw-command-token marker
+        // is only for actual shell text, not probe identifiers).
+        let n = NodeState::new(
+            NodeId::new(6),
+            "probe:sys:os".into(),
+            None,
+            "probe:sys:os".into(),
+        );
+        assert_eq!(n.display(), "probe:sys:os");
     }
 
     #[test]
@@ -135,8 +166,8 @@ mod tests {
             "clang -c lvm.c".into(),
         );
         assert_eq!(n.label(), "lvm.c");
-        // display() picks the artifact basename, label() the raw name — they differ on purpose.
-        assert_eq!(n.display(), "lvm.o");
+        // display() picks the unit's own full output path, label() the raw name — they differ on purpose.
+        assert_eq!(n.display(), "build/obj/lvm.o");
     }
 
     #[test]

@@ -197,7 +197,7 @@ recipe consumer
 
     // Ordering: producer's unit completes before consumer's.
     let producer_at = combined
-        .find("producer/gen.a")
+        .find("producer/build/gen.a")
         .unwrap_or_else(|| panic!("producer unit never ran:\n{combined}"));
     let consumer_at = combined
         .find("consumer/out.bin")

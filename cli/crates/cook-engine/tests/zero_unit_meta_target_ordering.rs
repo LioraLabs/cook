@@ -128,10 +128,10 @@ recipe consumer : middle
     // The nonce-equality check below is what actually proves consumer read
     // producer's output rather than a stale or racing write.
     let producer_at = combined
-        .find("producer/gen.a")
+        .find("producer/build/gen.a")
         .unwrap_or_else(|| panic!("producer unit never ran:\n{combined}"));
     let consumer_at = combined
-        .find("consumer/copy.a")
+        .find("consumer/build/copy.a")
         .unwrap_or_else(|| panic!("consumer unit never ran:\n{combined}"));
     assert!(
         producer_at < consumer_at,

@@ -1,19 +1,21 @@
 # Per-unit identity: two units that would collide under name/text-based
 # progress identity must still (a) attribute stdout to the correct unit and
 # (b) render as distinct completion lines.
+#
+# Unit labels (Task 2): a unit's label is its own declared output path,
+# relative to the project root, in full — not the artifact basename (which
+# drops distinguishing directory segments) and not the raw command text.
 
 [[run]]
 args = ["twolines"]
 [run.assert]
 exists = ["out/first.txt", "out/second.txt"]
-# Each step's own stdout marker must be tagged with that step's own label —
-# not the sibling step's. At HEAD, `bridge_engine_to_progress_events`
-# attributes every OutputLine in a recipe to the lexicographically-last
-# interned node, so the second step's marker prints under the first step's
-# tag instead of its own.
+# Each step's own stdout marker must be tagged with that step's own full
+# output path — not the sibling step's, and not the raw command text that
+# produced it.
 output_contains = [
-    "echo first > out/first.txt; echo MARKER_FIRST_LINE] MARKER_FIRST_LINE",
-    "cat out/first.txt > out/second.txt; echo MARKER_SECOND_LINE] MARKER_SECOND_LINE",
+    "twolines/out/first.txt] MARKER_FIRST_LINE",
+    "twolines/out/second.txt] MARKER_SECOND_LINE",
 ]
 
 [[run]]
@@ -21,13 +23,20 @@ args = ["fanout"]
 [run.assert]
 exists = ["out/alpha.done", "out/beta.done"]
 # Both fan-out members share an identical first command line ("echo
-# working"), so `WorkPayload::display_name()` collides for both — the
-# progress-side NodeId must still come from the executor's per-unit DAG
-# index, not the collided display string. At HEAD, the second member's
-# `NodeStarted` overwrites the first member's `NodeState` in `BuildState`
-# (same interned NodeId), so only one distinct per-member completion line
-# — never both — ever appears.
+# working"), so `WorkPayload::display_name()` collides for both — the label
+# must instead be derived from each member's own declared output path
+# (out/alpha.done vs out/beta.done), which is what makes the two members'
+# lines distinguishable at all.
 output_contains = [
-    "fanout/alpha.done",
-    "fanout/beta.done",
+    "fanout/out/alpha.done",
+    "fanout/out/beta.done",
 ]
+
+[[run]]
+args = ["probed"]
+[run.assert]
+exists = ["out/probed.txt"]
+# A probe unit declares no outputs, so its label falls back to
+# `display_name()` — which must keep the `probe:<key>` style verbatim, not
+# the `$probe:<key>` raw-command-token marker applied to other fallbacks.
+output_contains = ["probed/probe:demo:tag"]

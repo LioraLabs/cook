@@ -8,3 +8,9 @@ recipe fanout
         echo working
         cat $<in> > $<out>
     }
+
+probe demo:tag
+    { echo demo-value }
+
+recipe probed
+    cook "out/probed.txt" { echo "$<demo:tag>" > $<out> }
