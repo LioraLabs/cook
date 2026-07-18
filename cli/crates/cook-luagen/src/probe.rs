@@ -50,6 +50,17 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe) {
         ProbeProduce::Envs(names) => {
             out.push_str(&format!("    env = {{{}}},\n", quoted_list(names)));
         }
+        // CS-0148: `files { … }` declares its glob set as `inputs.files` —
+        // register-time glob resolution, each file's content hash folding into
+        // the fingerprint. The parser guarantees a `files` probe has no
+        // `ingredients` line, so this is the only `files =` emission.
+        ProbeProduce::Files { globs, excludes } => {
+            out.push_str(&format!(
+                "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
+                quoted_list(globs),
+                quoted_list(excludes),
+            ));
+        }
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
     }
     out.push_str("  },\n");
@@ -142,6 +153,14 @@ fn lower_produce(p: &ProbeProduce) -> String {
             }
             out.push_str("return _e");
             out
+        }
+        // CS-0148: the reserved sentinel — not Lua, never dispatched to a
+        // worker. The engine synthesises the value `{ [path] = hash }` from
+        // the probe's resolved `inputs.files` (see emit_probe), the same
+        // pairs the fingerprint folds, so trigger and value cannot drift and
+        // the keys stay workspace-relative (portable across machines).
+        ProbeProduce::Files { .. } => {
+            cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string()
         }
     }
 }

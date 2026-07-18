@@ -1279,6 +1279,115 @@ pub fn execute_dag(
                                     );
                                 }
                             }
+
+                            // CS-0148: a `files { … }` probe (reserved produce
+                            // sentinel) never dispatches to a worker. On a miss,
+                            // synthesise the value from the resolved inputs —
+                            // the same path→hash pairs the fingerprint's FILES
+                            // section just folded — then complete the node
+                            // exactly as the worker-result path would.
+                            if probe_unit.produce_source
+                                == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+                            {
+                                let started = std::time::Instant::now();
+                                let bytes = cook_contracts::probe_value::encode_files_manifest(
+                                    &inputs.files,
+                                );
+                                let probes_dir = cache_ctx
+                                    .project_root
+                                    .join(".cook")
+                                    .join("probes");
+                                if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                                    &probes_dir,
+                                    &probe_key,
+                                    &bytes,
+                                ) {
+                                    tracing::warn!(
+                                        "probe '{}': failed to write {}: {e}",
+                                        probe_key,
+                                        probes_dir.display(),
+                                    );
+                                }
+                                pool.probe_value_store().insert(&probe_key, bytes.clone());
+                                upstream_probe_fingerprints.insert(probe_key.clone(), fp);
+                                if cache_ctx.publish_enabled {
+                                    let mut artifact_meta = ArtifactMeta {
+                                        recipe_namespace: format!("probe:{}", probe_key),
+                                        command_hash: 0,
+                                        env_contribution: 0,
+                                        seal_contribution: 0,
+                                        schema_version: CACHE_VERSION,
+                                        size_bytes: bytes.len() as u64,
+                                        tags: std::collections::BTreeSet::new(),
+                                        consulted_env_keys: std::collections::BTreeSet::new(),
+                                        output_index: 0,
+                                        output_path: format!("probe:{}", probe_key),
+                                        content_hash: ArtifactMeta::zero_content_hash(),
+                                        kind: None,
+                                        mode: ArtifactMeta::default_mode(),
+                                        target: None,
+                                    }
+                                    .as_probe_value();
+                                    if let Err(e) = cook_cache::backend::put_bytes(
+                                        cache_ctx.backend.as_ref(),
+                                        &fp,
+                                        &bytes,
+                                        &mut artifact_meta,
+                                    ) {
+                                        tracing::warn!(
+                                            "probe '{}': failed to persist files manifest: {e}",
+                                            probe_key,
+                                        );
+                                    }
+                                }
+                                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                                emit(
+                                    event_tx,
+                                    EngineEvent::NodeStarted {
+                                        recipe: work_node.recipe_name.clone(),
+                                        node_name: node_name.clone(),
+                                        artifact: None,
+                                        fallback_label: node_name.clone(),
+                                        kind: NodeKind::Cooked,
+                                    },
+                                );
+                                emit(
+                                    event_tx,
+                                    EngineEvent::NodeCompleted {
+                                        recipe: work_node.recipe_name.clone(),
+                                        node_name: node_name.clone(),
+                                        elapsed: started.elapsed(),
+                                        kind: NodeKind::Cooked,
+                                    },
+                                );
+                                finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+                                *finished += 1;
+                                let newly_ready = dag.complete(id);
+                                let mut submitted = 0;
+                                for nid in newly_ready {
+                                    submitted += process_ready(
+                                        dag,
+                                        nid,
+                                        pool,
+                                        cancelled,
+                                        finished,
+                                        interactive_queue,
+                                        event_tx,
+                                        trackers,
+                                        cache_managers,
+                                        cache_ctx,
+                                        failures,
+                                        test_cache,
+                                        cached_test_results,
+                                        rerun_patterns,
+                                        blocked_results,
+                                        probe_units_by_node,
+                                        upstream_probe_fingerprints,
+                                        probe_fingerprint_by_node,
+                                    );
+                                }
+                                return submitted;
+                            }
                         }
                         Err(e) => {
                             // Fingerprint resolution failed (e.g. missing upstream).
