@@ -2679,7 +2679,9 @@ pub fn execute_dag(
 
     // Flush cache updates to disk
     for cm in cache_managers.values() {
-        let _ = cm.flush_all();
+        if let Err(e) = cm.flush_all() {
+            tracing::warn!("recipe cache not persisted: {e}; next run will re-execute");
+        }
     }
 
     if failures.is_empty() {

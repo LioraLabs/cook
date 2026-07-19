@@ -12,7 +12,10 @@
 //! on-disk-format change, so the two move together.
 //!
 //! **Index format (v4+).** Each recipe is stored as a human-readable TOML file
-//! at `<cache_dir>/<recipe_name>.toml`. The u64 hash fields (`command_hash`,
+//! at `<cache_dir>/<basename>.toml`, where `<basename>` is the recipe name
+//! with the two path-hostile bytes percent-encoded (`%` → `%25`, `/` → `%2F`
+//! — see [`cache_file_basename`]). Names without those bytes keep their
+//! historical file names unchanged. The u64 hash fields (`command_hash`,
 //! `env_contribution`, `FileRecord.hash`) are serialised as
 //! zero-padded 16-digit lowercase hex strings via `cook_fingerprint::record::hex_u64`.
 //! The `schema_version` field is always the first key written by `toml::to_string`.
@@ -65,6 +68,17 @@ impl Default for RecipeCache {
     }
 }
 
+/// Filesystem-safe basename for a recipe's cache file. Recipe names may
+/// contain `/` — npm-scoped package names minted by modules produce recipes
+/// like `@cap/env:build` — and a raw join would put the file under a
+/// directory that never exists (the write failed with ENOENT and, until the
+/// flush callsites started warning, was silently swallowed: the recipe
+/// simply never cached). Only `%` (the escape itself) and `/` are encoded,
+/// so every name without them keeps its historical file name.
+fn cache_file_basename(recipe_name: &str) -> String {
+    recipe_name.replace('%', "%25").replace('/', "%2F")
+}
+
 impl RecipeCache {
     pub fn new() -> Self {
         Self {
@@ -75,7 +89,7 @@ impl RecipeCache {
     }
 
     pub fn load(cache_dir: &Path, recipe_name: &str) -> Option<Self> {
-        let path = cache_dir.join(format!("{}.toml", recipe_name));
+        let path = cache_dir.join(format!("{}.toml", cache_file_basename(recipe_name)));
         let text = std::fs::read_to_string(&path).ok()?;
         let cache: Self = toml::from_str(&text).map_err(|e| {
             tracing::debug!(
@@ -96,8 +110,9 @@ impl RecipeCache {
 
     pub fn save(&self, cache_dir: &Path, recipe_name: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(cache_dir)?;
-        let target = cache_dir.join(format!("{}.toml", recipe_name));
-        let tmp = cache_dir.join(format!("{}.toml.tmp", recipe_name));
+        let base = cache_file_basename(recipe_name);
+        let target = cache_dir.join(format!("{}.toml", base));
+        let tmp = cache_dir.join(format!("{}.toml.tmp", base));
         let text = toml::to_string(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(&tmp, &text)?;
@@ -240,6 +255,30 @@ mod tests {
     fn load_missing_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(RecipeCache::load(dir.path(), "nonexistent").is_none());
+    }
+
+    #[test]
+    fn save_and_load_scoped_recipe_name() {
+        // npm-scoped names ("@cap/env:build") embed a `/`; a raw path join
+        // aimed the write at a directory that never exists, so the recipe
+        // silently never cached.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let original = make_populated_cache();
+        original.save(dir.path(), "@cap/env:build").expect("save");
+        let loaded = RecipeCache::load(dir.path(), "@cap/env:build").expect("load");
+        assert_eq!(original, loaded);
+        // Flat file, percent-encoded — no subdirectory materialised.
+        assert!(dir.path().join("@cap%2Fenv:build.toml").is_file());
+        assert!(!dir.path().join("@cap").exists());
+    }
+
+    #[test]
+    fn cache_file_basename_is_injective_for_escape_byte() {
+        // A literal "%2F" in a recipe name must not collide with an
+        // encoded "/".
+        assert_eq!(cache_file_basename("a/b"), "a%2Fb");
+        assert_eq!(cache_file_basename("a%2Fb"), "a%252Fb");
+        assert_eq!(cache_file_basename("plain:name"), "plain:name");
     }
 
     #[test]
