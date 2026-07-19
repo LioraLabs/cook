@@ -34,6 +34,9 @@ chore release version
 probe readme:tools
     tools { python3 }
 
+probe readme:files
+    files { "README.source" "assets/readme/code_svg.py" }
+
 probe readme:snippets
     ingredients "README.source"
     >{
@@ -53,9 +56,9 @@ probe readme:snippets
 
 recipe readme
     ingredients readme:snippets
-    seal readme:tools
+    seal readme:tools readme:files
     cook "assets/readme/snippet-$<in.name>.svg" "assets/readme/snippet-$<in.name>-dark.svg" {
         python3 assets/readme/code_svg.py render README.source $<in.name> light > assets/readme/snippet-$<in.name>.svg
         python3 assets/readme/code_svg.py render README.source $<in.name> dark > assets/readme/snippet-$<in.name>-dark.svg
     }
-    cook "README.md" { : $<file:README.source> $<file:assets/readme/code_svg.py> && python3 assets/readme/code_svg.py compile README.source > $<out> }
+    cook "README.md" { python3 assets/readme/code_svg.py compile README.source > $<out> }
