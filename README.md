@@ -24,9 +24,13 @@ one content-addressed cache. It keeps the recipe ergonomics of
 configuration for a declarative DSL that lowers to Lua. You describe artifacts
 in a `Cookfile`; cook runs exactly the work whose inputs changed.
 
+Heard enough?
+
 ```sh
 curl -fsSL https://getcook.sh | sh
 ```
+
+Still curious? Keep reading.
 
 ## Let's cook
 
@@ -51,6 +55,31 @@ your cores, each cached under its own key. The second step's targets are
 static, so it gathers: it waits for every upstream PNG and fires exactly once.
 An accessor in the target means fan out; no accessor means gather. You never
 write the loop or the join, and the pipeline stays incremental at every stage.
+
+### Now ship it
+
+Globs aren't the only source of fan-out. Data can shape the build too:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ship-dark.svg">
+  <img src="assets/readme/snippet-ship.svg" alt="cook Cookfile: a probe named platforms produces an inline JSON array of platform records; a recipe ship iterates the probe, zipping the sprite sheet into one bundle per platform at that platform's compression level.">
+</picture>
+
+`ingredients platforms` points at a **probe** — a named, cached value the
+graph can see — instead of a glob, so the recipe runs once per record, with
+fields addressable as `$<in.name>`. And `$<sprite-sheet>` reaches across
+recipes: it expands to the sheet's outputs and records the dependency edge,
+in one stroke.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ship-run-dark.svg">
+  <img src="assets/readme/snippet-ship-run.svg" alt="Terminal: cook ship rasterizes and packs the sheet, then zips one bundle per platform; adding a switch record to the platforms JSON builds exactly one new unit; editing enemy.svg re-rasterizes it, repacks the sheet, and re-zips every platform.">
+</picture>
+
+Delete a record and cook sweeps the orphaned bundle. The shape of your data
+is the shape of your build — the same mechanics behind eval suites,
+per-package monorepo tasks, and any build that's really one job per row of
+some data.
 
 Every idea on this page is covered in depth in [the manual](document.md) and
 demonstrated by the runnable projects in [`examples/`](examples/).
@@ -83,21 +112,6 @@ CI runner reuses your artifact exactly when they'd have computed the same one.
 Intrinsically non-reproducible work (an LLM response, say) declares that too:
 `nondet` records it once and reuses the recording rather than pretending the
 bytes are deterministic.
-
-### Data can shape the build
-
-Globs are only one source of fan-out. A **probe** is a named, cached value
-the graph can see, and recipes can iterate it:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-probe-dark.svg">
-  <img src="assets/readme/snippet-probe.svg" alt="cook Cookfile: a probe named services reads data/services.json as JSON; a recipe configs iterates that probe, producing one build/NAME.conf file per record.">
-</picture>
-
-If `services.json` holds an array of records, `configs` runs once per record.
-Add a service and exactly one new unit builds; remove one and cook sweeps its
-orphaned output. This is the shape behind eval suites, per-package monorepo
-tasks, and any build that's really "one job per row of some data."
 
 ### Recipes build; chores do
 
@@ -167,7 +181,16 @@ cook
 ## Learn cook
 
 - [**The Cook Manual**](document.md) — the complete, read-top-to-bottom guide.
-- [**Examples**](examples/) — runnable, arranged in learning order.
+  - [Your first recipe](document.md#your-first-recipe)
+  - [Recipes and dependencies](document.md#recipes-and-dependencies)
+  - [Ingredients, placeholders, and the cook step](document.md#ingredients-and-the-cook-step)
+  - [Probes and data-driven fan-out](document.md#probes-and-data-driven-fan-out)
+  - [Caching and cache trust](document.md#caching-and-cache-trust)
+  - [Tests](document.md#tests), [chores](document.md#chores), and
+    [configuration](document.md#configuration)
+  - [Dropping into Lua](document.md#dropping-into-lua)
+  - [Modules, workspaces, and composition](document.md#modules-and-composition)
+- [**Examples**](examples/) — runnable projects, arranged in learning order.
 - [**The Cook Standard**](standard/) — the authoritative specification.
 - [**Sharing a cache across a team**](docs/shared-cache.md) — the shared store
   is a directory; point everyone at one path, no server to run.
