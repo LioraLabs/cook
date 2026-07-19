@@ -148,8 +148,16 @@ everything else.
 
 ## At scale
 
-Two repository-sized builds, using nothing but the pieces above. Same
+Three repository-sized builds, using nothing but the pieces above. Same
 recipes, same ingredients, same probes and modules, no special modes.
+
+- [**cook-cap**](https://github.com/LioraLabs/cook-cap):
+  [Cap](https://github.com/CapSoftware/Cap), the 20k-star open-source screen
+  recorder, with Turborepo swapped for `cook_pnpm`. A comment-only edit in
+  one shared package: Turbo rebuilds 6 packages in ~47s; cook rebuilds 1 in
+  ~0.8s. Keys fold what artifacts *contain*, not a hash cascade, so
+  byte-identical output stops the rebuild cold. The Rust crates Turbo can't
+  see are three more recipes in the same graph.
 
 - [**cook-dogfood**](https://github.com/LioraLabs/cook-dogfood): a polyglot
   monorepo. A .NET API, a TypeScript/pnpm web app, a Rust CLI, and generated
