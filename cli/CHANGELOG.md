@@ -1,6 +1,32 @@
 # Cook CLI changelog
 
-## v0.5.0 — unreleased
+## v0.6.0 — 2026-07-19
+
+Claims Cook Standard v0.14.
+
+### Changed
+
+- **CS-0154: a brace-balanced block's body is the character span between the
+  braces.** The opening-line remainder (`json { echo '[`, `>{ return {`) and
+  the closing-line prefix are body segments instead of being silently
+  discarded, and shell single-/double-quote state carries across lines — so a
+  POSIX quoted string spanning newlines (inline JSON in a probe producer) and
+  a heredoc opened beside the `{` now parse (COOK-267, COOK-268). The inline
+  single-line form is the same span walk, fixing a latent quote-naive
+  `{ echo '}' }` miscount. Text after a block's closing `}` is the enclosing
+  production's trailer: cook/test modifier tails keep their meaning (now read
+  from the exact close position), while stray trailer text on probe producers
+  and chore Lua blocks is a parse error instead of being silently dropped.
+
+### Fixed
+
+- **Cold-restored units are recorded in the local cache index** (COOK-269).
+  A unit served by a cold fetch-by-key from the shared store (fresh clone,
+  lost `.cook`) restored its outputs but recorded nothing locally, so §17.7
+  stale-output reconciliation had no prior state and outputs orphaned by a
+  later shrink were never swept.
+
+## v0.5.0 — 2026-07-18
 
 Claims Cook Standard v0.14.
 

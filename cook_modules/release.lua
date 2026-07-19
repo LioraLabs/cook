@@ -71,10 +71,11 @@ function M.bump_claim(version)
         "cook-lang Rust source")
 
     -- 2. Markdown claim line in three READMEs.
+    -- The root README.md dropped its claim line in the 2026-07-19 topcoat
+    -- restructure; cook-lang's README/CONFORMANCE carry the claim now.
     for _, path in ipairs({
         "cli/crates/cook-lang/README.md",
         "cli/crates/cook-lang/CONFORMANCE.md",
-        "README.md",
     }) do
         rewrite_file(
             path,
