@@ -169,7 +169,24 @@ A conforming implementation MUST reject, with a load-time diagnostic, a `cook_st
 
 The iteration mode determines the number of work units produced; it is orthogonal to the `cook_step`'s declared output count. Each mode admits any number of declared outputs (one or more), as detailed in §{steps.cook-multi}.
 
-When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}), the `cook_step` is in **one-to-one over data members** mode regardless of its output-pattern accessors: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no ingredient path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by an `ingredients <probe>` source.
+When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}), the output-pattern rule of this section selects between two modes (CS-0155; before that amendment every step was member-iterated "regardless of its output-pattern accessors", which left literal-output steps registering one colliding unit per member over raw record text):
+
+- A `cook_step` with at least one accessor-bearing output is in **one-to-one over data members** mode: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no ingredient path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by an `ingredients <probe>` source.
+- A `cook_step` whose outputs are all literal is the ordinary **many-to-one** gather of this section, and its input list is the *preceding* `cook_step`'s collected outputs — exactly the chained-step rule that applies in a glob-driven recipe: one unit, `$<in>` expanding to that collected list, space-joined. Data members are records, not file paths, so there is nothing path-shaped for a *first* step to gather: a conforming implementation MUST reject a literal-output `cook_step` with no preceding `cook_step` in a probe-driven recipe with a register-phase diagnostic that names the recipe and directs the author to fan out first or to aggregate member values in a `>{ … }` Lua body via `cook.probes.get` (§{cat.probes.consumer}).
+
+### Example 8.4.1.2
+
+```cook
+probe services
+    json { echo '[ {"name":"web"}, {"name":"api"} ]' }
+
+recipe configs
+    ingredients services
+    cook "build/$<in.name>.conf" { render $<in.name> > $<out> }
+    cook "build/manifest.txt"    { cat $<in> > $<out> }
+```
+
+The first `cook` fans out: one unit per record, `$<in.name>` a record field. The second's outputs are literal, so it gathers — one unit whose `$<in>` is the collected `build/web.conf build/api.conf`, not the member records. Removing a record drops its fan-out unit, sweeps its `.conf` (§{exec.cache.reconcile}), and rebuilds the manifest.
 
 ### Example 8.4.1.1
 
