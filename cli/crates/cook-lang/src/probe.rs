@@ -282,9 +282,10 @@ fn finish_typed_shell(
     current_pos: usize,
     source_lines: &[&str],
 ) -> Result<(ProbeProduce, usize), ParseError> {
-    let (body, new_pos) = crate::cook_line::parse_body_payload(
+    let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
         tail, line, tokens, current_pos, source_lines, "probe",
     )?;
+    crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     match body {
         Body::LuaBlock(_) => Err(ParseError::Parse {
             line,
@@ -335,9 +336,10 @@ pub(crate) fn parse_producer(
         return finish_typed_shell(tail, ShellProduceType::Lines, line, tokens, current_pos, source_lines);
     }
     // Bare shell block (`{ … }` → string) or Lua block (`>{ … }` → structured).
-    let (body, new_pos) = crate::cook_line::parse_body_payload(
+    let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
         text, line, tokens, current_pos, source_lines, "probe",
     )?;
+    crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     Ok(match body {
         Body::LuaBlock(code) => (ProbeProduce::Lua(code), new_pos),
         Body::ShellBlock(cmds) => {

@@ -1,0 +1,5 @@
+recipe emit
+    cook "out.json" { cat <<'J' > $<out>
+{"not": "a closer"}
+J
+    }

@@ -1,0 +1,1 @@
+probe: unexpected text after the closing '}'

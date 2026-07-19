@@ -159,6 +159,44 @@ fn discovered_input_depfile_is_not_swept() {
 }
 
 #[test]
+fn cold_restored_outputs_are_recorded_and_later_swept() {
+    // COOK-269: a unit served by a cold fetch-by-key from the shared store
+    // (fresh clone / lost `.cook`) restored its outputs but recorded nothing in
+    // the local per-recipe index. §17.7's prior-output snapshot then came up
+    // empty, so an output orphaned by a later shrink was never swept.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache_tmp = tempfile::tempdir().expect("cache tempdir");
+    let wd = tmp.path();
+    write_isolated_cache_config(wd, cache_tmp.path());
+    fs::write(wd.join("src.txt"), b"payload").unwrap();
+
+    // Run 1: build both outputs, publishing to the isolated store.
+    write_cookfile(wd, &["build/a.txt", "build/b.txt"]);
+    run_build(wd, &[]);
+
+    // Lose the local state (fresh-clone simulation), keep the shared store.
+    fs::remove_dir_all(wd.join(".cook")).unwrap();
+    fs::remove_dir_all(wd.join("build")).unwrap();
+    write_isolated_cache_config(wd, cache_tmp.path());
+
+    // Run 2: every unit is a cold fetch-by-key restore, no execution.
+    run_build(wd, &[]);
+    assert!(wd.join("build/a.txt").exists(), "restore must materialise a.txt");
+    assert!(wd.join("build/b.txt").exists(), "restore must materialise b.txt");
+
+    // Run 3: the output set shrinks. The restored-run's recorded outputs are
+    // the only prior state — b.txt must still be swept.
+    write_cookfile(wd, &["build/a.txt"]);
+    run_build(wd, &[]);
+    assert!(wd.join("build/a.txt").exists(), "live output retained");
+    assert!(
+        !wd.join("build/b.txt").exists(),
+        "output orphaned after a restore-only run must be swept (COOK-269): \
+         cold-restored units must record their outputs in the local index"
+    );
+}
+
+#[test]
 fn no_prune_retains_orphan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cache_tmp = tempfile::tempdir().expect("cache tempdir");

@@ -790,6 +790,39 @@ pub fn execute_dag(
             &work_node.working_dir,
             meta.discovered_inputs.as_ref(),
         ) {
+            // COOK-269: a cold fetch restores the outputs but previously
+            // recorded nothing locally, so §17.7's prior-output snapshot came
+            // up empty after a fresh clone / lost `.cook` — an output orphaned
+            // by a later shrink was never swept. Record the StepEntry a fresh
+            // execution would have written, hashed from the bytes on disk.
+            // Complete-or-skip: a path that cannot be hashed (e.g. a `dir/`
+            // output) skips recording entirely rather than persisting a
+            // partial output list whose artifact indices would misalign.
+            let file_record = |p: &str| {
+                let abs = work_node.working_dir.join(p);
+                cook_fingerprint::hash_file(&abs).map(|h| cook_fingerprint::FileRecord {
+                    path: p.to_string(),
+                    mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                    hash: h,
+                })
+            };
+            let inputs: Option<Vec<_>> =
+                meta.input_paths.iter().map(|p| file_record(p)).collect();
+            let outputs: Option<Vec<_>> =
+                current_outputs_storage.iter().map(|p| file_record(p)).collect();
+            if let (Some(inputs), Some(outputs)) = (inputs, outputs) {
+                cm.update_step(
+                    &meta.recipe_name,
+                    &meta.cache_key,
+                    cook_fingerprint::StepEntry {
+                        inputs,
+                        outputs,
+                        command_hash: meta.command_hash,
+                        env_contribution: meta.env_contribution,
+                        seal_contribution: seal_contrib,
+                    },
+                );
+            }
             CacheDecision::Hit
         } else if meta.sharing.is_pinned() {
             // Fetch-only unit absent from BOTH the local index and the shared

@@ -50,10 +50,23 @@ impl LuaScanner {
     /// long bracket or block comment that was opened on a previous line and
     /// is closed on a later one.
     pub(crate) fn scan_line(&mut self, line: &str) -> i32 {
+        let mut depth: i32 = 0;
+        self.scan_impl(line, &mut depth, false);
+        depth
+    }
+
+    /// Scan a line (or the remainder of the block's opening line — CS-0154),
+    /// mutating `depth`, and return the byte index of the `}` at which `depth`
+    /// first reaches zero, or `None` if the block stays open past this text.
+    pub(crate) fn scan_to_close(&mut self, line: &str, depth: &mut i32) -> Option<usize> {
+        self.scan_impl(line, depth, true)
+    }
+
+    fn scan_impl(&mut self, line: &str, depth: &mut i32, stop_at_zero: bool) -> Option<usize> {
+        let byte_offsets: Vec<usize> = line.char_indices().map(|(b, _)| b).collect();
         let chars: Vec<char> = line.chars().collect();
         let len = chars.len();
         let mut i = 0;
-        let mut delta: i32 = 0;
 
         while i < len {
             // If we are inside an open long bracket, scan only for the
@@ -131,15 +144,18 @@ impl LuaScanner {
             }
 
             if c == '{' {
-                delta += 1;
+                *depth += 1;
             } else if c == '}' {
-                delta -= 1;
+                *depth -= 1;
+                if stop_at_zero && *depth == 0 {
+                    return Some(byte_offsets[i]);
+                }
             }
 
             i += 1;
         }
 
-        delta
+        None
     }
 }
 
@@ -203,6 +219,10 @@ pub(crate) struct ShellScanner {
     /// FIFO queue of heredoc closers introduced on the current or earlier
     /// lines but not yet closed. Each entry is `(delimiter, allow_tab_indent)`.
     pending_heredocs: Vec<(String, bool)>,
+    /// CS-0154: a single- (`b'\''`) or double- (`b'"'`) quote opened on an
+    /// earlier line and not yet closed. POSIX quoted strings span newlines,
+    /// so the quote span carries across body lines like heredoc state does.
+    in_quote: Option<u8>,
 }
 
 impl ShellScanner {
@@ -211,19 +231,34 @@ impl ShellScanner {
     }
 
     /// Scan a single source line, returning the net brace delta contributed
-    /// by characters NOT inside an open heredoc. Updates internal state so
-    /// that a heredoc opened on this line (or a previous one) consumes
-    /// subsequent lines until its delimiter is matched.
+    /// by characters NOT inside an open heredoc or quoted string. Updates
+    /// internal state so that a heredoc or quote opened on this line (or a
+    /// previous one) consumes subsequent lines until it closes.
     ///
-    /// The delimiter match is performed against the trimmed line. This
-    /// matches Cookfile shell-block runtime semantics: `collect_shell_block`
-    /// trims each line before passing the assembled script to the shell, so
-    /// the closer sees only the trimmed text. Authors writing heredocs
-    /// inside an indented `{ … }` body therefore do not need to dedent the
-    /// closing delimiter to column 0 in the source. The `<<-` (tab-strip)
-    /// form is still recognised; under trim-first matching the tab-strip
-    /// distinction collapses, but we preserve the parsed flag for clarity.
+    /// The heredoc delimiter match is performed against the trimmed line.
+    /// This matches Cookfile shell-block runtime semantics:
+    /// `collect_shell_block` trims each line before passing the assembled
+    /// script to the shell, so the closer sees only the trimmed text. Authors
+    /// writing heredocs inside an indented `{ … }` body therefore do not need
+    /// to dedent the closing delimiter to column 0 in the source. The `<<-`
+    /// (tab-strip) form is still recognised; under trim-first matching the
+    /// tab-strip distinction collapses, but we preserve the parsed flag for
+    /// clarity.
+    #[cfg(test)]
     pub(crate) fn scan_line(&mut self, line: &str) -> i32 {
+        let mut depth: i32 = 0;
+        self.scan_impl(line, &mut depth, false);
+        depth
+    }
+
+    /// Scan a line (or the remainder of the block's opening line — CS-0154),
+    /// mutating `depth`, and return the byte index of the `}` at which `depth`
+    /// first reaches zero, or `None` if the block stays open past this text.
+    pub(crate) fn scan_to_close(&mut self, line: &str, depth: &mut i32) -> Option<usize> {
+        self.scan_impl(line, depth, true)
+    }
+
+    fn scan_impl(&mut self, line: &str, depth: &mut i32, stop_at_zero: bool) -> Option<usize> {
         // If we are inside any open heredoc, the entire line is heredoc
         // content unless it is the delimiter line.
         if !self.pending_heredocs.is_empty() {
@@ -232,17 +267,36 @@ impl ShellScanner {
                 // This line closes the front-of-queue heredoc.
                 self.pending_heredocs.remove(0);
             }
-            return 0;
+            return None;
         }
 
-        // Not inside a heredoc — scan the line normally, counting braces and
-        // queueing any new heredoc openers.
         let bytes = line.as_bytes();
         let len = bytes.len();
         let mut i = 0;
-        let mut delta: i32 = 0;
 
         while i < len {
+            // Inside a quoted string (possibly opened on an earlier line —
+            // CS-0154): consume until the matching close quote; braces are
+            // data. `\` escapes only inside double quotes.
+            if let Some(q) = self.in_quote {
+                while i < len {
+                    if q == b'"' && bytes[i] == b'\\' && i + 1 < len {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == q {
+                        self.in_quote = None;
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                if self.in_quote.is_some() {
+                    return None; // quote still open at end of line
+                }
+                continue;
+            }
+
             let b = bytes[i];
 
             // Shell line comment: `#` outside of quotes/brace-words.
@@ -255,31 +309,11 @@ impl ShellScanner {
                 break;
             }
 
-            // Single-quoted: opaque, no escapes.
-            if b == b'\'' {
+            // Quote opener — the span is consumed by the `in_quote` arm above,
+            // which also carries an unterminated quote to the next line.
+            if b == b'\'' || b == b'"' {
+                self.in_quote = Some(b);
                 i += 1;
-                while i < len && bytes[i] != b'\'' {
-                    i += 1;
-                }
-                if i < len {
-                    i += 1;
-                }
-                continue;
-            }
-
-            // Double-quoted: `\` escapes a few characters.
-            if b == b'"' {
-                i += 1;
-                while i < len && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' && i + 1 < len {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                }
-                if i < len {
-                    i += 1;
-                }
                 continue;
             }
 
@@ -313,15 +347,18 @@ impl ShellScanner {
             }
 
             if b == b'{' {
-                delta += 1;
+                *depth += 1;
             } else if b == b'}' {
-                delta -= 1;
+                *depth -= 1;
+                if stop_at_zero && *depth == 0 {
+                    return Some(i);
+                }
             }
 
             i += 1;
         }
 
-        delta
+        None
     }
 
     /// Returns true if any heredoc opened on or before the most recently

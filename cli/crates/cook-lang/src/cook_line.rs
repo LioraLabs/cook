@@ -5,97 +5,6 @@ use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
-/// Try to extract a complete Lua block from the text immediately following
-/// the opening `>{`. `after_open` is the slice of the source line that comes
-/// after the `>{` that started the block.
-///
-/// Scans forward tracking brace depth (starting at 1 because the opening `{`
-/// has already been consumed). If depth reaches 0 on the same span, returns
-/// the content between the opening `{` and the matching `}` (trimmed).
-/// Returns `None` if the line does not contain a complete balanced block
-/// (i.e., the block spans multiple lines).
-///
-/// Handles the following Lua constructs that may contain literal `{`/`}`
-/// characters which must not affect the brace counter:
-/// * `"`/`'`-quoted strings (with `\`-escape handling).
-/// * `--` line comments — a `--` on the `>{` line means the closing `}` (if
-///   any) is commented out; the block must therefore continue on subsequent
-///   lines, so `None` is returned and the multiline collector takes over.
-/// * Lua long-bracket strings (`[[…]]`, `[=[…]=]`, `[==[…]==]` etc.):
-///   the function skips to the matching close bracket; if no matching close
-///   exists on this line, it returns `None` (the long string is unterminated
-///   on this line → multiline collector).
-///
-/// This is the Lua counterpart to `shell_block::try_inline_shell_block`.
-pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
-    use crate::brace_scan::{match_close_long_bracket, match_open_long_bracket};
-
-    let chars: Vec<char> = after_open.chars().collect();
-    let len = chars.len();
-    let mut depth: i32 = 1;
-    let mut i = 0;
-
-    while i < len {
-        let c = chars[i];
-
-        match c {
-            '{' => { depth += 1; i += 1; }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    // Reconstruct the content up to (not including) this `}`.
-                    let content: String = chars[..i].iter().collect();
-                    return Some(content.trim().to_string());
-                }
-                i += 1;
-            }
-            '"' | '\'' => {
-                let quote = c;
-                i += 1;
-                while i < len && chars[i] != quote {
-                    if chars[i] == '\\' && i + 1 < len { i += 2; } else { i += 1; }
-                }
-                if i < len { i += 1; } // skip closing quote
-            }
-            '-' if i + 1 < len && chars[i + 1] == '-' => {
-                // Lua line comment: rest of line is comment, no closing brace
-                // can be found on this span. A `--` on the `>{` line means
-                // the closing `}` (if any) is commented out; the multiline
-                // collector must handle the block.
-                return None;
-            }
-            '[' => {
-                // Lua long-bracket string: `[[…]]`, `[=[…]=]`, etc.
-                if let Some((level, after_open_lb)) = match_open_long_bracket(&chars, i) {
-                    // Scan forward character by character looking for the matching
-                    // close bracket on this line.
-                    let mut j = after_open_lb;
-                    let mut found_close = false;
-                    while j < len {
-                        if chars[j] == ']' {
-                            if let Some(after_close) = match_close_long_bracket(&chars, j, level) {
-                                // Close found on same line — skip past it and continue.
-                                i = after_close;
-                                found_close = true;
-                                break;
-                            }
-                        }
-                        j += 1;
-                    }
-                    if !found_close {
-                        // Long string continues past this line — multiline.
-                        return None;
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-            _ => { i += 1; }
-        }
-    }
-    None // no matching `}` on this span
-}
-
 /// Parse a body payload — the `body` production from App. A.4 (CS-0024).
 ///
 /// `after_kw` is the line text starting at the body opener (`{` or `>{`),
@@ -103,7 +12,9 @@ pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
 /// removed the `using` introducer) or after the keyword for test.
 /// `kw_for_diag` is the step name used in error messages (`cook`, `test`).
 ///
-/// Returns the parsed `Body` plus the new token-stream position.
+/// Returns the parsed `Body`, the trimmed trailer following the body's
+/// closing `}` on its line (CS-0154 — the cook/test modifier tail; stray in
+/// every other context), and the new token-stream position.
 pub(crate) fn parse_body_payload(
     after_kw: &str,
     line: usize,
@@ -111,7 +22,7 @@ pub(crate) fn parse_body_payload(
     current_pos: usize,
     source_lines: &[&str],
     kw_for_diag: &str,
-) -> Result<(Body, usize), ParseError> {
+) -> Result<(Body, String, usize), ParseError> {
     let trimmed = after_kw.trim_start();
 
     if trimmed.starts_with(">>{") {
@@ -125,31 +36,24 @@ pub(crate) fn parse_body_payload(
     }
 
     if trimmed.starts_with(">{") {
+        // CS-0154: the opening-line remainder is the block's first body
+        // segment; the unified collector handles the inline close too.
         let after_open = &trimmed[2..]; // text after `>{`
-        if let Some(code) = try_inline_lua_block(after_open) {
-            // Single-line Lua block: `>{ … }` all on one line.
-            let mut new_pos = current_pos + 1;
-            while new_pos < tokens.len() && tokens[new_pos].line <= line {
-                new_pos += 1;
-            }
-            return Ok((Body::LuaBlock(code), new_pos));
-        }
-        let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
-        return Ok((Body::LuaBlock(code), new_pos));
+        let (code, tail, new_pos) =
+            collect_lua_block(line, after_open, tokens, current_pos + 1, source_lines)?;
+        return Ok((Body::LuaBlock(code), tail, new_pos));
     }
 
     if trimmed.starts_with('{') {
         let after_open = &trimmed[1..];
-        if let Some(commands) = crate::shell_block::try_inline_shell_block(after_open) {
-            let mut new_pos = current_pos + 1;
-            while new_pos < tokens.len() && tokens[new_pos].line <= line {
-                new_pos += 1;
-            }
-            return Ok((Body::ShellBlock(commands), new_pos));
-        }
-        let (commands, new_pos) =
-            crate::shell_block::collect_shell_block(line, tokens, current_pos + 1, source_lines)?;
-        return Ok((Body::ShellBlock(commands), new_pos));
+        let (commands, tail, new_pos) = crate::shell_block::collect_shell_block(
+            line,
+            after_open,
+            tokens,
+            current_pos + 1,
+            source_lines,
+        )?;
+        return Ok((Body::ShellBlock(commands), tail, new_pos));
     }
 
     if trimmed.starts_with('"') {
@@ -428,34 +332,6 @@ fn scan_balanced_paren_expr<'a>(
     })
 }
 
-/// The trailing-modifier text after a body's closing `}` on the body's source
-/// line (COOK-171 `cook_mods`). `new_pos` is the token position returned by
-/// `parse_body_payload` (it points one past the body); the closing `}` lives on
-/// `tokens[new_pos - 1]`'s line.
-fn tail_after_body(
-    tokens: &[Located<Token>],
-    new_pos: usize,
-    fallback_line: usize,
-    source_lines: &[&str],
-) -> String {
-    let close_line = if new_pos > 0 {
-        tokens
-            .get(new_pos - 1)
-            .map(|t| t.line)
-            .unwrap_or(fallback_line)
-    } else {
-        fallback_line
-    };
-    let line_text = source_lines
-        .get(close_line.saturating_sub(1))
-        .copied()
-        .unwrap_or("");
-    match line_text.rfind('}') {
-        Some(i) => line_text[i + 1..].trim().to_string(),
-        None => String::new(),
-    }
-}
-
 /// Build the parsed disposition + per-unit unseal set from a modifier tail.
 fn cook_disposition_from_tail(
     tail: &str,
@@ -519,7 +395,7 @@ pub(crate) fn parse_cook_line(
             });
         }
 
-        let (body, new_pos) = parse_body_payload(
+        let (body, tail, new_pos) = parse_body_payload(
             leftover,
             line,
             tokens,
@@ -527,7 +403,6 @@ pub(crate) fn parse_cook_line(
             source_lines,
             "cook",
         )?;
-        let tail = tail_after_body(tokens, new_pos, line, source_lines);
         let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
         return Ok((
             CookStep { outputs, body: Some(body), disposition },
@@ -591,9 +466,8 @@ pub(crate) fn parse_cook_line(
     // the line `leftover` came from. Read its line number off the token.
     let body_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
 
-    let (body, new_pos) =
+    let (body, tail, new_pos) =
         parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
-    let tail = tail_after_body(tokens, new_pos, body_line, source_lines);
     let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
     Ok((
         CookStep { outputs, body: Some(body), disposition },

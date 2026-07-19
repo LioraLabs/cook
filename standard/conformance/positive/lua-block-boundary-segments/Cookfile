@@ -1,0 +1,5 @@
+probe rows
+    >{ return {
+        { name = "web" },
+        { name = "desktop" },
+    } }
