@@ -370,32 +370,82 @@ leaks.
 
 ## Probes and data-driven fan-out
 
-A **probe** is a named, cached value that the build graph can see: the output of a
-shell command, the contents of a JSON file, or a Lua computation. Probes let a
-build's *shape* be driven by data.
+A **probe** is a named, cached value that the build graph can see: the output of
+a shell command, the contents of a JSON file, a recorded tool identity, a Lua
+computation. Recipes consume probes three ways (reference, fan out, seal), and
+every one of them is visible to the cache.
+
+### The probe shapes
+
+Four producer forms run a body and cache its value:
 
 ```
+probe greeting
+    { echo hello }                        # bare: a string
+
 probe target_list
     ingredients "data/targets.txt"
-    lines { cat data/targets.txt }        # array, one per line
+    lines { cat data/targets.txt }        # an array, one per line
 
 probe services
     ingredients "data/services.json"
-    json { cat data/services.json }        # structured data
+    json { cat data/services.json }       # structured data
+
+probe count: services
+    >{ return { n = #cook.probes.get("services") } }   # a Lua value
 ```
 
-Producer forms: bare `{ shell }` (a string), `lines { shell }` (an array),
-`json { shell }` (structured), and `>{ lua }` (a Lua value that can read upstream
-probes via `cook.probes.get`). Three more forms record *determinants* rather
-than run commands: a `tools { cc }` probe records the resolved identity of an
-executable, an `envs { HOSTNAME }` probe records environment values, and a
-`files { "src/*.ts" !"src/gen/*.ts" }` probe records a file set as per-file
-content hashes (`ingredients` glob syntax; the value maps each matched path to
-its hash, so a change to any matched file, or adding or removing one, changes
-the value). Probes can depend on other probes with the same colon syntax.
+An `ingredients` line on a probe declares the files its body reads, so the value
+recomputes exactly when they change. Probes depend on other probes with the same
+colon syntax as recipes; a `>{ lua }` body reads its upstreams with
+`cook.probes.get`.
 
-The payoff is **fan-out**: point a recipe's `ingredients` at a probe (bare name,
-not a quoted glob) and the recipe runs once per member. Record fields are
+Three more forms run nothing of yours; they *record a determinant*:
+
+```
+probe compiler
+    tools { cc }                          # the resolved identity of an executable
+
+probe build_env
+    envs { HOSTNAME TERM }                # environment values
+
+probe sources
+    files { "src/**/*.c" !"src/gen/**" }  # a file set, hashed per file
+```
+
+`tools` records which `cc` resolved and its content hash. `envs` records the
+named environment values. `files` records each matched path's content hash
+(`ingredients` glob syntax), so editing, adding, or removing any matched file
+changes the value.
+
+Probes are demand-driven: one only runs when something scheduled actually
+consumes it. Which brings us to the three ways of consuming.
+
+### Using probes
+
+**Reference one in a step.** A `$<...>` sigil with a colon in its name is a
+probe reference (the colon is how cook tells it apart from a recipe or config
+reference, so name probes `namespace:thing` when you intend to reference them).
+One sigil interpolates the value, records the dependency edge, and folds the
+value into the unit's cache key:
+
+```
+probe stack:node
+    { node --version }
+
+recipe banner
+    cook "build/banner.txt" {
+        echo "built with node $<stack:node>" > $<out>
+    }
+```
+
+Upgrade node and the banner rebuilds; nothing else does. `$<key>` substitutes a
+string value; `$<key.field>` selects a field of a table value. (Execute-phase
+Lua bodies have no sigils; they read the same values with
+`cook.probes.get("key")`, which cook detects and wires identically.)
+
+**Fan out over one.** Point a recipe's `ingredients` at a probe (bare name, not
+a quoted glob) and the recipe runs once per member. Record fields are
 addressable as `$<in.FIELD>`:
 
 ```
@@ -419,6 +469,25 @@ recipe summary: render
 This is the shape behind eval suites, per-package monorepo tasks, and any
 "one unit per record" build.
 
+**Seal one into the key.** Some values should invalidate the cache without
+appearing in any command: the compiler's identity, the environment, the files a
+tool reads implicitly. `seal` folds the probe's value into the key of every
+unit in the recipe:
+
+```
+recipe app
+    ingredients "src/*.c"
+    seal compiler build_env
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+```
+
+Swap `cc` for a different binary, or change a sealed environment value, and
+every unit misses, attributably: `cook why` prints the sealed determinant that
+changed. A sealed probe is never interpolated; it is a declared determinant,
+nothing more. Sealing is the backbone of shared-cache correctness, and
+[Caching and cache trust](#caching-and-cache-trust) shows how it composes with
+`files` to cover inputs your `ingredients` line can't hold.
+
 ## Caching and cache trust
 
 The cache is cook's center of gravity. Every cacheable unit (a step with at
@@ -441,18 +510,11 @@ the failure mode, so cook gives you tools to see the key:
   under a matching key. A diagnostic for catching undeclared determinants (run it
   in CI on a different host), explicitly *not* a trust gate.
 
-Per-step **dispositions** control keying and sharing. Seal a determinant into the
-key with a `seal` line (or trailing `seal`); tune sharing with a trailing keyword:
+Per-step **dispositions** control keying and sharing. `seal` (the verb from
+[Using probes](#using-probes)) folds declared determinants into the key, and a
+trailing keyword on a `cook` step tunes how the artifact is stored and shared:
 
 ```
-probe compiler
-    tools { cc }
-
-recipe app
-    ingredients "src/*.c"
-    seal compiler                               # fold the compiler identity into the key
-    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-
 recipe misc
     cook "build/scratch.txt" { ./gen > $<out> } local    # cached locally, never shared
     cook "build/pinned.txt"  { ./gen > $<out> } pinned   # fetch-only; a cold miss is an error
