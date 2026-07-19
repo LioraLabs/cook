@@ -935,10 +935,49 @@ pub fn generate_with_names(
                     Step::ForEach { step, line } => Some((step, *line)),
                     _ => None,
                 });
-                if let Some((fe, _fe_line)) = for_each {
-                    emit_for_each_items(&mut out, fe);
-                }
                 let is_for_each = for_each.is_some();
+
+                // CS-0155: in a probe-driven recipe, a cook step whose
+                // outputs are all literal is not member-iterated — it is the
+                // ordinary chained gather over the preceding step's collected
+                // outputs. The FIRST cook step therefore cannot be literal:
+                // data members are records, not file paths, so there is
+                // nothing path-shaped to gather. Reject at the top of the
+                // body, before the member source is read, so the diagnostic
+                // is never masked by probe materialisation state.
+                let outputs_all_literal = |cs: &cook_lang::ast::CookStep| {
+                    cs.outputs.iter().all(|p| {
+                        !p.is_lua_expr()
+                            && matches!(
+                                crate::template::analyze_output_pattern(
+                                    p.as_str(),
+                                    recipe_names
+                                ),
+                                crate::template::OutputPatternKind::Literal
+                            )
+                    })
+                };
+                let first_step_literal_gather = is_for_each
+                    && recipe
+                        .steps
+                        .iter()
+                        .find_map(|s| match s {
+                            Step::Cook { step, .. } => Some(step),
+                            _ => None,
+                        })
+                        .map(&outputs_all_literal)
+                        .unwrap_or(false);
+                if first_step_literal_gather {
+                    out.push_str(&format!(
+                        "    error(\"recipe '{}': a literal-output cook step in an ingredients <probe> recipe has nothing to gather — data members are records, not file paths; fan out first (accessor-bearing outputs), or read the probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
+                        escape_lua_string(&recipe.name)
+                    ));
+                }
+                if let Some((fe, _fe_line)) = for_each {
+                    if !first_step_literal_gather {
+                        emit_for_each_items(&mut out, fe);
+                    }
+                }
 
                 let mut prev_cook_index: Option<usize> = None;
                 let mut cook_index: usize = 0;
@@ -959,7 +998,17 @@ pub fn generate_with_names(
                             cook_index += 1;
                             out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
                             out.push_str("    cook.step_group(function()\n");
-                            if is_for_each {
+                            // CS-0155: accessor-bearing (and Lua-expr)
+                            // outputs iterate members; all-literal outputs
+                            // route through the ordinary chained gather arm
+                            // below. The literal-FIRST-step rejection was
+                            // emitted at the top of the recipe body.
+                            let for_each_gather =
+                                is_for_each && outputs_all_literal(cook_step);
+                            if for_each_gather && prev_cook_index.is_none() {
+                                // Unreachable at run time: the body-top
+                                // error() raises before any step group runs.
+                            } else if is_for_each && !for_each_gather {
                                 generate_for_each_cook_step(
                                     &mut out,
                                     cook_step,

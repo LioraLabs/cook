@@ -611,8 +611,16 @@ pub(crate) fn generate_for_each_cook_step(
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
     let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
-    // OneShot rejects `$<in>`; Single permits the lone `$<out>`.
-    let ctx = crate::template::cook_step_ctx(IterMode::OneShot, OutputShape::Single, recipe_names);
+    // OneShot rejects `$<in>` (the member binds via `item`, not the path
+    // input). The output shape follows the declared template count so bare
+    // `$<out>` works on a single-output step and `$<out_N>` resolves against
+    // the member's declared outputs on a multi-output one (COOK-270 — this
+    // was hardcoded `Single`, rejecting every indexed placeholder).
+    let ctx = crate::template::cook_step_ctx(
+        IterMode::OneShot,
+        count_to_output_shape(cook_step.outputs.len()),
+        recipe_names,
+    );
     let sigil_err = |e: crate::resolver::ResolveError| {
         (
             format!(

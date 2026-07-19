@@ -98,6 +98,11 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // registrable solely through `cook.add_test` (§22.4).
   ['add-unit-step-kind-test-rejected',
    'CS-0153: step_kind = "test" on cook.add_unit — register-phase rejection, not syntactic'],
+  // CS-0155: a literal-output first cook step in an ingredients <probe>
+  // recipe parses cleanly; only the register pass knows there is no
+  // preceding step whose outputs it could gather (§8.4.1).
+  ['probe-fanout-literal-first-step',
+   'CS-0155: literal-output first step in a probe-driven recipe — register-phase rejection, not syntactic'],
   // §28 cc-module semantic rules (§28.3 — execute-phase / probe-time
   // rejections; the Cookfile parses cleanly):
   ['cc-check-bad-flag',

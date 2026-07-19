@@ -1,0 +1,6 @@
+probe members
+    json { echo '[{"name":"a"}]' }
+
+recipe bad
+    ingredients members
+    cook "out/all.txt" { cat $<in> > $<out> }

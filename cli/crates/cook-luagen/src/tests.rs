@@ -3197,6 +3197,59 @@ fn for_each_probe_cook_multi_output_declares_all_outputs() {
 }
 
 #[test]
+fn for_each_probe_cook_out_indexed_placeholders_resolve() {
+    // COOK-270: `$<out_1>` / `$<out_2>` in a multi-output fan-out body must
+    // resolve to the member's declared outputs. The resolve ctx was
+    // hardcoded `OutputShape::Single`, so an indexed placeholder tripped the
+    // multi-output validation with nonsense counts even though CS-0150
+    // registers every declared output per member.
+    let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" {\n        gen --light $<out_1> --dark $<out_2>\n    }\n";
+    let lua = generate(&cook_lang::parse(src).unwrap());
+    assert!(!lua.contains("SIGIL_ERROR"),
+        "indexed output placeholders must resolve in a fan-out body, got:\n{lua}");
+    assert!(lua.contains("_cook_outs[1]") && lua.contains("_cook_outs[2]"),
+        "command must reference the member's declared outputs, got:\n{lua}");
+}
+
+#[test]
+fn for_each_probe_cook_bare_out_rejected_on_multi_output() {
+    // §{steps.cook-multi} uniformly: bare `$<out>` is ambiguous when a step
+    // declares more than one output — fan-out steps included.
+    let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" { gen $<out> }\n";
+    let lua = generate(&cook_lang::parse(src).unwrap());
+    assert!(lua.contains("SIGIL_ERROR"),
+        "bare $<out> on a multi-output fan-out step must be rejected, got:\n{lua}");
+}
+
+#[test]
+fn for_each_probe_literal_step_gathers_previous_outputs() {
+    // CS-0155 / COOK-271: a literal-output step after a fan-out step is the
+    // ordinary chained many-to-one gather — one unit whose inputs are the
+    // preceding step's collected outputs, NOT one member-iterated unit per
+    // record with raw JSON in $<in>.
+    let src = "recipe render\n    ingredients services\n    cook \"build/$<in.name>.conf\" { gen $<in.name> > $<out> }\n    cook \"build/manifest.txt\" { cat $<in> > $<out> }\n";
+    let lua = generate(&cook_lang::parse(src).unwrap());
+    assert!(lua.contains("_cook_outputs_1"),
+        "gather step must read the previous step's collected outputs, got:\n{lua}");
+    // The gather unit is emitted by the ordinary chained arm: it declares
+    // real inputs (the collected files), unlike fan-out units (inputs = {}).
+    let gather = lua.split("step_group").nth(2).expect("second step group");
+    assert!(!gather.contains("for _, item in ipairs(_items)"),
+        "gather step must not member-iterate, got:\n{gather}");
+    assert!(gather.contains("manifest.txt"), "gather output present, got:\n{gather}");
+}
+
+#[test]
+fn for_each_probe_literal_first_step_rejected() {
+    // CS-0155: a literal-output FIRST step in a probe-driven recipe has
+    // nothing path-shaped to gather — members are records, not files.
+    let src = "recipe render\n    ingredients services\n    cook \"build/manifest.txt\" { cat $<in> > $<out> }\n";
+    let lua = generate(&cook_lang::parse(src).unwrap());
+    assert!(lua.contains("nothing to gather"),
+        "literal-output first step must emit the register-phase rejection, got:\n{lua}");
+}
+
+#[test]
 fn for_each_probe_ref_passes_through_verbatim() {
     // COOK-190: no codegen-side `:` split — the register pre-pass resolves
     // key-vs-field against the probe registry and stores the member array
