@@ -260,8 +260,8 @@ cook
 - [Workspaces and directory hopping](document.md#workspaces-and-directory-hopping):
   per-subtree Cookfiles joined by `import`; run cook from any directory
   without splitting the cache.
-- [`cook affected`](document.md#workspaces-and-directory-hopping): CI that
-  builds and tests only the slice a PR touched.
+- [`cook affected`](document.md#cook-affected): CI that builds and tests only
+  the slice a PR touched.
 
 **Day to day**
 

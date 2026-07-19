@@ -649,10 +649,7 @@ integration.
 ### Workspaces and directory hopping
 
 For a monorepo, each subproject keeps its own Cookfile and a root Cookfile
-composes them with `import`. Drop an empty `.cookroot` file at the top to mark the
-workspace boundary. Then you can run `cook` from *any* subdirectory: cook walks
-up to the nearest Cookfile and behaves as if you'd run it there, while anchoring
-all cache state at the workspace root, so hopping around never splits your cache.
+composes them with `import`:
 
 ```
 # /Cookfile
@@ -663,9 +660,46 @@ recipe ship: web.build api.build
     cook "out/release.tar" { tar cf $<out> dist }
 ```
 
-`cook affected --since=origin/main` lists the recipes whose inputs changed
-against a git ref: the basis for fast CI that only builds and tests the slice a
-PR actually touched.
+Then hop. Run `cook` from anywhere in the tree and it walks up to the nearest
+Cookfile and behaves exactly as if you'd started there: bare names resolve
+against that Cookfile's own recipes, and its imports answer to their aliases.
+
+```sh
+cd apps/web && cook build     # web's own build recipe, by its bare name
+cd ../..    && cook web.build # the same recipe through the root's alias
+```
+
+Same recipe, same work, same cache entry. Cache identity comes from a recipe's
+own Cookfile and the workspace root, never from the directory you invoked from
+or the alias an importer chose, so hopping around (or renaming an alias) never
+splits the cache: the second command above is a cache hit on the first.
+
+The workspace root is inferred by walking upward for the Cookfile that imports
+the tree you're standing in. Drop an empty `.cookroot` file at the top to make
+the boundary explicit; it also stops the upward walk, so cook will never select
+a Cookfile from an unrelated enclosing project. `--root` overrides everything.
+
+### `cook affected`
+
+A monorepo PR usually touches one corner of the graph; CI shouldn't build the
+world to find out. `cook affected` maps a git diff onto the graph:
+
+```sh
+cook affected --since=origin/main          # affected recipes, one per line
+cook affected --since=origin/main --json
+cook test --affected --since=origin/main   # run only the affected slice's tests
+```
+
+A recipe is affected when the diff touches its declared file inputs, or when it
+depends (directly or transitively) on one that is: invalidation flows
+downstream, so `ship` is affected whenever `web.build` is. The diff uses
+three-dot merge-base semantics against `--since` and includes your working
+tree: staged, unstaged, and untracked-but-not-ignored files all count.
+
+`--recipe <name>` narrows the listing to recipes with that bare name across the
+workspace (`--recipe=build` lists every `*.build` and `*:build`). The same
+`--affected --since` pair on an ordinary run restricts it to the affected
+slice; on `cook test` it's the CI pattern from [The cook CLI](#the-cook-cli).
 
 ## The cook CLI
 
