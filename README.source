@@ -223,7 +223,7 @@ same ingredients, same probes and modules, no special modes.
   cross-language contracts, built as one graph. Each subtree owns its
   Cookfile, `import` joins them.
 
-- [**dhewm3**](https://github.com/LioraLabs/dhewm3): the Doom 3 source port, built with `cook_cc` as a 427-node dependency graph.
+- [**dhewm3**](https://github.com/LioraLabs/cook-dhewm3): the Doom 3 source port, built with `cook_cc` as a 427-node dependency graph.
 
 ## Install and try it
 
