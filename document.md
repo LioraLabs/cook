@@ -643,6 +643,24 @@ collides with a subcommand.
 `-v/--verbose`, `--color`, `--output auto|plain|json`, `--set KEY=VALUE`
 (repeatable), `--since <ref>` + `--affected`, `--no-prune`, `--no-publish`.
 
+**Tab completion** is served by the `cook` binary itself, so it always matches
+the Cookfile in front of you: it completes your recipes and chores (and config
+presets after `@`), not just the built-in subcommands. Add one line to your
+shell's startup file:
+
+```sh
+# ~/.config/fish/config.fish
+COMPLETE=fish cook | source
+
+# ~/.bashrc
+source <(COMPLETE=bash cook)
+
+# ~/.zshrc
+source <(COMPLETE=zsh cook)
+```
+
+`elvish` and `powershell` work the same way.
+
 For CI, the pattern is:
 
 ```sh
