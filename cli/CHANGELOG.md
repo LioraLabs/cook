@@ -1,5 +1,25 @@
 # Cook CLI changelog
 
+## v0.6.1 — 2026-07-19
+
+Claims Cook Standard v0.14.
+
+### Fixed
+
+- **CS-0155: literal-output steps in `ingredients <probe>` recipes gather.**
+  Previously every cook step of a probe-driven recipe was member-iterated, so
+  a literal-output step registered one colliding unit per member with the raw
+  record JSON as `$<in>` — a tolerant command could cache a wrong artifact
+  silently. A literal-output step now gathers the preceding step's collected
+  outputs (the ordinary chained many-to-one, with real file input edges), so
+  `fan out → pack` works in one recipe; a literal-output *first* step is a
+  register-phase rejection (COOK-271).
+- **`$<out_1>` / `$<out_2>` resolve in multi-output fan-out bodies.** The
+  fan-out resolve context was hardcoded single-output, rejecting every
+  indexed placeholder with a garbled count; it now follows the declared
+  template count, and bare `$<out>` on a multi-output fan-out step is
+  rejected as ambiguous, as elsewhere (COOK-270).
+
 ## v0.6.0 — 2026-07-19
 
 Claims Cook Standard v0.14.
