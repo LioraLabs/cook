@@ -216,10 +216,10 @@ cook
   source, `cook init`.
 - [Your first recipe](document.md#your-first-recipe): a Cookfile from zero;
   register, then execute.
-- [Recipes and dependencies](document.md#recipes-and-dependencies): header
-  dependencies, `$<recipe>` references, and when edges record themselves.
 - [Ingredients and the cook step](document.md#ingredients-and-the-cook-step):
   globs, placeholders, fan-out and gather.
+- [Connecting recipes](document.md#connecting-recipes): `$<recipe>` references
+  that declare the read and record the edge; the colon for pure ordering.
 
 **Beyond the build**
 
