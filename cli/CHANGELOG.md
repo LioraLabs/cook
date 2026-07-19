@@ -1,6 +1,8 @@
 # Cook CLI changelog
 
-## Unreleased
+## v0.6.3 — 2026-07-19
+
+Claims Cook Standard v0.14.
 
 ### Fixed
 
