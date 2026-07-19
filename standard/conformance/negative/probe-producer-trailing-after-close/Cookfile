@@ -1,0 +1,2 @@
+probe greeting
+    json { echo hi } stray

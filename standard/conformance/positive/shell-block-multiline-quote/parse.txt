@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="platforms" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["echo '[", "{\"name\": \"web\",     \"level\": \"9\"},", "{\"name\": \"desktop\", \"level\": \"0\"}", "]'"]

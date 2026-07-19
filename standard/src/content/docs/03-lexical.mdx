@@ -178,11 +178,11 @@ No step kind currently accepts a bare `NUMBER`; digits that appear inside a shel
 ## 3.9. Brace-balanced blocks [#lexical.brace-blocks]
 A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a stateful brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }`) are brace-balanced blocks; they differ in their interior language (Lua vs. shell) and in how their collected body is normalised after the block closes.
 
-The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` that opens a `shell_block` body), establishing initial depth `1`. The block's body lines are then scanned in source order. Each line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear inside one of the **opaque spans** enumerated in §{lexical.brace-blocks.lua-spans} (for Lua blocks) or §{lexical.brace-blocks.shell-spans} (for shell blocks). The brace counter MUST carry **opaque-span state across lines** so that a span opened on one line and closed on a later line keeps every brace byte between the open and the close opaque.
+The opening brace (a `LuaBlockOpen` token for `>{`, or the `{` that opens a `shell_block` body) establishes initial depth `1`, and scanning begins immediately after it, with the **remainder of the opening line**. The block body is the **character span** from that point to the block's matching `}` (CS-0154): the opening-line remainder, any number of full interior lines, and the closing line's prefix (the text before the matching `}`) are all body text. The span is examined character by character in source order; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear inside one of the **opaque spans** enumerated in §{lexical.brace-blocks.lua-spans} (for Lua blocks) or §{lexical.brace-blocks.shell-spans} (for shell blocks). The brace counter MUST carry **opaque-span state across lines** so that a span opened on one line — including one opened on the opening-line remainder — and closed on a later line keeps every brace byte between the open and the close opaque.
 
-A conforming implementation MUST apply this exclusion consistently for both Lua blocks and shell blocks, so that a block's closing `}` is never mistaken for a literal `}` inside string, comment, or heredoc content. The block closes on the first line where the running depth returns to zero or below after the line's brace deltas have been applied; that closing line is consumed by the lexer but is NOT included in the block body.
+A conforming implementation MUST apply this exclusion consistently for both Lua blocks and shell blocks, so that a block's closing `}` is never mistaken for a literal `}` inside string, comment, or heredoc content. The block closes at the first **character** at which the running depth returns to zero. Body text may precede the closing brace on its line. Text following the closing brace on the same line is NOT body text: it is the enclosing production's **trailer**. A production that admits a trailer consumes it — the `cook` step's modifier tail (§{steps.cook-dispositions}) and the `test` step's rejected-modifier diagnostics read from exactly this position; in every other context (a probe producer's block, a chore-body Lua block) a conforming implementation MUST reject non-whitespace trailer text with a parse error (before CS-0154 stray trailer text in those contexts was silently discarded). A block that opens and closes on one line (`{ cmd }`, `>{ EXPR }`) is the degenerate single-line case of the same span, not a separate production, and its interior is scanned with the same opaque-span rules. A conforming implementation MUST reject a block whose depth never returns to zero by end of input.
 
-The `LUA_BLOCK_CONTENT` body is the concatenation of the interior lines in source order, joined by newlines, preserving their original whitespace. The `SHELL_BLOCK_CONTENT` body is further normalised per App. A.5: each interior line is trimmed of leading and trailing whitespace, and lines that are empty after trimming are discarded; the result is an ordered sequence of command strings, not a single raw string.
+The body's **segments** are the opening-line remainder, each full interior line, and the closing-line prefix, in source order. The `LUA_BLOCK_CONTENT` body is the concatenation of its segments joined by newlines, preserving interior whitespace, except that a boundary segment (the opening-line remainder or the closing-line prefix) that is empty or whitespace-only is dropped — `>{` alone on its opening line contributes no leading blank line. The `SHELL_BLOCK_CONTENT` body is further normalised per App. A.5: each segment is trimmed of leading and trailing whitespace, and segments that are empty after trimming are discarded; the result is an ordered sequence of command strings, not a single raw string. The per-segment trim applies uniformly, including to lines interior to a multi-line quoted string (§{lexical.brace-blocks.shell-spans}).
 
 A conforming implementation MUST reject a block whose depth never returns to zero by end of input.
 
@@ -204,10 +204,12 @@ When a long string or block comment is opened on one source line and closed on a
 
 For a `SHELL_BLOCK_CONTENT` body, braces are ignored when they appear:
 
-- inside a single-quoted string `'…'` (no escapes; single-line span);
-- inside a double-quoted string `"…"`, with `\`-escapes honoured (single-line span);
+- inside a single-quoted string `'…'` (no escapes; single-line **or** multi-line span — a POSIX single-quoted string spans newlines, and quote state MUST carry across body lines per CS-0154);
+- inside a double-quoted string `"…"`, with `\`-escapes honoured (single-line **or** multi-line span, as above);
 - after a backslash-escape `\{` or `\}` (the next byte is consumed as data; single-line span);
 - inside a POSIX **heredoc body** opened by `<<TAG`, `<<-TAG`, `<<'TAG'`, or `<<"TAG"` and closed by a line whose trimmed text equals `TAG` (multi-line span).
+
+Both string spans and heredoc openers participate on the opening-line remainder like on any other body line: a quote or heredoc opened after the block's `{` on the opening line keeps its interior opaque on the following lines. App. A.5's per-segment trim applies to every body line regardless of any open quote context: the interior lines of a multi-line quoted string are trimmed like any other body line before the commands are assembled.
 
 The heredoc closer is matched against the **trimmed** body line: this is consistent with the `SHELL_BLOCK_CONTENT` line-normalisation rule above, which trims each interior line before assembling the shell script. Authors writing a heredoc inside an indented `{ … }` body therefore do not need to dedent the closing delimiter to column 0 in the source; the trim-first match closes the heredoc as soon as the trimmed line matches the delimiter.
 
@@ -262,9 +264,33 @@ recipe emit
 
 The `cat <<EOF` opens a shell heredoc; its body extends through the next two lines, in which `}` bytes are heredoc data and MUST be opaque to the brace counter. The heredoc closes on the trimmed `EOF` line; brace counting resumes for `echo done` and the trailing `}` closes the `{ … }` block. The corresponding pin is fixture `042-shell-heredoc-brace-in-body`.
 
+### Example 3.9.4
+
+```cook
+probe platforms
+    json { echo '[
+        {"name": "web",     "level": "9"},
+        {"name": "desktop", "level": "0"}
+    ]' }
+```
+
+The producer's shell block opens on the `json` line, and `echo '[` — the opening-line remainder — is the block's first body segment (CS-0154). The single-quoted string opened there spans four source lines; every `{` and `}` byte inside it, including those in the JSON records, is opaque to the brace counter. The block closes at the final `}`; the `]'` before it on the closing line is body text (it carries the string's closing quote). After App. A.5 normalisation the body is the four-segment command sequence `["echo '[", "{\"name\": \"web\",     \"level\": \"9\"},", "{\"name\": \"desktop\", \"level\": \"0\"}", "]'"]`, which the assembled script joins with newlines — a single `echo` whose quoted argument spans them. The corresponding pin is fixture `positive/shell-block-multiline-quote`.
+
+### Example 3.9.5
+
+```cook
+probe rows
+    >{ return {
+        { name = "web" },
+        { name = "desktop" },
+    } }
+```
+
+`return {` is the opening-line remainder and the Lua block's first body segment. The closing line `} }` first closes the Lua table (depth 2 → 1) and then the block (1 → 0); its prefix `}` (the table's closer) is body text. The assembled `LUA_BLOCK_CONTENT` chunk is `return {` ⏎ `        { name = "web" },` ⏎ `        { name = "desktop" },` ⏎ `    }`. Before CS-0154 both boundary segments were discarded, truncating the chunk to its interior lines — a Lua syntax error. The corresponding pin is fixture `positive/lua-block-boundary-segments`.
+
 ### Note 3.9.1
 
-The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_block_brace_in_string`, `test_lua_block_brace_in_comment`, and the `cs_0035_*` family in `cli/crates/cook-lang/src/tests.rs`; the tests `collects_three_lines`, `drops_blank_lines`, `respects_nested_braces_in_content`, and the `cs_0035_*` family in `cli/crates/cook-lang/src/shell_block.rs`; and the unit tests in `cli/crates/cook-lang/src/brace_scan.rs` (informative).
+The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_block_brace_in_string`, `test_lua_block_brace_in_comment`, and the `cs_0035_*` family in `cli/crates/cook-lang/src/tests.rs`; the tests `collects_three_lines`, `drops_blank_lines`, `respects_nested_braces_in_content`, and the `cs_0035_*` / `cs_0154_*` families in `cli/crates/cook-lang/src/shell_block.rs`; and the unit tests in `cli/crates/cook-lang/src/brace_scan.rs` (informative).
 
 ## 3.10. Line classification cascade [#lexical.line-classification]
 For each source line, a conforming implementation MUST classify the line into exactly one token by applying the following tests in order, with the first matching test winning. The line's trimmed form (leading and trailing whitespace removed) is the subject of each test except where noted.

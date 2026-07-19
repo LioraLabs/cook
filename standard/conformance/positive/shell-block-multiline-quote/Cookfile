@@ -1,0 +1,5 @@
+probe platforms
+    json { echo '[
+        {"name": "web",     "level": "9"},
+        {"name": "desktop", "level": "0"}
+    ]' }

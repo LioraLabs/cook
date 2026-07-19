@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="emit" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out.json"] body=ShellBlock(["cat <<'J' > $<out>", "{\"not\": \"a closer\"}", "J"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

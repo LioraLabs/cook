@@ -547,22 +547,10 @@ pub(crate) fn parse_recipe(
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
-                    let (body, new_pos) = crate::cook_line::parse_body_payload(
+                    let (body, trailing, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "test",
                     )?;
-                    let modifier_line = if new_pos > 0 && new_pos <= tokens.len() {
-                        match tokens.get(new_pos - 1) {
-                            Some(t) => source_lines[t.line.saturating_sub(1)],
-                            None => "",
-                        }
-                    } else {
-                        ""
-                    };
-                    let trailing = match modifier_line.rfind('}') {
-                        Some(idx) => &modifier_line[idx + 1..],
-                        None => "",
-                    };
-                    reject_test_trailing(trailing, tok.line)?;
+                    reject_test_trailing(&trailing, tok.line)?;
                     steps.push(Step::Test {
                         step: TestStep { body },
                         line: tok.line,
@@ -788,8 +776,20 @@ pub(crate) fn parse_chore(
             }
             Token::LuaBlockOpen => {
                 let block_line = tok.line;
+                // The `>{` opener lexes as a bare token whose remaining line
+                // content the lexer dropped — recover it from the source so
+                // the remainder is the block's first body segment (CS-0154).
+                let after_open = source_lines
+                    .get(block_line.saturating_sub(1))
+                    .copied()
+                    .unwrap_or("")
+                    .trim_start()
+                    .strip_prefix(">{")
+                    .unwrap_or("");
                 pos += 1;
-                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                let (code, block_tail, new_pos) =
+                    collect_lua_block(block_line, after_open, tokens, pos, source_lines)?;
+                crate::shell_block::reject_stray_tail(&block_tail, block_line, "chore")?;
                 steps.push(Step::LuaBlock { code, line: block_line });
                 pos = new_pos;
             }
