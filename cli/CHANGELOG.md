@@ -1,5 +1,20 @@
 # Cook CLI changelog
 
+## v0.6.2 — 2026-07-19
+
+Claims Cook Standard v0.14.
+
+### Fixed
+
+- **Recipe names containing `/` persist to the recipe cache index** (COOK-273).
+  A module-minted recipe like `@cap/env:build` (npm-scoped names from
+  `cook_pnpm`) aimed its index write at a directory that never exists; the
+  ENOENT was silently swallowed, so the recipe re-executed every run with no
+  diagnostic. Cache file basenames now percent-encode the two path-hostile
+  bytes (`%` → `%25`, `/` → `%2F`); every other name keeps its historical
+  file name, so existing indexes are untouched. Failed index flushes now
+  warn instead of being discarded.
+
 ## v0.6.1 — 2026-07-19
 
 Claims Cook Standard v0.14.
