@@ -2,7 +2,7 @@ use super::compute_affected;
 use crate::RegisteredWorkspace;
 use cook_contracts::{CacheMeta, CapturedUnit, DepKind, RecipeUnits, WorkPayload};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Build a workspace where the recipe has a single `Shell` unit and its
 /// declared inputs live on `cache_meta.input_paths` (the post-register-phase
@@ -127,7 +127,7 @@ fn empty_changed_paths_returns_empty() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&[]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&[]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -136,7 +136,7 @@ fn empty_closure_returns_empty() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[]);
     let closure = names(&[]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -145,7 +145,7 @@ fn single_recipe_matching_path_returned() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["build"]));
 }
 
@@ -154,7 +154,7 @@ fn single_recipe_non_matching_path_not_returned() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["docs/readme.md"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["docs/readme.md"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -163,7 +163,7 @@ fn empty_inputs_no_consumers_never_returned() {
     let ws = workspace_with(&[("noop", &[])]);
     let edges = edges_from(&[("noop", &[])]);
     let closure = names(&["noop"]);
-    let got = compute_affected(&paths(&["anything.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["anything.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -184,7 +184,7 @@ fn empty_inputs_with_downstream_consumer_returned_transitively() {
         ("lib", &[]),
     ]);
     let closure = names(&["app", "pure", "lib"]);
-    let got = compute_affected(&paths(&["lib/foo.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["lib/foo.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["app", "pure", "lib"]));
 }
 
@@ -201,7 +201,7 @@ fn diamond_only_one_side_affected() {
         ("shared", &[]),
     ]);
     let closure = names(&["app", "utils", "shared"]);
-    let got = compute_affected(&paths(&["utils/src/x.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["utils/src/x.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["app", "utils"]));
 }
 
@@ -213,7 +213,7 @@ fn affected_outside_closure_not_returned() {
     ]);
     let edges = edges_from(&[("build", &[]), ("lint", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/lint.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["src/lint.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -225,7 +225,7 @@ fn same_input_in_multiple_recipes_all_returned() {
     ]);
     let edges = edges_from(&[("a", &[]), ("b", &[])]);
     let closure = names(&["a", "b"]);
-    let got = compute_affected(&paths(&["shared/x.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["shared/x.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["a", "b"]));
 }
 
@@ -234,7 +234,7 @@ fn recipe_with_multiple_inputs_one_hit_enough() {
     let ws = workspace_with(&[("build", &["src/a.rs", "src/b.rs", "src/c.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/b.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["src/b.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["build"]));
 }
 
@@ -246,7 +246,7 @@ fn changed_path_unrelated_to_any_recipe_returns_empty() {
     ]);
     let edges = edges_from(&[("build", &[]), ("test", &[])]);
     let closure = names(&["build", "test"]);
-    let got = compute_affected(&paths(&["random.txt"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["random.txt"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
 }
 
@@ -265,7 +265,7 @@ fn long_chain_transitive_downstream() {
         ("a", &[]),
     ]);
     let closure = names(&["a", "b", "c", "d"]);
-    let got = compute_affected(&paths(&["a.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["a.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["a", "b", "c", "d"]));
 }
 
@@ -277,7 +277,7 @@ fn shell_payload_with_cache_meta_inputs_is_a_direct_hit() {
     let ws = workspace_with_shell("build", &["src/main.rs"]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["build"]));
 }
 
@@ -286,6 +286,93 @@ fn shell_payload_with_cache_meta_inputs_unrelated_path_misses() {
     let ws = workspace_with_shell("build", &["src/main.rs"]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["docs/x.md"]), &ws, &edges, &closure);
+    let got = compute_affected(&paths(&["docs/x.md"]), &ws, &edges, &closure, Path::new("/ws"));
     assert!(got.is_empty());
+}
+
+/// Attach owner directories so imported recipes' subdir-relative inputs can
+/// be re-rooted against workspace-root-relative changed paths (COOK-274).
+fn with_owner_dirs(mut ws: RegisteredWorkspace, dirs: &[(&str, &str)]) -> RegisteredWorkspace {
+    for (prefix, dir) in dirs {
+        ws.working_dir_by_prefix
+            .insert(prefix.to_string(), PathBuf::from(dir));
+    }
+    ws
+}
+
+#[test]
+fn imported_recipe_subdir_relative_inputs_re_rooted() {
+    // `web.build` declares `index.html` relative to its own Cookfile at
+    // /ws/apps/web; git reports `apps/web/index.html`. Must hit (COOK-274).
+    let ws = with_owner_dirs(
+        workspace_with(&[("web.build", &["index.html"])]),
+        &[("", "/ws"), ("web", "/ws/apps/web")],
+    );
+    let edges = edges_from(&[("web.build", &[])]);
+    let closure = names(&["web.build"]);
+    let got = compute_affected(
+        &paths(&["apps/web/index.html"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
+    assert_eq!(got, names(&["web.build"]));
+}
+
+#[test]
+fn imported_recipe_hit_reaches_downstream_root_consumer() {
+    // Root `ship` depends on `web.build`; the subproject file change must
+    // seed the reverse-DAG walk so both are affected.
+    let ws = with_owner_dirs(
+        workspace_with(&[("web.build", &["index.html"]), ("ship", &[])]),
+        &[("", "/ws"), ("web", "/ws/apps/web")],
+    );
+    let edges = edges_from(&[("ship", &["web.build"]), ("web.build", &[])]);
+    let closure = names(&["ship", "web.build"]);
+    let got = compute_affected(
+        &paths(&["apps/web/index.html"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
+    assert_eq!(got, names(&["ship", "web.build"]));
+}
+
+#[test]
+fn imported_recipe_does_not_match_same_named_root_file() {
+    // A root-level `index.html` changed; `web.build`'s `index.html` lives in
+    // apps/web. The owner-relative input must NOT raw-match the root path.
+    let ws = with_owner_dirs(
+        workspace_with(&[("web.build", &["index.html"])]),
+        &[("", "/ws"), ("web", "/ws/apps/web")],
+    );
+    let edges = edges_from(&[("web.build", &[])]);
+    let closure = names(&["web.build"]);
+    let got = compute_affected(
+        &paths(&["index.html"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
+    assert!(got.is_empty());
+}
+
+#[test]
+fn absolute_input_paths_stripped_to_root_relative() {
+    // Inputs recorded as absolute paths under the workspace root still
+    // intersect root-relative changed paths.
+    let ws = workspace_with(&[("build", &["/ws/src/main.rs"])]);
+    let edges = edges_from(&[("build", &[])]);
+    let closure = names(&["build"]);
+    let got = compute_affected(
+        &paths(&["src/main.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
+    assert_eq!(got, names(&["build"]));
 }

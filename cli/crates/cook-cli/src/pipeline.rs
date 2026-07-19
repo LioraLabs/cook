@@ -635,6 +635,7 @@ fn run_with_progress(
             registered_workspace,
             &edges,
             &reachable,
+            &project_root,
         );
         if reachable.is_empty() {
             let recipe_name = targets.first().map(String::as_str).unwrap_or("?");
@@ -2009,7 +2010,13 @@ pub fn cmd_affected(
         all_names
             .iter()
             .filter(|n| {
-                n.as_str() == filter || n.rsplit(':').next() == Some(filter.as_str())
+                // Match the bare name after either qualification vocabulary:
+                // pnpm-style task names qualify with ':' ("web:build"), import
+                // prefixes with '.' ("web.build", or "app.web:build" for an
+                // imported pnpm workspace).
+                n.as_str() == filter
+                    || n.rsplit(':').next() == Some(filter.as_str())
+                    || n.rsplit('.').next() == Some(filter.as_str())
             })
             .cloned()
             .collect()
@@ -2042,6 +2049,7 @@ pub fn cmd_affected(
         &registered,
         &edges,
         &reachable,
+        &project_root,
     );
 
     if args.json {

@@ -91,7 +91,12 @@ fn resolve_merge_base(project_root: &Path, since_ref: &str) -> Result<String, Gi
 }
 
 fn diff_name_only(project_root: &Path, range: &str) -> Result<BTreeSet<PathBuf>, GitError> {
-    let out = run_git(project_root, &["diff", "--name-only", "-z", range])?;
+    // `--relative` scopes and re-roots the listing to the cwd (`-C
+    // project_root`): without it, paths come back repo-root-relative, which
+    // diverges from workspace-root-relative whenever the workspace lives
+    // inside a larger git repository (COOK-274). `ls_untracked` needs no
+    // flag; `ls-files` is cwd-relative by default.
+    let out = run_git(project_root, &["diff", "--relative", "--name-only", "-z", range])?;
     if !out.status.success() {
         // diff against HEAD on a brand-new repo with no commits yet returns
         // non-zero; treat as empty rather than error.

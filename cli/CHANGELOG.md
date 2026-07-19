@@ -1,5 +1,21 @@
 # Cook CLI changelog
 
+## Unreleased
+
+### Fixed
+
+- **`cook affected` matches imported recipes** (COOK-274). An imported
+  recipe's declared inputs are recorded relative to its own Cookfile's
+  directory, while git changed paths are workspace-root-relative; the exact
+  string intersection could therefore never match any imported recipe, so in
+  a monorepo (the feature's flagship case) `cook affected` and
+  `cook test --affected` silently selected nothing. Inputs are now re-rooted
+  through the owning import's directory before intersecting. Also: git diffs
+  run `--relative` so a workspace nested inside a larger repository compares
+  in workspace-relative vocabulary, and `--recipe=<name>` now matches
+  import-qualified names (`web.build`) in addition to pnpm-style task names
+  (`web:build`).
+
 ## v0.6.2 — 2026-07-19
 
 Claims Cook Standard v0.14.
