@@ -23,6 +23,7 @@
 //!   equals / contains = { path = "text" }
 //!   unchanged / changed = ["path", ...]   byte-compare vs the previous run
 //!   output_contains = ["text", ...]       matched against stdout+stderr
+//!   output_not_contains = ["text", ...]   must be absent from stdout+stderr
 
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +71,8 @@ struct AssertSpec {
     changed: Vec<String>,
     #[serde(default)]
     output_contains: Vec<String>,
+    #[serde(default)]
+    output_not_contains: Vec<String>,
 }
 
 fn corpus_root() -> PathBuf {
@@ -205,6 +208,13 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
             if !combined.contains(needle.as_str()) {
                 return Err(format!(
                     "{label}: output does not contain {needle:?}\n--- output ---\n{combined}"
+                ));
+            }
+        }
+        for needle in &a.output_not_contains {
+            if combined.contains(needle.as_str()) {
+                return Err(format!(
+                    "{label}: output must not contain {needle:?}\n--- output ---\n{combined}"
                 ));
             }
         }

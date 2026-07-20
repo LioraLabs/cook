@@ -36,7 +36,9 @@ output_contains = [
 args = ["probed"]
 [run.assert]
 exists = ["out/probed.txt"]
-# A probe unit declares no outputs, so its label falls back to
-# `display_name()` — which must keep the `probe:<key>` style verbatim, not
-# the `$probe:<key>` raw-command-token marker applied to other fallbacks.
-output_contains = ["probed/probe:demo:tag"]
+# Probe units collapse into one grouped row per recipe, labeled
+# `probe:<module>` — keeping the probe: style (never the `$probe:<key>`
+# raw-command-token marker applied to other fallbacks), with raw probe
+# keys never leaking into user-facing rows.
+output_contains = ["probed/probe:demo (1 probe)"]
+output_not_contains = ["probe:demo:tag", "$probe"]

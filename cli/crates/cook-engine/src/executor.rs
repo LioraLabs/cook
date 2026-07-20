@@ -653,8 +653,11 @@ pub fn execute_dag(
     enum CacheDecision {
         /// Served from cache (local hit, drift-restore, or cold fetch-by-key). Skip execution.
         Hit,
-        /// Not in cache; dispatch the unit normally.
-        Miss,
+        /// Not in cache; dispatch the unit normally. Carries the warm re-run
+        /// attribution (COOK-276): which determinant changed since the unit's
+        /// previous record, rendered as a one-line cause fragment — `None` for
+        /// a genuinely cold unit (no history to diff against).
+        Miss(Option<String>),
         /// `pinned` unit absent from both the local index and the shared store. MUST
         /// NOT be rebuilt — the caller raises a hard failure.
         PinnedColdMiss,
@@ -684,17 +687,34 @@ pub fn execute_dag(
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
-            None => return CacheDecision::Miss,
+            None => return CacheDecision::Miss(None),
         };
         if meta.output_paths.is_empty() {
-            return CacheDecision::Miss;
+            return CacheDecision::Miss(None);
         }
         let cm = match cache_managers.get(&work_node.recipe_name) {
             Some(cm) => cm,
-            None => return CacheDecision::Miss,
+            None => return CacheDecision::Miss(None),
         };
         let cache = cm.get_or_load(&meta.recipe_name);
         let entry = cache.steps.get(&meta.cache_key);
+        // COOK-276: the local step key embeds the env contribution
+        // (`<first-output>@<env:x>`), so an env change moves the key and the
+        // lookup above comes up empty — which would present the dominant
+        // "env value flipped" warm re-run as an unattributable cold build.
+        // A sibling entry under the same output identity is proof of history:
+        // attribute the miss to env.
+        let env_moved_key = entry.is_none() && {
+            let base = meta.output_paths[0].as_str();
+            let prefix = format!("{base}@");
+            cache.steps.contains_key(base)
+                || cache
+                    .steps
+                    .range(prefix.clone()..)
+                    .take_while(|(k, _)| k.starts_with(&prefix))
+                    .next()
+                    .is_some()
+        };
         // CS-0085 §17.6: when any declared output is a glob pattern AND a prior
         // StepEntry exists, derive current_outputs from the recorded concrete
         // paths rather than the raw pattern strings.  Pattern strings don't
@@ -761,10 +781,19 @@ pub fn execute_dag(
             return CacheDecision::Hit;
         }
         // RebuildResult::Rebuild — a local miss (includes a cold entry == None).
+        // COOK-276: name the changed determinant. NoCacheEntry normally means
+        // cold (no attribution), unless the env-in-key probe above found the
+        // unit's history parked under a different env suffix.
+        let cause = match &result {
+            RebuildResult::Rebuild(reason) => reason
+                .cause_summary()
+                .or_else(|| env_moved_key.then(|| "env changed".to_string())),
+            RebuildResult::Skip => None,
+        };
         // COOK-162 §3: `local` units never reach the backend, so a local miss is
         // a plain Miss → rebuild.
         if meta.sharing.is_local() {
-            return CacheDecision::Miss;
+            return CacheDecision::Miss(cause);
         }
         // Shared unit: attempt a cold fetch-by-key from the backend by
         // recomputing the one key from the declared inputs. A declared input
@@ -776,7 +805,7 @@ pub fn execute_dag(
                 return if meta.sharing.is_pinned() {
                     CacheDecision::PinnedColdMiss
                 } else {
-                    CacheDecision::Miss
+                    CacheDecision::Miss(cause)
                 };
             }
         };
@@ -829,7 +858,7 @@ pub fn execute_dag(
             // store: a hard error. The caller MUST NOT dispatch it.
             CacheDecision::PinnedColdMiss
         } else {
-            CacheDecision::Miss
+            CacheDecision::Miss(cause)
         }
     }
 
@@ -1035,7 +1064,7 @@ pub fn execute_dag(
                 // Check artifact cache before executing (no-op for Test nodes since they
                 // have no cache_meta, but kept for structural symmetry).
                 // COOK-162: `pinned` cold-miss aborts the node like a failed step.
-                match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     CacheDecision::Hit => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         emit(
@@ -1102,8 +1131,8 @@ pub fn execute_dag(
                         }
                         return 0;
                     }
-                    CacheDecision::Miss => {}
-                }
+                    CacheDecision::Miss(cause) => cause,
+                };
 
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                 emit(
@@ -1116,6 +1145,7 @@ pub fn execute_dag(
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: payload.display_name(),
                         kind: node_kind_for_payload(payload),
+                        cause: miss_cause,
                     },
                 );
                 // Emit TestStarted for this test-step node.
@@ -1390,6 +1420,7 @@ pub fn execute_dag(
                                         artifact: None,
                                         fallback_label: node_name.clone(),
                                         kind: NodeKind::Cooked,
+                                        cause: None,
                                     },
                                 );
                                 emit(
@@ -1470,6 +1501,7 @@ pub fn execute_dag(
                         artifact: None,
                         fallback_label: node_name.clone(),
                         kind: NodeKind::Cooked,
+                        cause: None,
                     },
                 );
 
@@ -1489,7 +1521,7 @@ pub fn execute_dag(
             Some(payload) => {
                 // Check cache before executing.
                 // COOK-162: `pinned` cold-miss aborts the node like a failed step.
-                match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     CacheDecision::Hit => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         emit(
@@ -1562,8 +1594,8 @@ pub fn execute_dag(
                         }
                         return 0;
                     }
-                    CacheDecision::Miss => {}
-                }
+                    CacheDecision::Miss(cause) => cause,
+                };
 
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                 emit(
@@ -1576,6 +1608,7 @@ pub fn execute_dag(
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: payload.display_name(),
                         kind: node_kind_for_payload(payload),
+                        cause: miss_cause,
                     },
                 );
                 // Emit TestStarted for test-step nodes so Phase 4 reporters can
@@ -2108,6 +2141,7 @@ pub fn execute_dag(
                             // Interactive payloads (@-shell) are never test steps,
                             // so default to Cooked.
                             kind: NodeKind::Cooked,
+                            cause: None,
                         },
                     );
                     let interactive_start = Instant::now();

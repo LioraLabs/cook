@@ -232,7 +232,8 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
             kind: crate::event::NodeKind::Cooked,
-        });
+                cause: None,
+            });
         store.record(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             line: "warning".into(), stream: Stream::Stderr,
@@ -318,7 +319,8 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "../../root".into(), artifact: None, fallback_label: "x".into(),
             kind: crate::event::NodeKind::Cooked,
-        });
+                cause: None,
+            });
         store.record(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             line: "hi".into(), stream: Stream::Stdout,

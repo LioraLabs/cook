@@ -1,5 +1,58 @@
 # Cook CLI changelog
 
+## Unreleased
+
+### Added
+
+- **Warm re-runs name their cause inline** (COOK-276). When a unit with a
+  previous fingerprint record misses its key, the build output says why at
+  start of work — `Rebuilding web/.next — input changed:
+  apps/web/app/.well-known/workflow/v1/manifest.json (+2 more)` (plain
+  renderer: `rebuild (input changed: …)`), categorized as input
+  changed/added/removed, env, command, seal, or output drift, capped at the
+  first path plus a count. The diff is a map-compare of determinants already
+  in hand at the miss — no new hashing on hits, default on, no flag. A cold
+  unit (no history) is not attributed. The full listing stays in `cook why`.
+  The local step index keys embed the env contribution, so an env flip used
+  to present as an unattributable cold build; a sibling entry under the same
+  output identity now attributes it to `env changed`. JSON progress events
+  carry the cause as an additive `cause` field (schema v1, ignored by older
+  readers).
+- **`cook why` labels both cache tiers** (COOK-276). A locally-warm unit no
+  longer leads with a bare `[MISS (shared)]` that reads as "will rebuild":
+  statuses render as `[HIT (local), MISS (shared)]`-style dual labels, the
+  shared tier is probed even on a local hit, and the JSON output gains
+  explicit `local_hit` / `shared_present` fields alongside the legacy
+  `status` string.
+
+### Changed
+
+- **Warm builds are quiet.** Per-node `Cached` lines are now held per recipe
+  and only print when the recipe does real work; a recipe that finishes with
+  nothing to do collapses to a single dim `Cached <recipe> (N nodes)` line
+  (plain renderer: the `done (N/N cached)` row alone). A fully warm build
+  prints one line per recipe plus `Finished in … (N nodes, all cached)`
+  instead of hundreds of per-node rows. When real work does happen, held
+  lines flush in front of it, capped at the per-recipe threshold with a
+  single deferred `… (N more cached)` report. `--verbose` restores live,
+  uncollapsed cached lines.
+- **Toolchain probes group into one line.** `probe:<module>:<key>` nodes no
+  longer print one row each; probes that actually ran collapse into
+  `Resolved <module> toolchain for <recipe> (N probes) in …`, and a
+  fully-cached probe set stays silent.
+- **Internal recipes display their module tag.** Recipes following the
+  double-underscore convention (`__cc_*` = internal cc tooling) render node
+  lines under the module tag (`cc/build/config.h`) instead of the raw minted
+  identifier, and print no queued/summary rows of their own.
+- **Zero-node aggregator recipes** no longer print `queued (0 nodes)` /
+  `done (0/0)` rows in the plain renderer (the inline renderer already
+  suppressed them).
+- **Fewer stray escapes.** The inline renderer only emits its
+  clear-status-line sequence when an event actually prints while the status
+  line is visible, so recorded ptys (script/asciinema/CI-with-tty) no longer
+  fill with `\r\x1b[2K` runs; the final clear is skipped entirely when no
+  status line was shown.
+
 ## v0.6.3 — 2026-07-19
 
 Claims Cook Standard v0.14.

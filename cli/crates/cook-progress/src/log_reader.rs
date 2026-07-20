@@ -449,7 +449,8 @@ mod tests_load_events {
             artifact: None,
             fallback_label: "parser.c".into(),
             kind: NodeKind::Cooked,
-        };
+                cause: None,
+            };
         state.apply(&ns);
         store.record(&state, &ns).unwrap();
 

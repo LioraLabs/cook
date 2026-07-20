@@ -112,6 +112,7 @@ fn warmup_collapses_to_two_runs() {
         Some(&di),
         false,
     );
-    assert!(matches!(r3, RebuildResult::Rebuild(RebuildReason::InputChanged(_))),
+    assert!(matches!(&r3, RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+            if changed.contains(&"a.h".to_string())),
         "Run 3 should rebuild because a.h content changed; got {r3:?}");
 }

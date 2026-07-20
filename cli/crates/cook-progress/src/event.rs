@@ -140,6 +140,11 @@ pub enum ProgressEvent {
         fallback_label: String,
         #[serde(default)]
         kind: NodeKind,
+        /// COOK-276 warm re-run attribution: which determinant changed since
+        /// the unit's previous fingerprint record. `None` for cold units.
+        /// Additive field — schema v1 readers ignore it (`#[serde(default)]`).
+        #[serde(default)]
+        cause: Option<String>,
     },
     NodeCompleted {
         recipe: RecipeId,

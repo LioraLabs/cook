@@ -354,8 +354,10 @@ fn cook_why_attributes_imported_unit_to_its_qualified_recipe_name() {
         .lines()
         .find(|l| l.starts_with("api.compile :: "))
         .unwrap_or_else(|| panic!("expected an `api.compile ::` line; got:\n{out}"));
+    // COOK-276 dual-tier labels: the local tier reads HIT; the shared tier is
+    // reported alongside it explicitly rather than swallowing the local answer.
     assert!(
-        dep_line.contains("[HIT (local)]") && dep_line.contains("key "),
+        dep_line.contains("HIT (local)") && dep_line.contains("key "),
         "expected the dep unit's line to show a local-hit status and key; got:\n{dep_line}"
     );
 }

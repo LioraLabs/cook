@@ -40,6 +40,7 @@ fn main() {
         name: "fetch-a".into(), artifact: Some("build/deps/a.tar".into()),
         fallback_label: "fetch a".into(),
         kind: NodeKind::Cooked,
+        cause: None,
     }).unwrap();
     thread::sleep(Duration::from_millis(400));
     tx.send(ProgressEvent::NodeCompleted {

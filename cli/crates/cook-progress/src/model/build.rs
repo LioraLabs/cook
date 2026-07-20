@@ -87,7 +87,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind } => {
+            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind, cause: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), fallback_label.clone());
                     ns.status = NodeStatus::Running;
@@ -304,7 +304,8 @@ mod tests {
             artifact: Some(PathBuf::from("build/obj/lvm.o")),
             fallback_label: "clang -c lvm.c".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         let r = &s.recipes[&RecipeId::new(0)];
         assert_eq!(r.nodes.len(), 1);
         assert_eq!(r.nodes[&NodeId::new(0)].status, NodeStatus::Running);
@@ -354,7 +355,8 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "x".into(), artifact: None, fallback_label: "x".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         s.apply(&ProgressEvent::NodeFailed {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(10),
@@ -422,7 +424,8 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "a".into(), artifact: None, fallback_label: "a".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         s.apply(&ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(1),

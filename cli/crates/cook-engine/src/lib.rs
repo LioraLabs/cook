@@ -201,6 +201,11 @@ pub enum EngineEvent {
         /// prints on completion (`Tested`, `Compiled`, `Cooked`, …). Defaults
         /// to `Cooked` for shell/cook/lua steps; test-step nodes emit `Test`.
         kind: NodeKind,
+        /// COOK-276 warm re-run attribution: which determinant changed since
+        /// the unit's previous fingerprint record (`input changed: <path>
+        /// (+N more)`, `env changed`, …). `None` for a cold unit or a unit
+        /// with no cache metadata.
+        cause: Option<String>,
     },
     /// A work node completed successfully.
     NodeCompleted {

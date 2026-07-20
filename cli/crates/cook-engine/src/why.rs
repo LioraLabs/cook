@@ -134,10 +134,18 @@ pub struct WhyUnit {
     pub key_hex: String,
     pub disposition: Disposition,
     pub status: CacheStatus,
+    /// COOK-276: explicit local-tier answer, independent of the shared tier.
+    /// `status` alone conflates them — a locally-warm unit whose artifact is
+    /// absent from the shared store must not read as "will rebuild".
+    pub local_hit: bool,
+    /// COOK-276: explicit shared-tier answer. `None` when the unit never
+    /// consults the shared tier (`local` sharing, or no key computable).
+    pub shared_present: Option<bool>,
     pub determinants: UnitDeterminants,
     pub line: u32,
-    /// On a shared miss: Some(diffs) if a producer manifest was found (empty ⇒
-    /// determinants identical to ours), None if no manifest exists for K.
+    /// On a shared-tier miss: Some(diffs) if a producer manifest was found
+    /// (empty ⇒ determinants identical to ours), None if no manifest exists
+    /// for K.
     pub manifest_diff: Option<Vec<DeterminantDiff>>,
 }
 
@@ -191,8 +199,7 @@ pub fn explain(
         }
         let det = resolve_unit_determinants(node, meta, &probe_store);
         let key_hex = unit_key_hex(meta, &det);
-        let (status, manifest_diff) =
-            classify(node, meta, cache_ctx, cache_managers, &det, &key_hex);
+        let c = classify(node, meta, cache_ctx, cache_managers, &det, &key_hex);
         let disposition = match meta.sharing {
             cook_contracts::Sharing::Local => Disposition::Local,
             cook_contracts::Sharing::Pinned => Disposition::Pinned,
@@ -212,10 +219,12 @@ pub fn explain(
             cache_key: meta.cache_key.clone(),
             key_hex,
             disposition,
-            status,
+            status: c.status,
+            local_hit: c.local_hit,
+            shared_present: c.shared_present,
             determinants: det,
             line: node_line(node),
-            manifest_diff,
+            manifest_diff: c.manifest_diff,
         });
     }
     Ok(WhyReport {
@@ -278,6 +287,16 @@ fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> Str
     hex::encode(k)
 }
 
+/// Both cache tiers, answered independently (COOK-276), plus the legacy
+/// single-status classification derived from them.
+struct Classification {
+    status: CacheStatus,
+    local_hit: bool,
+    /// `None` when the shared tier is not consulted (`local` sharing or no key).
+    shared_present: Option<bool>,
+    manifest_diff: Option<Vec<DeterminantDiff>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn classify(
     node: &WorkNode,
@@ -286,33 +305,46 @@ fn classify(
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     det: &UnitDeterminants,
     key_hex: &str,
-) -> (CacheStatus, Option<Vec<DeterminantDiff>>) {
+) -> Classification {
     // I1: a declared input absent on disk means the unit cannot be a clean hit
     // and no real key exists (mirrors `hash_input_paths` returning None at
     // executor.rs:710). Attribute the miss to that input rather than fabricating
     // a `0`-hash key that can never match a real manifest.
     if let Some(p) = first_missing_input(meta, &node.working_dir) {
-        return (CacheStatus::MissingInput { path: p }, None);
+        return Classification {
+            status: CacheStatus::MissingInput { path: p },
+            local_hit: false,
+            shared_present: None,
+            manifest_diff: None,
+        };
     }
-    if local_step_hit(node, meta, det, cache_managers) {
-        return (CacheStatus::LocalHit, None);
-    }
+    let local_hit = local_step_hit(node, meta, det, cache_managers);
     if meta.sharing.is_local() {
-        return (CacheStatus::LocalOnlyMiss, None);
+        return Classification {
+            status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::LocalOnlyMiss },
+            local_hit,
+            shared_present: None,
+            manifest_diff: None,
+        };
     }
     // C1: read-only shared-store probe — recompute artifact keys and confirm the
     // backend holds every output, but NEVER write to the working tree (unlike
     // `fetch_by_key`, which restores). `cook why` is strictly read-only.
-    if shared_artifacts_present(cache_ctx, key_hex, meta) {
-        return (CacheStatus::SharedHit, None);
-    }
-    if meta.sharing.is_pinned() {
-        return (
-            CacheStatus::PinnedColdMiss,
-            manifest_diff(cache_ctx, key_hex, det),
-        );
-    }
-    (CacheStatus::SharedMiss, manifest_diff(cache_ctx, key_hex, det))
+    // COOK-276: probed even on a local hit, so both tiers get an explicit
+    // answer (`[HIT (local), MISS (shared)]` instead of a bare tier label
+    // that reads as "will rebuild").
+    let shared = shared_artifacts_present(cache_ctx, key_hex, meta);
+    let manifest_diff = if shared { None } else { manifest_diff(cache_ctx, key_hex, det) };
+    let status = if local_hit {
+        CacheStatus::LocalHit
+    } else if shared {
+        CacheStatus::SharedHit
+    } else if meta.sharing.is_pinned() {
+        CacheStatus::PinnedColdMiss
+    } else {
+        CacheStatus::SharedMiss
+    };
+    Classification { status, local_hit, shared_present: Some(shared), manifest_diff }
 }
 
 fn first_missing_input(

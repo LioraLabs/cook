@@ -112,13 +112,14 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "total": total,
             "reason": "upstream-failed",
         }),
-        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind } => json!({
+        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind, cause } => json!({
             "type": "node-started",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "artifact": artifact.as_ref().map(|p| p.display().to_string()),
             "fallback_label": fallback_label,
             "kind": kind_str(kind),
+            "cause": cause,
         }),
         ProgressEvent::NodeCompleted { recipe, node, elapsed, kind } => json!({
             "type": "node-completed",
@@ -324,7 +325,8 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         let s = write_event(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             line: "warning: unused".into(), stream: Stream::Stderr,
@@ -371,12 +373,14 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         let s_started = write_event(&state, &ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "ignored-inline-name".into(), artifact: None, fallback_label: "x".into(),
             kind: NodeKind::Cooked,
-        });
+                cause: None,
+            });
         assert!(s_started.contains("\"node\":\"lvm.c\""),
             "node-started must read state, not inline name; got: {s_started}");
         let s_skipped = write_event(&state, &ProgressEvent::NodeSkipped {
@@ -426,7 +430,8 @@ mod tests {
             name: "lvm.c".into(), artifact: None,
             fallback_label: "x".into(),
             kind: NodeKind::Compile,
-        });
+                cause: None,
+            });
         assert!(s.contains("\"kind\":\"compile\""), "got: {s}");
     }
 

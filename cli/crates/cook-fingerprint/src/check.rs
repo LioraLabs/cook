@@ -58,11 +58,65 @@ pub enum RebuildReason {
     SealChanged,
     OutputMissing,
     OutputChanged,
-    InputSetChanged,
-    InputChanged(String),
+    /// COOK-276: the full recorded-vs-current input diff, computed at miss
+    /// time (both sides are already in hand — no extra hashing on hits).
+    /// All three lists empty means the sets are equal but ordered
+    /// differently (a reorder still misses the key).
+    InputsChanged {
+        /// Paths present in both sets whose content differs (or that can no
+        /// longer be read).
+        changed: Vec<String>,
+        /// Paths in the current set but not the recorded one.
+        added: Vec<String>,
+        /// Paths in the recorded set but not the current one.
+        removed: Vec<String>,
+    },
+}
+
+impl RebuildReason {
+    /// One-line human cause fragment for build-output attribution (COOK-276):
+    /// `input changed: <path> (+N more)`, `env changed`, … Returns `None` for
+    /// `NoCacheEntry` — a cold unit is not a *re*-run and gets no attribution.
+    pub fn cause_summary(&self) -> Option<String> {
+        fn capped(kind: &str, paths: &[String], extra: usize) -> String {
+            let more = paths.len() + extra - 1;
+            if more > 0 {
+                format!("input {kind}: {} (+{more} more)", paths[0])
+            } else {
+                format!("input {kind}: {}", paths[0])
+            }
+        }
+        match self {
+            RebuildReason::NoCacheEntry => None,
+            RebuildReason::CommandHashChanged => Some("command changed".into()),
+            RebuildReason::EnvChanged => Some("env changed".into()),
+            RebuildReason::SealChanged => Some("seal changed".into()),
+            RebuildReason::OutputMissing => Some("output missing (not restorable)".into()),
+            RebuildReason::OutputChanged => Some("output drifted (not restorable)".into()),
+            RebuildReason::InputsChanged { changed, added, removed } => {
+                let rest = |skip: &[String]| {
+                    changed.len() + added.len() + removed.len() - skip.len()
+                };
+                if !changed.is_empty() {
+                    Some(capped("changed", changed, rest(changed)))
+                } else if !added.is_empty() {
+                    Some(capped("added", added, rest(added)))
+                } else if !removed.is_empty() {
+                    Some(capped("removed", removed, rest(removed)))
+                } else {
+                    Some("input set reordered".into())
+                }
+            }
+        }
+    }
 }
 
 /// Shared input-checking logic for cook and plate layers.
+///
+/// On a mismatch, returns the FULL diff (every changed path, every
+/// added/removed path) rather than short-circuiting at the first — the walk
+/// only hashes files whose mtime moved, and a miss is followed by a rebuild
+/// that dwarfs the cost, so completeness here is effectively free (COOK-276).
 fn check_inputs(
     cached_inputs: &[FileRecord],
     current_input_paths: &[&str],
@@ -70,10 +124,16 @@ fn check_inputs(
 ) -> Result<Vec<FileRecord>, RebuildReason> {
     let cached_paths: Vec<&str> = cached_inputs.iter().map(|f| f.path.as_str()).collect();
     if cached_paths != current_input_paths {
-        return Err(RebuildReason::InputSetChanged);
+        let cached_set: std::collections::BTreeSet<&str> = cached_paths.iter().copied().collect();
+        let current_set: std::collections::BTreeSet<&str> =
+            current_input_paths.iter().copied().collect();
+        let added = current_set.difference(&cached_set).map(|s| s.to_string()).collect();
+        let removed = cached_set.difference(&current_set).map(|s| s.to_string()).collect();
+        return Err(RebuildReason::InputsChanged { changed: Vec::new(), added, removed });
     }
 
     let mut updated = cached_inputs.to_vec();
+    let mut changed: Vec<String> = Vec::new();
     for (i, (cached, rel_path)) in cached_inputs
         .iter()
         .zip(current_input_paths.iter())
@@ -82,22 +142,28 @@ fn check_inputs(
         let abs_path = working_dir.join(rel_path);
         let disk_mtime = match stat_mtime(&abs_path) {
             Some(m) => m,
-            None => return Err(RebuildReason::InputChanged(cached.path.clone())),
+            None => {
+                changed.push(cached.path.clone());
+                continue;
+            }
         };
         if disk_mtime != cached.mtime {
-            let disk_hash = match hash_file(&abs_path) {
-                Some(h) => h,
-                None => return Err(RebuildReason::InputChanged(cached.path.clone())),
-            };
-            if disk_hash != cached.hash {
-                return Err(RebuildReason::InputChanged(cached.path.clone()));
-            }
-            // Empty files are signals (marker files) — mtime is authoritative.
-            if disk_hash == empty_hash() {
-                return Err(RebuildReason::InputChanged(cached.path.clone()));
+            let disk_hash = hash_file(&abs_path);
+            // Unreadable, content differs, or an empty marker file (mtime is
+            // authoritative for those) → changed.
+            if disk_hash != Some(cached.hash) || disk_hash == Some(empty_hash()) {
+                changed.push(cached.path.clone());
+                continue;
             }
             updated[i].mtime = disk_mtime;
         }
+    }
+    if !changed.is_empty() {
+        return Err(RebuildReason::InputsChanged {
+            changed,
+            added: Vec::new(),
+            removed: Vec::new(),
+        });
     }
     Ok(updated)
 }
@@ -808,6 +874,94 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // COOK-276: warm re-run attribution — full diff + cause summaries
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn check_inputs_collects_every_changed_path_not_just_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(wd.join(f), format!("old {f}")).expect("write");
+        }
+        let cached: Vec<FileRecord> = ["a.txt", "b.txt", "c.txt"]
+            .iter()
+            .map(|f| FileRecord {
+                path: (*f).to_string(),
+                mtime: 0, // force the hash comparison
+                hash: hash_file(&wd.join(f)).expect("hash"),
+            })
+            .collect();
+        // Change two of the three.
+        std::fs::write(wd.join("a.txt"), b"new a").expect("write");
+        std::fs::write(wd.join("c.txt"), b"new c").expect("write");
+
+        let err = check_inputs(&cached, &["a.txt", "b.txt", "c.txt"], wd).unwrap_err();
+        assert_eq!(
+            err,
+            RebuildReason::InputsChanged {
+                changed: vec!["a.txt".into(), "c.txt".into()],
+                added: vec![],
+                removed: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn check_inputs_names_added_and_removed_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("keep.txt"), b"x").expect("write");
+        let cached = vec![
+            make_file_record("keep.txt", wd),
+            FileRecord { path: "gone.txt".into(), mtime: 0, hash: 1 },
+        ];
+        let err = check_inputs(&cached, &["keep.txt", "new.txt"], wd).unwrap_err();
+        assert_eq!(
+            err,
+            RebuildReason::InputsChanged {
+                changed: vec![],
+                added: vec!["new.txt".into()],
+                removed: vec!["gone.txt".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn cause_summary_formats_and_caps() {
+        let r = RebuildReason::InputsChanged {
+            changed: vec!["apps/web/manifest.json".into(), "b".into(), "c".into()],
+            added: vec![],
+            removed: vec![],
+        };
+        assert_eq!(
+            r.cause_summary().unwrap(),
+            "input changed: apps/web/manifest.json (+2 more)"
+        );
+
+        let single = RebuildReason::InputsChanged {
+            changed: vec![],
+            added: vec!["new.txt".into()],
+            removed: vec![],
+        };
+        assert_eq!(single.cause_summary().unwrap(), "input added: new.txt");
+
+        let mixed = RebuildReason::InputsChanged {
+            changed: vec!["m.json".into()],
+            added: vec!["a".into()],
+            removed: vec!["r".into()],
+        };
+        assert_eq!(mixed.cause_summary().unwrap(), "input changed: m.json (+2 more)");
+
+        assert_eq!(RebuildReason::EnvChanged.cause_summary().unwrap(), "env changed");
+        assert_eq!(RebuildReason::CommandHashChanged.cause_summary().unwrap(), "command changed");
+        assert_eq!(RebuildReason::NoCacheEntry.cause_summary(), None, "cold is not attributed");
+
+        let reorder = RebuildReason::InputsChanged { changed: vec![], added: vec![], removed: vec![] };
+        assert_eq!(reorder.cause_summary().unwrap(), "input set reordered");
+    }
+
+    // -------------------------------------------------------------------------
     // Task 5: rebuild-check algorithm
     // -------------------------------------------------------------------------
 
@@ -938,7 +1092,11 @@ mod tests {
             needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
         assert_eq!(
             result,
-            RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
+            RebuildResult::Rebuild(RebuildReason::InputsChanged {
+                changed: vec!["in.c".to_string()],
+                added: vec![],
+                removed: vec![],
+            })
         );
         assert!(updated.is_none());
     }
@@ -1278,8 +1436,13 @@ mod tests {
             false,
         );
 
-        // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → InputSetChanged.
-        assert!(matches!(result, RebuildResult::Rebuild(RebuildReason::InputSetChanged)));
+        // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → the
+        // set diff names hdr.h as removed from the current set.
+        assert!(matches!(
+            &result,
+            RebuildResult::Rebuild(RebuildReason::InputsChanged { removed, .. })
+                if removed == &vec!["hdr.h".to_string()]
+        ), "got: {result:?}");
     }
 
     // -------------------------------------------------------------------------

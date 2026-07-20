@@ -5,6 +5,7 @@ pub mod event;
 pub mod log_reader;
 pub mod log_store;
 pub mod model;
+pub mod naming;
 pub mod render;
 pub mod style;
 

@@ -42,16 +42,23 @@ impl InlineRenderer {
 
 impl Renderer for InlineRenderer {
     fn handle(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
-        // Coordinate with the tick thread: clear the status line before
-        // every event line we emit. Lock stderr so the tick thread can't
-        // interleave.
-        let mut stderr = io::stderr().lock();
-        write!(stderr, "{}", crate::render::CLEAR_LINE)?;
+        // Render to a buffer first: most events produce no output, and a
+        // silent event needs no CLEAR_LINE — spraying clears on every event
+        // bloats recorded ptys (script/asciinema/CI-with-tty) for nothing.
+        let mut buf = Vec::new();
+        self.event_writer.handle(&mut buf, state, event)?;
 
-        // Hand the event to EventWriter. It returns whether anything was written.
-        let _wrote = self.event_writer.handle(&mut stderr, state, event)?;
-        stderr.flush()?;
-        drop(stderr);
+        if !buf.is_empty() {
+            // Coordinate with the tick thread: clear the status line (when
+            // one may be painted) before the event lines. Lock stderr so
+            // the tick thread can't interleave.
+            let mut stderr = io::stderr().lock();
+            if self.status.as_ref().is_some_and(|s| s.is_visible()) {
+                write!(stderr, "{}", crate::render::CLEAR_LINE)?;
+            }
+            stderr.write_all(&buf)?;
+            stderr.flush()?;
+        }
 
         // Update + show/hide the status line.
         if let Some(s) = &self.status {
@@ -76,11 +83,16 @@ impl Renderer for InlineRenderer {
 
     fn finish(&mut self, _state: &BuildState) -> io::Result<()> {
         // Drop the StatusLine first — its Drop impl shuts down the tick thread,
-        // ensuring no further repaints can race with our final clear.
-        self.status.take();
-        let mut stderr = io::stderr().lock();
-        write!(stderr, "{}", crate::render::CLEAR_LINE)?;
-        stderr.flush()
+        // ensuring no further repaints can race with our final clear. With no
+        // status line there is nothing to clear (and a stray escape would
+        // land in the output).
+        if self.status.take().is_some() {
+            let mut stderr = io::stderr().lock();
+            write!(stderr, "{}", crate::render::CLEAR_LINE)?;
+            stderr.flush()
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -130,6 +142,7 @@ mod tests {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "x.c".into(), artifact: None, fallback_label: "x".into(),
                 kind: NodeKind::Compile,
+                cause: None,
             },
             ProgressEvent::NodeCompleted {
                 recipe: RecipeId::new(0), node: NodeId::new(0),

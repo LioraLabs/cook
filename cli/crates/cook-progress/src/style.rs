@@ -13,6 +13,8 @@ pub enum LineKind {
     NodeFailed,
     /// NodeSkipped (single, non-collapsed).
     NodeSkipped,
+    /// NodeStarted carrying a warm re-run cause (COOK-276 attribution).
+    NodeRebuilding,
     /// RecipeCompleted (success) or build-end success.
     RecipeFinished,
     /// RecipeFailed or build-end failure.
@@ -56,6 +58,7 @@ pub const fn verb_for(line: LineKind, kind: NodeKind) -> Verb {
         },
         LineKind::NodeCached         => Verb { text: "Cached",    color: VerbColor::Dim,    bold: false },
         LineKind::NodeSkipped        => Verb { text: "Skipped",   color: VerbColor::Yellow, bold: false },
+        LineKind::NodeRebuilding     => Verb { text: "Rebuilding", color: VerbColor::Yellow, bold: false },
         LineKind::NodeFailed         => Verb { text: "Failed",    color: VerbColor::Red,    bold: true },
         LineKind::RecipeFinished     => Verb { text: "Finished",  color: VerbColor::Green,  bold: true },
         LineKind::RecipeFailed       => Verb { text: "Failed",    color: VerbColor::Red,    bold: true },

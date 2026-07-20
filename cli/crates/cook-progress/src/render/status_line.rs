@@ -76,6 +76,9 @@ impl StatusLine {
     }
     pub fn show(&self) { self.visible.store(true, Ordering::Relaxed); }
     pub fn hide(&self) { self.visible.store(false, Ordering::Relaxed); }
+    /// Whether the tick thread may currently be painting the line — i.e.
+    /// whether an event writer needs to clear before printing its own line.
+    pub fn is_visible(&self) -> bool { self.visible.load(Ordering::Relaxed) }
 
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);

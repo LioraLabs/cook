@@ -264,6 +264,7 @@ fn bridge_engine_to_progress_events(
                     artifact,
                     fallback_label,
                     kind,
+                    cause,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
@@ -274,6 +275,7 @@ fn bridge_engine_to_progress_events(
                         artifact,
                         fallback_label,
                         kind: translate_kind(kind),
+                        cause,
                     }
                 }
                 cook_engine::EngineEvent::NodeCompleted {
@@ -360,6 +362,7 @@ fn bridge_engine_to_progress_events(
                             artifact: None,
                             fallback_label: node_name,
                             kind: cook_progress::NodeKind::Cooked,
+                            cause: None,
                         });
                     }
                     // CS-0035: map cook-contracts::OutputStream → cook-progress::Stream
@@ -2158,13 +2161,20 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
     let mut s = String::new();
     s.push_str(&format!("why {}\n", report.recipe));
     for u in &report.units {
+        // COOK-276: label both tiers explicitly. A bare `MISS (shared)` on a
+        // locally-warm unit reads as "this will rebuild" when it only means
+        // "absent from the shared store tier".
         let status = match &u.status {
-            CacheStatus::LocalHit => "HIT (local)".to_string(),
-            CacheStatus::SharedHit => "HIT (shared)".to_string(),
-            CacheStatus::SharedMiss => "MISS (shared)".to_string(),
-            CacheStatus::LocalOnlyMiss => "MISS (local-only)".to_string(),
-            CacheStatus::PinnedColdMiss => "MISS (pinned, cold)".to_string(),
             CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
+            CacheStatus::PinnedColdMiss => "MISS (local), MISS (shared) — pinned, fetch-only".to_string(),
+            _ => {
+                let local = if u.local_hit { "HIT (local)" } else { "MISS (local)" };
+                match u.shared_present {
+                    None => local.to_string(),
+                    Some(true) => format!("{local}, HIT (shared)"),
+                    Some(false) => format!("{local}, MISS (shared)"),
+                }
+            }
         };
         s.push_str(&format!(
             "\n{} :: {} [{}]  key {}\n",
@@ -2359,6 +2369,15 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
     for (k, v) in status_obj {
         obj.insert(k, v);
     }
+    // COOK-276: explicit per-tier answers alongside the legacy single status.
+    obj.insert("local_hit".to_string(), serde_json::Value::Bool(u.local_hit));
+    obj.insert(
+        "shared_present".to_string(),
+        match u.shared_present {
+            Some(b) => serde_json::Value::Bool(b),
+            None => serde_json::Value::Null,
+        },
+    );
     obj.insert("disposition".to_string(), serde_json::Value::String(disposition.to_string()));
     obj.insert("determinants".to_string(), determinants);
     obj.insert("manifest_diff".to_string(), manifest_diff);
