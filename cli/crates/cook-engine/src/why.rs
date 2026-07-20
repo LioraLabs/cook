@@ -371,7 +371,29 @@ fn shared_artifacts_present(
     if meta.output_paths.is_empty() {
         return false;
     }
-    for (idx, path) in meta.output_paths.iter().enumerate() {
+    // COOK-278: for glob-output units the declared paths are raw patterns, not
+    // the concrete names the publish path keyed its artifacts under — probing
+    // them reports a false SharedMiss. When the key's determinant manifest is
+    // present, probe its recorded concrete output list (files, implicit
+    // depfile, empty dirs — publish index order) instead.
+    let manifest_outputs: Option<Vec<String>> = cache_ctx
+        .backend
+        .get_manifest(&cloud_k)
+        .ok()
+        .flatten()
+        .map(|m| {
+            let mut list = m.output_paths;
+            if let Some(di) = &meta.discovered_inputs {
+                list.push(di.from.clone());
+            }
+            list.extend(m.empty_dir_outputs);
+            list
+        });
+    let probe_paths: &[String] = match &manifest_outputs {
+        Some(list) => list,
+        None => &meta.output_paths,
+    };
+    for (idx, path) in probe_paths.iter().enumerate() {
         let artifact_k = cook_fingerprint::artifact_key(&cloud_k, idx as u32, path);
         match cache_ctx.backend.get(&artifact_k) {
             Ok(Some(mut reader)) => {
@@ -457,6 +479,7 @@ mod tests {
             seal_contribution: 9,
             inputs: BTreeMap::from([("src/a.c".into(), 100u64)]),
             output_paths: vec!["build/a.o".into()],
+            empty_dir_outputs: Vec::new(),
             consulted_env: BTreeMap::from([("CC".into(), "gcc".into())]),
             sealed_probes: BTreeMap::from([("host".into(), "\"x86_64\"".into())]),
         }

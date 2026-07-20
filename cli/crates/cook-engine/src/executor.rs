@@ -809,7 +809,7 @@ pub fn execute_dag(
                 };
             }
         };
-        if cook_fingerprint::fetch_by_key(
+        if let Some(outcome) = cook_fingerprint::fetch_by_key(
             &restore_ctx,
             meta.command_hash,
             meta.env_contribution,
@@ -819,14 +819,54 @@ pub fn execute_dag(
             &work_node.working_dir,
             meta.discovered_inputs.as_ref(),
         ) {
+            let restored: std::collections::BTreeSet<&str> =
+                outcome.restored_outputs.iter().map(|s| s.as_str()).collect();
+            // COOK-278: a fetch hit must be byte-identical to a fresh build.
+            // On a warm revert the PREVIOUS build's concrete outputs are still
+            // on disk (content-dependent filenames — stale Next.js chunks);
+            // sweep every previously-recorded output the restore didn't
+            // rewrite, then reconcile `dir/` subtrees to exactly the restored
+            // set (CS-0119 parity with the plain-hit path).
+            if let Some(prior) = entry {
+                let stale = || {
+                    prior
+                        .outputs
+                        .iter()
+                        .filter(|rec| !restored.contains(rec.path.as_str()))
+                        .map(|rec| work_node.working_dir.join(&rec.path))
+                };
+                // Files first, then empty dirs (`remove_dir`, not `_all`): a
+                // stale dir record whose subtree gained restored files must
+                // survive — non-empty removal fails and that is correct.
+                for abs in stale().filter(|p| !p.is_dir()) {
+                    let _ = std::fs::remove_file(&abs);
+                }
+                for abs in stale().filter(|p| p.is_dir()) {
+                    let _ = std::fs::remove_dir(&abs);
+                }
+            }
+            let kept: std::collections::BTreeSet<String> =
+                outcome.restored_outputs.iter().cloned().collect();
+            for out in &meta.output_paths {
+                if let Some(root) = out.strip_suffix('/') {
+                    cook_fingerprint::reconcile_dir_output(
+                        &work_node.working_dir,
+                        root,
+                        &kept,
+                    );
+                }
+            }
             // COOK-269: a cold fetch restores the outputs but previously
             // recorded nothing locally, so §17.7's prior-output snapshot came
             // up empty after a fresh clone / lost `.cook` — an output orphaned
             // by a later shrink was never swept. Record the StepEntry a fresh
             // execution would have written, hashed from the bytes on disk.
-            // Complete-or-skip: a path that cannot be hashed (e.g. a `dir/`
-            // output) skips recording entirely rather than persisting a
-            // partial output list whose artifact indices would misalign.
+            // COOK-278: the entry is FAT — declared + discovered inputs, and
+            // the RESTORED output list (not the stale pre-fetch one) — so the
+            // next unchanged run is a plain local skip instead of a perpetual
+            // InputSetChanged → refetch round-trip. Complete-or-skip: a path
+            // that cannot be recorded skips recording entirely rather than
+            // persisting a partial list whose artifact indices would misalign.
             let file_record = |p: &str| {
                 let abs = work_node.working_dir.join(p);
                 cook_fingerprint::hash_file(&abs).map(|h| cook_fingerprint::FileRecord {
@@ -835,10 +875,31 @@ pub fn execute_dag(
                     hash: h,
                 })
             };
-            let inputs: Option<Vec<_>> =
-                meta.input_paths.iter().map(|p| file_record(p)).collect();
-            let outputs: Option<Vec<_>> =
-                current_outputs_storage.iter().map(|p| file_record(p)).collect();
+            // Restored outputs can include empty-dir records (COOK-180);
+            // record those with the same hash-0 convention publish uses.
+            let output_record = |p: &str| {
+                let abs = work_node.working_dir.join(p);
+                if abs.is_dir() {
+                    Some(cook_fingerprint::FileRecord {
+                        path: p.to_string(),
+                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                        hash: 0,
+                    })
+                } else {
+                    file_record(p)
+                }
+            };
+            let inputs: Option<Vec<_>> = meta
+                .input_paths
+                .iter()
+                .map(|p| file_record(p))
+                .chain(outcome.discovered_paths.iter().map(|p| file_record(p)))
+                .collect();
+            let outputs: Option<Vec<_>> = outcome
+                .restored_outputs
+                .iter()
+                .map(|p| output_record(p))
+                .collect();
             if let (Some(inputs), Some(outputs)) = (inputs, outputs) {
                 cm.update_step(
                     &meta.recipe_name,
@@ -3023,6 +3084,55 @@ fn publish_completion(
                         e
                     );
                 }
+
+                // COOK-278: additionally maintain the multi-set manifest under
+                // its own reserved key. The single-set artifact above is
+                // last-writer-wins, so an edit that changes the discovered SET
+                // erases the older set and breaks revert-restore; this one
+                // accumulates every distinct set seen for the declared key
+                // (newest first, capped). The v1 artifact keeps being written
+                // so pre-COOK-278 binaries sharing the store lose nothing.
+                let mut sets = cook_fingerprint::read_discovered_input_sets(
+                    cache_ctx.backend.as_ref(),
+                    &declared_key,
+                );
+                sets.retain(|s| *s != discovered_paths);
+                sets.insert(0, discovered_paths);
+                sets.truncate(cook_fingerprint::DISCOVERED_INPUT_SETS_CAP);
+                let sets_json = serde_json::to_vec(&sets).unwrap_or_default();
+                let sets_k = artifact_key(
+                    &declared_key,
+                    cook_fingerprint::DISCOVERED_INPUT_SETS_INDEX,
+                    cook_fingerprint::DISCOVERED_INPUT_SETS_PATH,
+                );
+                let mut sets_meta = ArtifactMeta {
+                    recipe_namespace: recipe_namespace.clone(),
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    schema_version: CACHE_VERSION,
+                    size_bytes: sets_json.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                    output_index: cook_fingerprint::DISCOVERED_INPUT_SETS_INDEX,
+                    output_path: cook_fingerprint::DISCOVERED_INPUT_SETS_PATH.to_string(),
+                    // CS-0054: stamped by the backend on put.
+                    content_hash: ArtifactMeta::zero_content_hash(),
+                    kind: Some("discovered_input_sets".to_string()),
+                    mode: 0o644,
+                    target: None,
+                };
+                if let Err(e) = cook_cache::backend::put_bytes(
+                    cache_ctx.backend.as_ref(),
+                    &sets_k,
+                    &sets_json,
+                    &mut sets_meta,
+                ) {
+                    tracing::warn!(
+                        "cache backend put failed for discovered-input sets manifest: {}",
+                        e
+                    );
+                }
             }
         }
     }
@@ -3121,6 +3231,7 @@ fn publish_completion(
             seal_contrib,
             &step_entry.inputs,
             &resolved_output_paths,
+            &empty_dir_paths,
             &meta.consulted_env,
             &meta.seal_keys,
             probe_store,
@@ -3147,6 +3258,7 @@ fn build_determinant_manifest(
     seal_contribution: u64,
     inputs: &[cook_fingerprint::FileRecord],
     output_paths: &[String],
+    empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,
     seal_keys: &std::collections::BTreeSet<String>,
     probe_store: &cook_luaotp::ProbeValueStore,
@@ -3165,6 +3277,7 @@ fn build_determinant_manifest(
         seal_contribution,
         inputs: inputs_map,
         output_paths: output_paths.to_vec(),
+        empty_dir_outputs: empty_dir_outputs.to_vec(),
         consulted_env: consulted_env.clone(),
         sealed_probes,
     }
@@ -3216,6 +3329,7 @@ mod tests {
             0x9abc,
             &inputs,
             &["build/a.o".to_string()],
+            &[],
             &consulted,
             &seal_keys,
             &store,

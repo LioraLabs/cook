@@ -170,7 +170,12 @@ fn cold_fetch_shares_depfile_unit_across_fleet() {
         Some(&di),
     );
 
-    assert!(hit, "cold fetch should HIT via manifest recovery");
+    let outcome = hit.expect("cold fetch should HIT via manifest recovery");
+    assert_eq!(
+        outcome.discovered_paths,
+        vec!["src/dep.h".to_string()],
+        "outcome must carry the winning discovered set so the caller can record a FAT entry",
+    );
     assert_eq!(
         std::fs::read(wd.join("build/main.o")).expect("read build/main.o"),
         b"OBJ",
@@ -228,7 +233,7 @@ fn cold_fetch_safe_miss_when_header_differs() {
         Some(&di),
     );
 
-    assert!(!hit, "safe miss: consumer dep.h differs, full key must not match");
+    assert!(hit.is_none(), "safe miss: consumer dep.h differs, full key must not match");
     assert!(
         !wd.join("build/main.o").exists(),
         "build/main.o must NOT be created on a safe miss",

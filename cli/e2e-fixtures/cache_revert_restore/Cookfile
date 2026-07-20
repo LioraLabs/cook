@@ -1,0 +1,26 @@
+# COOK-278: edit-then-revert must restore the cached artifact, never
+# re-execute. Two unit shapes, both with depfile discovered inputs:
+#
+#   chunks: glob outputs whose concrete filename depends on input CONTENT
+#           (the Next.js hashed-chunk shape that made cap-cook re-run a
+#           full `next build` on every revert).
+#   sets:   the discovered SET itself depends on input content, so an edit
+#           swaps which headers the depfile lists.
+
+recipe chunks
+    cook.add_unit({
+        name    = "chunks",
+        inputs  = {"main.src"},
+        outputs = {"build/**"},
+        command = "mkdir -p build && rm -f build/* && H=$(md5sum header.h | cut -c1-8) && cat main.src header.h > build/chunk-$H.txt && printf 'build/marker: main.src header.h\\n' > chunks.d",
+        discovered_inputs = { from = "chunks.d", format = "make" },
+    })
+
+recipe sets
+    cook.add_unit({
+        name    = "sets",
+        inputs  = {"main.src"},
+        outputs = {"out.txt"},
+        command = "DEPS='main.src header_a.h'; if grep -q include_b header_a.h; then DEPS=\"$DEPS header_b.h\"; fi && cat $DEPS > out.txt && printf 'out.txt: %s\\n' \"$DEPS\" > sets.d",
+        discovered_inputs = { from = "sets.d", format = "make" },
+    })

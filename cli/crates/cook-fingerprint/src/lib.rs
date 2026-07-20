@@ -24,11 +24,13 @@ use sha2::{Digest, Sha256};
 pub use backend::{
     artifact_key, cloud_key, recipe_namespace, ArtifactMeta, BackendError, BackendResult,
     CacheBackend, CloudKey, CloudKeyInputs, DISCOVERED_INPUTS_MANIFEST_INDEX,
-    DISCOVERED_INPUTS_MANIFEST_PATH,
+    DISCOVERED_INPUTS_MANIFEST_PATH, DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX,
+    DISCOVERED_INPUT_SETS_PATH,
 };
 pub use check::{
     fetch_by_key, hash_env, hash_file, hash_input_paths, install_depfile_parser,
-    needs_rebuild_cook, needs_rebuild_plate, stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
+    needs_rebuild_cook, needs_rebuild_plate, read_discovered_input_sets, stat_mtime, FetchOutcome,
+    RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
 pub use probe::resolve_probe_inputs;

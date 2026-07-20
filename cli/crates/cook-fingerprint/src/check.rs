@@ -637,31 +637,93 @@ fn try_restore(
     true
 }
 
-/// Cold fetch-by-key (COOK-162 §3 sharing): with no local StepEntry, attempt to
-/// serve a unit's declared outputs straight from the shared backend by
-/// recomputing its one key. Returns true iff every output was fetched, verified,
-/// and written. `sorted_input_content_hashes` MUST already be sorted.
+/// COOK-278: the result of a successful [`fetch_by_key`] restore. The caller
+/// needs both lists to leave the working tree and the local index in the same
+/// state a fresh execution would have: `restored_outputs` seeds the recorded
+/// `StepEntry.outputs` and the stray-output sweep; `discovered_paths` fattens
+/// the recorded input set so the NEXT check is a plain local skip instead of
+/// a perpetual `InputSetChanged` → refetch round-trip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchOutcome {
+    /// Index-ordered restored paths: resolved file outputs, then the implicit
+    /// depfile (discovered-inputs units only), then recorded empty dirs.
+    pub restored_outputs: Vec<String>,
+    /// The discovered-input path set whose content hashes composed the winning
+    /// full key. Empty for units without `discovered_inputs`.
+    pub discovered_paths: Vec<String>,
+}
+
+/// Read the candidate discovered-input path sets recorded under a unit's
+/// DECLARED-inputs-only key, newest first. Prefers the COOK-278 multi-set
+/// manifest; falls back to the single-set COOK-177 manifest written by older
+/// binaries. Returns `[]` when neither exists (or either is corrupt — a
+/// corrupt manifest degrades to a safe cold miss, never a wrong hit).
+pub fn read_discovered_input_sets(
+    backend: &dyn crate::backend::CacheBackend,
+    declared_key: &crate::backend::CloudKey,
+) -> Vec<Vec<String>> {
+    let read_json = |index: u32, path: &str| -> Option<Vec<u8>> {
+        let k = crate::backend::artifact_key(declared_key, index, path);
+        let mut reader = backend.get(&k).ok().flatten()?;
+        let mut buf = Vec::new();
+        // Drain fully so the VerifyingReader hashes on read (CS-0054).
+        std::io::Read::read_to_end(&mut reader, &mut buf).ok()?;
+        Some(buf)
+    };
+    if let Some(sets) = read_json(
+        crate::backend::DISCOVERED_INPUT_SETS_INDEX,
+        crate::backend::DISCOVERED_INPUT_SETS_PATH,
+    )
+    .and_then(|buf| serde_json::from_slice::<Vec<Vec<String>>>(&buf).ok())
+    {
+        return sets;
+    }
+    if let Some(set) = read_json(
+        crate::backend::DISCOVERED_INPUTS_MANIFEST_INDEX,
+        crate::backend::DISCOVERED_INPUTS_MANIFEST_PATH,
+    )
+    .and_then(|buf| serde_json::from_slice::<Vec<String>>(&buf).ok())
+    {
+        return vec![set];
+    }
+    Vec::new()
+}
+
+/// Fetch-by-key (COOK-162 §3 sharing): serve a unit's outputs straight from
+/// the shared backend by recomputing its one key from on-disk input content.
+/// Returns `Some(FetchOutcome)` iff every output of some candidate key was
+/// fetched, verified, and written; `None` is a safe miss.
+/// `sorted_input_content_hashes` MUST already be sorted and MUST cover the
+/// DECLARED inputs only.
 ///
-/// `output_paths` are the unit's declared output paths. An empty `output_paths`
-/// slice returns false (no artifacts to serve is not a hit).
+/// An empty `output_paths` slice returns `None` (no artifacts to serve is not
+/// a hit).
 ///
-/// One unit shape intrinsically cannot cold-fetch and so falls through to
-/// rebuild (and, for a `pinned` unit, to a hard cold-miss error):
-///   * **Glob outputs** — on the cold path the declared outputs are still raw
-///     patterns (e.g. `*.o`), not the concrete paths the publish path keyed its
-///     artifacts under.
-/// That degrades safely: a non-pinned unit rebuilds; a `pinned` unit cold-misses.
+/// **`discovered_inputs` (depfile) units** are handled via a two-level fetch
+/// (COOK-177, extended by COOK-278). The publish path folds the
+/// depfile-discovered inputs into the artifact key, but the consumer's
+/// depfile (if any) describes the LAST build, not the one being looked up. So
+/// the candidate discovered-path sets recorded under the DECLARED-only key
+/// are tried newest-first: re-hash each set's paths from the consumer's own
+/// `working_dir` at their CURRENT content, fold them into the hash set, and
+/// probe the resulting FULL key. A set whose files hash differently composes
+/// a different key and naturally misses — that is the manifest validation the
+/// ccache pattern requires (a different input content can imply a different
+/// input set, so a candidate hit validates against the store, never assumes
+/// set stability). Any recovery failure (no manifest, a listed input absent
+/// locally, a corrupt manifest) skips to the next candidate or returns a safe
+/// miss.
 ///
-/// **`discovered_inputs` (depfile) units** are handled here via a two-level
-/// fetch (COOK-177). The publish path folds the depfile-discovered inputs into
-/// the artifact key, but a cold consumer has no depfile yet, so the
-/// `sorted_input_content_hashes` passed here are the *declared* inputs only.
-/// To recover the full key, we first fetch the discovered-inputs manifest the
-/// publish side stored under the DECLARED-only key, re-hash those discovered
-/// paths from the consumer's own `working_dir`, fold them into the hash set, and
-/// then fetch the real output artifacts under the resulting FULL key. Any
-/// failure in that recovery (no manifest, a listed input absent locally, a
-/// corrupt manifest) returns a safe cold miss rather than a wrong hit.
+/// **Concrete output recovery (COOK-278):** the caller's `output_paths` may
+/// be stale for glob-output units — on a warm revert they are the LAST run's
+/// concrete names, and content-dependent filenames (Next.js chunk hashes)
+/// make those wrong for the candidate key being probed. When the candidate
+/// key's determinant manifest is present, its recorded `output_paths` (plus
+/// the implicit depfile and any recorded empty dirs) are restored instead;
+/// the caller list is only a fallback for stores written before the
+/// determinant manifest existed. This also lifts the old "glob outputs cannot
+/// cold-fetch" limitation: raw patterns in `output_paths` simply never match
+/// an artifact, but the manifest-driven list does.
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_by_key(
     ctx: &RestoreCtx,
@@ -672,76 +734,93 @@ pub fn fetch_by_key(
     output_paths: &[&str],
     working_dir: &std::path::Path,
     discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
-) -> bool {
+) -> Option<FetchOutcome> {
     if output_paths.is_empty() {
-        return false;
+        return None;
     }
-    // COOK-177: for a depfile unit, the published artifacts are keyed by the FULL
-    // input set (declared + depfile-discovered). The caller only knows the declared
-    // inputs on a cold path. Recover the discovered inputs from the manifest the
-    // publish side stored under the DECLARED-only key, re-hash them locally, and
-    // fold them in to reconstruct the full key.
-    let mut full_hashes: Vec<u64> = sorted_input_content_hashes.to_vec();
-    if discovered_inputs.is_some() {
-        let declared_key = crate::backend::cloud_key(&crate::backend::CloudKeyInputs {
+    // Candidate discovered-input sets. A unit without discovered_inputs has
+    // exactly one candidate: the empty set (full key == declared key).
+    let candidates: Vec<Vec<String>> = match discovered_inputs {
+        Some(_) => {
+            let declared_key = crate::backend::cloud_key(&crate::backend::CloudKeyInputs {
+                schema_version: CACHE_VERSION,
+                recipe_namespace: ctx.recipe_namespace,
+                command_hash,
+                env_contribution,
+                seal_contribution,
+                sorted_input_content_hashes, // declared-only, exactly as passed
+            });
+            let sets = read_discovered_input_sets(ctx.backend, &declared_key);
+            if sets.is_empty() {
+                return None; // no manifest => cannot reconstruct => safe cold miss
+            }
+            sets
+        }
+        None => vec![Vec::new()],
+    };
+    for set in candidates {
+        let mut full_hashes: Vec<u64> = sorted_input_content_hashes.to_vec();
+        if !set.is_empty() {
+            let refs: Vec<&str> = set.iter().map(|s| s.as_str()).collect();
+            match hash_input_paths(&refs, working_dir) {
+                Some(mut h) => full_hashes.append(&mut h),
+                None => continue, // a listed discovered input is absent locally => try next set
+            }
+            full_hashes.sort();
+        }
+        let cloud_k = crate::backend::cloud_key(&crate::backend::CloudKeyInputs {
             schema_version: CACHE_VERSION,
             recipe_namespace: ctx.recipe_namespace,
             command_hash,
             env_contribution,
             seal_contribution,
-            sorted_input_content_hashes, // declared-only, exactly as passed
+            sorted_input_content_hashes: &full_hashes,
         });
-        let manifest_k = crate::backend::artifact_key(
-            &declared_key,
-            crate::backend::DISCOVERED_INPUTS_MANIFEST_INDEX,
-            crate::backend::DISCOVERED_INPUTS_MANIFEST_PATH,
-        );
-        // Fetch + drain the manifest (VerifyingReader hashes on read).
-        let mut reader = match ctx.backend.get(&manifest_k) {
-            Ok(Some(r)) => r,
-            _ => return false, // no manifest => cannot reconstruct => safe cold miss
-        };
-        let mut buf = Vec::new();
-        if std::io::Read::read_to_end(&mut reader, &mut buf).is_err() {
-            return false;
-        }
-        let discovered_paths: Vec<String> = match serde_json::from_slice(&buf) {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
-        if !discovered_paths.is_empty() {
-            let refs: Vec<&str> = discovered_paths.iter().map(|s| s.as_str()).collect();
-            match hash_input_paths(&refs, working_dir) {
-                Some(mut h) => full_hashes.append(&mut h),
-                None => return false, // a listed discovered input is absent locally => safe miss
+        // COOK-278: prefer the candidate key's own recorded output list over
+        // the caller's (possibly stale) one. Index order mirrors publish:
+        // files, implicit depfile, empty dirs.
+        let restore_list: Vec<String> = match ctx.backend.get_manifest(&cloud_k) {
+            Ok(Some(m)) => {
+                let mut list = m.output_paths;
+                if let Some(di) = discovered_inputs {
+                    list.push(di.from.clone());
+                }
+                list.extend(m.empty_dir_outputs);
+                list
             }
+            _ => output_paths.iter().map(|s| (*s).to_string()).collect(),
+        };
+        if restore_all(ctx, &cloud_k, &restore_list, working_dir) {
+            return Some(FetchOutcome {
+                restored_outputs: restore_list,
+                discovered_paths: set,
+            });
         }
-        full_hashes.sort();
     }
-    let key_inputs = crate::backend::CloudKeyInputs {
-        schema_version: CACHE_VERSION,
-        recipe_namespace: ctx.recipe_namespace,
-        command_hash,
-        env_contribution,
-        seal_contribution,
-        sorted_input_content_hashes: &full_hashes,
-    };
-    let cloud_k = crate::backend::cloud_key(&key_inputs);
-    // Two-pass restore (symlink-last), mirroring `try_restore`. The cold path
-    // has no local `StepEntry` to pin against, so `expected_content_hash` is
-    // `None`: integrity rests solely on `get_with_meta`'s `VerifyingReader`
-    // (CS-0054 verify-on-restore) — unchanged from the prior behaviour.
+    None
+}
+
+/// Two-pass restore (symlink-last), mirroring `try_restore`. The fetch path
+/// has no local `StepEntry` to pin against, so `expected_content_hash` is
+/// `None`: integrity rests solely on `get_with_meta`'s `VerifyingReader`
+/// (CS-0054 verify-on-restore).
+fn restore_all(
+    ctx: &RestoreCtx,
+    cloud_k: &crate::backend::CloudKey,
+    paths: &[String],
+    working_dir: &std::path::Path,
+) -> bool {
     let mut pending: Vec<usize> = Vec::new();
-    for (idx, path) in output_paths.iter().enumerate() {
-        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+    for (idx, path) in paths.iter().enumerate() {
+        let artifact_k = crate::backend::artifact_key(cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
             pending.push(idx);
         }
     }
     for idx in pending {
-        let path = output_paths[idx];
-        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let path = &paths[idx];
+        let artifact_k = crate::backend::artifact_key(cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
             return false;

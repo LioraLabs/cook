@@ -193,6 +193,13 @@ pub struct DeterminantManifest {
     pub inputs: BTreeMap<String, u64>,
     /// Resolved (glob-expanded) declared output paths.
     pub output_paths: Vec<String>,
+    /// COOK-278: empty directories recorded as trailing implicit outputs
+    /// (COOK-180). A manifest-driven restore (`fetch_by_key`) recreates these
+    /// after the file outputs so a fetch hit is byte-identical to a fresh
+    /// build. Absent (`[]`) on pre-COOK-278 manifests — those restore files
+    /// only, exactly as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub empty_dir_outputs: Vec<String>,
     /// Post-denylist consulted env key → value. Resolved form of
     /// `env_contribution`.
     pub consulted_env: BTreeMap<String, String>,
@@ -387,6 +394,21 @@ pub fn recipe_namespace(project_id: &str, cookfile_path: &str, recipe: &str) -> 
 pub const DISCOVERED_INPUTS_MANIFEST_INDEX: u32 = u32::MAX;
 /// Reserved output path for the discovered-inputs manifest artifact.
 pub const DISCOVERED_INPUTS_MANIFEST_PATH: &str = "__cook_discovered_inputs__";
+
+/// COOK-278: reserved output index for the multi-entry discovered-input SETS
+/// manifest, keyed under the same DECLARED-inputs-only cloud key. Unlike the
+/// single-set COOK-177 manifest above (last-writer-wins, which loses older
+/// input sets the moment an edit changes what the depfile discovers), this
+/// artifact accumulates every distinct discovered-path set seen for the
+/// declared key, so a revert can recompose the ORIGINAL full key even after
+/// an intervening build discovered a different set.
+pub const DISCOVERED_INPUT_SETS_INDEX: u32 = u32::MAX - 1;
+/// Reserved output path for the discovered-input sets manifest artifact.
+pub const DISCOVERED_INPUT_SETS_PATH: &str = "__cook_discovered_input_sets__";
+
+/// Cap on retained discovered-path sets per declared key. Oldest sets fall
+/// off; a fallen-off set degrades to a safe re-execute, never a wrong hit.
+pub const DISCOVERED_INPUT_SETS_CAP: usize = 64;
 
 /// Derive an output-scoped artifact key from a cache entry's cloud_key.
 ///
@@ -701,6 +723,7 @@ mod tests {
             seal_contribution: 0x9abc,
             inputs,
             output_paths: vec!["build/a.o".into()],
+            empty_dir_outputs: Vec::new(),
             consulted_env: env,
             sealed_probes: probes,
         };

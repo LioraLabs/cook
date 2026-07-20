@@ -1143,6 +1143,7 @@ mod tests {
             seal_contribution: 0x3333,
             inputs,
             output_paths: vec!["build/a.o".into()],
+            empty_dir_outputs: Vec::new(),
             consulted_env: env,
             sealed_probes: probes,
         }

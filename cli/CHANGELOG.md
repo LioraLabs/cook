@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Edit-then-revert restores the cached artifact instead of re-executing**
+  (COOK-278, CS-0156). Reverting a change (checkout, stash pop, toggling a
+  diff to compare) re-ran discovered-input (depfile) units — a full
+  `next build` each direction on the cap-cook showcase — because the fetch
+  path probed the LAST run's concrete output names (wrong whenever output
+  filenames depend on content, e.g. Next.js chunk hashes) and the
+  discovered-inputs manifest kept only the newest discovered set. The store
+  now retains every distinct discovered set per declared key (newest first,
+  capped at 64), candidate keys are recomposed from current file content and
+  validated by the key itself, and the winning key's determinant manifest
+  supplies the true output list — which also lifts the old "glob outputs
+  cannot cold-fetch" limitation. A fetch hit now records the same fat local
+  entry an execution would (previously the thin entry silently re-fetched
+  from the store on every subsequent run) and sweeps the edited build's
+  stale outputs, so a revert settles to a plain local skip and the tree is
+  byte-identical to a fresh build. Existing caches keep working unchanged in
+  both directions — no key change, no store invalidation, and pre-fix
+  binaries sharing a store still see the single-set manifest they expect.
+- **`cook why` no longer reports a false shared miss for glob-output units.**
+  The read-only shared probe used the raw declared patterns as artifact
+  paths; it now probes the key's recorded concrete output list when the
+  determinant manifest is present.
+
 ### Added
 
 - **Warm re-runs name their cause inline** (COOK-276). When a unit with a
