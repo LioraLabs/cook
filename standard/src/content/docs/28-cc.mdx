@@ -238,6 +238,8 @@ Overrides the active compiler, standard, and warnings. `ToolchainOpts`:
 
 If never called, the implementation MUST auto-detect a compiler via PATH probing during `init()`.
 
+The toolchain probe's value MUST record both the chosen driver names (`cxx`, `cc`) and their **canonical identities** (`cxx_id`, `cc_id`) — the lowercase-hex content hash of each resolved driver binary, obtainable via `cook.tools.id` (§{lua.cook-tools-id}) — so that units sealing the probe (§28.3.14's seal adoption) key on the toolchain's identity rather than its name: a compiler upgrade MUST re-key every sealing unit. The value MUST NOT contain a resolved path or any machine-specific location (§{mods.authoring.seal}, CS-0158).
+
 ### 28.3.11. cc.compile_commands [#cat.cc.compile-commands]
 
 ```

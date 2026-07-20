@@ -77,6 +77,12 @@ Two consequences worth internalizing:
   toolchains, where the thing on `PATH` is a wrapper with the store path of the
   real compiler baked into it, hashing those bytes captures the closure
   transitively — the probe is at its most trustworthy exactly there.
+- **Sharing is exactly byte-equality.** Two machines share sealed artifacts
+  precisely when their toolchain bytes match — containers, one distro rolled
+  out to a fleet, Nix pins. The same nominal version packaged by two distros
+  hashes differently and does not share, and that is the correct outcome: its
+  codegen can differ. Location never matters — homebrew, `/usr/bin`, and a
+  home-dir toolchain with identical bytes are one identity.
 
 If you're on `cook_cc`, it seals its own toolchain probe under the module
 contract, and you get this without writing the probe yourself.
