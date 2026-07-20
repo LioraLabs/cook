@@ -2392,6 +2392,10 @@ fn install_remaining_apis(
     // in cook-luaotp install byte-identical behaviour.
     let cook_tbl: LuaTable = lua.globals().get("cook")?;
     cook_lua_stdlib::register_codec_api(lua, &cook_tbl)?;
+    // CS-0158: cook.tools.id — canonical tool identity, both-phase (a probe
+    // produce body must behave identically on the register pre-pass and the
+    // execute-phase demand path).
+    cook_lua_stdlib::register_tools_api(lua, &cook_tbl)?;
     Ok(module_state)
 }
 

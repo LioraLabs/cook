@@ -3434,7 +3434,11 @@ fn probe_tools_lowers_with_command_v_and_sha256() {
     assert!(lua.contains("command -v cc"), "lua:\n{lua}");
     assert!(lua.contains("command -v ld"), "lua:\n{lua}");
     assert!(lua.contains("sha256sum"), "lua:\n{lua}");
-    assert!(lua.contains("path = _p"), "lua:\n{lua}");
+    // CS-0157: the canonical value carries IDENTITY only — the resolved path
+    // is machine-specific location and must never enter the value bytes that
+    // seal_contribution folds. Path reaches consumers via the engine's
+    // per-run read-view metadata channel instead.
+    assert!(!lua.contains("path = _p"), "path must NOT enter the value:\n{lua}");
     assert!(lua.contains("hash = _h"), "lua:\n{lua}");
     // Table keys must be quoted-string literals, NOT long-bracket `[[name]]`
     // (which is ambiguous as a table index — `_t[[[name]]]`).

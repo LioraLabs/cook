@@ -2232,8 +2232,13 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
     s
 }
 
-/// Extract a " (cc→/usr/bin/cc, …)" suffix from a tools-probe JSON value
-/// ({"NAME":{"path":...,"hash":...}}). Empty for non-tools probe values.
+/// Extract a " (cc→/usr/bin/cc, …)" suffix for a tools-probe JSON value
+/// ({"NAME":{"hash":...}}). Empty for non-tools probe values.
+///
+/// CS-0157: the sealed value carries identity only (content hash) — path is
+/// location metadata and is resolved FRESH at query time, so the display
+/// shows where each tool resolves now rather than where it lived when the
+/// value was produced. A tool no longer on PATH annotates as `<not found>`.
 fn tools_probe_paths(value: &str) -> String {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(value) else {
         return String::new();
@@ -2243,8 +2248,14 @@ fn tools_probe_paths(value: &str) -> String {
     };
     let mut parts = Vec::new();
     for (name, entry) in obj {
-        if let Some(p) = entry.get("path").and_then(|p| p.as_str()) {
-            parts.push(format!("{name}→{p}"));
+        let tool_shaped = entry
+            .as_object()
+            .is_some_and(|e| e.get("hash").is_some_and(|h| h.is_string()));
+        if tool_shaped {
+            match cook_engine::why::resolve_tool_path(name) {
+                Some(p) => parts.push(format!("{name}→{p}")),
+                None => parts.push(format!("{name}→<not found>")),
+            }
         }
     }
     if parts.is_empty() {

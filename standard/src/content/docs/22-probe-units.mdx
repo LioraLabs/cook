@@ -98,10 +98,23 @@ value is determined by the producer form:
   comma/whitespace-separated LIST of bare tool names (`IDENT`), NOT a shell or
   Lua body. A conforming implementation MUST PATH-resolve each name and
   content-hash the resolved binary; the probe value is a JSON object keyed by
-  tool name, each entry an object `{ "path": <resolved path>, "hash": <content
-  hash> }`. The hash is BOTH the probe value AND its re-run trigger: a change to
-  the resolved binary changes the hash, re-fingerprinting the probe and any
-  dependent unit — freshness without a `volatile` annotation. A name that does
+  tool name, each entry an object `{ "hash": <content hash> }`. The hash is
+  BOTH the probe value AND its re-run trigger: a change to the resolved binary
+  changes the hash, re-fingerprinting the probe and any dependent unit —
+  freshness without a `volatile` annotation. The value MUST NOT contain the
+  resolved path or any other machine-specific location: path is location, not
+  identity, and a location in the canonical bytes would fold into every
+  sealing unit's key (§{exec.cache.single-key}), so identical toolchains at
+  different locations could never share sealed artifacts — the same
+  portability rule the `files` producer states for its value. The resolved
+  path is **read-view metadata** instead: an implementation MUST resolve each
+  declared tool's current location afresh on every run and MUST surface it to
+  consumers — merged into the value table returned by `cook.probes.get` (so
+  `$<KEY.NAME.path>` resolves for invocation) and shown by the key
+  explanation (§{exec.cache.why}) — while the canonical value bytes, the seal
+  fold, and the persisted probe artifact carry identity only. A consumer
+  therefore always reads where the tool resolves NOW; a cached value can
+  never replay a stale location. (CS-0157.) A name that does
   not resolve on PATH MUST fail the probe with a diagnostic naming the tool. A
   conforming implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua
   block (the brace content is a name list, not a body).

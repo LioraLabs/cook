@@ -454,6 +454,10 @@ fn register_worker_cook_table(
     // body behaves identically on the pre-pass and demand-driven paths.
     cook_lua_stdlib::register_codec_api(lua, &cook)?;
 
+    // CS-0158: cook.tools.id — canonical tool identity (content hash +
+    // fresh path). Both-phase; shared implementation, same rationale.
+    cook_lua_stdlib::register_tools_api(lua, &cook)?;
+
     // cook.load_module(name) — execute-phase counterpart of the register-phase
     // resolver in cook-register/src/module_loader.rs (CS-0017, CS-0035,
     // §{lua.cook-load-module}). Lookup uses the unit's current_working_dir,
@@ -727,6 +731,40 @@ fn probe_not_materialised_error(key: &str) -> mlua::Error {
 /// `nil` with no error — that boundary is load-bearing for probe produce
 /// bodies (`cook.probes.get(KEY) or { ... }`).
 ///
+/// CS-0157: merge the per-run tool-path metadata into a probe value's READ
+/// VIEW. The canonical value of a `tools { }` producer carries identity only
+/// (`{ NAME = { hash } }`); the resolved path is location, recorded fresh
+/// each run by the engine (ProbeValueStore::set_tool_paths) so a Lua
+/// consumer invoking `$<probe.NAME.path>` always gets where the tool
+/// resolves NOW — never a stale path replayed from a cached value. The merge
+/// is shape-scoped: only a table entry under the tool's own name that has a
+/// `hash` field and no author-provided `path` is annotated, so custom-body
+/// probes that happen to declare `inputs.tools` keep their values untouched.
+fn merge_tool_paths(
+    value: &mlua::Value,
+    store: &ProbeValueStore,
+    key: &str,
+) -> mlua::Result<()> {
+    let Some(paths) = store.tool_paths(key) else {
+        return Ok(());
+    };
+    let mlua::Value::Table(t) = value else {
+        return Ok(());
+    };
+    for (tool, path) in paths {
+        if let Ok(mlua::Value::Table(entry)) = t.get::<mlua::Value>(tool.as_str()) {
+            let has_hash =
+                matches!(entry.get::<mlua::Value>("hash"), Ok(mlua::Value::String(_)));
+            let path_absent =
+                matches!(entry.get::<mlua::Value>("path"), Ok(mlua::Value::Nil));
+            if has_hash && path_absent {
+                entry.set("path", path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
 /// it raises a runtime error directing the author to use `cook.probe` instead.
 ///
@@ -748,7 +786,9 @@ fn install_execute_phase_cook_probes(
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.probes.get('{}'): decode failed: {}", key, e
                     )))?;
-                crate::probe_value::json_to_lua(lua, &jv)
+                let v = crate::probe_value::json_to_lua(lua, &jv)?;
+                merge_tool_paths(&v, &store_for_get, &key)?;
+                Ok(v)
             }
             None => Err(probe_not_materialised_error(&key)),
         }
@@ -781,7 +821,9 @@ fn install_execute_phase_cook_probes(
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.probes.get('{}'): decode failed: {}", full, e
                         )))?;
-                    crate::probe_value::json_to_lua(lua, &jv)
+                    let v = crate::probe_value::json_to_lua(lua, &jv)?;
+                    merge_tool_paths(&v, &store_for_scoped_get, &full)?;
+                    Ok(v)
                 }
                 None => Err(probe_not_materialised_error(&full)),
             }

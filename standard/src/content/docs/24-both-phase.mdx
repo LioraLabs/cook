@@ -194,3 +194,16 @@ Parses `text` as YAML under the same value mapping as `cook.json_decode`. Malfor
 ### Note 24.8.1
 
 The codecs are pure functions of their argument; they perform no I/O and consult no phase state. A conforming implementation MUST install both on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body (§{cat.probes.api}) behaves identically whether it is evaluated by the `ingredients <probe>` register pre-pass or by a demand-driven worker (CS-0123).
+
+## 24.9. `cook.tools.id` [#lua.cook-tools-id]
+**Phase.** Both.
+
+**Signature.** `cook.tools.id(name: string) -> { hash: string, path: string } | nil`
+
+Resolves `name` on the current PATH and returns its **canonical tool identity**: `hash` is the lowercase-hex SHA-256 of the resolved binary's content — a machine-independent identity — and `path` is the location it resolved to right now. Returns `nil` when the name does not resolve. The call MUST resolve and hash the binary as it exists at call time; an implementation MAY memoize the hash per resolved path within a single run.
+
+The function exists so a module can fold a **real toolchain identity** into a probe value it seals (§{mods.authoring.seal}) without hashing large binaries in Lua: the `hash` field is the value to fold — a compiler upgrade changes the bytes, the hash, the sealed value, and therefore every sealing unit's key. The `path` field is location metadata for invocation and MUST NOT be folded into a sealed value: a machine-specific path in a sealed value re-keys identical toolchains across machines, defeating the cross-machine reuse §{exec.cache} exists to provide (the same rule the native `tools` producer's value shape enforces, §{cat.probes.decl}).
+
+### Note 24.9.1
+
+A conforming implementation MUST install `cook.tools.id` on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body behaves identically on the register pre-pass and the demand-driven worker path (the CS-0123 rule, applied to this API). The reference implementation backs both installs with the same per-run tool-hash memo the probe-fingerprint machinery uses, so calling `cook.tools.id` never re-hashes a binary the fingerprint pass already read. (CS-0158.)

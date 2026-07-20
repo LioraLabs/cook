@@ -1297,6 +1297,27 @@ pub fn execute_dag(
                             // can find it regardless of cache-hit vs. miss path.
                             probe_fingerprint_by_node.insert(id, fp);
 
+                            // CS-0157: record where each declared tool resolves
+                            // RIGHT NOW as read-view metadata. The canonical
+                            // value of a `tools { }` producer carries identity
+                            // only ({ hash }); the path a Lua consumer or
+                            // `cook why` sees comes from this per-run channel,
+                            // so it can never go stale inside a cached value.
+                            // Set on dispatch — before the hit/miss fork — so
+                            // both paths cover it.
+                            if !inputs.tools.is_empty() {
+                                let mut paths = std::collections::BTreeMap::new();
+                                for (name, _hash) in &inputs.tools {
+                                    if let Some(p) =
+                                        cook_fingerprint::resolve_tool_path(name)
+                                    {
+                                        paths.insert(name.clone(), p);
+                                    }
+                                }
+                                pool.probe_value_store()
+                                    .set_tool_paths(&probe_key, paths);
+                            }
+
                             // Attempt cache GET.
                             match cook_cache::backend::get_bytes(
                                 cache_ctx.backend.as_ref(),

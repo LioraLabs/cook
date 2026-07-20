@@ -102,11 +102,21 @@ fn lower_produce(p: &ProbeProduce) -> String {
             }
         }
         ProbeProduce::Tools(names) => {
-            // Build the VALUE `{ NAME = { path, hash } }` by resolving via
+            // Build the VALUE `{ NAME = { hash } }` by resolving via
             // `command -v` and hashing via `sha256sum`. The re-run TRIGGER is
             // the declared `inputs.tools` (see emit_probe), which the
-            // fingerprint machinery resolves + hashes independently; the
-            // resolved path stays in the value for COOK-165 `cook why`.
+            // fingerprint machinery resolves + hashes independently.
+            //
+            // CS-0157 (COOK-277): the resolved PATH deliberately does NOT
+            // enter the value. Path is location, not identity — folding it
+            // into the canonical bytes poisoned seal_contribution with a
+            // machine-specific string, so identical toolchains at different
+            // locations (homebrew vs /usr/bin, nix stores) could never share
+            // sealed artifacts. Path now rides the engine's per-run tool
+            // metadata channel: `cook.probes.get` merges a freshly-resolved
+            // `path` into the READ view and `cook why` displays it from the
+            // same channel, so consumers still see it — it just cannot key
+            // anything or go stale in a cached value.
             let mut out = String::from("local _t = {}\n");
             for name in names {
                 let resolve = format!("command -v {name}");
@@ -130,7 +140,7 @@ fn lower_produce(p: &ProbeProduce) -> String {
                 // safe (a long-bracket `[[name]]` would be ambiguous as a table
                 // index — `_t[[[name]]]`).
                 out.push_str(&format!(
-                    "  _t[\"{}\"] = {{ path = _p, hash = _h }}\n",
+                    "  _t[\"{}\"] = {{ hash = _h }}\n",
                     escape_lua_string(name)
                 ));
                 out.push_str("end\n");

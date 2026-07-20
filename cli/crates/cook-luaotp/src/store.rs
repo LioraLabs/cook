@@ -23,6 +23,12 @@ pub struct ProbeValueStore {
 struct Inner {
     dir: Option<PathBuf>,
     map: BTreeMap<String, Vec<u8>>,
+    /// CS-0157: per-run tool-path metadata, probe key → (tool name →
+    /// freshly-resolved path). Populated by the engine when it resolves a
+    /// probe's declared `inputs.tools` for the fingerprint; merged into the
+    /// Lua READ VIEW by `cook.probes.get`. Never persisted, never part of
+    /// the canonical value bytes, never folded into any key.
+    tool_paths: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl ProbeValueStore {
@@ -38,6 +44,21 @@ impl ProbeValueStore {
 
     pub fn insert(&self, key: &str, bytes: Vec<u8>) {
         self.inner.lock().unwrap().map.insert(key.to_string(), bytes);
+    }
+
+    /// CS-0157: record the freshly-resolved paths of a probe's declared
+    /// tools for this run. Read-view metadata only (see `Inner::tool_paths`).
+    pub fn set_tool_paths(&self, key: &str, paths: BTreeMap<String, String>) {
+        self.inner
+            .lock()
+            .unwrap()
+            .tool_paths
+            .insert(key.to_string(), paths);
+    }
+
+    /// The per-run tool-path metadata recorded for `key`, if any.
+    pub fn tool_paths(&self, key: &str) -> Option<BTreeMap<String, String>> {
+        self.inner.lock().unwrap().tool_paths.get(key).cloned()
     }
 
     /// Map lookup, then `.cook/probes/<key>.json` fallback (caching the

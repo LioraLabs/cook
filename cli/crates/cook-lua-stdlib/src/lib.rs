@@ -35,6 +35,7 @@ pub mod path_api;
 pub mod platform_api;
 pub mod sandbox;
 pub mod shell_guard;
+pub mod tools_api;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,7 @@ pub use codec_api::{json_to_lua_value, register_codec_api};
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
+pub use tools_api::register_tools_api;
 pub use sandbox::{SandboxPolicy, SandboxSource};
 pub use shell_guard::install_shell_escape_guards;
 

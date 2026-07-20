@@ -517,6 +517,7 @@ dependencies = [
 name = "cook-lua-stdlib"
 version = "0.6.3"
 dependencies = [
+ "cook-fingerprint",
  "glob",
  "mlua",
  "serde_json",

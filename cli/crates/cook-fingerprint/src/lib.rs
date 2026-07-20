@@ -33,7 +33,7 @@ pub use check::{
     RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
-pub use probe::resolve_probe_inputs;
+pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
 

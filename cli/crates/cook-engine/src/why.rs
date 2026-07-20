@@ -8,6 +8,10 @@
 use std::collections::BTreeMap;
 
 use cook_fingerprint::backend::DeterminantManifest;
+/// CS-0157: fresh PATH resolution for `cook why`'s tool-path display — the
+/// sealed value no longer carries a path, so the CLI resolves it at query
+/// time (re-exported here so cook-cli needs no direct fingerprint dep).
+pub use cook_fingerprint::resolve_tool_path;
 
 /// How a unit's cache lookup resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]

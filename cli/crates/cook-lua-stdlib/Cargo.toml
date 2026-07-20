@@ -5,6 +5,7 @@ edition = "2021"
 description = "Shared Cook Lua API surface (fs.*, path.*, cook.platform.*) used by both the register-phase and execute-phase Lua VMs"
 
 [dependencies]
+cook-fingerprint = { path = "../cook-fingerprint" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 glob = "0.3"
 serde_json = "1"

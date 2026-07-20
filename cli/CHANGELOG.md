@@ -4,6 +4,29 @@
 
 ### Fixed
 
+- **`tools { }` sealed values are portable across machines** (COOK-277,
+  CS-0157). The native tools producer folded the resolved absolute path
+  into the sealed value, so identical toolchains at different locations
+  (homebrew vs `/usr/bin`, nix stores) produced different unit keys and
+  heterogeneous fleets never shared sealed artifacts. The canonical value
+  now carries the binary's content hash only. The resolved path still
+  reaches consumers — `$<probe.NAME.path>` and `cook why`'s
+  `(cc→/usr/bin/cc)` annotation — but from a per-run metadata channel
+  resolved freshly on every run, which also fixes the staleness hazard
+  where a cached value replayed a path recorded before the tool moved.
+  Old path-bearing cached probe values are unreachable by construction
+  (the produce body is part of the probe fingerprint and it changed);
+  tools-sealing units re-key once.
+
+### Added
+
+- **`cook.tools.id(name)`** (COOK-277, CS-0158). Both-phase API returning
+  `{ hash, path }` for a PATH-resolved tool — the machine-independent
+  content-hash identity a module folds into a sealed probe value (per
+  §12.7.5), and the current location for invocation. Backed by the
+  fingerprint machinery's per-run tool-hash memo, so a 60MB binary is
+  hashed at most once per run and never in Lua.
+
 - **Edit-then-revert restores the cached artifact instead of re-executing**
   (COOK-278, CS-0156). Reverting a change (checkout, stash pop, toggling a
   diff to compare) re-ran discovered-input (depfile) units — a full

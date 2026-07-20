@@ -63,25 +63,55 @@ pub fn resolve_probe_inputs(
     })
 }
 
+/// Resolve a tool name to its current PATH location, freshly, every call.
+/// CS-0157: the resolved path is LOCATION metadata, not identity — it is
+/// deliberately excluded from probe fingerprints and canonical probe values,
+/// and deliberately NOT memoized here, so a consumer (the Lua read view,
+/// `cook why` display) always sees where the tool resolves NOW rather than a
+/// cached location that can go stale.
+pub fn resolve_tool_path(name: &str) -> Option<String> {
+    which::which(name).ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// CS-0158: canonical tool identity for Lua consumers (`cook.tools.id`).
+/// Resolves `name` on PATH and returns `(lowercase-hex sha256 of the binary,
+/// resolved path)` — the hash is the machine-independent identity a module
+/// folds into a sealed probe VALUE; the path is location metadata for
+/// invocation. `None` when the name does not resolve. Hashing goes through
+/// the same per-run memo as the fingerprint fold, so a module calling this
+/// never re-hashes a binary the fingerprint pass already read.
+pub fn tool_identity(name: &str) -> Option<(String, String)> {
+    let path = which::which(name).ok()?;
+    let hash = memoized_hash(&path);
+    Some((
+        crate::context::probe_hex_encode(&hash),
+        path.to_string_lossy().into_owned(),
+    ))
+}
+
 fn resolve_tool_hash(name: &str) -> [u8; 32] {
     let Ok(path) = which::which(name) else {
         return [0u8; 32];
     };
-    // Per-run memo keyed by resolved path. The same tool is fingerprinted
-    // once per probe NODE (five recipes sealing one `web:tools` probe hash
-    // its binaries five times), and a binary like node is ~60MB — without
-    // this, an all-cached workspace build spends seconds re-hashing the
-    // same toolchain. One run = one process, so a process-wide memo cannot
-    // go stale across builds.
+    memoized_hash(&path)
+}
+
+/// Per-run memo keyed by resolved path. The same tool is fingerprinted
+/// once per probe NODE (five recipes sealing one `web:tools` probe hash
+/// its binaries five times), and a binary like node is ~60MB — without
+/// this, an all-cached workspace build spends seconds re-hashing the
+/// same toolchain. One run = one process, so a process-wide memo cannot
+/// go stale across builds.
+fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static MEMO: OnceLock<Mutex<HashMap<std::path::PathBuf, [u8; 32]>>> = OnceLock::new();
     let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(h) = memo.lock().unwrap().get(&path) {
+    if let Some(h) = memo.lock().unwrap().get(path) {
         return *h;
     }
-    let h = hash_file(&path);
-    memo.lock().unwrap().insert(path, h);
+    let h = hash_file(path);
+    memo.lock().unwrap().insert(path.to_path_buf(), h);
     h
 }
 
