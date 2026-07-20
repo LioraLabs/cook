@@ -153,10 +153,12 @@ recipes, same ingredients, same probes and modules, no special modes.
 
 - [**cook-cap**](https://github.com/LioraLabs/cook-cap):
   [Cap](https://github.com/CapSoftware/Cap), the 20k-star open-source screen
-  recorder, with Turborepo swapped for `cook_pnpm`. A comment-only edit in
-  one shared package: Turbo rebuilds 6 packages in ~47s; cook rebuilds 1 in
-  ~0.8s. Keys fold what artifacts *contain*, not a hash cascade, so
-  byte-identical output stops the rebuild cold. The Rust crates Turbo can't
+  recorder, with Turborepo swapped for `cook_pnpm`. Two edits to the same
+  shared-package file: a comment, and a new export. Turbo rebuilds the same
+  7 of 11 tasks (~47s) for both; cook rebuilds one task in ~1s for the
+  comment, and for the export only the app that actually ingests those
+  bytes. Keys fold what artifacts *contain*, not a hash cascade, and the
+  repo's bench script reproduces every number. The Rust crates Turbo can't
   see are three more recipes in the same graph.
 
 - [**cook-dogfood**](https://github.com/LioraLabs/cook-dogfood): a polyglot
