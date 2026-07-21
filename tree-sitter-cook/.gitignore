@@ -1,9 +1,10 @@
 node_modules/
 build/
-src/parser.c
-src/tree_sitter/
-src/grammar.json
-src/node-types.json
-bindings/
 target/
 *.wasm
+
+# Generated sources under src/ are deliberately committed, following the
+# convention of the upstream tree-sitter grammar repos: a consumer builds the
+# Rust binding with `cc` alone and must not need the tree-sitter CLI. That
+# covers parser.c, node-types.json, grammar.json, and the tree_sitter/*.h
+# headers parser.c includes. Regenerate with `tree-sitter generate`.

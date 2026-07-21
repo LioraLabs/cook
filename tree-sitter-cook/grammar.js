@@ -262,8 +262,20 @@ module.exports = grammar({
     _probe_ref: ($) =>
       choice(alias($._bare_probe_key, $.identifier), $.string),
 
+    // Default token precedence, deliberately. This carried `prec(-1)` until
+    // it was found to break `repeat1($._disposition_ref)`: a seal/unseal group
+    // accepted at most ONE bare ref, and only in first position, so
+    // `seal a b` and `seal ns:x a` both ERRORed while `seal a ns:x` and
+    // `seal ns:a ns:b` parsed — the prefixed alternative carries `prec(1)`
+    // and repeated fine. The negative precedence was not needed to keep
+    // contextual keywords (`tools`, `envs`, `files`, `json`, `lines`,
+    // `local`, `pinned`, `nondet`, `as`) winning: those are string literals,
+    // which tree-sitter already prefers over a regex token of equal
+    // precedence and equal match length. The at-most-one-colon shape is
+    // enforced by maximal munch in the regex itself (see the comment above),
+    // not by precedence.
     _bare_probe_key: ($) =>
-      token(prec(-1, /[A-Za-z_][A-Za-z0-9_.-]*(:[A-Za-z_][A-Za-z0-9_.-]*)?/)),
+      token(/[A-Za-z_][A-Za-z0-9_.-]*(:[A-Za-z_][A-Za-z0-9_.-]*)?/),
 
     // Module-prefix-colon disambiguation (App. A.3.2, normative). The
     // dep-list-introducing `:` is distinguished from the module-prefix

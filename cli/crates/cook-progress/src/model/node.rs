@@ -54,6 +54,12 @@ impl NodeState {
         if let Some(artifact) = &self.artifact {
             return artifact.to_string_lossy().into_owned();
         }
+        // A test unit's name is a synthesised label (`<recipe>_test<N>`,
+        // cook-register/src/test_api.rs), not command text — show it bare,
+        // never `$`-prefixed.
+        if self.kind == NodeKind::Test && !self.name.is_empty() {
+            return self.name.clone();
+        }
         let stripped = self.fallback_label.trim_start_matches("$ ").trim_start();
         let first = stripped.split_whitespace().next().unwrap_or("?");
         if first.starts_with('@') || first.starts_with("probe:") {
@@ -101,6 +107,13 @@ mod tests {
     fn display_handles_empty_fallback() {
         let n = NodeState::new(NodeId::new(2), "x".into(), None, "".into());
         assert_eq!(n.display(), "$?");
+    }
+
+    #[test]
+    fn display_uses_synthesised_name_for_test_nodes() {
+        let mut n = NodeState::new(NodeId::new(5), "rust-test_test1".into(), None, "".into());
+        n.kind = NodeKind::Test;
+        assert_eq!(n.display(), "rust-test_test1");
     }
 
     #[test]

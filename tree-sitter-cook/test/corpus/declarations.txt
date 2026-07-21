@@ -252,5 +252,4 @@ recipe r
   (ERROR
     (shell_block
       (shell_content))
-    (import_name)
     (lua_code)))

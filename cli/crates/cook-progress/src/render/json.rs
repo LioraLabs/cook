@@ -135,11 +135,12 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "elapsed_ms": duration_ms(*elapsed),
             "error": error,
         }),
-        ProgressEvent::NodeCacheHit { recipe, node, name: _, artifact } => json!({
+        ProgressEvent::NodeCacheHit { recipe, node, name: _, artifact, kind } => json!({
             "type": "node-cache-hit",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "artifact": artifact.as_ref().map(|p| p.display().to_string()),
+            "kind": kind_str(kind),
         }),
         ProgressEvent::NodeSkipped { recipe, node, name: _, reason } => json!({
             "type": "node-skipped",

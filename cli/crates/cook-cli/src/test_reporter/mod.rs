@@ -22,7 +22,6 @@ pub struct Reporter {
 #[derive(Clone)]
 struct LabelMeta {
     recipe: String,
-    name: String,
     line: u32,
     iteration_item: Option<String>,
 }
@@ -67,14 +66,13 @@ impl Reporter {
 
     pub fn on_event(&mut self, evt: EngineEvent) {
         match evt {
-            EngineEvent::TestStarted { id, recipe, name, line, iteration_item } => {
+            EngineEvent::TestStarted { id, recipe, name: _, line, iteration_item } => {
                 if !self.header_printed {
                     println!("{}", self.style.bold("running tests"));
                     self.header_printed = true;
                 }
                 self.label_meta.insert(id.0.clone(), LabelMeta {
                     recipe: recipe.clone(),
-                    name: name.clone(),
                     line,
                     iteration_item: iteration_item.clone(),
                 });
@@ -118,10 +116,9 @@ impl Reporter {
             .map(|r| {
                 let meta = self.label_meta.get(&r.id.0);
                 let recipe = meta.map(|m| m.recipe.clone()).unwrap_or_else(|| r.recipe.clone());
-                let nm = meta.map(|m| m.name.clone()).unwrap_or_else(|| r.name.clone());
                 let ln = meta.map(|m| m.line).unwrap_or(r.line);
                 let it = meta.and_then(|m| m.iteration_item.clone()).or(r.iteration_item.clone());
-                let lbl = label::label(&recipe, &nm, ln, it.as_deref(), multi_ns);
+                let lbl = label::label(&recipe, ln, it.as_deref(), multi_ns);
                 (r.id.0.clone(), lbl)
             })
             .collect();
@@ -159,7 +156,6 @@ impl Reporter {
         match self.label_meta.get(test_id) {
             Some(meta) => label::label(
                 &meta.recipe,
-                &meta.name,
                 meta.line,
                 meta.iteration_item.as_deref(),
                 multi_ns,

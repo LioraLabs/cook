@@ -690,7 +690,7 @@ recipe bad
       outputs: (string)
       body: (shell_block (shell_content))
       (cook_mods (share_mod))
-      (ERROR (import_name)))))
+      (ERROR))))
 
 ================
 Recipe seal steps
@@ -726,3 +726,46 @@ recipe app
       name: (identifier))
     (module_call
       (module_call_text))))
+
+================
+Cook disposition group repeats bare refs
+================
+
+recipe package
+    cook "pkg" { bundle } seal cards tools unseal stale volatile
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods
+        (seal_group (identifier) (identifier))
+        (unseal_group (identifier) (identifier))))))
+
+================
+Cook disposition group mixes bare and prefixed refs in both orders
+================
+
+recipe package
+    cook "a" { x } seal ns:tools cards
+    cook "b" { y } seal cards ns:tools
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods
+        (seal_group (identifier) (identifier))))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods
+        (seal_group (identifier) (identifier))))))

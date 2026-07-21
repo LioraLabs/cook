@@ -18,13 +18,15 @@
 import { execFile } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { promisify } from 'node:util';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, mkdir } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const exec = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(HERE);
+// Parser compiled from THIS tree's grammar; see the --lib-path note in parseFile.
+const PARSER_LIB = join(REPO, 'build', 'parser', 'cook.so');
 
 const SEMANTIC_ONLY_NEGATIVES = new Map([
   ['003-use-after-recipe',
@@ -187,7 +189,29 @@ async function parseCase(file) {
   };
 
   try {
-    const { stdout, stderr } = await exec('tree-sitter', ['parse', file], { cwd: REPO });
+    // `--lib-path` is load-bearing, not cosmetic. Without an explicit parser,
+    // `tree-sitter parse` selects a grammar through the user's global
+    // ~/.config/tree-sitter/config.json `parser-directories`, which hold
+    // ABSOLUTE paths — so the harness graded whatever cook grammar that
+    // config resolved (typically a cached ~/.cache/tree-sitter/lib/cook.so
+    // built from some other checkout), never the tree it was invoked in.
+    // Every fixture here is named `Cookfile`, matching neither
+    // `file-types: ["cook"]` nor the `^#.*[Cc]ookfile` first-line regex, so
+    // the fallback always engaged.
+    //
+    // That misreports in BOTH directions: a false RED when the resolved
+    // parser lags this tree, and — the dangerous one for a release gate — a
+    // false GREEN when it runs ahead. `buildParser()` compiles this tree's
+    // grammar once up front and every fixture is parsed against it, so a
+    // clone, a worktree, and CI all grade the same bytes.
+    //
+    // `--grammar-path` would also pin it but implies --rebuild per
+    // invocation: 264 fixtures went from 0.7s to 98s. Build once instead.
+    const { stdout, stderr } = await exec(
+      'tree-sitter',
+      ['parse', '--lib-path', PARSER_LIB, '--lang-name', 'cook', file],
+      { cwd: REPO },
+    );
     return classify(stdout, stderr);
   } catch (err) {
     return classify(
@@ -270,6 +294,19 @@ async function runNegatives() {
   return { failures, notes };
 }
 
+/// Compile this tree's grammar to a dynamic library so every fixture is graded
+/// against the working tree rather than the ambient global config.
+async function buildParser() {
+  await mkdir(dirname(PARSER_LIB), { recursive: true });
+  try {
+    await exec('tree-sitter', ['build', REPO, '-o', PARSER_LIB], { cwd: REPO });
+  } catch (err) {
+    console.error(`failed to build parser from ${REPO}:`);
+    console.error(err.stderr || err.message || String(err));
+    process.exit(2);
+  }
+}
+
 async function main() {
   const root = corpusRoot();
   try {
@@ -280,6 +317,8 @@ async function main() {
   }
   console.log(`tree-sitter-cook conformance harness`);
   console.log(`corpus: ${root}`);
+  await buildParser();
+  console.log(`parser: ${PARSER_LIB}`);
   console.log('');
 
   const pos = await runPositives();

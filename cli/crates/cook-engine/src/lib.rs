@@ -234,6 +234,11 @@ pub enum EngineEvent {
         unit: usize,
         node_name: String,
         artifact: Option<std::path::PathBuf>,
+        /// Node kind, so a renderer can label a cache hit the same way it
+        /// would label the same node on a miss. Without it a cached test
+        /// node fell through to the command-text branch and rendered
+        /// `$<name>` (CS-0160).
+        kind: NodeKind,
     },
     /// A work node was skipped because an upstream dependency failed.
     NodeSkipped {

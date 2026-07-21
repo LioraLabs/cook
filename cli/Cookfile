@@ -1,4 +1,10 @@
-chore build
+# Sigil-anchored because §7.2 forbids `..`. Deliberately a diamond — the root
+# Cookfile imports tree-sitter-cook too — which §11 requires be loaded once.
+# `ts.generate` regenerates the tracked parser before cargo compiles it; it is
+# cached on grammar.js, so it costs nothing until the grammar moves.
+import ts //tree-sitter-cook
+
+chore build: ts.generate
     cargo build --manifest-path Cargo.toml
 
 # Deliberately sourceless, so it runs uncached (§8.4: a test step with no
@@ -6,7 +12,7 @@ chore build
 # crates/, e2e-fixtures/, and //standard/conformance/ — the conformance suite
 # walks the Standard's corpus. Declaring a partial set would cache a false
 # green; cargo's own incrementality already makes an unchanged run cheap.
-recipe test
+recipe test: ts.generate
     test { cargo test --manifest-path Cargo.toml }
 
 # Subsets of `test` for a targeted loop — the spec-first workflow in

@@ -41,7 +41,9 @@ The hook's goal is to make language impact visible at commit time. If you're mak
 - `cli/crates/cook-luagen/**` — codegen that materializes language constructs
 - `cli/crates/cook-register/**` — Cook Lua API registration
 - `tree-sitter-cook/grammar.js` — tree-sitter grammar (claims Cook Standard v0.14)
-- `tree-sitter-cook/src/**` — tree-sitter externals
+- `tree-sitter-cook/src/scanner.c` — the hand-written external scanner
+
+The rest of `tree-sitter-cook/src/**` (`parser.c`, `node-types.json`, `grammar.json`, `tree_sitter/*.h`) is `tree-sitter generate` output, committed so the Rust binding builds with `cc` alone and no tree-sitter CLI. It is deliberately *not* watched: generated artifacts cannot change the language independently of `grammar.js`, so watching them would demand the bypass on every routine regeneration — and a guardrail bypassed by habit stops being a guardrail. `cook ts.check-generated` enforces that those artifacts match `grammar.js`.
 
 Markdown files under these paths (crate READMEs, `CONFORMANCE.md`) are documentation, not language surface; the hook exempts `*.md`.
 

@@ -33,7 +33,15 @@ is_language_surface() {
     cli/crates/cook-luagen/*)     return 0 ;;
     cli/crates/cook-register/*)   return 0 ;;
     tree-sitter-cook/grammar.js)  return 0 ;;
-    tree-sitter-cook/src/*)       return 0 ;;
+    # Only the hand-written external scanner is language surface. The rest of
+    # src/ (parser.c, node-types.json, grammar.json, tree_sitter/*.h) is
+    # `tree-sitter generate` output, committed so the Rust binding builds
+    # without the tree-sitter CLI. Generated artifacts cannot change the
+    # language independently of grammar.js, which is watched above — watching
+    # them too would demand the bypass on every routine regeneration, and a
+    # guardrail bypassed by habit stops being a guardrail. `ts.check-generated`
+    # is what keeps those artifacts honest.
+    tree-sitter-cook/src/scanner.c) return 0 ;;
     standard/conformance/*)       return 0 ;;
     *)                            return 1 ;;
   esac

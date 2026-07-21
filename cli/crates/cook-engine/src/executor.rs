@@ -967,6 +967,8 @@ pub fn execute_dag(
                         node_name: work_node.recipe_name.clone(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                        // Pre-satisfied node: no payload to derive a kind from.
+                        kind: NodeKind::Cooked,
                     },
                 );
                 finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -1055,6 +1057,24 @@ pub fn execute_dag(
                                 stderr: entry.stderr.clone(),
                                 line: *line as u32,
                             });
+                            // Register the node under its derived name (CS-0160)
+                            // before completing it. `NodeCompleted` only updates a
+                            // node that already exists and is Running, so without
+                            // this a cache-hit test node was never created by any
+                            // event carrying a name: renderers fell through to the
+                            // command-token fallback and printed `?`, and the JSON
+                            // stream emitted a bare `node#N`. Every other cached
+                            // node kind already emits `NodeCacheHit`; this brings
+                            // the test path in line. The progress model marks the
+                            // node Completed on this event, so the `NodeCompleted`
+                            // below finds it non-Running and does not double-count.
+                            emit(event_tx, EngineEvent::NodeCacheHit {
+                                recipe: work_node.recipe_name.clone(),
+                                unit: id,
+                                node_name: test_name.clone(),
+                                artifact: None,
+                                kind: NodeKind::Test,
+                            });
                             // Emit NodeCompleted so the recipe tracker counts this node.
                             emit(event_tx, EngineEvent::NodeCompleted {
                                 recipe: work_node.recipe_name.clone(),
@@ -1136,6 +1156,7 @@ pub fn execute_dag(
                                 node_name: payload.display_name(),
                                 artifact: work_node.cache_meta.as_ref()
                                     .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                                kind: node_kind_for_payload(payload),
                             },
                         );
                         finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -1369,6 +1390,9 @@ pub fn execute_dag(
                                             unit: id,
                                             node_name: node_name.clone(),
                                             artifact: None,
+                                            // No Probe variant; `display()` special-cases the
+                                            // `probe:` name prefix, so the default is correct.
+                                            kind: NodeKind::Cooked,
                                         },
                                     );
                                     finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -1614,6 +1638,7 @@ pub fn execute_dag(
                                 node_name: payload.display_name(),
                                 artifact: work_node.cache_meta.as_ref()
                                     .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                                kind: node_kind_for_payload(payload),
                             },
                         );
                         finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);

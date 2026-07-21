@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="package" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["pkg"] body=ShellBlock(["bundle"]) disposition=[local=false pinned=false record=false seal=["cards", "tools"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

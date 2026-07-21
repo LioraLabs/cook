@@ -93,13 +93,6 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             Ok(other) => return Err(type_err("suite", "a string", other.type_name())),
         };
 
-        // CS-0135 §22.4: `cook.add_test` no longer accepts a `name` field
-        // (the `test` step's `as` modifier substitutes at codegen time,
-        // not through this table field). `WorkPayload::Test::test_name`
-        // stays populated for the engine executor (label/verdict
-        // derivation), defaulting to the same empty string the field
-        // used to fall back to when absent.
-        let test_name: String = String::new();
         // CS-0135 §22.4: `cook.add_test` no longer accepts a
         // `should_fail` field (the `test` step's `should_fail` modifier
         // was removed). `WorkPayload::Test::should_fail` stays
@@ -180,6 +173,24 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
         let body = slot.as_mut().ok_or_else(|| {
             mlua::Error::runtime("cook.add_test called outside a recipe body")
         })?;
+        // CS-0135 §22.4: `cook.add_test` accepts no `name` field (the `test`
+        // step's `as` modifier substitutes at codegen time), so
+        // `WorkPayload::Test::test_name` is engine-facing only. Derive it as
+        // `<recipe>_test<N>` — N the 1-based ordinal of this test unit within
+        // the enclosing recipe body — so a target-less test unit carries a
+        // stable, non-empty label (progress verb lines previously fell back
+        // to `$?`, and `cook logs` showed a blank unit name).
+        let test_ordinal = body
+            .units
+            .iter()
+            .filter(|u| matches!(u.payload, WorkPayload::Test { .. }))
+            .count()
+            + 1;
+        let test_name = format!(
+            "{}_test{}",
+            body.current_recipe.as_deref().unwrap_or(""),
+            test_ordinal
+        );
         // COOK-84: inputs ∪ step_group_dep_input_paths, deduped, order-preserving.
         let mut input_paths: Vec<String> = inputs;
         for p in &body.step_group_dep_input_paths {
@@ -283,7 +294,9 @@ mod tests {
                 assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
                 assert_eq!(suite_name, "unit");
-                assert_eq!(test_name, "");
+                // No current_recipe in this harness — the derived
+                // `<recipe>_test<N>` label degrades to a bare ordinal.
+                assert_eq!(test_name, "_test1");
             }
             _ => panic!("expected Test payload"),
         }
@@ -336,7 +349,7 @@ mod tests {
             WorkPayload::Test { timeout, should_fail, test_name, .. } => {
                 assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
-                assert_eq!(test_name, "");
+                assert_eq!(test_name, "_test1");
             }
             _ => panic!("expected Test payload"),
         }
@@ -366,6 +379,32 @@ mod tests {
             _ => panic!("expected Test payload"),
         };
         assert_eq!(payload, "frontend.unit");
+    }
+
+    #[test]
+    fn add_test_derives_name_from_recipe_and_ordinal() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("rust-test".to_string());
+
+        lua.load(r#"
+            cook.add_test({ command = "true" })
+            cook.add_test({ command = "false" })
+        "#).exec().unwrap();
+
+        let state = body_ref(&capture_state);
+        let names: Vec<&str> = state
+            .units
+            .iter()
+            .map(|u| match &u.payload {
+                WorkPayload::Test { test_name, .. } => test_name.as_str(),
+                _ => panic!("expected Test payload"),
+            })
+            .collect();
+        assert_eq!(names, ["rust-test_test1", "rust-test_test2"]);
     }
 
     #[test]

@@ -511,7 +511,7 @@ mod tests {
         for i in 0..n {
             let ev = ProgressEvent::NodeCacheHit {
                 recipe: RecipeId::new(0), node: NodeId::new(i),
-                name: format!("a{i}.o"), artifact: Some(format!("a{i}.o").into()),
+                name: format!("a{i}.o"), artifact: Some(format!("a{i}.o").into()), kind: NodeKind::Cooked,
             };
             state.apply(&ev);
             w.handle(buf, state, &ev).unwrap();
@@ -659,7 +659,7 @@ mod tests {
         state.apply(&started);
         let hit = ProgressEvent::NodeCacheHit {
             recipe: RecipeId::new(0), node: NodeId::new(0),
-            name: "probe:cc:compiler:auto".into(), artifact: None,
+            name: "probe:cc:compiler:auto".into(), artifact: None, kind: NodeKind::Cooked,
         };
         state.apply(&hit);
         w.handle(&mut buf, &state, &hit).unwrap();
@@ -1076,6 +1076,7 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "@45".into(),
             artifact: None,
+            kind: NodeKind::Cooked,
         };
         let opts = EventWriterOptions { colored: false, ..Default::default() };
         let out = render_one(&state, &ev, opts);

@@ -164,6 +164,7 @@ pub enum ProgressEvent {
         node: NodeId,
         name: String,
         artifact: Option<PathBuf>,
+        kind: NodeKind,
     },
     NodeSkipped {
         recipe: RecipeId,

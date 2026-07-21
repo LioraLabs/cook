@@ -275,7 +275,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{NodeId, RecipeTopo};
+    use crate::event::{NodeId, NodeKind, RecipeTopo};
 
     fn topo(recipes: &[(u32, &str, usize)]) -> Vec<RecipeTopo> {
         recipes.iter().map(|(id, name, n)| RecipeTopo {
@@ -411,6 +411,7 @@ mod tests {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "wc -w < a.txt > build/counts/alpha.count".into(),
             artifact: Some(std::path::PathBuf::from("build/counts/alpha.count")),
+            kind: NodeKind::Cooked,
         };
         state.apply(&hit);
         state.apply(&ProgressEvent::NodeStarted {
@@ -459,7 +460,7 @@ mod tests {
             });
                 let hit = ProgressEvent::NodeCacheHit {
                     recipe: RecipeId::new(0), node: NodeId::new(i),
-                    name: format!("a{i}.o"), artifact: Some(format!("a{i}.o").into()),
+                    name: format!("a{i}.o"), artifact: Some(format!("a{i}.o").into()), kind: NodeKind::Cooked,
                 };
                 state.apply(&hit);
                 r.handle(&state, &hit).unwrap();

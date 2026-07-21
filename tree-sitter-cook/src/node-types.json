@@ -1,0 +1,1140 @@
+[
+  {
+    "type": "chore",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "chore_header",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "lua_block",
+          "named": true
+        },
+        {
+          "type": "lua_line",
+          "named": true
+        },
+        {
+          "type": "shell_command",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "chore_header",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "params": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "chore_param_list",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "dependency_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "chore_param",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "defaulted_param",
+          "named": true
+        },
+        {
+          "type": "required_param",
+          "named": true
+        },
+        {
+          "type": "variadic_param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "chore_param_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "chore_param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "config_block",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "lua_code",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "cook_mods",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "seal_group",
+          "named": true
+        },
+        {
+          "type": "share_mod",
+          "named": true
+        },
+        {
+          "type": "unseal_group",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "cook_step",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "exec_lua_block",
+            "named": true
+          },
+          {
+            "type": "shell_block",
+            "named": true
+          }
+        ]
+      },
+      "outputs": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "lua_expr_output",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "cook_mods",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "defaulted_param",
+    "named": true,
+    "fields": {
+      "default": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "lua_expr_default",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "dependency_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "exec_lua_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "lua_code",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "explicit_recipe_header",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "dependency_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "glob_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "glob_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "glob_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "identifier",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "import_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "import_name",
+            "named": true
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "ingredient_exclude",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "ingredients_step",
+    "named": true,
+    "fields": {
+      "field": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "probe": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "ingredient_exclude",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lua_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "lua_code",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lua_expr_default",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "lua_expr_default",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lua_expr_output",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "lua_expr_default",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lua_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "lua_code",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_call",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "module_call_text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "name_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "placeholder",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "placeholder_ident",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "probe",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "ingredients_step",
+          "named": true
+        },
+        {
+          "type": "probe_header",
+          "named": true
+        },
+        {
+          "type": "producer",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "probe_dep_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "probe_header",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "probe_dep_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "producer",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "exec_lua_block",
+            "named": true
+          },
+          {
+            "type": "shell_block",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "glob_list",
+          "named": true
+        },
+        {
+          "type": "name_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "recipe",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "cook_step",
+          "named": true
+        },
+        {
+          "type": "explicit_recipe_header",
+          "named": true
+        },
+        {
+          "type": "ingredients_step",
+          "named": true
+        },
+        {
+          "type": "module_call",
+          "named": true
+        },
+        {
+          "type": "seal_step",
+          "named": true
+        },
+        {
+          "type": "test_step",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "register_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "lua_code",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "required_param",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "seal_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "seal_step",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "share_mod",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "shell_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "placeholder",
+          "named": true
+        },
+        {
+          "type": "shell_content",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "shell_command",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "placeholder",
+          "named": true
+        },
+        {
+          "type": "shell_content",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "source_file",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "chore",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "config_block",
+          "named": true
+        },
+        {
+          "type": "import_declaration",
+          "named": true
+        },
+        {
+          "type": "probe",
+          "named": true
+        },
+        {
+          "type": "recipe",
+          "named": true
+        },
+        {
+          "type": "register_block",
+          "named": true
+        },
+        {
+          "type": "top_level_module_call",
+          "named": true
+        },
+        {
+          "type": "use_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "string",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "placeholder",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "test_mods",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "seal_group",
+          "named": true
+        },
+        {
+          "type": "unseal_group",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "test_step",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "exec_lua_block",
+            "named": true
+          },
+          {
+            "type": "shell_block",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "test_mods",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "top_level_module_call",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "module_call_text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "unseal_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "use_declaration",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "variadic_param",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "sigil": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "*",
+            "named": false
+          },
+          {
+            "type": "+",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "!",
+    "named": false
+  },
+  {
+    "type": "\"",
+    "named": false
+  },
+  {
+    "type": "$",
+    "named": false
+  },
+  {
+    "type": "$<",
+    "named": false
+  },
+  {
+    "type": "'",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": "*",
+    "named": false
+  },
+  {
+    "type": "+",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": "=",
+    "named": false
+  },
+  {
+    "type": ">",
+    "named": false
+  },
+  {
+    "type": ">{",
+    "named": false
+  },
+  {
+    "type": "chore",
+    "named": false
+  },
+  {
+    "type": "comment",
+    "named": true
+  },
+  {
+    "type": "config",
+    "named": false
+  },
+  {
+    "type": "cook",
+    "named": false
+  },
+  {
+    "type": "envs",
+    "named": false
+  },
+  {
+    "type": "files",
+    "named": false
+  },
+  {
+    "type": "import",
+    "named": false
+  },
+  {
+    "type": "import_name",
+    "named": true
+  },
+  {
+    "type": "ingredients",
+    "named": false
+  },
+  {
+    "type": "json",
+    "named": false
+  },
+  {
+    "type": "lines",
+    "named": false
+  },
+  {
+    "type": "local",
+    "named": false
+  },
+  {
+    "type": "lua_code",
+    "named": true
+  },
+  {
+    "type": "module_call_text",
+    "named": true
+  },
+  {
+    "type": "nondet",
+    "named": false
+  },
+  {
+    "type": "path",
+    "named": true
+  },
+  {
+    "type": "pinned",
+    "named": false
+  },
+  {
+    "type": "placeholder_ident",
+    "named": true
+  },
+  {
+    "type": "probe",
+    "named": false
+  },
+  {
+    "type": "recipe",
+    "named": false
+  },
+  {
+    "type": "register",
+    "named": false
+  },
+  {
+    "type": "seal",
+    "named": false
+  },
+  {
+    "type": "shell_content",
+    "named": true
+  },
+  {
+    "type": "test",
+    "named": false
+  },
+  {
+    "type": "tools",
+    "named": false
+  },
+  {
+    "type": "unseal",
+    "named": false
+  },
+  {
+    "type": "use",
+    "named": false
+  },
+  {
+    "type": "{",
+    "named": false
+  },
+  {
+    "type": "}",
+    "named": false
+  }
+]

@@ -262,11 +262,11 @@ end)
             assert_eq!(cmd, "./run_test_a");
             // CS-0135: cook.add_test no longer accepts timeout/should_fail/
             // name; WorkPayload::Test still carries these fields for the
-            // engine executor, populated with their prior absent-defaults.
+            // engine executor. test_name derives as `<recipe>_test<N>`.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
             assert_eq!(suite_name, "unit");
-            assert_eq!(test_name, "");
+            assert_eq!(test_name, "tests_test1");
         }
         _ => panic!("expected Test payload"),
     }

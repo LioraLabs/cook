@@ -1,9 +1,12 @@
 config
     cook.env.NVIM_SITE = cook.env.NVIM_SITE or (os.getenv("HOME") .. "/.local/share/nvim/site")
 
+# One `generate` run produces all three; declaring only parser.c let
+# node-types.json drift behind grammar.js unnoticed. src/tree_sitter/*.h
+# tracks the CLI version, not grammar.js, so it stays undeclared.
 recipe generate
     ingredients "grammar.js"
-    cook "src/parser.c" {
+    cook "src/parser.c" "src/node-types.json" "src/grammar.json" {
         tree-sitter generate
     }
 
@@ -29,6 +32,26 @@ recipe nvim-parser: generate
         mkdir -p build/parser
         tree-sitter build . -o $<out>
     }
+
+# The Rust binding compiles the generated parser, so a grammar.js edit has to
+# reach cargo — depending on `generate` is what carries it. Sealed rather than
+# declared as ingredients because nothing here consumes $<in>: these are a
+# fingerprint, not an iteration driver.
+probe rust:tools
+    tools { cargo cc }
+
+probe rust:files
+    files { "bindings/rust/*.rs" "src/*.c" "src/tree_sitter/*.h" "src/node-types.json" "queries/*.scm" "Cargo.toml" "Cargo.lock" }
+
+recipe rust: generate
+    seal rust:tools rust:files
+    test { cargo test --manifest-path Cargo.toml }
+
+# src/ is generated but tracked, and the pre-commit hook does not watch it.
+# This is what keeps the committed bytes in step with grammar.js.
+chore check-generated
+    tree-sitter generate
+    git diff --exit-code -- src/ || { echo "src/ is stale — run 'cook ts.generate' and commit the result" >&2; exit 1; }
 
 chore nvim-install: nvim-parser
     mkdir -p $NVIM_SITE/parser

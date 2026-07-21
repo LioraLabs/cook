@@ -137,11 +137,12 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeCacheHit { recipe, node, name, artifact } => {
+            ProgressEvent::NodeCacheHit { recipe, node, name, artifact, kind } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     if let Entry::Vacant(e) = r.nodes.entry(*node) {
                         let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), name.clone());
+                        ns.kind = *kind;
                         ns.status = NodeStatus::Completed;
                         ns.completed_at = Some(Instant::now());
                         e.insert(ns);
@@ -319,12 +320,33 @@ mod tests {
         });
         s.apply(&ProgressEvent::NodeCacheHit {
             recipe: RecipeId::new(0), node: NodeId::new(0),
-            name: "a".into(), artifact: None,
+            name: "a".into(), artifact: None, kind: NodeKind::Cooked,
         });
         let r = &s.recipes[&RecipeId::new(0)];
         assert_eq!(r.cached_count, 1);
         assert_eq!(r.progress, (1, 3));
         assert_eq!(s.totals.completed_nodes, 1);
+    }
+
+    /// A cache hit must carry the node's kind through to the node it creates,
+    /// so a cached node is labelled exactly as the same node would be on a
+    /// miss. A test unit's name is a derived label (`<recipe>_test<N>`,
+    /// CS-0160), not command text: without the kind it fell through to the
+    /// command-token branch and rendered `$rust_test1`, and before the name
+    /// reached the node at all, a bare `?`.
+    #[test]
+    fn cache_hit_preserves_node_kind_so_test_labels_are_not_command_text() {
+        let mut s = BuildState::new();
+        s.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "rust", &[], 1)]), total_nodes: 1,
+        });
+        s.apply(&ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "rust_test1".into(), artifact: None, kind: NodeKind::Test,
+        });
+        let n = &s.recipes[&RecipeId::new(0)].nodes[&NodeId::new(0)];
+        assert_eq!(n.kind, NodeKind::Test);
+        assert_eq!(n.display(), "rust_test1");
     }
 
     #[test]
@@ -404,11 +426,11 @@ mod tests {
         });
         s.apply(&ProgressEvent::NodeCacheHit {
             recipe: RecipeId::new(0), node: NodeId::new(0),
-            name: "a".into(), artifact: None,
+            name: "a".into(), artifact: None, kind: NodeKind::Cooked,
         });
         s.apply(&ProgressEvent::NodeCacheHit {
             recipe: RecipeId::new(1), node: NodeId::new(0),
-            name: "b".into(), artifact: None,
+            name: "b".into(), artifact: None, kind: NodeKind::Cooked,
         });
         assert_eq!(s.totals.cached_node_count(&s), 2);
     }

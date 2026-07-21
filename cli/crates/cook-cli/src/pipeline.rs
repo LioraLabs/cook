@@ -315,6 +315,7 @@ fn bridge_engine_to_progress_events(
                     unit,
                     node_name,
                     artifact,
+                    kind,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
@@ -323,6 +324,7 @@ fn bridge_engine_to_progress_events(
                         node: nid,
                         name: node_name,
                         artifact,
+                        kind: translate_kind(kind),
                     }
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {

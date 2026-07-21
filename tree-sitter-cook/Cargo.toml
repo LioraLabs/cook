@@ -1,0 +1,33 @@
+[package]
+name = "tree-sitter-cook"
+description = "Tree-sitter grammar for the Cook build system DSL"
+version = "0.14.2"
+license = "MIT"
+edition = "2021"
+autoexamples = false
+repository = "https://github.com/LioraLabs/cook"
+keywords = ["incremental", "parsing", "tree-sitter", "cook"]
+categories = ["parsing", "text-editors"]
+
+build = "bindings/rust/build.rs"
+include = [
+    "bindings/rust/*",
+    "grammar.js",
+    "queries/*",
+    "src/*.c",
+    "src/*.h",
+    "src/tree_sitter/*",
+    "tree-sitter.json",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1.2"
+
+[dev-dependencies]
+tree-sitter = "0.26"

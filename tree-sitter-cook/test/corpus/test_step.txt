@@ -31,7 +31,6 @@ recipe r
   (ERROR
     (shell_block
       (shell_content))
-    (import_name)
     (lua_code)))
 
 ==================
@@ -50,7 +49,6 @@ recipe r
   (ERROR
     (shell_block
       (shell_content))
-    (import_name)
     (lua_code)))
 
 ==================
@@ -65,12 +63,11 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (test_step
-      body: (shell_block
-        (shell_content))
-      (ERROR
-        (import_name)))))
+      name: (identifier)))
+  (ERROR
+    (shell_block
+      (shell_content))
+    (lua_code)))
 
 ==================
 Test step with trailing seal (CS-0159)
@@ -132,4 +129,49 @@ recipe r
         (shell_content))
       (test_mods
         (seal_group
+          (identifier))))))
+
+==================
+Test step trailing seal repeats bare refs (CS-0159)
+==================
+
+recipe verify
+    test { true } seal host toolchain
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      (test_mods
+        (seal_group
+          (identifier)
+          (identifier))))))
+
+==================
+Test step trailing unseal repeats bare refs (CS-0159)
+==================
+
+recipe verify
+    test { true } unseal a b seal c d
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      (test_mods
+        (unseal_group
+          (identifier)
+          (identifier))
+        (seal_group
+          (identifier)
           (identifier))))))
