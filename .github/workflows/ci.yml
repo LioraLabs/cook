@@ -49,7 +49,7 @@ jobs:
       # loudly rather than silently reaching for a fallback.
       - name: Install tree-sitter CLI
         shell: bash
-        run: npm install -g tree-sitter-cli@0.25.10
+        run: npm install -g tree-sitter-cli@0.26.11
 
       - name: Toolchain sanity
         shell: bash
