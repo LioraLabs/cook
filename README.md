@@ -1,5 +1,3 @@
-<!-- GENERATED FILE: README.md is compiled from README.source (`cook readme`).
-     Edit README.source; code snippets live there as ```cook fences. -->
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/logo-dark.svg">
@@ -17,7 +15,7 @@
 </p>
 
 Got a lot of chefs complicating your build? cargo, CMake, pnpm, codegen, a
-`scripts/` directory nobody will admit to writing... each with its own idea
+`scripts/` directory nobody will admit to writing... each having its own idea
 of what's up to date. cook is one kitchen for the whole crew: a declarative
 language that runs them as one dependency graph with one content-addressed
 cache. It keeps the recipe ergonomics of
@@ -32,24 +30,83 @@ Heard enough?
 curl -fsSL https://getcook.sh | sh
 ```
 
-Still curious? Keep reading.
+Still curious? Don't take our word for any of that. Taste it.
 
-## Let's cook
+## The receipts
+
+Two repository-sized builds. Same recipes, same probes, same modules as
+the five-minute tour below; no special modes.
+
+### Cap: Turborepo, replaced
+
+[Cap](https://github.com/CapSoftware/Cap) is a 20k-star open-source screen
+recorder: a pnpm monorepo with eleven Turbo tasks, and a Rust workspace
+Turbo can't see at all. [cook-cap](https://github.com/LioraLabs/cook-cap)
+swaps Turborepo for `cook_pnpm` and benchmarks the swap. The experiment:
+two different edits to the same file in `@cap/env`, a package almost
+everything depends on.
+
+| Edit to `@cap/env` | Turborepo | cook |
+| --- | --- | --- |
+| Add a comment | rebuilds 7 of 11 tasks, **~47s** | rebuilds 1 task, **~1s** |
+| Add a real export | rebuilds the same 7 tasks, ~47s | rebuilds `@cap/env` plus the one app that ingests it, ~30s |
+
+Turbo hashes inputs and cascades: touch a file and everything downstream is
+dirty, whatever you touched. cook keys each task on what it actually
+consumes, so a comment that compiles away is a cache hit everywhere
+downstream. The Turbo config becomes this:
+
+```cook
+use cook_pnpm
+
+cook_pnpm.workspace({
+    packages = { "packages/*", "apps/web", "apps/desktop" },
+    pm       = "pnpm@10",
+    tasks    = {
+        build = { outputs = { "dist/**" }, depends_on = { "^build" } },
+        ["@cap/web#build"] = { outputs = { ".next/**" }, depends_on = { "^build" } },
+    },
+})
+
+probe rust:sources
+    files { "Cargo.toml", "Cargo.lock", "crates/**/*" }
+
+# The Rust workspace Turbo can't see: more recipes in the same graph.
+recipe rust-bins
+    seal rust:sources
+    cook "target/debug/scap-targets" { cargo build -q -p scap-targets }
+```
+
+Every number above is reproduced by
+[`bench/compare.sh`](https://github.com/LioraLabs/cook-cap/blob/main/bench/compare.sh)
+in that repo. Run it yourself.
+
+### Doom 3: one graph from compiler to demo map
+
+[cook-dhewm3](https://github.com/LioraLabs/cook-dhewm3) builds the Doom 3
+source port with `cook_cc`: a 427-node graph producing the engine binary,
+the gameplay `.so` plugins, and the asset tools (`dmap`, the AAS compiler),
+then feeds those tools their own output: a playable demo map compiled by
+the `dmap` the graph just built. Clone, `cook`, play.
+`compile_commands.json` for clangd falls out of the same graph.
+
+Straight talk: on a raw header-touch rebuild sweep, ninja is still faster,
+1.7x on our bench. What ninja can't do is hold the map compiler, the maps,
+and the engine in one cached graph; CMake can bolt that on with custom
+commands, but it can't cache it, share it, or explain a miss.
+
+## The five-minute tour
 
 Say you're handed a pile of SVGs and you need a PNG sprite sheet.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-sprite-dark.svg">
-  <img src="assets/readme/snippet-sprite.svg" alt="cook recipe sprite-sheet: ingredients are the images SVG glob; a cook step whose target uses a per-input accessor fans each SVG out to its own inkscape rasterize; a second cook step whose target has no accessor gathers every PNG into one texpack step producing spritesheet.png and spritesheet.json.">
-</picture>
-
-Five lines: a parallel asset pipeline with content-addressed caching and
-incremental execution.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-run-dark.svg">
-  <img src="assets/readme/snippet-run.svg" alt="Terminal: the first cook sprite-sheet rasterizes every SVG in parallel then packs the sheet; a second run is a full cache hit; after editing enemy.svg, cook re-rasterizes only enemy.png and repacks the sheet, nothing else.">
-</picture>
+```cook
+recipe sprite-sheet
+    ingredients "images/*.svg"
+    cook "build/sprites/$<in.stem>.png" { inkscape -z -e $<out> $<in> }
+    cook "build/spritesheet.json" "build/spritesheet.png" {
+        printf '%s\n' $<in> | texpack -o build/spritesheet
+    }
+```
 
 Each `cook` step declares a target. `$<in.stem>` varies per input, so the
 first step fans out: one unit per SVG, parallel across your cores, each
@@ -57,50 +114,65 @@ cached under its own key. The second step's targets are static, so it
 gathers: every PNG in, one sheet out. You never write the loop or the join.
 The shape of your outputs tells cook the shape of the work.
 
-### Now ship it
+```console
+$ cook sprite-sheet      # rasterizes every SVG in parallel, then packs the sheet
+$ cook sprite-sheet      # cache hit across the board, the kitchen doesn't even turn on
+$ nvim images/enemy.svg  # give the enemy a bigger sword
+$ cook sprite-sheet      # re-rasterizes enemy.png, repacks the sheet, nothing else
+```
 
 Globs aren't the only source of fan-out. Data can shape the build too:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ship-dark.svg">
-  <img src="assets/readme/snippet-ship.svg" alt="cook Cookfile: a probe named platforms produces an inline JSON array of platform records; a recipe ship iterates the probe, zipping the sprite sheet into one bundle per platform at that platform's compression level.">
-</picture>
+```cook
+probe platforms
+    json { echo '[ {"name":"web","level":"9"}, {"name":"desktop","level":"0"} ]' }
+
+recipe ship
+    ingredients platforms
+    cook "build/$<in.name>/game.zip" {
+        zip -$<in.level> -j $<out> $<sprite-sheet>
+    }
+```
 
 `ingredients platforms` points at a **probe**: a named, cached value the
 graph can see. The recipe runs once per record, fields addressable as
-`$<in.name>`. And `$<sprite-sheet>` reaches across recipes: it expands to
-the sheet's outputs and records the dependency edge.
+`$<in.name>`; add a record and exactly one new unit builds, delete one and
+cook sweeps the orphaned bundle. And `$<sprite-sheet>` reaches across
+recipes: it expands to the sheet's outputs and records the dependency edge.
+Eval suites, per-package monorepo tasks, one-job-per-row builds of any
+kind: the shape of your data is the shape of your build.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-ship-run-dark.svg">
-  <img src="assets/readme/snippet-ship-run.svg" alt="Terminal: cook ship rasterizes and packs the sheet, then zips one bundle per platform; adding a switch record to the platforms JSON builds exactly one new unit; editing enemy.svg re-rasterizes it, repacks the sheet, and re-zips every platform.">
-</picture>
+That's the language. Tests, chores (run-every-time side effects like
+deploys, with a real TTY), and configuration overlays are in
+[the manual](document.md).
 
-Delete a record and cook sweeps the orphaned bundle. The shape of your data
-is the shape of your build: eval suites, per-package monorepo tasks, any
-build that's really one job per row of some data.
+## Why not ___?
 
-### Out the door
+**make or just?** make decides staleness by mtime and makes you hand-write
+every edge in macro language; just has lovely ergonomics and no dependency
+graph or cache at all. cook keeps just's ergonomics and make's graph, keys
+work by content instead of clock, and gives you Lua where you'd otherwise
+be fighting `$(shell ...)`.
 
-Deploying doesn't produce a reproducible artifact, so it isn't a recipe.
-It's a **chore**, and chores deliberately run every time, with a real TTY
-and real parameters:
+**Turborepo or Nx?** Package-level hash cascades: any changed byte in a
+dependency dirties every dependent, and the graph ends at the edge of the
+JavaScript world. cook keys on what tasks actually consume (that's the Cap
+table above) and holds the Rust crates, codegen, and assets in the same
+graph as the JS.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-chore-dark.svg">
-  <img src="assets/readme/snippet-chore.svg" alt="cook Cookfile: a chore named deploy takes a target parameter, depends on ship, and rsyncs the built platform bundles to the target, running every time.">
-</picture>
+**Bazel?** If you can afford to adopt Bazel's world, adopt it: it's the
+strongest hermeticity story there is. The price is rewriting your build in
+its terms: BUILD files for every target, wrapped toolchains, ecosystem
+tools swapped for rules_*. cook wraps the tools you already run (pnpm,
+cargo, cc) instead of replacing them, and the shared store is a directory,
+not a service. You trade enforced hermeticity for a key you own and can
+audit; the next section is how cook keeps that trade honest.
 
-```console
-$ cook deploy staging
-```
+**CMake?** CMake generates build systems for C and C++ and stops at the
+language border. `cook_cc` is a module, not a fork: C and C++ land in the
+same graph as everything else in the repo. That's the Doom 3 build above.
 
-The bundles stay cached; the deployment doesn't. A recipe body is a plan,
-not a place for run-every-time shell.
-
-## Still hungry?
-
-Good. That was the appetizer. Now the part cook was built for: the cache.
+## The part cook was built for: the cache
 
 ### You own the key
 
@@ -108,17 +180,23 @@ Every unit of work is cached under one content-addressed key, and the key is
 built from what you declared: nothing else. cook does not quietly fold your
 machine, locale, or toolchain into it. That keeps artifacts portable by
 default, and it makes *you* responsible for naming your real determinants.
-When the compiler matters, say so:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-seal-dark.svg">
-  <img src="assets/readme/snippet-seal.svg" alt="cook Cookfile: a probe named compiler declares the cc tool; a recipe app seals that compiler so its resolved identity is folded into each unit's cache key, then compiles each src/*.c file to an object.">
-</picture>
+When the compiler matters, say so:
+```cook
+probe compiler
+    tools { cc }
+
+recipe app
+    ingredients "src/*.c"
+    seal compiler
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+```
 
 `seal` folds the resolved compiler identity into each unit's key. The local
 cache and the shared store are addressed by that same key, so a teammate or
 a CI runner reuses your artifact exactly when they'd have computed the same
-one.
+one. The store is a directory: point everyone at one path, no server to
+run.
 
 ### No mystery misses
 
@@ -135,52 +213,62 @@ response, say) is marked `nondet`, and verify leaves it alone.
 Need imperative scripting? Here it is. A `>{ ... }` body runs Lua instead of
 shell, with the unit's resolved I/O in scope:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/snippet-lua-dark.svg">
-  <img src="assets/readme/snippet-lua.svg" alt="cook Cookfile: a recipe upper whose cook step uses a Lua body, instead of shell, to read each input text file and write its uppercased contents to the output.">
-</picture>
+```cook
+recipe upper
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.txt" >{
+        local text = fs.read(input)
+        fs.write(output, text:upper())
+    }
+```
 
 This is no embedded afterthought: every Cookfile lowers to Lua before
 execution, and `cook emit-lua` shows you exactly what yours compiles to.
 Modules distributed through LuaRocks use the same interface to teach cook
-entire ecosystems; `cook_cc` brings C and C++ into the same graph as
-everything else.
-
-## At scale
-
-Three repository-sized builds, using nothing but the pieces above. Same
-recipes, same ingredients, same probes and modules, no special modes.
-
-- [**cook-cap**](https://github.com/LioraLabs/cook-cap):
-  [Cap](https://github.com/CapSoftware/Cap), the 20k-star open-source screen
-  recorder, with Turborepo swapped for `cook_pnpm`. Two edits to the same
-  shared-package file: a comment, and a new export. Turbo rebuilds the same
-  7 of 11 tasks (~47s) for both; cook rebuilds one task in ~1s for the
-  comment, and for the export only the app that actually ingests those
-  bytes. Keys fold what artifacts *contain*, not a hash cascade, and the
-  repo's bench script reproduces every number. The Rust crates Turbo can't
-  see are three more recipes in the same graph.
-
-- [**cook-dogfood**](https://github.com/LioraLabs/cook-dogfood): a polyglot
-  monorepo. A .NET API, a TypeScript/pnpm web app, a Rust CLI, and generated
-  cross-language contracts, built as one graph. Each subtree owns its
-  Cookfile, `import` joins them.
-
-- [**dhewm3**](https://github.com/LioraLabs/cook-dhewm3): the Doom 3 source
-  port, built with `cook_cc` as a 427-node dependency graph.
+entire ecosystems; `cook_cc` and `cook_pnpm` above are exactly that.
 
 ## Install
 
-The one-liner at the top of this page installs a single Rust binary with
-Lua 5.4 and LuaRocks bundled: no system Lua to match, no package manager to
-fight. Linux and macOS. Or build from source:
+On Linux and macOS install cook with a single command:
+```sh
+curl -fsSL https://getcook.sh | sh
 
+
+```
+
+This installs a single Rust binary with
+Lua 5.4 and LuaRocks bundled.
+
+Or build from source:
 ```sh
 cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
 ```
 
-Then:
+One linking note for source builds. cook statically embeds its own Lua 5.4;
+no system Lua is consulted. But a native (C) rock resolves the Lua C API
+out of the `cook` executable itself when it loads, so the binary has to
+*export* those symbols. A checkout build (`cargo build` under `cli/`) picks
+the right linker flag up from `cli/.cargo/config.toml` automatically;
+`cargo install` reads config from the directory you run it in, not from the
+package, so pass the flag yourself:
 
+```sh
+# Linux
+RUSTFLAGS="-C link-arg=-rdynamic" \
+    cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
+
+# macOS
+RUSTFLAGS="-C link-arg=-Wl,-export_dynamic" \
+    cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
+```
+
+Skip it and everything pure-Lua still works; the failure only shows up when
+a C rock loads: dlopen succeeds, then `lua_*` symbol lookup fails with an
+error that looks nothing like a linker problem. Sanity-check any build with
+`nm -D $(command -v cook) | grep lua_newstate`: exactly one line means the
+symbols are exported.
+
+Then:
 ```sh
 mkdir hello-cook && cd hello-cook
 cook init
@@ -256,14 +344,9 @@ cook
 
 ## Chef's note
 
-This README is itself a cook build: a probe reads
-[`README.source`](README.source) for the code snippets, a recipe fans out one
-light-and-dark render per snippet, and a gather step compiles the page. Edit
-one snippet and only its pair re-bakes. The recipe is at the bottom of the
-[`Cookfile`](Cookfile).
-
 cook is pre-1.0 software. If this friendly tour and the Standard disagree,
-the Standard wins, and the README has a bug.
+the Standard wins, and the README has a bug. Every claim above that carries
+a number ships with the script that produced it.
 
 ## License
 
