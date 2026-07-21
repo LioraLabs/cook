@@ -61,6 +61,12 @@ pub struct FingerprintInputs {
     pub dep_outputs: Vec<(String, String)>,
     /// `(key, value)` for env-var contributions.
     pub env_keys: Vec<(String, String)>,
+    /// CS-0159: `(probe_key, canonical_value)` for every probe in the test
+    /// unit's effective seal set (§17.4 rule 1). Resolved from the execute-phase
+    /// `ProbeValueStore` at ready time by the engine, using the same
+    /// absent-key-folds-to-empty-string rule as a cook unit's
+    /// `resolve_sealed_probes`, so producer and consumer agree on the digest.
+    pub sealed_probes: Vec<(String, String)>,
 }
 
 /// Hash a sorted list of `(key, value)` pairs into `h`.
@@ -132,6 +138,26 @@ pub fn compute_test_fingerprint(
     hash_pairs(&mut h, &inputs.cook_outputs);
     hash_pairs(&mut h, &inputs.dep_outputs);
     hash_pairs(&mut h, &inputs.env_keys);
+
+    // 7. sealed probe values (CS-0159, §17.4 rule 1).
+    //
+    //    The domain tag is load-bearing, not decoration. `hash_pairs` uses one
+    //    encoding for every pair list and the lists are hashed back-to-back,
+    //    so without a separator a sealed probe named `K` with value `V` would
+    //    hash byte-identically to an env-var contribution `K=V` — two
+    //    materially different determinants colliding on one key, i.e. a false
+    //    cache hit. NUL cannot occur in an env key or a probe key, so the tag
+    //    is unambiguous.
+    //
+    //    The tag is emitted ONLY for a non-empty set, which keeps the surface
+    //    purely additive: a test that seals nothing hashes exactly as it did
+    //    pre-CS-0159, so no `CACHE_VERSION` bump is needed and existing
+    //    test-cache entries stay valid. A newly-sealed test has no prior entry
+    //    to collide with.
+    if !inputs.sealed_probes.is_empty() {
+        h.update(b"\0seal\0");
+        hash_pairs(&mut h, &inputs.sealed_probes);
+    }
 
     format!("sha256:{:x}", h.finalize())
 }
@@ -506,6 +532,84 @@ mod tests {
         FingerprintInputs::default()
     }
 
+    // ── CS-0159: sealed-probe fold in the test fingerprint ──────────────
+
+    fn sealed(pairs: &[(&str, &str)]) -> FingerprintInputs {
+        FingerprintInputs {
+            sealed_probes: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// A test that seals nothing hashes exactly as it did pre-CS-0159 — the
+    /// surface is additive, so no existing test-cache entry is invalidated.
+    #[test]
+    fn seal_empty_set_leaves_fingerprint_unchanged() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        assert_eq!(
+            compute_test_fingerprint(&p, &empty_inputs()),
+            compute_test_fingerprint(&p, &sealed(&[]))
+        );
+    }
+
+    /// A sealed probe's VALUE is a determinant: same key, different value =>
+    /// different key. This is the whole point of sealing a test.
+    #[test]
+    fn seal_value_change_busts_fingerprint() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        let a = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]));
+        let b = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-14")]));
+        assert_ne!(a, b);
+    }
+
+    /// Sealing at all changes the key relative to not sealing.
+    #[test]
+    fn seal_presence_changes_fingerprint() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        assert_ne!(
+            compute_test_fingerprint(&p, &empty_inputs()),
+            compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]))
+        );
+    }
+
+    /// The fold is order-insensitive — the author's declaration order MUST NOT
+    /// affect the key (the engine passes a BTreeMap, but the hash sorts too).
+    #[test]
+    fn seal_fold_is_order_insensitive() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        let a = compute_test_fingerprint(&p, &sealed(&[("a", "1"), ("b", "2")]));
+        let b = compute_test_fingerprint(&p, &sealed(&[("b", "2"), ("a", "1")]));
+        assert_eq!(a, b);
+    }
+
+    /// Key and value are not interchangeable — swapping them MUST NOT collide.
+    #[test]
+    fn seal_key_value_swap_does_not_collide() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        let a = compute_test_fingerprint(&p, &sealed(&[("k", "v")]));
+        let b = compute_test_fingerprint(&p, &sealed(&[("v", "k")]));
+        assert_ne!(a, b);
+    }
+
+    /// The sealed fold occupies its own slot: a sealed probe MUST NOT be
+    /// confusable with an env-var contribution of the same key/value.
+    #[test]
+    fn seal_does_not_collide_with_env_contribution() {
+        let p = make_test_payload("./t", 0, false, "s", "t");
+        let as_seal = compute_test_fingerprint(&p, &sealed(&[("K", "V")]));
+        let as_env = compute_test_fingerprint(
+            &p,
+            &FingerprintInputs {
+                env_keys: vec![("K".to_string(), "V".to_string())],
+                ..Default::default()
+            },
+        );
+        assert_ne!(as_seal, as_env);
+    }
+
     fn make_test_payload(
         cmd: &str,
         timeout: u64,
@@ -514,6 +618,7 @@ mod tests {
         test_name: &str,
     ) -> WorkPayload {
         WorkPayload::Test {
+            seal_keys: Default::default(),
             cmd: cmd.into(),
             line: 1,
             timeout,
@@ -586,6 +691,7 @@ mod tests {
     fn test_unit_fingerprint_deterministic() {
         let payload = make_test_payload("run_tests.sh", 120, false, "suite", "test1");
         let inputs = FingerprintInputs {
+            sealed_probes: vec![],
             cook_outputs: vec![("out/lib.a".into(), "sha256:abc".into())],
             dep_outputs: vec![],
             env_keys: vec![("CC".into(), "gcc".into())],
@@ -654,6 +760,7 @@ mod tests {
     #[test]
     fn test_unit_fingerprint_cook_outputs_order_independent() {
         let inputs_a = FingerprintInputs {
+            sealed_probes: vec![],
             cook_outputs: vec![
                 ("a".into(), "hash1".into()),
                 ("b".into(), "hash2".into()),
@@ -661,6 +768,7 @@ mod tests {
             ..Default::default()
         };
         let inputs_b = FingerprintInputs {
+            sealed_probes: vec![],
             cook_outputs: vec![
                 ("b".into(), "hash2".into()),
                 ("a".into(), "hash1".into()),

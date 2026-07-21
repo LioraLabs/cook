@@ -50,7 +50,7 @@ pub(crate) enum CookMode {
 
 /// Render a set of probe keys as a Lua array literal: `{"key1", "key2"}`.
 /// Returns `"{}"` for an empty set.
-fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
+pub(crate) fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
     if keys.is_empty() {
         return "{}".to_string();
     }

@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="verify" line=1
+      deps: []
+      ingredients: ["src/*.c"]
+      excludes: []
+      steps:
+        Test body=ShellBlock(["./one.sh"]) seal=["b", "c"]
+        Test body=ShellBlock(["./two.sh"]) seal=["a", "b"]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

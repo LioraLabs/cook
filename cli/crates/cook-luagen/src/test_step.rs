@@ -76,6 +76,21 @@ pub(crate) fn generate_test_step(
     // cook-engine/src/run.rs.
     let inputs_field: &str = if has_ingredients { "inputs = ingredients, " } else { "" };
 
+    // CS-0159: the test unit's effective seal set (recipe baseline folded with
+    // this step's trailing seal/unseal by the parser). Emitted as a leading
+    // `seal = {...}, ` field so every add_test arm below carries it uniformly;
+    // empty when the test seals nothing, keeping existing goldens for
+    // unsealed tests byte-identical.
+    let seal_field: String = if test_step.seal.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "seal = {}, ",
+            crate::cook_step::probe_keys_to_lua_table(&test_step.seal)
+        )
+    };
+    let seal_field: &str = &seal_field;
+
     // CS-0101: test steps are cache = false, so `$<file:PATH>` is pure
     // substitution — hoisted locals, but NO `file_refs` unit field. The
     // accumulator is shared by the as-name and body expansions (patterns
@@ -92,8 +107,8 @@ pub(crate) fn generate_test_step(
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
                 out.push_str(&format!(
-                    "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
-                    source_expr, cmd_expr, inputs_field, line, consulted.to_lua_table()
+                    "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}{}line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
+                    source_expr, cmd_expr, inputs_field, seal_field, line, consulted.to_lua_table()
                 ));
             }
             // `ManyToOne` is grouped in here for exhaustiveness only:
@@ -109,8 +124,8 @@ pub(crate) fn generate_test_step(
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
                 out.push_str(&format!(
-                    "    cook.add_test({{command = {}, {}line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
-                    cmd_expr, inputs_field, line, consulted.to_lua_table()
+                    "    cook.add_test({{command = {}, {}{}line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
+                    cmd_expr, inputs_field, seal_field, line, consulted.to_lua_table()
                 ));
             }
         },
@@ -125,8 +140,8 @@ pub(crate) fn generate_test_step(
                 ));
                 // Binding convention: build lua_code at register time with `local input = <value>`.
                 out.push_str(&format!(
-                    "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}line = {}, iteration_item = _test_in, consulted_env_keys = \"*\"}})\n",
-                    lua_chunk_literal(code), inputs_field, line
+                    "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}{}line = {}, iteration_item = _test_in, consulted_env_keys = \"*\"}})\n",
+                    lua_chunk_literal(code), inputs_field, seal_field, line
                 ));
                 out.push_str("    end\n");
             }
@@ -136,8 +151,8 @@ pub(crate) fn generate_test_step(
                 }
                 // Serialise the inputs table at register time into the lua_code string.
                 out.push_str(&format!(
-                    "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
-                    source_expr, lua_chunk_literal(code), inputs_field, line
+                    "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}{}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
+                    source_expr, lua_chunk_literal(code), inputs_field, seal_field, line
                 ));
             }
             PlateTestMode::OneShot => {
@@ -145,8 +160,8 @@ pub(crate) fn generate_test_step(
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
                 out.push_str(&format!(
-                    "    cook.add_test({{lua_code = {}, {}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
-                    lua_chunk_literal(code), inputs_field, line
+                    "    cook.add_test({{lua_code = {}, {}{}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
+                    lua_chunk_literal(code), inputs_field, seal_field, line
                 ));
             }
         },
@@ -175,6 +190,14 @@ pub(crate) fn generate_for_each_test_step(
     use crate::template::{cook_step_ctx, expand_for_each_template};
 
     let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
+    // CS-0159: the effective seal set travels with the fan-out units too —
+    // every member unit of a sealed `test` keys on the same sealed probes.
+    let seal_field: String = if test_step.seal.is_empty() {
+        String::new()
+    } else {
+        format!("seal = {}, ", crate::cook_step::probe_keys_to_lua_table(&test_step.seal))
+    };
+    let seal_field: &str = &seal_field;
     // CS-0101: substitution only (cache = false) — hoists, no file_refs field.
     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
 
@@ -210,8 +233,8 @@ pub(crate) fn generate_for_each_test_step(
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_test({{command = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
-                cmd_expr, line, consulted.to_lua_table()
+                "        cook.add_test({{command = {}, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
+                cmd_expr, seal_field, line, consulted.to_lua_table()
             ));
             out.push_str("    end\n");
         }
@@ -223,8 +246,8 @@ pub(crate) fn generate_for_each_test_step(
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_test({{lua_code = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
-                lua_chunk_literal(code), line
+                "        cook.add_test({{lua_code = {}, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
+                lua_chunk_literal(code), seal_field, line
             ));
             out.push_str("    end\n");
         }

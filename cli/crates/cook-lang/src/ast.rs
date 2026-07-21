@@ -241,6 +241,17 @@ pub struct CookStep {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestStep {
     pub body: Body,
+    /// Effective `seal` refs — sorted, de-duplicated bare probe keys. Folded
+    /// from the recipe-level `seal` baseline plus this test's trailing
+    /// `seal`/`unseal` tail (§8.4.3, CS-0159). A test unit is a cacheable
+    /// unit, so it keys on its sealed probes' values exactly as a `cook`
+    /// unit does (§17.4 rule 1).
+    ///
+    /// Unlike [`CookStep`], a test carries no `share_mod` — `local` /
+    /// `pinned` / `nondet` state facts about an *output artifact*, and a test
+    /// produces a pass/fail record rather than artifacts. The test tail is
+    /// therefore the input half of `cook_mods` only.
+    pub seal: BTreeSet<String>,
 }
 
 /// The source of a `for_each` step's data members. Only a probe-key source
@@ -356,6 +367,7 @@ mod tests {
     #[test]
     fn test_test_step() {
         let _step = TestStep {
+            seal: Default::default(),
             body: Body::ShellBlock(vec!["./{in}".to_string()]),
         };
     }

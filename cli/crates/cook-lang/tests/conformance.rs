@@ -234,7 +234,16 @@ fn format_step(step: &Step) -> String {
                 ForEachSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
             },
         ),
-        Step::Test { step, .. } => format!("Test body={}", repr_body(&step.body)),
+        // CS-0159: render the effective seal set only when non-empty, so
+        // existing fixtures (unsealed tests) keep byte-identical `parse.txt`.
+        Step::Test { step, .. } => {
+            let mut s = format!("Test body={}", repr_body(&step.body));
+            if !step.seal.is_empty() {
+                let seal: Vec<&str> = step.seal.iter().map(|x| x.as_str()).collect();
+                s.push_str(&format!(" seal={seal:?}"));
+            }
+            s
+        }
         // `Step` is `#[non_exhaustive]`; render unknown future variants with a
         // generic placeholder so the conformance harness keeps building when
         // the AST grows.

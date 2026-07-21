@@ -2073,6 +2073,29 @@ fn first_cook_disposition(cf: &Cookfile) -> &crate::ast::Disposition {
     panic!("no cook step found");
 }
 
+/// CS-0159: the effective seal set of the recipe's first `test` step.
+fn first_test_seal(cf: &Cookfile) -> &std::collections::BTreeSet<String> {
+    for step in &cf.recipes[0].steps {
+        if let crate::ast::Step::Test { step, .. } = step {
+            return &step.seal;
+        }
+    }
+    panic!("no test step found");
+}
+
+/// The nth `test` step's effective seal set (0-indexed among tests).
+fn nth_test_seal(cf: &Cookfile, n: usize) -> &std::collections::BTreeSet<String> {
+    cf.recipes[0]
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            crate::ast::Step::Test { step, .. } => Some(&step.seal),
+            _ => None,
+        })
+        .nth(n)
+        .expect("test step index out of range")
+}
+
 #[test]
 fn disp_recipe_seal_applies_to_cook() {
     let cf = parse("recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n").unwrap();
@@ -2082,31 +2105,205 @@ fn disp_recipe_seal_applies_to_cook() {
     assert!(!d.record);
 }
 
+/// CS-0159: a `test`-only recipe is a legitimate seal target. A test unit is a
+/// cacheable unit that keys on its sealed probes' values (§17.4 rule 1), so the
+/// recipe-level baseline has somewhere to land. This inverts the pre-CS-0159
+/// behaviour, which rejected the recipe outright.
 #[test]
-fn disp_recipe_seal_rejects_test_only_recipe() {
-    let err = parse("recipe verify\n    seal host\n    test { true }\n")
-        .expect_err("a recipe-level seal requires a cook unit");
-    match err {
-        ParseError::Parse { line, message } => {
-            assert_eq!(line, 1);
-            assert!(
-                message.contains("seal on recipe verify: no cook units to apply to"),
-                "got: {message}"
-            );
-        }
-        e => panic!("expected ParseError::Parse, got {e:?}"),
+fn disp_recipe_seal_applies_to_test_only_recipe() {
+    let cf = parse("recipe verify\n    seal host\n    test { true }\n").unwrap();
+    let seal = first_test_seal(&cf);
+    assert!(seal.contains("host"), "got: {seal:?}");
+}
+
+// ── CS-0159: seal parity on test units ──────────────────────────────────
+
+/// The recipe baseline reaches cook and test units alike, in one recipe.
+#[test]
+fn seal_baseline_reaches_both_cook_and_test() {
+    let cf = parse(
+        "recipe build\n    ingredients \"a.c\"\n    seal toolchain\n\
+         \x20   cook \"x.o\" { cc -c $<in> }\n    test { ./x.o }\n",
+    )
+    .unwrap();
+    assert!(first_cook_disposition(&cf).seal.contains("toolchain"));
+    assert!(first_test_seal(&cf).contains("toolchain"));
+}
+
+/// A trailing `seal` on a test adds to the baseline; the tail is additive.
+#[test]
+fn test_trailing_seal_adds_to_baseline() {
+    let cf = parse(
+        "recipe verify\n    ingredients \"a.c\"\n    seal a\n    test { true } seal b c\n",
+    )
+    .unwrap();
+    let seal = first_test_seal(&cf);
+    assert_eq!(
+        seal.iter().cloned().collect::<Vec<_>>(),
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+/// `effective(unit) = (baseline ∪ trailing seals) − trailing unseals`, on a
+/// test exactly as on a cook (§8.4.3 rule 4).
+#[test]
+fn test_trailing_unseal_removes_from_baseline() {
+    let cf = parse(
+        "recipe verify\n    ingredients \"a.c\"\n    seal a b\n    test { true } unseal a seal c\n",
+    )
+    .unwrap();
+    let seal = first_test_seal(&cf);
+    assert_eq!(
+        seal.iter().cloned().collect::<Vec<_>>(),
+        vec!["b".to_string(), "c".to_string()]
+    );
+}
+
+/// An `unseal` on one test MUST NOT leak to a sibling test or cook unit.
+#[test]
+fn test_unseal_is_per_unit_only() {
+    let cf = parse(
+        "recipe verify\n    ingredients \"a.c\"\n    seal a\n\
+         \x20   test { one } unseal a\n    test { two }\n    cook \"x.o\" { cc }\n",
+    )
+    .unwrap();
+    assert!(nth_test_seal(&cf, 0).is_empty());
+    assert!(nth_test_seal(&cf, 1).contains("a"));
+    assert!(first_cook_disposition(&cf).seal.contains("a"));
+}
+
+/// The baseline is declarative: a `seal` after the test still applies to it.
+#[test]
+fn test_seal_baseline_is_order_independent() {
+    let cf = parse(
+        "recipe verify\n    ingredients \"a.c\"\n    test { true }\n    seal host\n",
+    )
+    .unwrap();
+    assert!(first_test_seal(&cf).contains("host"));
+}
+
+/// A test that seals nothing keeps an empty effective set (no accidental fold).
+#[test]
+fn test_without_seal_has_empty_set() {
+    let cf = parse("recipe verify\n    ingredients \"a.c\"\n    test { true }\n").unwrap();
+    assert!(first_test_seal(&cf).is_empty());
+}
+
+/// Bare trailing `seal`/`unseal` on a test is rejected (§8.4.3 rule 4).
+#[test]
+fn test_bare_seal_rejected() {
+    for src in [
+        "recipe v\n    ingredients \"a.c\"\n    test { true } seal\n",
+        "recipe v\n    ingredients \"a.c\"\n    test { true } unseal\n",
+    ] {
+        let err = parse(src).expect_err("bare seal/unseal must be rejected");
+        let ParseError::Parse { message, .. } = err else {
+            panic!("expected ParseError::Parse");
+        };
+        assert!(
+            message.contains("requires at least one probe ref"),
+            "got: {message}"
+        );
     }
+}
+
+/// CS-0159: a test takes the INPUT half of the tail only — `share_mod`
+/// states a fact about an output artifact, and a test produces none.
+#[test]
+fn test_share_mod_rejected() {
+    for kw in ["local", "pinned", "nondet"] {
+        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {kw}\n");
+        let err = parse(&src).expect_err("share_mod must be rejected on a test");
+        let ParseError::Parse { message, .. } = err else {
+            panic!("expected ParseError::Parse");
+        };
+        assert!(
+            message.contains("is not a test modifier") && message.contains("pass/fail"),
+            "got: {message}"
+        );
+    }
+}
+
+/// The removed v1.0 modifiers keep their did-you-mean diagnostics now that
+/// the trailing surface parses rather than blanket-rejects (CS-0135).
+#[test]
+fn test_removed_modifiers_keep_migration_diagnostics() {
+    for (kw, needle) in [
+        ("should_fail", "should_fail was removed in v1.0"),
+        ("timeout", "timeout was removed in v1.0"),
+        ("as \"name\"", "as was removed in v1.0"),
+    ] {
+        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {kw}\n");
+        let err = parse(&src).expect_err("removed modifier must be rejected");
+        let ParseError::Parse { message, .. } = err else {
+            panic!("expected ParseError::Parse");
+        };
+        assert!(message.contains(needle), "got: {message}");
+    }
+}
+
+/// Unrecognised trailing content still reports the generic diagnostic.
+#[test]
+fn test_unknown_trailing_content_rejected() {
+    let err = parse("recipe v\n    ingredients \"a.c\"\n    test { true } wat\n")
+        .expect_err("unknown trailing token must be rejected");
+    let ParseError::Parse { message, .. } = err else {
+        panic!("expected ParseError::Parse");
+    };
+    assert!(
+        message.contains("unexpected text after test body: 'wat'"),
+        "got: {message}"
+    );
+}
+
+/// Seal-ref validation is shared with the cook path: the quoted form and a
+/// third `:IDENT` segment are rejected on a test tail too.
+#[test]
+fn test_seal_ref_validation_matches_cook() {
+    for bad in ["seal \"host\"", "seal a:b:c"] {
+        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {bad}\n");
+        let err = parse(&src).expect_err("malformed probe ref must be rejected");
+        let ParseError::Parse { message, .. } = err else {
+            panic!("expected ParseError::Parse");
+        };
+        assert!(message.contains("seal:"), "got: {message}");
+    }
+}
+
+/// A module-prefixed probe ref (`cc:toolchain`) is admitted on a test tail.
+#[test]
+fn test_seal_accepts_module_prefixed_ref() {
+    let cf = parse(
+        "recipe v\n    ingredients \"a.c\"\n    test { true } seal cc:toolchain\n",
+    )
+    .unwrap();
+    assert!(first_test_seal(&cf).contains("cc:toolchain"));
+}
+
+/// Recipe-level `unseal` stays rejected, and the diagnostic now names both
+/// step kinds that accept the trailing form.
+#[test]
+fn recipe_level_unseal_still_rejected_mentions_test() {
+    let err = parse("recipe v\n    seal a\n    unseal a\n    test { true }\n")
+        .expect_err("recipe-level unseal must be rejected");
+    let ParseError::Parse { message, .. } = err else {
+        panic!("expected ParseError::Parse");
+    };
+    assert!(
+        message.contains("`cook` or `test` step"),
+        "got: {message}"
+    );
 }
 
 #[test]
 fn disp_recipe_seal_rejects_otherwise_empty_recipe() {
     let err = parse("recipe package\n    seal host\n")
-        .expect_err("a recipe-level seal requires a cook unit");
+        .expect_err("a recipe-level seal requires a cacheable unit");
     match err {
         ParseError::Parse { line, message } => {
             assert_eq!(line, 1);
             assert!(
-                message.contains("seal on recipe package: no cook units to apply to"),
+                message.contains("seal on recipe package: no cook or test units to apply to"),
                 "got: {message}"
             );
         }

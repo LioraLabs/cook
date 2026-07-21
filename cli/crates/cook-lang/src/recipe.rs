@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::ast::*;
 use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
-use crate::disposition::parse_seal_refs;
+use crate::disposition::{parse_seal_refs, parse_test_modifiers};
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
@@ -278,49 +278,17 @@ pub(crate) fn parse_register_block_lua(
     Ok((body, pos))
 }
 
-/// Reject any trailing content after a `test` body's closing `}` (CS-0135:
-/// the `as`/`timeout`/`should_fail` modifiers were removed in v1.0). When the
-/// first trailing token names one of the removed modifiers, emit a
-/// did-you-mean diagnostic naming it explicitly; otherwise a generic
-/// unexpected-trailing-content error.
-fn reject_test_trailing(trailing: &str, line: usize) -> Result<(), ParseError> {
-    let trimmed = trailing.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-    let first = trimmed.split_whitespace().next().unwrap_or(trimmed);
-    match first {
-        "should_fail" => Err(ParseError::Parse {
-            line,
-            message: "test: should_fail was removed in v1.0 — invert the check in the body \
-                      instead (e.g. run the command and fail if it unexpectedly succeeds)"
-                .to_string(),
-        }),
-        "timeout" => Err(ParseError::Parse {
-            line,
-            message: "test: timeout was removed in v1.0 — enforce a deadline from inside the \
-                      test body instead (e.g. `timeout N ...` in a shell body)"
-                .to_string(),
-        }),
-        "as" => Err(ParseError::Parse {
-            line,
-            message: "test: as was removed in v1.0 — test steps no longer take a custom name"
-                .to_string(),
-        }),
-        _ => Err(ParseError::Parse {
-            line,
-            message: format!("unexpected text after test body: '{}'", trimmed),
-        }),
-    }
-}
-
-/// COOK-171: fold the recipe-level `seal` baseline into each `cook` step's
-/// effective seal set, then apply each cook's per-unit trailing `unseal`.
-/// `effective(unit) = (base ∪ step_seals) − step_unseals`. Scope is declarative
-/// and order-independent — a recipe-level `seal` applies to every cook in the
+/// COOK-171 / CS-0159: fold the recipe-level `seal` baseline into each
+/// *cacheable unit's* effective seal set, then apply that unit's per-unit
+/// trailing `unseal`. `effective(unit) = (base ∪ step_seals) − step_unseals`.
+///
+/// Both `cook` and `test` steps are cacheable units, so the baseline applies
+/// to both (§8.4.3 rule 1, CS-0159). Scope is declarative and
+/// order-independent — a recipe-level `seal` applies to every unit in the
 /// recipe regardless of textual position — so the fold runs once at recipe
 /// finalize, after the whole body has been parsed. `unseals` carries
-/// `(index-into-steps, that-cook's-unseal-set)` pairs.
+/// `(index-into-steps, that-unit's-unseal-set)` pairs, keyed by step index so
+/// one map serves both step kinds.
 fn apply_base_seal(
     steps: &mut [Step],
     base: &BTreeSet<String>,
@@ -330,14 +298,18 @@ fn apply_base_seal(
     let unseal_by: HashMap<usize, &BTreeSet<String>> =
         unseals.iter().map(|(i, s)| (*i, s)).collect();
     for (i, step) in steps.iter_mut().enumerate() {
-        if let Step::Cook { step, .. } = step {
-            for r in base {
-                step.disposition.seal.insert(r.clone());
-            }
-            if let Some(u) = unseal_by.get(&i) {
-                for r in u.iter() {
-                    step.disposition.seal.remove(r);
-                }
+        // The effective-set slot differs per step kind; the fold does not.
+        let seal: &mut BTreeSet<String> = match step {
+            Step::Cook { step, .. } => &mut step.disposition.seal,
+            Step::Test { step, .. } => &mut step.seal,
+            _ => continue,
+        };
+        for r in base {
+            seal.insert(r.clone());
+        }
+        if let Some(u) = unseal_by.get(&i) {
+            for r in u.iter() {
+                seal.remove(r);
             }
         }
     }
@@ -350,10 +322,17 @@ fn finalize_base_seal(
     base: &BTreeSet<String>,
     unseals: &[(usize, BTreeSet<String>)],
 ) -> Result<(), ParseError> {
-    if !base.is_empty() && !steps.iter().any(|step| matches!(step, Step::Cook { .. })) {
+    // CS-0159: a `test`-only recipe is a legitimate seal target — a test unit
+    // keys on its sealed probes exactly as a cook unit does (§17.4 rule 1), so
+    // the baseline has somewhere to land. Only a recipe with no cacheable unit
+    // at all leaves the seal dangling.
+    let has_sealable = steps
+        .iter()
+        .any(|step| matches!(step, Step::Cook { .. } | Step::Test { .. }));
+    if !base.is_empty() && !has_sealable {
         return Err(ParseError::Parse {
             line: recipe_line,
-            message: format!("seal on recipe {name}: no cook units to apply to"),
+            message: format!("seal on recipe {name}: no cook or test units to apply to"),
         });
     }
     apply_base_seal(steps, base, unseals);
@@ -477,13 +456,14 @@ pub(crate) fn parse_recipe(
                     continue;
                 }
                 // COOK-171: recipe-level `unseal` is rejected — `unseal` is a
-                // trailing modifier on a `cook` step only. The recipe is the
-                // outermost seal scope, so there is nothing inherited to release.
+                // trailing modifier on a `cook` or `test` step only (CS-0159).
+                // The recipe is the outermost seal scope, so there is nothing
+                // inherited to release.
                 if strip_keyword(text, "unseal").is_some() {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "unseal is a trailing modifier on a `cook` step, not a \
-                                  recipe-level step (the recipe is the outermost seal scope; \
+                        message: "unseal is a trailing modifier on a `cook` or `test` step, not \
+                                  a recipe-level step (the recipe is the outermost seal scope; \
                                   there is nothing to release)"
                             .to_string(),
                     });
@@ -547,14 +527,23 @@ pub(crate) fn parse_recipe(
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
+                    // CS-0159: a `test` step takes the input half of the
+                    // trailing modifier tail (`seal`/`unseal`); the recipe-level
+                    // baseline is folded in later at finalize
+                    // (`apply_base_seal`), so per-unit seals here are additive
+                    // and the unseals are recorded against this step's index.
                     let (body, trailing, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "test",
                     )?;
-                    reject_test_trailing(&trailing, tok.line)?;
+                    let mods = parse_test_modifiers(&trailing, tok.line)?;
+                    let idx = steps.len();
                     steps.push(Step::Test {
-                        step: TestStep { body },
+                        step: TestStep { body, seal: mods.seal },
                         line: tok.line,
                     });
+                    if !mods.unseal.is_empty() {
+                        cook_unseals.push((idx, mods.unseal));
+                    }
                     pos = new_pos;
                     continue;
                 } else if text.starts_with('@') {

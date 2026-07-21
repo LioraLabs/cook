@@ -150,6 +150,32 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             Ok(other) => return Err(type_err("inputs", "a table of strings", other.type_name())),
         };
 
+        // CS-0159: opts.seal — the test unit's effective seal set (bare probe
+        // keys). Mirrors `cook.add_unit`'s `seal` field exactly: only the KEY
+        // set is register-time data; the canonical VALUES fold into the test
+        // fingerprint at execute phase, once the sealed probes have run.
+        let seal_keys: std::collections::BTreeSet<String> = match tbl.get::<LuaValue>("seal") {
+            Ok(LuaValue::Nil) | Err(_) => Default::default(),
+            Ok(LuaValue::Table(t)) => {
+                let mut out = std::collections::BTreeSet::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    let v = v.map_err(|e| {
+                        LuaError::runtime(format!("cook.add_test: `seal`: {e}"))
+                    })?;
+                    match v {
+                        LuaValue::String(s) => {
+                            out.insert(s.to_string_lossy().to_string());
+                        }
+                        other => {
+                            return Err(type_err("seal", "a table of strings", other.type_name()))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => return Err(type_err("seal", "a table of strings", other.type_name())),
+        };
+
         let mut slot = body_slot_add.borrow_mut();
         let body = slot.as_mut().ok_or_else(|| {
             mlua::Error::runtime("cook.add_test called outside a recipe body")
@@ -171,6 +197,7 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             iteration_item,
             lua_code,
             input_paths,
+            seal_keys: seal_keys.clone(),
         };
         let dep_kind = if let Some(group_idx) = body.current_group {
             DepKind::TestSibling(group_idx)
@@ -182,7 +209,12 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             payload,
             cache_meta: None,
             dep_kind: dep_kind.clone(),
-            probes: vec![],
+            // CS-0159: sealed probes are execute-phase determinants — the test
+            // must run after them so their values are materialised before the
+            // ready-time fingerprint is computed. Same wiring `cook.add_unit`
+            // does for a sealing cook unit (unit_api.rs); without it the fold
+            // would silently read an empty value for every sealed key.
+            probes: seal_keys.into_iter().collect(),
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),

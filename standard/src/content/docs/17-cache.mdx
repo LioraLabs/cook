@@ -190,7 +190,9 @@ A conforming implementation MAY cache the result of a `test_step` unit (§{steps
    - The content fingerprints of every cook-step output the test consumes via §{steps.iteration-mode-plate-test} source-list flattening.
    - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
    - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
-   - The values of every probe in the unit's effective seal set, on the same footing as the single cache key's probe-value fold (§{exec.cache.single-key}).
+   - The values of every probe in the unit's effective seal set, on the same footing as the single cache key's probe-value fold (§{exec.cache.single-key}). The unit's effective seal set is declared by the surface of §{steps.cook-disposition.test-tail} — the recipe-level `seal` baseline plus the test's own `test_mods` tail. A conforming implementation MUST schedule every sealed probe before the test unit, so each sealed value is materialised by the time the key is computed. A sealed key with no value in the store folds in as the empty string, matching §{exec.cache.single-key}'s absent-probe rule, so a producer and a verifier recomposing the digest agree. The sealed-value fold MUST be distinguishable from the env-key fold: an implementation MUST NOT encode a sealed probe `K` with value `V` such that it collides with an environment contribution `K=V`.
+
+   A `seal` narrows reuse of a key that already exists; it does not create one. An implementation MUST NOT treat a non-empty effective seal set as satisfying this rule's input requirement: a test with no consumed output and no `ingredients` has no cache key and runs uncached (§{steps.iteration-mode-plate-test}) whether or not it seals.
 
    The cache key MUST NOT include the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Moving a test within a recipe, or moving a recipe between Cookfiles, MUST NOT bust its cache.
 

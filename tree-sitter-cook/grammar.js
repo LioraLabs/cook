@@ -457,12 +457,24 @@ module.exports = grammar({
         "}",
       ),
 
+    // CS-0159: a `test` is a cacheable unit, so it takes the INPUT half of
+    // the trailing tail — seal/unseal. No `share_mod`: local/pinned/nondet
+    // state a fact about an output artifact and a test produces none, so
+    // they are rejected here (App. A, §8.4.3.3).
     test_step: ($) =>
       seq(
         "test",
         field("body", choice($.shell_block, $.exec_lua_block)),
+        optional($.test_mods),
         $._newline,
       ),
+
+    // CS-0159 §8.4.3.3. Deliberately NOT `cook_mods`: a test takes the input
+    // half of the tail only. `share_mod` (local/pinned/nondet) states a fact
+    // about an output artifact and a test produces none, so it has no slot
+    // here — a `test { … } local` fails to parse rather than reducing to a
+    // node the Rust parser must then reject.
+    test_mods: ($) => repeat1(choice($.seal_group, $.unseal_group)),
 
     lua_line: ($) =>
       seq(

@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="verify" line=1
+      deps: []
+      ingredients: ["src/*.c"]
+      excludes: []
+      steps:
+        Test body=ShellBlock(["./run.sh"]) seal=["host"]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -1022,7 +1022,7 @@ pub fn execute_dag(
                     // COOK-211: compute the fingerprint here at ready time — all
                     // predecessors are complete, so their consumed outputs are
                     // materialised and can be content-hashed for early cutoff.
-                    if let Some(fp) = crate::run::compute_ready_test_fingerprint(dag, id, cache_ctx) {
+                    if let Some(fp) = crate::run::compute_ready_test_fingerprint(dag, id, cache_ctx, &pool.probe_value_store()) {
                         let fp = &fp;
                         // Force-rerun: if the test id matches any --rerun pattern,
                         // skip cache lookup. Cache write still occurs after the
@@ -2536,7 +2536,7 @@ pub fn execute_dag(
                 // used for the lookup, so the cache entry is written under the
                 // key a future run will recompute. Predecessor outputs are still
                 // materialised (the test's execution does not touch them).
-                let fp_opt = crate::run::compute_ready_test_fingerprint(&dag, result.id, &cache_ctx);
+                let fp_opt = crate::run::compute_ready_test_fingerprint(&dag, result.id, &cache_ctx, &pool.probe_value_store());
                 let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
                     Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
                     _ => (0, None),
@@ -4188,6 +4188,7 @@ mod tests {
         dag.add_node(
             work_node(
                 WorkPayload::Test {
+                    seal_keys: Default::default(),
                     cmd: "true".to_string(),
                     line: 1,
                     timeout: 30,
@@ -4245,6 +4246,7 @@ mod tests {
         dag.add_node(
             work_node(
                 WorkPayload::Test {
+                    seal_keys: Default::default(),
                     cmd: "true".to_string(),
                     line: 17,
                     timeout: 30,
@@ -4304,6 +4306,7 @@ mod tests {
         dag.add_node(
             work_node(
                 WorkPayload::Test {
+                    seal_keys: Default::default(),
                     cmd: "true".to_string(),
                     line: 17,
                     timeout: 30,

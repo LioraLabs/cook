@@ -668,6 +668,7 @@ fn test_test_step_codegen() {
             },
             Step::Test {
                 step: TestStep {
+                    seal: Default::default(),
                     body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                 },
                 line: 4,
@@ -739,6 +740,7 @@ fn test_no_hash_in_output() {
             },
             Step::Test {
                 step: TestStep {
+                    seal: Default::default(),
                     body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                 },
                 line: 4,
@@ -784,6 +786,7 @@ fn test_test_step_wrapped_in_step_group() {
         vec![],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["echo run".to_string()]),
             },
             line: 2,
@@ -1109,6 +1112,7 @@ fn test_dep_ref_in_test_command() {
             },
             Step::Test {
                 step: TestStep {
+                    seal: Default::default(),
                     body: Body::ShellBlock(vec!["./$<app>".to_string()]),
                 },
                 line: 3,
@@ -1675,6 +1679,7 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             vec![],
             vec![Step::Test {
                 step: TestStep {
+                    seal: Default::default(),
                     body: Body::ShellBlock(vec!["echo $<protos.stem>".to_string()]),
                 },
                 line: 2,
@@ -2550,6 +2555,7 @@ fn test_step_iterates_union_of_all_include_globs_fallback() {
         vec!["src/*.c", "include/*.h"],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
             },
             line: 3,
@@ -2579,6 +2585,7 @@ fn test_step_emits_passthrough_after_iteration() {
         vec!["Cookfile"],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["echo \"$<in>\"".to_string()]),
             },
             line: 3,
@@ -2605,6 +2612,7 @@ fn test_step_oneshot_with_ingredients_still_passthroughs() {
         vec!["Cookfile"],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["echo hello".to_string()]),
             },
             line: 3,
@@ -2629,6 +2637,7 @@ fn test_step_with_no_source_omits_passthrough() {
         vec![],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["echo hello".to_string()]),
             },
             line: 3,
@@ -2660,6 +2669,7 @@ fn test_step_after_cook_passthroughs_cook_outputs() {
             },
             Step::Test {
                 step: TestStep {
+                    seal: Default::default(),
                     body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
                 },
                 line: 4,
@@ -2682,6 +2692,7 @@ fn test_step_emits_passthrough() {
         vec!["tests/*.sh"],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
             },
             line: 3,
@@ -2703,6 +2714,7 @@ fn test_step_iterates_union_of_all_include_globs() {
         vec!["tests/*.sh", "extra/*.sh"],
         vec![Step::Test {
             step: TestStep {
+                seal: Default::default(),
                 body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
             },
             line: 3,

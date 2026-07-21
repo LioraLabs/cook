@@ -183,7 +183,13 @@ share_mod             ::= "local" | "pinned" | "nondet"
                              §{grammar-appendix.probe}; the quoted form and a
                              third `:IDENT` segment are rejected — see §8.4.3 */
 
-test_step             ::= "test"  body NEWLINE
+test_step             ::= "test"  body test_mods? NEWLINE
+test_mods             ::= ("seal" probe_ref+ | "unseal" probe_ref+)*
+                          /* the INPUT half of cook_mods: a test is a cacheable
+                             unit and seals like one. No share_mod — local /
+                             pinned / nondet state a fact about an output
+                             artifact and a test produces none; they are
+                             rejected in this position. See §8.4.3.3 */
 body                  ::= exec_lua_block | shell_block
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE

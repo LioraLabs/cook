@@ -1,0 +1,4 @@
+recipe verify
+    ingredients "src/*.c"
+    seal host
+    test { ./run.sh }

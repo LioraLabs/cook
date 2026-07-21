@@ -71,3 +71,65 @@ recipe r
         (shell_content))
       (ERROR
         (import_name)))))
+
+==================
+Test step with trailing seal (CS-0159)
+==================
+
+recipe r
+    test { true } seal host
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      (test_mods
+        (seal_group
+          (identifier))))))
+
+==================
+Test step with trailing unseal then seal (CS-0159)
+==================
+
+recipe r
+    test { true } unseal a seal b
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      (test_mods
+        (unseal_group
+          (identifier))
+        (seal_group
+          (identifier))))))
+
+==================
+Test step seals a module-prefixed probe (CS-0159)
+==================
+
+recipe r
+    test { true } seal cc:toolchain
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      (test_mods
+        (seal_group
+          (identifier))))))

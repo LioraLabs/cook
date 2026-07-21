@@ -151,10 +151,11 @@ pub(crate) fn compute_ready_test_fingerprint(
     dag: &cook_dag::Dag<WorkNode>,
     test_idx: usize,
     cache_ctx: &CacheContext,
+    probe_store: &cook_luaotp::ProbeValueStore,
 ) -> Option<String> {
     let project_root = cache_ctx.project_root.as_path();
     let test_node = dag.node(test_idx).payload();
-    let WorkPayload::Test { input_paths, .. } = test_node.payload.as_ref()? else {
+    let WorkPayload::Test { input_paths, seal_keys, .. } = test_node.payload.as_ref()? else {
         return None;
     };
 
@@ -214,6 +215,14 @@ pub(crate) fn compute_ready_test_fingerprint(
     // and the post-run write, so the test reports every invocation with no
     // `(cached)`. A stable command-text-only key would be a false green:
     // the true inputs of a `test { cargo test }` are opaque to Cook.
+    //
+    // CS-0159: a `seal` does NOT rescue a source-less test into being
+    // cacheable. A seal ref is an *invalidate-only* determinant (§8.4.3), not
+    // an input source — sealing `test { cargo test }` on a toolchain probe
+    // would still leave the test's real inputs (the whole source tree)
+    // unmodelled, so a key built from the seal alone would be exactly the
+    // false green this guard exists to prevent. Seal narrows reuse of a key
+    // that already exists; it never mints one.
     if pairs.is_empty() {
         return None;
     }
@@ -225,10 +234,22 @@ pub(crate) fn compute_ready_test_fingerprint(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
+    // CS-0159 (§17.4 rule 1): fold the effective seal set's probe values. The
+    // register surface unioned these keys into the unit's probe-dependency
+    // set, so every sealed probe has run and its value is in the store by the
+    // time this ready-time fingerprint is computed — the same guarantee a
+    // sealing cook unit relies on. `resolve_sealed_probes` is shared with the
+    // cook path so both agree on the absent-key-folds-to-empty-string rule.
+    let sealed_probes: Vec<(String, String)> =
+        crate::seal::resolve_sealed_probes(seal_keys, probe_store)
+            .into_iter()
+            .collect();
+
     let inputs = FingerprintInputs {
         cook_outputs: pairs.into_iter().collect(),
         dep_outputs: vec![],
         env_keys,
+        sealed_probes,
     };
     Some(cook_fingerprint::compute_test_fingerprint(
         test_node.payload.as_ref().expect("checked above"),
@@ -1233,6 +1254,7 @@ mod tests {
     fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode {
         crate::WorkNode {
             payload: Some(WorkPayload::Test {
+                seal_keys: Default::default(),
                 cmd: "check".into(),
                 line: 1,
                 timeout: 5,
@@ -1295,11 +1317,11 @@ mod tests {
         let ctx = make_cache_ctx(wd);
 
         let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
-        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         // lib's command changes (rebuild) but its output stays "ok".
         let (dag_b, test_b) = materialised_fixture(wd, 12, "ok", "own");
-        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         assert!(before.is_some());
         assert_eq!(
@@ -1317,10 +1339,10 @@ mod tests {
         let ctx = make_cache_ctx(wd);
 
         let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
-        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         let (dag_b, test_b) = materialised_fixture(wd, 11, "broken", "own");
-        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         assert_ne!(
             before, after,
@@ -1336,10 +1358,10 @@ mod tests {
         let ctx = make_cache_ctx(wd);
 
         let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
-        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         let (dag_b, test_b) = materialised_fixture(wd, 11, "ok", "changed");
-        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
 
         assert_ne!(
             before, after,
@@ -1359,7 +1381,7 @@ mod tests {
         let test = dag.add_node(test_work_node(wd, &[]), &[]).unwrap();
 
         assert_eq!(
-            compute_ready_test_fingerprint(&dag, test, &ctx),
+            compute_ready_test_fingerprint(&dag, test, &ctx, &cook_luaotp::ProbeValueStore::new()),
             None,
             "a source-less test must have no fingerprint (always runs)"
         );
@@ -1397,14 +1419,14 @@ mod tests {
         };
 
         let (dag_a, test_a) = build("lib-v1", "app-out");
-        let base = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+        let base = compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
         assert!(base.is_some());
 
         // Transitive dep output changes; direct dep output unchanged → stable.
         let (dag_b, test_b) = build("lib-v2", "app-out");
         assert_eq!(
             base,
-            compute_ready_test_fingerprint(&dag_b, test_b, &ctx),
+            compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new()),
             "a transitive dep's output change must not re-key the test when the \
              immediate predecessor's output is byte-identical"
         );
@@ -1413,7 +1435,7 @@ mod tests {
         let (dag_c, test_c) = build("lib-v2", "app-out-CHANGED");
         assert_ne!(
             base,
-            compute_ready_test_fingerprint(&dag_c, test_c, &ctx),
+            compute_ready_test_fingerprint(&dag_c, test_c, &ctx, &cook_luaotp::ProbeValueStore::new()),
             "the immediate predecessor's output change must re-key the test"
         );
     }

@@ -162,6 +162,15 @@ pub enum WorkPayload {
         /// Folded into the upfront test fingerprint by
         /// cook-engine/src/run.rs.
         input_paths: Vec<String>,
+        /// CS-0159: the test unit's effective seal set — bare probe keys whose
+        /// canonical VALUES fold into the test fingerprint (§17.4 rule 1), on
+        /// the same footing as a cook unit's `CacheMeta::seal_keys`. Carried
+        /// on the payload rather than via `cache_meta` for the same reason
+        /// `input_paths` is: the executor relies on Test nodes having
+        /// `cache_meta == None`. The register surface unions these keys into
+        /// the unit's probe-dependency set, so every sealed value is
+        /// materialised by the time the ready-time fingerprint is computed.
+        seal_keys: std::collections::BTreeSet<String>,
     },
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
     /// VM and stashes the canonical-JSON-serialised return value under `key`.
@@ -462,6 +471,7 @@ mod tests {
     #[test]
     fn work_payload_test_construction() {
         let p = WorkPayload::Test {
+            seal_keys: Default::default(),
             cmd: "./run_tests".into(),
             line: 10,
             timeout: 30,
