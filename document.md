@@ -357,8 +357,8 @@ chore deploy target host="prod.example.com"
 ```
 
 ```sh
-cook deploy /var/www                 # host defaults to prod.example.com
-cook deploy /var/www host=staging    # override
+cook deploy /var/www            # host defaults to prod.example.com
+cook deploy /var/www staging    # arguments bind positionally, in header order
 ```
 
 Chores and recipes depend on each other with the same colon syntax. `cook play`

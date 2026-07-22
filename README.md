@@ -14,24 +14,23 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-lightgrey?style=flat-square" alt="Apache-2.0 license"></a>
 </p>
 
-Got a lot of chefs complicating your build:
-[Cargo](https://doc.rust-lang.org/cargo/), [CMake](https://cmake.org/),
-[pnpm](https://pnpm.io/), codegen, and a `scripts/` directory nobody will admit
-to writing, each with its own idea of what's up to date? cook is one kitchen
-for the whole crew: a build system that brings their work into one dependency
-graph with one [content-addressed cache](#the-part-cook-was-built-for-the-cache).
+Got a lot of chefs complicating your build: Cargo, CMake, pnpm, codegen, and a
+`scripts/` directory nobody will admit to writing, each with its own idea of
+what's up to date? cook is one kitchen for the whole crew: a build system that
+brings their work into one dependency graph with one content-addressed cache.
 It keeps the recipe ergonomics of
 [`just`](https://github.com/casey/just) and the dependency graph of
 [`make`](https://www.gnu.org/software/make/), and swaps macro-heavy
-configuration for a [Lua](https://www.lua.org/)-backed DSL. You describe
-artifacts in a [`Cookfile`](document.md#your-first-recipe); cook runs exactly
-the work required by what changed.
+configuration for a Lua-backed DSL. You describe artifacts in a `Cookfile`;
+cook runs exactly the work required by what changed.
 
-Heard enough? Try it for yourself on Linux and macOS.
+Heard enough?
 
 ```sh
 curl -fsSL https://getcook.sh | sh
 ```
+
+Not convinced?
 
 ## Real builds
 
@@ -41,11 +40,9 @@ We added a Cookfile to two large projects. Here's what happened.
 
 [Cap](https://github.com/CapSoftware/Cap) is a 20k-star open-source screen
 recorder: a pnpm monorepo with eleven Turbo tasks and 48 Rust crates beside
-it. [cook-cap](https://github.com/LioraLabs/cook-cap) swaps
-[Turborepo](https://turborepo.dev/) for
-[`cook_pnpm`](document.md#modules-and-composition) and benchmarks the swap. The
-experiment: two different edits to the same file in `@cap/env`, a package
-almost everything depends on.
+it. [cook-cap](https://github.com/LioraLabs/cook-cap) swaps Turborepo for
+`cook_pnpm` and benchmarks the swap. The experiment: two different edits to
+the same file in `@cap/env`, a package almost everything depends on.
 
 | Edit to `@cap/env` | Turborepo | cook |
 | --- | --- | --- |
@@ -90,8 +87,7 @@ in that repo. Run it yourself.
 ### Doom 3: one graph from compiler to demo map
 
 [cook-dhewm3](https://github.com/LioraLabs/cook-dhewm3) builds the Doom 3
-source port with [`cook_cc`](document.md#modules-and-composition): a 427-node
-graph producing the engine binary,
+source port with `cook_cc`: a 427-node graph producing the engine binary,
 the gameplay `.so` plugins, and the asset tools (`dmap`, the AAS compiler),
 then uses the freshly built `dmap` binary to compile a playable demo map in
 the same graph. Clone, `cook`, play.
@@ -99,8 +95,9 @@ the same graph. Clone, `cook`, play.
 
 ## The five-minute tour
 
-This tour uses [Inkscape](https://inkscape.org/) to rasterize SVGs and
-[ImageMagick](https://imagemagick.org/download/) to assemble the sprite sheet.
+This tour uses [librsvg](https://gitlab.gnome.org/GNOME/librsvg) to rasterize
+SVGs and [ImageMagick](https://imagemagick.org/download/) to assemble the
+sprite sheet.
 
 Say you're handed a pile of SVGs and you need a PNG sprite sheet.
 
@@ -108,7 +105,7 @@ Say you're handed a pile of SVGs and you need a PNG sprite sheet.
 recipe sprite-sheet
     ingredients "images/*.svg"
     cook "build/sprites/$<in.stem>.png" {
-        inkscape $<in> --export-filename=$<out>
+        rsvg-convert $<in> -o $<out>
     }
     cook "build/spritesheet.png" {
         magick montage $<in> -tile x1 -geometry +0+0 $<out>
@@ -149,8 +146,21 @@ recipes: it expands to the sheet's outputs and records the dependency edge.
 Eval suites, per-package monorepo tasks, one-job-per-row builds of any
 kind: the shape of your data is the shape of your build.
 
-That's the language. Tests, chores (run-every-time side effects like
-deploys, with a real TTY), and configuration overlays are in
+Deploying doesn't produce an artifact, so it isn't a recipe. It's a
+**[chore](document.md#chores)**: never cached, runs every time, with a
+real TTY:
+
+```cook
+chore deploy host="prod": ship
+    rsync -a build/ $<host>:/srv/game/
+```
+
+```console
+$ cook deploy              # ships to prod
+$ cook deploy staging
+```
+
+That's the language. Tests and configuration overlays are in
 [the manual](document.md).
 
 ## Why not ___?
@@ -177,13 +187,12 @@ it. cook has no privileged language or ecosystem. `cook_cc`, `cook_pnpm`, and
 modules for project-specific tools all contribute ordinary units to the same
 graph and cache.
 
-**[Bazel](https://bazel.build/)?** Bazel and cook start from different
-assumptions. Bazel asks a repository to enter a controlled build world, where
-rules, toolchains, and declared dependencies enforce reproducibility. cook
-starts with the tools a team already uses and connects them into one artifact
-graph. Bazel provides stronger enforcement. cook takes a lighter adoption
-path, relying on the user to declare the cache determinants, then making the
-resulting key inspectable and verifiable.
+**Bazel?** If you can afford to adopt Bazel's world, adopt it: it's the
+strongest hermeticity story there is. The price is rewriting your build in
+its terms: BUILD files for every target, wrapped toolchains, ecosystem tools
+swapped for `rules_*`. cook wraps the tools you already run instead of
+replacing them, and sharing the cache starts with nothing more than a
+directory. You trade enforced hermeticity for a key you own and can audit.
 
 ## The part cook was built for: the cache
 
@@ -192,11 +201,11 @@ what matters to your build.
 
 ### You own the key
 
-Every unit of work is cached under one content-addressed key, built entirely
-from its declared determinants. cook does not quietly fold your machine,
-locale, or toolchain into the key. That keeps keys reusable across machines by
-default, while making *you* responsible for declaring the determinants that
-make that reuse safe.
+Every unit of work is cached under one content-addressed key, and the key is
+built from what you declared: nothing else. cook does not quietly fold your
+machine, locale, or toolchain into the key. That keeps keys reusable across
+machines by default, while making *you* responsible for declaring the
+determinants that make that reuse safe.
 
 Need the compiler in the key? Say so:
 ```cook
@@ -241,9 +250,8 @@ recipe upper
 
 This is no embedded afterthought: every Cookfile lowers to Lua before
 execution, and `cook emit-lua` shows you exactly what yours compiles to.
-Modules distributed through [LuaRocks](https://luarocks.org/) use the same
-interface to teach cook entire ecosystems; `cook_cc` and `cook_pnpm` above are
-exactly that.
+Modules distributed through LuaRocks use the same interface to teach cook
+entire ecosystems; `cook_cc` and `cook_pnpm` above are exactly that.
 
 ## Install
 
