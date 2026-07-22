@@ -134,6 +134,37 @@ pub fn register_dep_output_api(
     })?;
     cook.set("dep_output_list", dep_output_list_fn)?;
 
+    // cook.dep_order(name) → nil
+    // COOK-297: the ordering-only counterpart of cook.dep_output. Records
+    // ONLY the fine-grained dep ref (attached to subsequent add_unit calls
+    // exactly like dep_output's) — no terminal-output lookup, no path folded
+    // into cache_meta.input_paths. For a unit that must run after `name`'s
+    // leaves without consuming its artifacts: e.g. cook_cc's archive unit,
+    // whose recipe requires the linked lib for register-time exports while
+    // the archive itself reads only its own objects. Referencing a recipe
+    // through this channel fine-covers the `requires` edge in the
+    // dag_builder, so the recipe's other units (compiles) stop inheriting
+    // the coarse root→leaf barrier.
+    //
+    // Unknown names are not diagnosed here: there is no terminal-outputs
+    // requirement (a zero-step meta recipe is a legitimate target), so
+    // validation is left to build_dag's DanglingDepEdge pre-walk.
+    let body_slot_dor = body_slot.clone();
+    let qp3 = qualified_prefix.clone();
+    let aqp3 = alias_qualified_prefixes.clone();
+    let dep_order_fn = lua.create_function(move |_, name: String| {
+        let global_key = resolve_global_key(&name, &qp3, &aqp3);
+        let mut slot = body_slot_dor.borrow_mut();
+        let body = slot
+            .as_mut()
+            .ok_or_else(|| mlua::Error::runtime("cook.dep_order called outside a recipe body"))?;
+        if !body.step_group_dep_refs.contains(&global_key) {
+            body.step_group_dep_refs.push(global_key);
+        }
+        Ok(())
+    })?;
+    cook.set("dep_order", dep_order_fn)?;
+
     Ok(())
 }
 
@@ -346,6 +377,73 @@ mod tests {
         let state = body_ref(&cs);
         // Should not duplicate
         assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
+    }
+
+    /// COOK-297: `cook.dep_order` records ONLY the edge ref — no
+    /// terminal-output lookup (a zero-step meta recipe is a legal target, so
+    /// none is registered here) and no entry in `step_group_dep_input_paths`
+    /// (nothing may land in `cache_meta.input_paths`; that is the whole
+    /// point of the API vs `dep_output`).
+    #[test]
+    fn test_dep_order_accumulates_ref_without_input_paths() {
+        let (lua, outputs, cs) = setup_lua();
+        register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+        lua.load(r#"cook.dep_order("libmath")"#).exec().unwrap();
+        let state = body_ref(&cs);
+        assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
+        assert!(
+            state.step_group_dep_input_paths.is_empty(),
+            "dep_order must not fold any path into the cache-input accumulator"
+        );
+        // No direct dep_edges yet — add_unit creates them.
+        assert!(state.dep_edges.is_empty());
+    }
+
+    /// COOK-297: dep_order and dep_output share one ref namespace — naming
+    /// the same recipe through both accumulates a single ref.
+    #[test]
+    fn test_dep_order_dedupes_against_dep_output() {
+        let (lua, outputs, cs) = setup_lua();
+        outputs
+            .lock().unwrap()
+            .insert("libmath".into(), vec!["libmath.a".into()]);
+        register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+        lua.load(r#"
+            cook.dep_output("libmath")
+            cook.dep_order("libmath")
+        "#).exec().unwrap();
+        let state = body_ref(&cs);
+        assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
+    }
+
+    /// COOK-297: dep_order resolves names exactly like dep_output — a bare
+    /// same-Cookfile name under `qualified_prefix = "queue"` records the
+    /// qualified global key.
+    #[test]
+    fn test_dep_order_same_cookfile_uses_self_prefix() {
+        let (lua, outputs, cs) = setup_lua();
+        register_dep_output_api(
+            &lua,
+            outputs,
+            cs.clone(),
+            BTreeMap::new(),
+            "queue".to_string(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        lua.load(r#"cook.dep_order("local_recipe")"#).exec().unwrap();
+        let state = body_ref(&cs);
+        assert_eq!(state.step_group_dep_refs, vec!["queue.local_recipe".to_string()]);
+    }
+
+    /// COOK-297: dep_order outside a recipe body raises, mirroring dep_output.
+    #[test]
+    fn test_dep_order_outside_body_errors() {
+        let (lua, outputs, _) = setup_lua();
+        let empty_slot: SharedBodySlot = Rc::new(RefCell::new(None));
+        register_dep_output_api(&lua, outputs, empty_slot, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+        let res = lua.load(r#"cook.dep_order("libmath")"#).exec();
+        assert!(res.is_err(), "dep_order outside a recipe body must raise");
     }
 
     #[test]

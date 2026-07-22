@@ -9,11 +9,30 @@
 //!
 //! Cross-recipe wiring (coarse):
 //! - A recipe's root units (those with no within-recipe deps) additionally
-//!   depend on the leaf barrier of every recipe listed in `deps`.
+//!   depend on the leaf barrier of every recipe listed in `deps` — EXCEPT
+//!   deps that are fine-covered (see below). The coarse edge is the
+//!   conservative default for `requires` edges with no declared artifact
+//!   consumption; it is what keeps a plain
+//!   `cook.require_recipe` + literal-input recipe ordered (§16.1.2's
+//!   suppression tests).
 //!
 //! Cross-recipe wiring (fine-grained):
 //! - For each `(unit_idx, dep_recipe_name)` in `ru.dep_edges`, that specific
 //!   unit additionally depends on the terminal nodes of the named recipe.
+//!
+//! Fine-covered suppression (COOK-297):
+//! - A dep named by at least one of the recipe's `dep_edges` entries is
+//!   "fine-covered": the consumer has declared, via a name reference
+//!   (`cook.dep_output` / `$<recipe>`), exactly which unit consumes the
+//!   producer's artifacts. For such a dep the coarse root→leaf-barrier edge
+//!   is NOT added (to root units nor to synthesised probe nodes) — the
+//!   fine-grained edge alone carries the ordering, so units that do not
+//!   consume the producer's outputs (compiles) run in one flat wave across
+//!   the recipe chain instead of serializing into per-recipe waves.
+//!   Register-time forcing and §16.1.2 read the DECLARED `requires` graph
+//!   and are unaffected. The empty-barrier leaf pass-through (below)
+//!   deliberately ignores suppression — a pruned-away consumer unit takes
+//!   its fine edge with it, so forwarding must stay unfiltered.
 //!
 //! Leaf pass-through (empty barrier):
 //! - A recipe's "leaves" (what downstream recipes depend on via `deps` /
@@ -276,8 +295,19 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // already rejects when it names an unknown recipe — so on the live
         // path this lookup missing is already impossible, and a redundant
         // check here would only duplicate that upstream validation.
+        //
+        // COOK-297: deps named by any of this recipe's `dep_edges` entries
+        // are fine-covered — the per-unit edge carries the ordering, so the
+        // coarse barrier is suppressed here and in `cross_deps` below. Both
+        // channels resolve names in the same (qualified) namespace, so a
+        // direct string match is sound.
+        let fine_covered: BTreeSet<&str> =
+            ru.dep_edges.iter().map(|(_, name)| name.as_str()).collect();
         let mut cross_deps_for_synth: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
+            if fine_covered.contains(dep_name.as_str()) {
+                continue;
+            }
             if let Some(leaves) = recipe_leaves.get(dep_name) {
                 cross_deps_for_synth.extend(leaves);
             }
@@ -394,10 +424,21 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // here because `deps` is analyzer-validated upstream (unlike
         // `ru.dep_edges`, which the pre-walk check at the top of this
         // function now validates).
+        //
+        // Two accumulators (COOK-297): `cross_deps` skips fine-covered deps
+        // and wires ROOT units; `forwarded_leaves` is the unfiltered union
+        // and feeds ONLY the empty-barrier leaf pass-through at the bottom
+        // of this loop — a recipe whose units were all pruned contributes no
+        // fine-grained edges, so filtering there would sever the downstream
+        // chain rather than flatten it.
         let mut cross_deps: Vec<usize> = Vec::new();
+        let mut forwarded_leaves: Vec<usize> = Vec::new();
         for dep_name in &ru.deps {
             if let Some(leaves) = recipe_leaves.get(dep_name) {
-                cross_deps.extend(leaves);
+                forwarded_leaves.extend(leaves);
+                if !fine_covered.contains(dep_name.as_str()) {
+                    cross_deps.extend(leaves);
+                }
             }
         }
 
@@ -603,20 +644,22 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         }
 
         // Record this recipe's leaves: normally its final sequential
-        // barrier, but when that barrier is EMPTY, forward `cross_deps`
-        // instead (the union of this recipe's own `deps`' leaves, computed
-        // above). The trigger is "empty barrier", not "zero units" — see
-        // the module doc comment's "Leaf pass-through" section for the list
-        // of ways a non-empty `units` still ends the loop with an empty
-        // barrier, all of which must forward too, so a
-        // downstream root unit still reaches the real upstream work instead
-        // of silently losing the edge. `cross_deps` is itself already a
+        // barrier, but when that barrier is EMPTY, forward
+        // `forwarded_leaves` instead (the UNFILTERED union of this recipe's
+        // own `deps`' leaves, computed above — deliberately ignoring
+        // COOK-297 fine-covered suppression, since a pruned unit takes its
+        // fine edge with it). The trigger is "empty barrier", not "zero
+        // units" — see the module doc comment's "Leaf pass-through" section
+        // for the list of ways a non-empty `units` still ends the loop with
+        // an empty barrier, all of which must forward too, so a downstream
+        // root unit still reaches the real upstream work instead of
+        // silently losing the edge. `forwarded_leaves` is itself already a
         // forwarded/transitive set by induction (every recipe earlier in
         // this topo-ordered slice applied the same rule), so a chain of
         // empty-barrier recipes forwards the original producer's leaves the
-        // whole way down. When `cross_deps` is also empty (no deps of its
-        // own), empty forwards empty — there is nothing to forward.
-        let leaves = if barrier.is_empty() { cross_deps } else { barrier };
+        // whole way down. When `forwarded_leaves` is also empty (no deps of
+        // its own), empty forwards empty — there is nothing to forward.
+        let leaves = if barrier.is_empty() { forwarded_leaves } else { barrier };
         recipe_leaves.insert(ru.recipe_name.clone(), leaves);
     }
 
@@ -1463,6 +1506,258 @@ mod tests {
         assert_eq!(dag.len(), 2);
         // build's unit depends on setup's unit via coarse deps
         assert_eq!(dag.node(1).remaining_deps(), 1);
+    }
+
+    /// COOK-297 fixture helper: a unit with the given payload/dep_kind and no
+    /// other metadata.
+    fn cap(payload: WorkPayload, dep_kind: DepKind) -> CapturedUnit {
+        CapturedUnit {
+            payload,
+            cache_meta: None,
+            dep_kind,
+            probes: vec![],
+            unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
+        }
+    }
+
+    /// COOK-297: when a consumer recipe expresses its consumption of a
+    /// required recipe through the fine-grained `dep_edges` channel
+    /// (`cook.dep_output` / `$<recipe>` refs), the `requires` edge must NOT
+    /// also lower into the coarse root→leaf-barrier execution edge. The
+    /// fine-grained edge carries the ordering; the consumer's root units
+    /// (compiles) start immediately instead of waiting for the producer's
+    /// last unit.
+    #[test]
+    fn dep_edge_to_required_recipe_suppresses_coarse_root_barrier() {
+        let libmath = RecipeUnits {
+            recipe_name: "libmath".into(),
+            deps: vec![],
+            units: vec![
+                cap(shell("gcc -c add.c"), DepKind::StepGroup(0)),
+                cap(shell("gcc -c mul.c"), DepKind::StepGroup(0)),
+                cap(shell("ar rcs libmath.a"), DepKind::Sequential),
+            ],
+            step_groups: vec![vec![0, 1]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["libmath.a".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        // app REQUIRES libmath (deps) and ALSO expresses fine-grained
+        // consumption on its link unit — the live-path shape once cook_cc
+        // mints a dep_output ref before the link add_unit.
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec!["libmath".into()],
+            units: vec![
+                cap(shell("gcc -c main.c"), DepKind::StepGroup(0)),
+                cap(shell("gcc -o app main.o libmath.a"), DepKind::Sequential),
+            ],
+            step_groups: vec![vec![0]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["app".into()],
+            dep_edges: vec![(1, "libmath".into())],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![libmath, app]).expect("no collision");
+        assert_eq!(dag.len(), 5);
+        // Nodes: 0=add.c, 1=mul.c, 2=archive, 3=app compile, 4=app link.
+        assert_eq!(
+            dag.node(3).remaining_deps(),
+            0,
+            "app's compile must start immediately: the requires edge is \
+             fine-covered by the link's dep_edge, so no coarse barrier"
+        );
+        let mut link_deps = dag.deps(4).to_vec();
+        link_deps.sort_unstable();
+        assert_eq!(
+            link_deps,
+            vec![2, 3],
+            "app's link must depend on exactly its own compile + libmath's \
+             leaf (archive)"
+        );
+    }
+
+    /// COOK-297: suppression is per-(recipe, dep) pair. A required recipe
+    /// with NO dep_edge naming it keeps the coarse root barrier even while a
+    /// sibling dep is fine-covered.
+    #[test]
+    fn coarse_barrier_survives_for_deps_without_dep_edges_in_mixed_recipe() {
+        let libmath = RecipeUnits {
+            recipe_name: "libmath".into(),
+            deps: vec![],
+            units: vec![cap(shell("ar rcs libmath.a"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["libmath.a".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let codegen = RecipeUnits {
+            recipe_name: "codegen".into(),
+            deps: vec![],
+            units: vec![cap(shell("gen config.h"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["config.h".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec!["libmath".into(), "codegen".into()],
+            units: vec![
+                cap(shell("gcc -c main.c"), DepKind::StepGroup(0)),
+                cap(shell("gcc -o app main.o libmath.a"), DepKind::Sequential),
+            ],
+            step_groups: vec![vec![0]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["app".into()],
+            dep_edges: vec![(1, "libmath".into())],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![libmath, codegen, app]).expect("no collision");
+        assert_eq!(dag.len(), 4);
+        // Nodes: 0=libmath archive, 1=codegen, 2=app compile, 3=app link.
+        assert_eq!(
+            dag.deps(2),
+            &[1],
+            "app's compile must wait on codegen (no dep_edge names it) but \
+             NOT on libmath (fine-covered)"
+        );
+        let mut link_deps = dag.deps(3).to_vec();
+        link_deps.sort_unstable();
+        assert_eq!(
+            link_deps,
+            vec![0, 2],
+            "app's link: own compile + libmath's leaf via the dep_edge"
+        );
+    }
+
+    /// COOK-297: synthesised top-level probe nodes inherit the recipe's
+    /// coarse cross deps — the SAME suppression must apply there, or the
+    /// probe→consumer edges re-serialize the compiles the root-barrier fix
+    /// just freed (compile → probe → producer leaf barrier).
+    #[test]
+    fn synthesised_probe_skips_dep_edge_covered_coarse_deps() {
+        use cook_contracts::{ProbeInputs, ProbeUnit, WorkPayload};
+
+        let libmath = RecipeUnits {
+            recipe_name: "libmath".into(),
+            deps: vec![],
+            units: vec![cap(shell("ar rcs libmath.a"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["libmath.a".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let probe_meta = ProbeUnit {
+            key: "cc:toolchain".to_string(),
+            produce_source: "return { cxx = 'g++' }".to_string(),
+            produce_line: 1,
+            inputs: ProbeInputs::default(),
+        };
+        let mut compile = cap(shell("$<cc:toolchain.cxx> -c main.c"), DepKind::StepGroup(0));
+        compile.probes = vec!["cc:toolchain".into()];
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec!["libmath".into()],
+            units: vec![
+                compile,
+                cap(shell("g++ -o app main.o libmath.a"), DepKind::Sequential),
+            ],
+            step_groups: vec![vec![0]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["app".into()],
+            dep_edges: vec![(1, "libmath".into())],
+            probes: vec![probe_meta],
+        };
+
+        let dag = build_dag(vec![libmath, app]).expect("no collision");
+        assert_eq!(dag.len(), 4);
+        // Nodes: 0=libmath archive, 1=synthesised probe, 2=app compile, 3=app link.
+        assert!(
+            matches!(dag.node(1).payload().payload, Some(WorkPayload::Probe { .. })),
+            "node 1 must be the synthesised probe"
+        );
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            0,
+            "the synthesised probe must not wait on the fine-covered dep's \
+             leaves — that would re-serialize every probe consumer"
+        );
+        assert_eq!(
+            dag.deps(2),
+            &[1],
+            "app's compile: probe edge only, no coarse barrier on libmath"
+        );
+    }
+
+    /// COOK-297 regression guard: the empty-barrier leaf pass-through must
+    /// forward the UNFILTERED union of the recipe's deps' leaves. A recipe
+    /// whose barrier ends empty contributes no fine-grained edges of its own
+    /// (its units were pruned), so suppressing a fine-covered dep there would
+    /// sever the downstream chain instead of flattening it.
+    #[test]
+    fn empty_barrier_leaf_forwarding_ignores_dep_edge_suppression() {
+        let producer = RecipeUnits {
+            recipe_name: "producer".into(),
+            deps: vec![],
+            units: vec![cap(shell("make gen.a"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["gen.a".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        // mid's only unit is an unconsumed probe → pruned → empty barrier.
+        // Its dep_edge names producer, but the edge dies with the pruned
+        // unit; forwarding must still hand producer's leaf downstream.
+        let mid = RecipeUnits {
+            recipe_name: "mid".into(),
+            deps: vec!["producer".into()],
+            units: vec![cap(probe("mid:unused"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![(0, "producer".into())],
+            probes: vec![],
+        };
+        let consumer = RecipeUnits {
+            recipe_name: "consumer".into(),
+            deps: vec!["mid".into()],
+            units: vec![cap(shell("cp gen.a out.bin"), DepKind::Sequential)],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["out.bin".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![producer, mid, consumer]).expect("no collision");
+        assert_eq!(dag.len(), 2, "mid's pruned probe leaves only 2 nodes");
+        // Nodes: 0=producer, 1=consumer.
+        assert_eq!(
+            dag.deps(1),
+            &[0],
+            "consumer must still reach producer's leaf through mid's \
+             forwarded (unfiltered) leaf set"
+        );
     }
 
     /// A `dep_edges` entry naming a recipe absent from the slice passed to
