@@ -34,10 +34,16 @@ pub enum GraphError {
 /// `ingredients` are file paths consumed by the recipe.
 /// `serves` are file paths produced by the recipe.
 /// `requires` are explicit named dependencies on other recipes.
+/// `orders` are names reached only through fine-grained per-unit references
+/// (`dep_edges`: `$<B>`, `cook.dep_output`, `cook.dep_order`). They join the
+/// build closure and participate in cycle detection exactly as `requires` does,
+/// but they never become a whole-recipe barrier — `run` keeps the coarse
+/// `RecipeUnits.deps` restricted to the recipe's own declared `requires`.
 pub struct RecipeInfo {
     pub ingredients: Vec<String>,
     pub serves: Vec<String>,
     pub requires: Vec<String>,
+    pub orders: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -46,10 +52,10 @@ pub struct RecipeInfo {
 
 /// Build an adjacency map: for each recipe, the set of recipes it depends on.
 ///
-/// Edges come from explicit `requires` declarations only. Name-reference
-/// edges (`{lib}` / `{lib.accessor}`) are produced during codegen by
-/// `cook-luagen` and composed into the DAG separately; they do not flow
-/// through this adjacency map. Path-string equality between an ingredient
+/// Edges come from explicit `requires` declarations and from `orders` —
+/// names a recipe reaches only through fine-grained per-unit references. Both
+/// establish closure membership and are cycle-checked; only `requires` also
+/// becomes a coarse whole-recipe barrier (see `RecipeInfo`). Path-string equality between an ingredient
 /// and another recipe's cook-output is opaque and does NOT produce an
 /// edge — see Cook Standard §10.6 and rationale App. C.16.1.
 fn build_adjacency<'a>(
@@ -58,7 +64,7 @@ fn build_adjacency<'a>(
     let mut deps: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, info) in recipes {
         let mut recipe_deps = BTreeSet::new();
-        for req in &info.requires {
+        for req in info.requires.iter().chain(info.orders.iter()) {
             if !recipes.contains_key(req.as_str()) {
                 return Err(GraphError::UnknownRecipe(req.clone()));
             }
@@ -216,6 +222,7 @@ pub fn build_workspace_recipe_info(
                 ingredients: vec![],
                 serves: vec![],
                 requires: resolved_deps,
+                orders: vec![],
             },
         );
     }
@@ -236,6 +243,7 @@ pub fn build_workspace_recipe_info(
                     ingredients: vec![],
                     serves: vec![],
                     requires: resolved_deps,
+                    orders: vec![],
                 },
             );
         }
@@ -521,6 +529,7 @@ fn build_recipe_info_for_targets(
                 ingredients: vec![],
                 serves: vec![],
                 requires: resolved_deps,
+                orders: vec![],
             },
         );
     }
@@ -675,6 +684,7 @@ mod tests {
             ingredients: ingredients.into_iter().map(String::from).collect(),
             serves: serves.into_iter().map(String::from).collect(),
             requires: requires.into_iter().map(String::from).collect(),
+            orders: vec![],
         }
     }
 

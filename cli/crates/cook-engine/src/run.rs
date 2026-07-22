@@ -384,7 +384,18 @@ where
             .ok_or_else(|| EngineError::UnknownRecipe(name.clone()))?;
         let mut u = units.clone();
         if let Some(deps) = edges.get(name) {
-            u.deps = deps.clone();
+            // `edges` is the closure graph and includes `orders` — names reached
+            // only through fine-grained per-unit refs. Those carry their ordering
+            // in `dep_edges`; promoting them here would manufacture the coarse
+            // whole-recipe barrier the fine reference exists to avoid. Keep the
+            // barrier set to what the recipe actually declared.
+            let declared: std::collections::BTreeSet<&str> =
+                units.deps.iter().map(|s| s.as_str()).collect();
+            u.deps = deps
+                .iter()
+                .filter(|d| declared.contains(d.as_str()))
+                .cloned()
+                .collect();
         }
         all_units.push(u);
     }

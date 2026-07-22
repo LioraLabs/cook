@@ -37,12 +37,33 @@ pub fn build_recipe_infos_from_registered(
             .get(&name.name)
             .map(|u| u.terminal_outputs.clone())
             .unwrap_or_default();
+        // Fine-grained per-unit references establish closure membership too:
+        // an author who writes only `cook.dep_order("b")` has named b, and
+        // naming is what puts b in the closure (Standard §10.6, CS-0121).
+        // These land in `orders`, never in `requires`, so they add a per-unit
+        // edge without manufacturing a whole-recipe barrier.
+        let orders: Vec<String> = ws
+            .units_by_recipe
+            .get(&name.name)
+            .map(|u| {
+                let mut v: Vec<String> = u
+                    .dep_edges
+                    .iter()
+                    .map(|(_, dep)| dep.clone())
+                    .filter(|dep| !name.requires.contains(dep))
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            })
+            .unwrap_or_default();
         infos.insert(
             name.name.clone(),
             RecipeInfo {
                 ingredients: vec![],
                 serves,
                 requires: name.requires.clone(),
+                orders,
             },
         );
     }
