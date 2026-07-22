@@ -14,7 +14,7 @@
   "metadata": {
     "version": "0.14.2",
     "license": "MIT",
-    "description": "Tree-sitter grammar for the Cook build system DSL, conforming to Cook Standard v0.14",
+    "description": "Tree-sitter grammar for the Cook build system DSL, conforming to Cook Standard v0.15",
     "links": {
       "repository": "https://github.com/LioraLabs/cook"
     }

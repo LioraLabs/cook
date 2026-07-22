@@ -1,7 +1,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// Conforms to Cook Standard v0.14. See standard/src/content/docs/
+// Conforms to Cook Standard v0.15. See standard/src/content/docs/
 // appendix/A-grammar.mdx for the normative grammar.
 
 module.exports = grammar({
