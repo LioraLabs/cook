@@ -266,3 +266,85 @@ recipe consumer
          {gen:?}:\n{combined}"
     );
 }
+
+/// `cook.step_group(opts, fn)` with `opts.dep_order` — the declarative form.
+/// A bare `cook.dep_order` call is positional: it applies to every `add_unit`
+/// after it and is cleared when the enclosing group closes, so its meaning
+/// depends on where the author put it. Declaring the names on the group makes
+/// the scope syntactic. Every unit inside the group is ordered after the
+/// referent; units registered outside it are not.
+///
+/// Driven from a module, which is the parameter's real consumer: a recipe body
+/// admits only step forms and `<id>.<id>(...)` module calls, so neither an
+/// inline table argument nor a `local` binding can appear there. Module files
+/// are plain Lua and carry no such restriction.
+#[test]
+fn step_group_opts_dep_order_scopes_edges_to_the_group() {
+    let tmp = setup(
+        r#"use sgmod
+
+recipe producer
+        cook.add_unit({
+            inputs  = { "src.c" },
+            outputs = { "build/gen.a" },
+            command = "sleep 1.5 && mkdir -p build && cp src.c build/gen.a",
+        })
+
+recipe consumer
+        sgmod.outside()
+        sgmod.inside("producer")
+"#,
+    );
+    let modules = tmp.path().join("cook_modules/share/lua/5.4");
+    fs::create_dir_all(&modules).unwrap();
+    fs::write(
+        modules.join("sgmod.lua"),
+        r#"local M = {}
+function M.outside()
+    cook.add_unit({
+        inputs  = { "src.c" },
+        outputs = { "outside.txt" },
+        command = "cp src.c outside.txt",
+    })
+end
+function M.inside(dep)
+    cook.step_group({ dep_order = { dep } }, function()
+        cook.add_unit({
+            inputs  = { "src.c" },
+            outputs = { "inside.txt" },
+            command = "cp src.c inside.txt",
+        })
+    end)
+end
+return M
+"#,
+    )
+    .unwrap();
+
+    let (ok, combined) = run_cook(tmp.path(), "consumer");
+    assert!(ok, "build must succeed:\n{combined}");
+
+    let outside = fs::metadata(tmp.path().join("outside.txt"))
+        .expect("outside.txt written")
+        .modified()
+        .unwrap();
+    let inside = fs::metadata(tmp.path().join("inside.txt"))
+        .expect("inside.txt written")
+        .modified()
+        .unwrap();
+    let gen = fs::metadata(tmp.path().join("build/gen.a"))
+        .expect("gen.a written")
+        .modified()
+        .unwrap();
+
+    assert!(
+        outside < gen,
+        "a unit registered OUTSIDE the group must carry no edge; outside.txt \
+         {outside:?}, gen.a {gen:?}:\n{combined}"
+    );
+    assert!(
+        inside > gen,
+        "a unit registered INSIDE the group must be ordered after the declared \
+         dep; inside.txt {inside:?}, gen.a {gen:?}:\n{combined}"
+    );
+}

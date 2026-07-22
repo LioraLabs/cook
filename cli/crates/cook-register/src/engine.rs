@@ -2379,6 +2379,12 @@ fn install_remaining_apis(
     // COOK-297 (revised): must follow register_dep_output_api — it wraps the
     // `cook.dep_order` that call installs, giving it require_recipe's
     // register-order guarantee so a maker can drop require_recipe entirely.
+    crate::context::register_import_forcing(
+        lua,
+        body_slot.clone(),
+        recipe_forcer.clone(),
+        builder.export_store.clone(),
+    )?;
     crate::context::register_dep_order_forcing(lua, body_slot.clone(), recipe_forcer)?;
     crate::dep_output_api::register_member_output_api(
         lua,

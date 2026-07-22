@@ -124,6 +124,12 @@ The Cook implementation MAY share the export table between register-phase and ex
 
 The values MUST be identical between the register-phase Lua VM and every execute-phase worker VM within a single Cook invocation. Implementations realise this by sharing a single source-of-truth resolver across VMs; the reference implementation does so via `cook-lua-stdlib::platform`.
 
+
+**Forcing (register phase, inside a recipe body).** When `cook.import(N)` is called from within a recipe body during the register phase and `N` has published no export yet, a conforming implementation MUST force `N`'s body to completion before returning, to the standard §{lua.cook-require-recipe} defines — same transitivity, same at-most-once rule, same prohibition on degrading the forcing to a silent skip. The call then returns `N`'s export.
+
+Forcing is a property of **reading** an export, not of declaring a dependency. A module resolving a link reference calls `cook.import` at exactly the moment it needs the referent's body to have run; requiring it to arrange that separately, through an API whose other effect is a whole-recipe ordering edge, is what coupled export resolution to execution ordering in the first place (§{lua.cook-dep-order}, CS-0161).
+
+Three boundaries on the rule. Where `N` has already exported, the implementation MUST NOT force — the value is returned directly, so the common case stays a lookup and the rule is a no-op once a body has run. Where the call is made **outside** a recipe body — a `cook.on_register_complete` finalizer (§{lua.cook-on-register-complete}) reading exports to emit a compilation database, say — the recipe set is closed and forcing is illegal; `cook.import` MUST remain a plain lookup there, returning `nil` for an absent export. And where `N` has no export and is not a recipe registered in the current pass, the implementation MUST surface the forcing error rather than returning `nil`: a silent `nil` is the mislink §{lua.cook-require-recipe} exists to prevent, and a caller that merges the result into a link line emits one missing the library.
 ### Example 24.6.1
 
 ```lua

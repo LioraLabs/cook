@@ -189,10 +189,16 @@ A conforming implementation MUST diagnose a duplicate name with a single error t
 A conforming implementation MUST apply the field defaults and raise register-phase Lua errors for invalid field values at the time `cook.add_test` is called, not deferred to execute time. Error messages MUST identify the offending field by name. Every documented field has exactly one accepted Lua type (or, for `command`/`lua_code`, the "exactly one of" pair above); a conforming implementation MUST reject a wrong-typed value with a register-phase error naming the field, the received type, and the accepted type, rather than silently coercing it to a default (CS-0127, mirroring §22.1's `cook.add_unit` field-typing rule). Supplying both `command` and `lua_code`, or neither, MUST raise a register-phase Lua error naming both fields. An empty-string `command` or `lua_code` is treated as absent for the purpose of this exactly-one check (so `command = ""` with a `lua_code` present is a valid Lua-body test, and both empty is the "neither supplied" error).
 
 ## 22.5. `cook.step_group` [#lua.step-group]
-**Signature.** `cook.step_group(fn: function) -> nil`
+**Signature.** `cook.step_group(fn: function, opts?: table) -> nil` — equivalently `cook.step_group(opts: table, fn: function)`; a conforming implementation MUST accept the table on either side of the function.
 **Phase.** Register-phase only.
 
 `cook.step_group` invokes `fn` synchronously on the register-phase Lua VM. Every `cook.add_unit` (§{lua.add-unit}) call made within the dynamic extent of `fn` records its unit as a member of a single **step group** (§{exec.step-groups}). Step-group members MAY execute in parallel during the execute phase.
+
+**`opts.dep_order`** (list of recipe names). Each entry MUST be handled exactly as a `cook.dep_order` call (§{lua.cook-dep-order}) made as the group's first statement: the referent's body is forced, it joins the build closure, and every unit registered inside `fn` takes a per-unit execution edge to it. Units registered outside the group take no such edge. A conforming implementation MUST reject a non-list value, and MUST reject a list element that is not a string, naming the field.
+
+The parameter exists because the bare call is **positional**. A `cook.dep_order` reference applies to every `cook.add_unit` that follows it and is discarded when the enclosing group closes, so where the author placed the call — and whether a group boundary happens to fall between it and the units it was meant for — decides its meaning. Declaring the names on the group makes the scope syntactic instead: these deps, these units, with no ordering to get wrong. The two forms are otherwise identical, and an implementation MAY implement one in terms of the other.
+
+Note that a recipe body admits only step forms and bare `<id>.<id>(...)` module calls (§{lua.recipe-body}), so neither an inline table argument nor a `local` binding can appear there; `opts` is reachable from module code, which is ordinary Lua. This is a property of the recipe-body surface, not of this API.
 
 `cook.step_group` MUST return after `fn` returns; nested `cook.step_group` calls within `fn` are unspecified.
 
@@ -297,7 +303,7 @@ This section relates to §{lua.cook-recipe-name} exactly as Note 22.7.1 anticipa
 
 ### Note 22.8.1
 
-The motivating case is a module that must resolve a link reference from inside a recipe body it does not own. A C/C++ target maker resolving `links = {"idLib"}` reads `idLib`'s export (§{lua.cook-exports-imports}) to obtain its library path and transitive link info (§{cat.cc.transitive}). That read resolves only if `idLib`'s body has already been evaluated and published its export — `cook.import` returns `nil` for a target that has not yet exported (§{lua.cook-imports}).
+The motivating case is a module that must resolve a link reference from inside a recipe body it does not own. A C/C++ target maker resolving `links = {"idLib"}` reads `idLib`'s export (§{lua.cook-exports-imports}) to obtain its library path and transitive link info (§{cat.cc.transitive}). Since CS-0161 that read resolves on its own: `cook.import` forces the referent's body when called from inside a recipe body (§{lua.cook-imports}), because forcing is a property of reading an export rather than of declaring an edge. What follows describes why `cook.require_recipe` was the original answer, and remains the right one wherever the caller wants the whole-recipe edge as well.
 
 Registration order within a pass is dependency-driven, not declaration order: two recipes with no declared dependency between them have no guaranteed relative order, so a module cannot assume that a recipe appearing earlier in the Cookfile has already run. Without a declared dependency, nothing makes `idLib`'s body run first, and the read silently returns `nil` — the maker then either fails obscurely or emits a link line missing the library. The author wrote `links = {"idLib"}` and reasonably expects both the ordering and the edge to follow from it.
 
