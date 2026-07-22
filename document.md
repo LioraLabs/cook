@@ -44,8 +44,37 @@ behind.
 From source:
 
 ```sh
-cargo install --locked --path cli/crates/cook-cli
+cd cli
+cargo install --locked --path crates/cook-cli
 ```
+
+Running the command from `cli/` lets Cargo load `cli/.cargo/config.toml`, which
+exports the embedded Lua symbols required by native Lua rocks.
+
+### Source-build linking
+
+cook statically embeds its own Lua 5.4; no system Lua is consulted. A native
+(C) rock resolves the Lua C API from the `cook` executable when it loads, so a
+source-built binary must export those symbols. Builds run from `cli/` pick up
+the correct linker flag from `cli/.cargo/config.toml` automatically.
+
+Cargo reads configuration from the directory where you invoke it, not from a
+package fetched by `cargo install`. When installing directly from Git, pass
+the flag explicitly:
+
+```sh
+# Linux
+RUSTFLAGS="-C link-arg=-rdynamic" \
+    cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
+
+# macOS
+RUSTFLAGS="-C link-arg=-Wl,-export_dynamic" \
+    cargo install --locked --git https://github.com/LioraLabs/cook cook-cli
+```
+
+Without the flag, pure-Lua modules still work. The failure appears only when a
+native rock loads: `dlopen` succeeds, then `lua_*` symbol lookup fails with an
+error that does not look like a linker problem.
 
 Verify:
 
