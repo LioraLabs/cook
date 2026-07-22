@@ -1071,9 +1071,55 @@ pub fn register_unit_api(
     })?;
     cook.set("passthrough", passthrough_fn)?;
 
-    // cook.step_group(fn)
+    // cook.step_group(fn, opts?)
+    //
+    // `opts.dep_order` (list of recipe names) declares the group's ordering
+    // deps up front instead of relying on a bare `cook.dep_order` call landing
+    // in the right place. The accumulator those calls write is positional —
+    // it applies to every `add_unit` after it and is cleared when the group
+    // closes — so a bare call's meaning depends on where the author put it.
+    // Declaring the names on the group makes the scope syntactic: these deps,
+    // these units, no ordering to get wrong. Equivalent to calling
+    // `cook.dep_order(name)` as the group's first statement, including the
+    // register-order guarantee.
     let body_slot_sg = body_slot.clone();
-    let step_group_fn = lua.create_function(move |_, func: LuaFunction| {
+    // Either argument order is accepted. `cook.step_group(opts, fn)` is the
+    // form to use inside a recipe body: the CS-0134 Lua-span parser ends the
+    // statement at the function literal's `end`, so a trailing `, { … })`
+    // after it is read as a loose shell command and rejected. Opts-first keeps
+    // the whole call inside one brace-balanced span, and reads better anyway —
+    // the declaration precedes the body it scopes.
+    let step_group_fn = lua.create_function(move |lua, (a, b): (LuaValue, Option<LuaValue>)| {
+        let (func, opts): (LuaFunction, Option<LuaTable>) = match (a, b) {
+            (LuaValue::Function(f), None) => (f, None),
+            (LuaValue::Function(f), Some(LuaValue::Table(t))) => (f, Some(t)),
+            (LuaValue::Table(t), Some(LuaValue::Function(f))) => (f, Some(t)),
+            (LuaValue::Function(f), Some(LuaValue::Nil)) => (f, None),
+            _ => {
+                return Err(mlua::Error::runtime(
+                    "cook.step_group takes a function, optionally with an opts \
+                     table on either side: step_group(fn), step_group(opts, fn), \
+                     or step_group(fn, opts)",
+                ))
+            }
+        };
+        // Resolve the declared deps BEFORE opening the group: cook.dep_order
+        // forces the referent's body, which re-enters the register APIs, and
+        // it must not do so with a half-open group on the caller's body state.
+        let declared: Vec<String> = match &opts {
+            Some(t) => match t.get::<Option<LuaTable>>("dep_order")? {
+                Some(list) => list
+                    .sequence_values::<String>()
+                    .collect::<LuaResult<Vec<String>>>()
+                    .map_err(|e| {
+                        mlua::Error::runtime(format!(
+                            "cook.step_group: opts.dep_order must be a list of recipe-name strings: {e}"
+                        ))
+                    })?,
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
         {
             let mut slot = body_slot_sg.borrow_mut();
             let body = slot.as_mut().ok_or_else(|| {
@@ -1082,6 +1128,13 @@ pub fn register_unit_api(
             let group_idx = body.step_groups.len();
             body.step_groups.push(Vec::new());
             body.current_group = Some(group_idx);
+        }
+        if !declared.is_empty() {
+            let cook: LuaTable = lua.globals().get("cook")?;
+            let dep_order: LuaFunction = cook.get("dep_order")?;
+            for name in declared {
+                dep_order.call::<()>(name)?;
+            }
         }
         let result = func.call::<()>(());
         {

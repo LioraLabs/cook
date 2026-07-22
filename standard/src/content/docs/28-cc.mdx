@@ -120,6 +120,8 @@ cc.archive(objects: list[string], output: string) -> string
 
 Archives `objects` into a static library at `output` via `ar rcs`. The implementation MUST emit one work unit whose `inputs = objects`, `output = output`, `command = "ar rcs <output> <objects...>"`.
 
+`cc.archive` accepts an optional third argument `opts`. `opts.dep_recipes` (list[string]): recipe names the emitted unit must be ordered after. For each entry, the implementation MUST call `cook.dep_order(name)` (§{lua.cook-dep-order}) immediately before registering the archive unit — after the compile step group has closed, so the reference attaches to the archive unit and nothing earlier. The entries MUST NOT enter the unit's `inputs`: an archive consumes only its own objects, and the reference exists to fine-cover the recipe's `requires` edges (§{xref.dep-implications}, CS-0161) so the recipe's compile units run in one flat wave with the upstream's.
+
 ### 28.3.7. cc.link [#cat.cc.link]
 
 ```
@@ -129,6 +131,8 @@ cc.link(objects: list[string], output: string, opts: LinkOpts) -> string
 Links objects to `output`. `LinkOpts.system_libs` is appended as `-l<name>`; `LinkOpts.extra_ldflags` is appended verbatim; `LinkOpts.shared = true` adds the platform's shared-library flag (§{cat.cc.shared}).
 
 `LinkOpts.frameworks` (list[string]): each entry MUST emit `-framework <name>` at link time on macOS hosts. On non-macOS hosts the implementation MUST treat the field as a no-op, allowing cross-platform call sites where a curated finder returns `system_libs={"openal"}` on Linux and `frameworks={"OpenAL"}` on macOS to use the same `cc.link` invocation.
+
+`LinkOpts.dep_recipes` (list[string]): as for `cc.archive` — the implementation MUST call `cook.dep_order(name)` for each entry immediately before registering the link unit. The link unit's data dependency on the upstream archives is carried separately by `LinkOpts.link_inputs` (the archive paths folded into the unit's `inputs` for cache invalidation); `dep_recipes` supplies the execution edges that make those reads safe once the recipe-level `requires` edges are fine-covered.
 
 ### 28.3.8. cc.find [#cat.cc.find]
 
@@ -385,7 +389,7 @@ Every cc target maker (`cc.bin`/`cc.lib`/`cc.shared`/`cc.headers`) MUST call `co
 - `info.links` — further transitive targets (forms the propagation graph)
 - `info.compile_info` — compile-time view of the target (post-merge: includes and defines as the compiler sees them, including transitively merged values), consumed by `cc.compile_commands` (§{cat.cc.compile-commands})
 
-When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands. The closure's `frameworks` MUST be merged into the new target's link command analogously to `system_libs` (dedup-preserving first-seen order); a non-macOS host implementation MAY merge but MUST NOT emit (§{cat.cc.link}).
+When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure walk MUST additionally record, in first-seen walk order, the name of every walked target whose export carries a non-empty `lib_path` (the `link_dep_recipes` set); target makers pass this set as `dep_recipes` to `cc.archive` / `cc.link` so the emitted unit is ordered after every artifact-producing target in its link closure (§{lua.cook-dep-order}, CS-0161). The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands. The closure's `frameworks` MUST be merged into the new target's link command analogously to `system_libs` (dedup-preserving first-seen order); a non-macOS host implementation MAY merge but MUST NOT emit (§{cat.cc.link}).
 
 ### 28.4.1. PRIVATE/PUBLIC distinction [#cat.cc.transitive.priv-pub]
 

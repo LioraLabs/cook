@@ -85,10 +85,15 @@ function M.bump_claim(version)
     end
 
     -- 3. tree-sitter-cook grammar.js header comment.
+    -- Pattern tracks the wording actually in the file ("Conforms to Cook
+    -- Standard vX.Y"); the previous regex looked for a phrasing no claim site
+    -- uses, so this step had been failing the whole chore.
     rewrite_file(
         "tree-sitter-cook/grammar.js",
-        "tree%-sitter%-cook claims conformance with Cook Standard v[0-9%.]+",
-        "tree-sitter-cook claims conformance with Cook Standard v" .. version,
+        -- MAJOR%.MINOR, not [0-9%.]+ — the latter is greedy and would swallow
+        -- the sentence's closing period along with the version.
+        "Conforms to Cook Standard v[0-9]+%.[0-9]+",
+        "Conforms to Cook Standard v" .. version,
         "tree-sitter-cook grammar.js header")
 
     -- 4. tree-sitter-cook package.json + tree-sitter.json description string.
@@ -100,8 +105,8 @@ function M.bump_claim(version)
     }) do
         rewrite_file(
             path,
-            "claims Cook Standard v[0-9%.]+",
-            "claims Cook Standard v" .. version,
+            "conforming to Cook Standard v[0-9%.]+",
+            "conforming to Cook Standard v" .. version,
             "tree-sitter-cook " .. path:match("[^/]+$"))
     end
 

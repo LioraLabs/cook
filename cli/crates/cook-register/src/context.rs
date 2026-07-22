@@ -262,6 +262,119 @@ pub fn register_require_recipe_api(
     Ok(())
 }
 
+/// Make `cook.import` force the referent's body when called from inside a
+/// recipe body.
+///
+/// Forcing is a property of READING an export, not of declaring an edge. A
+/// maker calls `cook.import(N)` at exactly the moment it needs `N`'s body to
+/// have run; before this, it had to arrange that separately — `cook_cc` forced
+/// its whole `links` list up front, inside an empty `cook.step_group` whose
+/// only job was to discard the references the forcing call recorded. Folding
+/// the force into `import` deletes that dance: `resolve_links` calls `import`,
+/// `import` forces, the export resolves.
+///
+/// Scope. The force fires only inside a recipe body. Outside one — a
+/// `cook.on_register_complete` finalizer reading exports to emit a compile
+/// database, say — the recipe set is closed and forcing is illegal (§22.9), so
+/// `import` stays the plain store lookup it has always been. Already-exported
+/// names skip the forcer entirely, which keeps the common case a single map hit
+/// and makes the whole thing a no-op once a body has run.
+///
+/// A name with no export that is also not a registered recipe surfaces the
+/// forcer's own unknown-recipe error rather than returning nil. That is the
+/// point: a silent nil here is the mislink `cook.require_recipe`'s guard exists
+/// to prevent, and `cook_cc`'s transitive walk would quietly emit a link line
+/// missing the library.
+pub fn register_import_forcing(
+    lua: &Lua,
+    body_slot: SharedBodySlot,
+    force: SharedRecipeForcer,
+    store: crate::export_api::SharedExportStore,
+) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let raw: LuaFunction = cook.get("import")?;
+    cook.set("__import_raw", raw)?;
+
+    let import_fn = lua.create_function(move |lua, name: String| {
+        let already_exported = store.borrow().contains_key(&name);
+        let in_body = {
+            let slot = body_slot.borrow();
+            matches!(slot.as_ref(), Some(body) if body.current_recipe.is_some())
+        };
+        if !already_exported && in_body {
+            // Drop every borrow before forcing: the forcer re-enters the
+            // register APIs via the callee's body and swaps the body slot.
+            let forcer = force.borrow().clone();
+            if let Some(force) = forcer {
+                force(lua, &name)?;
+            }
+        }
+        let cook: LuaTable = lua.globals().get("cook")?;
+        let raw: LuaFunction = cook.get("__import_raw")?;
+        raw.call::<LuaValue>(name)
+    })?;
+    cook.set("import", import_fn)?;
+    Ok(())
+}
+
+/// Give `cook.dep_order` `require_recipe`'s register-order guarantee.
+///
+/// COOK-297 (revised): `dep_order` is the fine-grained replacement for
+/// `require_recipe`, not a companion to it. A module that resolves link
+/// references needs the referent's body evaluated so `cook.import` returns its
+/// export — that forcing was the ONLY reason `cook_cc` called
+/// `require_recipe`, and the coarse whole-recipe barrier came along as an
+/// unwanted side effect. Moving the force here lets a maker drop
+/// `require_recipe` altogether: `dep_order` forces the body, records a
+/// per-unit edge, and (via `RecipeInfo.orders`) establishes closure
+/// membership — everything `require_recipe` did except manufacture the barrier.
+///
+/// Installed AFTER `register_dep_output_api`, which is what defines the
+/// function being wrapped. The raw accumulator-only implementation is kept at
+/// `cook.__dep_order_raw` and fetched per call rather than captured, so this
+/// wrapper holds no Lua handle across registrations.
+pub fn register_dep_order_forcing(
+    lua: &Lua,
+    body_slot: SharedBodySlot,
+    force: SharedRecipeForcer,
+) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let raw: LuaFunction = cook.get("dep_order")?;
+    cook.set("__dep_order_raw", raw)?;
+
+    let dep_order_fn = lua.create_function(move |lua, name: String| {
+        // Validate against the caller's body state, then drop the borrow
+        // before forcing — `force` re-enters register APIs via the callee's
+        // body and swaps the body slot out from under us.
+        {
+            let slot = body_slot.borrow();
+            match slot.as_ref() {
+                Some(body) if body.current_recipe.is_some() => {}
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "cook.dep_order must be called inside a recipe body",
+                    ))
+                }
+            }
+        }
+        let forcer = force.borrow().clone();
+        match forcer {
+            Some(force) => force(lua, &name)?,
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.dep_order: cannot force recipe \"{name}\": no \
+                     body-invocation driver is installed"
+                )))
+            }
+        }
+        let cook: LuaTable = lua.globals().get("cook")?;
+        let raw: LuaFunction = cook.get("__dep_order_raw")?;
+        raw.call::<()>(name)
+    })?;
+    cook.set("dep_order", dep_order_fn)?;
+    Ok(())
+}
+
 /// Resolve a glob pattern into a sorted set of relative file paths.
 ///
 /// Matches whose final (symlink-resolved) metadata is a directory are
