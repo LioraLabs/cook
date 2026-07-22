@@ -2362,7 +2362,7 @@ fn install_remaining_apis(
     // is the only closure any caller can ever capture, so an alias taken
     // during the top-level chunk sees the driver appear exactly as a fresh
     // `cook.require_recipe` lookup does (Standard §22.8, CS-0144).
-    crate::context::register_require_recipe_api(lua, body_slot.clone(), recipe_forcer)?;
+    crate::context::register_require_recipe_api(lua, body_slot.clone(), recipe_forcer.clone())?;
     // Standard §22.9, CS-0149: installs `cook.on_register_complete`, which
     // only queues onto `finalizer_queue` — `register_cookfile`'s step 12c
     // drains it after every recipe body has run; `list_names` never drains
@@ -2376,6 +2376,10 @@ fn install_remaining_apis(
         builder.qualified_prefix.clone(),
         builder.alias_qualified_prefixes.clone(),
     )?;
+    // COOK-297 (revised): must follow register_dep_output_api — it wraps the
+    // `cook.dep_order` that call installs, giving it require_recipe's
+    // register-order guarantee so a maker can drop require_recipe entirely.
+    crate::context::register_dep_order_forcing(lua, body_slot.clone(), recipe_forcer)?;
     crate::dep_output_api::register_member_output_api(
         lua,
         builder.member_outputs.clone(),
