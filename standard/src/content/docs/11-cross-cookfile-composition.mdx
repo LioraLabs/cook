@@ -104,3 +104,37 @@ The workspace load that begins at `/ws/Cookfile` MUST be rejected: canonicalisat
 
 Duplicate-import detection fires at parse time because the governing grammar production (App. A.2) constrains a single Cookfile's token stream, which is the unit the parser consumes. Cycle detection, by contrast, is a property of the `import` graph and necessarily crosses Cookfile boundaries; it fires at workspace-load time as the graph is walked (§{rationale.modules}).
 
+## 11.6. Config-block composition across Cookfiles [#comp.config-composition]
+> **Normative.** This section specifies how `config` blocks (§{decl.config}) behave when a workspace loads more than one Cookfile. It settles two questions §{decl.config} leaves to the single-Cookfile case: the **scope** of a config block across an `import` boundary, and how a `@PRESET` **selection** resolves against the several Cookfiles a workspace loads.
+
+### 11.6.1. Config scope is the declaring Cookfile [#comp.config-scope]
+A `config` block's scope is exactly its own Cookfile. Its `var.*` outputs and its `host.*` reads (§{decl.config}, §{decl.config-sandbox}) parameterise **only** that Cookfile's own `$<NAME>` placeholders. Neither a `var.*` value nor a `host.*` read crosses an `import` boundary: an imported Cookfile does not observe an importer's config values, and an importer does not observe an imported Cookfile's config values. There is no merged config namespace across a workspace, and no merge pass runs across Cookfiles.
+
+A conforming implementation MUST resolve each Cookfile's `$<NAME>` placeholders against that Cookfile's own config outputs alone. Consequently, two Cookfiles in one workspace MAY each declare a config value under the same `NAME` without collision — each resolves to its own value, and the two never meet.
+
+### 11.6.2. `@PRESET` selection is validated against the union of all loaded Cookfiles [#comp.config-selection]
+An overlay selection (a `@PRESET` name, §{decl.config-composition}) is a single **per-run global**. A conforming implementation MUST validate the selected name against the **union** of the named `config_block` names of every Cookfile loaded in the run — the root Cookfile and every transitively imported Cookfile — not against the entry Cookfile alone.
+
+- A selected name that matches a named `config_block` in **any** loaded Cookfile is valid.
+- A selected name that matches a named `config_block` in **no** loaded Cookfile MUST be rejected with a load-time error. The diagnostic MUST identify the requested name and the deduplicated union of available names across all loaded Cookfiles.
+- A loaded Cookfile that does **not** declare an overlay of the selected name runs its **base** config for that run — a silent no-op, not an error. Only a name that exists in no Cookfile is an error.
+
+Selection remains **at most one overlay per Cookfile** (§{decl.config-composition}): the per-run global names one overlay, and each Cookfile either matches it (running base + that one overlay) or no-ops to its base. A run in which some Cookfiles match the selected name and others no-op is still one overlay per Cookfile, not several overlays on one file, so the §{decl.config-composition} single-overlay restriction is untouched.
+
+Because the selection is a per-run global validated against the whole loaded set, `cook <alias>.<recipe> @PRESET` (invoked from an importer) and `cd <alias-dir> && cook <recipe> @PRESET` (invoked from the imported directory) MUST select the same overlay for the imported Cookfile. A selection reachable from one invocation directory but not another would let the invocation directory influence which bytes a step produces, which §20.2.3 forbids for cache identity.
+
+#### Example 11.6.1
+
+```
+/ws/Cookfile:       import cli ./cli
+/ws/cli/Cookfile:   config profiling
+                        var.CARGO_PROFILE_ARGS = "--profile profiling"
+```
+
+`cook cli.build @profiling`, invoked from `/ws`, is valid: `profiling` is declared in the loaded `cli/Cookfile`, so validation passes even though the root Cookfile declares no `profiling` overlay. The root Cookfile, lacking a `profiling` overlay, runs its base config; `cli/Cookfile` runs its base plus the `profiling` overlay. `cook build @nope` from `/ws` is a load-time error naming `nope` and listing `profiling` (the union of available names).
+
+### 11.6.3. Reserved: cross-Cookfile preset routing [#comp.config-routing-reserved]
+> **Non-normative (reserved).** This subsection reserves a direction; it specifies no requirement, and no conforming implementation is obliged to implement it.
+
+A future revision MAY let an importer steer which overlay each of its imports registers under — a `config.<alias>` routing directive inside a config block — together with a resolution rule for a Cookfile reached by more than one import path (a *diamond*): agreeing routings select the agreed overlay, and disagreeing routings abort the run. This direction is deliberately left unspecified here because the §{comp.config-selection} silent-no-op already lets every in-tree import compose under a single per-run global, and no consumer has demonstrated the need for per-import routing. Reserving it — rather than specifying it — keeps the composition surface minimal while recording the design for when a concrete need appears. Until then, an implementation that does not provide routing is fully conforming.
+

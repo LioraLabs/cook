@@ -109,7 +109,6 @@ mod tests {
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),
-            final_env_by_cookfile: BTreeMap::new(),
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),

@@ -45,7 +45,7 @@ pub mod workspace;
 pub use env::{load_env, parse_cli_overrides, resolve_env};
 pub use error::PipelineError;
 pub use inferred_deps::{compute_workspace_inferred_deps, workspace_dep_conflicts};
-pub use parse::{read_and_parse, validate_selected_config, ParsedCookfile};
+pub use parse::{read_and_parse, validate_selected_config_workspace, ParsedCookfile};
 pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{
     codegen_with_module_recipes, list_workspace_names, register_workspace, RegisterMode,

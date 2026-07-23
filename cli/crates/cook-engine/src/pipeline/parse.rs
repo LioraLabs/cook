@@ -5,11 +5,13 @@
 //! everything downstream (registries, recipe info, inferred deps) consumes
 //! the AST + Lua source produced here.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use cook_lang::ast::Cookfile;
 
 use super::error::PipelineError;
+use super::workspace::Workspace;
 
 /// Result of `read_and_parse`: the parsed AST, the generated Lua source,
 /// and any non-fatal warnings collected during codegen.
@@ -60,29 +62,48 @@ pub fn read_and_parse(path: &Path) -> Result<ParsedCookfile, PipelineError> {
     })
 }
 
-/// Validate that `config` (if supplied) matches a named `config NAME ... end`
-/// block in the Cookfile. Errors with the list of available names on mismatch.
-pub fn validate_selected_config(
-    cookfile: &Cookfile,
+/// Collect every named `config_block` name declared in `cookfile`.
+fn named_configs(cookfile: &Cookfile) -> impl Iterator<Item = &str> {
+    cookfile
+        .config_blocks
+        .iter()
+        .filter_map(|b| b.name.as_deref())
+}
+
+/// Validate `@PRESET` selection against the UNION of the named config blocks of
+/// every loaded Cookfile in `workspace` (root + all transitive imports), per
+/// §11.6 / CS-0165 (R3). A name declared in ANY member passes; a name declared
+/// in NO member is a hard error listing the deduplicated, sorted union of
+/// available names. A member that simply lacks the selected overlay runs its
+/// base config downstream (a silent no-op) — that is not this function's
+/// concern; it only rejects names that exist nowhere.
+///
+/// This replaces the pre-CS-0165 entry-Cookfile-only check: the selected name
+/// already propagates to every member's register builder, so validating only
+/// the entry Cookfile spuriously rejected a preset declared in an import (the
+/// sole reason `cook cli.build @profiling` failed while `cd cli && cook build
+/// @profiling` worked).
+pub fn validate_selected_config_workspace(
+    workspace: &Workspace,
     config: Option<&str>,
 ) -> Result<(), PipelineError> {
     let Some(name) = config else {
         return Ok(());
     };
-    let has_match = cookfile
-        .config_blocks
-        .iter()
-        .any(|b| b.name.as_deref() == Some(name));
-    if has_match {
-        return Ok(());
+    let members = std::iter::once(&workspace.root).chain(workspace.imports.values());
+    // Union of names across all members, deduplicated and ordered for a stable
+    // diagnostic.
+    let mut available: BTreeSet<String> = BTreeSet::new();
+    for member in members {
+        for n in named_configs(&member.cookfile) {
+            if n == name {
+                return Ok(());
+            }
+            available.insert(n.to_string());
+        }
     }
-    let available: Vec<String> = cookfile
-        .config_blocks
-        .iter()
-        .filter_map(|b| b.name.as_deref().map(String::from))
-        .collect();
     Err(PipelineError::UnknownConfig {
         name: name.to_string(),
-        available,
+        available: available.into_iter().collect(),
     })
 }
