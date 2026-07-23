@@ -3179,10 +3179,10 @@ fn for_each_probe_cook_fans_out_per_member() {
     assert!(lua.contains("for _, item in ipairs(_items) do"),
         "missing per-member loop, got:\n{lua}");
     // Output path interpolates the member field.
-    assert!(lua.contains("tostring(item[\"id\"])"),
+    assert!(lua.contains("cook.member_to_string(item[\"id\"])"),
         "output should interpolate $<in.id>, got:\n{lua}");
     // Command interpolates the member field and $<out>.
-    assert!(lua.contains("tostring(item[\"name\"])"),
+    assert!(lua.contains("cook.member_to_string(item[\"name\"])"),
         "command should interpolate $<in.name>, got:\n{lua}");
     assert!(lua.contains("cook.add_unit({inputs = {}, output = _cook_out, command = "),
         "missing ingredients-probe add_unit, got:\n{lua}");
@@ -3277,7 +3277,7 @@ fn for_each_test_fans_out_per_member() {
     let src = "recipe eval\n    ingredients cases\n    test { assert-eval \"$<in.input>\" \"$<in.expect>\" }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
-    assert!(lua.contains("tostring(item[\"input\"])"), "test body should interpolate $<in.input>, got:\n{lua}");
+    assert!(lua.contains("cook.member_to_string(item[\"input\"])"), "test body should interpolate $<in.input>, got:\n{lua}");
     assert!(lua.contains("cook.add_test({command = "), "missing test add_test, got:\n{lua}");
 }
 

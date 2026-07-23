@@ -46,8 +46,8 @@ echo "ingredients <probe> codegen assertions (cook emit-lua):"
 # cards_cook — probe source, cook fan-out, $<in.FIELD>.
 assert_contains "cards_cook: probe member source"      'local _items = cook.probes.get("cards")'
 assert_contains "cards_cook: per-member loop binds item" 'for _, item in ipairs(_items) do'
-assert_contains "cards_cook: \$<in.id> output"        'tostring(item["id"])'
-assert_contains "cards_cook: \$<in.name> in command"  'tostring(item["name"])'
+assert_contains "cards_cook: \$<in.id> output"        'cook.member_to_string(item["id"])'
+assert_contains "cards_cook: \$<in.name> in command"  'cook.member_to_string(item["name"])'
 
 # catalog_cook — probe key:field, bare $<in>.
 assert_contains "catalog_cook: verbatim ref passes through" 'cook.probes.get("catalog:items")'
@@ -55,7 +55,7 @@ assert_contains "catalog_cook: bare \$<in> renders member" 'cook.member_to_strin
 
 # eval — probe source, test fan-out.
 assert_contains "eval: cases probe source"              'local _items = cook.probes.get("cases")'
-assert_contains "eval: \$<in.input> in test body"     'tostring(item["input"])'
+assert_contains "eval: \$<in.input> in test body"     'cook.member_to_string(item["input"])'
 assert_contains "eval: test emits add_test"             'cook.add_test({command ='
 
 # --- Tier 2: execution (COOK-64 runtime) ------------------------------------

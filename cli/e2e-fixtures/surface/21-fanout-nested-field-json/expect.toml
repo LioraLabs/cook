@@ -1,0 +1,20 @@
+# COOK-302: a nested record field renders as canonical key-sorted JSON, and the
+# unit caches across runs. Pre-fix, `$<in.tags>` was a Lua table address, fresh
+# on every process, so run 2 always rebuilt.
+
+[[run]]
+args = ["render"]
+[run.assert]
+equals = { "build/auth.conf" = """
+tags=["a","b"]
+meta={"team":"core","tier":1}
+""", "build/billing.conf" = """
+tags=["c"]
+meta={"team":"money","tier":2}
+""" }
+
+[[run]]
+args = ["render"]
+[run.assert]
+unchanged = ["build/auth.conf", "build/billing.conf"]
+output_not_contains = ["rebuild"]

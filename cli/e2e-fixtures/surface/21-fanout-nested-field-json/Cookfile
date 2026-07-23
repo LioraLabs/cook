@@ -1,0 +1,14 @@
+# COOK-302 / §9.3: in a record fan-out, `$<in.FIELD>` renders a nested value
+# (array or object) as canonical key-sorted JSON. It used to render Lua's
+# `tostring` of the table — an ASLR-fresh address, which landed in the unit's
+# command string and defeated caching on every single run.
+
+probe services
+    ingredients "data/services.json"
+    json { cat data/services.json }
+
+recipe render
+    ingredients services
+    cook "build/$<in.name>.conf" {
+        printf 'tags=%s\nmeta=%s\n' '$<in.tags>' '$<in.meta>' > $<out>
+    }
