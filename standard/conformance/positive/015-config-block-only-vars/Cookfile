@@ -1,6 +1,6 @@
 config
-    cook.env.CC = "gcc"
-    cook.env.CFLAGS = "-Wall"
+    var.CC = "gcc"
+    var.CFLAGS = "-Wall"
 
 chore build
     echo hello
