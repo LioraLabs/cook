@@ -1278,6 +1278,11 @@ pub fn execute_dag(
                     recipe_name: work_node.recipe_name.clone(),
                     working_dir: work_node.working_dir.clone(),
                     env_vars: env_vars_hashmap,
+                    process_env_vars: work_node
+                        .process_env_vars
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
                     project_root: cache_ctx.project_root.clone(),
                 });
                 1
@@ -1620,6 +1625,11 @@ pub fn execute_dag(
                     recipe_name: work_node.recipe_name.clone(),
                     working_dir: work_node.working_dir.clone(),
                     env_vars: env_vars_hashmap,
+                    process_env_vars: work_node
+                        .process_env_vars
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
                     project_root: cache_ctx.project_root.clone(),
                 });
                 1
@@ -1803,6 +1813,11 @@ pub fn execute_dag(
                     recipe_name: work_node.recipe_name.clone(),
                     working_dir: work_node.working_dir.clone(),
                     env_vars: env_vars_hashmap,
+                    process_env_vars: work_node
+                        .process_env_vars
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
                     // CS-0045: project_root drives the worker's
                     // sandbox policy. CacheContext is the canonical
                     // source — it survives the cross-Cookfile-import
@@ -1983,11 +1998,14 @@ pub fn execute_dag(
                             // chore bodies (no cache_meta) but kept for
                             // uniformity.
                             match ensure_output_parent_dirs(work_node) {
+                                // R1 (CS-0164): a chore/interactive step spawns
+                                // with the process-env subset (its bound chore
+                                // params), not config `var.*` values.
                                 Ok(()) => run_interactive_on_main(
                                     cmd,
                                     *line,
                                     &work_node.working_dir,
-                                    &work_node.env_vars,
+                                    &work_node.process_env_vars,
                                 ),
                                 Err(e) => Err(e),
                             }
@@ -2011,6 +2029,11 @@ pub fn execute_dag(
                                         recipe_name: work_node.recipe_name.clone(),
                                         working_dir: work_node.working_dir.clone(),
                                         env_vars: env_vars_hashmap,
+                                        process_env_vars: work_node
+                                            .process_env_vars
+                                            .iter()
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect(),
                                         project_root: cache_ctx.project_root.clone(),
                                     });
                                     match rx.recv() {
@@ -3400,6 +3423,7 @@ mod tests {
 
     fn work_node(payload: WorkPayload, recipe: &str, wd: PathBuf) -> WorkNode {
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(payload),
             recipe_name: recipe.to_string(),
             cache_meta: None,
@@ -3410,6 +3434,7 @@ mod tests {
 
     fn presatisfied_node(recipe: &str, wd: PathBuf) -> WorkNode {
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: None,
             recipe_name: recipe.to_string(),
             cache_meta: None,
@@ -3672,6 +3697,7 @@ mod tests {
 
     fn cook_node(payload: WorkPayload, recipe: &str, wd: PathBuf, outputs: Vec<&str>) -> WorkNode {
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(payload),
             recipe_name: recipe.to_string(),
             cache_meta: Some(cook_meta(outputs)),
@@ -3695,6 +3721,7 @@ mod tests {
         meta.cache_key = format!("k_{recipe}");
         meta.sharing = sharing;
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(payload),
             recipe_name: recipe.to_string(),
             cache_meta: Some(meta),
@@ -4422,6 +4449,7 @@ mod tests {
 
     fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Probe {
                 key: key.to_string(),
                 produce: produce.to_string(),
@@ -4444,6 +4472,7 @@ mod tests {
         let mut env_vars = BTreeMap::new();
         env_vars.insert(env_var.to_string(), env_val.to_string());
         WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Probe {
                 key: key.to_string(),
                 produce: produce.to_string(),
