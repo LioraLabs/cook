@@ -2424,16 +2424,17 @@ fn install_remaining_apis(
 /// When codegen has emitted a config-block dispatcher, this:
 ///
 /// 1. Sandboxes the dispatcher's `_ENV` (Standard §5.3.2, CS-0163): the config
-///    body sees `host.*` (its only external-input surface), the `env` output
-///    sink (an alias of `cook.env`), and a pure-Lua subset — never `os`/`io`/
-///    clocks/randomness. `host.*` reads are recorded into `host_reads`.
+///    body sees `host.*` (its only external-input surface), the `var` output
+///    sink (CS-0164, an alias of `cook.env`), and a pure-Lua subset — never
+///    `os`/`io`/clocks/randomness. `host.*` reads are recorded into
+///    `host_reads`.
 /// 2. Calls the dispatcher with the builder's `selected_config`.
 /// 3. Freezes the env keyset against the post-dispatch table.
 /// 4. Re-applies any `--set KEY=VALUE` CLI overrides on top.
 /// 5. Snapshots the env back into the builder's shared `env_vars` map.
 /// 6. Emits one §5.2.3 shadowing warning per recipe-name / declared-env
 ///    collision (deduped via `builder.shadow_warnings_emitted`).
-/// 7. The `env` sink lives inside the sandbox `_ENV`, not on the real globals,
+/// 7. The `var` sink lives inside the sandbox `_ENV`, not on the real globals,
 ///    so recipe bodies access env only through `cook.env` with nothing to
 ///    remove afterward.
 ///
@@ -2504,7 +2505,7 @@ fn dispatch_config_blocks(
         }
 
         // `env_vars` was just refreshed above so it's the canonical source;
-        // copy from there. (The `env` sink lives inside the config sandbox
+        // copy from there. (The `var` sink lives inside the config sandbox
         // `_ENV`, not on the real globals, so there is no global to remove —
         // recipe bodies never see it.)
         let final_env: BTreeMap<String, String> = builder

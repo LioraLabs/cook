@@ -1,17 +1,17 @@
 use cook_cc
 
 config
-    env.CFLAGS = "-O2"
-    env.CXXFLAGS = "-O2"
-    env.CPP_DEFINES = host.os == "linux" and "LUA_USE_LINUX" or ""
+    var.CFLAGS = "-O2"
+    var.CXXFLAGS = "-O2"
+    var.CPP_DEFINES = host.os == "linux" and "LUA_USE_LINUX" or ""
 
 config debug
-    env.CFLAGS = "-O0 -g"
-    env.CXXFLAGS = "-O0 -g"
+    var.CFLAGS = "-O0 -g"
+    var.CXXFLAGS = "-O0 -g"
 
 config release
-    env.CFLAGS = "-O3 -DNDEBUG"
-    env.CXXFLAGS = "-O3 -DNDEBUG"
+    var.CFLAGS = "-O3 -DNDEBUG"
+    var.CXXFLAGS = "-O3 -DNDEBUG"
 
 register
     local liblua_sources = {}

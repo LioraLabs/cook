@@ -29,10 +29,10 @@
 # read the env-var form (`$who`) inside double quotes instead.
 
 config
-    env.MODE = "default"
+    var.MODE = "default"
 
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 
 # ─── Required parameter ─────────────────────────────────────────────────────
 # `name` is reserved (§A.2), so we use `who`.

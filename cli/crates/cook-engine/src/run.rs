@@ -1237,6 +1237,7 @@ mod tests {
         command_hash: u64,
     ) -> crate::WorkNode {
         crate::WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Shell {
                 cmd: "build".into(),
                 line: 1,
@@ -1264,6 +1265,7 @@ mod tests {
 
     fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode {
         crate::WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Test {
                 seal_keys: Default::default(),
                 cmd: "check".into(),

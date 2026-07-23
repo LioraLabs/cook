@@ -13,17 +13,17 @@ use release
 # against the root Cookfile only.
 
 config
-    env.CARGO_PROFILE_ARGS = ""
+    var.CARGO_PROFILE_ARGS = ""
 
 # Pairs with [profile.profiling] in cli/Cargo.toml. Setting RUSTFLAGS replaces
 # rather than merges with cli/.cargo/config.toml, so the overlay has to repeat
 # the link arg that exports Lua symbols for C rocks.
 config profiling
-    env.CARGO_PROFILE_ARGS = "--profile profiling"
+    var.CARGO_PROFILE_ARGS = "--profile profiling"
     local export_dynamic = host.os == "macos"
         and "-C link-arg=-Wl,-export_dynamic"
         or "-C link-arg=-rdynamic"
-    env.RUSTFLAGS = export_dynamic .. " -C force-frame-pointers=yes"
+    var.RUSTFLAGS = export_dynamic .. " -C force-frame-pointers=yes"
 
 # Runs from cli/ so cargo picks up cli/.cargo/config.toml, which it resolves
 # from the cwd rather than from the manifest's directory.

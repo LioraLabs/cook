@@ -6,14 +6,14 @@
 # - restore-on-hit across cookfile boundaries
 
 config
-    env.CFLAGS = "-O0 -g"
-    env.CC = "gcc"
+    var.CFLAGS = "-O0 -g"
+    var.CC = "gcc"
 
 config debug
-    env.CFLAGS = "-O0 -g"
+    var.CFLAGS = "-O0 -g"
 
 config release
-    env.CFLAGS = "-O3"
+    var.CFLAGS = "-O3"
 
 # lib_build — produces the imported library object file.
 recipe lib_build

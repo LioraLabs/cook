@@ -2,7 +2,7 @@
 #
 # Recipes BUILD things and are cached. Chores DO things — they run every
 # time, take parameters, and may be interactive. Config blocks hold the
-# knobs: only `env.*` declarations are visible to $<...> placeholders, and
+# knobs: only `var.*` declarations are visible to $<...> placeholders, and
 # every one a step consults becomes part of that step's cache key.
 #
 # Try:
@@ -17,14 +17,14 @@
 #   cook greet ada               # positional override
 #   cook clean
 
-# The unnamed block is the base config. `env.MODE` reads the caller's
+# The unnamed block is the base config. `var.MODE` reads the caller's
 # environment with a fallback.
 config
-    env.MODE = host.env("MODE", "debug")
+    var.MODE = host.env("MODE", "debug")
 
 # A named overlay: `cook build @release` applies it on top of the base.
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 
 recipe build
     ingredients "src/hello.c.in"

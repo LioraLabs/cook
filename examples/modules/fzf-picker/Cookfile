@@ -1,7 +1,7 @@
 use cook_cc
 
 config
-    env.CFLAGS = "-O2 -Wall"
+    var.CFLAGS = "-O2 -Wall"
 
 register
     cook_cc.bin("colorize",  { sources = { "src/colorize.c"  } })
