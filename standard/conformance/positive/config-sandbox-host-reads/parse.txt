@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: [ConfigBlock name=None body="    env.OSNAME = host.os\n    env.ARCHNAME = host.arch\n    env.MODE = host.env(\"MODE\", \"debug\")\n    env.VERSION = host.read(\"version.txt\")" line=1]
+  recipes:
+    Recipe name="build" line=7
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=LuaBlock("cook.sh(\"true\")")
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

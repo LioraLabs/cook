@@ -1,0 +1,8 @@
+config
+    env.OSNAME = host.os
+    env.ARCHNAME = host.arch
+    env.MODE = host.env("MODE", "debug")
+    env.VERSION = host.read("version.txt")
+
+recipe build
+    test >{ cook.sh("true") }
