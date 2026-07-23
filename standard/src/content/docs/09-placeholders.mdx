@@ -43,7 +43,7 @@ Resolution of a successfully-lexed placeholder is governed by §{xref.resolution
 
 ## 9.2. Resolution [#phl.resolution]
 
-Placeholder resolution is the closed function defined in §{xref.resolution}. Every well-lexed `$<IDENT>` either resolves to a known thing (a builtin shape from §{phl.cook-step} or §{phl.plate-test}, a recipe name from §{xref.name-references}, or a declared env var from §{xref.env-namespace}) or fails loudly. There is no silent fallthrough.
+Placeholder resolution is the closed function defined in §{xref.resolution}. Every well-lexed `$<IDENT>` either resolves to a known thing (a builtin shape from §{phl.cook-step} or §{phl.plate-test}, a recipe name from §{xref.name-references}, or a config value declared via `var.NAME` in a config block per §{xref.env-namespace} / §{decl.config}) or fails loudly. There is no silent fallthrough. A config value resolved this way is a determinant of the consuming step (its resolved string enters `consulted_env_keys`); it is never delivered to the step through the process environment (§{decl.config}, CS-0164).
 
 ## 9.3. Cook-step placeholders [#phl.cook-step]
 **Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.

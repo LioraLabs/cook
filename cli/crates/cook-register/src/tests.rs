@@ -596,10 +596,10 @@ fn test_registry_runs_config_block_and_applies_env() {
 
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
-    env.CC = "from_base"
+    var.CC = "from_base"
     if selected_name ~= nil then
         if selected_name == "release" then
-            env.CXXFLAGS = "-O3"
+            var.CXXFLAGS = "-O3"
         end
     end
 end
@@ -622,10 +622,10 @@ fn test_registry_config_block_unnamed_runs_when_no_selection() {
     let initial_env = HashMap::new();
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
-    env.BASE = "applied"
+    var.BASE = "applied"
     if selected_name ~= nil then
         if selected_name == "never_selected" then
-            env.SHOULD_NOT_APPEAR = "1"
+            var.SHOULD_NOT_APPEAR = "1"
         end
     end
 end
@@ -652,7 +652,7 @@ fn test_registry_no_dispatcher_no_op() {
 
 #[test]
 fn test_cli_overrides_win_over_config_block_defaults() {
-    // Regression: a `config` block's `env.X = "default"` is last-write-wins
+    // Regression: a `config` block's `var.X = "default"` is last-write-wins
     // per Standard §3.6, but explicit CLI `--set X=Y` overrides MUST still
     // win. The engine reapplies cli_overrides on cook.env after the
     // dispatcher returns.
@@ -665,8 +665,8 @@ fn test_cli_overrides_win_over_config_block_defaults() {
 
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
-    env.OPT_LEVEL = "3"
-    env.GREETING = "hello"
+    var.OPT_LEVEL = "3"
+    var.GREETING = "hello"
 end
 
 cook.recipe("build", {}, function() end)
@@ -677,7 +677,7 @@ cook.recipe("build", {}, function() end)
         .with_cli_overrides(cli_overrides);
     let units = register_one(registry, lua_source, "build");
 
-    // CLI override wins over the config block's `env.OPT_LEVEL = "3"`.
+    // CLI override wins over the config block's `var.OPT_LEVEL = "3"`.
     assert_eq!(units.env_vars.get("OPT_LEVEL").map(|s| s.as_str()), Some("0"));
     // Keys not in cli_overrides keep the config-block value.
     assert_eq!(units.env_vars.get("GREETING").map(|s| s.as_str()), Some("hello"));
@@ -697,7 +697,7 @@ fn test_cli_override_for_undeclared_key_still_applied() {
 
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
-    env.DECLARED = "yes"
+    var.DECLARED = "yes"
 end
 
 cook.recipe("build", {}, function() end)
@@ -722,9 +722,9 @@ fn test_recipe_shadows_env_var_does_not_panic() {
     // covers the actual diagnostic text.
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
-    env.foo = "shadowed"
-    env.bar = "also_shadowed"
-    env.kept = "no_recipe_with_this_name"
+    var.foo = "shadowed"
+    var.bar = "also_shadowed"
+    var.kept = "no_recipe_with_this_name"
 end
 
 cook.recipe("foo", {}, function() end)

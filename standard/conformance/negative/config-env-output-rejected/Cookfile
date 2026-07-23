@@ -1,5 +1,5 @@
 config
-    var.MODE = os.getenv("MODE") or "debug"
+    env.MODE = "debug"
 
 recipe build
     test >{ cook.sh("true") }

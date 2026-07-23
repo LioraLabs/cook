@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: [ConfigBlock name=None body="    var.CC = \"gcc\"\n    var.CFLAGS = \"-O0\"" line=1, ConfigBlock name=Some("release") body="    var.CFLAGS = \"-O2\"" line=5]
+  recipes:
+    Recipe name="build" line=8
+      deps: []
+      ingredients: ["src/main.c"]
+      excludes: []
+      steps:
+        Cook outputs=["build/main"] body=ShellBlock(["$<CC> $<CFLAGS> $<in> -o $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

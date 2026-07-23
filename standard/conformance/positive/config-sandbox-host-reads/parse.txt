@@ -1,7 +1,7 @@
 Cookfile
   uses: []
   imports: []
-  config_blocks: [ConfigBlock name=None body="    env.OSNAME = host.os\n    env.ARCHNAME = host.arch\n    env.MODE = host.env(\"MODE\", \"debug\")\n    env.VERSION = host.read(\"version.txt\")" line=1]
+  config_blocks: [ConfigBlock name=None body="    var.OSNAME = host.os\n    var.ARCHNAME = host.arch\n    var.MODE = host.env(\"MODE\", \"debug\")\n    var.VERSION = host.read(\"version.txt\")" line=1]
   recipes:
     Recipe name="build" line=7
       deps: []
