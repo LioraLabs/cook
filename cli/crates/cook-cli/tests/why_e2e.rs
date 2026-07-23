@@ -361,3 +361,51 @@ fn cook_why_attributes_imported_unit_to_its_qualified_recipe_name() {
         "expected the dep unit's line to show a local-hit status and key; got:\n{dep_line}"
     );
 }
+
+/// COOK-307: `cook why <recipe> @preset` accepts the `@` sigil, matching the
+/// run path (`cook build @preset`). Before the fix, `@alt` landed verbatim in
+/// the `config` positional and was rejected ("unknown config '@alt'"), while
+/// `--config alt` worked — an inconsistency between `why` and the run path.
+#[test]
+fn cook_why_accepts_the_at_preset_sigil() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cook")).unwrap();
+    let shared = dir.path().join(".cook/shared-cache");
+    fs::write(
+        dir.path().join(".cook/cloud.toml"),
+        format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("out")).unwrap();
+    fs::write(
+        dir.path().join("Cookfile"),
+        r#"config
+    var.MODE = "base"
+
+config alt
+    var.MODE = "alt"
+
+recipe show
+    cook "out/mode.txt" { printf '%s' "$<MODE>" > $<out> }
+"#,
+    )
+    .unwrap();
+
+    // The `@alt` sigil form must be accepted (was rejected on the sigil).
+    let sigil = run_cook(dir.path(), &["why", "show", "@alt"]);
+    assert!(
+        sigil.status.success(),
+        "cook why show @alt must be accepted:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&sigil.stdout),
+        String::from_utf8_lossy(&sigil.stderr),
+    );
+
+    // ...and be equivalent to the bare `alt` positional (the pre-sigil form).
+    let bare = run_cook(dir.path(), &["why", "show", "alt"]);
+    assert!(bare.status.success(), "cook why show alt must succeed");
+    assert_eq!(
+        String::from_utf8_lossy(&sigil.stdout),
+        String::from_utf8_lossy(&bare.stdout),
+        "`@alt` and the bare `alt` positional must produce identical why attribution"
+    );
+}

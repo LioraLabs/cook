@@ -134,7 +134,13 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
         Some(Cmd::Why(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");
-            cmd_why(&globals, recipe, args.config.as_deref(), args.json)
+            // `why` does not flow through `partition_argv`, so a `@PRESET`
+            // sigil lands verbatim in the `config` positional. Strip a leading
+            // `@` when the token has the `@<bare-ident>` shape, matching the run
+            // path's recognition (COOK-307), so `cook why show @alt` and
+            // `--config alt` agree. A non-sigil value passes through unchanged.
+            let config = args.config.as_deref().map(|c| strip_preset_sigil(c));
+            cmd_why(&globals, recipe, config, args.json)
         }
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
     }
@@ -367,6 +373,19 @@ fn partition_argv(
 
 fn is_preset_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+/// Strip a leading `@` from a preset token when it has the `@<bare-ident>`
+/// shape (the same shape `partition_argv` recognises for the run path). A token
+/// that is not a bare-`@`-sigil (empty after `@`, or containing non-preset
+/// characters) passes through verbatim, so a legitimately `@`-prefixed config
+/// name is never silently altered. Used by `cook why`, which does not flow
+/// through `partition_argv` (COOK-307).
+fn strip_preset_sigil(token: &str) -> &str {
+    match token.strip_prefix('@') {
+        Some(rest) if !rest.is_empty() && rest.chars().all(is_preset_char) => rest,
+        _ => token,
+    }
 }
 
 /// §20.2.4 / CS-0120 reserved syntax: a `//`-prefixed CLI target names a
