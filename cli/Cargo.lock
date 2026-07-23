@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cache"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-contracts",
  "cook-fingerprint",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cli"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "cook-contracts"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -426,11 +426,11 @@ dependencies = [
 
 [[package]]
 name = "cook-dag"
-version = "0.9.0"
+version = "0.9.1"
 
 [[package]]
 name = "cook-dag-viewer"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "cook-engine"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "cook-fingerprint"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lang"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-contracts",
  "glob",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "cook-logs"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "ansi-to-tui",
  "base64",
@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lua-stdlib"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-fingerprint",
  "glob",
@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "cook-luagen"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-contracts",
  "cook-lang",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "cook-luaotp"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-contracts",
  "cook-lua-stdlib",
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "cook-progress"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "arc-swap",
  "insta",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "cook-register"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "cook-cache",
  "cook-contracts",
