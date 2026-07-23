@@ -62,10 +62,10 @@ fn fixture() -> tempfile::TempDir {
         r#"import ns ./ns
 
 config
-    env.MODE = "debug"
+    var.MODE = "debug"
 
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 
 recipe deploy
     ingredients "src/a.in"
@@ -226,13 +226,10 @@ fn emitting_the_registration_script_does_not_run_the_cookfile() {
     std::fs::write(
         dir.path().join("Cookfile"),
         format!(
-            r#"config
-    env.MODE = (function()
-        local f = io.open("{}", "w")
-        f:write("ran")
-        f:close()
-        return "debug"
-    end)()
+            r#"register
+    local f = io.open("{}", "w")
+    f:write("ran")
+    f:close()
 
 recipe deploy
     ingredients "src/a.in"

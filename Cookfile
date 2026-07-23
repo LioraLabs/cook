@@ -5,30 +5,10 @@ import ts ./tree-sitter-cook
 use dist
 use release
 
-# Build variants:
-#   cook build              cargo's dev profile
-#   cook build @profiling   release codegen plus debug info for profilers
-#
-# `build` lives here rather than in cli/Cookfile because config presets resolve
-# against the root Cookfile only.
-
-config
-    env.CARGO_PROFILE_ARGS = ""
-
-# Pairs with [profile.profiling] in cli/Cargo.toml. Setting RUSTFLAGS replaces
-# rather than merges with cli/.cargo/config.toml, so the overlay has to repeat
-# the link arg that exports Lua symbols for C rocks.
-config profiling
-    env.CARGO_PROFILE_ARGS = "--profile profiling"
-    local export_dynamic = cook.platform.os == "macos"
-        and "-C link-arg=-Wl,-export_dynamic"
-        or "-C link-arg=-rdynamic"
-    env.RUSTFLAGS = export_dynamic .. " -C force-frame-pointers=yes"
-
-# Runs from cli/ so cargo picks up cli/.cargo/config.toml, which it resolves
-# from the cwd rather than from the manifest's directory.
-chore build: ts.generate
-    sh -c 'cd cli && exec cargo build $CARGO_PROFILE_ARGS'
+# Build variants live in cli/Cookfile beside the crate they build (config
+# presets now compose across imports, COOK-307 / §11.6):
+#   cook cli.build              cargo's dev profile
+#   cook cli.build @profiling   release codegen plus debug info for profilers
 
 # `target` is a Rust host triple and must equal the build host.
 chore package version target

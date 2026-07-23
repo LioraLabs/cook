@@ -236,10 +236,15 @@ pub fn verify_cache(
             let recorded: BTreeMap<String, u64> =
                 entry.outputs.iter().map(|f| (f.path.clone(), f.hash)).collect();
 
+            // R1 (CS-0164): config `var.*` values are never injected into a
+            // step's process environment, so the determinism re-run must not
+            // inject them either — it would diverge from the real execution.
+            // Byte-verify handles only shell (`cook`) units, which carry no
+            // per-unit exports, so an empty process env matches reality.
             let verdict = match rerun_outputs_in_sandbox(
                 &cmd,
                 &units.working_dir,
-                &units.env_vars,
+                &BTreeMap::new(),
                 &meta.output_paths,
             ) {
                 Ok(rerun) => classify(meta.record, &recorded, &rerun),

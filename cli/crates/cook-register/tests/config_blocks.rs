@@ -28,7 +28,7 @@ fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
 fn unnamed_config_applies_to_default_build() {
     let source = "\
 config
-    env.GREETING = \"hello\"
+    var.GREETING = \"hello\"
 
 recipe build
 ";
@@ -40,12 +40,12 @@ recipe build
 fn named_config_overlays_base() {
     let source = "\
 config
-    env.MODE = \"base\"
-    env.OPT = \"-O0\"
+    var.MODE = \"base\"
+    var.OPT = \"-O0\"
 
 config release
-    env.MODE = \"release\"
-    env.OPT = \"-O3\"
+    var.MODE = \"release\"
+    var.OPT = \"-O3\"
 
 recipe build
 ";

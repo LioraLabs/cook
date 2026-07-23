@@ -372,15 +372,18 @@ chore play: build
 ## Configuration
 
 A `config` block declares knobs. The base block is unnamed; **named overlays** are
-applied on top with `@name` at invocation. Only values under `env.*` are visible
-to `$<...>` placeholders, and every consulted one folds into the cache key.
+applied on top with `@name` at invocation. Values are declared on the `var` sink
+(`var.NAME = ...`), read only through `$<...>` placeholders, and every consulted
+one folds into the cache key. A config body is a sandbox: its one external channel
+is the `host` surface — `host.os`, `host.arch`, `host.env("NAME", "default")`, and
+`host.read("path")` — so the block stays a pure function of the facts it reads.
 
 ```
 config
-    env.MODE = os.getenv("MODE") or "debug"
+    var.MODE = host.env("MODE", "debug")
 
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 
 recipe build
     ingredients "src/*.c"
@@ -394,8 +397,9 @@ cook --set MODE=tiny build   # a one-shot override that wins over everything
 ```
 
 Flipping a declared value cleanly busts only the units that consumed it. A
-`$<KEY>` for a variable you never declared is a hard error: no accidental shell
-leaks.
+`$<KEY>` for a variable you never declared is a hard error, and a `var.*` value
+never enters a step's process environment — the only way to read it is `$<KEY>`,
+which keeps it in the cache key. No accidental shell leaks.
 
 ## Probes and data-driven fan-out
 

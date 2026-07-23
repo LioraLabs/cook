@@ -5,7 +5,7 @@
 # bust; touches a source file and asserts targeted invalidation.
 
 config
-    env.SLEEP = "0.1"
+    var.SLEEP = "0.1"
 
 # Deterministic test — should cache cleanly across runs.
 recipe deterministic

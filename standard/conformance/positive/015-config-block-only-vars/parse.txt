@@ -1,7 +1,7 @@
 Cookfile
   uses: []
   imports: []
-  config_blocks: [ConfigBlock name=None body="    cook.env.CC = \"gcc\"\n    cook.env.CFLAGS = \"-Wall\"" line=1]
+  config_blocks: [ConfigBlock name=None body="    var.CC = \"gcc\"\n    var.CFLAGS = \"-Wall\"" line=1]
   recipes:
   chores:
     Chore name="build" line=5

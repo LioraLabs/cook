@@ -1,0 +1,5 @@
+config
+    env.MODE = "debug"
+
+recipe build
+    test >{ cook.sh("true") }

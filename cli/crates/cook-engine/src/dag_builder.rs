@@ -379,6 +379,10 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 cache_meta: None,
                 working_dir: ru.working_dir.clone(),
                 env_vars: ru.env_vars.clone(),
+                // A probe runs a Lua `produce` body (reads `cook.env` via the
+                // full map); it spawns no shell step, so its process-env
+                // subset is empty.
+                process_env_vars: std::collections::BTreeMap::new(),
             };
             let dag_id = dag
                 .add_node(work_node, &deps)
@@ -530,6 +534,15 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 m.extend(unit.unit_env_vars.iter().map(|(k, v)| (k.clone(), v.clone())));
                 m
             };
+            // R1 (CS-0164): only per-unit exports (chore params) go into the
+            // spawned step's process environment. Config `var.*` values
+            // (`ru.env_vars`) stay in `env_vars` for `cook.env` / consulted /
+            // probe lookup but are `$<NAME>`-only — never injected into a step.
+            let process_env_vars: std::collections::BTreeMap<String, String> = unit
+                .unit_env_vars
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             let work_node = if is_presatisfied(unit) {
                 WorkNode {
                     payload: None,
@@ -537,6 +550,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                     cache_meta: None,
                     working_dir: ru.working_dir.clone(),
                     env_vars: merged_env_vars,
+                    process_env_vars,
                 }
             } else {
                 WorkNode {
@@ -545,6 +559,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                     cache_meta: unit.cache_meta.clone(),
                     working_dir: ru.working_dir.clone(),
                     env_vars: merged_env_vars,
+                    process_env_vars,
                 }
             };
 

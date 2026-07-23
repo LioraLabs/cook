@@ -26,7 +26,14 @@ pub struct WorkItem {
     pub payload: WorkPayload,
     pub recipe_name: String,
     pub working_dir: PathBuf,
+    /// Full env lookup map: seeds `cook.env` and backs `$<NAME>` /
+    /// consulted-value resolution. NOT the child-process environment — a
+    /// config `var.*` value here is `$<NAME>`-only (R1 / CS-0164).
     pub env_vars: HashMap<String, String>,
+    /// The subset of `env_vars` actually placed in a spawned step's process
+    /// environment: per-unit exports only (chore parameters). Config `var.*`
+    /// values are excluded so a shell `$NAME` read sees them unset (R1).
+    pub process_env_vars: HashMap<String, String>,
     /// Project root for the CS-0045 sandbox. The worker installs the
     /// per-item sandbox policy by combining this root with the
     /// payload's `step_kind` (Cook/Test/Chore → Confined; there is no
@@ -233,6 +240,11 @@ fn worker_loop(
     let current_recipe: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let current_working_dir: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(PathBuf::new()));
     let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    // R1 (CS-0164): the child-process env subset (chore-param exports). Kept
+    // separate from `current_env_vars` (the full `cook.env` lookup map) so a
+    // config `var.*` value never reaches a spawned step's environment.
+    let current_process_env_vars: Arc<Mutex<HashMap<String, String>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     // CS-0045 sandbox slot. Updated per work item before the body
     // runs: Cook/Test/Chore → Confined { project_root }. There is no
@@ -245,7 +257,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe, &probe_store, &dep_outputs)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &probe_store, &dep_outputs)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -307,6 +319,11 @@ fn worker_loop(
                     let mut env = current_env_vars.lock().expect("env_vars lock");
                     *env = work.env_vars.clone();
                 }
+                {
+                    let mut penv =
+                        current_process_env_vars.lock().expect("process_env_vars lock");
+                    *penv = work.process_env_vars.clone();
+                }
                 // CS-0045: pick the per-item sandbox policy. Cook, Test,
                 // Chore, and any non-LuaChunk payload all run confined to
                 // `project_root` — there is no unsandboxed step kind
@@ -361,7 +378,10 @@ fn worker_loop(
                 // (same intent as `TestOutput.duration`'s `start.elapsed()`).
                 let exec_start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    execute_work_item(&lua, &work, &work.working_dir, &work.env_vars)
+                    // R1: shell/test steps spawn with the process-env subset,
+                    // NOT the full config lookup map. `cook.env` reads (Lua
+                    // bodies) still see the full map via `current_env_vars`.
+                    execute_work_item(&lua, &work, &work.working_dir, &work.process_env_vars)
                 }));
                 let mut result = match result {
                     Ok(r) => r,
@@ -409,20 +429,23 @@ fn register_worker_cook_table(
     lua: &mlua::Lua,
     current_working_dir: &Arc<Mutex<PathBuf>>,
     current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
+    current_process_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
     probe_store: &ProbeValueStore,
     dep_outputs: &WorkerDepOutputs,
 ) -> mlua::Result<()> {
     let cook = lua.create_table()?;
 
-    // cook.sh(cmd) -> stdout string
+    // cook.sh(cmd) -> stdout string. R1 (CS-0164): a `cook.sh` child spawns
+    // with the process-env subset (chore-param exports), not the full config
+    // lookup map, so a config `var.*` value is never in its environment.
     let wd = Arc::clone(current_working_dir);
-    let env = Arc::clone(current_env_vars);
+    let penv = Arc::clone(current_process_env_vars);
     let recipe = Arc::clone(current_recipe);
     let sh_fn = lua.create_function(move |_, cmd: String| {
         let recipe_name = recipe.lock().expect("recipe name lock").clone();
         let working_dir = wd.lock().expect("working_dir lock").clone();
-        let env_vars = env.lock().expect("env_vars lock").clone();
+        let env_vars = penv.lock().expect("process_env_vars lock").clone();
         run_shell_in_worker(&cmd, &working_dir, &env_vars, &recipe_name, 0)
     })?;
     cook.set("sh", sh_fn)?;
@@ -1861,6 +1884,7 @@ mod tests {
         let (pool, rx, dir) = make_pool(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Shell {
                 cmd: "echo hello".to_string(),
@@ -1886,6 +1910,7 @@ mod tests {
 
         for i in 0..8 {
             pool.submit(WorkItem {
+                process_env_vars: HashMap::new(),
                 id: i,
                 payload: WorkPayload::Shell {
                     cmd: "true".to_string(),
@@ -1921,6 +1946,7 @@ mod tests {
         let (pool, rx, dir) = make_pool(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 42,
             payload: WorkPayload::Shell {
                 cmd: "false".to_string(),
@@ -1952,6 +1978,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Shell {
                 cmd: "cat file.txt".to_string(),
@@ -1984,6 +2011,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2072,6 +2100,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2108,6 +2137,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Shell {
                 cmd: "echo $MY_VAR".to_string(),
@@ -2150,6 +2180,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2170,6 +2201,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&out1).unwrap(), "from-dir1");
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 1,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2211,6 +2243,7 @@ mod tests {
 
         // First item: triggers a panic in execute_work_item.
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 7,
             payload: WorkPayload::Shell {
                 cmd: "true".to_string(),
@@ -2232,6 +2265,7 @@ mod tests {
 
         // Second item: same worker pool should still process this.
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 8,
             payload: WorkPayload::Shell {
                 cmd: "echo recovered".to_string(),
@@ -2341,6 +2375,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (pool, rx) = WorkerPool::spawn(1);
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2475,6 +2510,7 @@ mod tests {
     fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
         let (pool, rx) = WorkerPool::spawn(1);
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2663,6 +2699,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2711,6 +2748,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2789,6 +2827,7 @@ mod tests {
         "#;
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::LuaChunk {
                 code: code.to_string(),
@@ -2959,6 +2998,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Probe {
                 key: "test:simple".into(),
@@ -3005,6 +3045,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Probe {
                 key: "test:codecs".into(),
@@ -3038,6 +3079,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Probe {
                 key: "test:error".into(),
@@ -3069,6 +3111,7 @@ mod tests {
         let (pool, rx) = WorkerPool::spawn(1);
 
         pool.submit(WorkItem {
+            process_env_vars: HashMap::new(),
             id: 0,
             payload: WorkPayload::Probe {
                 key: "test:bad_type".into(),

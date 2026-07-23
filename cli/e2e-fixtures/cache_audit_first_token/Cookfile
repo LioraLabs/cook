@@ -8,7 +8,7 @@
 # realpath is folded into the fingerprint and the swap forces a rebuild.
 
 config
-    env.STAMP = "default"
+    var.STAMP = "default"
 
 recipe build
     ingredients "src/in.txt"

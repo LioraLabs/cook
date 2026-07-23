@@ -1011,7 +1011,6 @@ mod tests {
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),
-            final_env_by_cookfile: BTreeMap::new(),
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
@@ -1237,6 +1236,7 @@ mod tests {
         command_hash: u64,
     ) -> crate::WorkNode {
         crate::WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Shell {
                 cmd: "build".into(),
                 line: 1,
@@ -1264,6 +1264,7 @@ mod tests {
 
     fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode {
         crate::WorkNode {
+            process_env_vars: std::collections::BTreeMap::new(),
             payload: Some(WorkPayload::Test {
                 seal_keys: Default::default(),
                 cmd: "check".into(),

@@ -102,8 +102,18 @@ pub struct WorkNode {
     pub cache_meta: Option<CacheMeta>,
     /// Working directory for command execution.
     pub working_dir: PathBuf,
-    /// Environment variables to set for the child process.
+    /// Full env lookup map for this node: config `var.*` values merged with
+    /// per-unit exports. Read at execute time to seed `cook.env`, resolve
+    /// `consulted_env_keys` values, and back probe `env_lookup`. This is NOT
+    /// the child-process environment — a config `var.*` value is `$<NAME>`-only
+    /// and must never be spawned into a step (R1 / CS-0164). See
+    /// `process_env_vars`.
     pub env_vars: BTreeMap<String, String>,
+    /// The subset of `env_vars` that IS placed in a spawned step's process
+    /// environment: per-unit exports only (chore parameter exports,
+    /// COOK-36 §7.1.2). Config `var.*` values are deliberately excluded, so a
+    /// step reading a config key as a shell variable sees it unset (R1).
+    pub process_env_vars: BTreeMap<String, String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -223,7 +223,7 @@ fn parametric_chore_env_placeholder_resolves() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config\n    env.MODE = os.getenv(\"MODE\") or \"dev\"\n\nchore greet who=\"world\"\n    echo hello $<who>, mode=$<MODE>\n",
+        "config\n    var.MODE = host.env(\"MODE\", \"dev\")\n\nchore greet who=\"world\"\n    echo hello $<who>, mode=$<MODE>\n",
     )
     .unwrap();
 
@@ -578,7 +578,7 @@ fn preset_via_at_sigil() {
     // the shell-quoting that $<target> introduces around the value.
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    var.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=$<MODE>\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "@rel"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -593,7 +593,7 @@ fn preset_via_long_flag() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    var.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=$<MODE>\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "--config", "rel"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -607,7 +607,7 @@ fn preset_via_short_flag() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    var.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=$<MODE>\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "-c", "rel"]);
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

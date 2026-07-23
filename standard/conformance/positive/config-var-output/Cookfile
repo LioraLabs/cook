@@ -1,0 +1,10 @@
+config
+    var.CC = "gcc"
+    var.CFLAGS = "-O0"
+
+config release
+    var.CFLAGS = "-O2"
+
+recipe build
+    ingredients "src/main.c"
+    cook "build/main" { $<CC> $<CFLAGS> $<in> -o $<out> }

@@ -107,14 +107,14 @@ pub fn install_require_env(
             let msg = if declared.is_empty() {
                 format!(
                     "placeholder $<{}>: env var '{}' was not declared in any config block; \
-                     declare it with `env.{} = os.getenv(\"{}\") or \"\"` (or similar) in a config block",
+                     declare it with `var.{} = host.env(\"{}\", \"\")` (or similar) in a config block",
                     name, name, name, name
                 )
             } else {
                 let closest = closest_declared(&name, &declared, 3);
                 format!(
                     "placeholder $<{}>: env var '{}' was not declared. Closest declared names: {}. \
-                     Add `env.{} = ...` to a config block.",
+                     Add `var.{} = ...` to a config block.",
                     name,
                     name,
                     closest.join(", "),
@@ -202,8 +202,8 @@ mod tests {
         let msg = format!("{}", res.unwrap_err());
         assert!(msg.contains("HOMEDIR"), "expected HOMEDIR in: {msg}");
         assert!(
-            msg.contains("env.HOMDIR = "),
-            "expected 'env.HOMDIR = ' in: {msg}"
+            msg.contains("var.HOMDIR = "),
+            "expected 'var.HOMDIR = ' in: {msg}"
         );
         assert!(
             !msg.contains("PATH"),

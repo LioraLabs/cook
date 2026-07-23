@@ -5,7 +5,7 @@
 # specific runner contract; the recipe name names the contract.
 
 config
-    env.SLEEP = "0.1"
+    var.SLEEP = "0.1"
 
 # (1) Green path, one-shot. Pins terminal output, cache write.
 recipe pass_basic

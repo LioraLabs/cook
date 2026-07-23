@@ -1,0 +1,1 @@
+config outputs use `var.NAME = ...`, not `env.NAME = ...`

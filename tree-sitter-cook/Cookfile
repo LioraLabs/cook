@@ -1,5 +1,5 @@
 config
-    cook.env.NVIM_SITE = cook.env.NVIM_SITE or (os.getenv("HOME") .. "/.local/share/nvim/site")
+    var.NVIM_SITE = var.NVIM_SITE or (host.env("HOME", "") .. "/.local/share/nvim/site")
 
 # One run produces all three outputs. src/tree_sitter/*.h tracks the CLI
 # version rather than grammar.js, so it stays undeclared.
