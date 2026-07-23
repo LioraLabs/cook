@@ -445,9 +445,16 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         // form otherwise — via the `cook.member_to_string` runtime helper
         // (provided by the COOK-64 runtime slice). `$<in.FIELD>` reads a
         // record field by key (bracket-indexed so non-identifier keys are safe).
+        //
+        // COOK-302: the field goes through the same `cook.member_to_string`
+        // renderer as the whole member, not `tostring`. A nested field (array
+        // or object) is a Lua table, and `tostring` on a table yields an
+        // ASLR-fresh address — which lands in the unit's command string and
+        // defeats caching forever. §9.3 requires canonical key-sorted JSON for
+        // a nested table value, and the bare string form for a scalar.
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {
-            format!("tostring(item[\"{}\"])", escape_lua_string(&field))
+            format!("cook.member_to_string(item[\"{}\"])", escape_lua_string(&field))
         }
     }
 }
@@ -1293,11 +1300,11 @@ mod tests {
         assert_eq!(builtin_to_lua(BuiltinKind::Item), "cook.member_to_string(item)");
         assert_eq!(
             builtin_to_lua(BuiltinKind::ItemField("host".into())),
-            "tostring(item[\"host\"])"
+            "cook.member_to_string(item[\"host\"])"
         );
         assert_eq!(
             builtin_to_lua(BuiltinKind::ItemField("user-id".into())),
-            "tostring(item[\"user-id\"])"
+            "cook.member_to_string(item[\"user-id\"])"
         );
     }
 

@@ -485,6 +485,10 @@ recipe render
     }
 ```
 
+A field holding a nested value (a list or an object) renders as compact,
+key-sorted JSON, so `$<in.tags>` on `{"tags": ["a", "b"]}` is `["a","b"]`; a
+string field renders bare, with no surrounding quotes.
+
 Add one entry to `services.json` and exactly one new unit builds; remove one and
 cook sweeps its orphaned output. A downstream recipe that iterates the *same*
 probe can join to a sibling's per-member output with `$<render[in]>`:

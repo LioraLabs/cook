@@ -1,0 +1,4 @@
+[
+  { "name": "auth", "tags": ["a", "b"], "meta": { "team": "core", "tier": 1 } },
+  { "name": "billing", "tags": ["c"], "meta": { "team": "money", "tier": 2 } }
+]

@@ -2550,3 +2550,17 @@ The prerequisite relation is the mandate, and it needs no help from either.
 **Sections affected (addendum):** §22.5 (`opts.dep_order` on `cook.step_group` — the declarative alternative to a positional bare call); §24.5.2 (`cook.import` forces inside a recipe body, with the already-exported, outside-a-body, and unknown-recipe boundaries).
 
 **Migration:** none required — `cook.require_recipe` is unchanged and remains correct wherever the caller genuinely consumes the referent from every unit. Modules resolving link references SHOULD move to `cook.dep_order`; `cook_cc` does so in 0.17.0.
+
+## CS-0162 — Implementation catch-up: `$<in.FIELD>` renders a nested field as canonical JSON [#changes.cs-0162]
+
+**Date:** 2026-07-22
+**Version:** v0.15 (implementation-only catch-up; §{phl.cook-step}'s record-key rule already required the JSON rendering)
+**Sections affected:** §9.3 (one paragraph making the field rendering explicit and naming the cache consequence), App. E (this entry). No grammar, surface-syntax, Lua API, or cache-key change.
+
+**Summary:** In a record fan-out (`ingredients <probe>`), `$<in.FIELD>` lowered to Lua's `tostring(item["FIELD"])`. For a flat string or number field that is the right rendering, and the accessor worked as specified. For a **nested** field — an array or an object, i.e. a Lua table — `tostring` yields the table's address, which is ASLR-fresh in every process. That address landed in the unit's command string, so the command hash changed on every run and the unit could **never** cache: it rebuilt forever, on a Cookfile and a dataset that had not changed.
+
+The failure was silent and self-concealing. Nothing errored, every build was correct, and `cook why` attributed the invalidation to `command_hash` — which reads as "your command is nondeterministic" and sends the author auditing their own recipe body. Any fan-out over realistic JSON (anything with a list or object field, whether or not the recipe referenced it as a whole) lost caching with no diagnosable cause. The lowering now routes the field through the same `cook.member_to_string` renderer the whole-member `$<in>` already used, so a nested field renders as compact key-sorted JSON and scalars keep their bare string form.
+
+**Backward compatibility:** A nested-field unit's command text changes, so its cache key changes and it rebuilds once — which is vacuous, because such a unit could not have had a reusable entry in the first place. Flat string / number / boolean fields render byte-identically (`member_to_string` returns a string scalar bare and a number in its JSON form, matching `tostring` for both), so their keys are unchanged and no `CACHE_VERSION` bump is required. One rendering does change for a scalar: an **absent** field, formerly `nil`, is now `null`, consistent with the JSON rendering of the whole member.
+
+**Conformance:** No corpus case — the parse shape of `$<in.tags>` is identical to the already-covered `$<in.name>`, and the defect was entirely in the lowering. Pinned instead by the surface e2e fixture `21-fanout-nested-field-json` (nested array and object fields render as canonical JSON; the second run is a cache hit) and by the luagen lowering tests. Found by COOK-302, baselining data-driven fan-out on `cook 0.8.0`.
