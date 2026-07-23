@@ -149,6 +149,16 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    '§7.1.1 at-most-one-variadic rule — parse-time semantic'],
   ['chore-param-variadic-not-last',
    '§7.1.1 variadic-tail rule — parse-time semantic'],
+  // CS-0163 / CS-0164: a `config` body is opaque LUA_SOURCE to the grammar, so
+  // every config rejection is register-phase — the sandbox `__index` (§5.3.2)
+  // or the absent `env` sink (§5.3.1) fires when the config dispatcher runs
+  // the body. `cook-register/tests/conformance.rs` baselines the diagnostics.
+  ['config-sandbox-rejects-os',
+   'CS-0163: `os` unreachable in a sandboxed config body — register-phase rejection, not syntactic'],
+  ['config-sandbox-rejects-io',
+   'CS-0163: `io` unreachable in a sandboxed config body — register-phase rejection, not syntactic'],
+  ['config-env-output-rejected',
+   'CS-0164: `env.NAME` config output sink (now `var.NAME`) — register-phase rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
