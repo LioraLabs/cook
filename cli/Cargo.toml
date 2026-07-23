@@ -23,3 +23,26 @@ resolver = "2"
 # self-reports a different version.
 [workspace.package]
 version = "0.8.0"
+
+# Profiling build: release codegen plus the debug info profilers need.
+#
+#   cargo build --profile profiling -p cook-cli
+#   -> cli/target/profiling/cook
+#
+# `debug = 1` emits line tables and inline-frame records without the full
+# variable DWARF, so perf/heaptrack/samply can attribute samples to a file
+# and line and can unwind through inlined frames. Costs build time and
+# binary size only; codegen is identical to release.
+#
+# For frame-pointer unwinding (`perf record --call-graph fp`, ~100x cheaper
+# than `dwarf` and immune to its stack-truncation limit), add the flag at
+# build time. NOTE: setting RUSTFLAGS *replaces* the target rustflags in
+# cli/.cargo/config.toml rather than merging with them, so `-rdynamic` has
+# to be repeated or Lua C rocks fail to resolve `lua_*` symbols at runtime:
+#
+#   RUSTFLAGS="-C link-arg=-rdynamic -C force-frame-pointers=yes" \
+#     cargo build --profile profiling -p cook-cli
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
