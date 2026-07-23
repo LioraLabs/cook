@@ -1,5 +1,5 @@
 config
-    env.MODE = os.getenv("MODE") or "dev"
+    env.MODE = host.env("MODE", "dev")
 
 recipe build
     cook "out/mode.txt" { printf 'mode=%s nonce=%s\n' $<MODE> "$(date +%s%N)" > $<out> }

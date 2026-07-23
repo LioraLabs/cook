@@ -1,0 +1,5 @@
+config
+    env.DATA = io.open("VERSION"):read("*a")
+
+recipe build
+    test >{ cook.sh("true") }

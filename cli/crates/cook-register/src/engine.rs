@@ -340,9 +340,12 @@ pub fn register_cookfile(
     // 7. Config block dispatch — shared with `list_names` via the
     //    extracted helper. Returns the final env snapshot (post-config,
     //    post-CLI-override) or just the initial env_vars when no config
-    //    blocks are present.
+    //    blocks are present. `host_reads` collects the config's `host.*`
+    //    reads for provenance (Standard §5.3.2).
+    let host_reads: crate::config_sandbox::SharedHostReads =
+        Rc::new(RefCell::new(Vec::new()));
     let final_env =
-        dispatch_config_blocks(&lua, &builder, &recipes.borrow())?;
+        dispatch_config_blocks(&lua, &builder, &recipes.borrow(), &host_reads)?;
 
     // 8. Collision detection — Task 2.3. A name registered more than once
     //    (surface vs dynamic, dynamic vs dynamic, chore vs dynamic) is a
@@ -598,6 +601,7 @@ pub fn register_cookfile(
         probes,
         final_env,
         warnings,
+        config_host_reads: host_reads.take(),
     })
 }
 
@@ -2269,7 +2273,12 @@ pub fn list_names(
 
     // Run config blocks so per-config gating (e.g. recipe registration
     // inside a `config "release"` block) is reflected in the listed set.
-    let _final_env = dispatch_config_blocks(&lua, &builder, &recipes.borrow())?;
+    // Listing does not surface config provenance, so the host-reads sink is
+    // a throwaway.
+    let host_reads: crate::config_sandbox::SharedHostReads =
+        Rc::new(RefCell::new(Vec::new()));
+    let _final_env =
+        dispatch_config_blocks(&lua, &builder, &recipes.borrow(), &host_reads)?;
 
     // Same hard-error checks register_cookfile applies. Probe cycle
     // detection runs on the static `requires` graph — no probe BODY runs,
@@ -2414,15 +2423,19 @@ fn install_remaining_apis(
 ///
 /// When codegen has emitted a config-block dispatcher, this:
 ///
-/// 1. Exposes `env` as an alias of `cook.env` so the block body can write.
+/// 1. Sandboxes the dispatcher's `_ENV` (Standard §5.3.2, CS-0163): the config
+///    body sees `host.*` (its only external-input surface), the `env` output
+///    sink (an alias of `cook.env`), and a pure-Lua subset — never `os`/`io`/
+///    clocks/randomness. `host.*` reads are recorded into `host_reads`.
 /// 2. Calls the dispatcher with the builder's `selected_config`.
 /// 3. Freezes the env keyset against the post-dispatch table.
 /// 4. Re-applies any `--set KEY=VALUE` CLI overrides on top.
 /// 5. Snapshots the env back into the builder's shared `env_vars` map.
 /// 6. Emits one §5.2.3 shadowing warning per recipe-name / declared-env
 ///    collision (deduped via `builder.shadow_warnings_emitted`).
-/// 7. Removes the `env` global so subsequent code (recipe bodies)
-///    accesses env only through `cook.env`.
+/// 7. The `env` sink lives inside the sandbox `_ENV`, not on the real globals,
+///    so recipe bodies access env only through `cook.env` with nothing to
+///    remove afterward.
 ///
 /// When no config blocks are present, the helper returns the initial
 /// `env_vars` map unchanged.
@@ -2434,11 +2447,26 @@ fn dispatch_config_blocks(
     lua: &Lua,
     builder: &RegisterSessionBuilder,
     recipes: &[crate::capture::RegisteredRecipe],
+    host_reads: &crate::config_sandbox::SharedHostReads,
 ) -> Result<BTreeMap<String, String>, RegisterError> {
     if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
         let env_tbl: LuaTable = cook_tbl.get("env")?;
-        lua.globals().set("env", env_tbl.clone())?;
+
+        // Sandbox the config function (Standard §5.3.2, CS-0163). `_ENV` is
+        // swapped for the restricted table so `os`/`io`/clock/randomness/etc.
+        // are unreachable and the only external-input surface is `host.*`; the
+        // `env` output sink is exposed inside the sandbox rather than as a real
+        // global, so it never leaks to recipe bodies. `set_environment` returns
+        // false only when the function references no globals at all (an empty /
+        // pure-literal config body) — nothing to sandbox in that case.
+        let sandbox = crate::config_sandbox::build_config_sandbox_env(
+            lua,
+            &env_tbl,
+            &builder.working_dir,
+            host_reads,
+        )?;
+        dispatch.set_environment(sandbox)?;
 
         let name_arg: Option<String> = builder.selected_config.clone();
         dispatch.call::<()>(name_arg)?;
@@ -2475,9 +2503,10 @@ fn dispatch_config_blocks(
             }
         }
 
-        // Snapshot final env BEFORE removing the global so the table is
-        // still readable. `env_vars` was just refreshed above so it's the
-        // canonical source; copy from there.
+        // `env_vars` was just refreshed above so it's the canonical source;
+        // copy from there. (The `env` sink lives inside the config sandbox
+        // `_ENV`, not on the real globals, so there is no global to remove —
+        // recipe bodies never see it.)
         let final_env: BTreeMap<String, String> = builder
             .env_vars
             .borrow()
@@ -2485,7 +2514,6 @@ fn dispatch_config_blocks(
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        lua.globals().set("env", mlua::Value::Nil)?;
         Ok(final_env)
     } else {
         // No config blocks — `final_env` is just the initial env_vars.

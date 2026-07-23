@@ -4,6 +4,7 @@
 //! (commands, inputs, outputs) without executing them.
 
 pub mod capture;
+pub mod config_sandbox;
 pub mod context;
 pub mod dep_output_api;
 pub mod engine;
@@ -386,6 +387,13 @@ pub struct RegisteredCookfile {
     pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
     pub final_env: std::collections::BTreeMap<String, String>,
     pub warnings: Vec<String>,
+    /// `host.*` reads observed while the config block(s) executed, in
+    /// evaluation order (Standard §5.3.2, CS-0163). Recorded for provenance —
+    /// a future `cook why` attributes a host-varying config value to the read
+    /// that produced it. NOT a cache-key channel: host-varying values re-key
+    /// consuming steps through consulted-value hashing (§E), so this list is
+    /// purely explanatory.
+    pub config_host_reads: Vec<crate::config_sandbox::HostRead>,
 }
 
 /// Public summary of one registered recipe. Distinct from the internal

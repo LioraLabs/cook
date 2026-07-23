@@ -20,7 +20,7 @@
 # The unnamed block is the base config. `env.MODE` reads the caller's
 # environment with a fallback.
 config
-    env.MODE = os.getenv("MODE") or "debug"
+    env.MODE = host.env("MODE", "debug")
 
 # A named overlay: `cook build @release` applies it on top of the base.
 config release
