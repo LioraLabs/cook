@@ -231,7 +231,6 @@ pub fn register_workspace(
         names: Vec::new(),
         units_by_recipe: BTreeMap::new(),
         probes: BTreeMap::new(),
-        final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
@@ -462,8 +461,6 @@ fn merge_into(
             probe,
         );
     }
-    ws.final_env_by_cookfile
-        .insert(prefix.to_string(), rc.final_env);
 }
 
 /// Map a [`cook_register::RegisterError`] from one of the helpers in this

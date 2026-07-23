@@ -1,8 +1,34 @@
 # Regenerates the tracked parser before cargo compiles it; cached on grammar.js.
 import ts //tree-sitter-cook
 
+# Build variants: `cook cli.build` (cargo's dev profile) or
+# `cook cli.build @profiling` (release codegen plus debug info for profilers).
+# CARGO_PROFILE_ARGS / RUSTFLAGS are read via $<...> only — a config value is
+# never injected into a step's process environment (CS-0164) — so the base must
+# declare them empty for the default build to resolve the placeholders.
+config
+    var.CARGO_PROFILE_ARGS = ""
+    var.RUSTFLAGS = ""
+
+# Pairs with [profile.profiling] in Cargo.toml. Setting RUSTFLAGS *replaces*
+# cli/.cargo/config.toml rather than merging with it, so the overlay repeats the
+# export-dynamic link arg that exports lua_* symbols for C rocks, then adds
+# frame pointers for `perf --call-graph fp`.
+config profiling
+    var.CARGO_PROFILE_ARGS = "--profile profiling"
+    local export_dynamic = host.os == "macos"
+        and "-C link-arg=-Wl,-export_dynamic"
+        or "-C link-arg=-rdynamic"
+    var.RUSTFLAGS = export_dynamic .. " -C force-frame-pointers=yes"
+
+# Steps here run with cli/ as cwd, so cargo picks up cli/.cargo/config.toml (it
+# resolves config from the cwd, not the manifest dir) with no `cd cli` shim.
+# RUSTFLAGS is exported only when non-empty: an explicitly-set (even empty)
+# RUSTFLAGS would *replace* the config.toml link arg and drop the lua_* exports,
+# so the default build must leave it unset. `"$<RUSTFLAGS>"` (quoted) keeps the
+# multi-word value one token; `$<CARGO_PROFILE_ARGS>` (unquoted) word-splits.
 chore build: ts.generate
-    cargo build --manifest-path Cargo.toml
+    sh -c 'rf="$<RUSTFLAGS>"; [ -n "$rf" ] && export RUSTFLAGS="$rf"; exec cargo build --manifest-path Cargo.toml $<CARGO_PROFILE_ARGS>'
 
 # Sourceless on purpose: cargo's real input set spans crates/, e2e-fixtures/
 # and //standard/conformance/, and cargo is already incremental.

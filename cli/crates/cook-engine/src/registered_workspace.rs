@@ -26,12 +26,6 @@ pub struct RegisteredWorkspace {
     pub units_by_recipe: BTreeMap<String, RecipeUnits>,
     /// Probes keyed by qualified probe key.
     pub probes: BTreeMap<String, ProbeUnit>,
-    /// Per-Cookfile final env. Imports do not inherit the root's config writes.
-    ///
-    /// Keyed by qualified prefix (`""` for root). Value is a `BTreeMap` for
-    /// parity with `RegisteredCookfile.final_env` and the project-wide
-    /// "serialized collections are sorted" rule.
-    pub final_env_by_cookfile: BTreeMap<String, BTreeMap<String, String>>,
     /// Per-Cookfile working directory, keyed by qualified prefix (`""` for root).
     pub working_dir_by_prefix: BTreeMap<String, PathBuf>,
     /// Per-Cookfile `alias_dirs` (for `cook.dep_output` rewriting), keyed by

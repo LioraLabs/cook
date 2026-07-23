@@ -758,6 +758,11 @@ fn build_registered_workspace(
     mode: RegisterMode<'_>,
 ) -> Result<(Workspace, RegisteredWorkspace), CookError> {
     let mut workspace = load_workspace(globals)?;
+    // §11.6 / CS-0165 (R3): validate `@PRESET` against the UNION of the named
+    // config blocks of every loaded Cookfile — not just the entry Cookfile.
+    // This is the one place selection is validated; every command routes here.
+    pipeline::validate_selected_config_workspace(&workspace, config)
+        .map_err(pipeline_error_to_cook_error)?;
     // §10.2 step 2: re-classify $<NAME> against the full register-phase
     // recipe set before the register pass runs bodies.
     pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
@@ -790,9 +795,8 @@ pub fn cmd_cache_verify(
 ) -> Result<(), CookError> {
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
     let config = args.config.as_deref();
-    let parsed = read_and_parse(globals)?;
-    pipeline::validate_selected_config(&parsed.cookfile, config)
-        .map_err(pipeline_error_to_cook_error)?;
+    // Selection is validated once, in `build_registered_workspace`, against
+    // the union of all loaded Cookfiles (§11.6 / CS-0165).
     let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
@@ -879,10 +883,8 @@ pub fn cmd_run(
     argv: &[String],
     config: Option<&str>,
 ) -> Result<(), CookError> {
-    let parsed = read_and_parse(globals)?;
-    pipeline::validate_selected_config(&parsed.cookfile, config)
-        .map_err(pipeline_error_to_cook_error)?;
-
+    // Selection is validated once, in `build_registered_workspace`, against
+    // the union of all loaded Cookfiles (§11.6 / CS-0165).
     let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
@@ -1755,8 +1757,8 @@ pub fn cmd_serve(
     config: Option<&str>,
 ) -> Result<(), CookError> {
     let parsed = read_and_parse(globals)?;
-    pipeline::validate_selected_config(&parsed.cookfile, config)
-        .map_err(pipeline_error_to_cook_error)?;
+    // Selection is validated once, in `build_registered_workspace`, against
+    // the union of all loaded Cookfiles (§11.6 / CS-0165).
 
     // Check for interactive steps -- not supported under cook serve
     for recipe in &parsed.cookfile.recipes {
@@ -1886,11 +1888,10 @@ pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), Co
 pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
     use std::sync::Arc;
 
-    let parsed = read_and_parse(globals)?;
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
     let config = args.config.as_deref();
-    pipeline::validate_selected_config(&parsed.cookfile, config)
-        .map_err(pipeline_error_to_cook_error)?;
+    // Selection is validated once, in `build_registered_workspace`, against
+    // the union of all loaded Cookfiles (§11.6 / CS-0165).
 
     let targets = vec![recipe_name.to_string()];
 
@@ -2116,9 +2117,8 @@ pub fn cmd_why(
     config: Option<&str>,
     json: bool,
 ) -> Result<(), CookError> {
-    let parsed = read_and_parse(globals)?;
-    pipeline::validate_selected_config(&parsed.cookfile, config)
-        .map_err(pipeline_error_to_cook_error)?;
+    // Selection is validated once, in `build_registered_workspace`, against
+    // the union of all loaded Cookfiles (§11.6 / CS-0165).
     let (_, registered) = build_registered_workspace(
         globals,
         config,
