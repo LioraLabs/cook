@@ -20,7 +20,7 @@ config
 # the link arg that exports Lua symbols for C rocks.
 config profiling
     env.CARGO_PROFILE_ARGS = "--profile profiling"
-    local export_dynamic = cook.platform.os == "macos"
+    local export_dynamic = host.os == "macos"
         and "-C link-arg=-Wl,-export_dynamic"
         or "-C link-arg=-rdynamic"
     env.RUSTFLAGS = export_dynamic .. " -C force-frame-pointers=yes"
