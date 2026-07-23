@@ -15,16 +15,16 @@
 #   cook clean            — wipe build/
 
 config
-    env.CFLAGS = "-O0 -g"
-    env.CC = "gcc"
+    var.CFLAGS = "-O0 -g"
+    var.CC = "gcc"
 
 # Two overlays for the CFLAGS-toggle scenario.
 # Invoke with `cook debug demo` or `cook release demo`.
 config debug
-    env.CFLAGS = "-O0 -g"
+    var.CFLAGS = "-O0 -g"
 
 config release
-    env.CFLAGS = "-O3"
+    var.CFLAGS = "-O3"
 
 # Imported sub-cookfile for SHI-140 addendum monorepo cache verification.
 # `lib.lib_build` is referenced from the demo recipe.

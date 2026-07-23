@@ -98,7 +98,7 @@ fn published_artifact_has_matching_determinant_manifest() {
         wd,
         &backend_root,
         r#"config default
-    env.GREETING = host.env("GREETING", "")
+    var.GREETING = host.env("GREETING", "")
 
 recipe make
     ingredients "src/in.txt"

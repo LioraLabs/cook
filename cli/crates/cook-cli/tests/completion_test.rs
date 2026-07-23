@@ -62,10 +62,10 @@ fn fixture() -> tempfile::TempDir {
         r#"import ns ./ns
 
 config
-    env.MODE = "debug"
+    var.MODE = "debug"
 
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 
 recipe deploy
     ingredients "src/a.in"

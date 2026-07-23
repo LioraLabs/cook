@@ -17,8 +17,8 @@
 #         because main.c didn't change and lib.o wasn't in its inputs.
 
 config
-    env.CC = "gcc"
-    env.CFLAGS = "-O0"
+    var.CC = "gcc"
+    var.CFLAGS = "-O0"
 
 recipe lib_obj
     ingredients "src/lib.c"

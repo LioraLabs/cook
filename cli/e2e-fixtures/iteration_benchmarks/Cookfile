@@ -1,5 +1,5 @@
 config
-    env.SLEEP = "0.5"
+    var.SLEEP = "0.5"
 
 # Mode 1: One-to-one, shell block.
 # N inputs => N units, each producing 1 output.
