@@ -22,7 +22,7 @@ resolver = "2"
 # the pushed tag matches it — so a tag can never again ship a binary that
 # self-reports a different version.
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 
 # Profiling build: release codegen plus the debug info profilers need.
 #
