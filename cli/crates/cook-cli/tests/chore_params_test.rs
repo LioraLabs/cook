@@ -223,7 +223,7 @@ fn parametric_chore_env_placeholder_resolves() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config\n    env.MODE = os.getenv(\"MODE\") or \"dev\"\n\nchore greet who=\"world\"\n    echo hello $<who>, mode=$<MODE>\n",
+        "config\n    env.MODE = host.env(\"MODE\", \"dev\")\n\nchore greet who=\"world\"\n    echo hello $<who>, mode=$<MODE>\n",
     )
     .unwrap();
 
