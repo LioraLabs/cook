@@ -7,7 +7,7 @@ use cook_dag_viewer::input;
 use cook_dag_viewer::render::layout;
 use cook_dag_viewer::state::{AppState, Mode, Selection};
 
-mod fixtures;
+mod common;
 
 fn key(c: char) -> Event {
     Event::Key(KeyEvent {
@@ -38,7 +38,7 @@ fn special(code: KeyCode) -> Event {
 
 #[test]
 fn jjl_walks_into_first_unit() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
@@ -54,7 +54,7 @@ fn jjl_walks_into_first_unit() {
 
 #[test]
 fn capital_l_pans_camera_and_disables_follow() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
@@ -68,7 +68,7 @@ fn capital_l_pans_camera_and_disables_follow() {
 
 #[test]
 fn slash_then_typed_query_then_enter_jumps_to_match() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
@@ -86,7 +86,7 @@ fn slash_then_typed_query_then_enter_jumps_to_match() {
 
 #[test]
 fn q_quits() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
@@ -97,7 +97,7 @@ fn q_quits() {
 
 #[test]
 fn p_toggles_pin_on_selected_unit() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -123,7 +123,7 @@ fn p_toggles_pin_on_selected_unit() {
 
 #[test]
 fn p_emits_full_message_when_slots_exhausted() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -153,7 +153,7 @@ fn p_emits_full_message_when_slots_exhausted() {
 
 #[test]
 fn capital_p_pins_every_unit_in_selected_recipe() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -182,7 +182,7 @@ fn capital_p_pins_every_unit_in_selected_recipe() {
 
 #[test]
 fn capital_p_unpins_when_all_recipe_units_pinned() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -219,7 +219,7 @@ fn capital_p_unpins_when_all_recipe_units_pinned() {
 
 #[test]
 fn capital_p_on_file_node_emits_on_file_message() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -257,7 +257,7 @@ fn capital_p_on_file_node_emits_on_file_message() {
 
 #[test]
 fn capital_x_clears_all_pins() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -285,7 +285,7 @@ fn capital_x_clears_all_pins() {
 
 #[test]
 fn digit_jumps_selection_to_pin_slot() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,
@@ -308,7 +308,7 @@ fn digit_jumps_selection_to_pin_slot() {
 
 #[test]
 fn digit_emits_empty_slot_message_when_slot_unused() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
         &g,
         cook_dag_viewer::render::layout::LayoutDims::FULL,

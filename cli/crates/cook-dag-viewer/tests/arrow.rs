@@ -7,7 +7,7 @@ use cook_dag_viewer::input;
 use cook_dag_viewer::render::layout;
 use cook_dag_viewer::state::AppState;
 
-mod fixtures;
+mod common;
 
 fn special(code: KeyCode, mods: KeyModifiers) -> Event {
     Event::Key(KeyEvent { code, modifiers: mods, kind: KeyEventKind::Press, state: KeyEventState::NONE })
@@ -24,7 +24,7 @@ fn key(c: char) -> Event {
 
 #[test]
 fn down_arrow_moves_cursor_like_j() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let term = Rect::new(0, 0, 120, 40);
 
@@ -40,7 +40,7 @@ fn down_arrow_moves_cursor_like_j() {
 
 #[test]
 fn ctrl_right_pans_camera_and_does_not_move_cursor() {
-    let g = fixtures::three_wave_dag();
+    let g = common::three_wave_dag();
     let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let term = Rect::new(0, 0, 120, 40);
 
