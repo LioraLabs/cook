@@ -335,4 +335,5 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
 }
 
 #[cfg(test)]
+#[path = "tests/lang_tests.rs"]
 mod tests;
