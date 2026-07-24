@@ -109,3 +109,41 @@ cook standard.lint
 ````
 
 The lint routes through `standard/cook_modules/checks.lua` (`checks.lint_keywords`) and flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).
+
+## Rust test layout
+
+One rule, applied uniformly across `cli/crates/`:
+
+> Unit tests for `<dir>/<name>.rs` live in `<dir>/tests/<name>_tests.rs`, attached as a child module via `#[cfg(test)] #[path = ...]`.
+
+So a source file keeps three lines where the test module used to be:
+
+````rust
+#[cfg(test)]
+#[path = "tests/executor_tests.rs"]
+mod tests;
+````
+
+The rules in full:
+
+1. **Unit tests** go in `<dir>/tests/<name>_tests.rs`. Never inline: a `#[cfg(test)] mod tests { ... }` body in a source file is a violation.
+2. **Module names are preserved verbatim.** Each `#[cfg(test)] mod <M>` gets its own file and its own declaration; they are never merged. The filename is `<source-stem>_tests.rs` when `<M>` is `tests`, and `<M>.rs` otherwise. Merging them would change test paths from `pipeline::cmd_init_tests::x` to `pipeline::tests::cmd_init_tests::x`.
+3. **A `mod.rs`** takes the name of its directory, so `src/affected/mod.rs` maps to `src/affected/tests/affected_tests.rs`. A crate-wide test module declared from `lib.rs` uses the crate suffix: `cook-lang/src/tests/lang_tests.rs`.
+4. **Integration tests** use bare descriptive names under the crate-root `tests/`: `tests/why.rs`, not `tests/why_e2e.rs`. The directory already says "test", so `_e2e`, `_test`, `_integration`, `test_`, and `integration_` are all noise. Shared helpers go in `tests/common/mod.rs` so cargo does not compile them as an empty test binary.
+5. **Mirroring, not pooling.** Each directory gets its own `tests/` subdirectory rather than everything funnelling into one `src/tests/`. This avoids `../` in `#[path]` and removes basename collisions between, say, `src/cli.rs` and `src/modules/cli.rs`.
+
+**Why the payoff is worth an unusual attribute.** Test code was 35% of all lines under `cli/crates/*/src/`. Because unit tests were interleaved into the source files themselves, no ignore pattern could exclude them, so ripgrep and fuzzy finders surfaced test hits on every search through production code. With this layout, `**/tests/**` excludes 100% of test code in the workspace, unit and integration alike:
+
+````bash
+rg --glob '!**/tests/**' <pattern>
+````
+
+**Why `#[path]` rather than a plain module directory.** Rust requires a unit test with private access to be a child module of the code under test, so the tests cannot simply move to `tests/`. Using `src/executor/tests.rs` with a plain `mod tests;` would work, but it produces one file named `tests.rs` per module, which is useless in a fuzzy finder. `#[path]` buys unique filenames at the cost of one attribute. Private access, `use super::*`, `cargo test` filter paths, and `cargo fmt` all behave exactly as they do inline.
+
+### Enforcement
+
+````bash
+cd cli && ./scripts/check-test-layout.sh
+````
+
+Wired as a `cook` test unit (`cook cli.test-layout`), so CI's `cook test` covers it. It flags inline `#[cfg(test)]` module bodies and integration test names carrying a dead affix, printing `path:line: reason` for each.
