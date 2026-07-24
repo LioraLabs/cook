@@ -199,6 +199,9 @@ pub fn register_fs_api_with_sandbox(
                 std::fs::create_dir_all(parent)
                     .map_err(|e| mlua::Error::runtime(format!("fs.write: {e}")))?;
             }
+            // COOK-306: a Lua-side write is a write to the working tree like
+            // any other — no memoised mtime survives it.
+            cook_fingerprint::statmemo::disarm();
             std::fs::write(&full, content)
                 .map_err(|e| mlua::Error::runtime(format!("fs.write: {e}")))?;
             Ok(())

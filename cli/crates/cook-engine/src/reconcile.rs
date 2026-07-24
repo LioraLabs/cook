@@ -65,6 +65,7 @@ pub fn sweep(prior: &BTreeMap<PathBuf, u64>, live: &BTreeSet<PathBuf>) -> SweepR
         }
         match hash_file(path) {
             Some(h) if h == *recorded_hash => {
+                cook_fingerprint::statmemo::disarm();
                 if std::fs::remove_file(path).is_ok() {
                     report.swept.push(path.clone());
                 }

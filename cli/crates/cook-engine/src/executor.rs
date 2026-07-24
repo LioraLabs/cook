@@ -269,6 +269,8 @@ fn run_interactive_on_main(
         child_env.insert(k.clone(), v.clone());
     }
 
+    // COOK-306: an executed command may write anywhere in the tree.
+    cook_fingerprint::statmemo::disarm();
     let status = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(cmd)
@@ -418,6 +420,12 @@ pub fn execute_dag(
     if let Err(cycle) = dag.validate() {
         return Err(EngineError::CycleDetected(cycle.to_string()));
     }
+
+    // COOK-306: arm the per-run mtime memo. Registration (and every probe
+    // capture it ran) is complete by now, so nothing has written to the tree
+    // since the last stat; the first write from here on disarms it. See
+    // `cook_fingerprint::statmemo`.
+    cook_fingerprint::statmemo::arm();
 
     let total = dag.len();
     let (pool, rx) = WorkerPool::spawn_with_dep_outputs(num_workers, dep_outputs);
@@ -696,25 +704,23 @@ pub fn execute_dag(
             Some(cm) => cm,
             None => return CacheDecision::Miss(None),
         };
-        let cache = cm.get_or_load(&meta.recipe_name);
-        let entry = cache.steps.get(&meta.cache_key);
-        // COOK-276: the local step key embeds the env contribution
-        // (`<first-output>@<env:x>`), so an env change moves the key and the
-        // lookup above comes up empty — which would present the dominant
-        // "env value flipped" warm re-run as an unattributable cold build.
-        // A sibling entry under the same output identity is proof of history:
-        // attribute the miss to env.
-        let env_moved_key = entry.is_none() && {
-            let base = meta.output_paths[0].as_str();
-            let prefix = format!("{base}@");
-            cache.steps.contains_key(base)
-                || cache
-                    .steps
-                    .range(prefix.clone()..)
-                    .take_while(|(k, _)| k.starts_with(&prefix))
-                    .next()
-                    .is_some()
-        };
+        // COOK-306: copy the one keyed entry, never the whole recipe index.
+        // At DuckDB scale (1,687 nodes behind a single 648k-record index) the
+        // difference is 95% of the process's allocation traffic.
+        //
+        // `env_moved_key` is computed inside the same lookup: the local step
+        // key embeds the env contribution (`<first-output>@<env:x>`), so an
+        // env change moves the key and the keyed lookup comes up empty —
+        // which would present the dominant "env value flipped" warm re-run as
+        // an unattributable cold build. A sibling entry under the same output
+        // identity is proof of history: attribute the miss to env (COOK-276).
+        let lookup = cm.lookup_step(
+            &meta.recipe_name,
+            &meta.cache_key,
+            meta.output_paths[0].as_str(),
+        );
+        let entry = lookup.entry.as_ref();
+        let env_moved_key = lookup.env_moved_key;
         // CS-0085 §17.6: when any declared output is a glob pattern AND a prior
         // StepEntry exists, derive current_outputs from the recorded concrete
         // paths rather than the raw pattern strings.  Pattern strings don't
@@ -838,6 +844,7 @@ pub fn execute_dag(
                 // Files first, then empty dirs (`remove_dir`, not `_all`): a
                 // stale dir record whose subtree gained restored files must
                 // survive — non-empty removal fails and that is correct.
+                cook_fingerprint::statmemo::disarm();
                 for abs in stale().filter(|p| !p.is_dir()) {
                     let _ = std::fs::remove_file(&abs);
                 }

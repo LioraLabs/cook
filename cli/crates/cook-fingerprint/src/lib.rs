@@ -15,6 +15,7 @@ pub mod context;
 pub mod envkey;
 pub mod probe;
 pub mod record;
+pub mod statmemo;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -36,6 +37,7 @@ pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
 pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
+pub use statmemo::stat_mtime_memo;
 
 /// Hash a string (for command templates, env vars, etc.)
 pub fn hash_str(s: &str) -> u64 {
@@ -292,6 +294,9 @@ mod ingredient_glob_tests;
 /// subtree not in `kept`, then prunes directories left empty. Deletion is bounded
 /// strictly to the subtree; the root directory itself is preserved.
 pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<String>) {
+    // COOK-306: sweeping strays writes to the tree, so no memoised mtime can
+    // be trusted afterwards.
+    statmemo::disarm();
     let root = root.trim_end_matches('/');
     let present = resolve_glob(working_dir, &format!("{root}/**/*"));
     for rel in &present {

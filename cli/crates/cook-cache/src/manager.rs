@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use cook_contracts::CacheMeta;
 use cook_fingerprint::{hash_file, stat_mtime, FileRecord, StepEntry};
@@ -73,8 +73,27 @@ impl CacheState {
 
 pub type SharedCacheState = Rc<RefCell<CacheState>>;
 
+/// Outcome of a single keyed step lookup against a recipe index.
+///
+/// See [`ThreadSafeCacheManager::lookup_step`]: this is the whole of what the
+/// per-node hot path needs from the index, so it is what the manager hands
+/// out there instead of the index itself.
+pub struct StepLookup {
+    /// The entry stored under the requested cache key, if any.
+    pub entry: Option<StepEntry>,
+    /// COOK-276: no entry under the requested key, but a sibling entry exists
+    /// under the same output identity (`<first-output>` bare, or
+    /// `<first-output>@<env:...>` under a different env suffix). Proof of
+    /// history: the miss is attributable to a changed env value rather than
+    /// being a cold build.
+    pub env_moved_key: bool,
+}
+
 pub struct ThreadSafeCacheManager {
-    caches: Mutex<HashMap<String, RecipeCache>>,
+    /// Per-recipe indexes behind `Arc` so a reader can take a snapshot by
+    /// copying a pointer. See [`Self::get_or_load`] for why by-value is not
+    /// an option (COOK-306).
+    caches: Mutex<HashMap<String, Arc<RecipeCache>>>,
     cache_dir: PathBuf,
     dirty: Mutex<HashSet<String>>,
 }
@@ -94,7 +113,19 @@ impl ThreadSafeCacheManager {
     pub fn load_recipe(&self, recipe_name: &str) {
         let cache = RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default();
         let mut caches = self.caches.lock().unwrap();
-        caches.insert(recipe_name.to_string(), cache);
+        caches.insert(recipe_name.to_string(), Arc::new(cache));
+    }
+
+    /// Resolve `recipe_name` to its in-memory index, loading it from disk on
+    /// first touch. Caller must already hold the `caches` lock.
+    fn resolve<'a>(
+        caches: &'a mut HashMap<String, Arc<RecipeCache>>,
+        cache_dir: &Path,
+        recipe_name: &str,
+    ) -> &'a Arc<RecipeCache> {
+        caches.entry(recipe_name.to_string()).or_insert_with(|| {
+            Arc::new(RecipeCache::load(cache_dir, recipe_name).unwrap_or_default())
+        })
     }
 
     pub fn update_step(&self, recipe_name: &str, cache_key: &str, entry: StepEntry) {
@@ -102,7 +133,21 @@ impl ThreadSafeCacheManager {
         let recipe_cache = caches
             .entry(recipe_name.to_string())
             .or_default();
-        recipe_cache.steps.insert(cache_key.to_string(), entry);
+        // COOK-306: a settled run re-validates every step and writes back an
+        // entry identical to the one it read. Storing it is a no-op; marking
+        // the recipe dirty is not — it costs a full re-serialisation of the
+        // index at flush time, which for DuckDB's 128 MB index is seconds of
+        // TOML writing on a run that changed nothing. Comparing first is
+        // O(records) with no allocation, far cheaper than the write it avoids.
+        if recipe_cache.steps.get(cache_key) == Some(&entry) {
+            return;
+        }
+        // `make_mut` copies the index only when a snapshot handed out by
+        // `get_or_load` is still alive. Nothing holds one across execution
+        // (every caller drops it within its own statement or block), so this
+        // is an in-place insert on the hot path. Retaining a snapshot across
+        // a build would silently restore the COOK-306 quadratic clone.
+        Arc::make_mut(recipe_cache).steps.insert(cache_key.to_string(), entry);
         drop(caches);
         let mut dirty = self.dirty.lock().unwrap();
         dirty.insert(recipe_name.to_string());
@@ -122,7 +167,7 @@ impl ThreadSafeCacheManager {
         let mut caches = self.caches.lock().unwrap();
         if let Some(cache) = caches.get_mut(recipe_name) {
             let before = cache.steps.len();
-            cache.steps.retain(|k, v| keep(k, v));
+            Arc::make_mut(cache).steps.retain(|k, v| keep(k, v));
             let changed = cache.steps.len() != before;
             drop(caches);
             if changed {
@@ -150,14 +195,49 @@ impl ThreadSafeCacheManager {
         Ok(())
     }
 
-    pub fn get_or_load(&self, recipe_name: &str) -> RecipeCache {
+    /// Snapshot a whole recipe index, loading it from disk on first touch.
+    ///
+    /// Returns an `Arc`, not a copy: a large real-world index is large enough
+    /// that copying it per caller is a build-dominating cost (COOK-306 — a
+    /// 128 MB / 648k-record DuckDB index copied once per work node was 95% of
+    /// all allocation traffic and ~102s of a 107s settled no-op). The `Arc`
+    /// also keeps the lock hold time to a pointer copy, so this stays cheap
+    /// if cache validation is ever parallelised.
+    ///
+    /// The per-node cache check wants one keyed entry rather than the whole
+    /// index — use [`Self::lookup_step`] there. Callers of this method should
+    /// stay once-per-run: hold a snapshot across execution and
+    /// [`Self::update_step`] must copy the index to mutate it.
+    pub fn get_or_load(&self, recipe_name: &str) -> Arc<RecipeCache> {
         let mut caches = self.caches.lock().unwrap();
-        if let Some(cache) = caches.get(recipe_name) {
-            return cache.clone();
+        Arc::clone(Self::resolve(&mut caches, &self.cache_dir, recipe_name))
+    }
+
+    /// Look up a single step by cache key, copying just that entry.
+    ///
+    /// This is the per-work-node hot path (COOK-306). `output_base` is the
+    /// unit's first declared output path, used only to attribute a miss to a
+    /// changed env value — see [`StepLookup::env_moved_key`].
+    pub fn lookup_step(
+        &self,
+        recipe_name: &str,
+        cache_key: &str,
+        output_base: &str,
+    ) -> StepLookup {
+        let mut caches = self.caches.lock().unwrap();
+        let cache = Self::resolve(&mut caches, &self.cache_dir, recipe_name);
+        if let Some(entry) = cache.steps.get(cache_key) {
+            return StepLookup { entry: Some(entry.clone()), env_moved_key: false };
         }
-        let cache = RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default();
-        caches.insert(recipe_name.to_string(), cache.clone());
-        cache
+        let prefix = format!("{output_base}@");
+        let env_moved_key = cache.steps.contains_key(output_base)
+            || cache
+                .steps
+                .range(prefix.clone()..)
+                .take_while(|(k, _)| k.starts_with(&prefix))
+                .next()
+                .is_some();
+        StepLookup { entry: None, env_moved_key }
     }
 
     pub fn record_completion(

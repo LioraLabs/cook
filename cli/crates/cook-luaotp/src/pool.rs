@@ -1182,6 +1182,8 @@ fn run_shell_in_worker(
         child_env.insert(k.clone(), v.clone());
     }
 
+    // COOK-306: an executed command may write anywhere in the tree.
+    cook_fingerprint::statmemo::disarm();
     let output = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(cmd)
@@ -1312,6 +1314,8 @@ fn execute_shell(
         child_env.insert(k.clone(), v.clone());
     }
 
+    // COOK-306: an executed command may write anywhere in the tree.
+    cook_fingerprint::statmemo::disarm();
     let result = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(cmd)
@@ -1668,6 +1672,8 @@ fn execute_test(
         child_env.insert(k.clone(), v.clone());
     }
 
+    // COOK-306: an executed command may write anywhere in the tree.
+    cook_fingerprint::statmemo::disarm();
     let child = std::process::Command::new("/bin/sh")
         .args(["-c", cmd])
         .current_dir(working_dir)

@@ -139,8 +139,12 @@ fn check_inputs(
         .zip(current_input_paths.iter())
         .enumerate()
     {
-        let abs_path = working_dir.join(rel_path);
-        let disk_mtime = match stat_mtime(&abs_path) {
+        // COOK-306: memoised by path for the duration of a run that has not
+        // written anything. The same header appears in hundreds of translation
+        // units' input sets, so this is where a large graph's redundant stat
+        // traffic lives. Deliberately avoids building `abs_path` until a stat
+        // actually has to happen.
+        let disk_mtime = match crate::statmemo::stat_mtime_memo(working_dir, rel_path) {
             Some(m) => m,
             None => {
                 changed.push(cached.path.clone());
@@ -148,6 +152,7 @@ fn check_inputs(
             }
         };
         if disk_mtime != cached.mtime {
+            let abs_path = working_dir.join(rel_path);
             let disk_hash = hash_file(&abs_path);
             // Unreadable, content differs, or an empty marker file (mtime is
             // authoritative for those) → changed.
@@ -587,6 +592,10 @@ fn try_restore(
     updated_inputs: &[FileRecord],
     working_dir: &Path,
 ) -> bool {
+    // COOK-306: a restore writes artifacts into the working tree, so no
+    // memoised mtime can be trusted afterwards. Disarmed before the attempt,
+    // not after: a partial restore writes files too.
+    crate::statmemo::disarm();
     let mut sorted: Vec<u64> = updated_inputs.iter().map(|r| r.hash).collect();
     sorted.sort();
     let key_inputs = crate::backend::CloudKeyInputs {

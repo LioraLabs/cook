@@ -262,3 +262,95 @@ fn retain_steps_keeps_all_is_not_dirty() {
     let loaded = store::RecipeCache::load(dir.path(), "rec").expect("load");
     assert!(loaded.steps.contains_key("a"));
 }
+
+// --- COOK-306 -------------------------------------------------------------
+
+#[test]
+fn lookup_step_returns_the_keyed_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "build/main.o", make_step_entry(0xfeed));
+
+    let hit = cm.lookup_step("rec", "build/main.o", "build/main.o");
+    assert_eq!(hit.entry.expect("entry").command_hash, 0xfeed);
+    assert!(!hit.env_moved_key, "a keyed hit never reports env-moved");
+}
+
+#[test]
+fn lookup_step_reports_a_cold_miss_as_cold() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+
+    let miss = cm.lookup_step("rec", "build/main.o@abc", "build/main.o");
+    assert!(miss.entry.is_none());
+    assert!(
+        !miss.env_moved_key,
+        "no sibling entry exists, so the miss is genuinely cold"
+    );
+}
+
+/// COOK-276 attribution, preserved through the COOK-306 rewrite: history
+/// parked under a different env suffix makes the miss env-attributable.
+#[test]
+fn lookup_step_attributes_a_moved_env_key() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "build/main.o@OLDENV", make_step_entry(0x1));
+
+    let miss = cm.lookup_step("rec", "build/main.o@NEWENV", "build/main.o");
+    assert!(miss.entry.is_none());
+    assert!(miss.env_moved_key, "sibling under the same output identity");
+}
+
+#[test]
+fn lookup_step_attributes_a_bare_output_key() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "build/main.o", make_step_entry(0x1));
+
+    let miss = cm.lookup_step("rec", "build/main.o@NEWENV", "build/main.o");
+    assert!(miss.entry.is_none());
+    assert!(miss.env_moved_key, "bare-key history counts as history");
+}
+
+/// A prefix match must not leak across output identities: `build/main.o2` is a
+/// different artifact from `build/main.o`, not an env variant of it.
+#[test]
+fn lookup_step_does_not_attribute_a_neighbouring_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "build/main.o2@ENV", make_step_entry(0x1));
+
+    let miss = cm.lookup_step("rec", "build/main.o@ENV", "build/main.o");
+    assert!(!miss.env_moved_key, "'@' boundary must be respected");
+}
+
+/// The COOK-306 perf invariant, which nothing else can observe: re-writing an
+/// identical entry must NOT mark the recipe dirty, or a settled run pays a
+/// full index re-serialisation (seconds, on a large graph) to write bytes it
+/// already has.
+#[test]
+fn rewriting_an_identical_entry_does_not_dirty_the_recipe() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "step", make_step_entry(0xabc));
+    cm.flush_all().expect("flush 1");
+
+    let index = dir.path().join("rec.toml");
+    let stamp = std::fs::metadata(&index).expect("stat").modified().expect("mtime");
+
+    // Same entry again, then flush: the file must not be rewritten.
+    cm.update_step("rec", "step", make_step_entry(0xabc));
+    cm.flush_all().expect("flush 2");
+    assert_eq!(
+        stamp,
+        std::fs::metadata(&index).expect("stat").modified().expect("mtime"),
+        "an identical write must leave the index untouched"
+    );
+
+    // A genuinely different entry still persists.
+    cm.update_step("rec", "step", make_step_entry(0xdef));
+    cm.flush_all().expect("flush 3");
+    let loaded = store::RecipeCache::load(dir.path(), "rec").expect("load");
+    assert_eq!(loaded.steps.get("step").expect("step").command_hash, 0xdef);
+}
