@@ -29,6 +29,7 @@ pub mod unit_api;
 pub use cook_lua_stdlib::{register_fs_api, register_path_api, register_platform_api};
 
 #[cfg(test)]
+#[path = "tests/register_tests.rs"]
 mod tests;
 
 use std::cell::RefCell;
