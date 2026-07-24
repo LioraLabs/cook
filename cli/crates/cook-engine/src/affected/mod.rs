@@ -10,4 +10,5 @@ pub mod git;
 pub use compute::compute_affected;
 
 #[cfg(test)]
+#[path = "tests/affected_tests.rs"]
 mod tests;

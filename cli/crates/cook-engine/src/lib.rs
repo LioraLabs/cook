@@ -659,77 +659,9 @@ impl From<cook_register::RegisterError> for EngineError {
 }
 
 #[cfg(test)]
-mod strip_set_e_tests {
-    use super::*;
-
-    #[test]
-    fn strip_set_e_removes_exact_prefix() {
-        assert_eq!(strip_set_e("set -e\nmkdir -p build"), "mkdir -p build");
-    }
-
-    #[test]
-    fn strip_set_e_leaves_unprefixed_command_unchanged() {
-        assert_eq!(strip_set_e("mkdir -p build"), "mkdir -p build");
-    }
-
-    #[test]
-    fn registration_command_failed_render_strips_set_e_prelude() {
-        let e: EngineError = cook_register::RegisterError::CommandFailed {
-            command: "set -e\nfalse".to_string(),
-            line: 3,
-            code: 1,
-        }
-        .into();
-        match e {
-            EngineError::RegistrationFailed { message, .. } => {
-                assert!(!message.contains("set -e"), "{message}");
-                assert!(message.contains("false"), "{message}");
-            }
-            other => panic!("expected RegistrationFailed, got {other:?}"),
-        }
-    }
-}
+#[path = "tests/strip_set_e_tests.rs"]
+mod strip_set_e_tests;
 
 #[cfg(test)]
-mod test_result_tests {
-    use super::*;
-    #[test]
-    fn test_result_carries_line() {
-        let r = TestResult {
-            id: TestId("r:t".into()),
-            namespace: String::new(),
-            recipe: "r".into(),
-            name: "t".into(),
-            suite: String::new(),
-            iteration_item: None,
-            outcome: TestOutcome::Passed,
-            duration: std::time::Duration::ZERO,
-            from_cache: false,
-            stdout: String::new(),
-            stderr: String::new(),
-            fingerprint: None,
-            blocked_by: None,
-            should_fail: false,
-            timed_out: false,
-            line: 42,
-            exit_code: None,
-        };
-        assert_eq!(r.line, 42);
-    }
-
-    #[test]
-    fn test_started_event_carries_line() {
-        let evt = EngineEvent::TestStarted {
-            id: TestId("r:t".into()),
-            recipe: "r".into(),
-            name: "t".into(),
-            line: 7,
-            iteration_item: None,
-        };
-        if let EngineEvent::TestStarted { line, .. } = evt {
-            assert_eq!(line, 7);
-        } else {
-            panic!("wrong variant");
-        }
-    }
-}
+#[path = "tests/test_result_tests.rs"]
+mod test_result_tests;
