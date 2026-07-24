@@ -520,36 +520,8 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 }
 
 #[cfg(test)]
-mod engine_error_to_cook_error_tests {
-    use super::*;
-
-    #[test]
-    fn strip_set_e_removes_exact_prefix() {
-        assert_eq!(strip_set_e("set -e\nmkdir -p build"), "mkdir -p build");
-    }
-
-    #[test]
-    fn strip_set_e_leaves_unprefixed_command_unchanged() {
-        assert_eq!(strip_set_e("mkdir -p build"), "mkdir -p build");
-    }
-
-    #[test]
-    fn command_failed_render_strips_set_e_prelude() {
-        let e = cook_engine::EngineError::TaskFailures {
-            count: 1,
-            failures: vec![(
-                0,
-                "build".to_string(),
-                "COOK_CMD_FAILED:3:1:set -e\nfalse".to_string(),
-            )],
-            partial_test_results: vec![],
-        };
-        let err = engine_error_to_cook_error(e);
-        let msg = err.to_string();
-        assert!(!msg.contains("set -e"), "{msg}");
-        assert!(msg.contains("false"), "{msg}");
-    }
-}
+#[path = "tests/engine_error_to_cook_error_tests.rs"]
+mod engine_error_to_cook_error_tests;
 
 // ---------------------------------------------------------------------------
 // Run-with-progress glue
@@ -1565,170 +1537,12 @@ fn merge_cook_gitignore_section(existing: Option<&str>) -> GitignoreMerge {
 }
 
 #[cfg(test)]
-mod cmd_init_tests {
-    use super::*;
-
-    #[test]
-    fn merge_creates_section_when_no_gitignore() {
-        let merged = merge_cook_gitignore_section(None);
-        match merged {
-            GitignoreMerge::Created(content) => {
-                assert!(content.contains(COOK_GITIGNORE_MARKER));
-                assert!(content.contains("cook_modules/lib/"));
-                assert!(content.contains(".cook/**"));
-                assert!(content.ends_with('\n'));
-                // Guard against drift: the comment must reference the
-                // current subcommand name, not the renamed-and-removed
-                // `cook modules add`.
-                assert!(content.contains("cook modules install"));
-                assert!(!content.contains("cook modules add"));
-            }
-            other => panic!("expected Created, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn merge_is_idempotent_when_marker_present() {
-        let existing = format!("target/\n\n{COOK_GITIGNORE_SECTION}");
-        assert_eq!(
-            merge_cook_gitignore_section(Some(&existing)),
-            GitignoreMerge::Unchanged,
-        );
-    }
-
-    #[test]
-    fn merge_appends_with_blank_line_separator() {
-        let existing = "target/\nnode_modules/\n";
-        match merge_cook_gitignore_section(Some(existing)) {
-            GitignoreMerge::Appended(content) => {
-                assert!(content.starts_with("target/\nnode_modules/\n\n"));
-                assert!(content.contains(COOK_GITIGNORE_MARKER));
-                assert!(content.contains("cook_modules/lib/"));
-            }
-            other => panic!("expected Appended, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn merge_normalizes_missing_trailing_newline_before_appending() {
-        let existing = "target/";
-        match merge_cook_gitignore_section(Some(existing)) {
-            GitignoreMerge::Appended(content) => {
-                assert!(content.starts_with("target/\n\n"));
-                assert!(content.contains(COOK_GITIGNORE_MARKER));
-            }
-            other => panic!("expected Appended, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn merge_treats_empty_file_like_creation() {
-        match merge_cook_gitignore_section(Some("")) {
-            GitignoreMerge::Appended(content) => {
-                assert!(content.starts_with(COOK_GITIGNORE_MARKER));
-            }
-            other => panic!("expected Appended, got {other:?}"),
-        }
-    }
-}
+#[path = "tests/cmd_init_tests.rs"]
+mod cmd_init_tests;
 
 #[cfg(test)]
-mod resolve_test_scope_tests {
-    use super::*;
-    use cook_engine::TestScope;
-    use std::collections::BTreeSet;
-
-    fn names(items: &[&str]) -> BTreeSet<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn empty_recipe_set_defers_to_engine_as_recipe() {
-        // When the workspace can't be loaded we treat the arg as a recipe so
-        // the engine's canonical "unknown recipe" diagnostic surfaces.
-        let scope = resolve_test_scope("anything", &BTreeSet::new()).unwrap();
-        match scope {
-            TestScope::Recipe(n) => assert_eq!(n, "anything"),
-            other => panic!("expected Recipe, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn exact_recipe_match_returns_recipe() {
-        let set = names(&["build", "sub.pass", "sub.fail_one"]);
-        let scope = resolve_test_scope("sub.pass", &set).unwrap();
-        match scope {
-            TestScope::Recipe(n) => assert_eq!(n, "sub.pass"),
-            other => panic!("expected Recipe, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn bare_recipe_match_returns_recipe() {
-        let set = names(&["build", "sub.pass"]);
-        let scope = resolve_test_scope("build", &set).unwrap();
-        match scope {
-            TestScope::Recipe(n) => assert_eq!(n, "build"),
-            other => panic!("expected Recipe, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn single_segment_namespace_match_returns_namespace() {
-        // Reproduction case from the bug report: `cook test web` with
-        // `web.build` defined under `import web ./web` MUST resolve as
-        // a Namespace, not a (failing) Recipe lookup.
-        let set = names(&["build", "web.build", "web.test"]);
-        let scope = resolve_test_scope("web", &set).unwrap();
-        match scope {
-            TestScope::Namespace(n) => assert_eq!(n, "web"),
-            other => panic!("expected Namespace, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn nested_namespace_match_returns_namespace() {
-        let set = names(&["apps.web.build", "apps.web.unit", "apps.api.build"]);
-        let scope = resolve_test_scope("apps.web", &set).unwrap();
-        match scope {
-            TestScope::Namespace(n) => assert_eq!(n, "apps.web"),
-            other => panic!("expected Namespace, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn recipe_match_wins_over_namespace_match() {
-        // If both a recipe `foo` and recipes `foo.bar` exist (which can happen
-        // with deeply-nested imports), prefer the exact recipe match.
-        let set = names(&["foo", "foo.bar", "foo.baz"]);
-        let scope = resolve_test_scope("foo", &set).unwrap();
-        match scope {
-            TestScope::Recipe(n) => assert_eq!(n, "foo"),
-            other => panic!("expected Recipe (exact match wins), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn unknown_scope_errors_with_useful_diagnostic() {
-        let set = names(&["build", "web.build", "web.test"]);
-        let err = resolve_test_scope("xyz", &set).expect_err("unknown scope must error");
-        let msg = format!("{err}");
-        assert!(msg.contains("unknown test scope: 'xyz'"), "message: {msg}");
-        assert!(msg.contains("recipe name"), "message: {msg}");
-        assert!(msg.contains("namespace"), "message: {msg}");
-        assert!(msg.contains("--filter"), "message: {msg}");
-    }
-
-    #[test]
-    fn unknown_scope_does_not_swallow_partial_namespace_typo() {
-        // `webs` doesn't match the recipe `web.build` exactly nor the
-        // namespace `webs.` — we must error rather than silently widening.
-        let set = names(&["web.build", "web.test"]);
-        let err = resolve_test_scope("webs", &set).expect_err("typo must error");
-        let msg = format!("{err}");
-        assert!(msg.contains("unknown test scope: 'webs'"), "message: {msg}");
-    }
-}
+#[path = "tests/resolve_test_scope_tests.rs"]
+mod resolve_test_scope_tests;
 
 // ---------------------------------------------------------------------------
 // cmd_serve
@@ -1847,19 +1661,8 @@ pub fn cmd_serve(
 }
 
 #[cfg(test)]
-mod serve_glob_tests {
-    use super::*;
-
-    #[test]
-    fn anchor_globs_joins_relative_and_keeps_absolute() {
-        let dir = std::path::Path::new("/ws/apps/rust");
-        let got = anchor_globs(
-            vec!["src/*.c".to_string(), "/abs/x/*.h".to_string()],
-            dir,
-        );
-        assert_eq!(got, vec!["/ws/apps/rust/src/*.c".to_string(), "/abs/x/*.h".to_string()]);
-    }
-}
+#[path = "tests/serve_glob_tests.rs"]
+mod serve_glob_tests;
 
 // ---------------------------------------------------------------------------
 // cmd_dag — feature-gated

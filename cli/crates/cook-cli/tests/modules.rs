@@ -5,7 +5,7 @@
 //!     cook_smoke from rocks.usecook.com via the bundled luarocks.
 //!
 //! Online tests require network egress + a populated rocks.usecook.com.
-//! Run with `--ignored` to enable: `cargo test -p cook-cli --test modules_integration -- --ignored`.
+//! Run with `--ignored` to enable: `cargo test -p cook-cli --test modules -- --ignored`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

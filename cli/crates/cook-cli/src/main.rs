@@ -403,100 +403,13 @@ fn reject_reserved_root_target(target: &str) -> Result<(), CookError> {
 }
 
 #[cfg(test)]
-mod entry_discovery_tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    fn matches_for(argv: &[&str]) -> clap::ArgMatches {
-        let mut full = vec!["cook"];
-        full.extend_from_slice(argv);
-        <cli::Cli as CommandFactory>::command()
-            .try_get_matches_from(full)
-            .expect("parse")
-    }
-
-    #[test]
-    fn default_file_is_not_explicit() {
-        assert!(!cookfile_flag_was_explicit(&matches_for(&["build"])));
-        assert!(!cookfile_flag_was_explicit(&matches_for(&["menu"])));
-        assert!(!cookfile_flag_was_explicit(&matches_for(&[])));
-    }
-
-    #[test]
-    fn pre_subcommand_flag_is_explicit() {
-        assert!(cookfile_flag_was_explicit(&matches_for(&[
-            "-f", "sub/Cookfile", "build"
-        ])));
-    }
-
-    #[test]
-    fn post_subcommand_global_flag_is_explicit() {
-        // global=true args given after a named subcommand propagate up to the
-        // top-level matches (pinned by cli.rs::globals_apply_after_subcommand);
-        // value_source must see them as CommandLine too.
-        assert!(cookfile_flag_was_explicit(&matches_for(&[
-            "test", "-f", "sub/Cookfile"
-        ])));
-    }
-}
+#[path = "tests/entry_discovery_tests.rs"]
+mod entry_discovery_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn partition_peels_trailing_global_bool_flag() {
-        let mut g = crate::cli::Globals::default();
-        let p = partition_argv(&["-v".to_string()], "report", &mut g).unwrap();
-        assert!(p.argv.is_empty());
-        assert!(g.verbose);
-    }
-
-    #[test]
-    fn partition_peels_trailing_global_value_flag() {
-        let mut g = crate::cli::Globals::default();
-        let p = partition_argv(
-            &[
-                "--output".to_string(),
-                "plain".to_string(),
-                "-j".to_string(),
-                "4".to_string(),
-            ],
-            "report",
-            &mut g,
-        )
-        .unwrap();
-        assert!(p.argv.is_empty());
-        assert_eq!(g.output, "plain");
-        assert_eq!(g.jobs, Some(4));
-    }
-
-    #[test]
-    fn partition_keeps_chore_params_as_argv() {
-        let mut g = crate::cli::Globals::default();
-        let p = partition_argv(&["who=world".to_string()], "greet", &mut g).unwrap();
-        assert_eq!(p.argv, vec!["who=world".to_string()]);
-    }
-}
+#[path = "tests/main_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod reserved_target_tests {
-    use super::*;
-
-    #[test]
-    fn double_slash_target_is_rejected() {
-        let err = reject_reserved_root_target("//check").unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("reserved"), "msg: {msg}");
-        assert!(msg.contains("not yet supported"), "msg: {msg}");
-        assert!(msg.contains("check"), "msg: {msg}");
-    }
-
-    #[test]
-    fn normal_and_qualified_targets_pass() {
-        assert!(reject_reserved_root_target("build").is_ok());
-        assert!(reject_reserved_root_target("rust.build").is_ok());
-        // single slash is not the reserved syntax
-        assert!(reject_reserved_root_target("/x").is_ok());
-    }
-}
+#[path = "tests/reserved_target_tests.rs"]
+mod reserved_target_tests;
