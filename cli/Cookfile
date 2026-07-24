@@ -41,3 +41,10 @@ chore conformance
 
 chore e2e
     cargo test --manifest-path Cargo.toml -p cook-cli --test surface_conformance
+
+# Enforces the Rust test-layout convention (COOK-312, CONTRIBUTING.md): unit
+# tests live in <dir>/tests/<name>_tests.rs attached via #[path], never inline,
+# and integration tests use bare names. A `test {}` step rather than a chore so
+# CI's `cook test` fans out to it.
+recipe test-layout
+    test { scripts/check-test-layout.sh }
