@@ -11,6 +11,7 @@ mod test_step;
 pub mod dep_ref;
 
 #[cfg(test)]
+#[path = "tests/luagen_tests.rs"]
 mod tests;
 
 pub use recipe::{
