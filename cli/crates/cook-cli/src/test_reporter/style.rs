@@ -52,7 +52,6 @@ impl Style {
     pub fn green(&self, s: &str) -> String { self.wrap("32", s) }
     pub fn red(&self, s: &str) -> String { self.wrap("31", s) }
     pub fn yellow(&self, s: &str) -> String { self.wrap("33", s) }
-    pub fn cyan(&self, s: &str) -> String { self.wrap("36", s) }
     pub fn dim(&self, s: &str) -> String { self.wrap("2", s) }
     pub fn bold(&self, s: &str) -> String { self.wrap("1", s) }
     pub fn bold_red(&self, s: &str) -> String { self.wrap("1;31", s) }
