@@ -775,12 +775,11 @@ fn fat_entry(wd: &std::path::Path) -> StepEntry {
 // COOK-180: restore_one kind-dispatch + symlink-last ordering
 // -------------------------------------------------------------------------
 
-/// In-crate fake `CacheBackend` for unit-testing `restore_one`. A real
-/// `LocalBackend` lives in `cook-cache`, but cook-cache dev-depends on
-/// cook-fingerprint which produces two distinct crate instances in the
-/// test dependency graph — so `cook_cache::LocalBackend` implements a
-/// *different* `CacheBackend` trait than `crate::backend::CacheBackend`.
-/// This minimal in-memory fake speaks the in-crate trait. Integrity
+/// In-crate fake `CacheBackend` for unit-testing `restore_one`. The real
+/// `LocalBackend` lives in `cook-cache`, which depends on this crate, so
+/// reaching for it here would mean depending back on cook-cache — the
+/// dependency edge COOK-313 removed when the depfile-parser hook went away.
+/// This minimal in-memory fake speaks the in-crate trait instead. Integrity
 /// (VerifyingReader) is exercised end-to-end by cook-cache's integration
 /// restore tests; here we only need faithful kind/mode/target dispatch.
 #[derive(Default)]

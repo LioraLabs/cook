@@ -173,7 +173,6 @@ fn check_inputs(
     Ok(updated)
 }
 
-
 /// Context for restore-on-hit attempts (2026-05-02 addendum spec §5.2).
 ///
 /// When `Some(&RestoreCtx)` is passed to `needs_rebuild_cook`, a cache entry

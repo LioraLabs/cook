@@ -19,5 +19,4 @@ which = "7"
 
 [dev-dependencies]
 tempfile = "3"
-cook-cache = { path = "../cook-cache" }
 toml = "0.8"
