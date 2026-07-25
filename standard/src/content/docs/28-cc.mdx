@@ -12,7 +12,7 @@ The `cc` module specifies a portable surface for declarative C and C++ native bu
 
 A conforming implementation MUST expose the fifteen public functions listed in §{cat.cc.surface} (the thirteen from v0.5 plus the `cc.checks` namespace and `cc.config_header`) and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
-The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.8 (cook_cc 0.10.x): the v0.7 surface plus the additive `SharedOpts.output` field introduced by CS-0084 (§{cat.cc.shared}). The v0.7 surface (cook_cc 0.8.x–0.9.x) is the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.9: the v0.8 surface plus the collision-free object-path derivation introduced by CS-0167 (§{cat.cc.object-path}) — the first *breaking* revision of the surface, since it changes the path every object is emitted to. The v0.8 surface (cook_cc 0.10.x) is the v0.7 surface plus the additive `SharedOpts.output` field introduced by CS-0084 (§{cat.cc.shared}); it also absorbed the top-level `cc.compile_commands` relocation of CS-0151 (§{cat.cc.compile-commands}, cook_cc 0.14) without a surface-version bump. The v0.7 surface (cook_cc 0.8.x–0.9.x) is the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
 ## 28.2. Identity, resolution, init hook [#cat.cc.identity]
 
@@ -108,9 +108,32 @@ The PRIVATE/PUBLIC distinction introduced by CS-0080 (§{cat.cc.transitive.priv-
 cc.compile(source: string, opts: CompileOpts) -> string
 ```
 
-Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call with `output = "build/obj/<target_name>/<stem>.o"` (where `<stem>` is the source's filename without extension and `<target_name>` is `opts.target_name` or `"default"`). The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds.
+Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call whose `output` is the object path derived for `(target_name, source)` per §{cat.cc.object-path}, where `<target_name>` is `opts.target_name` or `"default"`. When `opts.output` is supplied the implementation MUST use that value verbatim as the unit's `output` instead.
+
+The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds. The depfile path MUST be derived from the unit's **`output`** and MUST NOT be derived from the source's basename, so that the depfile is distinct whenever the object is distinct. The Standard does not otherwise constrain the depfile's location; the reference implementation mirrors the object path under `.cook/deps/`.
 
 Returns the output path.
+
+#### 28.3.5.1. Object path derivation [#cat.cc.object-path]
+
+For a target named `<target_name>` and a source `<source>`, the derived object path is:
+
+```
+build/obj/<target_name>/<source-path-relative-to-the-project-root>.o
+```
+
+The source's path relative to the workspace root (§{exec.ws.determination}) is retained **in full**, including its directory components and its file extension; the `.o` suffix is *appended* to that path rather than replacing the extension. For example, a target `duckdb_lib` compiling `src/common/bignum.cpp` yields `build/obj/duckdb_lib/src/common/bignum.cpp.o`.
+
+The derivation MUST be **injective**: for a fixed `<target_name>`, two distinct sources MUST NOT derive the same object path. Injectivity here is a property of construction — the relative source path is carried through unaltered — and not of sanitisation. Implementations MUST NOT substitute a character-folding transform (e.g. replacing path separators or non-alphanumerics with `_`), because such transforms are not injective: `a/b.o` and `a.b.o` collide under separator folding, as do `dictionary_compression.cpp` and `dictionary/compression.cpp`.
+
+Retaining the extension is likewise load-bearing: a target may legally compile both `foo.c` and `foo.cpp` from one directory, and these are distinct translation units dispatched to different drivers (§{cat.cc.synopsis}).
+
+Two cases require an explicit rule:
+
+- **Sources outside the project root** (absolute paths, or paths reached through `..`). The implementation MUST map these to a path that remains inside `build/obj/<target_name>/` and that remains injective over the source set. The reference implementation places them under a reserved `build/obj/<target_name>/_external/` prefix keyed by a hash of the absolute source path. An implementation MUST NOT emit an object path that escapes `build/obj/<target_name>/`.
+- **Generated sources** already under `build/`. These are ordinary project-relative sources and take the general rule; no special case applies.
+
+> **Note (informative).** This derivation supersedes the basename-derived `build/obj/<target_name>/<stem>.o` of surface v0.8 and earlier, which was *specified* to collide: any tree with repeated source filenames aliased distinct translation units onto one object path. The aliasing was silent, because the engine accepted the resulting ambiguous graph without diagnostic — a separate defect, addressed independently. Because object paths change, the first build after an implementation adopts this derivation is a full rebuild; stale objects under the old layout are swept by §{exec.cache.reconcile} stale-output reconciliation wherever the owning recipe is reached.
 
 ### 28.3.6. cc.archive [#cat.cc.archive]
 
@@ -253,6 +276,8 @@ cc.compile_commands()
 `cc.compile_commands()` is a **top-level register-phase call**, invoked at column 0 like `cc.uses`, `cc.toolchain`, and `cc.config_header`. It MUST queue — via `cook.on_register_complete` (§{lua.cook-on-register-complete}) — a run-once finalizer that renders `compile_commands.json` in the current working directory from the complete known-target set, after every recipe body of the registration pass has been evaluated. The call itself mints no recipe.
 
 The rendered database MUST include one entry per source per registered target, for **every** registered target regardless of link closure or dispatch reachability, and MUST NOT require any ordering dependency of the author. The output MUST be valid JSON parseable by clangd and equivalent tools.
+
+Each entry's compile command MUST name the object path that the build actually produces for that `(target, source)` pair — that is, the path derived by §{cat.cc.object-path}. A conforming implementation MUST NOT re-derive this path independently of its `cc.compile` implementation: the two MUST be computed by a single shared derivation, so that they cannot drift. An implementation that renders a compile database naming object paths the build never produces is non-conforming, even if every other field is correct.
 
 Repeat top-level `cc.compile_commands()` calls MUST be idempotent: at most one finalizer is queued per registration pass, producing one write of `compile_commands.json` per pass.
 
