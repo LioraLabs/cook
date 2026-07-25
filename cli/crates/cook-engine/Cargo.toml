@@ -27,3 +27,5 @@ hex = "0.4"
 
 [dev-dependencies]
 cook-contracts = { path = "../cook-contracts" }
+# COOK-233 e2e: backdate CAS blob mtimes to prove touch-on-read fires.
+filetime = "0.2"
