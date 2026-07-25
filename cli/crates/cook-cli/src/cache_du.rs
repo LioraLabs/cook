@@ -244,7 +244,11 @@ fn percent_used(total: u64, budget: u64) -> u64 {
 /// Decimal-SI (1000-based) human size formatter: B, kB, MB, GB, TB. One
 /// shared formatter for every size in the report, so the figures in `Total:`,
 /// `By kind:`, `By namespace:`, and `Budget:` are all on the same scale.
-fn human_size(bytes: u64) -> String {
+///
+/// `pub(crate)`: `cook cache gc` reuses this exact formatter so the bytes it
+/// reports sit on precisely the same scale as `du`'s — one shared vocabulary
+/// for CAS sizes across both commands, no second formatter.
+pub(crate) fn human_size(bytes: u64) -> String {
     const KB: f64 = 1_000.0;
     const MB: f64 = 1_000_000.0;
     const GB: f64 = 1_000_000_000.0;

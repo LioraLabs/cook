@@ -200,6 +200,7 @@ impl Cmd {
                 CacheCmd::Verify(v) => v.recipe.as_deref(),
                 CacheCmd::Dump(d) => d.recipe.as_deref(),
                 CacheCmd::Du => None,
+                CacheCmd::Gc(_) => None,
             },
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
@@ -321,6 +322,26 @@ pub enum CacheCmd {
     /// `[cloud] enabled = true` the cloud cache is server-managed and this
     /// prints a note instead of walking anything local.
     Du,
+    /// Evict least-recently-used or stale artifacts from the local store.
+    ///
+    /// Manual sweep: requires `--max-size` and/or `--older-than`. Neither
+    /// given is a usage error. When `[cloud] enabled = true` the cloud
+    /// cache is server-managed and this prints a note instead of touching
+    /// anything local.
+    Gc(CacheGcArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheGcArgs {
+    /// Evict least-recently-used artifacts until the store fits (e.g. 10GB, 500MB).
+    #[arg(long = "max-size")]
+    pub max_size: Option<String>,
+    /// Evict artifacts untouched for longer than this (e.g. 30d, 720h).
+    #[arg(long = "older-than")]
+    pub older_than: Option<String>,
+    /// Report what would be freed without deleting anything.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

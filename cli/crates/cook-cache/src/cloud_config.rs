@@ -104,6 +104,16 @@ pub enum CloudConfigError {
     BadMaxSize(String),
 }
 
+/// COOK-234. The `parse_size` accepted-forms vocabulary, shared verbatim
+/// between `CloudConfigError::BadMaxSize`'s message (a bad `[cache] max_size`
+/// in `.cook/cloud.toml`) and `cook cache gc --max-size`'s flag diagnostic
+/// (`cook-cli`'s `cache_gc.rs`). The two call sites name different things —
+/// a config field vs. a CLI flag — so they can't share one `Display`
+/// message outright, but the list of accepted units is exactly one fact and
+/// must not fork into two strings that can drift when a unit is added.
+pub const SIZE_LITERAL_HELP: &str =
+    "a decimal number with an optional unit suffix (B, KB, MB, GB, TB, KiB, MiB, GiB, TiB)";
+
 impl std::fmt::Display for CloudConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -128,8 +138,7 @@ impl std::fmt::Display for CloudConfigError {
             Self::BadMaxSize(lit) => write!(
                 f,
                 "[cache] max_size = {lit:?} is not a valid size — \
-                 expected a decimal number with an optional unit suffix \
-                 (B, KB, MB, GB, TB, KiB, MiB, GiB, TiB), e.g. \"20GB\" or \"512 MiB\""
+                 expected {SIZE_LITERAL_HELP}, e.g. \"20GB\" or \"512 MiB\""
             ),
         }
     }
@@ -153,7 +162,11 @@ impl std::error::Error for CloudConfigError {}
 /// A value that doesn't fit in `u64` also returns `None` rather than
 /// silently saturating to `u64::MAX` — a typo like `"999999999TB"` must
 /// not read as "effectively no budget".
-fn parse_size(literal: &str) -> Option<u64> {
+///
+/// `pub`: `cook cache gc --max-size` is this parser's second consumer, so a
+/// byte budget typed on the gc CLI accepts exactly the same literal forms as
+/// `[cache] max_size` in `.cook/cloud.toml`.
+pub fn parse_size(literal: &str) -> Option<u64> {
     let s = literal.trim();
     if s.starts_with('-') || s.starts_with('+') {
         return None;

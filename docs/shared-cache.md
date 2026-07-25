@@ -143,10 +143,15 @@ build to be correct.
 **Cap the artifacts you don't want to ship.** `[cloud] max_artifact_mib` bounds
 what gets stored, and is honored by the directory backend.
 
-**Nothing garbage-collects the store.** There is no retention policy, no eviction,
-and no `cook cache prune`. The directory grows forever. It's ordinary files, so a
-`find -atime` cron job is a perfectly reasonable stopgap — but budget the disk,
-and don't be surprised by it.
+**Eviction is manual.** Nothing sweeps the store automatically today; it still
+grows until someone runs one, so budget the disk. `cook cache du` shows what's
+in there, and `cook cache gc` evicts: down to a size with `--max-size`, or by
+staleness with `--older-than`, with `--dry-run` to preview first. Don't reach
+for a `find -atime` cron job instead: a naive age sweep over the raw files
+doesn't know that a `discovered_input_sets` manifest gates other artifacts by
+key, and would strand them, where `gc` won't. Either way, a wrong eviction is
+cheap: the key is content-addressed, so it costs one rebuild, which republishes
+identical bytes.
 
 **Permissions are the mount's problem.** Entries are ordinary files created by
 whoever ran the build; if your team needs group-writability, set that up on the

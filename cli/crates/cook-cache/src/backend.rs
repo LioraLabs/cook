@@ -15,6 +15,10 @@ pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
     CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
 };
+pub use cook_fingerprint::evict::{
+    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
+    SIZE_SWEEP_EXEMPT_KINDS,
+};
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
 /// hasher, and on EOF compares the finalized hash to `expected`. On
@@ -473,6 +477,11 @@ impl CacheBackend for LocalBackend {
         let path = self.path_for(key);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("meta.json"));
+        // `path_for` yields a path with no extension, so `with_extension`
+        // here appends rather than replaces — the same construction
+        // `put_manifest` uses to write this sidecar in the first place.
+        // Best-effort: a sidecar that was never written is not an error.
+        let _ = std::fs::remove_file(path.with_extension("provenance.json"));
         Ok(())
     }
 
@@ -678,6 +687,72 @@ impl LocalBackend {
 
         Ok(out)
     }
+
+    /// Execute `plan`: remove the blob and both sidecars for every victim.
+    ///
+    /// Deliberately an **inherent** method, not a `CacheBackend` trait method
+    /// (milestone D2), for the same reason as `enumerate`: a client of a
+    /// shared, multi-tenant store must never be able to issue deletes.
+    /// `plan_eviction` is pure policy shared with the future cloud-side
+    /// sweep; only the local, single-tenant filesystem backend is trusted to
+    /// actually apply it.
+    ///
+    /// Per victim: remove the blob with a single `remove_file` call and
+    /// count `size` toward the returned `EvictOutcome` only if THIS call
+    /// was the one that actually removed it (`Ok`). Stat-then-delete would
+    /// open a TOCTOU window: a concurrent sweep could remove the blob
+    /// between the stat and the delete, and this run would still count
+    /// `size`, double-counting the freed bytes across both sweeps — exactly
+    /// what this method must not do. Deriving "removed" from the delete's
+    /// own result closes that window, and also stops counting a blob whose
+    /// removal failed for some other reason (e.g. a permission error): the
+    /// bytes are still on disk, so they must not be reported as freed.
+    ///
+    /// The sidecars are removed unconditionally (best-effort), whether or
+    /// not the blob was present, so a half-removed object still gets
+    /// cleaned up.
+    ///
+    /// Never returns `Err` for a per-object filesystem failure; every
+    /// removal is best-effort, matching `delete`'s shape. The `BackendResult`
+    /// return type is kept for symmetry with `enumerate` and so a future
+    /// cloud-shaped caller (which *can* fail wholesale, e.g. on an auth or
+    /// connectivity error) has a slot to put it in.
+    ///
+    /// `.tmp` files are never victims — `enumerate` cannot produce them
+    /// (see `is_lowercase_hex`), so `plan.victims` never names one and no
+    /// extra guard is needed here.
+    pub fn apply_eviction(&self, plan: &EvictPlan) -> BackendResult<EvictOutcome> {
+        let mut outcome = EvictOutcome::default();
+
+        for victim in &plan.victims {
+            let path = self.path_for(&victim.key);
+            let blob_removed = std::fs::remove_file(&path).is_ok();
+
+            let _ = std::fs::remove_file(path.with_extension("meta.json"));
+            let _ = std::fs::remove_file(path.with_extension("provenance.json"));
+
+            if blob_removed {
+                outcome.objects += 1;
+                outcome.bytes = outcome.bytes.saturating_add(victim.size);
+            }
+        }
+
+        Ok(outcome)
+    }
+}
+
+/// What a sweep actually removed, as opposed to what the plan projected.
+/// `plan.freed_bytes` / `plan.victims.len()` are the projection at plan time;
+/// this is ground truth as of `apply_eviction`'s actual filesystem walk —
+/// the two can differ when a victim vanished between planning and applying
+/// (see `apply_eviction`'s doc comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EvictOutcome {
+    /// Count of victims whose blob this call's own `remove_file` actually
+    /// removed (i.e. it was still present and the removal succeeded).
+    pub objects: usize,
+    /// Sum of `size` over those same victims.
+    pub bytes: u64,
 }
 
 #[cfg(test)]

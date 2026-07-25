@@ -13,6 +13,7 @@ pub mod backend;
 pub mod check;
 pub mod context;
 pub mod envkey;
+pub mod evict;
 pub mod probe;
 pub mod record;
 pub mod statmemo;
@@ -33,6 +34,10 @@ pub use check::{
     RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
+pub use evict::{
+    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
+    SIZE_SWEEP_EXEMPT_KINDS,
+};
 pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
