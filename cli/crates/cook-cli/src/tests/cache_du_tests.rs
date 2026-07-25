@@ -199,6 +199,44 @@ fn budget_line_carries_over_budget_suffix_and_overage() {
     assert!(rendered.contains("500.0 MB"), "expected the overage amount:\n{rendered}");
 }
 
+#[test]
+fn budget_line_under_budget_has_no_suffix() {
+    let report = summarize(vec![candidate(None, "ns", 1_200_000, 1)]);
+    let rendered = render(&report, Path::new("/tmp/store"), Some(20_000_000_000));
+    assert!(
+        rendered.contains("Budget: 1.2 MB of 20.0 GB (0% used)\n"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("AT BUDGET"));
+    assert!(!rendered.contains("OVER BUDGET"));
+}
+
+#[test]
+fn budget_line_at_exact_equality_reads_at_budget_not_over_by_zero() {
+    let report = summarize(vec![candidate(None, "ns", 20_000_000_000, 1)]);
+    let rendered = render(&report, Path::new("/tmp/store"), Some(20_000_000_000));
+    assert!(
+        rendered.contains("Budget: 20.0 GB of 20.0 GB (100% used) — AT BUDGET\n"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("OVER BUDGET"),
+        "exact equality must not read as over budget:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("by 0 B"),
+        "must not print a zero-sized overage:\n{rendered}"
+    );
+}
+
+#[test]
+fn budget_line_over_budget_still_reads_over_not_at() {
+    let report = summarize(vec![candidate(None, "ns", 1_500_000_000, 1)]);
+    let rendered = render(&report, Path::new("/tmp/store"), Some(1_000_000_000));
+    assert!(rendered.contains("OVER BUDGET by 500.0 MB"), "{rendered}");
+    assert!(!rendered.contains("AT BUDGET"));
+}
+
 // ---------------------------------------------------------------------------
 // human_size formatter
 // ---------------------------------------------------------------------------

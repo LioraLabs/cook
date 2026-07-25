@@ -441,7 +441,6 @@ dependencies = [
  "cook-luagen",
  "cook-luaotp",
  "cook-register",
- "dirs",
  "dotenvy",
  "globset",
  "hex",

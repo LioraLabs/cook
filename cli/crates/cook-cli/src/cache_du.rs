@@ -44,6 +44,19 @@ pub fn cmd_cache_du(globals: &Globals) -> Result<(), CookError> {
         .max_size_bytes()
         .map_err(|e| CookError::Other(format!("invalid .cook/cloud.toml: {e}")))?;
 
+    // COOK-232 cleanup: `du` is read-only — it must never create the store
+    // as a side effect of merely inspecting it. `LocalBackend::with_config`
+    // (which `LocalBackend::new` calls) unconditionally `create_dir_all`s
+    // the root, so a missing store is handled here, BEFORE constructing a
+    // backend at all: render the same zero-total report `enumerate`'s
+    // missing-root branch would have produced, without ever mkdir-ing
+    // anything.
+    if !store.exists() {
+        let report = summarize(Vec::new());
+        print!("{}", render(&report, &store, budget));
+        return Ok(());
+    }
+
     let backend = LocalBackend::new(store.clone());
     let candidates = backend.enumerate().map_err(|e| {
         CookError::Other(format!(
@@ -199,8 +212,12 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
     out
 }
 
-/// `Budget: <used> of <budget> (<pct>% used)`, with an ` — OVER BUDGET by
-/// <overage>` suffix when `total` exceeds `budget`.
+/// `Budget: <used> of <budget> (<pct>% used)`, with a suffix once `total`
+/// reaches `budget`: exact equality reads ` — AT BUDGET` (COOK-235's
+/// warn-and-sweep threshold is "at or over", so `du` must agree at the
+/// boundary); strictly over reads ` — OVER BUDGET by <overage>`. Printing
+/// `OVER BUDGET by 0 B` at exact equality would read as a bug, so that case
+/// is called out separately instead of falling through the `>` arm.
 fn budget_line(total: u64, budget: u64) -> String {
     let pct = percent_used(total, budget);
     let mut line = format!(
@@ -210,6 +227,8 @@ fn budget_line(total: u64, budget: u64) -> String {
     );
     if total > budget {
         line.push_str(&format!(" — OVER BUDGET by {}", human_size(total - budget)));
+    } else if total == budget {
+        line.push_str(" — AT BUDGET");
     }
     line.push('\n');
     line

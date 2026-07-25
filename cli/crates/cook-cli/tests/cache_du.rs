@@ -383,6 +383,13 @@ fn empty_store_reports_zero_total_without_error() {
         "expected the zero-total line:\n{text}"
     );
     assert!(text.trim().split('\n').next().unwrap().starts_with("Store: "));
+    // COOK-232 cleanup: `du` is read-only and must never mkdir the store as
+    // a side effect of merely inspecting it — a fresh machine asking "how
+    // big is my cache?" must not itself create `~/.cache/cook/cloud`.
+    assert!(
+        !cache_dir.exists(),
+        "cook cache du must not create the store directory as a side effect"
+    );
 }
 
 // ---------------------------------------------------------------------------
