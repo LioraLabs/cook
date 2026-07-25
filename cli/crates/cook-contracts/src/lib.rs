@@ -171,6 +171,35 @@ pub enum WorkPayload {
         /// the unit's probe-dependency set, so every sealed value is
         /// materialised by the time the ready-time fingerprint is computed.
         seal_keys: std::collections::BTreeSet<String>,
+        /// Glob allowlist narrowing which *predecessor outputs* fold into
+        /// the ready-time fingerprint (§17.4 step 1). Empty — the default —
+        /// folds every immediate-predecessor output, the historical
+        /// behaviour.
+        ///
+        /// Exists because that fold is otherwise unnarrowable from the
+        /// register surface, and over-folding is not merely slow: a
+        /// dependency's `dist/` routinely carries artifacts no consumer
+        /// reads, and one of them changing re-keys the check. Sourcemaps
+        /// are the flagship case — tsup/esbuild inline `sourcesContent`,
+        /// so a comment-only edit upstream rewrites `index.mjs.map` while
+        /// `index.mjs` stays byte-identical, and every downstream check
+        /// loses its cached pass for a file it never opened. Cook units
+        /// have always had the equivalent control (they declare their own
+        /// inputs, and `discovered_inputs` records what was actually
+        /// read); this is the test unit's counterpart.
+        ///
+        /// Matching follows gitignore convention: a pattern containing no
+        /// `/` matches a path's BASENAME at any depth (`*.d.ts`), one
+        /// containing `/` matches the project-root-relative path
+        /// (`packages/core/dist/**/*.mjs`).
+        ///
+        /// Narrowing a fingerprint is always a correctness risk in the
+        /// under-keying direction, so this never silently folds nothing:
+        /// when predecessor outputs exist and no pattern matches any of
+        /// them, the engine keeps the unnarrowed set (§17.4 — a
+        /// declaration that cannot be honoured must not quietly weaken a
+        /// key).
+        consumes: Vec<String>,
     },
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
     /// VM and stashes the canonical-JSON-serialised return value under `key`.

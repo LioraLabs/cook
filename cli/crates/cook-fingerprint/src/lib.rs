@@ -11,6 +11,7 @@
 
 pub mod backend;
 pub mod check;
+pub mod consumes;
 pub mod context;
 pub mod envkey;
 pub mod probe;
@@ -32,6 +33,7 @@ pub use check::{
     fetch_by_key, hash_env, hash_file, hash_input_paths, hash_reader,     needs_rebuild_cook, needs_rebuild_plate, read_discovered_input_sets, stat_mtime, FetchOutcome,
     RebuildReason, RebuildResult, RestoreCtx,
 };
+pub use consumes::ConsumesFilter;
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
 pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
 pub use envkey::{env_contribution, EnvDenylist};

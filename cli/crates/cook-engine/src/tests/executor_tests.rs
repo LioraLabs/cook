@@ -885,6 +885,7 @@ fn cook_failure_produces_blocked_test_result() {
         work_node(
             WorkPayload::Test {
                 seal_keys: Default::default(),
+                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 1,
                 timeout: 30,
@@ -943,6 +944,7 @@ fn test_line_number_propagates_from_payload_to_events() {
         work_node(
             WorkPayload::Test {
                 seal_keys: Default::default(),
+                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,
@@ -1003,6 +1005,7 @@ fn test_iteration_item_propagates() {
         work_node(
             WorkPayload::Test {
                 seal_keys: Default::default(),
+                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,

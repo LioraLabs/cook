@@ -97,6 +97,7 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
 fn work_payload_test_construction() {
     let p = WorkPayload::Test {
         seal_keys: Default::default(),
+        consumes: Vec::new(),
         cmd: "./run_tests".into(),
         line: 10,
         timeout: 30,
