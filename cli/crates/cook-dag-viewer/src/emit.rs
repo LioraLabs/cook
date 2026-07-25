@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::dag_data::{EdgeKind, WaveDagData};
+use crate::dag_data::{DagData, EdgeKind};
 
 /// How much of the graph to collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,34 +115,32 @@ fn collapse_id(
 }
 
 /// Collapse the unit-level graph to `level`.
-pub fn aggregate(dag: &WaveDagData, level: Level, max_nodes: usize) -> Result<Graph, EmitError> {
+pub fn aggregate(dag: &DagData, level: Level, max_nodes: usize) -> Result<Graph, EmitError> {
     // unit-node id -> collapsed id
     let mut mapping: BTreeMap<&str, String> = BTreeMap::new();
     // collapsed id -> (label, unit count, cached tally)
     let mut acc: BTreeMap<String, (String, usize, Vec<Option<bool>>)> = BTreeMap::new();
     let mut total_units = 0usize;
 
-    for wave in &dag.waves {
-        for node in &wave.nodes {
-            if node.kind == "unit" {
-                total_units += 1;
-            }
-            let Some(cid) = collapse_id(level, node) else {
-                continue;
-            };
-            mapping.insert(node.id.as_str(), cid.clone());
-            let label = match level {
-                Level::Recipe => node.recipe.clone().unwrap_or_else(|| node.label.clone()),
-                Level::Group => match node.group_index {
-                    Some(gi) => format!("{}#{}", node.recipe.clone().unwrap_or_default(), gi),
-                    None => node.label.clone(),
-                },
-                Level::Unit => node.label.clone(),
-            };
-            let entry = acc.entry(cid).or_insert_with(|| (label, 0, Vec::new()));
-            entry.1 += 1;
-            entry.2.push(node.cached);
+    for node in &dag.nodes {
+        if node.kind == "unit" {
+            total_units += 1;
         }
+        let Some(cid) = collapse_id(level, node) else {
+            continue;
+        };
+        mapping.insert(node.id.as_str(), cid.clone());
+        let label = match level {
+            Level::Recipe => node.recipe.clone().unwrap_or_else(|| node.label.clone()),
+            Level::Group => match node.group_index {
+                Some(gi) => format!("{}#{}", node.recipe.clone().unwrap_or_default(), gi),
+                None => node.label.clone(),
+            },
+            Level::Unit => node.label.clone(),
+        };
+        let entry = acc.entry(cid).or_insert_with(|| (label, 0, Vec::new()));
+        entry.1 += 1;
+        entry.2.push(node.cached);
     }
 
     if level == Level::Unit && acc.len() > max_nodes {
@@ -173,12 +171,7 @@ pub fn aggregate(dag: &WaveDagData, level: Level, max_nodes: usize) -> Result<Gr
     // (most constraining) of the bundle — a barrier must not disappear behind
     // the data edges it travels with.
     let mut merged: BTreeMap<(String, String), (EdgeKind, usize)> = BTreeMap::new();
-    let all_edges = dag
-        .waves
-        .iter()
-        .flat_map(|w| w.edges.iter())
-        .chain(dag.inter_wave_edges.iter());
-    for e in all_edges {
+    for e in &dag.edges {
         let (Some(from), Some(to)) = (mapping.get(e.from.as_str()), mapping.get(e.to.as_str()))
         else {
             continue;

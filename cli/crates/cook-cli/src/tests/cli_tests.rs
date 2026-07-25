@@ -119,12 +119,25 @@ fn test_subcommand_with_scope() {
 }
 
 #[test]
-fn dag_subcommand_with_theme() {
-    let cli = parse(&["dag", "host", "--theme", "mono"]);
+fn dag_subcommand_with_level_and_format() {
+    let cli = parse(&["dag", "host", "--level", "group", "--format", "mermaid"]);
     match cli.cmd {
         Some(Cmd::Dag(args)) => {
             assert_eq!(args.recipe.as_deref(), Some("host"));
-            assert_eq!(args.theme, "mono");
+            assert_eq!(args.level, "group");
+            assert_eq!(args.format, "mermaid");
+        }
+        other => panic!("expected Cmd::Dag, got {other:?}"),
+    }
+}
+
+#[test]
+fn dag_defaults_to_recipe_level_and_text() {
+    let cli = parse(&["dag"]);
+    match cli.cmd {
+        Some(Cmd::Dag(args)) => {
+            assert_eq!(args.level, "recipe");
+            assert_eq!(args.format, "text");
         }
         other => panic!("expected Cmd::Dag, got {other:?}"),
     }

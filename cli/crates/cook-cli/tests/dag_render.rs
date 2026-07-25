@@ -54,16 +54,17 @@ fn barrier_workspace(root: &Path) {
     );
 }
 
+/// `cook dag` used to be behind a cargo feature and, in a released binary,
+/// only printed "rebuild with --features viewer". It must render.
 #[test]
-fn dag_runs_without_the_viewer_feature() {
+fn dag_renders_in_a_default_build() {
     let tmp = TempDir::new().unwrap();
     barrier_workspace(tmp.path());
     let out = cook(tmp.path(), &["dag", "build"]);
     assert_ok(&out);
-    assert!(
-        !stdout(&out).contains("--features viewer"),
-        "the default binary must render a graph, not ask to be rebuilt"
-    );
+    let s = stdout(&out);
+    assert!(!s.contains("--features"), "must not ask to be rebuilt: {s}");
+    assert!(s.contains("recipe level"), "{s}");
 }
 
 #[test]
@@ -77,7 +78,7 @@ fn recipe_level_is_the_default_and_reports_a_real_barrier() {
     assert!(s.contains("waits on gen"), "{s}");
     // Nothing fine-covers this dep-list edge, so a barrier is the truth.
     assert!(s.contains("barrier"), "{s}");
-    assert!(s.contains("(waits on nothing)"), "{s}");
+    assert!(s.contains("free to start immediately"), "{s}");
 }
 
 #[test]

@@ -1675,12 +1675,11 @@ mod serve_glob_tests;
 // cmd_dag — feature-gated
 // ---------------------------------------------------------------------------
 //
-// The DAG viewer (`cook dag`) lives in the `cook-dag-viewer` crate and is
-// pulled in only when the `viewer` cargo feature is enabled (see
-// `Cargo.toml`). When the feature is off, `cmd_dag` short-circuits with a
-// helpful error so users learn which build flag they need. The reference-
-// implementation policy is documented in the Cook Standard at
-// `standard/src/content/docs/appendix/D-changes.mdx#changes-cs-0047`.
+// `cook dag` builds the graph in the `cook-dag-viewer` crate and prints it.
+// There is no longer a terminal browser or a cargo feature behind it: the
+// ratatui viewer navigated by wave, and waves stopped existing at SHI-222
+// Phase 4. CS-0047 already made a graphical viewer implementation-optional,
+// so dropping it needs no Standard change.
 
 pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
     use std::sync::Arc;
@@ -1765,23 +1764,12 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
         })
         .collect();
 
-    // inferred_deps is empty in the unified-DAG model — cross-recipe edges
-    // live directly on `RecipeUnits.dep_edges` inside `all_units`, not on a
-    // separate analyzer-level map. The viewer's wave_grouper still accepts
-    // the map (legacy compatibility), so we pass an empty one.
-    let inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
     let dag_inputs = cook_dag_viewer::DagInputs {
         target: recipe_name,
         all_units: &all_units,
         explicit_edges: &edges,
-        inferred_deps: &inferred_deps,
         cache_managers: &cache_managers,
     };
-
-    if args.tui {
-        return run_dag_tui(&dag_inputs, &args.theme);
-    }
 
     let level = match args.level.as_str() {
         "recipe" => cook_dag_viewer::emit::Level::Recipe,
@@ -1810,31 +1798,6 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
         .map_err(|e| CookError::Other(e.to_string()))?;
     print!("{}", cook_dag_viewer::emit::render(&graph, format));
     Ok(())
-}
-
-/// The ratatui browser is still optional: it is the one part of `cook dag`
-/// that costs a terminal-UI dependency, and printing a graph does not need it.
-#[cfg(feature = "viewer")]
-fn run_dag_tui(
-    inputs: &cook_dag_viewer::DagInputs<'_>,
-    theme: &str,
-) -> Result<(), CookError> {
-    cook_dag_viewer::run_tui(inputs, cook_dag_viewer::theme::Theme::from_str(theme))
-        .map_err(|e| CookError::Other(e.to_string()))
-}
-
-#[cfg(not(feature = "viewer"))]
-fn run_dag_tui(
-    _inputs: &cook_dag_viewer::DagInputs<'_>,
-    _theme: &str,
-) -> Result<(), CookError> {
-    Err(CookError::Other(
-        "`--tui` is the optional ratatui browser, left out of the default \
-         binary to keep it slim; rebuild with `cargo build --features viewer` \
-         to enable it. Every other `cook dag` mode (--format text/mermaid/dot/json) \
-         works in this build."
-            .to_string(),
-    ))
 }
 
 /// Split off the namespace prefix from a qualified recipe name.

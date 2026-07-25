@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{DagData, EdgeData, NodeData};
 
 fn unit(id: &str, recipe: &str, group: Option<usize>, cached: Option<bool>) -> NodeData {
     NodeData {
@@ -43,27 +43,24 @@ fn edge(from: &str, to: &str, kind: EdgeKind) -> EdgeData {
 
 /// Two recipes: `lib` has two grouped compiles, `bin` links them. A barrier
 /// edge and a data edge both run lib -> bin.
-fn fixture() -> WaveDagData {
-    WaveDagData {
-        schema_version: 2,
+fn fixture() -> DagData {
+    DagData {
+        schema_version: crate::DAG_SCHEMA_VERSION,
         target: "bin".to_string(),
-        waves: vec![WaveData {
-            recipes: vec!["lib".to_string(), "bin".to_string()],
-            nodes: vec![
-                unit("unit:lib:0", "lib", Some(0), Some(true)),
-                unit("unit:lib:1", "lib", Some(0), Some(true)),
-                unit("unit:bin:0", "bin", None, Some(false)),
-                file("file:main.c"),
-            ],
-            edges: vec![
-                edge("file:main.c", "unit:lib:0", EdgeKind::Data),
-                edge("unit:lib:0", "unit:lib:1", EdgeKind::Group),
-                // Two edges crossing lib -> bin, one weak and one strong.
-                edge("unit:lib:0", "unit:bin:0", EdgeKind::Data),
-                edge("unit:lib:1", "unit:bin:0", EdgeKind::Barrier),
-            ],
-        }],
-        inter_wave_edges: vec![],
+        recipes: vec!["lib".to_string(), "bin".to_string()],
+        nodes: vec![
+            unit("unit:lib:0", "lib", Some(0), Some(true)),
+            unit("unit:lib:1", "lib", Some(0), Some(true)),
+            unit("unit:bin:0", "bin", None, Some(false)),
+            file("file:main.c"),
+        ],
+        edges: vec![
+            edge("file:main.c", "unit:lib:0", EdgeKind::Data),
+            edge("unit:lib:0", "unit:lib:1", EdgeKind::Group),
+            // Two edges crossing lib -> bin, one weak and one strong.
+            edge("unit:lib:0", "unit:bin:0", EdgeKind::Data),
+            edge("unit:lib:1", "unit:bin:0", EdgeKind::Barrier),
+        ],
     }
 }
 
@@ -130,9 +127,8 @@ fn cached_is_all_or_nothing_else_unknown() {
 #[test]
 fn unit_level_refuses_past_the_cap_instead_of_emitting_a_blob() {
     let mut dag = fixture();
-    let nodes = &mut dag.waves[0].nodes;
     for i in 0..50 {
-        nodes.push(unit(&format!("unit:big:{i}"), "big", None, None));
+        dag.nodes.push(unit(&format!("unit:big:{i}"), "big", None, None));
     }
     let err = aggregate(&dag, Level::Unit, 10).unwrap_err();
     assert!(matches!(err, EmitError::TooManyNodes { .. }));
@@ -157,7 +153,9 @@ fn text_render_reads_as_waits_on() {
     let out = render(&g, Format::Text);
     assert!(out.contains("waits on"), "{out}");
     assert!(out.contains("barrier"), "{out}");
-    assert!(out.contains("(waits on nothing)"), "{out}");
+    // At recipe level file inputs are collapsed away, so the phrasing has to
+    // say "nothing orders this", not "this has no inputs".
+    assert!(out.contains("free to start immediately"), "{out}");
 }
 
 #[test]

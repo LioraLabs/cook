@@ -1,4 +1,10 @@
-//! DAG data model for JSON serialization to the frontend viewer.
+//! The build graph: a flat set of nodes and edges.
+//!
+//! There are no waves. The engine stopped scheduling in waves at SHI-222
+//! Phase 4 — it walks one unified work-unit DAG — and the wave grouping that
+//! lingered here was a display construct with no counterpart in execution.
+//! Keeping it was actively harmful: it manufactured whole-recipe edges the
+//! engine does not impose, which then masked the real per-unit ordering.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -8,29 +14,22 @@ use std::sync::Arc;
 use cook_cache::ThreadSafeCacheManager;
 use cook_fingerprint::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult};
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
-use crate::wave_grouper;
 use std::collections::BTreeSet;
 
-use crate::VIEWER_SCHEMA_VERSION;
+use crate::DAG_SCHEMA_VERSION;
 
 // ---------------------------------------------------------------------------
-// Wave-grouped DAG data model
+// Graph data model
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Clone)]
-pub struct WaveDagData {
-    /// Wire-format schema version (CS-0048). Currently write-only: the JS
-    /// viewer that gated on this was removed by CS-0060, so no consumer
-    /// reads it. Bumped when the payload shape changes so a future external
-    /// consumer can reason about compatibility.
+pub struct DagData {
+    /// Wire-format schema version (CS-0048). Bumped to 3 when the wave
+    /// structure was removed — an incompatible structural change, which
+    /// CS-0048's evolution policy requires a bump for.
     pub schema_version: u32,
     pub target: String,
-    pub waves: Vec<WaveData>,
-    pub inter_wave_edges: Vec<EdgeData>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct WaveData {
+    /// Every recipe reachable from the target, in registration order.
     pub recipes: Vec<String>,
     pub nodes: Vec<NodeData>,
     pub edges: Vec<EdgeData>,
@@ -151,71 +150,61 @@ fn file_label(path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Wave-grouped DAG builder
+// Graph builder
 // ---------------------------------------------------------------------------
 
-/// Build the unified wave-grouped DAG data from registered RecipeUnits.
+/// Build the graph from registered `RecipeUnits`.
 ///
-/// Calls `wave_grouper::compute_waves` to determine execution order, then for
-/// each wave builds a flat node+edge graph that includes file nodes, unit
-/// nodes, and all intra-wave edges.  Inter-wave edges connect the terminal
-/// barrier nodes of wave N to the root barrier nodes of wave N+1 for recipes
-/// that are joined by explicit deps.
-pub fn build_wave_dag_data(
+/// Two passes, which is what removing waves buys: pass one emits every
+/// recipe's nodes and intra-recipe edges and records each recipe's terminal
+/// units; pass two wires the cross-recipe edges against those terminals. No
+/// ordering of recipes is needed, so no grouping is needed to establish one.
+pub fn build_dag_data(
     target: &str,
     all_units: &[(String, RecipeUnits)],
     explicit_deps: &BTreeMap<String, Vec<String>>,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> WaveDagData {
-    // Index by name for fast lookup.
+) -> DagData {
     let units_by_name: BTreeMap<&str, &RecipeUnits> = all_units
         .iter()
         .map(|(name, ru)| (name.as_str(), ru))
         .collect();
-    let all_recipe_names: BTreeSet<String> = all_units.iter().map(|(n, _)| n.clone()).collect();
+    let recipe_names: Vec<String> = all_units.iter().map(|(n, _)| n.clone()).collect();
 
-    let waves = wave_grouper::compute_waves(explicit_deps, inferred_deps, &all_recipe_names)
-        .unwrap_or_else(|_| {
-            // Fall back to a single wave containing all recipes on cycle error.
-            vec![wave_grouper::Wave {
-                recipes: all_recipe_names.iter().cloned().collect(),
-            }]
-        });
+    // Pass 1: nodes + intra-recipe edges, collecting per-recipe terminals and
+    // roots for pass 2.
+    let (mut nodes, mut edges, recipe_terminals, recipe_roots) =
+        build_nodes(&recipe_names, &units_by_name, cache_managers);
 
-    // Per-recipe terminal node IDs, populated while building each wave and
-    // used to wire inter-wave edges.
-    let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Per-recipe root node IDs (first barrier set after processing the first
-    // unit of a recipe).
-    let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    let mut wave_data_list: Vec<WaveData> = Vec::new();
-
-    for wave in &waves {
-        let (wave_data, terminals, roots) = build_wave(
-            &wave.recipes,
-            &units_by_name,
-            cache_managers,
-            &recipe_terminals,
-        );
-        wave_data_list.push(wave_data);
-        recipe_terminals.extend(terminals);
-        // Only record roots for recipes not yet seen (first occurrence).
-        for (recipe, root_ids) in roots {
-            recipe_roots.entry(recipe).or_insert(root_ids);
+    // Pass 2a: per-unit cross-recipe edges (cook.dep_order / cook.dep_output).
+    for recipe_name in &recipe_names {
+        let Some(ru) = units_by_name.get(recipe_name.as_str()) else {
+            continue;
+        };
+        for (unit_idx, dep_recipe) in &ru.dep_edges {
+            let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
+            let Some(terminals) = recipe_terminals.get(dep_recipe) else {
+                continue;
+            };
+            for terminal in terminals {
+                edges.push(EdgeData {
+                    from: terminal.clone(),
+                    to: unit_id.clone(),
+                    kind: EdgeKind::DepOrder,
+                });
+            }
         }
     }
 
-    // Build inter-wave edges: for each explicit dep A -> B where A and B
-    // live in different waves, connect the terminals of A to the roots of B.
+    // Pass 2b: whole-recipe edges, for each explicit dep A -> B, connecting
+    // the terminals of B to the roots of A.
     //
     // Only where the dependency is NOT already fine-covered. A recipe-level
     // `requires` edge that a module has covered with per-unit `cook.dep_order`
     // references (CS-0161) does not execute as a whole-recipe barrier — the
     // consumer's units are free to run in one flat wave with the upstream's,
     // and only the units that named the upstream actually wait. Those fine
-    // edges are already in the graph, emitted from `dep_edges` below.
+    // edges are already in the graph, emitted by pass 2a above.
     //
     // Emitting the coarse edge anyway would be worse than redundant: it
     // outnumbers the fine edges (one per consumer root, so ~1685 to 1 on a
@@ -224,7 +213,6 @@ pub fn build_wave_dag_data(
     // coarse edge is emitted only when nothing fine-covers it, which makes its
     // presence meaningful: a `barrier` in the output is a real whole-recipe
     // barrier, and the absence of one is a dependency that was fine-covered.
-    let mut inter_wave_edges: Vec<EdgeData> = Vec::new();
     for (recipe, deps) in explicit_deps {
         let Some(roots) = recipe_roots.get(recipe) else {
             continue;
@@ -242,7 +230,7 @@ pub fn build_wave_dag_data(
             };
             for terminal in terminals {
                 for root in roots {
-                    inter_wave_edges.push(EdgeData {
+                    edges.push(EdgeData {
                         from: terminal.clone(),
                         to: root.clone(),
                         // An explicit dep-list edge between recipes: every unit
@@ -254,43 +242,47 @@ pub fn build_wave_dag_data(
         }
     }
 
-    WaveDagData {
-        schema_version: VIEWER_SCHEMA_VERSION,
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    DagData {
+        schema_version: DAG_SCHEMA_VERSION,
         target: target.to_string(),
-        waves: wave_data_list,
-        inter_wave_edges,
+        recipes: recipe_names,
+        nodes,
+        edges,
     }
 }
 
-/// Build the `WaveData` for a single wave.
+/// Pass 1: emit every recipe's nodes and intra-recipe edges.
 ///
-/// Returns:
-/// - The `WaveData` (nodes + edges for all recipes in the wave).
-/// - A map of recipe_name → terminal unit node IDs for this wave.
-/// - A map of recipe_name → root unit node IDs for this wave.
-fn build_wave(
+/// Returns the nodes, the intra-recipe edges, and per-recipe terminal and
+/// root unit IDs for pass 2 to wire cross-recipe edges against.
+#[allow(clippy::type_complexity)]
+fn build_nodes(
     recipe_names: &[String],
     units_by_name: &BTreeMap<&str, &RecipeUnits>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-    // Terminals from prior waves, used to wire intra-wave cross-recipe edges.
-    prior_recipe_terminals: &BTreeMap<String, Vec<String>>,
-) -> (WaveData, BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<String>>) {
+) -> (
+    Vec<NodeData>,
+    Vec<EdgeData>,
+    BTreeMap<String, Vec<String>>,
+    BTreeMap<String, Vec<String>>,
+) {
     let mut nodes: Vec<NodeData> = Vec::new();
     let mut edges: Vec<EdgeData> = Vec::new();
 
     // Deduplicated file nodes: path → node id.
     let mut file_node_ids: BTreeMap<String, String> = BTreeMap::new();
 
-    // Wave preflight in a single pass: gather every unit's declared inputs
-    // and outputs across the wave.
+    // Preflight in a single pass: gather every unit's declared inputs and
+    // outputs across the whole graph.
     //
     // - `unit_output_paths` lets the per-unit emission skip making file nodes
     //   for intermediate artifacts (e.g. .o files that are both one unit's
     //   output and another's input — the unit→unit edge already encodes that).
     // - `declared_input_paths` lets the discovered-inputs emission classify a
     //   path as declared regardless of the order units are processed in
-    //   (spec §3.3): a path declared by *any* unit in the wave is rendered
-    //   declared, even if a depfile sees it first.
+    //   (spec §3.3): a path declared by *any* unit is rendered declared, even
+    //   if a depfile sees it first.
     let mut unit_output_paths: BTreeSet<String> = BTreeSet::new();
     let mut declared_input_paths: BTreeSet<String> = BTreeSet::new();
     for recipe_name in recipe_names {
@@ -308,7 +300,7 @@ fn build_wave(
         }
     }
 
-    // Per-recipe terminal unit node IDs (last barrier after processing units).
+    // Per-recipe terminal unit node IDs (final barrier after processing units).
     let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Per-recipe root unit node IDs (first barrier encountered).
     let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -459,7 +451,7 @@ fn build_wave(
                 let unique_paths: BTreeSet<&String> = meta.input_paths.iter().collect();
 
                 for path in unique_paths {
-                    // Skip inputs that are outputs of other units in this wave
+                    // Skip inputs that are outputs of other units in the graph
                     // (e.g. .o files produced by compile steps and consumed by
                     // archive steps). The unit→unit edge already captures this.
                     if unit_output_paths.contains(path.as_str()) {
@@ -570,8 +562,8 @@ fn build_wave(
             // Probes never read or advance the barrier (mirrors dag_builder.rs):
             // they are pure fact-gathering, ordered only via `inputs.requires`.
             if is_probe {
-                // Still record the recipe root if we haven't yet, so the wave
-                // visualisation has a reasonable entry point.
+                // Still record the recipe root if we haven't yet, so the
+                // recipe has a reasonable entry point.
                 if !recipe_root_recorded {
                     recipe_roots
                         .entry(recipe_name.clone())
@@ -645,37 +637,9 @@ fn build_wave(
             recipe_terminals.insert(recipe_name.clone(), barrier);
         }
 
-        // --- Cross-recipe dep edges within this wave ---
-        // For each (unit_idx, dep_recipe_name) in dep_edges, wire unit to the
-        // terminal nodes of dep_recipe within this wave (or prior waves).
-        for (unit_idx, dep_recipe) in &ru.dep_edges {
-            let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
-
-            let dep_terminals = recipe_terminals
-                .get(dep_recipe)
-                .or_else(|| prior_recipe_terminals.get(dep_recipe));
-
-            if let Some(terminals) = dep_terminals {
-                for terminal in terminals {
-                    edges.push(EdgeData {
-                        from: terminal.clone(),
-                        to: unit_id.clone(),
-                        // cook.dep_order / cook.dep_output: attaches to the
-                        // referencing unit only, not the whole recipe.
-                        kind: EdgeKind::DepOrder,
-                    });
-                }
-            }
-        }
     }
 
-    let wave_data = WaveData {
-        recipes: recipe_names.to_vec(),
-        nodes,
-        edges,
-    };
-
-    (wave_data, recipe_terminals, recipe_roots)
+    (nodes, edges, recipe_terminals, recipe_roots)
 }
 
 /// Check whether a file is modified relative to its cached record.

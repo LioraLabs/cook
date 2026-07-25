@@ -134,12 +134,10 @@ fn independent_probes_have_no_edges_between_them() {
     };
     let all_units = vec![("game".into(), ru)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("game", &all_units, &explicit, &inferred, &cms);
-    assert_eq!(g.waves.len(), 1);
-    let edges = &g.waves[0].edges;
+    let g = build_dag_data("game", &all_units, &explicit, &cms);
+    let edges = &g.edges;
     // No edge between the two independent probes.
     let probe_to_probe = edges.iter().any(|e| {
         (e.from == "unit:game:0" && e.to == "unit:game:1")
@@ -170,7 +168,7 @@ fn independent_probes_have_no_edges_between_them() {
 }
 
 #[test]
-fn build_wave_dag_data_emits_discovered_file_nodes() {
+fn build_dag_data_emits_discovered_file_nodes() {
     let tmp = TempDir::new().unwrap();
     let wd = tmp.path().to_path_buf();
 
@@ -186,13 +184,10 @@ fn build_wave_dag_data_emits_discovered_file_nodes() {
     let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
     let all_units = vec![(name.clone(), ru)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
-
-    assert_eq!(g.waves.len(), 1, "single wave expected");
-    let nodes = &g.waves[0].nodes;
+    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let nodes = &g.nodes;
     let by_id = |id: &str| nodes.iter().find(|n| n.id == id);
 
     let bar_cpp = by_id("file:bar.cpp").expect("declared file node missing");
@@ -204,7 +199,7 @@ fn build_wave_dag_data_emits_discovered_file_nodes() {
     let math = by_id("file:math.h").expect("discovered math.h missing");
     assert_eq!(math.discovered, Some(true));
 
-    let edges = &g.waves[0].edges;
+    let edges = &g.edges;
     let has_edge = |from: &str, to: &str| {
         edges.iter().any(|e| e.from == from && e.to == to)
     };
@@ -301,27 +296,25 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
 
     let all_units = vec![("a".into(), ru_a), ("b".into(), ru_b)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms);
 
-    // shared.h appears in the same wave as both units (a and b have no
-    // explicit deps so the wave grouper places them together).
-    let wave = &g.waves[0];
-    let shared = wave
+    // shared.h is declared by one unit and discovered by the other; the
+    // declared classification wins regardless of processing order.
+    let shared = g
         .nodes
         .iter()
         .find(|n| n.id == "file:shared.h")
         .expect("shared.h node missing");
     assert_eq!(
         shared.discovered, None,
-        "path declared by another unit in the wave should not be classified discovered",
+        "a path declared by another unit must not be classified discovered",
     );
 
     // Both units have an edge from shared.h.
     let has_edge = |to: &str| {
-        wave.edges
+        g.edges
             .iter()
             .any(|e| e.from == "file:shared.h" && e.to == to)
     };
@@ -339,16 +332,15 @@ fn missing_depfile_does_not_panic_or_emit_discovered() {
     let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
     let all_units = vec![(name, ru)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms);
 
-    let wave = &g.waves[0];
+    
     // Declared file is present; no discovered nodes.
-    assert!(wave.nodes.iter().any(|n| n.id == "file:bar.cpp"));
+    assert!(g.nodes.iter().any(|n| n.id == "file:bar.cpp"));
     assert!(
-        !wave.nodes.iter().any(|n| n.discovered == Some(true)),
+        !g.nodes.iter().any(|n| n.discovered == Some(true)),
         "no discovered nodes when depfile is missing",
     );
 }
@@ -364,15 +356,14 @@ fn malformed_depfile_does_not_panic_or_emit_discovered() {
     let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
     let all_units = vec![(name, ru)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms);
 
-    let wave = &g.waves[0];
-    assert!(wave.nodes.iter().any(|n| n.id == "file:bar.cpp"));
+    
+    assert!(g.nodes.iter().any(|n| n.id == "file:bar.cpp"));
     assert!(
-        !wave.nodes.iter().any(|n| n.discovered == Some(true)),
+        !g.nodes.iter().any(|n| n.discovered == Some(true)),
         "no discovered nodes when depfile is malformed",
     );
 }
@@ -465,16 +456,15 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
 
     let all_units = vec![("compile".into(), ru_compile), ("archive".into(), ru_archive)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms);
 
     // Across whatever wave layout the grouper picks, no `file:a.o` ever
     // appears — a.o is a unit output, not a source file.
-    for wave in &g.waves {
+    {
         assert!(
-            !wave.nodes.iter().any(|n| n.id == "file:a.o"),
+            !g.nodes.iter().any(|n| n.id == "file:a.o"),
             "a.o is a unit output and must not be emitted as a file node",
         );
     }
@@ -563,13 +553,12 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
 
     let all_units = vec![("rust.build".into(), ru)];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
     cms.insert("rust.build".into(), Arc::new(mgr));
 
-    let g = build_wave_dag_data("rust.build", &all_units, &explicit, &inferred, &cms);
+    let g = build_dag_data("rust.build", &all_units, &explicit, &cms);
 
-    let node = g.waves[0]
+    let node = g
         .nodes
         .iter()
         .find(|n| n.id == "unit:rust.build:0")

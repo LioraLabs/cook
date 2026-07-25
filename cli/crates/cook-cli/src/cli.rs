@@ -125,7 +125,7 @@ pub enum Cmd {
     /// Run tests in the workspace (or scoped to a recipe/namespace).
     Test(TestArgs),
 
-    /// Visualize the build DAG in a TUI viewer.
+    /// Print the build graph: what waits on what, and why.
     Dag(DagArgs),
 
     /// Show logs for past builds.
@@ -269,14 +269,6 @@ pub struct DagArgs {
     #[arg(long = "max-nodes", default_value_t = 200)]
     pub max_nodes: usize,
 
-    /// Open the ratatui browser instead of printing. Requires a build with
-    /// `--features viewer`.
-    #[arg(long = "tui")]
-    pub tui: bool,
-
-    /// DAG TUI theme: auto (default) or mono.
-    #[arg(long = "theme", default_value = "auto")]
-    pub theme: String,
 }
 
 #[derive(clap::Args, Debug, Clone)]

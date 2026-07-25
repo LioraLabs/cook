@@ -21,9 +21,7 @@ cook-lang = { path = "../cook-lang" }
 cook-progress = { path = "../cook-progress" }
 cook-engine = { path = "../cook-engine" }
 cook-logs = { path = "../cook-logs" }
-# The DAG model + text/mermaid/dot/json renderers are always in. Only the
-# ratatui browser is optional (the `viewer` feature below).
-cook-dag-viewer = { path = "../cook-dag-viewer", default-features = false }
+cook-dag-viewer = { path = "../cook-dag-viewer" }
 
 # `string` lets runtime-discovered recipe names be injected as clap
 # subcommands for completion; without it a subcommand name must be &'static str.
@@ -46,11 +44,6 @@ sha2 = "0.10"
 
 [features]
 default = []
-# Embeds the ratatui-based DAG browser reached via `cook dag --tui`. Pulls
-# in ratatui + crossterm, so it is off by default to keep vanilla `cook`
-# builds slim. Every other `cook dag` mode works without it. CS-0047
-# documents the original rationale.
-viewer = ["cook-dag-viewer/tui"]
 
 [dev-dependencies]
 tempfile = "3"
