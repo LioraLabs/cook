@@ -8,7 +8,10 @@ description = "Fingerprint and cache-key computation for the Cook build system"
 cook-contracts = { path = "../cook-contracts" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 tracing = "0.1"
-serde = { version = "1", features = ["derive"] }
+# COOK-313: `rc` enables serde on `Arc<str>`, the interned path type on
+# `FileRecord` (see `cook_cache::index_bin`). Only `cook cache dump` still
+# serialises these types now that the index itself is binary.
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 glob = "0.3"
 sha2 = "0.10"

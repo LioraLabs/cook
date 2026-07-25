@@ -527,7 +527,7 @@ where
             let mut outs: BTreeMap<PathBuf, u64> = BTreeMap::new();
             for step in prior.steps.values() {
                 for o in &step.outputs {
-                    outs.insert(ru.working_dir.join(&o.path), o.hash);
+                    outs.insert(ru.working_dir.join(&*o.path), o.hash);
                 }
             }
             if !outs.is_empty() {
@@ -769,7 +769,7 @@ fn reconcile_outputs(
                     || step
                         .outputs
                         .iter()
-                        .any(|o| live_ref.contains(&wd.join(&o.path)))
+                        .any(|o| live_ref.contains(&wd.join(&*o.path)))
             });
         }
     }

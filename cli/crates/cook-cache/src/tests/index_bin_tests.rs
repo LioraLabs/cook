@@ -4,7 +4,7 @@ use cook_fingerprint::record::{FileRecord, StepEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn rec(path: &str, mtime: u64, hash: u64) -> FileRecord {
-    FileRecord { path: path.to_string(), mtime, hash }
+    FileRecord { path: path.into(), mtime, hash }
 }
 
 fn step(inputs: Vec<FileRecord>, outputs: Vec<FileRecord>) -> StepEntry {
@@ -131,6 +131,28 @@ fn shared_path_is_stored_once() {
         .filter(|w| *w == needle)
         .count();
     assert_eq!(occurrences, 1, "path blob must intern shared paths");
+}
+
+#[test]
+fn decoded_records_share_one_allocation_per_path() {
+    // The whole point of interning: `src/common.h` is named by a record in
+    // each of the two steps, and after decoding both records must point at the
+    // SAME allocation. Without this, loading an index allocates once per
+    // record (328k times on DuckDB) instead of once per distinct path (6,730).
+    let decoded = decode(&encode(&populated())).expect("decode");
+    let main = &decoded.steps["compile_main"].inputs;
+    let util = &decoded.steps["compile_util"].inputs;
+
+    let a = main.iter().find(|r| &*r.path == "src/common.h").expect("in compile_main");
+    let b = util.iter().find(|r| &*r.path == "src/common.h").expect("in compile_util");
+    assert!(
+        std::sync::Arc::ptr_eq(&a.path, &b.path),
+        "records naming the same path must share one Arc"
+    );
+
+    // Distinct paths must NOT be conflated into one allocation.
+    let distinct = main.iter().find(|r| &*r.path == "src/main.c").expect("main.c");
+    assert!(!std::sync::Arc::ptr_eq(&a.path, &distinct.path));
 }
 
 #[test]

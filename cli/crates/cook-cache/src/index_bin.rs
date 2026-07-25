@@ -64,6 +64,7 @@
 //! unchanged index produces an unchanged file.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
 
@@ -160,7 +161,7 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
     let mut paths: BTreeSet<&str> = BTreeSet::new();
     for step in cache.steps.values() {
         for r in step.inputs.iter().chain(step.outputs.iter()) {
-            paths.insert(r.path.as_str());
+            paths.insert(&*r.path);
         }
     }
     for members in cache.globs.values() {
@@ -186,7 +187,7 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
     w.u32(record_count as u32);
     for step in cache.steps.values() {
         for r in step.inputs.iter().chain(step.outputs.iter()) {
-            w.u32(path_ids[r.path.as_str()]);
+            w.u32(path_ids[&*r.path]);
             w.u64(r.mtime);
             w.u64(r.hash);
         }
@@ -270,7 +271,13 @@ impl<'a> Reader<'a> {
     /// Inverse of [`Writer::string_table`]. Validates that offsets ascend and
     /// stay inside the blob before slicing, so a corrupt offset is an error
     /// rather than a panic.
-    fn string_table(&mut self) -> Result<Vec<String>, DecodeError> {
+    ///
+    /// Yields `Arc<str>` because the path table's entries are shared by every
+    /// record that names them — that sharing is the point of interning, and it
+    /// is what makes loading an index allocate once per distinct path instead
+    /// of once per record. Key tables are small and convert to `String` at the
+    /// call site.
+    fn string_table(&mut self) -> Result<Vec<Arc<str>>, DecodeError> {
         let count = self.u32()? as usize;
         let blob_len = self.u32()? as usize;
         // Reject absurd counts before allocating: each entry costs one offset
@@ -298,11 +305,9 @@ impl<'a> Reader<'a> {
             if start > end || end > blob_len {
                 return Err(DecodeError::BadReference);
             }
-            out.push(
-                std::str::from_utf8(&blob[start..end])
-                    .map_err(|_| DecodeError::Utf8)?
-                    .to_string(),
-            );
+            out.push(Arc::from(
+                std::str::from_utf8(&blob[start..end]).map_err(|_| DecodeError::Utf8)?,
+            ));
         }
         Ok(out)
     }
@@ -347,13 +352,16 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         let path_id = r.u32()? as usize;
         let mtime = r.u64()?;
         let hash = r.u64()?;
+        // Arc clone: a refcount bump, not an allocation. This is the line the
+        // whole interning design exists for.
         let path = paths.get(path_id).ok_or(DecodeError::BadReference)?;
-        records.push(FileRecord { path: path.clone(), mtime, hash });
+        records.push(FileRecord { path: Arc::clone(path), mtime, hash });
     }
 
     let step_keys = r.string_table()?;
     let mut steps = BTreeMap::new();
     for key in step_keys {
+        let key = key.to_string();
         let inputs_start = r.u32()? as usize;
         let inputs_len = r.u32()? as usize;
         let outputs_start = r.u32()? as usize;
@@ -386,10 +394,10 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
     let mut members = Vec::with_capacity(member_total);
     for _ in 0..member_total {
         let id = r.u32()? as usize;
-        members.push(paths.get(id).ok_or(DecodeError::BadReference)?.clone());
+        members.push(paths.get(id).ok_or(DecodeError::BadReference)?.to_string());
     }
     let mut globs = BTreeMap::new();
-    for (i, key) in glob_keys.into_iter().enumerate() {
+    for (i, key) in glob_keys.into_iter().map(|k| k.to_string()).enumerate() {
         let (start, end) = (member_offsets[i], member_offsets[i + 1]);
         if start > end || end > members.len() {
             return Err(DecodeError::BadReference);

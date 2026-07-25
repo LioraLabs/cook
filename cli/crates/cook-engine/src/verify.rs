@@ -234,7 +234,7 @@ pub fn verify_cache(
                 continue; // not cached this run — nothing to verify
             };
             let recorded: BTreeMap<String, u64> =
-                entry.outputs.iter().map(|f| (f.path.clone(), f.hash)).collect();
+                entry.outputs.iter().map(|f| (f.path.to_string(), f.hash)).collect();
 
             // R1 (CS-0164): config `var.*` values are never injected into a
             // step's process environment, so the determinism re-run must not

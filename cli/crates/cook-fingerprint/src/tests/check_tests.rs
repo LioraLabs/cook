@@ -81,7 +81,7 @@ fn check_inputs_collects_every_changed_path_not_just_first() {
     let cached: Vec<FileRecord> = ["a.txt", "b.txt", "c.txt"]
         .iter()
         .map(|f| FileRecord {
-            path: (*f).to_string(),
+            path: (*f).into(),
             mtime: 0, // force the hash comparison
             hash: hash_file(&wd.join(f)).expect("hash"),
         })
@@ -162,7 +162,7 @@ fn cause_summary_formats_and_caps() {
 fn make_file_record(rel_path: &str, working_dir: &Path) -> FileRecord {
     let abs = working_dir.join(rel_path);
     FileRecord {
-        path: rel_path.to_string(),
+        path: rel_path.into(),
         mtime: stat_mtime(&abs).expect("mtime"),
         hash: hash_file(&abs).expect("hash"),
     }
@@ -266,7 +266,7 @@ fn test_input_content_changed_rebuilds() {
     // the hash comparison will also differ, triggering InputChanged.
     let old_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".to_string(),
+        path: "in.c".into(),
         mtime: 0, // guaranteed to differ from any real mtime
         hash: old_hash,
     };
@@ -311,7 +311,7 @@ fn record_unit_with_drifted_present_output_skips() {
     // Recorded output hash deliberately does NOT match the on-disk content,
     // and the mtime is stale (0) so the drift fast-path fires.
     let out_record = FileRecord {
-        path: "out.o".to_string(),
+        path: "out.o".into(),
         mtime: 0, // guaranteed to differ from any real mtime
         hash: xxhash_rust::xxh3::xxh3_64(b"different recorded bytes"),
     };
@@ -367,7 +367,7 @@ fn record_unit_with_missing_output_still_rebuilds_without_restore() {
 
     let in_record = make_file_record("in.c", wd);
     let out_record = FileRecord {
-        path: "out.o".to_string(),
+        path: "out.o".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"recorded bytes"),
     };

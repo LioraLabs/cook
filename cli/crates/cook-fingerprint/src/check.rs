@@ -122,7 +122,7 @@ fn check_inputs(
     current_input_paths: &[&str],
     working_dir: &Path,
 ) -> Result<Vec<FileRecord>, RebuildReason> {
-    let cached_paths: Vec<&str> = cached_inputs.iter().map(|f| f.path.as_str()).collect();
+    let cached_paths: Vec<&str> = cached_inputs.iter().map(|f| &*f.path).collect();
     if cached_paths != current_input_paths {
         let cached_set: std::collections::BTreeSet<&str> = cached_paths.iter().copied().collect();
         let current_set: std::collections::BTreeSet<&str> =
@@ -147,7 +147,7 @@ fn check_inputs(
         let disk_mtime = match crate::statmemo::stat_mtime_memo(working_dir, rel_path) {
             Some(m) => m,
             None => {
-                changed.push(cached.path.clone());
+                changed.push(cached.path.to_string());
                 continue;
             }
         };
@@ -157,7 +157,7 @@ fn check_inputs(
             // Unreadable, content differs, or an empty marker file (mtime is
             // authoritative for those) → changed.
             if disk_hash != Some(cached.hash) || disk_hash == Some(empty_hash()) {
-                changed.push(cached.path.clone());
+                changed.push(cached.path.to_string());
                 continue;
             }
             updated[i].mtime = disk_mtime;
@@ -299,7 +299,7 @@ pub fn needs_rebuild_cook(
                 // the depfile back. Without a restore_ctx there's nothing
                 // to recover from, so fall back to rebuild (self-heal).
                 if restore_ctx.is_some() {
-                    entry_inputs_refs = entry.inputs.iter().map(|f| f.path.as_str()).collect();
+                    entry_inputs_refs = entry.inputs.iter().map(|f| &*f.path).collect();
                     &entry_inputs_refs
                 } else {
                     current_inputs

@@ -4,12 +4,12 @@ use crate::store::{self, FileRecord, StepEntry};
 fn make_step_entry(command_hash: u64) -> StepEntry {
     StepEntry {
         inputs: vec![FileRecord {
-            path: "src/main.c".to_string(),
+            path: "src/main.c".into(),
             mtime: 1700000000,
             hash: 0xaabbccdd,
         }],
         outputs: vec![FileRecord {
-            path: "build/main.o".to_string(),
+            path: "build/main.o".into(),
             mtime: 1700000100,
             hash: 0x11223344,
         }],
@@ -173,7 +173,7 @@ fn record_completion_appends_depfile_to_outputs() {
     let entry = mgr.record_completion("rec", "k", &meta, wd, 0).expect("rec");
 
     let output_paths: Vec<&str> =
-        entry.outputs.iter().map(|fr| fr.path.as_str()).collect();
+        entry.outputs.iter().map(|fr| fr.path.as_ref()).collect();
     assert!(output_paths.contains(&"a.o"), "user output present");
     assert!(output_paths.contains(&".cook/deps/a.d"),
         "depfile appended to outputs when discovered_inputs is set");

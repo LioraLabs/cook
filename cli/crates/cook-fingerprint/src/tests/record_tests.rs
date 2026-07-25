@@ -4,7 +4,7 @@ use super::*;
 fn hash_fields_serialize_as_lowercase_hex_strings() {
     let entry = StepEntry {
         inputs: vec![FileRecord {
-            path: "src/main.c".to_string(),
+            path: "src/main.c".into(),
             mtime: 1700000000123,
             hash: 0x1234567890abcdef,
         }],

@@ -18,7 +18,7 @@ fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecor
         let abs = working_dir.join(rel);
         let mtime = stat_mtime(&abs).ok_or_else(|| rel.clone())?;
         let hash = hash_file(&abs).ok_or_else(|| rel.clone())?;
-        out.push(FileRecord { path: rel.clone(), mtime, hash });
+        out.push(FileRecord { path: rel.as_str().into(), mtime, hash });
     }
     Ok(out)
 }
