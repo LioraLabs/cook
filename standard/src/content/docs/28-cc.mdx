@@ -12,7 +12,7 @@ The `cc` module specifies a portable surface for declarative C and C++ native bu
 
 A conforming implementation MUST expose the fifteen public functions listed in §{cat.cc.surface} (the thirteen from v0.5 plus the `cc.checks` namespace and `cc.config_header`) and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
-The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.8 (cook_cc 0.10.x): the v0.7 surface plus the additive `SharedOpts.output` field introduced by CS-0084 (§{cat.cc.shared}). The v0.7 surface (cook_cc 0.8.x–0.9.x) is the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.10: the v0.9 surface plus the source-selection rules of CS-0168 (§{cat.cc.sources} — glob and `!`-exclusion entries in `sources`, deterministic order, non-matching includes an error), the `fpic` target field, and the code-generation option vocabulary of §{cat.cc.codegen} (`optimize`, `debug_symbols`, `gc_sections`). The v0.9 surface is the v0.8 surface plus the collision-free object-path derivation introduced by CS-0167 (§{cat.cc.object-path}) — the first *breaking* revision of the surface, since it changes the path every object is emitted to. The v0.8 surface (cook_cc 0.10.x) is the v0.7 surface plus the additive `SharedOpts.output` field introduced by CS-0084 (§{cat.cc.shared}); it also absorbed the top-level `cc.compile_commands` relocation of CS-0151 (§{cat.cc.compile-commands}, cook_cc 0.14) without a surface-version bump. The v0.7 surface (cook_cc 0.8.x–0.9.x) is the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
 ## 28.2. Identity, resolution, init hook [#cat.cc.identity]
 
@@ -40,8 +40,9 @@ Registers an executable target named `name`. A conforming implementation MUST co
 
 | Field | Type | Semantics |
 |---|---|---|
-| `sources` | list[string] | Source paths or globs. REQUIRED unless `dir` is provided. |
+| `sources` | list[string] | Literal source paths, glob patterns, and `!`-prefixed exclusion patterns, resolved per §{cat.cc.sources}. REQUIRED unless `dir` is provided. |
 | `dir` | string | Root for recursive source globbing (`*.c`, `*.cpp`, `*.cc`, `*.cxx`). |
+| `fpic` | boolean | Compile with `-fPIC`. Defaults to `true` for `cc.shared` and `false` otherwise. A static archive destined to be linked into a shared library MUST set it explicitly. |
 | `includes` | list[string] | Private include dirs. |
 | `export_includes` | list[string] | Public include dirs propagated to consumers via `cook.export`. Absent → falls back to `includes` (the sole backcompat carve-out; see §{cat.cc.transitive.priv-pub}). |
 | `export_defines` | list[string] | Public macros propagated to consumers via `cook.export`. Bare `defines` is PRIVATE-by-default; see §{cat.cc.transitive.priv-pub}. |
@@ -61,6 +62,29 @@ Registers an executable target named `name`. A conforming implementation MUST co
 Return: the target name (echo for chaining).
 
 Error: if the source count is zero after globbing, the implementation MUST raise `[cc.bin] no sources found for target '<name>'` at the caller's line.
+
+#### 28.3.1.1. Source selection [#cat.cc.sources]
+
+Each entry of `opts.sources` is one of three forms, mirroring the `ingredients` step's item grammar (§{steps.ingredients}):
+
+| Form | Meaning |
+|---|---|
+| a path containing no wildcard | **literal**: the named source, added directly. |
+| a glob pattern | **include**: every match is added to the source set. |
+| `!` followed by a glob pattern or literal path | **exclude**: every match is subtracted from the source set. |
+
+The resolved source set is the set difference `(union of includes and literals) \ (union of excludes)`. Item order MUST NOT affect the result: an exclusion subtracts a matching source whether it is written before or after the include that contributed it. The glob language is the one supplied by `fs.glob` (§{lua.fs-helpers}); §{cat.cc.sources} adds no wildcard syntax of its own.
+
+Two requirements make the resolved set safe to use as a build input:
+
+- **Deterministic order.** The implementation MUST present the resolved set to its compile fan-out in a stable, host-independent order (lexicographic by workspace-relative path is the reference implementation's choice). Source order reaches the `ar` and link command strings, which are folded into the cache key (§{exec.cache.single-key}); an order that varies with directory-entry order would re-key the archive on machines that differ only in filesystem layout.
+- **Duplicates collapse.** A source contributed by more than one include MUST be compiled once. Without this, overlapping patterns register two units with the same `output` — an ambiguous graph, and precisely the failure §{cat.cc.object-path} exists to prevent.
+
+An **include pattern that matches nothing MUST be an error**, naming the pattern, at the caller's line. A silently-empty pattern is the failure mode this rule exists to catch: in a target of several thousand sources, a mistyped or stale directory in one pattern drops a whole subtree without changing the build's exit status, and the loss surfaces much later as an undefined symbol at link. An **exclusion** that matches nothing MUST NOT be an error — excludes are routinely written to be robust against a file's absence.
+
+A literal path that does not exist MUST be an error on the same terms as a non-matching include; this is the existing `cc.compile` behaviour (§{cat.cc.compile}) reached one step earlier, with the target named.
+
+> **Note (informative).** A literal source filename beginning with `!` cannot be written directly, since the leading `!` is the exclusion sigil. Spell it `./!name.c`.
 
 ### 28.3.2. cc.lib [#cat.cc.lib]
 
@@ -108,9 +132,32 @@ The PRIVATE/PUBLIC distinction introduced by CS-0080 (§{cat.cc.transitive.priv-
 cc.compile(source: string, opts: CompileOpts) -> string
 ```
 
-Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call with `output = "build/obj/<target_name>/<stem>.o"` (where `<stem>` is the source's filename without extension and `<target_name>` is `opts.target_name` or `"default"`). The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds.
+Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call whose `output` is the object path derived for `(target_name, source)` per §{cat.cc.object-path}, where `<target_name>` is `opts.target_name` or `"default"`. When `opts.output` is supplied the implementation MUST use that value verbatim as the unit's `output` instead.
+
+The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds. The depfile path MUST be derived from the unit's **`output`** and MUST NOT be derived from the source's basename, so that the depfile is distinct whenever the object is distinct. The Standard does not otherwise constrain the depfile's location; the reference implementation mirrors the object path under `.cook/deps/`.
 
 Returns the output path.
+
+#### 28.3.5.1. Object path derivation [#cat.cc.object-path]
+
+For a target named `<target_name>` and a source `<source>`, the derived object path is:
+
+```
+build/obj/<target_name>/<source-path-relative-to-the-project-root>.o
+```
+
+The source's path relative to the workspace root (§{exec.ws.determination}) is retained **in full**, including its directory components and its file extension; the `.o` suffix is *appended* to that path rather than replacing the extension. For example, a target `duckdb_lib` compiling `src/common/bignum.cpp` yields `build/obj/duckdb_lib/src/common/bignum.cpp.o`.
+
+The derivation MUST be **injective**: for a fixed `<target_name>`, two distinct sources MUST NOT derive the same object path. Injectivity here is a property of construction — the relative source path is carried through unaltered — and not of sanitisation. Implementations MUST NOT substitute a character-folding transform (e.g. replacing path separators or non-alphanumerics with `_`), because such transforms are not injective: `a/b.o` and `a.b.o` collide under separator folding, as do `dictionary_compression.cpp` and `dictionary/compression.cpp`.
+
+Retaining the extension is likewise load-bearing: a target may legally compile both `foo.c` and `foo.cpp` from one directory, and these are distinct translation units dispatched to different drivers (§{cat.cc.synopsis}).
+
+Two cases require an explicit rule:
+
+- **Sources outside the project root** (absolute paths, or paths reached through `..`). The implementation MUST map these to a path that remains inside `build/obj/<target_name>/` and that remains injective over the source set. The reference implementation places them under a reserved `build/obj/<target_name>/_external/` prefix keyed by a hash of the absolute source path. An implementation MUST NOT emit an object path that escapes `build/obj/<target_name>/`.
+- **Generated sources** already under `build/`. These are ordinary project-relative sources and take the general rule; no special case applies.
+
+> **Note (informative).** This derivation supersedes the basename-derived `build/obj/<target_name>/<stem>.o` of surface v0.8 and earlier, which was *specified* to collide: any tree with repeated source filenames aliased distinct translation units onto one object path. The aliasing was silent, because the engine accepted the resulting ambiguous graph without diagnostic — a separate defect, addressed independently. Because object paths change, the first build after an implementation adopts this derivation is a full rebuild; stale objects under the old layout are swept by §{exec.cache.reconcile} stale-output reconciliation wherever the owning recipe is reached.
 
 ### 28.3.6. cc.archive [#cat.cc.archive]
 
@@ -232,15 +279,40 @@ Records module-wide defaults that subsequent `cc.bin`, `cc.lib`, `cc.shared`, an
 cc.toolchain(opts: ToolchainOpts)
 ```
 
-Overrides the active compiler, standard, and warnings. `ToolchainOpts`:
+Overrides the active compiler, standard, warnings, and code-generation defaults. `ToolchainOpts`:
 
 | Field | Type | Semantics |
 |---|---|---|
 | `compiler` | string | The `cxx` driver to use (e.g., `"clang++"`); the `cc` driver is derived. |
 | `standard` | string | Default `-std=` value for subsequent C++ compiles. |
 | `warnings` | string | Default warnings preset or raw flags. |
+| `optimize` | string | Optimisation preset, or raw flags. See §{cat.cc.codegen}. |
+| `debug_symbols` | boolean | Emit debug information. See §{cat.cc.codegen}. |
+| `gc_sections` | boolean | Place functions and data in their own sections and drop the unreferenced ones at link. See §{cat.cc.codegen}. |
+
+`optimize`, `debug_symbols`, and `gc_sections` are also accepted per-target on `BinOpts`, `LibOpts`, and `SharedOpts`, where they override the toolchain-wide value — the same two-level arrangement `standard` and `warnings` already use.
 
 If never called, the implementation MUST auto-detect a compiler via PATH probing during `init()`.
+
+#### 28.3.10.1. Code-generation options [#cat.cc.codegen]
+
+These options exist so that call sites need not hand-author driver-specific flag strings. `cc` places the compiler behind a probe precisely so a Cookfile is portable across drivers; a raw `extra_cflags = "-O3 -DNDEBUG -g -ffunction-sections -fdata-sections"` defeats that, and is not portable to a driver with a different flag dialect.
+
+`optimize` takes a preset, or any other string, which is passed through as raw flags (the same escape hatch `warnings` provides):
+
+| Preset | GCC / Clang dialect |
+|---|---|
+| `"none"` | `-O0` |
+| `"debug"` | `-Og` |
+| `"size"` | `-Os -DNDEBUG` |
+| `"speed"` | `-O2 -DNDEBUG` |
+| `"max"` | `-O3 -DNDEBUG` |
+
+`debug_symbols = true` emits `-g`. It is independent of `optimize`: `optimize = "max"` with `debug_symbols = true` is the ordinary shippable-with-symbols build, and an implementation MUST NOT let either option suppress the other.
+
+`gc_sections = true` MUST emit **both halves** of the transformation: the per-section compile flags (`-ffunction-sections -fdata-sections`) *and* the linker's collection flag (`-Wl,--gc-sections` on Linux, `-Wl,-dead_strip` on macOS). Emitting only the compile half is the failure this option exists to prevent — it is silent, it costs object size and link time, and it delivers none of the intended reduction. An implementation MUST NOT provide the compile half alone.
+
+On a `cc.lib` target only the compile half applies, because the target emits an archive and never a link. The link half is supplied by whichever `cc.bin` or `cc.shared` links that archive, from *its own* `gc_sections` setting — the flag does not propagate along `links`, since a bare link-time flag on a library is PRIVATE by default (§{cat.cc.transitive.priv-pub}). In the ordinary arrangement the option is set once on `cc.toolchain`, so every target in the build — the archives and the binary that consumes them — sees it, and both halves are emitted without any propagation.
 
 The toolchain probe's value MUST record both the chosen driver names (`cxx`, `cc`) and their **canonical identities** (`cxx_id`, `cc_id`) — the lowercase-hex content hash of each resolved driver binary, obtainable via `cook.tools.id` (§{lua.cook-tools-id}) — so that units sealing the probe (§28.3.14's seal adoption) key on the toolchain's identity rather than its name: a compiler upgrade MUST re-key every sealing unit. The value MUST NOT contain a resolved path or any machine-specific location (§{mods.authoring.seal}, CS-0158).
 
@@ -253,6 +325,8 @@ cc.compile_commands()
 `cc.compile_commands()` is a **top-level register-phase call**, invoked at column 0 like `cc.uses`, `cc.toolchain`, and `cc.config_header`. It MUST queue — via `cook.on_register_complete` (§{lua.cook-on-register-complete}) — a run-once finalizer that renders `compile_commands.json` in the current working directory from the complete known-target set, after every recipe body of the registration pass has been evaluated. The call itself mints no recipe.
 
 The rendered database MUST include one entry per source per registered target, for **every** registered target regardless of link closure or dispatch reachability, and MUST NOT require any ordering dependency of the author. The output MUST be valid JSON parseable by clangd and equivalent tools.
+
+Each entry's compile command MUST name the object path that the build actually produces for that `(target, source)` pair — that is, the path derived by §{cat.cc.object-path}. A conforming implementation MUST NOT re-derive this path independently of its `cc.compile` implementation: the two MUST be computed by a single shared derivation, so that they cannot drift. An implementation that renders a compile database naming object paths the build never produces is non-conforming, even if every other field is correct.
 
 Repeat top-level `cc.compile_commands()` calls MUST be idempotent: at most one finalizer is queued per registration pass, producing one write of `compile_commands.json` per pass.
 
