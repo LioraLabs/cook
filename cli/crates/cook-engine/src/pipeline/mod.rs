@@ -42,7 +42,7 @@ pub mod recipe_info;
 pub mod registers;
 pub mod workspace;
 
-pub use env::{load_env, parse_cli_overrides, resolve_env};
+pub use env::parse_cli_overrides;
 pub use error::PipelineError;
 pub use inferred_deps::{compute_workspace_inferred_deps, workspace_dep_conflicts};
 pub use parse::{read_and_parse, validate_selected_config_workspace, ParsedCookfile};

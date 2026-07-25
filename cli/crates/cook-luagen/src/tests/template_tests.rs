@@ -145,22 +145,22 @@ fn recipe_lowers_to_dep_output() {
 }
 
 #[test]
-fn env_var_lowers_to_require_env() {
+fn env_var_lowers_to_require_var() {
     let r = empty_recipes();
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-    assert_eq!(result, "cook.require_env(\"HOME\")");
+    assert_eq!(result, "cook.require_var(\"HOME\")");
     assert!(env.keys.contains("HOME"), "HOME should be recorded");
 }
 
 #[test]
-fn env_prefix_strips_to_require_env() {
+fn var_prefix_strips_to_require_var() {
     let r = empty_recipes();
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<env.HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-    assert_eq!(result, "cook.require_env(\"HOME\")");
+    let result = expand_sigil_template("$<var.HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    assert_eq!(result, "cook.require_var(\"HOME\")");
     assert!(env.keys.contains("HOME"));
 }
 
@@ -306,7 +306,7 @@ fn recipe_member_bad_index_errors_in_fanout_body() {
 
 // COOK-221 / CS-0137: in an OUTPUT PATTERN the bracket-index diagnostics
 // must surface as a SIGIL_ERROR sentinel (hard error via the checked-path
-// sentinel scan), never fall back to cook.require_env.
+// sentinel scan), never fall back to cook.require_var.
 #[test]
 fn recipe_member_bracket_errors_are_sentinels_in_output_patterns() {
     let mut env = ConsultedEnv::new();
@@ -316,7 +316,7 @@ fn recipe_member_bracket_errors_are_sentinels_in_output_patterns() {
         "expected SIGIL_ERROR sentinel with did-you-mean, got: {lua}"
     );
     assert!(
-        !lua.contains("cook.require_env"),
+        !lua.contains("cook.require_var"),
         "bracket error must not fall through to env lookup, got: {lua}"
     );
 

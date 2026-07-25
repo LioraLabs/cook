@@ -149,15 +149,22 @@ fn lower_produce(p: &ProbeProduce) -> String {
             out
         }
         ProbeProduce::Envs(names) => {
-            // Read each env var via cook.env.<NAME> for the VALUE. The re-run
-            // trigger is the declared `inputs.env` (see emit_probe). An unset
-            // var assigns nil, which Lua never stores as a table key, so the
-            // key is OMITTED from the resulting JSON object (§22.5.2).
+            // CS-0172: read the AMBIENT PROCESS environment via `os.getenv`.
+            // An `envs { }` probe is the specced channel for making a host
+            // environment value a keyed determinant (§22.5.2), so it must read
+            // the process environment — not the declared-variable namespace.
+            // Before CS-0172 it read `cook.env`, which was both at once; a
+            // config block could therefore silently redefine what an `envs`
+            // probe recorded about the host. The re-run trigger is the declared
+            // `inputs.env` (see emit_probe). An unset var assigns nil, which Lua
+            // never stores as a table key, so the key is OMITTED from the
+            // resulting JSON object (§22.5.2).
             let mut out = String::from("local _e = {}\n");
             for name in names {
                 // Quoted-string key (see Tools arm); `name` is a bare IDENT.
                 out.push_str(&format!(
-                    "_e[\"{}\"] = cook.env.{name}\n",
+                    "_e[\"{}\"] = os.getenv(\"{}\")\n",
+                    escape_lua_string(name),
                     escape_lua_string(name)
                 ));
             }

@@ -456,16 +456,29 @@ fn register_worker_cook_table(
     // installed as error-raising guards near the bottom of this
     // function — see `install_register_only_guard`.
 
-    // cook.env — use a metatable __index so reads always reflect current env_vars
-    let env_table = lua.create_table()?;
-    let env_for_index = Arc::clone(current_env_vars);
+    // CS-0172: the read-only `var` global — the execute-phase half of the
+    // declared-variable surface (§5.3.1). A `__index` metamethod so reads
+    // always reflect the current unit's resolved variables. Values arrive in
+    // string form: the register phase rejects a non-string variable read from
+    // an execute-phase Lua body precisely so this surface never has to coerce
+    // one. Writes are refused, as at register phase — a step cannot redefine a
+    // determinant it was keyed on.
+    let var_table = lua.create_table()?;
+    let vars_for_index = Arc::clone(current_env_vars);
     let meta = lua.create_table()?;
     meta.set("__index", lua.create_function(move |_, (_tbl, key): (mlua::Value, String)| {
-        let env_vars = env_for_index.lock().expect("env_vars lock");
-        Ok(env_vars.get(&key).cloned())
+        let vars = vars_for_index.lock().expect("var store lock");
+        Ok(vars.get(&key).cloned())
     })?)?;
-    env_table.set_metatable(Some(meta));
-    cook.set("env", env_table)?;
+    meta.set("__newindex", lua.create_function(|_, (_tbl, key, _v): (mlua::Value, String, mlua::Value)| -> mlua::Result<()> {
+        Err(mlua::Error::RuntimeError(format!(
+            "var.{key} is read-only: a declared variable is a cache determinant \
+             of the unit reading it (Standard §5.3.1)"
+        )))
+    })?)?;
+    meta.set("__metatable", false)?;
+    var_table.set_metatable(Some(meta));
+    lua.globals().set("var", var_table)?;
 
     // cook.platform — installed via the shared cook-lua-stdlib so the
     // execute-phase string values are byte-identical to the

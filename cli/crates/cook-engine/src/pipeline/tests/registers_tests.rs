@@ -111,8 +111,8 @@ fn codegen_with_module_recipes_discovers_dynamic_recipe_workspace_of_one() {
     let entry = dir.path().join("Cookfile");
     let root = std::fs::canonicalize(dir.path()).unwrap();
     let mut ws = Workspace::load(&entry, &root, &[]).unwrap();
-    // Static codegen cannot see `gen` → mis-lowers to require_env.
-    assert!(ws.root.lua_source.contains("cook.require_env(\"gen\")"));
+    // Static codegen cannot see `gen` → mis-lowers to require_var.
+    assert!(ws.root.lua_source.contains("cook.require_var(\"gen\")"));
     // Simulate a module-registered recipe: append a dynamic registration
     // to the discovery Lua (list_names sees it; bodies never run).
     ws.root.lua_source.push_str(
@@ -147,7 +147,7 @@ fn codegen_with_module_recipes_discovers_dynamic_recipe_in_importee() {
     let entry = dir.path().join("Cookfile");
     let root = std::fs::canonicalize(dir.path()).unwrap();
     let mut ws = Workspace::load(&entry, &root, &[]).unwrap();
-    assert!(ws.root.lua_source.contains("cook.require_env(\"lib.gen\")"));
+    assert!(ws.root.lua_source.contains("cook.require_var(\"lib.gen\")"));
     // Simulate a module-registered recipe in the importee.
     let lib_canon = std::fs::canonicalize(dir.path().join("lib")).unwrap();
     ws.imports
@@ -250,7 +250,7 @@ fn codegen_with_module_recipes_qualifies_extras_with_local_alias_only() {
     )
     .unwrap();
     // Root ALSO references `$<b.gen>` — but root does not import b
-    // directly, so its reference must STAY mis-lowered (require_env)
+    // directly, so its reference must STAY mis-lowered (require_var)
     // after discovery: extras reach direct importers only.
     std::fs::write(
         dir.path().join("Cookfile"),
@@ -275,7 +275,7 @@ fn codegen_with_module_recipes_qualifies_extras_with_local_alias_only() {
         "a's $<b.gen> must re-lower via its LOCAL alias, got:\n{a_lua}"
     );
     assert!(
-        ws.root.lua_source.contains("cook.require_env(\"b.gen\")"),
+        ws.root.lua_source.contains("cook.require_var(\"b.gen\")"),
         "root's $<b.gen> must stay mis-lowered (root does not import b \
          directly, so b's extras must not reach its union), got:\n{}",
         ws.root.lua_source

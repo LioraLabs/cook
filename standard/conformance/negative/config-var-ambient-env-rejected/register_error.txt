@@ -1,0 +1,1 @@
+no config block declares 'HOME'

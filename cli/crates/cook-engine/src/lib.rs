@@ -578,6 +578,14 @@ impl From<cook_register::RegisterError> for EngineError {
             cook_register::RegisterError::RecipeNotFound(name) => {
                 EngineError::UnknownRecipe(name)
             }
+            // CS-0172: `--set` naming an undeclared variable. The wording lives
+            // in the variant's `#[error(...)]`; surface it verbatim.
+            ref e @ cook_register::RegisterError::UndeclaredSet { .. } => {
+                EngineError::RegistrationFailed {
+                    recipe: String::new(),
+                    message: e.to_string(),
+                }
+            }
             // COOK-36 Task 4: argv-binding diagnostics surface as
             // RegistrationFailed so the CLI can render the message and exit.
             // The variants below carry the user-visible string in their

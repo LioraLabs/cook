@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use cook_register::{register_cookfile, RegisterSessionBuilder, SharedMemberOutputs, SharedTerminalOutputs};
 
-use super::env::{load_env, parse_cli_overrides, resolve_env};
+use super::env::parse_cli_overrides;
 use super::error::PipelineError;
 use super::recipe_info::find_full_prefix;
 use super::workspace::{LoadedCookfile, Workspace};
@@ -144,10 +144,12 @@ fn root_anchored_cookfile_label(workspace_root: &Path, member_dir: &Path) -> Str
 /// per-member env policy plus the CLI-override / selected-config / qualified-
 /// prefix scaffold every register-layer pass shares.
 ///
-/// Env policy: the root Cookfile gets `.env` layering from its own directory;
-/// imports do not inherit it — each sub-Cookfile starts from a fresh env
-/// baseline (system env and CLI `--set` overrides still apply). This is the
-/// ONE place that policy lives; [`register_workspace`],
+/// Var policy (CS-0172): every member starts with an EMPTY `var` namespace.
+/// A member's own `config` blocks are its only source of declared variables —
+/// per §11.6 a config block's scope is exactly its own Cookfile — and the CLI
+/// `--set` overrides apply on top, checked against the declared set. There is
+/// no ambient-process-env layer and no `.env` layer for `is_root` to select.
+/// This is the ONE place that policy lives; [`register_workspace`],
 /// [`list_workspace_names`], and [`codegen_with_module_recipes`] all derive
 /// their per-member builders from here.
 fn member_base_builder(
@@ -157,14 +159,9 @@ fn member_base_builder(
     config: Option<&str>,
     env_overrides: &[String],
 ) -> Result<RegisterSessionBuilder, PipelineError> {
-    let dotenv_vars = if is_root {
-        load_env(&member.dir)
-    } else {
-        HashMap::new()
-    };
-    let env = resolve_env(config, dotenv_vars, env_overrides)?;
+    let _ = is_root;
     let cli_overrides = parse_cli_overrides(env_overrides)?;
-    Ok(RegisterSessionBuilder::new(member.dir.clone(), env)
+    Ok(RegisterSessionBuilder::new(member.dir.clone(), HashMap::new())
         .with_cli_overrides(cli_overrides)
         .with_selected_config(config.map(|s| s.to_string()))
         .with_qualified_prefix(prefix.to_string()))
@@ -432,7 +429,7 @@ pub fn list_workspace_names(
 /// statically parsed `recipe` blocks plus the §7.3 alias union. A `$<NAME>`
 /// naming a recipe registered at register-phase by a top-level module call
 /// (e.g. `cook_cc.bin("x")`) is invisible to those passes and mis-lowers to
-/// `cook.require_env(...)`, hard-erroring when the body runs during the
+/// `cook.require_var(...)`, hard-erroring when the body runs during the
 /// register pass. This runs the cheap body-free [`cook_register::list_names`]
 /// pass per member (same env policy as [`list_workspace_names`]), unions the
 /// discovered names with the static set — locally, and as `alias.name` on

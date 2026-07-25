@@ -1,0 +1,5 @@
+config
+    var.MODE = "debug"
+
+recipe build
+    cook "build/out.txt" { echo $<HOME> > $<out> }

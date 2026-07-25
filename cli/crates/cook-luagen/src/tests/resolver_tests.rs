@@ -172,21 +172,33 @@ fn unknown_token_falls_through_to_env_runtime() {
 }
 
 #[test]
-fn explicit_env_prefix_strips_to_env_runtime() {
+fn explicit_var_prefix_strips_to_var_runtime() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
-    assert_eq!(resolve("env.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
+    assert_eq!(resolve("var.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
 }
 
 #[test]
-fn explicit_env_overrides_recipe_match() {
+fn retired_env_prefix_is_an_error() {
+    // CS-0172: `env.` named the process-environment namespace, which no longer
+    // backs declared variables.
+    let r = empty();
+    let ctx = ctx_oneshot_none(&r);
+    assert!(matches!(
+        resolve("env.HOME", &ctx),
+        Resolved::Error(ResolveError::RetiredEnvPrefix { .. })
+    ));
+}
+
+#[test]
+fn explicit_var_prefix_overrides_recipe_match() {
     let mut r = BTreeSet::new();
     r.insert("HOME".to_string());
     let ctx = ctx_oneshot_none(&r);
-    // Bare HOME → recipe (recipe wins over env).
+    // Bare HOME → recipe (recipe wins over a declared variable).
     assert!(matches!(resolve("HOME", &ctx), Resolved::Recipe { .. }));
-    // env.HOME → always env, even if HOME is a recipe.
-    assert_eq!(resolve("env.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
+    // var.HOME → always the variable, even if HOME is a recipe.
+    assert_eq!(resolve("var.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
 }
 
 #[test]

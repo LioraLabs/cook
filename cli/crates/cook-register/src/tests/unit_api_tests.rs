@@ -397,14 +397,15 @@ fn test_single_step_terminal_outputs() {
 fn add_unit_populates_consulted_env_from_keys_list() {
     // The lookup reads from cook.env (the Cook Lua VM env table), NOT the
     // process env — that's the merged config-overlay+process value the
-    // command actually consumed. Populate cook.env directly here; in real
-    // usage, capture.rs seeds cook.env from process env at startup and
-    // config dispatch may overlay project-specific values.
+    // command actually consumed. Populate the declared-variable store directly
+    // here; in real usage capture.rs creates it and the config-block dispatch
+    // fills it (CS-0172).
     let lua = Lua::new();
     let cook_table = lua.create_table().unwrap();
-    let env_table = lua.create_table().unwrap();
-    env_table.set("FOO_TEST_VAR_X", "the-value").unwrap();
-    cook_table.set("env", env_table).unwrap();
+    let store = lua.create_table().unwrap();
+    store.set("FOO_TEST_VAR_X", "the-value").unwrap();
+    lua.set_named_registry_value(crate::VAR_STORE_REGISTRY_KEY, store)
+        .unwrap();
     lua.globals().set("cook", cook_table).unwrap();
 
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
@@ -438,7 +439,7 @@ fn add_unit_populates_consulted_env_from_keys_list() {
     assert_eq!(
         meta.consulted_env.get("FOO_TEST_VAR_X").map(|s| s.as_str()),
         Some("the-value"),
-        "consulted_env must contain FOO_TEST_VAR_X=the-value (read from cook.env)"
+        "consulted_env must contain FOO_TEST_VAR_X=the-value (read from the var store)"
     );
     // env_contribution must be non-zero because a non-denylisted var was consulted
     assert_ne!(meta.env_contribution, 0, "env_contribution must be non-zero");

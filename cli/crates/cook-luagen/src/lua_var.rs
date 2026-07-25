@@ -1,4 +1,4 @@
-//! Static scanner for `cook.env.<KEY>` reads inside `using >{ ... }` Lua
+//! Static scanner for `var.<NAME>` reads inside `using >{ ... }` Lua
 //! bodies (Standard §17.1).
 //!
 //! Mirrors the shell-side `$<KEY>` sigil scanner in [`crate::sigil`], applied
@@ -13,25 +13,23 @@
 //! (the scanner skips `"..."`, `'...'`, `[[...]]` long strings, `--` line
 //! comments, and `--[[...]]` long comments before testing for matches):
 //!
-//! 1. **Dot access** — `cook.env.IDENT` where `IDENT` matches the
-//!    conventional env-key shape `[A-Z_][A-Z0-9_]*` (uppercase + underscore).
-//!    Lower-case identifiers are intentionally skipped: by convention env
-//!    keys are upper-case, and admitting lower-case would burn false
-//!    positives on common Lua idioms like `cook.env.path` that aren't env
-//!    keys.
-//! 2. **String index, double-quoted** — `cook.env["KEY"]` where `KEY` is
+//! 1. **Dot access** — `var.IDENT` for any Lua identifier. No case
+//!    constraint: declared variables are routinely lower-case
+//!    (`var.optimize`), and under-recording is the unsafe direction.
+//! 2. **String index, double-quoted** — `var["NAME"]` where `KEY` is
 //!    any non-empty string literal. No case constraint — the author has
 //!    explicitly named the key.
-//! 3. **String index, single-quoted** — `cook.env['KEY']`. Same as (2).
+//! 3. **String index, single-quoted** — `var['NAME']`. Same as (2).
 //!
 //! # Skipped (by design)
 //!
-//! - **Dynamic-key reads** — `cook.env[var]`, `cook.env[KEY_NAME]`,
-//!   `cook.env[string.upper(x)]`, etc. The key isn't statically resolvable
+//! - **Dynamic-key reads** — `var[k]`, `var[NAME_VAR]`,
+//!   `var[string.upper(x)]`, etc. The key isn't statically resolvable
 //!   without evaluating Lua. Authors who need cache invalidation on a
 //!   dynamic-key read MUST surface the key statically (e.g., assign to a
-//!   local first: `local k = cook.env["KEY"]`).
-//! - **Writes** — `cook.env.X = …` and `cook.env["X"] = …`. The pattern
+//!   local first: `local k = var["NAME"]`).
+//! - **Writes** — `var.X = …` and `var["X"] = …` (rejected at runtime by the
+//!   read-only proxy, but skipped here too so a write is never keyed). The pattern
 //!   appears identical to a read up to the LHS; the scanner checks the
 //!   token immediately following the match and skips the key when it sees
 //!   a `=` that is not part of `==`, `~=`, `<=`, `>=`.
@@ -41,23 +39,23 @@
 //! Conservative on false positives is the safe direction — over-recording
 //! an env key only wastes a cache lookup; under-recording silently serves
 //! stale output (the bug this scanner exists to close). The scanner does
-//! NOT try to disambiguate `cook.env.X` appearing in:
+//! NOT try to disambiguate `var.X` appearing in:
 //!
-//! - a function-call argument that aliases `cook.env` away (e.g.
-//!   `local e = cook.env; e.FOO`);
-//! - reflective `_G.cook.env.X` access (the scanner anchors on the literal
-//!   `cook.env.` byte sequence, which `_G.cook.env.X` happens to contain —
+//! - a function-call argument that aliases `var` away (e.g.
+//!   `local v = var; v.FOO`);
+//! - reflective `_G.var.X` access (the scanner anchors on the literal
+//!   `var` byte sequence, which `_G.var.X` happens to contain —
 //!   acceptable false positive).
 //!
 //! These limitations are documented in §17.1 of the Cook Standard.
 
 use std::collections::BTreeSet;
 
-/// Scan `source` for static reads of `cook.env.<KEY>` and return the set of
+/// Scan `source` for static reads of `var.<NAME>` and return the set of
 /// keys found (sorted, deduplicated).
 ///
 /// See module docs for the matching rules and skipped patterns.
-pub fn scan_env_reads(source: &str) -> BTreeSet<String> {
+pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
     let mut keys: BTreeSet<String> = BTreeSet::new();
     let bytes = source.as_bytes();
     let mut i = 0usize;
@@ -120,20 +118,25 @@ pub fn scan_env_reads(source: &str) -> BTreeSet<String> {
             }
         }
 
-        // ── Try to match `cook.env` here.
-        const PREFIX: &[u8] = b"cook.env";
+        // ── Try to match `var` here.
+        const PREFIX: &[u8] = b"var";
         if bytes_starts_with(bytes, i, PREFIX)
             && !is_part_of_larger_identifier(bytes, i, PREFIX.len())
         {
             let after = i + PREFIX.len();
 
-            // Dot access: `cook.env.IDENT`
+            // Dot access: `var.IDENT`
             if after < bytes.len() && bytes[after] == b'.' {
                 let id_start = after + 1;
                 let id_end = scan_lua_ident_end(bytes, id_start);
                 if id_end > id_start {
                     let key = &source[id_start..id_end];
-                    if is_envkey_shape(key) && !is_assignment_target(bytes, id_end) {
+                    // CS-0172: any Lua identifier counts. The pre-CS-0172
+                    // scanner required an upper-case `[A-Z_][A-Z0-9_]*` shape;
+                    // declared variables are routinely lower-case
+                    // (`var.optimize`), and under-recording is the unsafe
+                    // direction — a missed key serves stale output.
+                    if !is_assignment_target(bytes, id_end) {
                         keys.insert(key.to_string());
                     }
                     i = id_end;
@@ -141,7 +144,7 @@ pub fn scan_env_reads(source: &str) -> BTreeSet<String> {
                 }
             }
 
-            // String-indexed access: `cook.env["KEY"]` / `cook.env['KEY']`
+            // String-indexed access: `var["NAME"]` / `var['NAME']`
             if after < bytes.len() && bytes[after] == b'[' {
                 let mut j = after + 1;
                 // Allow optional whitespace before the quote.
@@ -180,20 +183,20 @@ pub fn scan_env_reads(source: &str) -> BTreeSet<String> {
                     }
                 }
                 // Not a literal-keyed index — dynamic-key form. Skip past
-                // `cook.env[` and resume scanning so a later `cook.env.X`
+                // `var[` and resume scanning so a later `var.X`
                 // in an expression on the same line still matches.
                 i = after + 1;
                 continue;
             }
 
-            // `cook.env` followed by something else (e.g. assignment to the
+            // `var` followed by something else (e.g. assignment to the
             // whole table, end of expression). Advance past the prefix.
             i = after;
             continue;
         }
 
         // ── Skip any identifier we encounter so we don't re-test for the
-        // `cook.env` prefix inside an identifier (e.g. `bookmark`).
+        // `var` prefix inside an identifier (e.g. `variadic`).
         if is_lua_ident_start(b) {
             i = scan_lua_ident_end(bytes, i);
             continue;
@@ -250,8 +253,8 @@ fn bytes_starts_with(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
 /// True if the byte immediately preceding position `i` (if any) is a Lua
 /// identifier-continuation byte, OR if the byte at `i + prefix_len` (if any)
 /// is also a Lua identifier-continuation byte. In either case the prefix is
-/// embedded in a larger identifier (e.g. `_cook.env_x` is not the prefix
-/// we're after; nor is `xcook.env`).
+/// embedded in a larger identifier (e.g. `variadic` is not the `var` prefix
+/// we're after; nor is `myvar`).
 fn is_part_of_larger_identifier(bytes: &[u8], i: usize, prefix_len: usize) -> bool {
     if i > 0 && is_lua_ident_cont(bytes[i - 1]) {
         return true;
@@ -260,21 +263,9 @@ fn is_part_of_larger_identifier(bytes: &[u8], i: usize, prefix_len: usize) -> bo
     after < bytes.len() && is_lua_ident_cont(bytes[after]) && bytes[after] != b'.'
 }
 
-/// True if `key` matches the conventional env-key shape `[A-Z_][A-Z0-9_]*`.
-fn is_envkey_shape(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_uppercase() || first == '_') {
-        return false;
-    }
-    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-}
-
 /// True if the byte position `pos` is immediately followed by an assignment
 /// operator (`=` that is not part of `==`, `<=`, `>=`, `~=`, or a `=>`-style
-/// future syntax). Used to skip `cook.env.X = …` writes.
+/// future syntax). Used to skip `var.X = …` writes.
 fn is_assignment_target(bytes: &[u8], pos: usize) -> bool {
     let mut k = pos;
     // Skip horizontal whitespace.
@@ -369,7 +360,7 @@ fn simple_unescape(s: &str) -> String {
 /// concatenation: `cook.probes.get("a" .. b)` has a string literal as the
 /// first token, but that literal is not the WHOLE argument — the real key is
 /// dynamic, so collecting `"a"` would be wrong. Matching is scoped outside
-/// strings and comments exactly like [`scan_env_reads`] (see that function's
+/// strings and comments exactly like [`scan_var_reads`] (see that function's
 /// docs for the comment/string-skipping approach, reused verbatim here).
 ///
 /// # Skipped (by design)
@@ -381,7 +372,7 @@ fn simple_unescape(s: &str) -> String {
 /// - **`cook.probes.scope(...)` chains** — out of scope by design; only the
 ///   literal `cook.probes.get` accessor is scanned.
 /// - Text inside comments or unrelated string literals (mirrors
-///   [`scan_env_reads`]).
+///   [`scan_var_reads`]).
 pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
     let mut keys: BTreeSet<String> = BTreeSet::new();
     let bytes = source.as_bytes();
@@ -537,5 +528,5 @@ fn is_lua_space(b: u8) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/lua_env_tests.rs"]
+#[path = "tests/lua_var_tests.rs"]
 mod tests;

@@ -1429,6 +1429,11 @@ fn probe_fingerprint_changes_invalidate_cache() {
     };
     assert_ne!(fp_v1, fp_v2, "fingerprints must differ when env var changes");
 
+    // CS-0172: an `envs { }` probe determinant is read from the AMBIENT PROCESS
+    // environment, so the simulated "machine change" is a real `set_var` rather
+    // than a value planted in the node's variable map.
+    std::env::set_var(env_var, "first");
+
     // --- Run 1: env_val="first" → cache miss → populate backend under fp_v1 ---
     {
         let mut dag = Dag::new();
@@ -1469,6 +1474,8 @@ fn probe_fingerprint_changes_invalidate_cache() {
             .is_none(),
         "fp_v2 must not be in backend before run2"
     );
+
+    std::env::set_var(env_var, "second");
 
     // --- Run 2: env_val="second" → different fingerprint → cache miss ---
     {
@@ -1518,6 +1525,8 @@ fn probe_fingerprint_changes_invalidate_cache() {
             .is_some(),
         "fp_v2 must be in backend after run2"
     );
+
+    std::env::remove_var(env_var);
 }
 
 // ---------------------------------------------------------------------------

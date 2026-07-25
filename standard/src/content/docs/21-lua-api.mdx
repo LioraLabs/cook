@@ -56,6 +56,10 @@ An ordinary pattern is resolved relative to the Cookfile member that declares th
 
 For each include pattern, after normalization, matching, and directory filtering—but before applying excludes—a conforming implementation MUST emit exactly one warning attributed to the declaring recipe when that include's expansion contains no files. Exclude patterns never emit an empty-expansion warning. If one or more includes initially resolve to files but the excludes remove every resolved file, the implementation MUST NOT warn merely because the recipe's final ingredient set is empty.
 
-## 21.3. The `env` alias inside `config_block` bodies [#lua.env-alias]
+## 21.3. The `var` sink inside `config_block` bodies [#lua.var-sink]
 
-Within the body of a `config_block` (§{decl.config}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in cook-step `>{ … }` bodies, in module bodies, or at any other Lua entry point.
+Within the body of a `config_block` (§{decl.config}), the global `var` MUST be bound to the **writable** declared-variable sink: assignments through it export names into the namespace. This is the only Lua context in which `var` is writable; everywhere else it is the read-only, type-preserving read surface of §{lua.var}, and a write through it MUST raise.
+
+A conforming implementation MUST NOT expose the sink itself to any other Lua context — a recipe body, a `register` block, a module body, or an execute-phase body MUST NOT be able to reach past the read-only surface and mutate a declared value (CS-0172). The reference implementation keeps the sink table in the Lua registry and hands out only a guarded proxy.
+
+The pre-CS-0164 spelling of the sink was a bare global `env` aliased to `cook.env`; both are retired. A `config_body` that reads a global named `env` MUST produce the load-time diagnostic of §{decl.config}.
