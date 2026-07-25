@@ -159,6 +159,16 @@ end
 -- release binary built from the tree being tagged: `cook test` is self-hosted,
 -- so gating on a cook from PATH would test whatever is installed rather than
 -- what is about to ship. There is no skip flag on purpose.
+--
+-- `--rerun` is load-bearing, not belt-and-braces. CI is always cold, but a
+-- developer's `.cook` is warm, and several of this repo's test units are
+-- deliberately sourceless or under-declared (`cli.test` is sourceless because
+-- cargo is already incremental; `ts.conformance` declares its script and not
+-- the corpus it walks). A warm-cache `cook test` therefore reports `ok
+-- (cached)` for those units no matter what the working tree says — verified:
+-- with a corrupt fixture committed into standard/conformance/positive/, a
+-- plain `cook test` passed in 0.2s with 4/7 units served from cache. A gate
+-- that can be satisfied by a stale record is not a gate.
 local function preflight_tests()
     print("[release.cut] building the release binary for the test gate...")
     cook.sh("cargo build --release -p cook-cli --manifest-path cli/Cargo.toml")
@@ -168,8 +178,8 @@ local function preflight_tests()
         error("[release.cut] " .. cook_bin .. " not found after cargo build")
     end
 
-    print("[release.cut] running `cook test` (ci.yml's gate)...")
-    local ok, err = try_sh("./" .. cook_bin .. " test")
+    print("[release.cut] running `cook test --rerun` (ci.yml's gate, uncached)...")
+    local ok, err = try_sh("./" .. cook_bin .. " test --rerun")
     if not ok then
         error("[release.cut] `cook test` failed; nothing was committed, tagged "
             .. "or pushed. Fix the failures and rerun.\n" .. tostring(err))

@@ -1,0 +1,28 @@
+# CS-0148 `files` probe producer, end to end.
+#
+# `manifest` pins the value's shape: a JSON object keyed by workspace-relative
+# path whose entries are content hashes, with the `!` exclusion honoured.
+# `stamp` pins the cache effect: it seals the probe and writes a nonce, so an
+# unchanged output means the probe re-produced the same value and the unit was
+# re-served, and a changed one means the file set moved the key.
+
+probe srcs
+    files { "src/*.ts" !"src/gen/*.ts" }
+
+recipe manifest
+    seal srcs
+    cook "build/keys.txt" >{
+        local m = cook.probes.get("srcs")
+        local keys = {}
+        for path, hash in pairs(m) do
+            -- A 64-hex content hash, not a path and not "<missing>".
+            assert(hash:match("^[0-9a-f]+$"), "not a hex hash: " .. tostring(hash))
+            keys[#keys + 1] = path
+        end
+        table.sort(keys)
+        fs.write(output, table.concat(keys, "\n") .. "\n")
+    }
+
+recipe build: manifest
+    seal srcs
+    cook "build/stamp.txt" { mkdir -p build && date +%s%N > $<out> }
