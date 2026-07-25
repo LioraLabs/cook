@@ -63,7 +63,7 @@ fn selection_overlay_applies_reverse_video() {
     assert!(cell.style().add_modifier.contains(Modifier::REVERSED));
 }
 
-use crate::dag_data::EdgeData;
+use crate::dag_data::{EdgeData, EdgeKind};
 
 fn dag_with_discovered_file() -> WaveDagData {
     WaveDagData {
@@ -101,8 +101,7 @@ fn dag_with_discovered_file() -> WaveDagData {
             ],
             edges: vec![EdgeData {
                 from: "file:helpers.h".into(),
-                to: "unit:a:0".into(),
-            }],
+                to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     }

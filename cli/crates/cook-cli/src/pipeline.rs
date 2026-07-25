@@ -1682,19 +1682,6 @@ mod serve_glob_tests;
 // implementation policy is documented in the Cook Standard at
 // `standard/src/content/docs/appendix/D-changes.mdx#changes-cs-0047`.
 
-#[cfg(not(feature = "viewer"))]
-pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
-    Err(CookError::Other(
-        "`cook dag` is an optional ratatui terminal viewer, left out of the \
-         default binary to keep it slim; rebuild with `cargo build --features \
-         viewer` (or install with `--features viewer`) to enable it. When \
-         built in, the viewer automatically falls back to a plain wave \
-         listing if run headless (no TTY)."
-            .to_string(),
-    ))
-}
-
-#[cfg(feature = "viewer")]
 pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
     use std::sync::Arc;
 
@@ -1784,22 +1771,76 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
     // the map (legacy compatibility), so we pass an empty one.
     let inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
-    cook_dag_viewer::cmd_dag(&cook_dag_viewer::DagViewerInputs {
+    let dag_inputs = cook_dag_viewer::DagInputs {
         target: recipe_name,
         all_units: &all_units,
         explicit_edges: &edges,
         inferred_deps: &inferred_deps,
         cache_managers: &cache_managers,
-        theme: cook_dag_viewer::theme::Theme::from_str(&args.theme),
-    })
-    .map_err(|e| CookError::Other(e.to_string()))
+    };
+
+    if args.tui {
+        return run_dag_tui(&dag_inputs, &args.theme);
+    }
+
+    let level = match args.level.as_str() {
+        "recipe" => cook_dag_viewer::emit::Level::Recipe,
+        "group" => cook_dag_viewer::emit::Level::Group,
+        "unit" => cook_dag_viewer::emit::Level::Unit,
+        other => {
+            return Err(CookError::Other(format!(
+                "unknown --level '{other}'; expected recipe, group, or unit"
+            )))
+        }
+    };
+    let format = match args.format.as_str() {
+        "text" => cook_dag_viewer::emit::Format::Text,
+        "mermaid" => cook_dag_viewer::emit::Format::Mermaid,
+        "dot" => cook_dag_viewer::emit::Format::Dot,
+        "json" => cook_dag_viewer::emit::Format::Json,
+        other => {
+            return Err(CookError::Other(format!(
+                "unknown --format '{other}'; expected text, mermaid, dot, or json"
+            )))
+        }
+    };
+
+    let dag = cook_dag_viewer::build_dag(&dag_inputs);
+    let graph = cook_dag_viewer::emit::aggregate(&dag, level, args.max_nodes)
+        .map_err(|e| CookError::Other(e.to_string()))?;
+    print!("{}", cook_dag_viewer::emit::render(&graph, format));
+    Ok(())
+}
+
+/// The ratatui browser is still optional: it is the one part of `cook dag`
+/// that costs a terminal-UI dependency, and printing a graph does not need it.
+#[cfg(feature = "viewer")]
+fn run_dag_tui(
+    inputs: &cook_dag_viewer::DagInputs<'_>,
+    theme: &str,
+) -> Result<(), CookError> {
+    cook_dag_viewer::run_tui(inputs, cook_dag_viewer::theme::Theme::from_str(theme))
+        .map_err(|e| CookError::Other(e.to_string()))
+}
+
+#[cfg(not(feature = "viewer"))]
+fn run_dag_tui(
+    _inputs: &cook_dag_viewer::DagInputs<'_>,
+    _theme: &str,
+) -> Result<(), CookError> {
+    Err(CookError::Other(
+        "`--tui` is the optional ratatui browser, left out of the default \
+         binary to keep it slim; rebuild with `cargo build --features viewer` \
+         to enable it. Every other `cook dag` mode (--format text/mermaid/dot/json) \
+         works in this build."
+            .to_string(),
+    ))
 }
 
 /// Split off the namespace prefix from a qualified recipe name.
 ///
 /// `"backend.proto.generate"` → `"backend.proto"`
 /// `"build"` → `""`
-#[cfg(feature = "viewer")]
 fn split_recipe_prefix(name: &str) -> &str {
     name.rfind('.').map(|p| &name[..p]).unwrap_or("")
 }

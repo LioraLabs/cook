@@ -1,3 +1,6 @@
+#![cfg(feature = "tui")]
+//! Terminal-browser tests; the graph model and renderers are tested in-crate.
+
 //! Arrow-key bindings: parity with hjkl in normal mode, ctrl+arrows pan camera.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};

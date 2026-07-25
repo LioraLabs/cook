@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 use crate::state::{AppState, Selection};
 
 fn unit_node(id: &str, recipe: &str, label: &str) -> NodeData {
@@ -30,8 +30,8 @@ fn three_unit_chain() -> WaveDagData {
                 unit_node("unit:a:2", "a", "a2"),
             ],
             edges: vec![
-                EdgeData { from: "unit:a:0".into(), to: "unit:a:1".into() },
-                EdgeData { from: "unit:a:1".into(), to: "unit:a:2".into() },
+                EdgeData { from: "unit:a:0".into(), to: "unit:a:1".into(), kind: EdgeKind::Data },
+                EdgeData { from: "unit:a:1".into(), to: "unit:a:2".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],

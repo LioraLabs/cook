@@ -10,13 +10,21 @@ cook-cache = { path = "../cook-cache" }
 cook-fingerprint = { path = "../cook-fingerprint" }
 cook-engine = { path = "../cook-engine" }
 
-ratatui = "0.30"
-crossterm = "0.29"
-nucleo-matcher = "0.3"
-unicode-width = "0.2"
+# TUI-only. Optional so the DAG model and the text/mermaid/dot renderers
+# build — and ship — without pulling a terminal UI stack in.
+ratatui = { version = "0.30", optional = true }
+crossterm = { version = "0.29", optional = true }
+nucleo-matcher = { version = "0.3", optional = true }
+unicode-width = { version = "0.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+[features]
+default = []
+# The ratatui terminal browser. The crate's data model, aggregation, and
+# text/mermaid/dot/json renderers are always available without it.
+tui = ["dep:ratatui", "dep:crossterm", "dep:nucleo-matcher", "dep:unicode-width"]
 
 [dev-dependencies]
 insta = { version = "1", features = ["yaml"] }

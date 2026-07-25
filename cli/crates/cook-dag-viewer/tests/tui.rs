@@ -1,3 +1,6 @@
+#![cfg(feature = "tui")]
+//! Terminal-browser tests; the graph model and renderers are tested in-crate.
+
 //! End-to-end-ish: drive AppState through scripted key events.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};

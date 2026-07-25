@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 
 fn unit(id: &str, recipe: &str, label: &str) -> NodeData {
     NodeData {
@@ -134,8 +134,7 @@ fn open_edge_picker_single_candidate_jumps_directly() {
     let mut g = graph_2x2();
     g.inter_wave_edges.push(EdgeData {
         from: "unit:a:0".into(),
-        to: "unit:c:0".into(),
-    });
+        to: "unit:c:0".into(), kind: EdgeKind::Data });
     let mut app = AppState::new(&g);
     app.tree.waves[0].recipes[0].expanded = true;
     app.selection = Selection::unit(0, 0, 0);
@@ -149,12 +148,10 @@ fn open_edge_picker_multiple_candidates_opens_picker() {
     let mut g = graph_2x2();
     g.inter_wave_edges.push(EdgeData {
         from: "unit:a:0".into(),
-        to: "unit:c:0".into(),
-    });
+        to: "unit:c:0".into(), kind: EdgeKind::Data });
     g.waves[0].edges.push(EdgeData {
         from: "unit:a:0".into(),
-        to: "unit:b:0".into(),
-    });
+        to: "unit:b:0".into(), kind: EdgeKind::Data });
     let mut app = AppState::new(&g);
     app.tree.waves[0].recipes[0].expanded = true;
     app.selection = Selection::unit(0, 0, 0);
@@ -335,7 +332,7 @@ fn graph_with_files() -> WaveDagData {
                     discovered: None,
                 },
             ],
-            edges: vec![EdgeData { from: "file:foo.cpp".into(), to: "unit:a:0".into() }],
+            edges: vec![EdgeData { from: "file:foo.cpp".into(), to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     }

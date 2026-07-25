@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::dag_data::{EdgeData, NodeData, WaveDagData, WaveData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveDagData, WaveData};
 use crate::state::{AppState, SelectionLeaf};
 
 /// Build a single-wave subgraph containing the focus set (derived from
@@ -113,7 +113,9 @@ fn build_subgraph(graph: &WaveDagData, visible: &BTreeSet<String>) -> WaveDagDat
     }
     let mut edges: Vec<EdgeData> = Vec::new();
     let mut edge_seen: BTreeSet<(String, String)> = BTreeSet::new();
-    let push = |from: &str, to: &str,
+    // The source edge's kind is carried through verbatim: focusing hides
+    // nodes, it does not change why the surviving edges exist.
+    let push = |from: &str, to: &str, kind: EdgeKind,
                     edges: &mut Vec<EdgeData>,
                     seen: &mut BTreeSet<(String, String)>| {
         if !visible.contains(from) || !visible.contains(to) {
@@ -121,16 +123,16 @@ fn build_subgraph(graph: &WaveDagData, visible: &BTreeSet<String>) -> WaveDagDat
         }
         let k = (from.to_string(), to.to_string());
         if seen.insert(k) {
-            edges.push(EdgeData { from: from.to_string(), to: to.to_string() });
+            edges.push(EdgeData { from: from.to_string(), to: to.to_string(), kind });
         }
     };
     for wave in &graph.waves {
         for e in &wave.edges {
-            push(&e.from, &e.to, &mut edges, &mut edge_seen);
+            push(&e.from, &e.to, e.kind, &mut edges, &mut edge_seen);
         }
     }
     for e in &graph.inter_wave_edges {
-        push(&e.from, &e.to, &mut edges, &mut edge_seen);
+        push(&e.from, &e.to, e.kind, &mut edges, &mut edge_seen);
     }
 
     WaveDagData {

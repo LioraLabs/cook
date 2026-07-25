@@ -69,7 +69,7 @@ fn renders_expanded_recipe_with_units_and_badges() {
 }
 
 fn graph_with_files() -> WaveDagData {
-    use crate::dag_data::EdgeData;
+    use crate::dag_data::{EdgeData, EdgeKind};
     WaveDagData {
         schema_version: crate::VIEWER_SCHEMA_VERSION,
         target: "build".into(),
@@ -105,8 +105,8 @@ fn graph_with_files() -> WaveDagData {
                 unit("unit:a:0", "a", "a0", Some(true)),
             ],
             edges: vec![
-                EdgeData { from: "file:bar.cpp".into(), to: "unit:a:0".into() },
-                EdgeData { from: "file:helpers.h".into(), to: "unit:a:0".into() },
+                EdgeData { from: "file:bar.cpp".into(), to: "unit:a:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "file:helpers.h".into(), to: "unit:a:0".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],
@@ -245,7 +245,7 @@ fn files_folder_header_is_not_reversed_when_unselected() {
 
 #[test]
 fn long_filename_truncates_with_ellipsis_before_badge() {
-    use crate::dag_data::EdgeData;
+    use crate::dag_data::{EdgeData, EdgeKind};
     let g = WaveDagData {
         schema_version: crate::VIEWER_SCHEMA_VERSION,
         target: "build".into(),
@@ -269,8 +269,7 @@ fn long_filename_truncates_with_ellipsis_before_badge() {
             ],
             edges: vec![EdgeData {
                 from: "file:include/platform/threading.h".into(),
-                to: "unit:a:0".into(),
-            }],
+                to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     };

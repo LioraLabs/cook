@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 
 fn unit(id: &str, recipe: &str, label: &str) -> NodeData {
     NodeData {
@@ -49,8 +49,7 @@ fn longest_path_layers_a_chain_left_to_right() {
                 nodes: vec![file("file:foo", "foo"), unit("unit:a:0", "a", "a0")],
                 edges: vec![EdgeData {
                     from: "file:foo".into(),
-                    to: "unit:a:0".into(),
-                }],
+                    to: "unit:a:0".into(), kind: EdgeKind::Data }],
             },
             WaveData {
                 recipes: vec!["b".into()],
@@ -60,8 +59,7 @@ fn longest_path_layers_a_chain_left_to_right() {
         ],
         inter_wave_edges: vec![EdgeData {
             from: "unit:a:0".into(),
-            to: "unit:b:0".into(),
-        }],
+            to: "unit:b:0".into(), kind: EdgeKind::Data }],
     };
     let l = compute(&g, LayoutDims::FULL);
     assert_eq!(layer_of(&l, "file:foo"), 0);
@@ -86,9 +84,9 @@ fn long_edges_get_dummy_nodes_for_routing() {
                 unit("unit:r:1", "r", "c"),
             ],
             edges: vec![
-                EdgeData { from: "file:in".into(), to: "unit:r:0".into() },
-                EdgeData { from: "unit:r:0".into(), to: "unit:r:1".into() },
-                EdgeData { from: "file:in".into(), to: "unit:r:1".into() },
+                EdgeData { from: "file:in".into(), to: "unit:r:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "unit:r:0".into(), to: "unit:r:1".into(), kind: EdgeKind::Data },
+                EdgeData { from: "file:in".into(), to: "unit:r:1".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],
@@ -121,8 +119,7 @@ fn routes_short_edge_with_orthogonal_polyline() {
             nodes: vec![file("file:foo", "foo"), unit("unit:a:0", "a", "a0")],
             edges: vec![EdgeData {
                 from: "file:foo".into(),
-                to: "unit:a:0".into(),
-            }],
+                to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     };
@@ -159,8 +156,8 @@ fn barycenter_reduces_crossings_between_two_layers() {
                 unit("unit:y:0", "y", "y0"),
             ],
             edges: vec![
-                EdgeData { from: "file:f2".into(), to: "unit:x:0".into() },
-                EdgeData { from: "file:f1".into(), to: "unit:y:0".into() },
+                EdgeData { from: "file:f2".into(), to: "unit:x:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "file:f1".into(), to: "unit:y:0".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],
@@ -201,9 +198,9 @@ fn multi_tier_edge_bends_in_gaps_not_inside_a_layer_column() {
                 unit("unit:r:1", "r", "c"),
             ],
             edges: vec![
-                EdgeData { from: "file:in".into(), to: "unit:r:0".into() },
-                EdgeData { from: "unit:r:0".into(), to: "unit:r:1".into() },
-                EdgeData { from: "file:in".into(), to: "unit:r:1".into() },
+                EdgeData { from: "file:in".into(), to: "unit:r:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "unit:r:0".into(), to: "unit:r:1".into(), kind: EdgeKind::Data },
+                EdgeData { from: "file:in".into(), to: "unit:r:1".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],

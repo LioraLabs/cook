@@ -63,10 +63,65 @@ pub struct NodeData {
     pub discovered: Option<bool>,
 }
 
+/// Why an edge exists — the thing that decides whether it is costing you
+/// parallelism, and the question a kindless `{from, to}` pair cannot answer.
+///
+/// Ordered weakest-to-strongest by how much they constrain scheduling, so
+/// aggregation can keep the most constraining kind visible when it merges a
+/// bundle of edges between two collapsed nodes (see `Ord`).
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    /// A declared file input feeding a unit. A real data dependency.
+    Data,
+    /// A header reached through a `discovered_inputs` depfile.
+    Discovered,
+    /// A probe value consumed by a unit (§22.5.5).
+    Probe,
+    /// Entry into a step group: the members are siblings and run in parallel.
+    Group,
+    /// A §15.1 sequential barrier between units of one recipe.
+    Serial,
+    /// Per-unit cross-recipe ordering — `cook.dep_order` / `cook.dep_output`
+    /// (§22.10). Fine-grained: only the referencing units wait.
+    DepOrder,
+    /// Whole-recipe barrier — a dep-list entry or `cook.require_recipe`
+    /// (§22.8). Every unit of the consumer waits for every unit of the
+    /// referent. The most expensive edge in the model, and the one most often
+    /// reached for when `DepOrder` would do.
+    Barrier,
+}
+
+impl EdgeKind {
+    /// Short label used by every renderer.
+    pub fn label(self) -> &'static str {
+        match self {
+            EdgeKind::Data => "data",
+            EdgeKind::Discovered => "discovered",
+            EdgeKind::Probe => "probe",
+            EdgeKind::Group => "group",
+            EdgeKind::Serial => "serial",
+            EdgeKind::DepOrder => "dep_order",
+            EdgeKind::Barrier => "barrier",
+        }
+    }
+
+    /// True when the edge imposes ordering rather than carrying data. These
+    /// are the edges worth interrogating when a build is less parallel than
+    /// expected.
+    pub fn is_ordering(self) -> bool {
+        matches!(
+            self,
+            EdgeKind::Group | EdgeKind::Serial | EdgeKind::DepOrder | EdgeKind::Barrier
+        )
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct EdgeData {
     pub from: String,
     pub to: String,
+    pub kind: EdgeKind,
 }
 
 /// Read and parse the depfile a unit declares via `discovered_inputs`.
@@ -154,12 +209,34 @@ pub fn build_wave_dag_data(
 
     // Build inter-wave edges: for each explicit dep A -> B where A and B
     // live in different waves, connect the terminals of A to the roots of B.
+    //
+    // Only where the dependency is NOT already fine-covered. A recipe-level
+    // `requires` edge that a module has covered with per-unit `cook.dep_order`
+    // references (CS-0161) does not execute as a whole-recipe barrier — the
+    // consumer's units are free to run in one flat wave with the upstream's,
+    // and only the units that named the upstream actually wait. Those fine
+    // edges are already in the graph, emitted from `dep_edges` below.
+    //
+    // Emitting the coarse edge anyway would be worse than redundant: it
+    // outnumbers the fine edges (one per consumer root, so ~1685 to 1 on a
+    // large C++ target) and, once aggregated, would mask them entirely — the
+    // tool would report a barrier that the engine does not impose. So the
+    // coarse edge is emitted only when nothing fine-covers it, which makes its
+    // presence meaningful: a `barrier` in the output is a real whole-recipe
+    // barrier, and the absence of one is a dependency that was fine-covered.
     let mut inter_wave_edges: Vec<EdgeData> = Vec::new();
     for (recipe, deps) in explicit_deps {
         let Some(roots) = recipe_roots.get(recipe) else {
             continue;
         };
+        let fine_covered: BTreeSet<&str> = units_by_name
+            .get(recipe.as_str())
+            .map(|ru| ru.dep_edges.iter().map(|(_, dep)| dep.as_str()).collect())
+            .unwrap_or_default();
         for dep in deps {
+            if fine_covered.contains(dep.as_str()) {
+                continue;
+            }
             let Some(terminals) = recipe_terminals.get(dep) else {
                 continue;
             };
@@ -168,6 +245,9 @@ pub fn build_wave_dag_data(
                     inter_wave_edges.push(EdgeData {
                         from: terminal.clone(),
                         to: root.clone(),
+                        // An explicit dep-list edge between recipes: every unit
+                        // of the consumer waits for every unit of the referent.
+                        kind: EdgeKind::Barrier,
                     });
                 }
             }
@@ -418,6 +498,7 @@ fn build_wave(
                     edges.push(EdgeData {
                         from: file_id,
                         to: unit_id.clone(),
+                        kind: EdgeKind::Data,
                     });
                 }
             }
@@ -439,6 +520,7 @@ fn build_wave(
                             edges.push(EdgeData {
                                 from: file_id,
                                 to: unit_id.clone(),
+                                kind: EdgeKind::Discovered,
                             });
                             continue;
                         }
@@ -464,6 +546,7 @@ fn build_wave(
                         edges.push(EdgeData {
                             from: file_id,
                             to: unit_id.clone(),
+                            kind: EdgeKind::Discovered,
                         });
                     }
                 }
@@ -478,6 +561,7 @@ fn build_wave(
                     edges.push(EdgeData {
                         from: probe_uid.clone(),
                         to: unit_id.clone(),
+                        kind: EdgeKind::Probe,
                     });
                 }
             }
@@ -502,6 +586,7 @@ fn build_wave(
                         edges.push(EdgeData {
                             from: b.clone(),
                             to: unit_id.clone(),
+                            kind: EdgeKind::Serial,
                         });
                     }
                     barrier = vec![unit_id.clone()];
@@ -517,6 +602,7 @@ fn build_wave(
                                 edges.push(EdgeData {
                                     from: b.clone(),
                                     to: member_id,
+                                    kind: EdgeKind::Group,
                                 });
                             }
                         }
@@ -537,6 +623,7 @@ fn build_wave(
                         edges.push(EdgeData {
                             from: b.clone(),
                             to: unit_id.clone(),
+                            kind: EdgeKind::Serial,
                         });
                     }
                     barrier = vec![unit_id.clone()];
@@ -573,6 +660,9 @@ fn build_wave(
                     edges.push(EdgeData {
                         from: terminal.clone(),
                         to: unit_id.clone(),
+                        // cook.dep_order / cook.dep_output: attaches to the
+                        // referencing unit only, not the whole recipe.
+                        kind: EdgeKind::DepOrder,
                     });
                 }
             }

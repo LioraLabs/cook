@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 use crate::state::{AppState, Selection};
 
 fn unit(id: &str, recipe: &str, label: &str) -> NodeData {
@@ -47,9 +47,9 @@ fn small_dag() -> WaveDagData {
                 unit("unit:b:0", "b", "b0"),
             ],
             edges: vec![
-                EdgeData { from: "file:foo.cpp".into(), to: "unit:a:0".into() },
-                EdgeData { from: "file:noise.h".into(), to: "unit:b:0".into() },
-                EdgeData { from: "unit:a:0".into(), to: "unit:b:0".into() },
+                EdgeData { from: "file:foo.cpp".into(), to: "unit:a:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "file:noise.h".into(), to: "unit:b:0".into(), kind: EdgeKind::Data },
+                EdgeData { from: "unit:a:0".into(), to: "unit:b:0".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],
@@ -94,8 +94,7 @@ fn two_wave_dag() -> WaveDagData {
                 ],
                 edges: vec![EdgeData {
                     from: "file:foo.cpp".into(),
-                    to: "unit:a:0".into(),
-                }],
+                    to: "unit:a:0".into(), kind: EdgeKind::Data }],
             },
             WaveData {
                 recipes: vec!["b".into()],
@@ -105,8 +104,7 @@ fn two_wave_dag() -> WaveDagData {
         ],
         inter_wave_edges: vec![EdgeData {
             from: "unit:a:0".into(),
-            to: "unit:b:0".into(),
-        }],
+            to: "unit:b:0".into(), kind: EdgeKind::Data }],
     }
 }
 
@@ -216,8 +214,7 @@ fn focus_subgraph_for_files_folder_matches_wave_only() {
             ],
             edges: vec![EdgeData {
                 from: "file:foo.h".into(),
-                to: "unit:a:0".into(),
-            }],
+                to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     };

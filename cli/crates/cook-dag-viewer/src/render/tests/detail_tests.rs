@@ -1,5 +1,5 @@
 use super::*;
-use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
+use crate::dag_data::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 use crate::frame::SnapshotFrame;
 use crate::state::{AppState, Selection};
 
@@ -39,8 +39,7 @@ fn graph() -> WaveDagData {
             ],
             edges: vec![EdgeData {
                 from: "file:foo.cpp".into(),
-                to: "unit:a:0".into(),
-            }],
+                to: "unit:a:0".into(), kind: EdgeKind::Data }],
         }],
         inter_wave_edges: vec![],
     }
@@ -135,12 +134,10 @@ fn graph_with_discovered() -> WaveDagData {
             edges: vec![
                 EdgeData {
                     from: "file:foo.cpp".into(),
-                    to: "unit:a:0".into(),
-                },
+                    to: "unit:a:0".into(), kind: EdgeKind::Data },
                 EdgeData {
                     from: "file:helpers.h".into(),
-                    to: "unit:a:0".into(),
-                },
+                    to: "unit:a:0".into(), kind: EdgeKind::Data },
             ],
         }],
         inter_wave_edges: vec![],

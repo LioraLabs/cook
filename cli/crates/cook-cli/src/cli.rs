@@ -255,6 +255,25 @@ pub struct DagArgs {
     /// Config preset.
     pub config: Option<String>,
 
+    /// How much to collapse: recipe (default), group, or unit. A real C/C++
+    /// target registers thousands of units, so the default is coarse.
+    #[arg(long = "level", default_value = "recipe")]
+    pub level: String,
+
+    /// Output syntax: text (default), mermaid, dot, or json.
+    #[arg(long = "format", default_value = "text")]
+    pub format: String,
+
+    /// Node ceiling for `--level unit`; above it the command refuses rather
+    /// than emitting a graph nobody can read.
+    #[arg(long = "max-nodes", default_value_t = 200)]
+    pub max_nodes: usize,
+
+    /// Open the ratatui browser instead of printing. Requires a build with
+    /// `--features viewer`.
+    #[arg(long = "tui")]
+    pub tui: bool,
+
     /// DAG TUI theme: auto (default) or mono.
     #[arg(long = "theme", default_value = "auto")]
     pub theme: String,

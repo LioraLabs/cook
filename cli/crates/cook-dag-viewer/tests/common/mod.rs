@@ -6,7 +6,7 @@
 
 #![allow(dead_code)] // each test binary uses a different subset.
 
-use cook_dag_viewer::{EdgeData, NodeData, WaveData, WaveDagData};
+use cook_dag_viewer::{EdgeData, EdgeKind, NodeData, WaveData, WaveDagData};
 
 fn cached_unit_node(id: &str, recipe: &str, label: &str) -> NodeData {
     NodeData {
@@ -61,8 +61,7 @@ pub fn three_wave_dag() -> WaveDagData {
                 ],
                 edges: vec![EdgeData {
                     from: "file:bar.cpp".into(),
-                    to: "unit:cpp.compile:0".into(),
-                }],
+                    to: "unit:cpp.compile:0".into(), kind: EdgeKind::Data }],
             },
             WaveData {
                 recipes: vec!["cpp.link".into()],
@@ -85,8 +84,7 @@ pub fn three_wave_dag() -> WaveDagData {
         ],
         inter_wave_edges: vec![EdgeData {
             from: "unit:cpp.compile:0".into(),
-            to: "unit:cpp.link:0".into(),
-        }],
+            to: "unit:cpp.link:0".into(), kind: EdgeKind::Data }],
     }
 }
 
@@ -109,6 +107,7 @@ pub fn small_dag() -> WaveDagData {
         .map(|w| EdgeData {
             from: format!("u:{}-1", w),
             to: format!("u:{}-0", w + 1),
+            kind: EdgeKind::Barrier,
         })
         .collect();
     WaveDagData {
@@ -139,6 +138,7 @@ pub fn medium_dag() -> WaveDagData {
             (0..3).map(move |i| EdgeData {
                 from: format!("u:{}-{}", w, i),
                 to: format!("u:{}-{}", w + 1, i),
+                kind: EdgeKind::Barrier,
             })
         })
         .collect();
@@ -170,6 +170,7 @@ pub fn wide_dag() -> WaveDagData {
             (0..5).map(move |i| EdgeData {
                 from: format!("u:{}-{}", w, i),
                 to: format!("u:{}-{}", w + 1, i),
+                kind: EdgeKind::Barrier,
             })
         })
         .collect();
