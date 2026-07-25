@@ -419,6 +419,110 @@ max_size = "-5GB"
     );
 }
 
+/// A signed-zero literal (`-0`) must not slip past the negative check by
+/// evaluating `-0.0 < 0.0` as false. A leading `-` is rejected outright.
+#[test]
+fn max_size_negative_zero_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "-0"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("-0"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// Same signed-zero case with a unit suffix attached.
+#[test]
+fn max_size_negative_zero_with_unit_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "-0GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("-0GB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A leading `+` is rejected too — a budget literal never needs an
+/// explicit sign, so this is intended, not a regression.
+#[test]
+fn max_size_explicit_plus_sign_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "+5GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("+5GB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A value that overflows `u64` must error, not silently saturate to
+/// `u64::MAX` (which would read as "effectively no budget").
+#[test]
+fn max_size_overflow_unit_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "999999999TB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("999999999TB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A bare-byte literal one past `u64::MAX` must also error rather than
+/// silently saturate.
+#[test]
+fn max_size_overflow_bare_number_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "18446744073709551616"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("18446744073709551616"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
 #[test]
 fn max_size_absent_does_not_change_load_or_default_behaviour() {
     // A cloud.toml that omits [cache] max_size still loads exactly as

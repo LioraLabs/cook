@@ -171,7 +171,9 @@ pub struct EvictCandidate {
     /// The artifact's 32-byte content-addressed key.
     pub key: CloudKey,
     /// On-disk blob size from `fs::metadata().len()`. NOT `ArtifactMeta.size_bytes`,
-    /// which is caller-set and untrusted (see `cook-cache/src/backend.rs:409-417`).
+    /// which is caller-set and untrusted (see `LocalBackend::put`'s handling of
+    /// `size_bytes` in the `cook-cache` crate: it's left as whatever the caller
+    /// passed in, not recomputed from the written bytes).
     pub size: u64,
     /// Blob mtime as Unix seconds. Touch-on-read (COOK-233) keeps this current;
     /// 0 when the platform mtime is unavailable.

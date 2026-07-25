@@ -53,9 +53,9 @@ fn empty_dir_yields_zero_candidates() {
 fn nonexistent_root_yields_zero_candidates_not_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let missing_root = dir.path().join("does-not-exist");
-    // Deliberately do NOT go through LocalBackend::new/with_config's
-    // create_dir_all here — construct then remove the root to exercise the
-    // "root doesn't exist" branch directly.
+    // LocalBackend::new/with_config creates the root via create_dir_all;
+    // remove it again immediately so `enumerate` sees a missing root and
+    // we exercise the "root doesn't exist" branch directly.
     let backend = LocalBackend::new(missing_root.clone());
     std::fs::remove_dir_all(&missing_root).expect("remove freshly-created root");
     let candidates = backend.enumerate().expect("enumerate");
@@ -164,6 +164,75 @@ fn blob_with_deleted_sidecar_still_appears_as_orphan() {
     assert_eq!(candidates[0].key, key);
     assert_eq!(candidates[0].kind, None);
     assert_eq!(candidates[0].recipe_namespace, "");
+}
+
+#[test]
+fn blob_with_malformed_sidecar_still_appears_as_orphan() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+
+    let key = some_key(8);
+    let bytes = b"malformed-sidecar-blob";
+    let mut meta = make_meta(RECIPE_NS, "malformed.out", bytes.len() as u64);
+    put_bytes(&backend, &key, bytes, &mut meta).expect("put");
+
+    let hex = hex::encode(key);
+    let shard_dir = dir.path().join(&hex[..2]);
+    // Overwrite the sidecar `put` just wrote with garbage — not a missing
+    // file, a present-but-unparseable one.
+    std::fs::write(
+        shard_dir.join(format!("{}.meta.json", &hex[2..])),
+        b"not valid json {{{",
+    )
+    .expect("overwrite sidecar with invalid json");
+
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].key, key);
+    assert_eq!(candidates[0].kind, None);
+    assert_eq!(candidates[0].recipe_namespace, "");
+}
+
+#[test]
+fn shard_dir_name_filtering_and_blob_case_sensitivity() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+
+    // Genuine blob in a genuine shard dir — the one thing that should
+    // survive all the junk planted below.
+    let key = some_key(9);
+    let bytes = b"legit-blob";
+    let mut meta = make_meta(RECIPE_NS, "legit.out", bytes.len() as u64);
+    put_bytes(&backend, &key, bytes, &mut meta).expect("put");
+
+    let hex = hex::encode(key);
+    let shard_dir = dir.path().join(&hex[..2]);
+
+    // Same (legitimate) shard dir, but a 62-char *uppercase* hex name:
+    // right length, hex characters, but not lowercase — must be excluded.
+    std::fs::write(shard_dir.join("A".repeat(62)), b"uppercase-blob")
+        .expect("write uppercase-named blob");
+
+    // Store-root directories whose names are not exactly 2 lowercase hex
+    // chars: uppercase (wrong case), "zz" (right length, not hex chars),
+    // and "deadbeef" (valid hex chars, wrong length). Each holds a
+    // plausible 62-hex-named file that would pass the blob-name filter on
+    // its own, to prove it's the shard-name check doing the excluding.
+    let plausible_blob_name = "a".repeat(62);
+    for bogus_shard in ["AB", "zz", "deadbeef"] {
+        let bogus_dir = dir.path().join(bogus_shard);
+        std::fs::create_dir_all(&bogus_dir).expect("mkdir bogus shard");
+        std::fs::write(bogus_dir.join(&plausible_blob_name), b"bogus-shard-blob")
+            .expect("write into bogus shard dir");
+    }
+
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(
+        candidates.len(),
+        1,
+        "only the genuine lowercase blob in the genuine shard dir should be counted, got {candidates:?}"
+    );
+    assert_eq!(candidates[0].key, key);
 }
 
 #[test]

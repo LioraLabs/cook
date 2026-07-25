@@ -575,9 +575,20 @@ impl LocalBackend {
                     continue;
                 };
 
-                let blob_path = blob_entry.path();
-                let Ok(metadata) = std::fs::metadata(&blob_path) else {
-                    continue;
+                // `DirEntry::metadata()` (not `fs::metadata(path)`): it
+                // stats relative to the already-open directory (cheaper at
+                // scale) and, importantly, does NOT follow symlinks — a
+                // 62-hex-named symlink pointing outside the CAS must not
+                // report its target's size as CAS-resident.
+                let metadata = match blob_entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        tracing::debug!(
+                            "enumerate: unreadable blob metadata at {} ({e}); skipped",
+                            blob_entry.path().display()
+                        );
+                        continue;
+                    }
                 };
                 let size = metadata.len();
                 let last_access = metadata

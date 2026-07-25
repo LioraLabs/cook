@@ -143,16 +143,23 @@ impl std::error::Error for CloudConfigError {}
 /// followed by an optional unit suffix, matched case-insensitively, with
 /// optional whitespace between the number and the unit. A bare number is
 /// bytes. `KB`/`MB`/`GB`/`TB` are powers of 1000; `KIB`/`MIB`/`GIB`/`TIB`
-/// are powers of 1024. Negative numbers and anything else that doesn't
-/// match this shape return `None` — the caller turns that into a
-/// `CloudConfigError::BadMaxSize` naming the original literal.
+/// are powers of 1024. A leading sign (`+` or `-`) and anything else that
+/// doesn't match this shape return `None` — the caller turns that into a
+/// `CloudConfigError::BadMaxSize` naming the original literal. A budget
+/// literal never needs an explicit sign, so a value never gets far enough
+/// to be tested as negative (which would otherwise let a signed zero like
+/// `"-0"` slip through, since `-0.0 < 0.0` is false).
+///
+/// A value that doesn't fit in `u64` also returns `None` rather than
+/// silently saturating to `u64::MAX` — a typo like `"999999999TB"` must
+/// not read as "effectively no budget".
 fn parse_size(literal: &str) -> Option<u64> {
     let s = literal.trim();
+    if s.starts_with('-') || s.starts_with('+') {
+        return None;
+    }
     let bytes = s.as_bytes();
     let mut i = 0;
-    if i < bytes.len() && (bytes[i] == b'-' || bytes[i] == b'+') {
-        i += 1;
-    }
     let mut saw_digit = false;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
         i += 1;
@@ -170,9 +177,6 @@ fn parse_size(literal: &str) -> Option<u64> {
     }
     let (num_part, rest) = s.split_at(i);
     let number: f64 = num_part.parse().ok()?;
-    if number < 0.0 {
-        return None;
-    }
     let unit = rest.trim_start();
     let multiplier: f64 = if unit.is_empty() {
         1.0
@@ -192,6 +196,12 @@ fn parse_size(literal: &str) -> Option<u64> {
     };
     let total = number * multiplier;
     if !total.is_finite() {
+        return None;
+    }
+    // `u64::MAX` isn't exactly representable as `f64` (it rounds up to
+    // `2^64`), so this comparison correctly rejects anything that would
+    // otherwise saturate via the `as` cast below rather than erroring.
+    if total >= u64::MAX as f64 {
         return None;
     }
     Some(total as u64)
