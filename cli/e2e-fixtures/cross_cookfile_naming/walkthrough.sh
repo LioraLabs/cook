@@ -27,7 +27,7 @@ run_assert() {
     scenario=$((scenario + 1))
     printf "  [%d] %-60s " "$scenario" "$name"
     local out
-    out="$("$@" 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+    out="$("$@" 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
     if [[ "$out" == *"$expected"* ]]; then
         echo "PASS"
         pass=$((pass + 1))
@@ -105,7 +105,7 @@ clean_state
 sub_out=$(cd apps/cli && "$COOK" build 2>&1)
 scenario=$((scenario + 1))
 printf "  [%d] %-60s " "$scenario" "cook build from apps/cli/ subdir"
-if echo "$sub_out" | grep -q 'cook build done'; then
+if echo "$sub_out" | grep -q 'cook done in'; then
     echo "PASS"
     pass=$((pass + 1))
 else

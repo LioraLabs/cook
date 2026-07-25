@@ -33,7 +33,7 @@ run_assert() {
     scenario=$((scenario + 1))
     printf "  [%d] %-55s " "$scenario" "$name"
     local out
-    out="$("$@" 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+    out="$("$@" 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
     if [[ "$out" == *"$expected"* ]]; then
         echo "PASS"
         pass=$((pass + 1))
@@ -100,7 +100,7 @@ if echo "$sub_out" | grep -q '0 cached recipes, 2 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$sub_out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$sub_out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 
