@@ -904,15 +904,9 @@ pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<A
     let mut denylist = EnvDenylist::baseline();
     denylist.extend_with(cloud_config.cache_ignore_env());
     let denylist = Arc::new(denylist);
-    let cache_dir = cloud_config
-        .cache_dir()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::cache_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("cook")
-                .join("cloud")
-        });
+    // COOK-232: shared with `CloudConfig::resolved_cache_dir` so `cook cache
+    // du` reports on the exact directory the engine writes to.
+    let cache_dir = cloud_config.resolved_cache_dir();
     let backend: Arc<dyn CacheBackend> = if cloud_config.cloud.enabled {
         let endpoint = cloud_config
             .cloud

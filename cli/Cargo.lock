@@ -372,6 +372,7 @@ version = "0.10.1"
 dependencies = [
  "cook-contracts",
  "cook-fingerprint",
+ "dirs",
  "filetime",
  "hex",
  "mockito",
@@ -440,7 +441,6 @@ dependencies = [
  "cook-luagen",
  "cook-luaotp",
  "cook-register",
- "dirs",
  "dotenvy",
  "filetime",
  "globset",

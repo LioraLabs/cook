@@ -1,5 +1,6 @@
 //! cook — the user-facing binary for the Cook build system.
 
+mod cache_du;
 mod cli;
 mod completion;
 mod error;
@@ -126,6 +127,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Cache(args)) => match args.cmd {
             crate::cli::CacheCmd::Verify(v) => cmd_cache_verify(&globals, &v),
             crate::cli::CacheCmd::Dump(d) => cmd_cache_dump(&globals, &d),
+            crate::cli::CacheCmd::Du => cache_du::cmd_cache_du(&globals),
         },
         Some(Cmd::Serve(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");
