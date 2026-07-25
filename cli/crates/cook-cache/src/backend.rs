@@ -170,6 +170,24 @@ impl LocalBackend {
     }
 }
 
+/// COOK-233 — best-effort last-access bump on a CAS blob.
+///
+/// LRU eviction (`cook cache gc`) needs to know when an entry was last
+/// used. The signal is the blob file's own mtime, restamped with a single
+/// `utimensat` per cache hit; "LRU order" is therefore ascending *blob*
+/// mtime. The rejected alternative was a `last_access` field inside
+/// `.meta.json` rewritten on every read, which puts write amplification on
+/// the hot read path.
+///
+/// Returns `()` on purpose: a failed touch must never fail a cache read.
+/// Failures are logged at `debug!`, not `warn!` — read-only mounts and
+/// exotic filesystems make this an expected outcome, not an anomaly.
+fn touch_on_read(path: &std::path::Path) {
+    if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::now()) {
+        tracing::debug!("cache last-access: touch {} failed: {e}", path.display());
+    }
+}
+
 impl CacheBackend for LocalBackend {
     fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
         let mut hits = std::collections::BTreeSet::new();
@@ -254,6 +272,28 @@ impl CacheBackend for LocalBackend {
             }
             Err(e) => return Err(BackendError::Other(format!("open {}: {e}", path.display()))),
         };
+
+        // COOK-233 — this is a hit; stamp last-access. Every miss path above
+        // has already returned, so mtime moves only on genuine hits, and
+        // `get` delegates here, so both read entry points are covered.
+        // `batch_query` is an existence probe, not a read, and is excluded.
+        //
+        // SAFETY ARGUMENT — this touch is inert *only because restore is a
+        // byte copy, not a hardlink*. `cook_fingerprint::check::restore_one`
+        // does `read_to_end` -> write tmp -> rename, so the CAS blob and the
+        // restored workspace file are different inodes and restamping the
+        // blob cannot perturb workspace-file mtimes. If restore is ever
+        // changed to hardlink or reflink the blob into the workspace, the two
+        // become the same inode and this touch would corrupt input-freshness
+        // detection. Do not make that change without removing this touch.
+        //
+        // Accepted imprecision (not a defect): the touch fires after
+        // `File::open` but before `VerifyingReader` can reject at EOF, so a
+        // *tampered* blob gets its mtime bumped even though the read
+        // ultimately surfaces as a miss. That makes LRU marginally less
+        // precise and has no correctness consequence.
+        touch_on_read(&path);
+
         Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))
     }
 
