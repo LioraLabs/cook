@@ -40,7 +40,7 @@ Unnamed config block
 ================
 
 config
-    env.CC = "gcc"
+    var.CC = "gcc"
 
 ---
 
@@ -53,7 +53,7 @@ Named config block with Lua body
 ================
 
 config release
-    env.CXXFLAGS = "-O3"
+    var.CXXFLAGS = "-O3"
     cpp.defaults({defines = {"NDEBUG"}})
 
 ---
@@ -68,8 +68,8 @@ Config block (quoted name)
 ================
 
 config "release"
-    env.CXXFLAGS = "-O2"
-    env.LDFLAGS = "-s"
+    var.CXXFLAGS = "-O2"
+    var.LDFLAGS = "-s"
 
 ---
 
@@ -98,7 +98,7 @@ use cpp
 import backend ./services/backend
 
 config debug
-    env.CFLAGS = "-g"
+    var.CFLAGS = "-g"
 
 ---
 
@@ -252,4 +252,23 @@ recipe r
   (ERROR
     (shell_block
       (shell_content))
+    (lua_code)))
+
+================
+Config block reading the host surface (CS-0163)
+================
+
+config profiling
+    local export_dynamic = host.os == "macos"
+        and "-C link-arg=-Wl,-export_dynamic"
+        or "-C link-arg=-rdynamic"
+    var.RUSTFLAGS = export_dynamic
+    var.HOME = host.env("HOME", "")
+    var.PINNED = host.read("VERSION")
+
+---
+
+(source_file
+  (config_block
+    name: (identifier)
     (lua_code)))

@@ -408,3 +408,34 @@ probe empty-files
   (ERROR
     (probe_header
       name: (identifier))))
+
+================
+Unquoted entry in a files glob-list is rejected (CS-0148)
+================
+
+probe srcs
+    files { src/*.ts }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      name: (identifier))
+    (import_name)
+    (lua_code)))
+
+================
+Lua block supplied where a files glob-list is required is rejected (CS-0148)
+================
+
+probe srcs
+    files >{ return {} }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      name: (identifier))
+    (lua_code)))
