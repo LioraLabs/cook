@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="engine" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_cc.lib({ sources = { \"src/storage/compression/dictionary_compression.cpp\", \"src/storage/compression/dictionary/compression.cpp\", \"src/common/bignum.cpp\", \"src/parser/bignum.cpp\" } })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

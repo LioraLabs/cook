@@ -1,0 +1,4 @@
+use cook_cc
+
+recipe engine
+    cook_cc.lib({ sources = { "src/storage/compression/dictionary_compression.cpp", "src/storage/compression/dictionary/compression.cpp", "src/common/bignum.cpp", "src/parser/bignum.cpp" } })
