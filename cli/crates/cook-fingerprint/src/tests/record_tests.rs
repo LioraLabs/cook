@@ -72,8 +72,8 @@ env_contribution = "00"
 }
 
 #[test]
-fn cache_version_is_6() {
-    assert_eq!(CACHE_VERSION, 6);
+fn cache_version_is_7() {
+    assert_eq!(CACHE_VERSION, 7);
 }
 
 #[test]

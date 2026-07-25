@@ -100,9 +100,10 @@ pub struct ThreadSafeCacheManager {
 
 impl ThreadSafeCacheManager {
     pub fn new(cache_dir: PathBuf) -> Self {
-        // COOK-92 one-time sweep: drop orphaned pre-v4 `.bin` indexes on the
+        // COOK-92 / CS-0166 sweep: drop index files in a format this cook no
+        // longer reads (pre-v4 `.bin`, v4..v6 `.toml`, torn temps) on the
         // first touch of this cache dir. No-op once they are gone.
-        crate::store::sweep_orphaned_bin_indexes(&cache_dir);
+        crate::store::sweep_superseded_indexes(&cache_dir);
         Self {
             caches: Mutex::new(HashMap::new()),
             cache_dir,

@@ -685,7 +685,7 @@ fn collect_output_glob_warnings_for_recipe(
         .collect()
 }
 
-/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.toml`): the `recipe_name`
+/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.idx`): the `recipe_name`
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.

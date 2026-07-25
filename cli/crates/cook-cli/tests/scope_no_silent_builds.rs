@@ -6,7 +6,7 @@
 //! EVERY non-chore recipe in the workspace — not just the ones declaring
 //! `test` steps. Non-test recipes then executed invisibly under the test
 //! reporter (only `test ... ok|FAILED` lines are shown) and their local
-//! cache indexes (`.cook/cache/<recipe>.toml`) advanced, so a later
+//! cache indexes (`.cook/cache/<recipe>.idx`) advanced, so a later
 //! `cook <recipe>` reported `cached` on work the user never actually saw
 //! run — a false cache hit hiding genuinely stale output.
 //!
@@ -106,7 +106,7 @@ recipe smoke: build
     .unwrap();
 
     let tc_runs_log = root.join("tc-runs.log");
-    let typecheck_cache = root.join(".cook/cache/typecheck.toml");
+    let typecheck_cache = root.join(".cook/cache/typecheck.idx");
 
     // Step 1: baseline — `cook typecheck` then `cook test` — typecheck
     // executes exactly once (from the direct `cook typecheck` invocation;

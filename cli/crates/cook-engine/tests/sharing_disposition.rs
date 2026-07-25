@@ -108,7 +108,7 @@ fn artifact_file_count(dir: &Path) -> usize {
 /// Wipe the local `.cook` index (cache StepEntries + logs) to simulate a fresh
 /// consumer, while PRESERVING `.cook/cloud.toml` so the run still points at the
 /// same shared `cache_dir`. The local index discovered for COOK-162 lives under
-/// `.cook/cache/<recipe>.toml` (StepEntry index) with run logs under
+/// `.cook/cache/<recipe>.idx` (StepEntry index) with run logs under
 /// `.cook/logs/`; `.cook/cloud.toml` is the only file that must survive.
 fn wipe_local_index_keep_cloud_toml(wd: &Path) {
     let dot_cook = wd.join(".cook");

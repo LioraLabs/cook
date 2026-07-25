@@ -11,17 +11,20 @@
 //! `FileRecord` / per-step keys are computed) is by definition an incompatible
 //! on-disk-format change, so the two move together.
 //!
-//! **Index format (v4+).** Each recipe is stored as a human-readable TOML file
-//! at `<cache_dir>/<basename>.toml`, where `<basename>` is the recipe name
-//! with the two path-hostile bytes percent-encoded (`%` → `%25`, `/` → `%2F`
-//! — see [`cache_file_basename`]). Names without those bytes keep their
-//! historical file names unchanged. The u64 hash fields (`command_hash`,
-//! `env_contribution`, `FileRecord.hash`) are serialised as
-//! zero-padded 16-digit lowercase hex strings via `cook_fingerprint::record::hex_u64`.
-//! The `schema_version` field is always the first key written by `toml::to_string`.
-//! TOML is non-positional, so a file missing `schema_version` deserialises via
-//! `default_cache_schema()` to 1 and is refused by the exact-match check.
-//! Pre-v4 bincode `.bin` files are never opened by this loader.
+//! **Index format (v7+, CS-0166).** Each recipe is stored as a binary file at
+//! `<cache_dir>/<basename>.idx`, where `<basename>` is the recipe name with
+//! the two path-hostile bytes percent-encoded (`%` → `%25`, `/` → `%2F` —
+//! see [`cache_file_basename`]). The layout, and why it is hand-rolled rather
+//! than a serde codec, are documented on [`crate::index_bin`]. Readability
+//! moved from the file to `cook why` and `cook cache dump`.
+//!
+//! v4..v6 stored a human-readable TOML file at `<basename>.toml`. That format
+//! spent 48.8% of its bytes restating each step key once per input record (a
+//! `toml::to_string` array-of-tables artifact, not a decision anyone made) and
+//! stored every path in full despite a ~49x redundancy across translation
+//! units. On a 1,711-node DuckDB build it reached 69 MB and cost 0.75s to
+//! parse on a run that executed nothing. Neither `.toml` nor the pre-v4
+//! bincode `.bin` is ever opened by this loader.
 //!
 //! **Read policy (CS-0048).** A recipe cache whose `schema_version` exceeds
 //! `CACHE_VERSION` is refused — the file was written by a future cook, and
@@ -29,7 +32,11 @@
 //! `schema_version` is *less than* `CACHE_VERSION` is also refused today
 //! because any schema mismatch is non-additive pre-v1.0. Both rejection
 //! paths surface as a cache-miss (the file is regeneratable; no hard error
-//! is needed).
+//! is needed), as does a failed checksum or any structural corruption.
+//!
+//! **No migration (CS-0166).** The index is regeneratable by definition, so
+//! nothing is migrated across a format change: superseded index files are
+//! deleted by [`sweep_superseded_indexes`] and the graph rebuilds once.
 //!
 //! **Evolution policy (v1.0+).** Future `RecipeCache` evolution is
 //! additive-only: new fields are introduced with `#[serde(default)]` and the
@@ -89,49 +96,59 @@ impl RecipeCache {
     }
 
     pub fn load(cache_dir: &Path, recipe_name: &str) -> Option<Self> {
-        let path = cache_dir.join(format!("{}.toml", cache_file_basename(recipe_name)));
-        let text = std::fs::read_to_string(&path).ok()?;
-        let cache: Self = toml::from_str(&text).map_err(|e| {
-            tracing::debug!(
-                path = %path.display(),
-                error = %e,
-                "recipe cache TOML parse failed — treating as cache miss"
-            );
-            e
-        }).ok()?;
-        // CS-0048 read policy. See crate docs: today the check is exact
-        // equality (pre-v1.0); the forward-compatible `<= CACHE_VERSION`
-        // form takes effect once the additive-only contract starts at v1.0.
-        if cache.schema_version != CACHE_VERSION {
-            return None;
-        }
-        Some(cache)
+        let path = cache_dir.join(format!("{}{INDEX_EXT}", cache_file_basename(recipe_name)));
+        let bytes = std::fs::read(&path).ok()?;
+        // Every decode failure is a cache-miss: the index is regeneratable, so
+        // there is nothing to gain by failing the build over one. The version
+        // check lives inside `decode` (CS-0048 exact-equality read policy).
+        crate::index_bin::decode(&bytes)
+            .map_err(|e| {
+                tracing::debug!(
+                    path = %path.display(),
+                    error = %e,
+                    "recipe index decode failed — treating as cache miss"
+                );
+                e
+            })
+            .ok()
     }
 
     pub fn save(&self, cache_dir: &Path, recipe_name: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(cache_dir)?;
         let base = cache_file_basename(recipe_name);
-        let target = cache_dir.join(format!("{}.toml", base));
-        let tmp = cache_dir.join(format!("{}.toml.tmp", base));
-        let text = toml::to_string(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        std::fs::write(&tmp, &text)?;
+        let target = cache_dir.join(format!("{base}{INDEX_EXT}"));
+        let tmp = cache_dir.join(format!("{base}{INDEX_EXT}.tmp"));
+        std::fs::write(&tmp, crate::index_bin::encode(self))?;
         std::fs::rename(&tmp, &target)?;
         Ok(())
     }
 }
 
-/// One-time hygiene sweep (COOK-92): delete orphaned pre-v4 bincode indexes
-/// (`*.bin`) and torn temp files (`*.bin.tmp`) sitting directly inside
-/// `cache_dir`. There is no migration — the loader only reads `.toml` — so
-/// these files are dead weight left by older cook versions.
+/// Extensions of index files this cook no longer reads: pre-v4 bincode
+/// (`.bin`), v4..v6 TOML (`.toml`), and the torn temp files either could
+/// leave behind. `.idx.tmp` is included so a crash mid-save does not leave a
+/// partial file lying next to the real one forever.
+///
+/// Deliberately a denylist of *known superseded index* extensions rather than
+/// an allowlist of `.idx`. The cache dir is not exclusively ours: modules keep
+/// state beside the indexes (`cook_cc.json` is in every cc-built project's
+/// `.cook/cache/`), and an allowlist sweep would delete it.
+const SUPERSEDED_INDEX_EXTS: &[&str] = &[".bin", ".bin.tmp", ".toml", ".toml.tmp", ".idx.tmp"];
+
+/// The on-disk extension of a v7+ recipe index.
+const INDEX_EXT: &str = ".idx";
+
+/// Hygiene sweep (COOK-92, extended by COOK-313/CS-0166): delete index files
+/// written by a cook whose format this binary no longer reads, sitting
+/// directly inside `cache_dir`. There is no migration — the index is
+/// regeneratable, so a superseded file is dead weight, not data.
 ///
 /// Non-recursive on purpose: `.cook/cache/tests/` (the JSON test cache) and
 /// any other subdirectory are never touched. The artifact store lives under
 /// a different root entirely (`~/.cache/cook/...`) and is out of scope.
 /// Idempotent and infallible: a missing dir or a failed unlink is ignored
 /// (the next construction retries).
-pub fn sweep_orphaned_bin_indexes(cache_dir: &Path) {
+pub fn sweep_superseded_indexes(cache_dir: &Path) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -140,7 +157,7 @@ pub fn sweep_orphaned_bin_indexes(cache_dir: &Path) {
         }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.ends_with(".bin") || name.ends_with(".bin.tmp") {
+        if SUPERSEDED_INDEX_EXTS.iter().any(|ext| name.ends_with(ext)) {
             let _ = std::fs::remove_file(&path);
         }
     }
