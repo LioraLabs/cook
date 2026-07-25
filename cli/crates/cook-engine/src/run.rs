@@ -527,7 +527,7 @@ where
             let mut outs: BTreeMap<PathBuf, u64> = BTreeMap::new();
             for step in prior.steps.values() {
                 for o in &step.outputs {
-                    outs.insert(ru.working_dir.join(&o.path), o.hash);
+                    outs.insert(ru.working_dir.join(&*o.path), o.hash);
                 }
             }
             if !outs.is_empty() {
@@ -685,7 +685,7 @@ fn collect_output_glob_warnings_for_recipe(
         .collect()
 }
 
-/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.toml`): the `recipe_name`
+/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.idx`): the `recipe_name`
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
@@ -769,7 +769,7 @@ fn reconcile_outputs(
                     || step
                         .outputs
                         .iter()
-                        .any(|o| live_ref.contains(&wd.join(&o.path)))
+                        .any(|o| live_ref.contains(&wd.join(&*o.path)))
             });
         }
     }

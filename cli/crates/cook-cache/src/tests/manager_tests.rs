@@ -4,12 +4,12 @@ use crate::store::{self, FileRecord, StepEntry};
 fn make_step_entry(command_hash: u64) -> StepEntry {
     StepEntry {
         inputs: vec![FileRecord {
-            path: "src/main.c".to_string(),
+            path: "src/main.c".into(),
             mtime: 1700000000,
             hash: 0xaabbccdd,
         }],
         outputs: vec![FileRecord {
-            path: "build/main.o".to_string(),
+            path: "build/main.o".into(),
             mtime: 1700000100,
             hash: 0x11223344,
         }],
@@ -173,7 +173,7 @@ fn record_completion_appends_depfile_to_outputs() {
     let entry = mgr.record_completion("rec", "k", &meta, wd, 0).expect("rec");
 
     let output_paths: Vec<&str> =
-        entry.outputs.iter().map(|fr| fr.path.as_str()).collect();
+        entry.outputs.iter().map(|fr| fr.path.as_ref()).collect();
     assert!(output_paths.contains(&"a.o"), "user output present");
     assert!(output_paths.contains(&".cook/deps/a.d"),
         "depfile appended to outputs when discovered_inputs is set");
@@ -226,12 +226,12 @@ fn retain_steps_drops_and_persists() {
 }
 
 #[test]
-fn manager_construction_sweeps_orphaned_bin_indexes() {
+fn manager_construction_sweeps_superseded_indexes() {
     let dir = tempfile::tempdir().expect("tempdir");
         // Legacy bincode index + torn tmp from an interrupted pre-v4 write.
         std::fs::write(dir.path().join("old_recipe.bin"), b"\x03legacy").expect("bin");
     std::fs::write(dir.path().join("old_recipe.bin.tmp"), b"torn").expect("tmp");
-    // Things the sweep must NOT touch: the TOML index, and subdirs
+    // Things the sweep must NOT touch: the live `.idx` index, and subdirs
     // (the tests/ JSON cache lives under the same root).
     store::RecipeCache::new().save(dir.path(), "current").expect("save");
     std::fs::create_dir_all(dir.path().join("tests/ab")).expect("mkdir");
@@ -239,7 +239,7 @@ fn manager_construction_sweeps_orphaned_bin_indexes() {
     let _mgr = ThreadSafeCacheManager::new(dir.path().to_path_buf());
     assert!(!dir.path().join("old_recipe.bin").exists(), ".bin swept");
     assert!(!dir.path().join("old_recipe.bin.tmp").exists(), ".bin.tmp swept");
-    assert!(dir.path().join("current.toml").exists(), "toml index untouched");
+    assert!(dir.path().join("current.idx").exists(), "live index untouched");
     assert!(dir.path().join("tests/ab/abcd1234.json").exists(), "test cache untouched");
 }
 
@@ -336,7 +336,7 @@ fn rewriting_an_identical_entry_does_not_dirty_the_recipe() {
     cm.update_step("rec", "step", make_step_entry(0xabc));
     cm.flush_all().expect("flush 1");
 
-    let index = dir.path().join("rec.toml");
+    let index = dir.path().join("rec.idx");
     let stamp = std::fs::metadata(&index).expect("stat").modified().expect("mtime");
 
     // Same entry again, then flush: the file must not be rewritten.

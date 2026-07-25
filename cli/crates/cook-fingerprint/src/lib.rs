@@ -29,8 +29,7 @@ pub use backend::{
     DISCOVERED_INPUT_SETS_PATH,
 };
 pub use check::{
-    fetch_by_key, hash_env, hash_file, hash_input_paths, install_depfile_parser,
-    needs_rebuild_cook, needs_rebuild_plate, read_discovered_input_sets, stat_mtime, FetchOutcome,
+    fetch_by_key, hash_env, hash_file, hash_input_paths,     needs_rebuild_cook, needs_rebuild_plate, read_discovered_input_sets, stat_mtime, FetchOutcome,
     RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};

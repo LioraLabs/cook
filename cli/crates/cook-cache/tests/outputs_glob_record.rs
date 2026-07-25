@@ -61,7 +61,7 @@ fn record_completion_with_resolved_glob_produces_concrete_step_entry() {
     cm.flush_all().expect("flush");
 
     assert_eq!(entry.outputs.len(), 3, "StepEntry records three outputs");
-    let mut paths: Vec<&str> = entry.outputs.iter().map(|f| f.path.as_str()).collect();
+    let mut paths: Vec<&str> = entry.outputs.iter().map(|f| &*f.path).collect();
     paths.sort();
     assert_eq!(paths, vec!["build/a.o", "build/b.o", "build/c.o"]);
 }

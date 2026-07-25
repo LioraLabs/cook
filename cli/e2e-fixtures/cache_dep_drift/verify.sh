@@ -28,7 +28,7 @@ run_assert() {
     scenario=$((scenario + 1))
     printf "  [%d] %-55s " "$scenario" "$name"
     local out
-    out="$("$@" 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+    out="$("$@" 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
     if [[ "$out" == *"$expected"* ]]; then
         echo "PASS"
         pass=$((pass + 1))
@@ -61,7 +61,7 @@ printf '\nint lib_drift_sentinel(void) { return 42; }\n' >> src/lib.c
 
 scenario=$((scenario + 1))
 printf "  [%d] %-55s " "$scenario" "lib.c drift → BOTH rebuild (consumer not silent)"
-out="$("$COOK" app 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+out="$("$COOK" app 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
 # Tolerant assertion: the critical signal is "0 cached" — neither lib_obj nor
 # app is allowed to cache-hit. A pre-fix run prints "1 cached recipes, 2 done"
 # (app silently hit because lib.o wasn't in its inputs).

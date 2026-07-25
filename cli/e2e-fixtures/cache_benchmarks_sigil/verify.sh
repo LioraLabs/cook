@@ -36,7 +36,7 @@ run_assert() {
     scenario=$((scenario + 1))
     printf "  [%2d] %-55s " "$scenario" "$name"
     local out
-    out="$("$@" 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+    out="$("$@" 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
     if [[ "$out" == *"$expected"* ]]; then
         echo "PASS"
         pass=$((pass + 1))
@@ -95,7 +95,7 @@ if echo "$out" | grep -q '1 cached recipes, 3 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 restore_core_c
@@ -116,12 +116,12 @@ else
     fail=$((fail + 1))
 fi
 scenario=$((scenario + 1))
-printf "  [%2d] %-55s " "$scenario" "core_lib.bin created in core/lib/.cook/cache"
-if [ -f core/lib/.cook/cache/core_lib.bin ]; then
+printf "  [%2d] %-55s " "$scenario" "core_lib.idx created in core/lib/.cook/cache"
+if [ -f core/lib/.cook/cache/core_lib.idx ]; then
     echo "PASS"
     pass=$((pass + 1))
 else
-    echo "FAIL  (core/lib/.cook/cache/core_lib.bin missing)"
+    echo "FAIL  (core/lib/.cook/cache/core_lib.idx missing)"
     fail=$((fail + 1))
 fi
 sub_out=$((cd core/lib && "$COOK" core_lib 2>&1) || true)
@@ -132,7 +132,7 @@ if echo "$sub_out" | grep -q '1 cached recipes, 1 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$sub_out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$sub_out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 

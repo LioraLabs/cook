@@ -395,7 +395,7 @@ fn build_wave(
                             path,
                             &ru.working_dir,
                             cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
-                                e.inputs.iter().find(|r| r.path == *path).map(|r| (r.mtime, r.hash))
+                                e.inputs.iter().find(|r| &*r.path == path.as_str()).map(|r| (r.mtime, r.hash))
                             }),
                         );
 

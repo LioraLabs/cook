@@ -395,19 +395,6 @@ pub fn execute_dag(
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
     dep_outputs: cook_luaotp::WorkerDepOutputs,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
-    // Install the depfile parser pointer so cook-fingerprint's pre-check
-    // augmentation can call back into cook-cache without a runtime dep cycle.
-    {
-        use std::sync::Once;
-        static INSTALL: Once = Once::new();
-        INSTALL.call_once(|| {
-            cook_fingerprint::install_depfile_parser(|p, src, wd, fmt| {
-                if fmt != "make" { return Err(()); }
-                cook_cache::parse_make_depfile(p, src, wd).map_err(|_| ())
-            });
-        });
-    }
-
     // Empty DAG — nothing to do.
     if dag.is_empty() {
         return Ok(Vec::new());
@@ -732,7 +719,7 @@ pub fn execute_dag(
                 .unwrap()
                 .outputs
                 .iter()
-                .map(|f| f.path.clone())
+                .map(|f| f.path.to_string())
                 .collect()
         } else {
             meta.output_paths.clone()
@@ -770,7 +757,7 @@ pub fn execute_dag(
             // (strays dropped into the dir between runs are swept out).
             if let Some(ref e) = updated {
                 let kept: std::collections::BTreeSet<String> =
-                    e.outputs.iter().map(|r| r.path.clone()).collect();
+                    e.outputs.iter().map(|r| r.path.to_string()).collect();
                 for entry in &meta.output_paths {
                     if let Some(root) = entry.strip_suffix('/') {
                         cook_fingerprint::reconcile_dir_output(
@@ -838,8 +825,8 @@ pub fn execute_dag(
                     prior
                         .outputs
                         .iter()
-                        .filter(|rec| !restored.contains(rec.path.as_str()))
-                        .map(|rec| work_node.working_dir.join(&rec.path))
+                        .filter(|rec| !restored.contains(&*rec.path))
+                        .map(|rec| work_node.working_dir.join(&*rec.path))
                 };
                 // Files first, then empty dirs (`remove_dir`, not `_all`): a
                 // stale dir record whose subtree gained restored files must
@@ -877,7 +864,7 @@ pub fn execute_dag(
             let file_record = |p: &str| {
                 let abs = work_node.working_dir.join(p);
                 cook_fingerprint::hash_file(&abs).map(|h| cook_fingerprint::FileRecord {
-                    path: p.to_string(),
+                    path: p.into(),
                     mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
                     hash: h,
                 })
@@ -888,7 +875,7 @@ pub fn execute_dag(
                 let abs = work_node.working_dir.join(p);
                 if abs.is_dir() {
                     Some(cook_fingerprint::FileRecord {
-                        path: p.to_string(),
+                        path: p.into(),
                         mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
                         hash: 0,
                     })
@@ -3255,7 +3242,7 @@ fn publish_completion(
             // dir: restore_one's "dir" branch ignores the body/hash, and the
             // cloud_key keys on INPUT hashes only.
             step_entry.outputs.push(cook_fingerprint::FileRecord {
-                path: ed.clone(),
+                path: ed.as_str().into(),
                 mtime: cook_fingerprint::stat_mtime(&abs_ed).unwrap_or(0),
                 hash: 0,
             });
@@ -3340,7 +3327,7 @@ fn build_determinant_manifest(
     probe_store: &cook_luaotp::ProbeValueStore,
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
-        inputs.iter().map(|fr| (fr.path.clone(), fr.hash)).collect();
+        inputs.iter().map(|fr| (fr.path.to_string(), fr.hash)).collect();
     // C2: single-source the sealed-probe resolution (absent → empty string)
     // so producer and `cook why` consumer cannot drift.
     let sealed_probes = crate::seal::resolve_sealed_probes(seal_keys, probe_store);

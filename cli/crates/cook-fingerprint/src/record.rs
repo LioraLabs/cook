@@ -6,6 +6,7 @@
 //! on load (see `cook-cache::store`).
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Serde adapter: u64 <-> zero-padded lowercase hex string.
 ///
@@ -37,8 +38,10 @@ pub mod hex_u64 {
 /// seal set's probe values via `StepEntry.seal_contribution` (CS-0107). v6
 /// (COOK-180): per-output `mode` / symlink / empty-dir fidelity recorded in
 /// `ArtifactMeta`; a discovered-inputs manifest (keyed by the declared-only
-/// key) enables cold fetch-by-key sharing for depfile (cc) units.
-pub const CACHE_VERSION: u32 = 6;
+/// key) enables cold fetch-by-key sharing for depfile (cc) units. v7
+/// (COOK-313 / CS-0166): the index is a binary `<recipe>.idx` with an
+/// interned path table (see `cook_cache::index_bin`), replacing v4..v6 TOML.
+pub const CACHE_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
@@ -58,7 +61,18 @@ pub struct StepEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileRecord {
-    pub path: String,
+    /// Interned. On a large C++ graph the same header appears in hundreds of
+    /// translation units' input sets — DuckDB's index held 327,951 input
+    /// records naming 6,730 distinct paths — so the index decoder builds one
+    /// `Arc<str>` per distinct path and every record that names it clones the
+    /// pointer. Loading an index therefore allocates once per *path*, not once
+    /// per *record*. See `cook_cache::index_bin`.
+    ///
+    /// `Arc<str>` rather than an index into a side table so that `path` stays
+    /// self-describing: `as_str()` and `clone()` work everywhere a `String`
+    /// did, and a `StepEntry` remains meaningful without carrying its table
+    /// through `needs_rebuild_cook` / `check_inputs` / `fetch_by_key`.
+    pub path: Arc<str>,
     pub mtime: u64,
     #[serde(with = "hex_u64")]
     pub hash: u64,

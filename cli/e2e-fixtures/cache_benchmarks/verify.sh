@@ -31,7 +31,7 @@ run_assert() {
     scenario=$((scenario + 1))
     printf "  [%2d] %-55s " "$scenario" "$name"
     local out
-    out="$("$@" 2>&1 | grep -oE 'cook build done.*\)' | head -1)"
+    out="$("$@" 2>&1 | grep -oE 'cook done in.*\)' | head -1)"
     if [[ "$out" == *"$expected"* ]]; then
         echo "PASS"
         pass=$((pass + 1))
@@ -55,14 +55,14 @@ echo "--- Scenarios 1-2: fresh build + no-op rebuild ---"
 # demo now depends on lib.lib_build via {lib.lib_build} body ref (§7.3),
 # so `cook demo` runs 4 recipes: greet, util, lib.lib_build, demo.
 clean_state
-run_assert "Fresh build executes 4 recipes"          "0 cached recipes, 4 done"  "$COOK" demo debug
-run_assert "No-op rebuild hits all 4"                 "4 cached recipes, 4 done"  "$COOK" demo debug
+run_assert "Fresh build executes 4 recipes"          "0 cached recipes, 4 done"  "$COOK" demo @debug
+run_assert "No-op rebuild hits all 4"                 "4 cached recipes, 4 done"  "$COOK" demo @debug
 
 echo
 echo "--- Scenario 3: mtime touch (content-unchanged) ---"
 touch src/greet.c
 sleep 0.05  # ensure mtime resolution boundary
-run_assert "Touch-only change still hits all 4"       "4 cached recipes, 4 done"  "$COOK" demo debug
+run_assert "Touch-only change still hits all 4"       "4 cached recipes, 4 done"  "$COOK" demo @debug
 
 echo
 echo "--- Scenario 5-6: config CFLAGS toggle (variant coexistence + restore) ---"
@@ -76,22 +76,22 @@ echo "--- Scenario 5-6: config CFLAGS toggle (variant coexistence + restore) ---
 #   cached). demo rebuilds because its stored entry tracks the release lib.o
 #   hash, but the restored lib.o has debug bytes (InputChanged).
 clean_state
-run_assert "Build under debug: all execute"           "0 cached recipes, 4 done"  "$COOK" demo debug
-run_assert "Switch to release: all rebuild"           "0 cached recipes, 4 done"  "$COOK" demo release
-run_assert "Toggle back to debug: 3 restore+1 build"  "3 cached recipes, 4 done"  "$COOK" demo debug
-run_assert "Toggle to release: 3 restore+1 build"     "3 cached recipes, 4 done"  "$COOK" demo release
+run_assert "Build under debug: all execute"           "0 cached recipes, 4 done"  "$COOK" demo @debug
+run_assert "Switch to release: all rebuild"           "0 cached recipes, 4 done"  "$COOK" demo @release
+run_assert "Toggle back to debug: 3 restore+1 build"  "3 cached recipes, 4 done"  "$COOK" demo @debug
+run_assert "Toggle to release: 3 restore+1 build"     "3 cached recipes, 4 done"  "$COOK" demo @release
 
 echo
 echo "--- Scenario 7: sister recipe insulation ---"
 clean_state
 run_assert "Sister fresh build"                       "0 cached recipes, 1 done"  "$COOK" sister
-run_assert "Sister with debug: still hits"            "1 cached recipes, 1 done"  "$COOK" sister debug
-run_assert "Sister with release: still hits"          "1 cached recipes, 1 done"  "$COOK" sister release
+run_assert "Sister with debug: still hits"            "1 cached recipes, 1 done"  "$COOK" sister @debug
+run_assert "Sister with release: still hits"          "1 cached recipes, 1 done"  "$COOK" sister @release
 
 echo
 echo "--- Scenario 8: denylisted env (HOME) ---"
-"$COOK" demo debug >/dev/null 2>&1  # warm cache
-run_assert "HOME change does not invalidate"          "4 cached recipes, 4 done"  env HOME=/some/other/path "$COOK" demo debug
+"$COOK" demo @debug >/dev/null 2>&1  # warm cache
+run_assert "HOME change does not invalidate"          "4 cached recipes, 4 done"  env HOME=/some/other/path "$COOK" demo @debug
 
 echo
 echo "--- Scenario 9: multi-output pair ---"
@@ -148,7 +148,7 @@ if echo "$out" | grep -q '2 cached recipes, 5 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 # Restore lib.c
@@ -159,11 +159,11 @@ echo "--- Scenario 12: variant-toggle restore-on-hit (addendum §5.2) ---"
 # Capture greet.o bytes after a debug build; toggle to release; toggle back to
 # debug; restored greet.o bytes must match the original debug bytes.
 clean_state
-"$COOK" demo debug >/dev/null 2>&1
+"$COOK" demo @debug >/dev/null 2>&1
 debug_o=$(sha256sum build/greet.o | awk '{print $1}')
-"$COOK" demo release >/dev/null 2>&1
+"$COOK" demo @release >/dev/null 2>&1
 release_o=$(sha256sum build/greet.o | awk '{print $1}')
-"$COOK" demo debug >/dev/null 2>&1
+"$COOK" demo @debug >/dev/null 2>&1
 restored_o=$(sha256sum build/greet.o | awk '{print $1}')
 scenario=$((scenario + 1))
 printf "  [%2d] %-55s " "$scenario" "Restored greet.o == original debug bytes"
@@ -224,7 +224,7 @@ if echo "$out" | grep -q '2 cached recipes, 4 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 git checkout -- lib/src/lib.c 2>/dev/null || true
@@ -233,7 +233,7 @@ echo
 echo "--- Scenario 16: workspace-root inference from deep subdir ---"
 # Running `cook lib_build` from within lib/ should succeed. The workspace-root
 # inference (Rule 3: walk up and find a Cookfile that tree-imports this dir)
-# locates the parent as root. The cache file lands at lib/.cook/cache/lib_build.bin.
+# locates the parent as root. The cache file lands at lib/.cook/cache/lib_build.idx.
 clean_state
 scenario=$((scenario + 1))
 printf "  [%2d] %-55s " "$scenario" "cook lib_build from lib/ subdir succeeds"
@@ -245,12 +245,12 @@ else
     fail=$((fail + 1))
 fi
 scenario=$((scenario + 1))
-printf "  [%2d] %-55s " "$scenario" "lib_build.bin created in lib/.cook/cache"
-if [ -f lib/.cook/cache/lib_build.bin ]; then
+printf "  [%2d] %-55s " "$scenario" "lib_build.idx created in lib/.cook/cache"
+if [ -f lib/.cook/cache/lib_build.idx ]; then
     echo "PASS"
     pass=$((pass + 1))
 else
-    echo "FAIL  (lib/.cook/cache/lib_build.bin missing)"
+    echo "FAIL  (lib/.cook/cache/lib_build.idx missing)"
     fail=$((fail + 1))
 fi
 # Second run from lib/ should hit cache.
@@ -262,7 +262,7 @@ if echo "$sub_out" | grep -q '1 cached recipes, 1 done'; then
     pass=$((pass + 1))
 else
     echo "FAIL"
-    echo "       got: $(echo "$sub_out" | grep -oE 'cook build done.*\)')"
+    echo "       got: $(echo "$sub_out" | grep -oE 'cook done in.*\)')"
     fail=$((fail + 1))
 fi
 

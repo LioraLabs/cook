@@ -17,7 +17,8 @@ use cook_cli::modules;
 use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
-    cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_menu, cmd_run,
+    cmd_affected, cmd_cache_dump, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_menu,
+    cmd_run,
     cmd_serve, cmd_test, cmd_why, resolve_project_root, set_invoked_builtin,
     warn_if_builtin_shadows_recipe,
 };
@@ -125,6 +126,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         }
         Some(Cmd::Cache(args)) => match args.cmd {
             crate::cli::CacheCmd::Verify(v) => cmd_cache_verify(&globals, &v),
+            crate::cli::CacheCmd::Dump(d) => cmd_cache_dump(&globals, &d),
         },
         Some(Cmd::Serve(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");

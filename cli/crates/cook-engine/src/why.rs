@@ -439,7 +439,7 @@ fn local_step_hit(
     // recorded concrete output paths when any declared output is a glob.
     let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::is_terminal_output(s));
     let current_outputs_storage: Vec<String> = if any_glob {
-        entry.outputs.iter().map(|f| f.path.clone()).collect()
+        entry.outputs.iter().map(|f| f.path.to_string()).collect()
     } else {
         meta.output_paths.clone()
     };

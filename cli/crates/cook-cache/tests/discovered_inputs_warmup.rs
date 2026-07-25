@@ -2,20 +2,10 @@
 //! Asserts: Run 1 = miss, Run 2 = hit (after augmentation), Run 3 = hit
 //! after a header content edit triggers InputChanged.
 
-use cook_cache::{parse_make_depfile, store::{FileRecord, StepEntry}};
+use cook_cache::store::{FileRecord, StepEntry};
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{install_depfile_parser, needs_rebuild_cook, RebuildReason, RebuildResult};
-use std::sync::Once;
+use cook_fingerprint::{needs_rebuild_cook, RebuildReason, RebuildResult};
 
-fn install_parser_once() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        install_depfile_parser(|p, src, wd, fmt| {
-            if fmt != "make" { return Err(()); }
-            parse_make_depfile(p, src, wd).map_err(|_| ())
-        });
-    });
-}
 
 fn fr(wd: &std::path::Path, rel: &str) -> FileRecord {
     FileRecord {
@@ -27,8 +17,6 @@ fn fr(wd: &std::path::Path, rel: &str) -> FileRecord {
 
 #[test]
 fn warmup_collapses_to_two_runs() {
-    install_parser_once();
-
     let dir = tempfile::tempdir().expect("tempdir");
     let wd = dir.path();
     std::fs::write(wd.join("a.c"), b"int main(){return 0;}").expect("a.c");

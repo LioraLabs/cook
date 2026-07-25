@@ -2248,3 +2248,33 @@ fn determinant_diff_json(d: &cook_engine::why::DeterminantDiff) -> serde_json::V
         }),
     }
 }
+
+/// `cook cache dump <recipe>` — print a recipe's cache index as readable TOML
+/// (CS-0166).
+///
+/// The v7 index is binary, so this is the on-demand readable view that
+/// replaces opening the file. Purely a reader: it resolves the workspace root,
+/// loads the index, and prints. It deliberately does NOT register the
+/// workspace — dumping an index must work even when the Cookfile no longer
+/// parses, which is exactly when someone is inspecting cache state by hand.
+pub fn cmd_cache_dump(
+    globals: &Globals,
+    args: &crate::cli::CacheDumpArgs,
+) -> Result<(), CookError> {
+    let recipe_name = args.recipe.as_deref().unwrap_or("build");
+    let project_root = resolve_project_root(globals)?;
+    let cache_dir = project_root.join(".cook").join("cache");
+
+    match cook_engine::cook_cache::RecipeCache::load(&cache_dir, recipe_name) {
+        Some(cache) => {
+            print!("{}", cache.to_readable_toml());
+            Ok(())
+        }
+        None => Err(CookError::Other(format!(
+            "no readable cache index for recipe '{recipe_name}' in {}\n\
+             (the recipe may never have run, or its index predates the current \
+             cache version and was swept)",
+            cache_dir.display()
+        ))),
+    }
+}

@@ -32,12 +32,12 @@ echo "=== cache_portability bug-hunt ==="
 echo
 
 echo "--- Step 1: fresh build at $A ---"
-out_A1=$(cd "$A" && "$COOK" widget 2>&1 | grep -oE 'cook build done.*\)' | head -1)
+out_A1=$(cd "$A" && "$COOK" widget 2>&1 | grep -oE 'cook done in.*\)' | head -1)
 echo "  fresh: $out_A1"
 
 echo
 echo "--- Step 2: rerun at $A (warm cache) ---"
-out_A2=$(cd "$A" && "$COOK" widget 2>&1 | grep -oE 'cook build done.*\)' | head -1)
+out_A2=$(cd "$A" && "$COOK" widget 2>&1 | grep -oE 'cook done in.*\)' | head -1)
 echo "  warm:  $out_A2"
 
 if [[ "$out_A2" != *"1 cached recipes, 1 done"* ]]; then
@@ -53,7 +53,7 @@ ls "$B/.cook/cache/" 2>/dev/null && echo "  (cache files copied)"
 
 echo
 echo "--- Step 4: cook widget at $B ---"
-out_B=$(cd "$B" && "$COOK" widget 2>&1 | grep -oE 'cook build done.*\)' | head -1)
+out_B=$(cd "$B" && "$COOK" widget 2>&1 | grep -oE 'cook done in.*\)' | head -1)
 echo "  moved: $out_B"
 
 echo

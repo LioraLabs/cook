@@ -201,6 +201,7 @@ impl Cmd {
             Cmd::Dag(a) => a.recipe.as_deref(),
             Cmd::Cache(c) => match &c.cmd {
                 CacheCmd::Verify(v) => v.recipe.as_deref(),
+                CacheCmd::Dump(d) => d.recipe.as_deref(),
             },
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
@@ -300,6 +301,18 @@ pub enum CacheCmd {
     /// Opt-in CI fidelity tool: exits non-zero on any divergence. `record`
     /// record steps are byte-exempt. NOT a trust gate.
     Verify(CacheVerifyArgs),
+    /// Print a recipe's cache index as readable TOML (CS-0166).
+    ///
+    /// The index itself is binary since v7; this renders it on demand, with
+    /// each input/output record inlined on one line. Read-only. For the
+    /// question "why did this rebuild", prefer `cook why`.
+    Dump(CacheDumpArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheDumpArgs {
+    /// Recipe whose index to dump (default: 'build').
+    pub recipe: Option<String>,
 }
 
 #[derive(clap::Args, Debug, Clone)]
