@@ -15,6 +15,10 @@ pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
     CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
 };
+pub use cook_fingerprint::evict::{
+    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
+    SIZE_SWEEP_EXEMPT_KINDS,
+};
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
 /// hasher, and on EOF compares the finalized hash to `expected`. On
