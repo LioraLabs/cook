@@ -287,11 +287,14 @@ impl CacheBackend for LocalBackend {
         // become the same inode and this touch would corrupt input-freshness
         // detection. Do not make that change without removing this touch.
         //
-        // Accepted imprecision (not a defect): the touch fires after
-        // `File::open` but before `VerifyingReader` can reject at EOF, so a
-        // *tampered* blob gets its mtime bumped even though the read
-        // ultimately surfaces as a miss. That makes LRU marginally less
-        // precise and has no correctness consequence.
+        // Accepted imprecision (not a defect): the touch fires here, so ANY
+        // read that opens the blob and then abandons it still counts as an
+        // access. That covers a *tampered* blob (`VerifyingReader` only
+        // rejects at EOF, strictly after this point) and every caller-side
+        // bail in `restore_one` — `create_dir_all` failure, `read_to_end`
+        // failure, warm-path xxh3 mismatch. All bump mtime for a read that
+        // ends as a miss. LRU is marginally less precise; there is no
+        // correctness consequence.
         touch_on_read(&path);
 
         Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))

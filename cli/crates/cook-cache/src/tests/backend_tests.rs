@@ -767,34 +767,50 @@ fn get_touches_blob_mtime_on_hit() {
     );
 }
 
-/// Case 3 — only the blob is touched. The `.meta.json` sidecar is neither
-/// restamped nor rewritten: zero write amplification on the read path is
-/// the whole reason mtime was chosen over a `last_access` JSON field.
+/// Case 3 — only the blob is touched. Neither the `.meta.json` nor the
+/// `.provenance.json` sidecar is restamped or rewritten: zero write
+/// amplification on the read path is the whole reason mtime was chosen
+/// over a `last_access` JSON field. Both sidecars are asserted so this
+/// stays a regression guard if anything is later added near the touch.
 #[test]
-fn read_does_not_restamp_or_rewrite_sidecar() {
+fn read_does_not_restamp_or_rewrite_sidecars() {
     let dir = tempfile::tempdir().expect("tempdir");
     let backend = LocalBackend::new(dir.path().to_path_buf());
     let k = key(0xD2);
     let mut meta = sample_meta();
     put_bytes(&backend, &k, b"sidecar untouched", &mut meta).expect("put");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
 
     let blob = backend.path_for(&k);
     let meta_path = blob.with_extension("meta.json");
-    let sidecar_before = std::fs::read(&meta_path).expect("read sidecar");
+    let prov_path = blob.with_extension("provenance.json");
+    let meta_before = std::fs::read(&meta_path).expect("read meta sidecar");
+    let prov_before = std::fs::read(&prov_path).expect("read provenance sidecar");
     filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
-    filetime::set_file_mtime(&meta_path, OLD_STAMP).expect("backdate sidecar");
+    filetime::set_file_mtime(&meta_path, OLD_STAMP).expect("backdate meta sidecar");
+    filetime::set_file_mtime(&prov_path, OLD_STAMP).expect("backdate provenance sidecar");
 
     assert!(backend.get(&k).expect("get").is_some(), "expected a hit");
 
     assert_eq!(
         mtime_of(&meta_path),
         OLD_STAMP,
-        "sidecar mtime must be untouched by a read"
+        "meta sidecar mtime must be untouched by a read"
     );
     assert_eq!(
-        std::fs::read(&meta_path).expect("re-read sidecar"),
-        sidecar_before,
-        "sidecar bytes must be untouched by a read"
+        std::fs::read(&meta_path).expect("re-read meta sidecar"),
+        meta_before,
+        "meta sidecar bytes must be untouched by a read"
+    );
+    assert_eq!(
+        mtime_of(&prov_path),
+        OLD_STAMP,
+        "provenance sidecar mtime must be untouched by a read"
+    );
+    assert_eq!(
+        std::fs::read(&prov_path).expect("re-read provenance sidecar"),
+        prov_before,
+        "provenance sidecar bytes must be untouched by a read"
     );
     assert!(mtime_of(&blob) > OLD_STAMP, "blob mtime should have advanced");
 }
