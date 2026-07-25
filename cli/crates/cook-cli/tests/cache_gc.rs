@@ -153,10 +153,13 @@ impl Fixture {
     fn run_with_env(&self, args: &[&str], envs: &[(&str, &str)]) -> Output {
         let mut cmd = Command::new(cook_bin());
         cmd.args(args).current_dir(&self.project_dir);
-        cmd.env("XDG_CACHE_HOME", &self.xdg_dir);
         for (k, v) in envs {
             cmd.env(k, v);
         }
+        // Set last, after the caller's own envs, so a caller-supplied
+        // `XDG_CACHE_HOME` can never override this belt: this file's subject
+        // deletes files, and the developer's real CAS holds real artifacts.
+        cmd.env("XDG_CACHE_HOME", &self.xdg_dir);
         cmd.output().expect("run cook")
     }
 

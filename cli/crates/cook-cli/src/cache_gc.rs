@@ -74,8 +74,7 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
     // `du`'s identical early return. A missing store is a zero-work report,
     // not an error.
     if !store.exists() {
-        let plan = plan_eviction(&[], &policy, now);
-        print_report(&store, &plan, args.dry_run, None);
+        print!("{}", render_nothing_to_evict(&store));
         return Ok(());
     }
 
@@ -161,14 +160,14 @@ fn parse_older_than_flag(literal: &str) -> Result<Duration, CookError> {
 /// The shared "no victims" report: an empty plan means the same thing
 /// whether it came from a dry run, a real sweep, or a missing store, so
 /// there is exactly one place that spells out its two lines.
-pub(crate) fn render_nothing_to_evict(store: &Path) -> String {
+fn render_nothing_to_evict(store: &Path) -> String {
     format!("Store: {}\nNothing to evict.\n", store.display())
 }
 
 /// Render the `--dry-run` projection: `Would free: …` sourced from
 /// `plan.freed_bytes` / `plan.victims.len()`, since nothing has actually been
 /// deleted yet — the plan IS the whole story for a dry run.
-pub(crate) fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
+fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
     if plan.victims.is_empty() {
         return render_nothing_to_evict(store);
     }
@@ -195,7 +194,7 @@ pub(crate) fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
 /// consistency check between the two. `plan.total_before` / `count_before`
 /// are the enumeration snapshot taken before any deletion and are safe to
 /// reuse here: they don't depend on which victims the policy chose.
-pub(crate) fn render_applied(store: &Path, plan: &EvictPlan, outcome: &EvictOutcome) -> String {
+fn render_applied(store: &Path, plan: &EvictPlan, outcome: &EvictOutcome) -> String {
     if plan.victims.is_empty() {
         return render_nothing_to_evict(store);
     }
