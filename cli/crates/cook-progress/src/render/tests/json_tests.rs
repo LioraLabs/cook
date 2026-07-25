@@ -60,6 +60,7 @@ fn node_output_uses_names_and_stream_string() {
         name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let s = write_event(&state, &ProgressEvent::NodeOutput {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -108,12 +109,14 @@ fn node_event_node_field_resolves_via_state() {
         name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let s_started = write_event(&state, &ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "ignored-inline-name".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     assert!(s_started.contains("\"node\":\"lvm.c\""),
         "node-started must read state, not inline name; got: {s_started}");
@@ -166,6 +169,7 @@ fn node_started_emits_kind_in_wire_format() {
         fallback_label: "x".into(),
         kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
     assert!(s.contains("\"kind\":\"compile\""), "got: {s}");
 }

@@ -50,6 +50,7 @@ fn node_started_inserts_running_node() {
         fallback_label: "clang -c lvm.c".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let r = &s.recipes[&RecipeId::new(0)];
     assert_eq!(r.nodes.len(), 1);
@@ -122,6 +123,7 @@ fn recipe_failed_records_first_error_summary() {
         name: "x".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     s.apply(&ProgressEvent::NodeFailed {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -191,6 +193,7 @@ fn duplicate_node_completed_does_not_double_count_progress() {
         name: "a".into(), artifact: None, fallback_label: "a".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     s.apply(&ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),

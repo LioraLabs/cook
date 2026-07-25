@@ -272,6 +272,7 @@ fn bridge_engine_to_progress_events(
                     fallback_label,
                     kind,
                     cause,
+                    cache_key,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
@@ -283,6 +284,7 @@ fn bridge_engine_to_progress_events(
                         fallback_label,
                         kind: translate_kind(kind),
                         cause,
+                        cache_key,
                     }
                 }
                 cook_engine::EngineEvent::NodeCompleted {
@@ -374,6 +376,10 @@ fn bridge_engine_to_progress_events(
                             fallback_label: node_name,
                             kind: cook_progress::NodeKind::Cooked,
                             cause: None,
+                            // Synthetic: this stands in for a unit that never
+                            // emitted a NodeStarted of its own, so there is no
+                            // cache identity to attach.
+                            cache_key: None,
                         });
                     }
                     // CS-0035: map cook-contracts::OutputStream → cook-progress::Stream
@@ -1858,14 +1864,15 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     )
     .map_err(engine_error_to_cook_error)?;
 
+    let timings = cook_engine::timings::Timings::load(&project_root);
+
     // A `--unit` selector is a determinant query, not a graph query: the caller
     // has already found the unit and wants everything known about it. Answer it
     // directly rather than making them render the whole closure at unit level.
     if let Some(pattern) = &args.unit {
-        return render_selected_units(&report, pattern, format);
+        return render_selected_units(&report, pattern, format, &timings);
     }
 
-    let timings = cook_engine::timings::Timings::load(&project_root);
     let annotations = annotations_from(&report, &timings);
 
     let all_units: Vec<(String, cook_engine::cook_contracts::RecipeUnits)> = reachable
@@ -1932,7 +1939,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     if format == cook_graph::emit::Format::Json {
         let mut doc = cook_graph::emit::json_value(&graph);
         doc["units"] = serde_json::Value::Array(
-            report.units.iter().map(why_unit_json).collect(),
+            report.units.iter().map(|u| why_unit_json(u, &timings)).collect(),
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
         return Ok(());
@@ -1944,7 +1951,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     // detail fits underneath the graph. This is what keeps CS-0112's fidelity
     // reachable after the merge: the graph is the index, this is the body.
     if level == cook_graph::emit::Level::Unit && format == cook_graph::emit::Format::Text {
-        print!("\n{}", render_why_plain(&report));
+        print!("\n{}", render_why_plain(&report, &timings));
     }
     Ok(())
 }
@@ -2008,6 +2015,7 @@ fn render_selected_units(
     report: &cook_engine::why::WhyReport,
     pattern: &str,
     format: cook_graph::emit::Format,
+    timings: &cook_engine::timings::Timings,
 ) -> Result<(), CookError> {
     let matched: Vec<_> = report
         .units
@@ -2036,13 +2044,16 @@ fn render_selected_units(
         units: matched,
     };
     match format {
-        cook_graph::emit::Format::Json => print!("{}", render_why_json(&selected)),
-        _ => print!("{}", render_why_plain(&selected)),
+        cook_graph::emit::Format::Json => print!("{}", render_why_json(&selected, timings)),
+        _ => print!("{}", render_why_plain(&selected, timings)),
     }
     Ok(())
 }
 
-fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
+fn render_why_plain(
+    report: &cook_engine::why::WhyReport,
+    timings: &cook_engine::timings::Timings,
+) -> String {
     use cook_engine::why::CacheStatus;
     let mut s = String::new();
     s.push_str(&format!("why {}\n", report.recipe));
@@ -2111,6 +2122,27 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
             s.push_str("  sealed probes:\n");
             for (k, v) in &u.determinants.sealed_probes {
                 s.push_str(&format!("    {k} = {v}{}\n", tools_probe_paths(v)));
+            }
+        }
+        // CS-0174: the local tier's answer to the question the shared tier
+        // answers with a manifest diff. Printed before it, because a unit that
+        // misses locally is asking "what changed since I last ran this" and
+        // that is the nearer question.
+        if let Some(cause) = &u.local_cause {
+            s.push_str(&format!("  local-miss cause: {cause}\n"));
+        }
+        // CS-0174: history, kept plainly separate from the live verdict above.
+        // For a unit that is currently a hit this is the only causal answer
+        // available, and it is the one that answers "why did this rebuild
+        // overnight when I changed nothing".
+        if let Some(obs) = timings.get(&u.recipe_name, &u.cache_key) {
+            if let Some(cause) = &obs.cause {
+                let ago = match obs.builds_ago {
+                    0 => "last build".to_string(),
+                    1 => "1 build ago".to_string(),
+                    n => format!("{n} builds ago"),
+                };
+                s.push_str(&format!("  last ran because: {cause} ({ago})\n"));
             }
         }
         match &u.manifest_diff {
@@ -2199,8 +2231,12 @@ fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
 // `serde_json::Map` is BTreeMap-backed and serialises keys sorted regardless of
 // insertion order. The determinant maps themselves are already `BTreeMap` in the
 // engine; this note covers the per-unit object keys assembled here.
-fn render_why_json(report: &cook_engine::why::WhyReport) -> String {
-    let units: Vec<serde_json::Value> = report.units.iter().map(why_unit_json).collect();
+fn render_why_json(
+    report: &cook_engine::why::WhyReport,
+    timings: &cook_engine::timings::Timings,
+) -> String {
+    let units: Vec<serde_json::Value> =
+        report.units.iter().map(|u| why_unit_json(u, timings)).collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "recipe": report.recipe,
         "units": units,
@@ -2209,7 +2245,10 @@ fn render_why_json(report: &cook_engine::why::WhyReport) -> String {
         + "\n"
 }
 
-fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
+fn why_unit_json(
+    u: &cook_engine::why::WhyUnit,
+    timings: &cook_engine::timings::Timings,
+) -> serde_json::Value {
     use cook_engine::why::CacheStatus;
 
     let mut status_obj = serde_json::Map::new();
@@ -2332,6 +2371,33 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
     obj.insert("disposition".to_string(), serde_json::Value::String(disposition.to_string()));
     obj.insert("determinants".to_string(), determinants);
     obj.insert("manifest_diff".to_string(), manifest_diff);
+    // CS-0174: local-tier attribution, the counterpart of `manifest_diff`.
+    obj.insert(
+        "local_cause".to_string(),
+        match &u.local_cause {
+            Some(c) => serde_json::Value::String(c.clone()),
+            None => serde_json::Value::Null,
+        },
+    );
+    // CS-0174: history, and labelled as history. `last_cause` says why the unit
+    // ran on a past build; `local_cause` says why it will run now. A consumer
+    // must not read one for the other, so they are separate keys and the age of
+    // the observation rides alongside.
+    let last = timings.get(&u.recipe_name, &u.cache_key);
+    obj.insert(
+        "last_cause".to_string(),
+        match last.and_then(|o| o.cause.as_ref()) {
+            Some(c) => serde_json::Value::String(c.clone()),
+            None => serde_json::Value::Null,
+        },
+    );
+    obj.insert(
+        "last_cause_builds_ago".to_string(),
+        match last.filter(|o| o.cause.is_some()) {
+            Some(o) => serde_json::json!(o.builds_ago),
+            None => serde_json::Value::Null,
+        },
+    );
     serde_json::Value::Object(obj)
 }
 

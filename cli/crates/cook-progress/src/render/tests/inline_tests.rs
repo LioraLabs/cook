@@ -43,6 +43,7 @@ fn handle_routes_events_to_event_writer() {
             name: "x.c".into(), artifact: None, fallback_label: "x".into(),
             kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         },
         ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),

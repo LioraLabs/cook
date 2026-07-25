@@ -217,6 +217,12 @@ pub enum EngineEvent {
         /// (+N more)`, `env changed`, …). `None` for a cold unit or a unit
         /// with no cache metadata.
         cause: Option<String>,
+        /// CS-0174: the same recipe-local cache key `NodeCompleted` carries,
+        /// for the same reason and with the same caveats. It rides here too
+        /// because this is the record carrying `cause`, and a reader recovering
+        /// *why* a unit last ran needs to name the unit as surely as one
+        /// recovering how long it took. `None` for a non-cacheable node.
+        cache_key: Option<String>,
     },
     /// A work node completed successfully.
     NodeCompleted {
@@ -238,9 +244,10 @@ pub enum EngineEvent {
         /// hex key: the question a timing lookup answers is "how long did THIS
         /// unit take last time", which must survive its inputs changing.
         ///
-        /// It rides on this event rather than `NodeStarted` because this is
-        /// the record carrying `elapsed`; a reader recovering timings should
-        /// not have to correlate two events to learn which unit was timed.
+        /// It rides on this event because this is the record carrying
+        /// `elapsed`; a reader recovering timings should not have to correlate
+        /// two events to learn which unit was timed. CS-0174 stamps it on
+        /// `NodeStarted` as well, on the same principle applied to `cause`.
         cache_key: Option<String>,
     },
     /// A work node failed.

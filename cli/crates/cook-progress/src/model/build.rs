@@ -87,7 +87,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind, cause: _ } => {
+            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind, cause: _, cache_key: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), fallback_label.clone());
                     ns.status = NodeStatus::Running;

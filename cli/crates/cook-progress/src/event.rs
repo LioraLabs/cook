@@ -145,6 +145,14 @@ pub enum ProgressEvent {
         /// Additive field — schema v1 readers ignore it (`#[serde(default)]`).
         #[serde(default)]
         cause: Option<String>,
+        /// CS-0174: the unit's recipe-local cache key, so a retained log's
+        /// `cause` can be joined back to the unit it explains. `node` is a
+        /// display string that collides across distinct units, so it cannot
+        /// serve — the same reasoning that put this field on `NodeCompleted`
+        /// at CS-0171. Additive field, so `PROGRESS_SCHEMA_VERSION` is
+        /// unchanged.
+        #[serde(default)]
+        cache_key: Option<String>,
     },
     NodeCompleted {
         recipe: RecipeId,

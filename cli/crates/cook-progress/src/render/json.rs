@@ -112,7 +112,7 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "total": total,
             "reason": "upstream-failed",
         }),
-        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind, cause } => json!({
+        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind, cause, cache_key } => json!({
             "type": "node-started",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
@@ -120,6 +120,7 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "fallback_label": fallback_label,
             "kind": kind_str(kind),
             "cause": cause,
+            "cache_key": cache_key,
         }),
         ProgressEvent::NodeCompleted { recipe, node, elapsed, kind, cache_key } => json!({
             "type": "node-completed",

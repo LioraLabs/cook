@@ -27,6 +27,7 @@ fn drive_minimal_build(tmp: &Path) -> String {
         fallback_label: "parser.c".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         };
     state.apply(&ns);
     store.record(&state, &ns).unwrap();

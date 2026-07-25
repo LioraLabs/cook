@@ -31,6 +31,7 @@ fn node_completed_compile_kind_emits_compiled_verb() {
         fallback_label: "clang -c lvm.c".into(),
         kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -85,6 +86,7 @@ fn cached_lines_held_until_real_work_then_collapse_after_threshold() {
         name: "b.c".into(), artifact: Some("b.o".into()),
         fallback_label: "cc b.c".into(), kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let ev = ProgressEvent::NodeCompleted {
@@ -154,6 +156,7 @@ fn probes_group_into_single_resolved_line() {
             name: (*key).into(), artifact: None,
             fallback_label: (*key).into(), kind: NodeKind::Resolve,
             cause: None,
+            cache_key: None,
         };
         state.apply(&started);
         let ev = ProgressEvent::NodeCompleted {
@@ -172,6 +175,7 @@ fn probes_group_into_single_resolved_line() {
         name: "x.c".into(), artifact: Some("x.o".into()),
         fallback_label: "cc x.c".into(), kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let ev = ProgressEvent::NodeCompleted {
@@ -198,6 +202,7 @@ fn fully_cached_probe_set_stays_silent() {
         name: "probe:cc:compiler:auto".into(), artifact: None,
         fallback_label: "probe:cc:compiler:auto".into(), kind: NodeKind::Resolve,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let hit = ProgressEvent::NodeCacheHit {
@@ -235,6 +240,7 @@ fn probes_only_work_still_collapses_recipe_summary() {
         name: "probe:cc:compiler:auto".into(), artifact: None,
         fallback_label: "probe:cc:compiler:auto".into(), kind: NodeKind::Resolve,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let probe = ProgressEvent::NodeCompleted {
@@ -281,6 +287,7 @@ fn internal_recipe_shows_module_tag_and_no_summary() {
         artifact: Some("build/dhewm3/config.h".into()),
         fallback_label: "render config.h".into(), kind: NodeKind::Generate,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let ev = ProgressEvent::NodeCompleted {
@@ -317,6 +324,7 @@ fn node_started_with_cause_prints_rebuilding_line() {
         fallback_label: "next build".into(),
         kind: NodeKind::Cooked,
         cause: Some("input changed: apps/web/app/.well-known/workflow/v1/manifest.json (+2 more)".into()),
+        cache_key: None,
     };
     state.apply(&ev);
     let opts = EventWriterOptions { colored: false, ..Default::default() };
@@ -337,6 +345,7 @@ fn node_started_without_cause_stays_silent() {
         name: "x.c".into(), artifact: Some("x.o".into()),
         fallback_label: "cc x.c".into(), kind: NodeKind::Compile,
         cause: None,
+        cache_key: None,
     };
     state.apply(&ev);
     let opts = EventWriterOptions { colored: false, ..Default::default() };
@@ -355,6 +364,7 @@ fn cause_line_flushes_held_cached_lines_first() {
         name: "c.c".into(), artifact: Some("c.o".into()),
         fallback_label: "cc c.c".into(), kind: NodeKind::Compile,
         cause: Some("input changed: c.c".into()),
+        cache_key: None,
     };
     state.apply(&ev);
     w.handle(&mut buf, &state, &ev).unwrap();
@@ -395,6 +405,7 @@ fn node_failed_dumps_indented_stderr() {
         fallback_label: "clang lvm.c".into(),
         kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeFailed {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -418,6 +429,7 @@ fn quiet_suppresses_per_node_lines_but_keeps_recipe_summary() {
         name: "x.c".into(), artifact: Some("x.o".into()),
         fallback_label: "x".into(), kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         };
     state.apply(&started);
     let completed = ProgressEvent::NodeCompleted {
@@ -458,6 +470,7 @@ fn verbose_emits_node_output_lines() {
         fallback_label: "x".into(),
         kind: NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeOutput {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -578,6 +591,7 @@ fn node_completed_no_artifact_emits_no_line() {
         fallback_label: "@45".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -599,6 +613,7 @@ fn node_completed_no_artifact_verbose_still_prints() {
         name: "@45".into(), artifact: None, fallback_label: "@45".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -620,6 +635,7 @@ fn node_cache_hit_no_artifact_emits_no_line() {
         name: "@45".into(), artifact: None, fallback_label: "@45".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeCacheHit {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -693,6 +709,7 @@ fn chore_window_failure_renders_step_index_and_chore_name() {
         fallback_label: "play".into(),
         kind: NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeFailed {
         recipe: RecipeId::new(0),

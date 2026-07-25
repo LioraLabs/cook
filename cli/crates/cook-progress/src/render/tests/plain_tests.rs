@@ -97,6 +97,7 @@ fn node_output_prefix_includes_recipe_and_node() {
         fallback_label: "x".into(),
         kind: crate::event::NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let ev = ProgressEvent::NodeOutput {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -130,6 +131,7 @@ fn cache_hit_line_uses_full_output_path_not_raw_command() {
         fallback_label: "wc -w < a.txt > build/counts/alpha.count".into(),
         kind: crate::event::NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let hit = ProgressEvent::NodeCacheHit {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -145,6 +147,7 @@ fn cache_hit_line_uses_full_output_path_not_raw_command() {
         fallback_label: "wc -w < b.txt > build/counts/beta.count".into(),
         kind: crate::event::NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     let completed = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(1),
@@ -182,6 +185,7 @@ fn all_cached_recipe_drops_held_rows_keeps_summary() {
                 fallback_label: format!("cc a{i}.c"),
                 kind: crate::event::NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
             let hit = ProgressEvent::NodeCacheHit {
                 recipe: RecipeId::new(0), node: NodeId::new(i),
@@ -242,6 +246,7 @@ fn internal_recipe_node_row_uses_module_tag_and_no_done_row() {
         fallback_label: "render config.h".into(),
         kind: crate::event::NodeKind::Generate,
             cause: None,
+            cache_key: None,
         });
     let completed = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -285,6 +290,7 @@ fn probes_collapse_to_one_row() {
                 fallback_label: (*key).into(),
                 kind: crate::event::NodeKind::Resolve,
             cause: None,
+            cache_key: None,
         });
             let completed = ProgressEvent::NodeCompleted {
                 recipe: RecipeId::new(0), node: NodeId::new(i as u32),
@@ -301,6 +307,7 @@ fn probes_collapse_to_one_row() {
             fallback_label: "cc x.c".into(),
             kind: crate::event::NodeKind::Compile,
             cause: None,
+            cache_key: None,
         });
         let completed = ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(2),

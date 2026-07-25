@@ -452,3 +452,91 @@ fn plain_output_attributes_a_forced_rebuild_to_its_upstream() {
     assert!(s.contains("key not computable"), "{s}");
     assert!(s.contains("mid.txt  pending gen"), "{s}");
 }
+
+/// CS-0174: a local miss must name the determinant that moved. The reason was
+/// already computed inside `local_step_hit` and discarded, which left the
+/// explain tool strictly less informative than the build log it pre-empts:
+/// a shared miss got a manifest diff, a local miss got a list of determinants
+/// and no verdict.
+#[test]
+fn a_local_miss_names_the_determinant_that_changed() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_hit"], false, "{v}");
+    assert_eq!(unit["local_cause"], "input changed: src.txt", "{v}");
+}
+
+/// The same attribution, in the plain renderer.
+#[test]
+fn plain_output_names_the_local_miss_cause() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "gen"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("local-miss cause: input changed: src.txt"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// CS-0174: for a unit that is currently a hit there is no live cause to
+/// report, and the retained log is the only thing that can say why it last
+/// ran. That is the "why did this rebuild overnight when I changed nothing"
+/// question, and it must be labelled as history rather than as a verdict.
+#[test]
+fn a_hit_reports_why_it_last_ran_from_the_retained_log() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    write(tmp.path(), "src.txt", "two\n");
+    // This build records the cause; afterwards the unit is a hit again.
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_hit"], true, "should be a hit now: {v}");
+    // No live cause: nothing is going to rebuild.
+    assert!(unit["local_cause"].is_null(), "{v}");
+    // But history knows why it ran.
+    assert_eq!(unit["last_cause"], "input changed: src.txt", "{v}");
+    assert_eq!(unit["last_cause_builds_ago"], 0, "{v}");
+}
+
+/// The two causes answer different questions and must never be conflated: one
+/// is a verdict on the run being explained, the other is a record of a past
+/// one. A unit that will rebuild for a *new* reason must not have its live
+/// cause overwritten by the stale one.
+#[test]
+fn live_and_historical_causes_are_reported_independently() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    // First edit, then build: the log now records "src.txt".
+    write(tmp.path(), "src.txt", "two\n");
+    assert_ok(&cook(tmp.path(), &["build"]));
+    // Second edit, NOT built: the live cause is about to be recomputed while
+    // history still remembers the previous run.
+    write(tmp.path(), "src.txt", "three\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_cause"], "input changed: src.txt", "live: {v}");
+    assert_eq!(unit["last_cause"], "input changed: src.txt", "history: {v}");
+    // Distinct keys, both present, neither standing in for the other.
+    assert!(!unit["local_cause"].is_null() && !unit["last_cause"].is_null(), "{v}");
+}
