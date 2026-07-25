@@ -697,14 +697,20 @@ impl LocalBackend {
     /// sweep; only the local, single-tenant filesystem backend is trusted to
     /// actually apply it.
     ///
-    /// Per victim: stat the blob first. If it's present, remove all three
-    /// files (blob, `.meta.json`, `.provenance.json`) and count `size`
-    /// toward the returned `EvictOutcome`. If the blob is already gone —
-    /// a concurrent sweep, or manual interference — remove any stray
-    /// sidecars anyway (cleans up a half-removed object) but count
-    /// nothing: the bytes were already freed by whoever removed the blob
-    /// first, and reporting them again would double-count freed space
-    /// across two concurrent sweeps.
+    /// Per victim: remove the blob with a single `remove_file` call and
+    /// count `size` toward the returned `EvictOutcome` only if THIS call
+    /// was the one that actually removed it (`Ok`). Stat-then-delete would
+    /// open a TOCTOU window: a concurrent sweep could remove the blob
+    /// between the stat and the delete, and this run would still count
+    /// `size`, double-counting the freed bytes across both sweeps — exactly
+    /// what this method must not do. Deriving "removed" from the delete's
+    /// own result closes that window, and also stops counting a blob whose
+    /// removal failed for some other reason (e.g. a permission error): the
+    /// bytes are still on disk, so they must not be reported as freed.
+    ///
+    /// The sidecars are removed unconditionally (best-effort), whether or
+    /// not the blob was present, so a half-removed object still gets
+    /// cleaned up.
     ///
     /// Never returns `Err` for a per-object filesystem failure; every
     /// removal is best-effort, matching `delete`'s shape. The `BackendResult`
@@ -720,13 +726,12 @@ impl LocalBackend {
 
         for victim in &plan.victims {
             let path = self.path_for(&victim.key);
-            let blob_present = path.exists();
+            let blob_removed = std::fs::remove_file(&path).is_ok();
 
-            let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_file(path.with_extension("meta.json"));
             let _ = std::fs::remove_file(path.with_extension("provenance.json"));
 
-            if blob_present {
+            if blob_removed {
                 outcome.objects += 1;
                 outcome.bytes = outcome.bytes.saturating_add(victim.size);
             }
@@ -743,7 +748,8 @@ impl LocalBackend {
 /// (see `apply_eviction`'s doc comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EvictOutcome {
-    /// Count of victims whose blob was actually present and removed.
+    /// Count of victims whose blob this call's own `remove_file` actually
+    /// removed (i.e. it was still present and the removal succeeded).
     pub objects: usize,
     /// Sum of `size` over those same victims.
     pub bytes: u64,

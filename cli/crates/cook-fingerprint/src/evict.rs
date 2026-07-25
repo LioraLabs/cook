@@ -106,6 +106,12 @@ pub struct EvictPolicy {
     /// Fraction of `max_size` the size pass sweeps down to. `1.0` evicts to
     /// exactly `max_size`. Values below `1.0` (e.g. [`DEFAULT_LOW_WATER`])
     /// sweep past `max_size`, leaving headroom for COOK-235's `auto_gc`.
+    ///
+    /// Expected range is `0.0..=1.0`; `plan_eviction` `debug_assert!`s this
+    /// in debug builds. In a release build an out-of-range value is not
+    /// validated: NaN or negative saturate to a `0` target (evict everything
+    /// eligible), and a value above `1.0` under-sweeps (targets above
+    /// `max_size`). No panic, no UB either way.
     pub low_water: f64,
 }
 
@@ -151,7 +157,13 @@ fn eviction_order(c: &EvictCandidate) -> (u64, CloudKey) {
 /// the caller so the policy is testable and reusable server-side (milestone
 /// D2). See the module doc for the two-pass algorithm.
 pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u64) -> EvictPlan {
-    let total_before: u64 = candidates.iter().map(|c| c.size).sum();
+    debug_assert!(
+        (0.0..=1.0).contains(&policy.low_water),
+        "EvictPolicy::low_water must be in 0.0..=1.0, got {}",
+        policy.low_water
+    );
+
+    let total_before: u64 = candidates.iter().fold(0u64, |a, c| a.saturating_add(c.size));
     let count_before = candidates.len();
 
     let mut victims: Vec<EvictCandidate> = Vec::new();
@@ -171,7 +183,7 @@ pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u
         }
     }
 
-    let freed_by_age: u64 = victims.iter().map(|c| c.size).sum();
+    let freed_by_age: u64 = victims.iter().fold(0u64, |a, c| a.saturating_add(c.size));
     let mut running_total = total_before.saturating_sub(freed_by_age);
 
     // --- Size pass: non-exempt candidates the age pass didn't already take
@@ -186,13 +198,12 @@ pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u
             if running_total <= target {
                 break;
             }
-            evicted.insert(c.key);
             running_total = running_total.saturating_sub(c.size);
             victims.push(c.clone());
         }
     }
 
-    let freed_bytes: u64 = victims.iter().map(|c| c.size).sum();
+    let freed_bytes: u64 = victims.iter().fold(0u64, |a, c| a.saturating_add(c.size));
     let total_after = total_before.saturating_sub(freed_bytes);
 
     EvictPlan {

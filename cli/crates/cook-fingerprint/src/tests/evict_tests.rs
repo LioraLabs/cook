@@ -166,6 +166,34 @@ fn both_knobs_together_never_double_count_a_victim() {
 }
 
 #[test]
+fn both_knobs_together_the_size_pass_still_evicts_after_the_age_pass() {
+    // `old` is caught by the age pass alone; `young` survives the age pass
+    // but the size pass must still take it to reach `max_size`. Both must
+    // appear in `victims` exactly once, and `old` must NOT be re-evicted by
+    // the size pass just because it is still non-exempt and un-filtered.
+    let old = candidate(0x01, 50, 1, None);
+    let young = candidate(0x02, 100, 999, None);
+    let candidates = vec![old.clone(), young.clone()];
+
+    // now=1000, older_than=500s -> cutoff=500: catches `old` (last_access=1)
+    // but not `young` (last_access=999).
+    let policy = EvictPolicy {
+        max_size: Some(60), // target=60 (low_water=1.0)
+        older_than: Some(std::time::Duration::from_secs(500)),
+        low_water: 1.0,
+    };
+    let plan = plan_eviction(&candidates, &policy, 1_000);
+
+    // Age pass takes `old` (freed 50, running_total 150-50=100). Size pass
+    // then still must evict `young` (100 > target 60) to reach budget.
+    assert_eq!(plan.victims.len(), 2, "both old and young must be evicted, each exactly once");
+    assert_eq!(plan.victims.iter().filter(|c| **c == old).count(), 1, "old must not be double-counted");
+    assert_eq!(plan.victims.iter().filter(|c| **c == young).count(), 1, "young must be evicted by the size pass");
+    assert_eq!(plan.freed_bytes, 150, "freed_bytes must be 50+100, not 50+50 from a double-counted old");
+    assert_eq!(plan.total_after, 0);
+}
+
+#[test]
 fn age_pass_already_under_budget_means_the_size_pass_evicts_nothing() {
     // now=1000, older_than=50s -> cutoff=950.
     let old = candidate(0x01, 800, 1, None); // age victim
@@ -244,4 +272,35 @@ fn none_kind_is_treated_as_an_evictable_file() {
     let plan = plan_eviction(&[legacy_file.clone()], &policy, 1_000);
 
     assert_eq!(plan.victims, vec![legacy_file]);
+}
+
+#[test]
+fn is_size_sweep_exempt_does_not_recognise_an_unknown_kind_string() {
+    assert!(!is_size_sweep_exempt(Some("hardlink")));
+}
+
+#[test]
+fn is_size_sweep_exempt_is_case_sensitive() {
+    // "probe_value" is exempt; a case-variant of it must not be.
+    assert!(is_size_sweep_exempt(Some("probe_value")));
+    assert!(!is_size_sweep_exempt(Some("Probe_Value")));
+}
+
+#[test]
+fn neither_knob_set_frees_nothing_even_with_real_candidates_present() {
+    // `empty_candidates_plan_frees_nothing` only exercises this branch over
+    // an empty list, where a no-op implementation would also pass. Pin it
+    // over a non-empty candidate list too.
+    let candidates = vec![
+        candidate(0x01, 100, 1, None),
+        candidate(0x02, 200, 2, Some("probe_value")),
+        candidate(0x03, 300, 3, None),
+    ];
+    let plan = plan_eviction(&candidates, &none_policy(), 1_000);
+
+    assert!(plan.victims.is_empty());
+    assert_eq!(plan.freed_bytes, 0);
+    assert_eq!(plan.total_after, plan.total_before);
+    assert_eq!(plan.total_before, 600);
+    assert_eq!(plan.count_before, 3);
 }
