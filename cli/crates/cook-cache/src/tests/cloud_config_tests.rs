@@ -539,3 +539,155 @@ ignore_env = ["GITHUB_TOKEN"]
     assert_eq!(cfg.cache_ignore_env(), &["GITHUB_TOKEN".to_string()]);
     assert_eq!(cfg.max_size_bytes().expect("parse"), None);
 }
+
+// ─── auto_gc: opt-in sweep vs. warn-only default ─────────────────────────
+
+/// Milestone decision D4: `auto_gc` defaults to `false` (warn-only) across
+/// all three "unset" shapes — no cloud.toml file at all, an empty
+/// `[cache]` section, and an absent `auto_gc` key alongside other cache
+/// settings. This default must never silently flip.
+#[test]
+fn auto_gc_defaults_to_false_when_file_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(!cfg.auto_gc(), "auto_gc must default to false with no cloud.toml at all");
+}
+
+#[test]
+fn auto_gc_defaults_to_false_when_cache_section_empty() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(!cfg.auto_gc(), "auto_gc must default to false with an empty [cache] section");
+}
+
+#[test]
+fn auto_gc_defaults_to_false_when_key_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "20GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(
+        !cfg.auto_gc(),
+        "auto_gc must default to false when absent, even alongside other [cache] keys"
+    );
+}
+
+#[test]
+fn auto_gc_true_parses_true() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+auto_gc = true
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(cfg.auto_gc(), "auto_gc = true must parse to true");
+}
+
+#[test]
+fn auto_gc_false_parses_false() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+auto_gc = false
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(!cfg.auto_gc(), "auto_gc = false must parse to false");
+}
+
+/// A non-boolean `auto_gc` must surface as a TOML type error through the
+/// existing `CloudConfigError::Parse` path, not silently coerce to false.
+#[test]
+fn auto_gc_non_boolean_is_parse_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+auto_gc = "yes"
+"#,
+    );
+    let result = CloudConfig::load_or_default(dir.path());
+    match result {
+        Err(CloudConfigError::Parse(_)) => {}
+        other => panic!("expected Parse error for non-boolean auto_gc, got: {other:?}"),
+    }
+}
+
+/// `auto_gc = true` with no `max_size` set must not be a load-time error:
+/// no budget means no check, so the sweep simply never runs. The two
+/// knobs are deliberately uncoupled at load time.
+#[test]
+fn auto_gc_true_without_max_size_is_not_an_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+auto_gc = true
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("auto_gc=true with no max_size must load fine");
+    assert!(cfg.auto_gc());
+    assert_eq!(cfg.max_size_bytes().expect("parse"), None);
+}
+
+// ─── max_size_literal: verbatim echo for remediation commands ───────────
+
+#[test]
+fn max_size_literal_absent_yields_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_literal(), None);
+}
+
+/// `max_size_literal` must return the exact string the user typed, not a
+/// re-rendered/normalised form — "20GB" must stay "20GB", not become
+/// "20 GB" or a byte count.
+#[test]
+fn max_size_literal_round_trips_verbatim() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "20GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_literal(), Some("20GB"));
+}
+
+/// `max_size_literal` returns the literal verbatim even when it's not a
+/// valid size — it's a raw echo, not a validated accessor. Validation is
+/// `max_size_bytes()`'s job.
+#[test]
+fn max_size_literal_round_trips_even_when_invalid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "twenty gigs"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_literal(), Some("twenty gigs"));
+    assert!(cfg.max_size_bytes().is_err());
+}
