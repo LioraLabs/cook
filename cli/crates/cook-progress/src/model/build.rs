@@ -96,7 +96,7 @@ impl BuildState {
                     r.nodes.insert(*node, ns);
                 }
             }
-            ProgressEvent::NodeCompleted { recipe, node, elapsed: _, kind: _ } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed: _, kind: _, cache_key: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let bumped = if let Some(n) = r.nodes.get_mut(node) {
                         if n.status == NodeStatus::Running {

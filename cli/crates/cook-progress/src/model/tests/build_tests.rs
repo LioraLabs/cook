@@ -196,6 +196,7 @@ fn duplicate_node_completed_does_not_double_count_progress() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(1),
         kind: NodeKind::Cooked,
+        cache_key: None,
     });
     assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
     assert_eq!(s.totals.completed_nodes, 1);
@@ -205,6 +206,7 @@ fn duplicate_node_completed_does_not_double_count_progress() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(1),
         kind: NodeKind::Cooked,
+        cache_key: None,
     });
     assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
     assert_eq!(s.totals.completed_nodes, 1);

@@ -1,4 +1,4 @@
-//! The Cook build graph: model, aggregation, and renderers for `cook dag`.
+//! The Cook build graph: model, aggregation, and renderers for `cook why`.
 //!
 //! There is no terminal browser here any more, and no waves. The ratatui
 //! viewer navigated by wave, and waves were a display construct the engine
@@ -12,17 +12,25 @@ use std::sync::Arc;
 use cook_cache::ThreadSafeCacheManager;
 use cook_contracts::RecipeUnits;
 
+pub mod annotate;
 pub mod dag_data;
 pub mod emit;
 
+pub use annotate::{Annotations, UnitFacts};
 pub use dag_data::{build_dag_data, DagData, EdgeData, EdgeKind, NodeData};
 
-/// Wire-format schema version for the DAG payload (CS-0048).
+/// Wire-format schema version for the `cook why` payload (CS-0048,
+/// §{exec.cache.why.formats}).
 ///
-/// 3 since the wave structure was removed: `{waves, inter_wave_edges}` became
-/// `{recipes, nodes, edges}`, which is an incompatible structural change and
-/// so requires a bump under CS-0048's evolution policy.
-pub const DAG_SCHEMA_VERSION: u32 = 3;
+/// 3 when the wave structure was removed: `{waves, inter_wave_edges}` became
+/// `{recipes, nodes, edges}`.
+///
+/// 4 at CS-0171, when the graph payload and the determinant payload merged
+/// into one document: a node's `cached` boolean became `hits`/`rebuilds`/
+/// `unclassified` tallies plus `forces` and the timing pair, and the former
+/// `cook why --json` `units` array joined the same object. Two incompatible
+/// structural changes at once, and one bump covers both.
+pub const DAG_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewerError {

@@ -14,6 +14,7 @@ pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
 mod seal;
+pub mod timings;
 pub mod verify;
 pub mod why;
 
@@ -227,6 +228,20 @@ pub enum EngineEvent {
         /// Mirrors the `kind` from the matching `NodeStarted` so the renderer
         /// can pick the right verb without remembering per-node state.
         kind: NodeKind,
+        /// CS-0171: the unit's recipe-local cache key, the stable identity
+        /// `cook why` joins retained timings against. `unit` is a per-run DAG
+        /// index and `node_name` collides across distinct units (CS-0167 was
+        /// a whole defect class built on basename collisions), so neither
+        /// survives as a cross-run join key. `None` for a non-cacheable node.
+        ///
+        /// Deliberately the recipe-local key rather than the content-addressed
+        /// hex key: the question a timing lookup answers is "how long did THIS
+        /// unit take last time", which must survive its inputs changing.
+        ///
+        /// It rides on this event rather than `NodeStarted` because this is
+        /// the record carrying `elapsed`; a reader recovering timings should
+        /// not have to correlate two events to learn which unit was timed.
+        cache_key: Option<String>,
     },
     /// A work node failed.
     NodeFailed {

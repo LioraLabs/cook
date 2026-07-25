@@ -204,7 +204,7 @@ A conforming implementation MUST apply the field defaults and raise register-pha
 
 The parameter exists because the bare call is **positional**. A `cook.dep_order` reference applies to every `cook.add_unit` that follows it and is discarded when the enclosing group closes, so where the author placed the call — and whether a group boundary happens to fall between it and the units it was meant for — decides its meaning. Declaring the names on the group makes the scope syntactic instead: these deps, these units, with no ordering to get wrong. The two forms are otherwise identical, and an implementation MAY implement one in terms of the other.
 
-Note that a recipe body admits only step forms and bare `<id>.<id>(...)` module calls (§{lua.recipe-body}), so neither an inline table argument nor a `local` binding can appear there; `opts` is reachable from module code, which is ordinary Lua. This is a property of the recipe-body surface, not of this API.
+Note that a recipe body admits only step forms and bare `<id>.<id>(...)` module calls (§{recipes.region-rule}), so neither an inline table argument nor a `local` binding can appear there; `opts` is reachable from module code, which is ordinary Lua. This is a property of the recipe-body surface, not of this API.
 
 `cook.step_group` MUST return after `fn` returns; nested `cook.step_group` calls within `fn` are unspecified.
 

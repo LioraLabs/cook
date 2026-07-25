@@ -49,7 +49,7 @@ cli/crates/
 ├── cook-fingerprint      # pure hashing, env contribution, machine identity, rebuild logic
 ├── cook-contracts        # behaviour-free shared types (WorkPayload, CapturedUnit, CacheMeta, …)
 ├── cook-dag              # generic Dag<T> with atomic remaining_deps and cycle detection
-├── cook-dag-viewer       # TUI for inspecting a recipe DAG (cook dag)
+├── cook-graph            # build-graph model, aggregation, and renderers (cook why)
 └── cook-progress         # event-driven renderer (Inline/Plain/JSON) + on-disk log store
 ```
 

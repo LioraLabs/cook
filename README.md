@@ -328,8 +328,8 @@ cook
 **Day to day**
 
 - [The cook CLI](document.md#the-cook-cli): `cook menu`, `cook serve` to
-  watch and re-run, the `cook dag` TUI, `cook logs`, and tab completion
-  served by the binary itself.
+  watch and re-run, `cook why` to see what a run would do and why, `cook logs`,
+  and tab completion served by the binary itself.
 
 **Reference**
 

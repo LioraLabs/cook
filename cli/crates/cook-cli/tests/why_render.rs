@@ -1,0 +1,346 @@
+//! `cook why` end to end: edge kinds, aggregation levels, formats, cache
+//! tallies, cascade attribution, and timing.
+//!
+//! Two load-bearing cases.
+//!
+//! *Fine coverage.* A recipe-level dependency that a module has covered with
+//! per-unit `cook.dep_order` references (CS-0161) does not execute as a
+//! whole-recipe barrier, so reporting one would be a lie — and an expensive
+//! one, since "why is my build serial" is half of what this command exists to
+//! answer.
+//!
+//! *One command.* The other half is "what will actually run, and why". Before
+//! CS-0171 those were `cook dag` and `cook why`, and neither could answer the
+//! other's question: the graph had a private local-index-only cache check, and
+//! the determinant report had no edges to attribute a miss along.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use tempfile::TempDir;
+
+fn cook_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_cook"))
+}
+
+fn write(root: &Path, rel: &str, body: &str) {
+    let path = root.join(rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, body).unwrap();
+}
+
+fn cook(root: &Path, args: &[&str]) -> Output {
+    Command::new(cook_bin())
+        .args(args)
+        .current_dir(root)
+        .output()
+        .expect("run cook")
+}
+
+fn stdout(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+fn assert_ok(o: &Output) {
+    assert!(
+        o.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+/// Point the shared store at a private per-test directory.
+///
+/// Without this the host-wide `~/.cache/cook/cloud` serves these deterministic
+/// echo/cat units across unrelated test runs, so a "cold" workspace reports
+/// hits and the cache assertions below test nothing. Same reasoning as
+/// `unit_timing.rs`.
+fn isolate_shared_cache(root: &Path) {
+    std::fs::create_dir_all(root.join(".cook")).unwrap();
+    let shared = root.join(".cook/shared-cache");
+    write(
+        root,
+        ".cook/cloud.toml",
+        &format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+    );
+}
+
+/// Two recipes joined by a plain dep-list entry and nothing finer.
+fn barrier_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(
+        root,
+        "Cookfile",
+        "recipe gen\n    cook \"g.txt\" {\n        echo g > g.txt\n    }\n\n\
+         recipe build: gen\n    cook \"a.txt\" {\n        echo a > a.txt\n    }\n",
+    );
+}
+
+/// A producer and a consumer wired by a real file dependency, so the graph has
+/// a data edge to cascade along: `gen` writes `mid.txt` from `src.txt`, and
+/// `build` consumes `mid.txt`.
+fn chain_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(root, "src.txt", "one\n");
+    write(
+        root,
+        "Cookfile",
+        "recipe gen\n\
+         \x20   ingredients \"src.txt\"\n\
+         \x20   cook \"mid.txt\" {\n        cat src.txt > mid.txt\n    }\n\
+         \n\
+         recipe build: gen\n\
+         \x20   ingredients \"mid.txt\"\n\
+         \x20   cook \"out.txt\" {\n        cat mid.txt > out.txt\n    }\n",
+    );
+}
+
+#[test]
+fn why_renders_the_graph_by_default() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("recipe level"), "{s}");
+    assert!(s.starts_with("why build"), "{s}");
+}
+
+#[test]
+fn recipe_level_is_the_default_and_reports_a_real_barrier() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("recipe level"), "{s}");
+    assert!(s.contains("waits on gen"), "{s}");
+    // Nothing fine-covers this dep-list edge, so a barrier is the truth.
+    assert!(s.contains("barrier"), "{s}");
+    assert!(s.contains("free to start immediately"), "{s}");
+}
+
+#[test]
+fn mermaid_labels_edges_and_weights_barriers() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--format", "mermaid"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.starts_with("graph LR"), "{s}");
+    assert!(s.contains("|barrier|"), "{s}");
+    assert!(s.contains("==>"), "barrier arrows should be heavy: {s}");
+    assert!(s.contains("linkStyle"), "{s}");
+}
+
+#[test]
+fn json_is_parseable_and_carries_edge_kinds() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    assert_eq!(v["level"], "recipe");
+    let edges = v["edges"].as_array().unwrap();
+    assert!(edges.iter().any(|e| e["kind"] == "barrier"), "{v}");
+}
+
+/// CS-0171: the JSON payload is the successor to *both* former payloads, so
+/// the cache tallies must ride alongside the shape.
+#[test]
+fn json_carries_cache_tallies_alongside_the_shape() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let node = v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "recipe:build")
+        .expect("build node");
+    // Cold workspace: nothing has ever run, so everything rebuilds.
+    assert_eq!(node["hits"], 0, "{v}");
+    assert_eq!(node["rebuilds"], 1, "{v}");
+    // And nothing has ever been observed to take any time.
+    assert_eq!(node["observed_ms"], 0, "{v}");
+    assert_eq!(node["unobserved"], 1, "{v}");
+}
+
+#[test]
+fn dot_renders_a_digraph() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--format", "dot"]);
+    assert_ok(&out);
+    assert!(stdout(&out).starts_with("digraph cook {"));
+}
+
+#[test]
+fn unknown_level_and_format_are_rejected_by_name() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+
+    let out = cook(tmp.path(), &["why", "build", "--level", "nope"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown --level 'nope'"));
+
+    let out = cook(tmp.path(), &["why", "build", "--format", "nope"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown --format 'nope'"));
+}
+
+#[test]
+fn unit_level_refuses_past_max_nodes_rather_than_emitting_a_blob() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--max-nodes", "1"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("not readable in any format"), "{err}");
+    // The refusal must point at the levels that do work on the same graph.
+    assert!(err.contains("--level recipe"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// CS-0171: the merge
+// ---------------------------------------------------------------------------
+
+/// `cook dag` is gone. Not aliased, not deprecated — removed, because it never
+/// shipped in a tagged release.
+#[test]
+fn cook_dag_no_longer_exists() {
+    let tmp = TempDir::new().unwrap();
+    barrier_workspace(tmp.path());
+    let out = cook(tmp.path(), &["dag", "build"]);
+    assert!(!out.status.success(), "`cook dag` must not resolve");
+    // It falls through to recipe dispatch and fails as an unknown recipe,
+    // rather than being caught as a reserved subcommand.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("dag"), "{err}");
+}
+
+/// The determinant fidelity CS-0112 specified must survive the merge. At unit
+/// level — where the node count is already capped — the full per-unit block
+/// prints under the graph.
+#[test]
+fn unit_level_still_reports_full_determinants() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("unit level"), "{s}");
+    assert!(s.contains("command_hash"), "determinants missing: {s}");
+    assert!(s.contains("env_contribution"), "{s}");
+    assert!(s.contains("seal_contribution"), "{s}");
+    assert!(s.contains("inputs:"), "{s}");
+    assert!(s.contains("src.txt"), "{s}");
+}
+
+/// The `--unit` selector answers a determinant question directly, without
+/// making the caller render the whole closure at unit granularity.
+#[test]
+fn unit_selector_reports_determinants_for_one_unit() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--unit", "out.txt"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("command_hash"), "{s}");
+    assert!(s.contains("out.txt"), "{s}");
+    // Exactly one unit is selected: the report has one determinant block.
+    assert_eq!(s.matches("command_hash").count(), 1, "selector should narrow: {s}");
+}
+
+/// A selector matching nothing is a user error worth naming, not an empty
+/// report that reads as "nothing to explain".
+#[test]
+fn a_unit_selector_matching_nothing_is_an_error() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build", "--unit", "nosuchthing"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("matched no unit"), "{err}");
+}
+
+/// §17.1.6.2: a coarse node reports counts, and on a warm workspace they are
+/// hits rather than rebuilds. This is the merge working: the tally comes from
+/// `why`'s two-tier verdict, not from the deleted local-only check.
+///
+/// Builds TWICE to reach steady state, which is a workaround for COOK-326: a
+/// recipe consuming another recipe's generated output does not record a
+/// correct cache entry on its first run (and is served wrong bytes from the
+/// shared store). One build is enough once that is fixed, and this test should
+/// be tightened back to one then.
+#[test]
+fn a_warm_workspace_reports_hits_not_rebuilds() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+
+    let cold = cook(tmp.path(), &["why", "build"]);
+    assert_ok(&cold);
+    assert!(stdout(&cold).contains("2 rebuild"), "cold: {}", stdout(&cold));
+
+    assert_ok(&cook(tmp.path(), &["build"]));
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    let warm = cook(tmp.path(), &["why", "build"]);
+    assert_ok(&warm);
+    let s = stdout(&warm);
+    assert!(s.contains("2 hit, 0 rebuild"), "warm: {s}");
+    assert!(!s.contains("[1 rebuild]"), "no node should rebuild: {s}");
+}
+
+/// §17.1.6.3 and §17.1.6.4 together: after editing the root source, the graph
+/// reports what rebuilds, what that rebuild forces, and what it was observed
+/// to cost last time.
+#[test]
+fn an_edited_input_reports_cascade_and_observed_timing() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+
+    // Both units rebuild: the edit invalidates mid.txt, which invalidates out.txt.
+    assert!(s.contains("2 rebuild"), "{s}");
+    // The upstream names what its rebuild costs downstream.
+    assert!(
+        s.contains("invalidates 1 downstream unit"),
+        "cascade attribution missing: {s}"
+    );
+    // And the downstream names the upstream rather than presenting its miss as
+    // an independent finding.
+    assert!(s.contains("← rebuilding"), "upstream not marked: {s}");
+    // The prior run timed both units, so both carry an observation.
+    assert!(s.contains("observed"), "timing missing: {s}");
+    assert!(
+        !s.contains("estimate") && !s.contains("will take"),
+        "timing must not read as a prediction: {s}"
+    );
+}
+
+/// §17.1.6.4: a workspace that has never run has no timings, and must say so
+/// by omission rather than by rendering zero.
+#[test]
+fn a_never_run_workspace_reports_no_timing_rather_than_zero() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "build"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    // No unit has ever run, so no node carries a duration at all. Checked as
+    // a whole-output property rather than `!contains("0ms observed")`, which
+    // any duration ending in zero would satisfy ("400ms observed").
+    assert!(!s.contains("observed"), "absence is not zero: {s}");
+}

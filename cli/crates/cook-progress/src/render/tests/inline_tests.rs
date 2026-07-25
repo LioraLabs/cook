@@ -47,6 +47,7 @@ fn handle_routes_events_to_event_writer() {
         ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(100), kind: NodeKind::Compile,
+            cache_key: None,
         },
         ProgressEvent::RecipeCompleted {
             recipe: RecipeId::new(0),

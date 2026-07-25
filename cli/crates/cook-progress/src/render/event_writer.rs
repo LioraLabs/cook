@@ -151,7 +151,7 @@ impl EventWriter {
                 Ok(false)
             }
 
-            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind, cache_key: _ } => {
                 if self.opts.quiet { return Ok(false); }
                 let nname = node_display(state, *recipe, *node);
                 if !self.opts.verbose && let Some(module) = probe_module(&nname) {

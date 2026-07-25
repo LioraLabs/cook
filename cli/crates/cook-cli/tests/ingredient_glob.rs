@@ -64,7 +64,7 @@ fn member_root_ingredient_is_tracked_by_why() {
 
     let build = cook(tmp.path(), &["member.build"]);
     assert_ok(&build);
-    let why = cook(tmp.path(), &["why", "member.build", "--json"]);
+    let why = cook(tmp.path(), &["why", "member.build", "--format", "json"]);
     assert_ok(&why);
     let json: serde_json::Value = serde_json::from_slice(&why.stdout).unwrap();
     let inputs = json["units"][0]["determinants"]["inputs"]
@@ -224,7 +224,7 @@ fn migration_and_root_lockfile_repro_tracks_every_file_without_warning() {
         "{}",
         stderr(&build)
     );
-    let why = cook(tmp.path(), &["why", "member.build", "--json"]);
+    let why = cook(tmp.path(), &["why", "member.build", "--format", "json"]);
     assert_ok(&why);
     let text = String::from_utf8_lossy(&why.stdout);
     for expected in [

@@ -90,6 +90,15 @@ fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
     }
 }
 
+/// CS-0171: the recipe-local cache key to stamp on this node's progress
+/// records, or `None` for a node with no cache metadata (a bare shell step, a
+/// chore body). This is the identity `cook why` joins retained timings on;
+/// see `EngineEvent::NodeStarted::cache_key` for why neither the per-run unit
+/// index nor the display name can serve.
+fn node_cache_key(node: &WorkNode) -> Option<String> {
+    node.cache_meta.as_ref().map(|m| m.cache_key.clone())
+}
+
 // ---------------------------------------------------------------------------
 // is_chore_window_member — admit a node into the chore-window drain
 // ---------------------------------------------------------------------------
@@ -1076,6 +1085,7 @@ pub fn execute_dag(
                                 node_name: test_name.clone(),
                                 elapsed: duration,
                                 kind: NodeKind::Test,
+                                cache_key: node_cache_key(work_node),
                             });
                             finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
 
@@ -1536,6 +1546,7 @@ pub fn execute_dag(
                                         node_name: node_name.clone(),
                                         elapsed: started.elapsed(),
                                         kind: NodeKind::Cooked,
+                                        cache_key: node_cache_key(work_node),
                                     },
                                 );
                                 finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -2317,6 +2328,7 @@ pub fn execute_dag(
                                 elapsed: interactive_elapsed,
                                 // Interactive nodes are never test steps.
                                 kind: NodeKind::Cooked,
+                                cache_key: node_cache_key(work_node),
                             },
                         );
 
@@ -2548,6 +2560,7 @@ pub fn execute_dag(
                         .as_ref()
                         .map(node_kind_for_payload)
                         .unwrap_or(NodeKind::Cooked),
+                    cache_key: node_cache_key(work_node),
                 },
             );
 

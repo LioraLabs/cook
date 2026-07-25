@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cook_cache::ThreadSafeCacheManager;
-use cook_fingerprint::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult};
+use cook_fingerprint::{hash_file, stat_mtime};
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
 use std::collections::BTreeSet;
 
@@ -46,8 +46,19 @@ pub struct NodeData {
     pub command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    /// CS-0171: the unit's recipe-local cache key. This is the join key that
+    /// attaches `cook why`'s determinant/tier findings and the retained
+    /// timings to this node; `(recipe, cache_key)` identifies a unit across
+    /// runs, which the per-run node id does not.
+    ///
+    /// This crate deliberately computes NO cache verdict of its own. It used
+    /// to: a local-index-only `needs_rebuild_cook` call that knew nothing of
+    /// the shared tier and rendered as a bare `[cached]`/`[stale]` marker.
+    /// Two cache truths in one binary is one too many, and it was the weaker
+    /// one. The graph supplies structure; `cook_engine::why` supplies the
+    /// verdict. (CS-0171.)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached: Option<bool>,
+    pub cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dep_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -276,21 +287,26 @@ fn build_nodes(
     // Preflight in a single pass: gather every unit's declared inputs and
     // outputs across the whole graph.
     //
-    // - `unit_output_paths` lets the per-unit emission skip making file nodes
-    //   for intermediate artifacts (e.g. .o files that are both one unit's
-    //   output and another's input — the unit→unit edge already encodes that).
+    // - `producer_by_output` maps each declared output path to the unit that
+    //   produces it. An input matching one of these is an intermediate
+    //   artifact (a .o consumed by an archive step, say) and gets a direct
+    //   producer→consumer edge rather than a file node.
     // - `declared_input_paths` lets the discovered-inputs emission classify a
     //   path as declared regardless of the order units are processed in
     //   (spec §3.3): a path declared by *any* unit is rendered declared, even
     //   if a depfile sees it first.
-    let mut unit_output_paths: BTreeSet<String> = BTreeSet::new();
+    //
+    // CS-0169 makes a literal output path declarable by at most one unit per
+    // run, so this map cannot lose a producer to a collision.
+    let mut producer_by_output: BTreeMap<String, String> = BTreeMap::new();
     let mut declared_input_paths: BTreeSet<String> = BTreeSet::new();
     for recipe_name in recipe_names {
         if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
-            for unit in &ru.units {
+            for (unit_idx, unit) in ru.units.iter().enumerate() {
                 if let Some(meta) = &unit.cache_meta {
                     for out in &meta.output_paths {
-                        unit_output_paths.insert(out.clone());
+                        producer_by_output
+                            .insert(out.clone(), format!("unit:{}:{}", recipe_name, unit_idx));
                     }
                     for inp in &meta.input_paths {
                         declared_input_paths.insert(inp.clone());
@@ -382,50 +398,14 @@ fn build_nodes(
                 _ => ("unknown".to_string(), None),
             };
 
-            // --- Cache status ---
-            let cached = if let (Some(meta), Some(cache)) = (&unit.cache_meta, recipe_cache.as_ref()) {
-                if meta.output_paths.is_empty() {
-                    None
-                } else {
-                    let entry = cache.steps.get(&meta.cache_key);
-                    let input_refs: Vec<&str> =
-                        meta.input_paths.iter().map(|s| s.as_str()).collect();
-                    let current_outputs: Vec<&str> =
-                        meta.output_paths.iter().map(|s| s.as_str()).collect();
-                    // Viewer query — no restore side-effects (COOK-161). The
-                    // viewer has no live ProbeValueStore (sealed probe values only
-                    // exist during an execute-phase DAG walk, not in this static
-                    // graph view), so it cannot re-fold the seal set. It instead
-                    // compares the persisted entry's own seal_contribution against
-                    // itself, so a clean *sealed* unit is correctly shown as
-                    // up-to-date rather than falsely flagged SealChanged. The one
-                    // thing this cannot detect is a probe-value drift since the
-                    // last build — invisible in a static view, and harmless since
-                    // the viewer never writes the cache.
-                    let seal_contribution = entry.map(|e| e.seal_contribution).unwrap_or(0);
-                    let (result, _) = needs_rebuild_cook(
-                        entry,
-                        &input_refs,
-                        &current_outputs,
-                        meta.command_hash,
-                        meta.env_contribution,
-                        seal_contribution,
-                        &ru.working_dir,
-                        None,
-                        None,
-                        // COOK-163: honour the unit's record disposition so the
-                        // static view doesn't falsely flag a present-but-drifted
-                        // record output as needing a rebuild (execute-phase would
-                        // Skip it — byte-equivalence is waived, §17.1.3).
-                        meta.record,
-                    );
-                    Some(matches!(result, RebuildResult::Skip))
-                }
-            } else {
-                None
-            };
-
             // --- Unit node ---
+            //
+            // No cache verdict is computed here. The local-index-only check
+            // that used to live at this point knew nothing about the shared
+            // tier and could not re-fold a sealed unit's probe values, so it
+            // answered a strictly weaker question than `cook_engine::why`
+            // while looking like the same answer. All this node carries now is
+            // the key to join the real verdict on. (CS-0171.)
             nodes.push(NodeData {
                 id: unit_id.clone(),
                 kind: "unit".to_string(),
@@ -433,7 +413,7 @@ fn build_nodes(
                 recipe: Some(recipe_name.clone()),
                 command: Some(command),
                 output: output.clone(),
-                cached,
+                cache_key: unit.cache_meta.as_ref().map(|m| m.cache_key.clone()),
                 dep_kind: Some(dep_kind_str),
                 group_index,
                 modified: None,
@@ -451,10 +431,25 @@ fn build_nodes(
                 let unique_paths: BTreeSet<&String> = meta.input_paths.iter().collect();
 
                 for path in unique_paths {
-                    // Skip inputs that are outputs of other units in the graph
-                    // (e.g. .o files produced by compile steps and consumed by
-                    // archive steps). The unit→unit edge already captures this.
-                    if unit_output_paths.contains(path.as_str()) {
+                    // An input that another unit produces is an intermediate
+                    // artifact, not a source. Emit the producer→consumer edge
+                    // directly rather than interposing a file node.
+                    //
+                    // This edge used to be dropped entirely, on the assumption
+                    // that the intra-recipe barrier already implied it. It does
+                    // not: the barrier expresses ordering within one recipe,
+                    // while this expresses data flow, including across recipes
+                    // where no barrier exists. Without it the graph could not
+                    // say which units a rebuild actually invalidates, which is
+                    // what cascade attribution needs (§17.1.6.3, CS-0171).
+                    if let Some(producer) = producer_by_output.get(path.as_str()) {
+                        if producer != &unit_id {
+                            edges.push(EdgeData {
+                                from: producer.clone(),
+                                to: unit_id.clone(),
+                                kind: EdgeKind::Data,
+                            });
+                        }
                         continue;
                     }
 
@@ -478,7 +473,7 @@ fn build_nodes(
                             recipe: None,
                             command: None,
                             output: None,
-                            cached: None,
+                            cache_key: None,
                             dep_kind: None,
                             group_index: None,
                             modified: Some(modified),
@@ -504,7 +499,18 @@ fn build_nodes(
                     let source = meta.input_paths.first().map(String::as_str);
                     let discovered = read_discovered_paths(di, source, &ru.working_dir);
                     for path in discovered {
-                        if unit_output_paths.contains(path.as_str()) {
+                        // Same as the declared-input case above: a discovered
+                        // path that another unit produces is a generated header,
+                        // and the producer→consumer edge is the honest rendering
+                        // of that dependency.
+                        if let Some(producer) = producer_by_output.get(path.as_str()) {
+                            if producer != &unit_id {
+                                edges.push(EdgeData {
+                                    from: producer.clone(),
+                                    to: unit_id.clone(),
+                                    kind: EdgeKind::Discovered,
+                                });
+                            }
                             continue;
                         }
                         let file_id = format!("file:{}", path);
@@ -528,7 +534,7 @@ fn build_nodes(
                             recipe: None,
                             command: None,
                             output: None,
-                            cached: None,
+                            cache_key: None,
                             dep_kind: None,
                             group_index: None,
                             modified: None,

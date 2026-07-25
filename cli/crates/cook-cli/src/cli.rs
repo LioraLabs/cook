@@ -125,9 +125,6 @@ pub enum Cmd {
     /// Run tests in the workspace (or scoped to a recipe/namespace).
     Test(TestArgs),
 
-    /// Print the build graph: what waits on what, and why.
-    Dag(DagArgs),
-
     /// Show logs for past builds.
     Logs(LogsArgs),
 
@@ -148,9 +145,11 @@ pub enum Cmd {
     /// Requires `--since=<ref>`.
     Affected(AffectedArgs),
 
-    /// Explain the cache key per unit: every input that shapes the key,
-    /// attributed to its source, with hit/miss status — and on a shared miss,
-    /// the diff against what the cached artifact was built from. Read-only; runs nothing.
+    /// Explain what a run would do, and why: the build graph with per-node
+    /// hit/rebuild counts and what each rebuild forces downstream, plus (at
+    /// `--level unit`) every determinant behind each unit's cache key and, on
+    /// a shared miss, the diff against what the cached artifact was built
+    /// from. Read-only; runs nothing.
     Why(WhyArgs),
 
     /// Run a recipe by name. Captured for any first positional that does not
@@ -169,7 +168,6 @@ impl Cmd {
             Cmd::List => Some("list"),
             Cmd::Modules(_) => Some("modules"),
             Cmd::Test(_) => Some("test"),
-            Cmd::Dag(_) => Some("dag"),
             Cmd::Logs(_) => Some("logs"),
             Cmd::Cache(_) => Some("cache"),
             Cmd::Serve(_) => Some("serve"),
@@ -198,7 +196,6 @@ impl Cmd {
     pub fn reserved_target(&self) -> Option<&str> {
         match self {
             Cmd::Test(a) => a.scope.as_deref(),
-            Cmd::Dag(a) => a.recipe.as_deref(),
             Cmd::Cache(c) => match &c.cmd {
                 CacheCmd::Verify(v) => v.recipe.as_deref(),
                 CacheCmd::Dump(d) => d.recipe.as_deref(),
@@ -248,8 +245,8 @@ pub struct TestArgs {
 }
 
 #[derive(clap::Args, Debug, Clone)]
-pub struct DagArgs {
-    /// Recipe to visualize (default: 'build').
+pub struct WhyArgs {
+    /// Recipe to explain (default: 'build').
     pub recipe: Option<String>,
 
     /// Config preset.
@@ -261,6 +258,10 @@ pub struct DagArgs {
     pub level: String,
 
     /// Output syntax: text (default), mermaid, dot, or json.
+    ///
+    /// CS-0171: this subsumes the former `--json` flag. One spelling for one
+    /// thing — `--json` and `--format json` meaning the same thing was surface
+    /// worth removing while the command had no users.
     #[arg(long = "format", default_value = "text")]
     pub format: String,
 
@@ -269,17 +270,10 @@ pub struct DagArgs {
     #[arg(long = "max-nodes", default_value_t = 200)]
     pub max_nodes: usize,
 
-}
-
-#[derive(clap::Args, Debug, Clone)]
-pub struct WhyArgs {
-    /// Recipe to explain (default: 'build').
-    pub recipe: Option<String>,
-    /// Config preset.
-    pub config: Option<String>,
-    /// Emit machine-readable JSON instead of the human-readable report.
-    #[arg(long = "json")]
-    pub json: bool,
+    /// Report full determinants for units whose recipe name, cache key, or
+    /// output path contains this substring, instead of rendering the graph.
+    #[arg(long = "unit", num_args = 1)]
+    pub unit: Option<String>,
 }
 
 #[derive(clap::Args, Debug, Clone)]

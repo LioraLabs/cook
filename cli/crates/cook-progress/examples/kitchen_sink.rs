@@ -47,6 +47,7 @@ fn main() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(400),
         kind: NodeKind::Cooked,
+        cache_key: Some("step:0".into()),
     }).unwrap();
     tx.send(ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),

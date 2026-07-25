@@ -17,7 +17,7 @@ use cook_cli::modules;
 use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
-    cmd_affected, cmd_cache_dump, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_menu,
+    cmd_affected, cmd_cache_dump, cmd_cache_verify, cmd_emit_lua, cmd_init, cmd_menu,
     cmd_run,
     cmd_serve, cmd_test, cmd_why, resolve_project_root, set_invoked_builtin,
     warn_if_builtin_shadows_recipe,
@@ -109,7 +109,6 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::List) => cmd_menu(&globals),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
-        Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),
         Some(Cmd::Logs(args)) => {
             let selector = if args.last_failed {
                 cook_logs::BuildSelector::LastFailed
@@ -134,15 +133,17 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         }
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
         Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
-        Some(Cmd::Why(args)) => {
-            let recipe = args.recipe.as_deref().unwrap_or("build");
+        Some(Cmd::Why(mut args)) => {
             // `why` does not flow through `partition_argv`, so a `@PRESET`
             // sigil lands verbatim in the `config` positional. Strip a leading
             // `@` when the token has the `@<bare-ident>` shape, matching the run
             // path's recognition (COOK-307), so `cook why show @alt` and
             // `--config alt` agree. A non-sigil value passes through unchanged.
-            let config = args.config.as_deref().map(|c| strip_preset_sigil(c));
-            cmd_why(&globals, recipe, config, args.json)
+            args.config = args
+                .config
+                .as_deref()
+                .map(|c| strip_preset_sigil(c).to_string());
+            cmd_why(&globals, &args)
         }
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
     }

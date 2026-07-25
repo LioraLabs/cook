@@ -764,9 +764,8 @@ collides with a subcommand.
 
 | Command | Does |
 |---|---|
-| `cook why [recipe]` | explain each unit's cache key and hit/miss (`--json`); read-only |
+| `cook why [recipe]` | explain what a run would do: the build graph with per-node hit/rebuild counts, what each rebuild invalidates downstream, and last-observed timings. `--level recipe\|group\|unit`, `--format text\|mermaid\|dot\|json`, `--unit <pat>` for one unit's full determinants. Read-only |
 | `cook cache verify [recipe]` | re-run cached steps, fail on byte-divergence (`--json`) |
-| `cook dag [recipe]` | open the build-DAG TUI viewer (`--theme mono`) |
 | `cook logs [id]` | browse the per-build log archive (`-n N` for the Nth most recent, `--last-failed`) |
 | `cook emit-lua` | print the Lua a Cookfile compiles to |
 | `cook affected --since=<ref>` | list recipes whose inputs changed since a git ref (`--recipe`, `--json`) |

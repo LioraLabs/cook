@@ -291,6 +291,7 @@ fn bridge_engine_to_progress_events(
                     node_name: _,
                     elapsed,
                     kind,
+                    cache_key,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, unit, &mut node_ids, &mut next_node);
@@ -299,6 +300,7 @@ fn bridge_engine_to_progress_events(
                         node: nid,
                         elapsed,
                         kind: translate_kind(kind),
+                        cache_key,
                     }
                 }
                 cook_engine::EngineEvent::NodeFailed {
@@ -1671,135 +1673,6 @@ pub fn cmd_serve(
 #[path = "tests/serve_glob_tests.rs"]
 mod serve_glob_tests;
 
-// ---------------------------------------------------------------------------
-// cmd_dag — feature-gated
-// ---------------------------------------------------------------------------
-//
-// `cook dag` builds the graph in the `cook-dag-viewer` crate and prints it.
-// There is no longer a terminal browser or a cargo feature behind it: the
-// ratatui viewer navigated by wave, and waves stopped existing at SHI-222
-// Phase 4. CS-0047 already made a graphical viewer implementation-optional,
-// so dropping it needs no Standard change.
-
-pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
-    use std::sync::Arc;
-
-    let recipe_name = args.recipe.as_deref().unwrap_or("build");
-    let config = args.config.as_deref();
-    // Selection is validated once, in `build_registered_workspace`, against
-    // the union of all loaded Cookfiles (§11.6 / CS-0165).
-
-    let targets = vec![recipe_name.to_string()];
-
-    // SHI-222 Phase 5 Task 5.5: cmd_dag now drives the same register pipeline
-    // as cmd_run/cmd_test. The unified `RegisteredWorkspace` carries every
-    // reachable recipe — including Lua-registered ones (`cook_cc.bin`, dynamic
-    // chores, …) — with `RecipeUnits` already wired. The viewer's
-    // `all_units` is the reachable slice of `registered.units_by_recipe`;
-    // `explicit_edges` is the recipe-level edge map; `inferred_deps` is empty
-    // in the unified-DAG world (cross-recipe edges now live on `dep_edges`
-    // inside each `RecipeUnits`, not on a separate inferred-dep map).
-    let (_, registered) = build_registered_workspace(globals, config, RegisterMode::Enumerate)?;
-
-    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets).map_err(
-        |e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
-                CookError::Other(format!("dependency cycle involving: {name}"))
-            }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
-                CookError::RecipeNotFound(name)
-            }
-            other => CookError::Other(other.to_string()),
-        },
-    )?;
-    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
-
-    // Assemble the inputs the viewer expects from the registered workspace.
-    // `all_units` is the reachable slice of `registered.units_by_recipe`,
-    // tagged with the qualified recipe name. Recipes missing from the units
-    // map (zero-unit meta-targets) get an empty `RecipeUnits` stub so the
-    // viewer still sees them as a node in the graph.
-    let all_units: Vec<(String, cook_engine::cook_contracts::RecipeUnits)> = reachable
-        .iter()
-        .map(|name| {
-            let units = registered
-                .units_by_recipe
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| cook_engine::cook_contracts::RecipeUnits {
-                    recipe_name: name.clone(),
-                    deps: edges.get(name).cloned().unwrap_or_default(),
-                    units: Vec::new(),
-                    step_groups: Vec::new(),
-                    working_dir: registered
-                        .working_dir_by_prefix
-                        .get(split_recipe_prefix(name))
-                        .cloned()
-                        .unwrap_or_else(|| std::path::PathBuf::from(".")),
-                    env_vars: std::collections::BTreeMap::new(),
-                    terminal_outputs: Vec::new(),
-                    dep_edges: Vec::new(),
-                    probes: Vec::new(),
-                });
-            (name.clone(), units)
-        })
-        .collect();
-
-    // Per-recipe cache managers anchored at each recipe's prefix's working_dir.
-    let cache_managers: BTreeMap<String, Arc<cook_engine::cook_cache::ThreadSafeCacheManager>> = reachable
-        .iter()
-        .map(|name| {
-            let prefix = split_recipe_prefix(name);
-            let wd = registered
-                .working_dir_by_prefix
-                .get(prefix)
-                .cloned()
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let cache_dir = wd.join(".cook").join("cache");
-            (
-                name.clone(),
-                Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(cache_dir)),
-            )
-        })
-        .collect();
-
-    let dag_inputs = cook_dag_viewer::DagInputs {
-        target: recipe_name,
-        all_units: &all_units,
-        explicit_edges: &edges,
-        cache_managers: &cache_managers,
-    };
-
-    let level = match args.level.as_str() {
-        "recipe" => cook_dag_viewer::emit::Level::Recipe,
-        "group" => cook_dag_viewer::emit::Level::Group,
-        "unit" => cook_dag_viewer::emit::Level::Unit,
-        other => {
-            return Err(CookError::Other(format!(
-                "unknown --level '{other}'; expected recipe, group, or unit"
-            )))
-        }
-    };
-    let format = match args.format.as_str() {
-        "text" => cook_dag_viewer::emit::Format::Text,
-        "mermaid" => cook_dag_viewer::emit::Format::Mermaid,
-        "dot" => cook_dag_viewer::emit::Format::Dot,
-        "json" => cook_dag_viewer::emit::Format::Json,
-        other => {
-            return Err(CookError::Other(format!(
-                "unknown --format '{other}'; expected text, mermaid, dot, or json"
-            )))
-        }
-    };
-
-    let dag = cook_dag_viewer::build_dag(&dag_inputs);
-    let graph = cook_dag_viewer::emit::aggregate(&dag, level, args.max_nodes)
-        .map_err(|e| CookError::Other(e.to_string()))?;
-    print!("{}", cook_dag_viewer::emit::render(&graph, format));
-    Ok(())
-}
-
 /// Split off the namespace prefix from a qualified recipe name.
 ///
 /// `"backend.proto.generate"` → `"backend.proto"`
@@ -1898,6 +1771,7 @@ pub fn cmd_affected(
 // cmd_why — explain the cache key per unit (read-only; runs nothing)
 // ---------------------------------------------------------------------------
 
+
 /// Derive the `(edges, reachable)` pair that `cook run` would consume for
 /// `recipe_name`, using the EXACT derivation `run_with_progress` / `cmd_run`
 /// rely on: `build_recipe_infos_from_registered` → `dependency_edges_multi`
@@ -1925,14 +1799,34 @@ fn resolve_reachable_closure(
     Ok((edges, reachable))
 }
 
-pub fn cmd_why(
-    globals: &Globals,
-    recipe_name: &str,
-    config: Option<&str>,
-    json: bool,
-) -> Result<(), CookError> {
+/// CS-0171: `cook why` — the one read-only transparency query.
+///
+/// Structure and determinants arrive from two places and are joined here:
+/// `cook_graph` supplies the graph and collapses it to `args.level`,
+/// `cook_engine::why` supplies each unit's key, tier verdict, and determinant
+/// values, and `cook_engine::timings` supplies what any of it was last
+/// observed to cost. The join key throughout is `(recipe, cache_key)`.
+///
+/// The two halves used to be two commands. `cook dag` printed the structure
+/// with a private, local-index-only cache check, and `cook why` printed the
+/// determinants as an unaggregated, uncapped, edgeless list. Neither could
+/// answer the question the other was for.
+pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), CookError> {
+    use std::sync::Arc;
+
+    let recipe_name = args.recipe.as_deref().unwrap_or("build");
+    let config = args.config.as_deref();
+    let level = parse_level(&args.level)?;
+    let format = parse_format(&args.format)?;
+
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
+    //
+    // `Dispatch`, not `Enumerate`: §17.1.6 requires this query to register the
+    // workspace by the same path a run of the same target would, so that the
+    // key it reports is the key a run would compute. `cook dag` used
+    // `Enumerate`, which is why its graph was not an explanation of any
+    // particular run.
     let (_, registered) = build_registered_workspace(
         globals,
         config,
@@ -1964,10 +1858,186 @@ pub fn cmd_why(
     )
     .map_err(engine_error_to_cook_error)?;
 
-    if json {
-        print!("{}", render_why_json(&report));
-    } else {
-        print!("{}", render_why_plain(&report));
+    // A `--unit` selector is a determinant query, not a graph query: the caller
+    // has already found the unit and wants everything known about it. Answer it
+    // directly rather than making them render the whole closure at unit level.
+    if let Some(pattern) = &args.unit {
+        return render_selected_units(&report, pattern, format);
+    }
+
+    let timings = cook_engine::timings::Timings::load(&project_root);
+    let annotations = annotations_from(&report, &timings);
+
+    let all_units: Vec<(String, cook_engine::cook_contracts::RecipeUnits)> = reachable
+        .iter()
+        .map(|name| {
+            let units = registered
+                .units_by_recipe
+                .get(name)
+                .cloned()
+                // A zero-unit meta-target still belongs in the graph as a node,
+                // so it gets an empty stub rather than being dropped.
+                .unwrap_or_else(|| cook_engine::cook_contracts::RecipeUnits {
+                    recipe_name: name.clone(),
+                    deps: edges.get(name).cloned().unwrap_or_default(),
+                    units: Vec::new(),
+                    step_groups: Vec::new(),
+                    working_dir: registered
+                        .working_dir_by_prefix
+                        .get(split_recipe_prefix(name))
+                        .cloned()
+                        .unwrap_or_else(|| std::path::PathBuf::from(".")),
+                    env_vars: std::collections::BTreeMap::new(),
+                    terminal_outputs: Vec::new(),
+                    dep_edges: Vec::new(),
+                    probes: Vec::new(),
+                });
+            (name.clone(), units)
+        })
+        .collect();
+
+    // Per-recipe cache managers anchored at each recipe's prefix's working_dir.
+    // The graph uses these only for input-file staleness; the cache verdict
+    // comes from `report` above.
+    let graph_cache_managers: BTreeMap<String, Arc<cook_engine::cook_cache::ThreadSafeCacheManager>> =
+        reachable
+            .iter()
+            .map(|name| {
+                let prefix = split_recipe_prefix(name);
+                let wd = registered
+                    .working_dir_by_prefix
+                    .get(prefix)
+                    .cloned()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let cache_dir = wd.join(".cook").join("cache");
+                (
+                    name.clone(),
+                    Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(cache_dir)),
+                )
+            })
+            .collect();
+
+    let dag = cook_graph::build_dag(&cook_graph::DagInputs {
+        target: recipe_name,
+        all_units: &all_units,
+        explicit_edges: &edges,
+        cache_managers: &graph_cache_managers,
+    });
+    let graph = cook_graph::emit::aggregate(&dag, level, args.max_nodes, &annotations)
+        .map_err(|e| CookError::Other(e.to_string()))?;
+
+    // §17.1.6.5: the machine surface is ONE document carrying both halves.
+    // Emitting only the graph would drop every key and determinant value, and
+    // a consumer would be back to running two commands to learn one thing.
+    if format == cook_graph::emit::Format::Json {
+        let mut doc = cook_graph::emit::json_value(&graph);
+        doc["units"] = serde_json::Value::Array(
+            report.units.iter().map(why_unit_json).collect(),
+        );
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
+        return Ok(());
+    }
+
+    print!("{}", cook_graph::emit::render(&graph, format));
+
+    // At unit level the closure is already node-capped, so the full determinant
+    // detail fits underneath the graph. This is what keeps CS-0112's fidelity
+    // reachable after the merge: the graph is the index, this is the body.
+    if level == cook_graph::emit::Level::Unit && format == cook_graph::emit::Format::Text {
+        print!("\n{}", render_why_plain(&report));
+    }
+    Ok(())
+}
+
+fn parse_level(s: &str) -> Result<cook_graph::emit::Level, CookError> {
+    match s {
+        "recipe" => Ok(cook_graph::emit::Level::Recipe),
+        "group" => Ok(cook_graph::emit::Level::Group),
+        "unit" => Ok(cook_graph::emit::Level::Unit),
+        other => Err(CookError::Other(format!(
+            "unknown --level '{other}'; expected recipe, group, or unit"
+        ))),
+    }
+}
+
+fn parse_format(s: &str) -> Result<cook_graph::emit::Format, CookError> {
+    match s {
+        "text" => Ok(cook_graph::emit::Format::Text),
+        "mermaid" => Ok(cook_graph::emit::Format::Mermaid),
+        "dot" => Ok(cook_graph::emit::Format::Dot),
+        "json" => Ok(cook_graph::emit::Format::Json),
+        other => Err(CookError::Other(format!(
+            "unknown --format '{other}'; expected text, mermaid, dot, or json"
+        ))),
+    }
+}
+
+/// Fold the determinant report and the retained timings into the fact map the
+/// graph aggregates over.
+///
+/// "Served" is the union of both tiers, deliberately: a locally-warm unit does
+/// not rebuild merely because the shared store has never heard of it, and
+/// COOK-276 exists because conflating the two read as "this will rebuild".
+fn annotations_from(
+    report: &cook_engine::why::WhyReport,
+    timings: &cook_engine::timings::Timings,
+) -> cook_graph::Annotations {
+    let mut a = cook_graph::Annotations::new();
+    for u in &report.units {
+        a.insert(
+            &u.recipe_name,
+            &u.cache_key,
+            cook_graph::UnitFacts {
+                served: u.local_hit || u.shared_present == Some(true),
+                observed_ms: timings
+                    .get(&u.recipe_name, &u.cache_key)
+                    .map(|o| o.elapsed_ms),
+                observed_builds_ago: timings
+                    .get(&u.recipe_name, &u.cache_key)
+                    .map(|o| o.builds_ago)
+                    .unwrap_or(0),
+            },
+        );
+    }
+    a
+}
+
+/// `--unit <pattern>`: full determinants for the units whose recipe name,
+/// cache key, or output paths contain `pattern`.
+fn render_selected_units(
+    report: &cook_engine::why::WhyReport,
+    pattern: &str,
+    format: cook_graph::emit::Format,
+) -> Result<(), CookError> {
+    let matched: Vec<_> = report
+        .units
+        .iter()
+        .filter(|u| {
+            u.recipe_name.contains(pattern)
+                || u.cache_key.contains(pattern)
+                || u.determinants
+                    .output_paths
+                    .iter()
+                    .any(|p| p.contains(pattern))
+        })
+        .cloned()
+        .collect();
+    if matched.is_empty() {
+        // A selector that matches nothing is a user error worth naming, not an
+        // empty report that reads as "nothing to explain".
+        return Err(CookError::Other(format!(
+            "--unit '{pattern}' matched no unit in {}'s closure; \
+             run without --unit to see the units available",
+            report.recipe
+        )));
+    }
+    let selected = cook_engine::why::WhyReport {
+        recipe: report.recipe.clone(),
+        units: matched,
+    };
+    match format {
+        cook_graph::emit::Format::Json => print!("{}", render_why_json(&selected)),
+        _ => print!("{}", render_why_plain(&selected)),
     }
     Ok(())
 }
