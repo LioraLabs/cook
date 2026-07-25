@@ -15,6 +15,7 @@ pub mod cache_ctx;
 pub mod cloud_backend;
 pub mod cloud_config;
 pub mod depfile;
+pub mod index_bin;
 pub mod manager;
 pub mod store;
 pub mod test_cache;
