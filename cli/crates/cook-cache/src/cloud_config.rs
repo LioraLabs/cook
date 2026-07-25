@@ -153,7 +153,11 @@ impl std::error::Error for CloudConfigError {}
 /// A value that doesn't fit in `u64` also returns `None` rather than
 /// silently saturating to `u64::MAX` — a typo like `"999999999TB"` must
 /// not read as "effectively no budget".
-fn parse_size(literal: &str) -> Option<u64> {
+///
+/// `pub`: `cook cache gc --max-size` is this parser's second consumer, so a
+/// byte budget typed on the gc CLI accepts exactly the same literal forms as
+/// `[cache] max_size` in `.cook/cloud.toml`.
+pub fn parse_size(literal: &str) -> Option<u64> {
     let s = literal.trim();
     if s.starts_with('-') || s.starts_with('+') {
         return None;
