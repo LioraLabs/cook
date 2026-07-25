@@ -162,6 +162,28 @@ impl ArtifactMeta {
     }
 }
 
+/// One blob discovered by `LocalBackend::enumerate()` (COOK-232): everything
+/// a CAS-hygiene consumer (`cook cache du`, `cook cache gc` / COOK-234) needs
+/// to size up and evict a single artifact, WITHOUT trusting anything the
+/// original caller claimed about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvictCandidate {
+    /// The artifact's 32-byte content-addressed key.
+    pub key: CloudKey,
+    /// On-disk blob size from `fs::metadata().len()`. NOT `ArtifactMeta.size_bytes`,
+    /// which is caller-set and untrusted (see `cook-cache/src/backend.rs:409-417`).
+    pub size: u64,
+    /// Blob mtime as Unix seconds. Touch-on-read (COOK-233) keeps this current;
+    /// 0 when the platform mtime is unavailable.
+    pub last_access: u64,
+    /// `ArtifactMeta.kind` verbatim. `None` = legacy file artifact, or an orphan
+    /// blob with no readable sidecar. Both are evictable, so the conflation is safe.
+    pub kind: Option<String>,
+    /// `ArtifactMeta.recipe_namespace` verbatim, `""` when no sidecar was readable.
+    /// Reporting only (milestone D3: attribution is a label, never a deletion key).
+    pub recipe_namespace: String,
+}
+
 /// COOK-166 / CS-0110: the producer **determinant manifest** persisted
 /// alongside a shared artifact. It records the *resolved values* that formed
 /// the unit's single cache key K (§{exec.cache.single-key}) — not the artifact

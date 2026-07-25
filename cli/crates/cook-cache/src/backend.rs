@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
-    CloudKey, CloudKeyInputs, DeterminantManifest,
+    CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
 };
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
@@ -485,6 +485,144 @@ impl CacheBackend for LocalBackend {
                 path.display()
             ))),
         }
+    }
+}
+
+/// Exactly `len` lowercase hex characters — the shape used both for shard
+/// directory names (2) and blob file names (62). Anything else (uppercase,
+/// wrong length, non-hex) fails the predicate. This single predicate is what
+/// excludes `.meta.json`, `.provenance.json`, `.tmp`, and `.meta.json.tmp`
+/// sidecars from `LocalBackend::enumerate` — no extension-specific logic
+/// needed.
+fn is_lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+// Deliberately a SEPARATE `impl LocalBackend` block (not folded into the one
+// above `impl CacheBackend for LocalBackend`) so this addition stays
+// non-adjacent to COOK-233's concurrent edits inside `get`/`get_with_meta`.
+impl LocalBackend {
+    /// Walk the on-disk CAS at `{root}/{2 hex}/{62 hex}` and return one
+    /// `EvictCandidate` per blob found. Ordering is unspecified; callers
+    /// that need a stable order (e.g. LRU eviction) must sort.
+    ///
+    /// Deliberately an **inherent** method, not a `CacheBackend` trait
+    /// method (milestone D2): enumerating every artifact a backend holds is
+    /// exactly the capability a client of a shared, multi-tenant store (a
+    /// future `CloudBackend`) must never be granted. Keeping `enumerate`
+    /// off the trait means it can only exist where it's safe — the local,
+    /// single-tenant filesystem backend — so a `Box<dyn CacheBackend>` call
+    /// site can never accidentally acquire it.
+    ///
+    /// Implemented with plain two-level `std::fs::read_dir` (matching
+    /// `path_for`'s `{2}/{62}` layout); no `walkdir` dependency needed for a
+    /// fixed-depth tree.
+    pub fn enumerate(&self) -> BackendResult<Vec<EvictCandidate>> {
+        let mut out = Vec::new();
+
+        let root_entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // `with_config` always `create_dir_all`s the root, so in
+                // practice this only fires for a backend whose root was
+                // removed after construction, or a test pointed directly at
+                // a path that was never created. Either way: no blobs on
+                // disk, so an empty result — not an error — is correct.
+                return Ok(out);
+            }
+            Err(e) => {
+                return Err(BackendError::Other(format!(
+                    "read_dir {}: {e}",
+                    self.root.display()
+                )))
+            }
+        };
+
+        for shard_entry in root_entries {
+            // Per-entry I/O failure below the root is skipped, not fatal —
+            // one unreadable directory entry must not fail a 30k-object walk.
+            let Ok(shard_entry) = shard_entry else {
+                continue;
+            };
+            let shard_os_name = shard_entry.file_name();
+            let Some(shard_name) = shard_os_name.to_str() else {
+                continue;
+            };
+            if !is_lowercase_hex(shard_name, 2) {
+                continue;
+            }
+            let shard_path = shard_entry.path();
+            let Ok(shard_entries) = std::fs::read_dir(&shard_path) else {
+                continue;
+            };
+
+            for blob_entry in shard_entries {
+                let Ok(blob_entry) = blob_entry else {
+                    continue;
+                };
+                let blob_os_name = blob_entry.file_name();
+                let Some(file_name) = blob_os_name.to_str() else {
+                    continue;
+                };
+                if !is_lowercase_hex(file_name, 62) {
+                    continue;
+                }
+
+                let Ok(key_bytes) = hex::decode(format!("{shard_name}{file_name}")) else {
+                    continue;
+                };
+                let Ok(key): Result<CloudKey, _> = key_bytes.try_into() else {
+                    continue;
+                };
+
+                let blob_path = blob_entry.path();
+                let Ok(metadata) = std::fs::metadata(&blob_path) else {
+                    continue;
+                };
+                let size = metadata.len();
+                let last_access = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                // Sidecar read is best-effort: a missing or malformed
+                // `.meta.json` is NOT an error here. The bytes still occupy
+                // disk and MUST still show up so `cook cache du` accounts
+                // for them; we just can't attribute them to a recipe.
+                let meta_path = shard_path.join(format!("{file_name}.meta.json"));
+                let (kind, recipe_namespace) = match std::fs::read(&meta_path) {
+                    Ok(bytes) => match serde_json::from_slice::<ArtifactMeta>(&bytes) {
+                        Ok(meta) => (meta.kind, meta.recipe_namespace),
+                        Err(e) => {
+                            tracing::debug!(
+                                "enumerate: malformed sidecar at {} ({e}); orphan blob",
+                                meta_path.display()
+                            );
+                            (None, String::new())
+                        }
+                    },
+                    Err(e) => {
+                        tracing::debug!(
+                            "enumerate: no sidecar at {} ({e}); orphan blob",
+                            meta_path.display()
+                        );
+                        (None, String::new())
+                    }
+                };
+
+                out.push(EvictCandidate {
+                    key,
+                    size,
+                    last_access,
+                    kind,
+                    recipe_namespace,
+                });
+            }
+        }
+
+        Ok(out)
     }
 }
 
