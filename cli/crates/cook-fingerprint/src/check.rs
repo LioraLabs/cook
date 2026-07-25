@@ -173,34 +173,6 @@ fn check_inputs(
     Ok(updated)
 }
 
-mod __depfile_call {
-    use std::path::Path;
-
-    /// Function pointer the engine installs at startup. `cook-fingerprint`
-    /// does not depend on `cook-cache`; the engine wires the real parser
-    /// before any check fires (see cook-engine::executor).
-    static PARSER: std::sync::OnceLock<
-        fn(&Path, &str, &Path, &str) -> Result<Vec<String>, ()>,
-    > = std::sync::OnceLock::new();
-
-    pub fn install(parser: fn(&Path, &str, &Path, &str) -> Result<Vec<String>, ()>) {
-        let _ = PARSER.set(parser);
-    }
-
-    pub fn parse(
-        depfile_path: &Path,
-        source_path: &str,
-        working_dir: &Path,
-        format: &str,
-    ) -> Result<Vec<String>, ()> {
-        match PARSER.get() {
-            Some(p) => p(depfile_path, source_path, working_dir, format),
-            None => Err(()),
-        }
-    }
-}
-
-pub use __depfile_call::install as install_depfile_parser;
 
 /// Context for restore-on-hit attempts (2026-05-02 addendum spec §5.2).
 ///
@@ -258,54 +230,41 @@ pub fn needs_rebuild_cook(
         return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
     }
 
-    // Pre-check augmentation: when the unit declares discovered_inputs and
-    // a prior depfile is on disk, fatten current_inputs by the discovered
-    // paths so the entry's input set matches.
+    // Discovered inputs: absorb-and-forget (COOK-313).
     //
-    // §10 refinement: when the depfile is missing or malformed but a
-    // restore_ctx is available, fall back to the stored entry's input list
-    // rather than forcing a rebuild. The depfile itself is an implicit output
-    // (appended by record_completion) and will be restored by try_restore if
-    // the outputs check finds it missing. Without this fallback, a partial
-    // disk wipe that removes only the depfile causes an InputSetChanged
-    // rebuild even though the backend can restore both the .d and .o.
+    // A unit with `discovered_inputs` records a FAT entry — declared inputs
+    // plus the paths its depfile named — at execution time. The check does
+    // NOT re-read the depfile: the stored entry already IS the discovered
+    // set, so re-parsing the `.d` recovers information we are holding.
     //
-    // Without restore_ctx: a missing or malformed depfile is no-augmentation
-    // (fallthrough to InputSetChanged → rebuild → self-heal).
-    let augmented_storage: Vec<String>;
-    let augmented_refs: Vec<&str>;
+    // Until COOK-313 this re-parsed every unit's depfile on every check,
+    // including a fully settled no-op that executed nothing. On DuckDB that
+    // was 1,705 files and 17.15 MB of text yielding 330,415 tokens against
+    // 5,128 distinct paths, each token costing a String allocation and a
+    // HashSet probe, every run.
+    //
+    // Soundness is unchanged, because the two candidate sources say the same
+    // thing. Both the `.d` on disk and `entry.inputs` describe the LAST
+    // execution; neither predicts the next one. Each recorded input is still
+    // stat'd, and hashed whenever its mtime moves, so:
+    //
+    //   - a changed header is caught by the content walk below;
+    //   - a DELETED header is caught by the same walk (`stat_mtime_memo`
+    //     returns None → `changed`), where it previously surfaced as the path
+    //     vanishing from the re-parsed depfile — same rebuild, different
+    //     reason string;
+    //   - a header set that changes because the SOURCE changed is caught
+    //     earlier still: the source is a declared input.
+    //
+    // The depfile remains an implicit OUTPUT (appended by record_completion,
+    // uploaded and restored by the engine). A missing `.d` is therefore
+    // caught by the output walk below as `OutputMissing` and self-heals via
+    // restore or rebuild — which is the right place for it, the `.d` being an
+    // output rather than an input.
     let entry_inputs_refs: Vec<&str>;
-    let current_inputs_for_check: &[&str] = if let Some(di) = discovered_inputs {
-        let source_for_skip = current_inputs.first().copied().unwrap_or("");
-        match __depfile_call::parse(
-            &working_dir.join(&di.from),
-            source_for_skip,
-            working_dir,
-            &di.format,
-        ) {
-            Ok(discovered_paths) => {
-                augmented_storage = current_inputs
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .chain(discovered_paths)
-                    .collect();
-                augmented_refs = augmented_storage.iter().map(String::as_str).collect();
-                &augmented_refs
-            }
-            Err(_) => {
-                // Depfile missing or malformed. If we have a restore_ctx,
-                // use the stored entry's fat input list so the check can
-                // proceed to the outputs walk where try_restore will fetch
-                // the depfile back. Without a restore_ctx there's nothing
-                // to recover from, so fall back to rebuild (self-heal).
-                if restore_ctx.is_some() {
-                    entry_inputs_refs = entry.inputs.iter().map(|f| &*f.path).collect();
-                    &entry_inputs_refs
-                } else {
-                    current_inputs
-                }
-            }
-        }
+    let current_inputs_for_check: &[&str] = if discovered_inputs.is_some() {
+        entry_inputs_refs = entry.inputs.iter().map(|f| &*f.path).collect();
+        &entry_inputs_refs
     } else {
         current_inputs
     };

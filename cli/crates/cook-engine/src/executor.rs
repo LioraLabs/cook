@@ -395,19 +395,6 @@ pub fn execute_dag(
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
     dep_outputs: cook_luaotp::WorkerDepOutputs,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
-    // Install the depfile parser pointer so cook-fingerprint's pre-check
-    // augmentation can call back into cook-cache without a runtime dep cycle.
-    {
-        use std::sync::Once;
-        static INSTALL: Once = Once::new();
-        INSTALL.call_once(|| {
-            cook_fingerprint::install_depfile_parser(|p, src, wd, fmt| {
-                if fmt != "make" { return Err(()); }
-                cook_cache::parse_make_depfile(p, src, wd).map_err(|_| ())
-            });
-        });
-    }
-
     // Empty DAG — nothing to do.
     if dag.is_empty() {
         return Ok(Vec::new());

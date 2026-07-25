@@ -8,27 +8,14 @@ use cook_cache::{
     backend::{
         artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
     },
-    parse_make_depfile,
     store::{FileRecord, StepEntry, CACHE_VERSION},
 };
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{install_depfile_parser, needs_rebuild_cook, RebuildResult, RestoreCtx};
-use std::sync::Once;
+use cook_fingerprint::{needs_rebuild_cook, RebuildResult, RestoreCtx};
 
-fn install_parser_once() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        install_depfile_parser(|p, src, wd, fmt| {
-            if fmt != "make" { return Err(()); }
-            parse_make_depfile(p, src, wd).map_err(|_| ())
-        });
-    });
-}
 
 #[test]
 fn missing_outputs_and_depfile_are_both_restored() {
-    install_parser_once();
-
     let wd_dir = tempfile::tempdir().expect("wd");
     let wd = wd_dir.path();
     let backend_dir = tempfile::tempdir().expect("backend");

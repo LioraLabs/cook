@@ -561,7 +561,6 @@ fn augments_current_inputs_from_depfile_and_skips() {
         format: "make".into(),
     };
 
-    install_real_parser_once();
 
     // Caller passes only the declared input.
     let (result, _updated) = needs_rebuild_cook(
@@ -582,61 +581,194 @@ fn augments_current_inputs_from_depfile_and_skips() {
 }
 
 #[test]
-fn missing_depfile_falls_back_to_thin_inputs() {
+fn missing_depfile_does_not_force_a_rebuild() {
+    // COOK-313 (absorb-and-forget), replacing the pre-COOK-313 contract that
+    // this same fixture used to assert: a missing `.d` used to no-op the
+    // augmentation, leaving current=[src.c] against a fat entry=[src.c,hdr.h]
+    // and producing InputsChanged{removed:[hdr.h]}.
+    //
+    // The check no longer consults the depfile at all, so the recorded set IS
+    // the current set. Every recorded input is still verified by content, and
+    // here both are unchanged on disk, so this is a legitimate skip. Nothing
+    // is lost: the depfile is an implicit OUTPUT, so when a real unit records
+    // it as one, a missing `.d` is caught by the output walk instead — see
+    // `missing_depfile_recorded_as_output_still_self_heals`.
     use cook_contracts::DiscoveredInputs;
 
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("src.c"), b"src").expect("src");
+    let wd = dir.path();
+    std::fs::write(wd.join("src.c"), b"src").expect("src");
     std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
-        std::fs::write(wd.join("out.o"), b"obj").expect("out");
+    std::fs::write(wd.join("out.o"), b"obj").expect("out");
 
-    let src_hash = hash_file(&wd.join("src.c")).unwrap();
-    let hdr_hash = hash_file(&wd.join("hdr.h")).unwrap();
-    let out_hash = hash_file(&wd.join("out.o")).unwrap();
+    let entry = fat_entry(wd);
+    let di = DiscoveredInputs {
+        from: ".cook/deps/src.d".into(), // does not exist
+        format: "make".into(),
+    };
 
-    let entry = StepEntry {
+    let (result, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+
+    assert!(matches!(result, RebuildResult::Skip), "got: {result:?}");
+}
+
+#[test]
+fn settled_check_never_reads_the_depfile() {
+    // The load-bearing test for COOK-313. A settled unit must skip even with
+    // its depfile deleted, which is only possible if the check does not read
+    // it. Before the change this same setup produced an InputsChanged
+    // rebuild; the depfile's absence is now simply not consulted.
+    use cook_contracts::DiscoveredInputs;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("src.c"), b"src").expect("src");
+    std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+    std::fs::write(wd.join("out.o"), b"obj").expect("out");
+    std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
+    std::fs::write(wd.join(".cook/deps/src.d"), b"build/src.o: src.c hdr.h\n").expect("d");
+
+    let entry = fat_entry(wd);
+    let di = DiscoveredInputs { from: ".cook/deps/src.d".into(), format: "make".into() };
+
+    // With the depfile present: skip.
+    let (before, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+    assert!(matches!(before, RebuildResult::Skip), "got: {before:?}");
+
+    // Delete it and re-check. Identical decision — the file is not an input.
+    std::fs::remove_file(wd.join(".cook/deps/src.d")).expect("rm");
+    let (after, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+    assert_eq!(before, after, "the depfile's presence must not change the decision");
+}
+
+#[test]
+fn deleted_discovered_header_rebuilds() {
+    // The case whose code path MOVED. It used to surface as the header
+    // vanishing from the re-parsed depfile (an input-set diff); it now
+    // surfaces from the content walk, because stat of a deleted file fails.
+    // Same rebuild, and the reason must still name the header.
+    use cook_contracts::DiscoveredInputs;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("src.c"), b"src").expect("src");
+    std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+    std::fs::write(wd.join("out.o"), b"obj").expect("out");
+
+    let entry = fat_entry(wd);
+    let di = DiscoveredInputs { from: ".cook/deps/src.d".into(), format: "make".into() };
+
+    std::fs::remove_file(wd.join("hdr.h")).expect("rm header");
+
+    let (result, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+
+    assert!(matches!(
+        &result,
+        RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+            if changed == &vec!["hdr.h".to_string()]
+    ), "a deleted discovered header must rebuild and be named; got: {result:?}");
+}
+
+#[test]
+fn changed_discovered_header_rebuilds() {
+    // The ordinary incremental case: edit a header, the object rebuilds.
+    use cook_contracts::DiscoveredInputs;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("src.c"), b"src").expect("src");
+    std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+    std::fs::write(wd.join("out.o"), b"obj").expect("out");
+
+    let entry = fat_entry(wd);
+    let di = DiscoveredInputs { from: ".cook/deps/src.d".into(), format: "make".into() };
+
+    // The recorded mtime is 0, so any real on-disk mtime already forces the
+    // content hash — no mtime manipulation needed to exercise the walk.
+    std::fs::write(wd.join("hdr.h"), b"hdr-EDITED").expect("edit header");
+
+    let (result, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+
+    assert!(matches!(
+        &result,
+        RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+            if changed == &vec!["hdr.h".to_string()]
+    ), "got: {result:?}");
+}
+
+#[test]
+fn missing_depfile_recorded_as_output_still_self_heals() {
+    // The safety net for absorb-and-forget. In the real pipeline
+    // record_completion appends the `.d` as an implicit OUTPUT, so a wiped
+    // depfile is caught by the output walk rather than the input walk. This
+    // is where the missing-depfile recovery the old input-side fallback
+    // provided actually lives now.
+    use cook_contracts::DiscoveredInputs;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("src.c"), b"src").expect("src");
+    std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+    std::fs::write(wd.join("out.o"), b"obj").expect("out");
+    std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
+    std::fs::write(wd.join(".cook/deps/src.d"), b"build/src.o: src.c hdr.h\n").expect("d");
+
+    let mut entry = fat_entry(wd);
+    // Record the depfile as the implicit extra output, as the engine does.
+    let d_rel = ".cook/deps/src.d";
+    entry.outputs.push(FileRecord {
+        path: d_rel.into(),
+        mtime: stat_mtime(&wd.join(d_rel)).unwrap_or(0),
+        hash: hash_file(&wd.join(d_rel)).unwrap(),
+    });
+
+    let di = DiscoveredInputs { from: d_rel.into(), format: "make".into() };
+
+    // Settled: skip.
+    let (before, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+    assert!(matches!(before, RebuildResult::Skip), "got: {before:?}");
+
+    // Wipe just the depfile. Without a restore_ctx there is nothing to fetch,
+    // so the output walk must force a rebuild rather than silently skipping.
+    std::fs::remove_file(wd.join(d_rel)).expect("rm depfile");
+    let (after, _) = needs_rebuild_cook(
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
+    );
+    assert!(
+        matches!(after, RebuildResult::Rebuild(_)),
+        "a wiped depfile recorded as an output must self-heal; got: {after:?}"
+    );
+}
+
+/// The fat entry a `discovered_inputs` unit records: declared input plus the
+/// header its depfile named, against `out.o`.
+fn fat_entry(wd: &std::path::Path) -> StepEntry {
+    StepEntry {
         inputs: vec![
-            FileRecord { path: "src.c".into(), mtime: 0, hash: src_hash },
-            FileRecord { path: "hdr.h".into(), mtime: 0, hash: hdr_hash },
+            FileRecord { path: "src.c".into(), mtime: 0, hash: hash_file(&wd.join("src.c")).unwrap() },
+            FileRecord { path: "hdr.h".into(), mtime: 0, hash: hash_file(&wd.join("hdr.h")).unwrap() },
         ],
         outputs: vec![FileRecord {
             path: "out.o".into(),
             mtime: stat_mtime(&wd.join("out.o")).unwrap_or(0),
-            hash: out_hash,
+            hash: hash_file(&wd.join("out.o")).unwrap(),
         }],
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
-    };
-
-    let di = DiscoveredInputs {
-        from: ".cook/deps/src.d".into(),  // does not exist
-        format: "make".into(),
-    };
-
-    install_real_parser_once();
-
-    let (result, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
-    );
-
-    // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → the
-    // set diff names hdr.h as removed from the current set.
-    assert!(matches!(
-        &result,
-        RebuildResult::Rebuild(RebuildReason::InputsChanged { removed, .. })
-            if removed == &vec!["hdr.h".to_string()]
-    ), "got: {result:?}");
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -826,15 +958,4 @@ fn symlink_hardening_allows_reentrant_within_anchor() {
     // target `../sub2/x` from link-parent `sub/` resolves to `sub2/x` under anchor
     assert!(restore_symlink_checked(anchor, &link, "../sub2/x"));
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-}
-
-fn install_real_parser_once() {
-    use std::sync::OnceLock;
-    static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        crate::install_depfile_parser(|p, s, wd, fmt| {
-            if fmt != "make" { return Err(()); }
-            cook_cache::parse_make_depfile(p, s, wd).map_err(|_| ())
-        });
-    });
 }
