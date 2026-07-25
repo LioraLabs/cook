@@ -503,6 +503,16 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
 /// `None`, relying solely on `get_with_meta`'s `VerifyingReader` — unchanged
 /// from prior behaviour. Returns false on any miss/error (caller falls back to
 /// rebuild).
+///
+/// COOK-233 CONSTRAINT — file restore MUST stay a byte copy (`read_to_end` ->
+/// write tmp -> rename), never a hardlink or reflink of the CAS blob. The
+/// restored workspace file must be a *different inode* from the blob, because
+/// `LocalBackend::get_with_meta` restamps the blob's mtime on every cache hit
+/// as the last-access signal for LRU eviction (`cook cache gc`). Share the
+/// inode and that per-hit touch would land on the workspace file too,
+/// corrupting input-freshness detection. If you want hardlink/reflink restore
+/// for the disk savings, the mtime touch in `cook_cache::backend` has to go
+/// first.
 fn restore_one(
     backend: &dyn crate::backend::CacheBackend,
     artifact_k: &crate::backend::CloudKey,

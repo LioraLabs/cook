@@ -706,3 +706,171 @@ fn local_get_with_meta_returns_mode_and_kind() {
     std::io::Read::read_to_end(&mut reader, &mut body).unwrap();
     assert!(body.is_empty());
 }
+
+// ─── COOK-233: last-access tracking (blob mtime touched on read) ────────
+//
+// LRU eviction (COOK-234) needs a last-access signal. It is the blob's
+// mtime, bumped on every hit by a single `utimensat`. These tests pin the
+// three properties that make that safe: it fires on hits, it mutates
+// nothing but the blob's mtime, and it cannot break a read.
+//
+// Every case is rooted at a `tempfile::tempdir()` — never the real CAS.
+
+/// An mtime old enough that "now" is unambiguously greater: 2001-09-09.
+const OLD_STAMP: filetime::FileTime = filetime::FileTime::from_unix_time(1_000_000_000, 0);
+
+fn mtime_of(path: &std::path::Path) -> filetime::FileTime {
+    filetime::FileTime::from_last_modification_time(
+        &std::fs::metadata(path).expect("stat"),
+    )
+}
+
+/// Case 1 — `get_with_meta` on a hit advances the blob's mtime.
+#[test]
+fn get_with_meta_touches_blob_mtime_on_hit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xD0);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"touch me", &mut meta).expect("put");
+
+    let blob = backend.path_for(&k);
+    filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
+
+    let hit = backend.get_with_meta(&k).expect("get_with_meta");
+    assert!(hit.is_some(), "expected a hit");
+
+    assert!(
+        mtime_of(&blob) > OLD_STAMP,
+        "get_with_meta on a hit must advance blob mtime; still {:?}",
+        mtime_of(&blob)
+    );
+}
+
+/// Case 2 — `get` (which delegates to `get_with_meta`) does the same.
+#[test]
+fn get_touches_blob_mtime_on_hit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xD1);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"touch me too", &mut meta).expect("put");
+
+    let blob = backend.path_for(&k);
+    filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
+
+    assert!(backend.get(&k).expect("get").is_some(), "expected a hit");
+    assert!(
+        mtime_of(&blob) > OLD_STAMP,
+        "get on a hit must advance blob mtime; still {:?}",
+        mtime_of(&blob)
+    );
+}
+
+/// Case 3 — only the blob is touched. Neither the `.meta.json` nor the
+/// `.provenance.json` sidecar is restamped or rewritten: zero write
+/// amplification on the read path is the whole reason mtime was chosen
+/// over a `last_access` JSON field. Both sidecars are asserted so this
+/// stays a regression guard if anything is later added near the touch.
+#[test]
+fn read_does_not_restamp_or_rewrite_sidecars() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xD2);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"sidecar untouched", &mut meta).expect("put");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+
+    let blob = backend.path_for(&k);
+    let meta_path = blob.with_extension("meta.json");
+    let prov_path = blob.with_extension("provenance.json");
+    let meta_before = std::fs::read(&meta_path).expect("read meta sidecar");
+    let prov_before = std::fs::read(&prov_path).expect("read provenance sidecar");
+    filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
+    filetime::set_file_mtime(&meta_path, OLD_STAMP).expect("backdate meta sidecar");
+    filetime::set_file_mtime(&prov_path, OLD_STAMP).expect("backdate provenance sidecar");
+
+    assert!(backend.get(&k).expect("get").is_some(), "expected a hit");
+
+    assert_eq!(
+        mtime_of(&meta_path),
+        OLD_STAMP,
+        "meta sidecar mtime must be untouched by a read"
+    );
+    assert_eq!(
+        std::fs::read(&meta_path).expect("re-read meta sidecar"),
+        meta_before,
+        "meta sidecar bytes must be untouched by a read"
+    );
+    assert_eq!(
+        mtime_of(&prov_path),
+        OLD_STAMP,
+        "provenance sidecar mtime must be untouched by a read"
+    );
+    assert_eq!(
+        std::fs::read(&prov_path).expect("re-read provenance sidecar"),
+        prov_before,
+        "provenance sidecar bytes must be untouched by a read"
+    );
+    assert!(mtime_of(&blob) > OLD_STAMP, "blob mtime should have advanced");
+}
+
+/// Case 4a — a miss on a missing sidecar returns before the touch.
+#[test]
+fn missing_sidecar_miss_does_not_touch_blob() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xD3);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"orphaned bytes", &mut meta).expect("put");
+
+    let blob = backend.path_for(&k);
+    std::fs::remove_file(blob.with_extension("meta.json")).expect("remove sidecar");
+    filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
+
+    assert!(backend.get(&k).expect("get").is_none(), "expected a miss");
+    assert_eq!(
+        mtime_of(&blob),
+        OLD_STAMP,
+        "a miss must leave blob mtime untouched"
+    );
+}
+
+/// Case 4b — a miss on a malformed sidecar likewise returns before the touch.
+#[test]
+fn malformed_sidecar_miss_does_not_touch_blob() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xD4);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"bytes with bad meta", &mut meta).expect("put");
+
+    let blob = backend.path_for(&k);
+    std::fs::write(blob.with_extension("meta.json"), b"{ not json").expect("corrupt sidecar");
+    filetime::set_file_mtime(&blob, OLD_STAMP).expect("backdate blob");
+
+    assert!(backend.get(&k).expect("get").is_none(), "expected a miss");
+    assert_eq!(
+        mtime_of(&blob),
+        OLD_STAMP,
+        "a miss must leave blob mtime untouched"
+    );
+}
+
+/// Case 5 — a failing touch is swallowed, never propagated.
+///
+/// The spec asks for "a read whose touch fails does not error the get", but
+/// arranging a genuinely-failing `utimensat` inside an otherwise-successful
+/// read is not portable: the file owner may set times regardless of mode,
+/// and as root it is impossible. Exercising the helper directly against a
+/// path that cannot be touched, plus `touch_on_read`'s `-> ()` signature
+/// (there is no error channel to propagate), makes the guarantee structural
+/// rather than incidental.
+#[test]
+fn touch_on_read_swallows_failure() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("no").join("such").join("blob");
+    assert!(!missing.exists());
+    // Must return normally — no panic, no error to observe.
+    touch_on_read(&missing);
+}

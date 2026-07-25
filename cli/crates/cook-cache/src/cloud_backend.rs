@@ -467,6 +467,9 @@ impl CacheBackend for CloudBackend {
         &self,
         key: &CloudKey,
     ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
+        // COOK-233 — deliberately no last-access touch here: there is no
+        // local blob to stamp, and last-access for a remote entry is
+        // server-managed. Only `LocalBackend` tracks it.
         let url = self.artifact_url(key);
         let auth = self.auth_header();
         retry_loop(&self.config, || {
