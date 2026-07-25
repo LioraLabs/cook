@@ -1675,26 +1675,12 @@ mod serve_glob_tests;
 // cmd_dag — feature-gated
 // ---------------------------------------------------------------------------
 //
-// The DAG viewer (`cook dag`) lives in the `cook-dag-viewer` crate and is
-// pulled in only when the `viewer` cargo feature is enabled (see
-// `Cargo.toml`). When the feature is off, `cmd_dag` short-circuits with a
-// helpful error so users learn which build flag they need. The reference-
-// implementation policy is documented in the Cook Standard at
-// `standard/src/content/docs/appendix/D-changes.mdx#changes-cs-0047`.
+// `cook dag` builds the graph in the `cook-dag-viewer` crate and prints it.
+// There is no longer a terminal browser or a cargo feature behind it: the
+// ratatui viewer navigated by wave, and waves stopped existing at SHI-222
+// Phase 4. CS-0047 already made a graphical viewer implementation-optional,
+// so dropping it needs no Standard change.
 
-#[cfg(not(feature = "viewer"))]
-pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
-    Err(CookError::Other(
-        "`cook dag` is an optional ratatui terminal viewer, left out of the \
-         default binary to keep it slim; rebuild with `cargo build --features \
-         viewer` (or install with `--features viewer`) to enable it. When \
-         built in, the viewer automatically falls back to a plain wave \
-         listing if run headless (no TTY)."
-            .to_string(),
-    ))
-}
-
-#[cfg(feature = "viewer")]
 pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
     use std::sync::Arc;
 
@@ -1778,28 +1764,46 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
         })
         .collect();
 
-    // inferred_deps is empty in the unified-DAG model — cross-recipe edges
-    // live directly on `RecipeUnits.dep_edges` inside `all_units`, not on a
-    // separate analyzer-level map. The viewer's wave_grouper still accepts
-    // the map (legacy compatibility), so we pass an empty one.
-    let inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    cook_dag_viewer::cmd_dag(&cook_dag_viewer::DagViewerInputs {
+    let dag_inputs = cook_dag_viewer::DagInputs {
         target: recipe_name,
         all_units: &all_units,
         explicit_edges: &edges,
-        inferred_deps: &inferred_deps,
         cache_managers: &cache_managers,
-        theme: cook_dag_viewer::theme::Theme::from_str(&args.theme),
-    })
-    .map_err(|e| CookError::Other(e.to_string()))
+    };
+
+    let level = match args.level.as_str() {
+        "recipe" => cook_dag_viewer::emit::Level::Recipe,
+        "group" => cook_dag_viewer::emit::Level::Group,
+        "unit" => cook_dag_viewer::emit::Level::Unit,
+        other => {
+            return Err(CookError::Other(format!(
+                "unknown --level '{other}'; expected recipe, group, or unit"
+            )))
+        }
+    };
+    let format = match args.format.as_str() {
+        "text" => cook_dag_viewer::emit::Format::Text,
+        "mermaid" => cook_dag_viewer::emit::Format::Mermaid,
+        "dot" => cook_dag_viewer::emit::Format::Dot,
+        "json" => cook_dag_viewer::emit::Format::Json,
+        other => {
+            return Err(CookError::Other(format!(
+                "unknown --format '{other}'; expected text, mermaid, dot, or json"
+            )))
+        }
+    };
+
+    let dag = cook_dag_viewer::build_dag(&dag_inputs);
+    let graph = cook_dag_viewer::emit::aggregate(&dag, level, args.max_nodes)
+        .map_err(|e| CookError::Other(e.to_string()))?;
+    print!("{}", cook_dag_viewer::emit::render(&graph, format));
+    Ok(())
 }
 
 /// Split off the namespace prefix from a qualified recipe name.
 ///
 /// `"backend.proto.generate"` → `"backend.proto"`
 /// `"build"` → `""`
-#[cfg(feature = "viewer")]
 fn split_recipe_prefix(name: &str) -> &str {
     name.rfind('.').map(|p| &name[..p]).unwrap_or("")
 }

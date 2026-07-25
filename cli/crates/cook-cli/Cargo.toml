@@ -21,7 +21,7 @@ cook-lang = { path = "../cook-lang" }
 cook-progress = { path = "../cook-progress" }
 cook-engine = { path = "../cook-engine" }
 cook-logs = { path = "../cook-logs" }
-cook-dag-viewer = { path = "../cook-dag-viewer", optional = true }
+cook-dag-viewer = { path = "../cook-dag-viewer" }
 
 # `string` lets runtime-discovered recipe names be injected as clap
 # subcommands for completion; without it a subcommand name must be &'static str.
@@ -44,10 +44,6 @@ sha2 = "0.10"
 
 [features]
 default = []
-# Embeds the ratatui-based DAG terminal viewer used by `cook dag`. Pulls in
-# the `cook-dag-viewer` crate (ratatui + crossterm). Off by default so
-# vanilla `cook` builds stay slim. CS-0047 documents the rationale.
-viewer = ["dep:cook-dag-viewer"]
 
 [dev-dependencies]
 tempfile = "3"
