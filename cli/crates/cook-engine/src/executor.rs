@@ -1232,6 +1232,7 @@ pub fn execute_dag(
                         fallback_label: payload.display_name(),
                         kind: node_kind_for_payload(payload),
                         cause: miss_cause,
+                        cache_key: node_cache_key(work_node),
                     },
                 );
                 // Emit TestStarted for this test-step node.
@@ -1540,6 +1541,7 @@ pub fn execute_dag(
                                         fallback_label: node_name.clone(),
                                         kind: NodeKind::Cooked,
                                         cause: None,
+                                        cache_key: node_cache_key(work_node),
                                     },
                                 );
                                 emit(
@@ -1622,6 +1624,7 @@ pub fn execute_dag(
                         fallback_label: node_name.clone(),
                         kind: NodeKind::Cooked,
                         cause: None,
+                        cache_key: node_cache_key(work_node),
                     },
                 );
 
@@ -1735,6 +1738,7 @@ pub fn execute_dag(
                         fallback_label: payload.display_name(),
                         kind: node_kind_for_payload(payload),
                         cause: miss_cause,
+                        cache_key: node_cache_key(work_node),
                     },
                 );
                 // Emit TestStarted for test-step nodes so Phase 4 reporters can
@@ -2281,6 +2285,7 @@ pub fn execute_dag(
                             // so default to Cooked.
                             kind: NodeKind::Cooked,
                             cause: None,
+                            cache_key: node_cache_key(work_node),
                         },
                     );
                     let interactive_start = Instant::now();

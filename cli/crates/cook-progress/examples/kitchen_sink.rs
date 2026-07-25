@@ -41,6 +41,7 @@ fn main() {
         fallback_label: "fetch a".into(),
         kind: NodeKind::Cooked,
         cause: None,
+        cache_key: None,
     }).unwrap();
     thread::sleep(Duration::from_millis(400));
     tx.send(ProgressEvent::NodeCompleted {

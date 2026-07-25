@@ -27,6 +27,7 @@ fn node_output_is_written_with_stream_tag() {
         name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: crate::event::NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     store.record(&state, &ProgressEvent::NodeOutput {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -114,6 +115,7 @@ fn recipe_and_node_names_are_sanitized_into_paths() {
         name: "../../root".into(), artifact: None, fallback_label: "x".into(),
         kind: crate::event::NodeKind::Cooked,
             cause: None,
+            cache_key: None,
         });
     store.record(&state, &ProgressEvent::NodeOutput {
         recipe: RecipeId::new(0), node: NodeId::new(0),

@@ -35,6 +35,15 @@ pub struct Observation {
     /// How many retained builds back the observation came from. `0` is the
     /// most recent retained build.
     pub builds_ago: usize,
+    /// CS-0174: why the unit ran on that build — the COOK-276 attribution the
+    /// executor printed at the time (`input changed: <path>`, `env changed`,
+    /// …). `None` when the unit ran cold, when the log predates CS-0174, or
+    /// when the run had no attribution to give.
+    ///
+    /// This is history, not a verdict on the run being explained: it says why
+    /// the unit ran *then*. The live reason a unit will rebuild *now* is
+    /// computed at query time and reported separately.
+    pub cause: Option<String>,
 }
 
 /// Last-observed wall times, keyed by `(recipe, cache_key)`.
@@ -119,32 +128,53 @@ fn harvest_build(
     let Ok(f) = fs::File::open(events) else {
         return;
     };
+    // CS-0174: `cause` rides on `node-started` and `elapsed_ms` on
+    // `node-completed`, so one pass collects both and they are joined on the
+    // cache key both events now carry. Causes are buffered per build rather
+    // than written straight through, because a unit must not take its cause
+    // from this build and its timing from an older one: an observation is a
+    // record of a single run.
+    let mut causes: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut timed: Vec<(String, String, u64)> = Vec::new();
     for line in BufReader::new(f).lines().map_while(Result::ok) {
         // A build's event stream is dominated by `node-output` lines — one per
         // line of every unit's stdout. Rejecting on a substring before handing
         // the line to serde keeps this a scan rather than a parse of the whole
         // build's console output.
-        if !line.contains("\"node-completed\"") {
+        let completed = line.contains("\"node-completed\"");
+        if !completed && !line.contains("\"node-started\"") {
             continue;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        if v.get("type").and_then(|t| t.as_str()) != Some("node-completed") {
-            continue;
-        }
-        let (Some(recipe), Some(key), Some(ms)) = (
+        // `cache_key` is null for a non-cacheable node, and absent entirely in
+        // a log written before the field existed. Both mean "nothing to
+        // recover for a unit `cook why` can name", so both are skipped.
+        let (Some(recipe), Some(key)) = (
             v.get("recipe").and_then(|r| r.as_str()),
             v.get("cache_key").and_then(|k| k.as_str()),
-            v.get("elapsed_ms").and_then(|e| e.as_u64()),
         ) else {
-            // `cache_key` is null for a non-cacheable node, and absent entirely
-            // in a log written before CS-0171. Both mean "no timing to recover
-            // for a unit `cook why` can name", so both are skipped.
             continue;
         };
-        out.entry((recipe.to_string(), key.to_string()))
-            .or_insert(Observation { elapsed_ms: ms, builds_ago });
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("node-completed") => {
+                if let Some(ms) = v.get("elapsed_ms").and_then(|e| e.as_u64()) {
+                    timed.push((recipe.to_string(), key.to_string(), ms));
+                }
+            }
+            Some("node-started") => {
+                if let Some(c) = v.get("cause").and_then(|c| c.as_str()) {
+                    causes.insert((recipe.to_string(), key.to_string()), c.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    for (recipe, key, elapsed_ms) in timed {
+        let cause = causes.get(&(recipe.clone(), key.clone())).cloned();
+        out.entry((recipe, key))
+            .or_insert(Observation { elapsed_ms, builds_ago, cause });
     }
 }
 

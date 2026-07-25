@@ -189,6 +189,15 @@ pub struct WhyUnit {
     /// (empty ⇒ determinants identical to ours), None if no manifest exists
     /// for K.
     pub manifest_diff: Option<Vec<DeterminantDiff>>,
+    /// CS-0174: on a local-tier miss, which determinant changed since this
+    /// unit's previous fingerprint record — the same attribution the executor
+    /// prints as `rebuild (input changed: <path>)`. `None` on a hit, or on a
+    /// cold unit with no previous record to differ from.
+    ///
+    /// This is the local-tier counterpart of `manifest_diff`: that names why
+    /// the SHARED store could not serve this key, this names why the LOCAL
+    /// index could not.
+    pub local_cause: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +270,7 @@ pub fn explain(
                         path: path.clone(),
                     },
                     local_hit: false,
+                    local_cause: None,
                     shared_present: None,
                     manifest_diff: None,
                     shared_output_hashes: BTreeMap::new(),
@@ -302,6 +312,7 @@ pub fn explain(
             disposition,
             status: c.status,
             local_hit: c.local_hit,
+            local_cause: c.local_cause,
             shared_present: c.shared_present,
             determinants: det,
             line: node_line(node),
@@ -394,6 +405,9 @@ fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> Str
 struct Classification {
     status: CacheStatus,
     local_hit: bool,
+    /// CS-0174: on a local miss, the determinant that changed since this unit's
+    /// previous fingerprint record. `None` on a hit or a cold unit.
+    local_cause: Option<String>,
     /// `None` when the shared tier is not consulted (`local` sharing or no key).
     shared_present: Option<bool>,
     manifest_diff: Option<Vec<DeterminantDiff>>,
@@ -423,16 +437,18 @@ fn classify(
         return Classification {
             status: CacheStatus::MissingInput { path: p },
             local_hit: false,
+            local_cause: None,
             shared_present: None,
             manifest_diff: None,
             shared_output_hashes: BTreeMap::new(),
         };
     }
-    let local_hit = local_step_hit(node, meta, det, cache_managers);
+    let (local_hit, local_cause) = local_step_hit(node, meta, det, cache_managers);
     if meta.sharing.is_local() {
         return Classification {
             status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::LocalOnlyMiss },
             local_hit,
+            local_cause,
             shared_present: None,
             manifest_diff: None,
             shared_output_hashes: BTreeMap::new(),
@@ -460,6 +476,7 @@ fn classify(
     Classification {
         status,
         local_hit,
+        local_cause,
         shared_present: Some(shared),
         manifest_diff,
         shared_output_hashes,
@@ -607,18 +624,30 @@ fn decode_key_hex(key_hex: &str) -> Option<[u8; 32]> {
     hex::decode(key_hex).ok()?.try_into().ok()
 }
 
+/// CS-0174: the local-tier verdict AND, on a miss, the determinant that moved.
+///
+/// `needs_rebuild_cook` already computes the attribution — it is the same call
+/// and the same `RebuildReason` the executor renders as `rebuild (input
+/// changed: <path>)`. Reducing it to a boolean here was why a local miss listed
+/// every determinant and named none, while a shared miss got a manifest diff:
+/// the explain tool was strictly less informative than the build log it exists
+/// to pre-empt.
+///
+/// `None` means no attribution is available, not that nothing changed: a unit
+/// with no cache manager, no prior entry, or a `NoCacheEntry` verdict is cold,
+/// and there is no previous record to have diverged from.
 fn local_step_hit(
     node: &WorkNode,
     meta: &cook_contracts::CacheMeta,
     det: &UnitDeterminants,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> bool {
+) -> (bool, Option<String>) {
     let Some(cm) = cache_managers.get(&node.recipe_name) else {
-        return false;
+        return (false, None);
     };
     let cache = cm.get_or_load(&meta.recipe_name);
     let Some(entry) = cache.steps.get(&meta.cache_key) else {
-        return false;
+        return (false, None);
     };
     let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
     // I2: for glob outputs the raw pattern strings don't exist on disk; passing
@@ -644,7 +673,10 @@ fn local_step_hit(
         meta.discovered_inputs.as_ref(),
         meta.record,
     );
-    matches!(result, cook_fingerprint::RebuildResult::Skip)
+    match result {
+        cook_fingerprint::RebuildResult::Skip => (true, None),
+        cook_fingerprint::RebuildResult::Rebuild(reason) => (false, reason.cause_summary()),
+    }
 }
 
 fn manifest_diff(
