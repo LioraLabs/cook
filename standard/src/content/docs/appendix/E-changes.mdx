@@ -2791,3 +2791,31 @@ The join required a prerequisite. Node progress records identified a unit by ren
 **Surface.** `cook why [<recipe>] [<config>] [--level recipe|group|unit] [--format text|mermaid|dot|json] [--max-nodes N] [--unit <pattern>]`. The former `cook why --json` folds into `--format json`: one spelling for one thing. The graph payload and the determinant payload become a single versioned JSON document rather than two, so a consumer reads structure and cache state from one query.
 
 **Conformance.** No grammar change, no Lua API change, no change to any §17.1 cache observable, and no change to any cache key. The determinant reporting of §{exec.cache.why.determinants} is unchanged in substance from the prior §17.1.6 and remains normative; aggregation gains normative floor requirements (a coarse default, tallies rather than booleans at coarse levels, most-constraining-kind preservation when collapsing an edge bundle, and a ceiling on unaggregated unit-level output); cascade attribution is SHOULD; timing is MAY with three MUST-level constraints on how it may be presented. Pinned by unit tests in `cook-graph` and e2e tests in `cook-cli` (`why_render`, successor to `dag_render`).
+
+## CS-0172 — `var` is its own namespace, resolved before register phase [#changes.cs-0172]
+
+**Date:** 2026-07-25
+**Version:** v0.18
+**Sections affected:** §{decl.config}, §{decl.config-sandbox}, §{phl}, §{xref.var-namespace}, §{exec.cache.lua-var-reads}, §{lua.var-sink}, §{lua.var} amended; C.21.1 rewritten; App. D.15 marked resolved. App. E (this entry). Reference implementation: `cli/crates/cook-register/src/var_api.rs` (replacing `env_api.rs`), `cli/crates/cook-luagen/src/lua_var.rs` (renamed from `lua_env.rs`), `cli/crates/cook-engine/src/pipeline/env.rs`, `cli/crates/cook-luaotp/src/pool.rs`.
+
+**Summary.** The declared-variable namespace and the process environment were one table. A `config` block's `var` sink *was* `cook.env`, pre-seeded from `std::env::vars()` and a `.env` file, and four defects followed from that single fact. They are fixed together because they have one cause.
+
+*Every ambient variable was an undeclared build variable.* `$<HOME>` resolved in a Cookfile that declared nothing at all. The config sandbox of §{decl.config-sandbox} exists precisely so that a config body's external inputs are declared and therefore keyable; seeding the same table from the ambient environment made that gate bypassable by simply not declaring anything. The invocation override could likewise invent a variable no config block mentions, which is the trap App. D.15 recorded and could not close by rule.
+
+*Config resolved too late to configure anything.* Config blocks ran after all register-phase Lua, so a top-level `module_call` — which is exactly where a toolchain is configured — read nil. `cc.toolchain({ optimize = var.optimize })`, the shape the surface invites, could not work.
+
+*Values were string-only,* because an environment holds strings. That left the boolean half of the `cc` code-generation vocabulary of CS-0168 (`debug_symbols`, `gc_sections`) unreachable from config: there was no way to spell a false boolean that did not arrive as the truthy string `"false"`.
+
+*`envs { }` probes and `$<env.NAME>` read the same conflated table,* so a config block could silently redefine what a probe had recorded about the host, corrupting a determinant with a value the host never had.
+
+**Resolution.** The namespace is exactly what the config blocks export. `var` is a read-only global everywhere outside a config body (§{lua.var-sink}, §{lua.var}), and its store lives in the Lua registry where Lua cannot reach it, so a determinant cannot be mutated after a unit has been keyed on it. The override applies after the blocks run and only to a name a block declared, which closes App. D.15 by construction rather than by prohibition.
+
+Ordering is fixed in codegen: everything after the config function is wrapped in `__cook_main`, which the engine calls after dispatch. Config is therefore resolved before any register-phase Lua runs, and a top-level module call reads declared values.
+
+Values keep their Lua type — string, number, or boolean — for `var.NAME` reads during register phase, and render to a defined string form for `$<NAME>` interpolation and for cache keys. An execute-phase Lua body receives the string form only; reading a non-string variable there is refused at register phase rather than coerced, so a boolean can never arrive on a worker as truthy `"false"`.
+
+The ambient environment now reaches a build through exactly two declared doors: `host.env` in a config body, and an `envs { }` probe, which reads `os.getenv` — the host environment it always meant.
+
+**Retired with no shim.** `cook.env`, `cook.require_env`, the `$<env.NAME>` placeholder prefix (now `$<var.NAME>`, §{xref.var-namespace}), and the `.env` file layer. The `consulted_env_keys` determinant field keeps its name: it is named in a published rockspec, and renaming a determinant field is a separate sweep with its own cache-version cost.
+
+**Conformance.** Breaking. A Cookfile that read an ambient variable it never declared no longer resolves, and the diagnostic names the undeclared placeholder and points at `var.NAME` in a config block. Pinned by five fixtures: `config-var-typed-toplevel-read` (typed values, preset overlay, register-phase read) and `config-var-output` on the positive side; `config-var-ambient-env-rejected`, `config-var-table-value-rejected`, and `config-var-write-outside-config-rejected` on the negative side.
