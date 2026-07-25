@@ -218,6 +218,18 @@ fn shard_dir_name_filtering_and_blob_case_sensitivity() {
     // and "deadbeef" (valid hex chars, wrong length). Each holds a
     // plausible 62-hex-named file that would pass the blob-name filter on
     // its own, to prove it's the shard-name check doing the excluding.
+    // On a case-insensitive filesystem (macOS/APFS) the bogus "AB" shard and
+    // a genuine "ab" shard would be the SAME directory, which would drop the
+    // plausible blob into the real shard and make this test fail for a reason
+    // that has nothing to do with the predicate. `some_key(9)` shards to "db"
+    // today, but that is an accident of the seed — assert it rather than rely
+    // on it, so a future key change fails loudly here instead of silently
+    // mis-testing on darwin.
+    assert_ne!(
+        &hex[..2],
+        "ab",
+        "test key collides with the bogus uppercase shard on case-insensitive filesystems"
+    );
     let plausible_blob_name = "a".repeat(62);
     for bogus_shard in ["AB", "zz", "deadbeef"] {
         let bogus_dir = dir.path().join(bogus_shard);
