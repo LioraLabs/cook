@@ -8,7 +8,6 @@ pub mod config_sandbox;
 pub mod context;
 pub mod dep_output_api;
 pub mod engine;
-pub mod env_api;
 pub mod export_api;
 pub mod file_ref;
 pub mod module_cache;
@@ -18,6 +17,7 @@ pub mod probe_api;
 pub mod probe_value;
 pub mod test_api;
 pub mod unit_api;
+pub mod var_api;
 
 // `fs.*`, `path.*`, and `cook.platform.*` are part of the shared Cook
 // Lua API surface (CS-0044). The implementation lives in
@@ -38,6 +38,11 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use cook_contracts::CapturedUnit;
+
+/// Lua-registry key under which the declared-variable store lives
+/// (CS-0172). Not reachable from Lua: the only handles are the read-only
+/// `var` proxy and `cook.require_var`, both installed by [`var_api`].
+pub(crate) const VAR_STORE_REGISTRY_KEY: &str = "cook.var_store";
 
 #[derive(Error, Debug)]
 pub enum RegisterError {
@@ -75,6 +80,25 @@ pub enum RegisterError {
     /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.2).
     #[error("dependency cycle: {}", recipes.join(" -> "))]
     DependencyCycle { recipes: Vec<String> },
+
+    /// CS-0172: `--set NAME=VALUE` named a variable no `config` block
+    /// declares. The `var` namespace is exactly what the config blocks write,
+    /// so an override with nothing to override is a typo, not a declaration —
+    /// before CS-0172 it silently invented the variable.
+    #[error(
+        "--set {name}={value}: no config block declares '{name}'{}. \
+         Declare it with `var.{name} = ...` in a config block.",
+        if closest.is_empty() {
+            String::new()
+        } else {
+            format!(" (closest declared: {})", closest.join(", "))
+        }
+    )]
+    UndeclaredSet {
+        name: String,
+        value: String,
+        closest: Vec<String>,
+    },
 
     /// A required chore parameter was not supplied via argv.
     ///

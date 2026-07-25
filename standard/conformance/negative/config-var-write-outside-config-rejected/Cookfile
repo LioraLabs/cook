@@ -1,0 +1,8 @@
+config
+    var.MODE = "debug"
+
+register
+    var.MODE = "release"
+
+recipe build
+    cook "build/out.txt" { echo $<MODE> > $<out> }

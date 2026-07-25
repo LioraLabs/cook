@@ -1,52 +1,31 @@
 use super::*;
-use std::fs;
-use tempfile::TempDir;
+
+// CS-0172 removed the ambient-process-env and `.env` layers: the declared
+// variable namespace is exactly what a Cookfile's `config` blocks write, so
+// the only thing left to resolve here is the `--set` override list. The
+// declared-name check on those overrides lives in `cook-register`
+// (`check_overrides_declared`), which is where the declared set exists.
 
 #[test]
-fn test_load_env_from_file() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join(".env"), "FOO=bar\nBAZ=qux\n").unwrap();
-    let env = load_env(dir.path());
-    assert_eq!(env.get("FOO").unwrap(), "bar");
-        assert_eq!(env.get("BAZ").unwrap(), "qux");
-}
-
-#[test]
-fn test_missing_env_file_returns_empty() {
-    let dir = TempDir::new().unwrap();
-    let env = load_env(dir.path());
-    assert!(env.is_empty());
-}
-
-#[test]
-fn test_comments_and_blank_lines() {
-    let dir = TempDir::new().unwrap();
-    fs::write(
-        dir.path().join(".env"),
-        "# This is a comment\n\nKEY=value\n\n# Another comment\nKEY2=value2\n",
-    )
+fn test_parse_cli_overrides_splits_on_first_equals() {
+    let map = parse_cli_overrides(&[
+        "MODE=release".to_string(),
+        "FLAGS=-DA=1 -DB=2".to_string(),
+    ])
     .unwrap();
-    let env = load_env(dir.path());
-    assert_eq!(env.len(), 2);
-    assert_eq!(env.get("KEY").unwrap(), "value");
-    assert_eq!(env.get("KEY2").unwrap(), "value2");
+    assert_eq!(map.get("MODE").unwrap(), "release");
+    // Only the FIRST '=' separates; the rest belongs to the value.
+    assert_eq!(map.get("FLAGS").unwrap(), "-DA=1 -DB=2");
 }
 
 #[test]
-fn test_quoted_values() {
-    let dir = TempDir::new().unwrap();
-    fs::write(
-        dir.path().join(".env"),
-        "SINGLE='hello world'\nDOUBLE=\"hello world\"\n",
-    )
-    .unwrap();
-    let env = load_env(dir.path());
-    assert_eq!(env.get("SINGLE").unwrap(), "hello world");
-    assert_eq!(env.get("DOUBLE").unwrap(), "hello world");
+fn test_parse_cli_overrides_accepts_empty_value() {
+    let map = parse_cli_overrides(&["EMPTY=".to_string()]).unwrap();
+    assert_eq!(map.get("EMPTY").unwrap(), "");
 }
 
 #[test]
-fn test_resolve_env_invalid_set() {
-    let result = resolve_env(None, HashMap::new(), &["NOT_A_PAIR".to_string()]);
+fn test_parse_cli_overrides_rejects_missing_equals() {
+    let result = parse_cli_overrides(&["NOT_A_PAIR".to_string()]);
     assert!(matches!(result, Err(PipelineError::InvalidSet(_))));
 }

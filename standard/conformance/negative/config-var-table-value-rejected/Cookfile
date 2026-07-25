@@ -1,0 +1,5 @@
+config
+    var.INCLUDES = { "src", "vendor" }
+
+recipe build
+    cook "build/out.txt" { echo $<INCLUDES> > $<out> }

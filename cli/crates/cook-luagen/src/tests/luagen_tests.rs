@@ -80,7 +80,7 @@ fn test_expand_template_stem_in_path() {
     let ctx = ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("build/$<stem>.o", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
-    assert_eq!(result, "\"build/\" .. cook.require_env(\"stem\") .. \".o\"");
+    assert_eq!(result, "\"build/\" .. cook.require_var(\"stem\") .. \".o\"");
 }
 
 #[test]
@@ -507,13 +507,13 @@ fn test_config_var_in_cook_step() {
     assert!(output.contains("_cook_in"), "should expand $<in> to _cook_in");
     assert!(output.contains("_cook_out"), "should expand $<out> to _cook_out");
     assert!(
-        output.contains(r#"cook.require_env("CC")"#),
-        "should expand $<CC> to cook.require_env(\"CC\"), got: {}",
+        output.contains(r#"cook.require_var("CC")"#),
+        "should expand $<CC> to cook.require_var(\"CC\"), got: {}",
         output
     );
     assert!(
-        output.contains(r#"cook.require_env("CFLAGS")"#),
-        "should expand $<CFLAGS> to cook.require_env(\"CFLAGS\"), got: {}",
+        output.contains(r#"cook.require_var("CFLAGS")"#),
+        "should expand $<CFLAGS> to cook.require_var(\"CFLAGS\"), got: {}",
         output
     );
 }
@@ -536,7 +536,7 @@ fn test_config_var_only_template() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(output.contains(r#"cook.require_env("CC")"#));
+    assert!(output.contains(r#"cook.require_var("CC")"#));
     assert!(output.contains("_cook_in"));
     assert!(output.contains("_cook_out"));
 }
@@ -562,7 +562,7 @@ fn test_no_config_vars_unchanged() {
     // CS-0022: shell block joined with "set -e\n" prefix; gcc command follows
     assert!(output.contains("gcc -c "), "should contain gcc -c command, got:\n{output}");
     assert!(!output.contains("cook.env"), "should not emit cook.env when no config vars");
-    assert!(!output.contains("cook.require_env"), "should not emit cook.require_env when no env tokens");
+    assert!(!output.contains("cook.require_var"), "should not emit cook.require_var when no env tokens");
 }
 
 #[test]
@@ -954,8 +954,8 @@ fn test_env_var_still_works_when_not_recipe() {
     )]);
     let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
-        output.contains(r#"cook.require_env("CC")"#),
-        "CC is not a recipe name, should be env var via cook.require_env, got:\n{output}"
+        output.contains(r#"cook.require_var("CC")"#),
+        "CC is not a recipe name, should be env var via cook.require_var, got:\n{output}"
     );
 }
 
@@ -1021,7 +1021,7 @@ fn test_bare_shell_dep_ref_lowers_to_register_time_eval() {
 
 #[test]
 fn test_bare_shell_env_ref_lowers_to_register_time_eval() {
-    // Same regression as the dep-ref case for `cook.require_env`:
+    // Same regression as the dep-ref case for `cook.require_var`:
     // both helpers are register-VM-only.
     let names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let cookfile = make_cookfile(vec![make_recipe(
@@ -1036,15 +1036,15 @@ fn test_bare_shell_env_ref_lowers_to_register_time_eval() {
     )]);
     let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
     let req_call_pos = output
-        .find(r#"cook.require_env("HOME")"#)
-        .expect("expected cook.require_env(\"HOME\") call");
+        .find(r#"cook.require_var("HOME")"#)
+        .expect("expected cook.require_var(\"HOME\") call");
     let preceding = &output[..req_call_pos];
     let opens: usize = preceding.matches("[[").count();
     let closes: usize = preceding.matches("]]").count();
     assert_eq!(
         opens, closes,
-        "cook.require_env must not be inside a [[ … ]] long string in a bare \
-         shell body — register VM is the only one with require_env, got:\n{output}"
+        "cook.require_var must not be inside a [[ … ]] long string in a bare \
+         shell body — register VM is the only one with require_var, got:\n{output}"
     );
 }
 
@@ -1770,7 +1770,7 @@ fn test_compile_chore_resolves_recipe_ref_to_dep_output() {
     // §10.2 step 2: a `$<recipe>` reference in a chore body (e.g. a `play`
     // chore launching a just-built binary via `$<engine>`) MUST resolve to
     // that recipe's output via `cook.dep_output`, creating the cross-recipe
-    // edge — not fall through to `cook.require_env` (the bug).
+    // edge — not fall through to `cook.require_var` (the bug).
     let chore = make_chore(
         "play",
         vec!["engine"],
@@ -1788,8 +1788,8 @@ fn test_compile_chore_resolves_recipe_ref_to_dep_output() {
         "chore $<engine> must lower to cook.dep_output, got:\n{lua}"
     );
     assert!(
-        !lua.contains("cook.require_env(\"engine\")"),
-        "chore $<engine> must NOT lower to require_env, got:\n{lua}"
+        !lua.contains("cook.require_var(\"engine\")"),
+        "chore $<engine> must NOT lower to require_var, got:\n{lua}"
     );
 }
 
@@ -2296,7 +2296,7 @@ fn test_test_out_rejected() {
 fn test_test_shell_in_and_all_named_env_coexist() {
     // CS-0130: `$<all>` is no longer a reserved builtin, so a shell test
     // body may combine `$<in>` (per-item, OneToOne) with a literal `$<all>`
-    // token, which now falls through to `cook.require_env("all")` like any
+    // token, which now falls through to `cook.require_var("all")` like any
     // other unrecognized name — no mixed-mode rejection.
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { echo $<in> $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
@@ -2307,8 +2307,8 @@ fn test_test_shell_in_and_all_named_env_coexist() {
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(
-        lua.contains(r#"cook.require_env("all")"#),
-        "expected $<all> to fall through to require_env, got:\n{lua}"
+        lua.contains(r#"cook.require_var("all")"#),
+        "expected $<all> to fall through to require_var, got:\n{lua}"
     );
 }
 
@@ -2381,7 +2381,7 @@ recipe build
 fn lua_block_step_with_no_env_reads_emits_empty_keyset() {
     // COOK-59 Task 4.5 / CS-0090: cook-step Lua using-blocks no longer emit
     // the `consulted_env_keys = "*"` sentinel. Instead, the codegen scans
-    // the Lua body for `cook.env.<KEY>` reads (see `lua_env::scan_env_reads`)
+    // the Lua body for `cook.env.<KEY>` reads (see `lua_var::scan_var_reads`)
     // and emits the matched keys as a literal Lua list. A body with no such
     // reads emits the empty list `{}` so the cache doesn't see any
     // synthetic environment dependency.
@@ -2404,7 +2404,7 @@ recipe build
 }
 
 #[test]
-fn lua_block_step_records_static_cook_env_reads() {
+fn lua_block_step_records_static_var_reads() {
     // COOK-59 Task 4.5 / CS-0090: a cook-step Lua using-block that reads
     // `cook.env.FOO` and `cook.env.BAR` MUST emit a sorted, deduplicated
     // list of those keys as `consulted_env_keys`.
@@ -2413,8 +2413,8 @@ recipe touch
     ingredients "Cookfile"
     cook (input .. ".out") >{
         local f = io.open(output, "w")
-        f:write("FOO=" .. tostring(cook.env.FOO))
-        f:write("BAR=" .. tostring(cook.env.BAR))
+        f:write("FOO=" .. tostring(var.FOO))
+        f:write("BAR=" .. tostring(var.BAR))
         f:close()
     }
 "#;
@@ -2428,9 +2428,9 @@ recipe touch
 // ─── Task 4 review: chore-body sigil regression tests (E.8 motivating case) ──
 
 #[test]
-fn chore_body_sigil_lowers_to_require_env() {
+fn chore_body_sigil_lowers_to_require_var() {
     // CS-0033 App. E.8: $<ADB> in a chore bare shell command must lower to
-    // cook.require_env("ADB") and must not survive verbatim into the emitted Lua.
+    // cook.require_var("ADB") and must not survive verbatim into the emitted Lua.
     let cookfile_text = r#"config
     env.ADB = "adb"
 
@@ -2439,8 +2439,8 @@ chore devices
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
-        lua.contains(r#"cook.require_env("ADB")"#),
-        "expected cook.require_env(\"ADB\") in emitted lua; got:\n{}",
+        lua.contains(r#"cook.require_var("ADB")"#),
+        "expected cook.require_var(\"ADB\") in emitted lua; got:\n{}",
         lua
     );
     assert!(
@@ -3484,11 +3484,11 @@ fn probe_files_lowers_to_inputs_and_sentinel() {
 }
 
 #[test]
-fn probe_env_lowers_with_cook_env_reads() {
+fn probe_env_lowers_with_os_getenv_reads() {
     let cf = make_probe_cf(ProbeProduce::Envs(vec!["SDKROOT".into(), "CC".into()]));
     let lua = generate(&cf);
-    assert!(lua.contains("cook.env.SDKROOT"), "lua:\n{lua}");
-    assert!(lua.contains("cook.env.CC"), "lua:\n{lua}");
+    assert!(lua.contains(r#"os.getenv("SDKROOT")"#), "lua:\n{lua}");
+    assert!(lua.contains(r#"os.getenv("CC")"#), "lua:\n{lua}");
     assert!(lua.contains(r#"_e["SDKROOT"]"#), "lua:\n{lua}");
     assert!(lua.contains(r#"_e["CC"]"#), "lua:\n{lua}");
     // The re-run TRIGGER: named env-vars declared as probe inputs so the

@@ -1311,10 +1311,14 @@ pub fn execute_dag(
                 let node_name = format!("probe:{}", probe_key);
 
                 if let Some(probe_unit) = probe_units_by_node.get(&id) {
-                    // Resolve fingerprint inputs. The env_lookup reads from the
-                    // node's env_vars map (populated by the register phase from
-                    // the recipe's env_vars).
-                    let env_lookup = |name: &str| work_node.env_vars.get(name).cloned();
+                    // Resolve fingerprint inputs. CS-0172: an `envs { }` probe
+                    // records AMBIENT PROCESS environment values (§22.5.2) — the
+                    // whole point of the probe is to make a host value a keyed
+                    // determinant — so the lookup reads the process
+                    // environment, not the declared-variable namespace. The two
+                    // were the same table before CS-0172, which let a config
+                    // block redefine what the probe recorded about the host.
+                    let env_lookup = |name: &str| std::env::var(name).ok();
                     match cook_fingerprint::probe::resolve_probe_inputs(
                         probe_unit,
                         &work_node.working_dir,

@@ -4,7 +4,8 @@
 //! Mirrors `sharing_disposition_e2e.rs`: a real `cook` binary builds a tiny
 //! Cookfile against a `LocalBackend` shared store rooted in a tempdir (configured
 //! via `.cook/cloud.toml`). The single cacheable `cook` step reads one env var
-//! via the `$<GREETING>` sigil (lowered to `cook.require_env(GREETING)`), so the
+//! via the `$<GREETING>` sigil (lowered to `cook.require_var(GREETING)`), declared
+//! by the base config block from `host.env`, so the
 //! producer's `consulted_env` is non-empty.
 //!
 //! After the build, the manifest published as the `{key}.provenance.json` sidecar
@@ -97,7 +98,7 @@ fn published_artifact_has_matching_determinant_manifest() {
     write_fixture(
         wd,
         &backend_root,
-        r#"config default
+        r#"config
     var.GREETING = host.env("GREETING", "")
 
 recipe make

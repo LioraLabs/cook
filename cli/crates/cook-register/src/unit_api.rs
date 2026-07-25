@@ -538,18 +538,16 @@ pub fn register_unit_api(
             .chain(file_ref_paths.into_iter())
             .collect();
 
-        // Read consulted_env_keys from the table and look up values in cook.env
-        // (the merged Cookfile-config + process env that the command actually
-        // consumed at substitution time, per spec §4.3). Reading from
-        // std::env::var would miss config-overlay values and capture process
-        // env that the command never saw — both produce false misses.
+        // Read consulted_env_keys from the table and look up values in the
+        // declared-variable store (CS-0172) — the resolved `var` namespace the
+        // command actually consumed at substitution time, per spec §5.3.1.
+        // Reading from std::env::var would miss config-overlay values and
+        // capture process env the command never saw — both produce false
+        // misses. Values are rendered with `var_to_string` so a boolean-valued
+        // variable keys as `true`/`false` rather than being silently dropped.
         let mut consulted_env: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
-        let env_table: Option<LuaTable> = lua
-            .globals()
-            .get::<LuaTable>("cook")
-            .and_then(|c| c.get::<LuaTable>("env"))
-            .ok();
+        let env_table: Option<LuaTable> = crate::var_api::var_store(lua).ok();
         // CS-0127: `consulted_env_keys` must be a table of strings, or the
         // literal string "*" — never coerced, and element collection is
         // strict (a non-string element is a hard error, not a silent drop).
@@ -557,19 +555,39 @@ pub fn register_unit_api(
             Ok(LuaValue::Nil) | Err(_) => {}
             Ok(LuaValue::Table(list)) => {
                 let keys = collect_string_list(&list, "consulted_env_keys")?;
+                // A Lua-body unit reads `var.NAME` on the execute-phase VM,
+                // where values arrive in string form. Rather than coerce — and
+                // hand the body a truthy `"false"` — CS-0172 rejects the read
+                // here, at the declaration site's own phase.
+                let lua_body = !matches!(tbl.get::<LuaValue>("lua_code"), Ok(LuaValue::Nil) | Err(_));
                 if let Some(env) = &env_table {
                     for v in keys {
-                        if let Ok(val) = env.get::<String>(v.clone()) {
-                            consulted_env.insert(v, val);
+                        if let Ok(val) = env.get::<LuaValue>(v.clone()) {
+                            if !val.is_nil() {
+                                if lua_body && !matches!(val, LuaValue::String(_)) {
+                                    return Err(LuaError::runtime(format!(
+                                        "var.{v} is a {} and is read by an \
+                                         execute-phase Lua body, which receives \
+                                         declared variables in string form \
+                                         (Standard §5.3.1). Interpolate it as \
+                                         $<{v}>, or branch on it in a register \
+                                         block and pass the result in.",
+                                        val.type_name()
+                                    )));
+                                }
+                                consulted_env
+                                    .insert(v.clone(), crate::var_api::var_to_string(&v, &val)?);
+                            }
                         }
                     }
                 }
             }
             Ok(LuaValue::String(s)) if s.to_str().ok().as_deref() == Some("*") => {
                 if let Some(env) = &env_table {
-                    for pair in env.clone().pairs::<String, String>() {
+                    for pair in env.clone().pairs::<String, LuaValue>() {
                         if let Ok((k, v)) = pair {
-                            consulted_env.insert(k, v);
+                            let rendered = crate::var_api::var_to_string(&k, &v)?;
+                            consulted_env.insert(k, rendered);
                         }
                     }
                 }
@@ -822,7 +840,7 @@ pub fn register_unit_api(
         // gap for the common literal-key case; non-literal reads still fall
         // through to the execute-phase hard error.
         if let Some(code) = &lua_code {
-            for k in cook_luagen::lua_env::scan_probe_reads(code) {
+            for k in cook_luagen::lua_var::scan_probe_reads(code) {
                 if !probes.contains(&k) {
                     probes.push(k);
                 }

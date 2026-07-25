@@ -1,62 +1,30 @@
-//! Environment resolution: layered variable loading.
+//! CLI variable overrides (`--set KEY=VALUE`).
 //!
-//! Layer order (later wins):
-//!   1. System env
-//!   2. .env file (dotenvy)
-//!   3. Caller-supplied `KEY=VALUE` overrides (e.g. CLI `--set` flags)
+//! CS-0172: the declared-variable namespace is exactly what a Cookfile's
+//! `config` blocks write to the `var` sink. It is NOT the process
+//! environment. A build therefore starts with an empty namespace; config
+//! blocks populate it, and `--set` overrides a name one of them declared.
 //!
-//! Cookfile-defined variables live inside `config ... end` Lua blocks
-//! and are applied at runtime. Layer (3) is reapplied to `cook.env` after
-//! the config block runs, so explicit CLI overrides win over config-block
-//! defaults regardless of how the block was authored. See
-//! `parse_cli_overrides` for the helper that exposes layer (3) separately.
+//! Before CS-0172 this module layered the ambient process environment and a
+//! `.env` file underneath the config blocks, which made every ambient
+//! variable an undeclared build variable: `$<HOME>` resolved in a Cookfile
+//! that declared nothing, and the `config` sandbox's `host.env` gate — the
+//! whole point of which is that a config body's inputs are declared — could
+//! be bypassed by simply not declaring them. Both layers are gone. A step
+//! still inherits the ambient environment as ordinary shell variables (`$HOME`
+//! in a step body works); reading one as a *keyed determinant* is what the
+//! `envs { ... }` probe (§22) is for.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use super::error::PipelineError;
 
-/// Load variables from a `.env` file in `cookfile_dir`, if present.
-pub fn load_env(cookfile_dir: &Path) -> HashMap<String, String> {
-    let env_path = cookfile_dir.join(".env");
-    match dotenvy::from_path_iter(&env_path) {
-        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
-        Err(_) => HashMap::new(),
-    }
-}
-
-/// Merge all environment layers into a single map.
+/// Parse `KEY=VALUE` override strings (the CLI `--set` flags) into a map.
 ///
-/// `selected_config` is accepted but unused: it no longer overlays env
-/// vars; it flows to the runtime for `config NAME ... end` Lua-block
-/// dispatch. Kept here so call sites don't churn.
-pub fn resolve_env(
-    selected_config: Option<&str>,
-    dotenv_vars: HashMap<String, String>,
-    overrides: &[String],
-) -> Result<HashMap<String, String>, PipelineError> {
-    let _ = selected_config;
-
-    // Layer 1: system env
-    let mut env: HashMap<String, String> = std::env::vars().collect();
-
-    // Layer 2: .env file
-    for (k, v) in dotenv_vars {
-        env.insert(k, v);
-    }
-
-    // Layer 3: caller-supplied KEY=VALUE overrides (split on first '=')
-    for (k, v) in parse_cli_overrides(overrides)? {
-        env.insert(k, v);
-    }
-
-    Ok(env)
-}
-
-/// Parse `KEY=VALUE` override strings (typically the CLI `--set` flags) into
-/// a map. This is layer (3) of [`resolve_env`] in isolation; the engine needs
-/// it as a separate input so it can re-apply CLI overrides on top of any
-/// values a `config` block writes to `cook.env`.
+/// The engine applies these to the `var` namespace after the config blocks
+/// run, so an explicit CLI override wins over a config-block default
+/// regardless of how the block was authored. Overriding a name no config
+/// block declared is an error, raised at that point (§5.3.1).
 pub fn parse_cli_overrides(
     overrides: &[String],
 ) -> Result<HashMap<String, String>, PipelineError> {

@@ -1,0 +1,1 @@
+var.MODE is read-only outside a config block

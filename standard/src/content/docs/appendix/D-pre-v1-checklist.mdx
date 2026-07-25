@@ -332,7 +332,7 @@ A positive conformance fixture under `standard/conformance/positive/` exercising
 
 ## D.15. Bare `env.X = "..."` in `config` clobbers `--set X=...` [#pre-v1.config-set-clobber]
 
-**Status.** Open as of v0.8.
+**Status.** RESOLVED in v0.18 by CS-0172 — via this item's option 3 (reverse the precedence), not the option 1 it recommended. `--set` is applied after both config bodies run, so it wins however the block was authored and the `or`-idiom is no longer load-bearing. CS-0172 also rejects a `--set` naming a variable no config block declared, which was the other half of the trap: the flag silently invented variables. The record below is retained for the reasoning.
 
 **Symptom.** The `--set KEY=VALUE` CLI flag is the documented mechanism for overriding env defaults at invocation (`cook --help` output: "Override a variable (KEY=VALUE), repeatable"). A user reflexively writes `env.X = "default"` inside a `config` block to declare a default, expecting `--set X=other` to take precedence at runtime. It does not: the config block executes after `--set` populates `cook.env`, so the bare assignment overwrites the CLI-supplied value with the literal. The override silently fails.
 

@@ -172,7 +172,7 @@ pub(crate) fn expand_for_each_template(
     Ok((concat, probe_keys))
 }
 
-/// Accumulator for env keys that fall through to `cook.require_env(KEY)` during
+/// Accumulator for env keys that fall through to `cook.require_var(KEY)` during
 /// template expansion. Populated by every expansion path that reaches the
 /// "env-runtime" branch. The set is sorted (BTreeSet) so the resulting
 /// emitted Lua table is deterministic.
@@ -275,7 +275,7 @@ impl FileRefs {
 /// a `cook.add_unit` `command = ...` value.
 ///
 /// Builtins inline as `_cook_in`/`_cook_out`/etc; recipes lower to
-/// `cook.dep_output("name")`; env vars lower to `cook.require_env("name")`.
+/// `cook.dep_output("name")`; env vars lower to `cook.require_var("name")`.
 ///
 /// Returns Err if any placeholder fails to resolve (builtin mode/count violation,
 /// or malformed index).
@@ -414,7 +414,7 @@ fn resolved_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             consulted_env.record(&key);
-            Ok(format!("cook.require_env(\"{}\")", escape_lua_string(&key)))
+            Ok(format!("cook.require_var(\"{}\")", escape_lua_string(&key)))
         }
         // CS-0074: probe-value reference — emit a tostring-wrapped cache read.
         // The access expression is pre-built by the resolver.
@@ -644,7 +644,7 @@ fn output_pattern_ident_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             out.record(&key);
-            format!("cook.require_env(\"{}\")", escape_lua_string(&key))
+            format!("cook.require_var(\"{}\")", escape_lua_string(&key))
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
@@ -678,7 +678,7 @@ fn output_pattern_ident_to_lua(
             // In output patterns, errors fall through to env lookup for backward compat
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
             out.record(ident);
-            format!("cook.require_env(\"{}\")", escape_lua_string(ident))
+            format!("cook.require_var(\"{}\")", escape_lua_string(ident))
         }
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns have no
         // fan-out body context and `item` is not in scope. Emit a sentinel string that
@@ -954,7 +954,7 @@ fn validate_sigil_token(
 /// per-item or one-shot only — see [`PlateTestMode`]), and reject `$<out>` /
 /// `$<out_N>` (use `validate_plate_test_placeholders` before calling).
 /// `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
-/// is a recipe; otherwise to `cook.require_env(NAME)`.
+/// is a recipe; otherwise to `cook.require_var(NAME)`.
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,
@@ -996,10 +996,10 @@ pub(crate) fn expand_plate_test_body(
         } else if recipe_names.contains(ident.as_str()) {
             format!("cook.dep_output(\"{}\")", escape_lua_string(ident))
         } else {
-            // Strip env. prefix if present.
-            let key = ident.strip_prefix("env.").unwrap_or(ident);
+            // CS-0172: `var.` is the explicit disambiguating prefix.
+            let key = ident.strip_prefix("var.").unwrap_or(ident);
             out.record(key);
-            format!("cook.require_env(\"{}\")", escape_lua_string(key))
+            format!("cook.require_var(\"{}\")", escape_lua_string(key))
         };
         parts.push(lua);
 

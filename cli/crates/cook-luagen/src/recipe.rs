@@ -436,7 +436,7 @@ fn step_line(step: &Step) -> usize {
 /// Lua. `RegisterTimeShellCmd` pieces hold a Lua expression that resolves at
 /// register time to a *shell command string* — typically because the original
 /// shell command contained a `$<NAME>` recipe ref or a `$<HOME>` env ref that
-/// lowered to `cook.dep_output(...)` / `cook.require_env(...)`. Those calls
+/// lowered to `cook.dep_output(...)` / `cook.require_var(...)`. Those calls
 /// only exist on the register VM, so we evaluate them at register time and
 /// bake the resolved string back into the worker's chunk as a literal.
 enum ChunkPiece {
@@ -461,11 +461,11 @@ enum ChunkPiece {
 /// placeholder in a command is expanded at codegen time. Commands with no
 /// sigil placeholders are coalesced into a raw shell-text `cook.sh` call;
 /// commands with sigil placeholders are split into a `RegisterTimeShellCmd`
-/// piece so that any `cook.dep_output(...)` or `cook.require_env(...)` call
+/// piece so that any `cook.dep_output(...)` or `cook.require_var(...)` call
 /// in the resolved Lua expression evaluates on the register VM (where those
 /// helpers are installed). Cook Standard §5.5 requires `$<NAME>` to substitute
 /// in any bare `shell_command` body; the worker VM has no `cook.dep_output` /
-/// `cook.require_env`, so resolving at register time is the only place these
+/// `cook.require_var`, so resolving at register time is the only place these
 /// calls can succeed.
 ///
 /// The chunk is prefixed with `local <alias> = cook.load_module("<name>")`
@@ -531,7 +531,7 @@ fn emit_body_unit_with_names(
                     // run before this sigil command.
                     flush_raw_into_static(&mut static_buf, &mut shell_run);
                     // Expand sigil template; the result is a Lua expression that
-                    // may reference `cook.dep_output(...)` / `cook.require_env(...)`
+                    // may reference `cook.dep_output(...)` / `cook.require_var(...)`
                     // — both register-VM-only. Ship it as a RegisterTimeShellCmd
                     // piece so it evaluates on the right VM.
                     let ctx = ResolveCtx {
@@ -846,7 +846,13 @@ pub fn generate_with_names(
             }
         }
 
-        out.push_str("end\n\n");
+        // CS-0172: everything after the config function goes inside
+        // `__cook_main`, which the engine calls only after the config blocks
+        // have run. Register-phase Lua therefore observes resolved `var`
+        // values. The `function` keyword is folded onto the config function's
+        // closing `end` so the wrapper consumes no generated line — later
+        // `pad_to_line` calls still align each body line to its source line.
+        out.push_str("end function __cook_main()\n");
     }
 
     // Source-ordered merge of recipes, chores, register blocks, and
@@ -1133,6 +1139,12 @@ pub fn generate_with_names(
                 crate::probe::emit_probe(&mut out, p);
             }
         }
+    }
+
+    // CS-0172: close the `__cook_main` wrapper opened after the config
+    // function. Trailing lines shift no earlier alignment.
+    if !cookfile.config_blocks.is_empty() {
+        out.push_str("\nend\n");
     }
 
     Ok(out)

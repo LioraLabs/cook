@@ -687,11 +687,11 @@ cook.recipe("build", {}, function() end)
 }
 
 #[test]
-fn test_cli_override_for_undeclared_key_still_applied() {
-    // CLI overrides apply unconditionally, even for keys the config block
-    // doesn't declare. Whether `$<X>` resolution then accepts X is a
-    // separate concern handled by env_keyset / require_env.
-    let initial_env = HashMap::new();
+fn test_cli_override_for_undeclared_key_is_rejected() {
+    // CS-0172: the `var` namespace is exactly what the config blocks declare,
+    // so `--set` on a name none of them wrote is a typo, not a declaration.
+    // Before CS-0172 the override was applied unconditionally and silently
+    // invented the variable.
     let mut cli_overrides = HashMap::new();
     cli_overrides.insert("ARBITRARY".to_string(), "42".to_string());
 
@@ -700,16 +700,44 @@ function __cook_run_config_blocks(selected_name)
     var.DECLARED = "yes"
 end
 
+function __cook_main()
 cook.recipe("build", {}, function() end)
+end
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
+        .with_cli_overrides(cli_overrides);
+    let err = register_cookfile(registry, lua_source, None)
+        .expect_err("--set on an undeclared name must be rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("ARBITRARY"), "diagnostic must name the key: {msg}");
+    assert!(msg.contains("DECLARED"), "diagnostic must suggest the declared name: {msg}");
+}
+
+#[test]
+fn test_cli_override_for_declared_key_wins_over_config_default() {
+    // The other half: an override that names a declared variable replaces the
+    // config block's value, however the block was authored (App. D.15).
+    let mut cli_overrides = HashMap::new();
+    cli_overrides.insert("DECLARED".to_string(), "42".to_string());
+
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    var.DECLARED = "yes"
+end
+
+function __cook_main()
+cook.recipe("build", {}, function() end)
+end
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_cli_overrides(cli_overrides);
     let units = register_one(registry, lua_source, "build");
 
-    assert_eq!(units.env_vars.get("ARBITRARY").map(|s| s.as_str()), Some("42"));
-    assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("yes"));
+    assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("42"));
 }
 
 #[test]

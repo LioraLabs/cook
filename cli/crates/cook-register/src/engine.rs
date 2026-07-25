@@ -10,7 +10,7 @@ use cook_contracts::RecipeUnits;
 use crate::capture::install_cook_api;
 use crate::context::setup_recipe_context;
 use crate::dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
-use crate::env_api::{install_require_env, EnvKeyset};
+use crate::var_api::{install_var_api, VarKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
@@ -53,7 +53,7 @@ pub struct RegisterSessionBuilder {
     /// Frozen keyset of env-var names declared via config blocks.
     /// Shared between the Lua-env-construction call and the config-block
     /// evaluation call so both sides see the same Rc-backed set.
-    env_keyset: EnvKeyset,
+    env_keyset: VarKeyset,
     /// (recipe, env-var) shadowing pairs we've already warned about, so
     /// we don't repeat the diagnostic on every recipe-register call within
     /// a single Cookfile load.
@@ -86,7 +86,7 @@ impl RegisterSessionBuilder {
             alias_dirs: BTreeMap::new(),
             alias_qualified_prefixes: BTreeMap::new(),
             cookfile_label: None,
-            env_keyset: EnvKeyset::new(),
+            env_keyset: VarKeyset::new(),
             shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
             target_recipe: None,
             target_argv: Vec::new(),
@@ -281,7 +281,7 @@ pub fn register_cookfile(
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_require_env(&lua, &cook_tbl, builder.env_keyset.clone())?;
+        install_var_api(&lua, &cook_tbl, builder.env_keyset.clone())?;
     }
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
@@ -344,8 +344,13 @@ pub fn register_cookfile(
     //    reads for provenance (Standard §5.3.2).
     let host_reads: crate::config_sandbox::SharedHostReads =
         Rc::new(RefCell::new(Vec::new()));
-    let final_env =
-        dispatch_config_blocks(&lua, &builder, &recipes.borrow(), &host_reads)?;
+    let final_env = dispatch_config_blocks(&lua, &builder, &host_reads)?;
+
+    // 7b. CS-0172: with config resolved, run the rest of the program — the
+    //     top-level module calls, register blocks, and recipe registrations
+    //     codegen wrapped in `__cook_main`.
+    run_main_program(&lua)?;
+    warn_var_shadowing(&builder, &recipes.borrow());
 
     // 8. Collision detection — Task 2.3. A name registered more than once
     //    (surface vs dynamic, dynamic vs dynamic, chore vs dynamic) is a
@@ -404,7 +409,6 @@ pub fn register_cookfile(
         &lua,
         &recipes.borrow(),
         &probe_registry.borrow(),
-        &builder.env_vars,
         &builder.working_dir,
         cache_ctx.as_ref(),
         &prepass_store,
@@ -741,7 +745,7 @@ impl BodyDriver {
         if !known {
             let registered: Vec<String> =
                 self.recipes.borrow().iter().map(|r| r.name.clone()).collect();
-            let closest = crate::env_api::closest_declared(name, &registered, 3);
+            let closest = crate::var_api::closest_declared(name, &registered, 3);
             return Err(mlua::Error::runtime(format!(
                 "cook.require_recipe: recipe \"{name}\" (required by \"{requiring}\") is not \
                  registered in this Cookfile. Closest registered names: {}. Check the spelling, \
@@ -1747,7 +1751,6 @@ fn run_for_each_prepass(
     lua: &Lua,
     recipes: &[crate::capture::RegisteredRecipe],
     probe_registry: &ProbeRegistry,
-    env_vars: &Rc<RefCell<HashMap<String, String>>>,
     working_dir: &Path,
     cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
     prepass_store: &crate::module_loader::SharedPrepassStore,
@@ -1795,7 +1798,10 @@ fn run_for_each_prepass(
         }
     }
 
-    let env_lookup = |name: &str| env_vars.borrow().get(name).cloned();
+    // CS-0172: `envs { }` probe determinants are ambient process environment
+    // values (§22.5.2), not declared variables — see the matching lookup in
+    // `cook-engine`'s executor.
+    let env_lookup = |name: &str| std::env::var(name).ok();
     let mut upstream_fps: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     let mut done: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -2229,7 +2235,7 @@ pub fn list_names(
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_require_env(&lua, &cook_tbl, builder.env_keyset.clone())?;
+        install_var_api(&lua, &cook_tbl, builder.env_keyset.clone())?;
     }
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
@@ -2277,8 +2283,14 @@ pub fn list_names(
     // a throwaway.
     let host_reads: crate::config_sandbox::SharedHostReads =
         Rc::new(RefCell::new(Vec::new()));
-    let _final_env =
-        dispatch_config_blocks(&lua, &builder, &recipes.borrow(), &host_reads)?;
+    let _final_env = dispatch_config_blocks(&lua, &builder, &host_reads)?;
+
+    // CS-0172: registration lives in `__cook_main`, so the listed set does not
+    // exist until it runs — and it must run after config dispatch so a
+    // `register` block that gates a registration on a `var` sees the resolved
+    // value. Bodies are still never invoked.
+    run_main_program(&lua)?;
+    warn_var_shadowing(&builder, &recipes.borrow());
 
     // Same hard-error checks register_cookfile applies. Probe cycle
     // detection runs on the static `requires` graph — no probe BODY runs,
@@ -2447,23 +2459,25 @@ fn install_remaining_apis(
 fn dispatch_config_blocks(
     lua: &Lua,
     builder: &RegisterSessionBuilder,
-    recipes: &[crate::capture::RegisteredRecipe],
     host_reads: &crate::config_sandbox::SharedHostReads,
 ) -> Result<BTreeMap<String, String>, RegisterError> {
     if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        let env_tbl: LuaTable = cook_tbl.get("env")?;
+        // CS-0172: the store the config bodies write, reachable only through
+        // the registry — the `var` global outside a config block is a read-only
+        // proxy onto it.
+        let store: LuaTable = crate::var_api::var_store(lua)?;
 
         // Sandbox the config function (Standard §5.3.2, CS-0163). `_ENV` is
         // swapped for the restricted table so `os`/`io`/clock/randomness/etc.
         // are unreachable and the only external-input surface is `host.*`; the
-        // `env` output sink is exposed inside the sandbox rather than as a real
-        // global, so it never leaks to recipe bodies. `set_environment` returns
-        // false only when the function references no globals at all (an empty /
+        // `var` output sink is exposed inside the sandbox rather than as a real
+        // global, so a config body writes the store while every other Lua
+        // context sees the read-only proxy. `set_environment` returns false
+        // only when the function references no globals at all (an empty /
         // pure-literal config body) — nothing to sandbox in that case.
         let sandbox = crate::config_sandbox::build_config_sandbox_env(
             lua,
-            &env_tbl,
+            &store,
             &builder.working_dir,
             host_reads,
         )?;
@@ -2472,35 +2486,29 @@ fn dispatch_config_blocks(
         let name_arg: Option<String> = builder.selected_config.clone();
         dispatch.call::<()>(name_arg)?;
 
-        builder.env_keyset.freeze(&env_tbl)?;
+        builder.env_keyset.freeze(&store)?;
 
+        // CLI overrides apply on top of the config blocks so `--set` wins over
+        // a config-block default however the block was authored (closing the
+        // clobber trap of App. D.15). CS-0172: an override may only name a
+        // variable the config blocks declared — the namespace has no other
+        // source, so inventing one here would resurrect the undeclared-var
+        // channel this CS removes.
+        check_overrides_declared(builder)?;
         for (k, v) in &builder.cli_overrides {
-            env_tbl.set(k.as_str(), v.as_str())?;
+            store.set(k.as_str(), v.as_str())?;
         }
 
+        // Snapshot the store into the session's string-valued map — the form
+        // the cache key hashes and `$<NAME>` interpolates. A declared value
+        // that is not a string, number, or boolean is rejected here, naming the
+        // variable (CS-0172); it cannot reach a determinant otherwise.
         {
             let mut env_map = builder.env_vars.borrow_mut();
-            for pair in env_tbl.pairs::<String, String>() {
+            for pair in store.pairs::<String, LuaValue>() {
                 let (k, v) = pair?;
-                env_map.insert(k, v);
-            }
-        }
-
-        // §5.2.3 shadowing diagnostic.
-        let declared_env: std::collections::BTreeSet<String> =
-            builder.env_keyset.declared_list().into_iter().collect();
-        let recipe_names_set: std::collections::BTreeSet<String> =
-            recipes.iter().map(|r| r.name.clone()).collect();
-        let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
-        for name in recipe_names_set.intersection(&declared_env) {
-            let key = (name.clone(), name.clone());
-            if emitted.insert(key) {
-                eprintln!(
-                    "cook: warning: recipe '{name}' shadows declared env var \
-                     'env.{name}': $<{name}> resolves to the recipe (Standard \
-                     §5.2.3). Use $<env.{name}> for the env-var value, or \
-                     rename one of them."
-                );
+                let rendered = crate::var_api::var_to_string(&k, &v)?;
+                env_map.insert(k, rendered);
             }
         }
 
@@ -2517,13 +2525,90 @@ fn dispatch_config_blocks(
 
         Ok(final_env)
     } else {
-        // No config blocks — `final_env` is just the initial env_vars.
+        // No config blocks: the declared set is empty, so any `--set` names an
+        // undeclared variable (CS-0172). Previously these were silently
+        // injected and `$<NAME>` resolved them.
+        check_overrides_declared(builder)?;
         Ok(builder
             .env_vars
             .borrow()
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect())
+    }
+}
+
+/// Reject every `--set NAME=VALUE` whose `NAME` no `config` block declared
+/// (CS-0172, §5.3.1), suggesting the closest declared names.
+fn check_overrides_declared(builder: &RegisterSessionBuilder) -> Result<(), RegisterError> {
+    if builder.cli_overrides.is_empty() {
+        return Ok(());
+    }
+    let declared = builder.env_keyset.declared_list();
+    // Deterministic diagnostic when several overrides are wrong: report the
+    // lexicographically first offender rather than whichever the map yields.
+    let mut offenders: Vec<(&String, &String)> = builder
+        .cli_overrides
+        .iter()
+        .filter(|(k, _)| !builder.env_keyset.contains(k))
+        .collect();
+    offenders.sort_by(|a, b| a.0.cmp(b.0));
+    if let Some((name, value)) = offenders.first() {
+        return Err(RegisterError::UndeclaredSet {
+            name: (*name).clone(),
+            value: (*value).clone(),
+            closest: crate::var_api::closest_declared(name, &declared, 3),
+        });
+    }
+    Ok(())
+}
+
+/// Run the transpiled program's `__cook_main` body (CS-0172).
+///
+/// When a Cookfile declares any `config` block, codegen wraps everything after
+/// the config function — top-level `module_call`s, `register` blocks, and the
+/// `cook.recipe(...)` registrations — in `__cook_main`, and the chunk's `exec`
+/// therefore only *defines*. Calling it here, after
+/// [`dispatch_config_blocks`], is what lets register-phase Lua read resolved
+/// `var` values: a `cook_cc.toolchain({ optimize = var.optimize })` at top
+/// level runs with the config already applied.
+///
+/// A Cookfile with no config block emits no wrapper and has already run its
+/// top level during `exec`, so the absent global is the no-op case.
+fn run_main_program(lua: &Lua) -> Result<(), RegisterError> {
+    if let Ok(main) = lua.globals().get::<LuaFunction>("__cook_main") {
+        main.call::<()>(())?;
+    }
+    Ok(())
+}
+
+/// Emit the §5.2.3 diagnostic for each recipe name that collides with a
+/// declared `var` name.
+///
+/// Runs after [`run_main_program`] rather than inside
+/// [`dispatch_config_blocks`]: registration now happens after config dispatch
+/// (CS-0172), so the recipe set does not exist yet at dispatch time.
+fn warn_var_shadowing(
+    builder: &RegisterSessionBuilder,
+    recipes: &[crate::capture::RegisteredRecipe],
+) {
+    let declared: std::collections::BTreeSet<String> =
+        builder.env_keyset.declared_list().into_iter().collect();
+    if declared.is_empty() {
+        return;
+    }
+    let recipe_names: std::collections::BTreeSet<String> =
+        recipes.iter().map(|r| r.name.clone()).collect();
+    let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
+    for name in recipe_names.intersection(&declared) {
+        let key = (name.clone(), name.clone());
+        if emitted.insert(key) {
+            eprintln!(
+                "cook: warning: recipe '{name}' shadows declared var \
+                 '{name}': $<{name}> resolves to the recipe (Standard \
+                 §5.2.3). Rename one of them."
+            );
+        }
     }
 }
 

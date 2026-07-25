@@ -518,7 +518,6 @@ pub fn install_cook_api(
     // existing surface. Inside a body, the layer check applies as before.
     let body_slot_sh = body_slot.clone();
     let wd_sh = working_dir.clone();
-    let env_sh = env_vars.clone();
     let sh_recipe_name = recipe_name.to_string();
     let sh_fn = lua.create_function(move |_, cmd: String| {
         {
@@ -532,20 +531,32 @@ pub fn install_cook_api(
         }
         // Execute immediately — cook.sh is a user-facing utility
         // and callers depend on its return value for control flow.
-        let env_snapshot = env_sh.borrow();
-        run_shell_command(&cmd, &wd_sh, &env_snapshot, 0, &sh_recipe_name)
+        //
+        // CS-0172: the child inherits the ambient environment and nothing
+        // else. A declared variable is not a process-environment entry
+        // (§5.3.1) — injecting one here would make `$NAME` in a `cook.sh`
+        // command silently resolve to a build variable, which is the
+        // conflation this CS removes. `$<NAME>` interpolates one explicitly.
+        run_shell_command(&cmd, &wd_sh, &HashMap::new(), 0, &sh_recipe_name)
     })?;
     cook.set("sh", sh_fn)?;
 
-    // cook.env table (initial population; may be mutated by config dispatch)
-    let env_table = lua.create_table()?;
+    // CS-0172: the declared-variable store. Config blocks write it (as their
+    // `var` sink, §5.3.1); everything else reads it through the read-only
+    // `var` global installed below. The store itself is kept in the Lua
+    // registry rather than on `cook`, so the only Lua-reachable handle is the
+    // one with the read-only guard on it — a recipe body cannot reach past the
+    // proxy and mutate a declared value out from under the cache key.
+    let var_store = lua.create_table()?;
     {
         let snap = env_vars.borrow();
         for (key, value) in snap.iter() {
-            env_table.set(key.as_str(), value.as_str())?;
+            var_store.set(key.as_str(), value.as_str())?;
         }
     }
-    cook.set("env", env_table)?;
+    // The read-only `var` global that reads this store is installed alongside
+    // `cook.require_var`, where the declared keyset is in scope.
+    lua.set_named_registry_value(crate::VAR_STORE_REGISTRY_KEY, var_store)?;
 
     // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
     // member to its canonical string form (key-sorted JSON for a table, the

@@ -1,0 +1,17 @@
+config
+    var.optimize = "-O0"
+    var.symbols  = true
+    var.jobs     = 4
+
+config release
+    var.optimize = "-O2"
+    var.symbols  = false
+
+register
+    local flags = var.optimize
+    if var.symbols then flags = flags .. " -g" end
+    CFLAGS = flags .. " -j" .. var.jobs
+
+recipe build
+    ingredients "src/main.c"
+    cook "build/main" { cc $<optimize> $<in> -o $<out> }

@@ -328,7 +328,7 @@ recipe build: lib setup   # test 7:  RecipeHeader (column 0)
     # test 2: Comment
     ingredients "src/*.c" # test 12: Content (step-dispatched to ingredients_step)
     >>{                   # test 3:  recognised, then REJECTED (CS-0134 — doubled-`>` removed)
-        cook.env.CFLAGS = "-Wall"
+        var.CFLAGS = "-Wall"
     }
     >> local n = 4        # test 4:  recognised, then REJECTED (CS-0134 — doubled-`>` removed)
     >{                    # test 5:  LuaBlockOpen (lexes; recipe parser REJECTS a standalone >{ per CS-0134)

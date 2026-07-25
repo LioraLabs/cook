@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
-use crate::lua_env;
+use crate::lua_var;
 use crate::resolver::{IterMode, OutputShape};
 use crate::template::{
     analyze_output_pattern, expand_command_template, expand_output_pattern, ConsultedEnv,
@@ -15,11 +15,11 @@ use crate::template::{
 ///
 /// Per Standard §17.1, a Lua using-block's cache fingerprint MUST include
 /// the values of every env key the body statically reads from `cook.env`.
-/// The scanner is in [`lua_env::scan_env_reads`]; this helper threads the
+/// The scanner is in [`lua_var::scan_var_reads`]; this helper threads the
 /// scanned keys through the shared [`ConsultedEnv`] accumulator so the
 /// rendering path matches the shell-template emission exactly.
 fn lua_body_consulted_env_keys(code: &str) -> String {
-    let scanned = lua_env::scan_env_reads(code);
+    let scanned = lua_var::scan_var_reads(code);
     let mut consulted = ConsultedEnv::new();
     for key in &scanned {
         consulted.record(key);

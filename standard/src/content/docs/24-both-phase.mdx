@@ -10,7 +10,7 @@ sidebar:
 **Signature.** `cook.sh(cmd: string) -> string`
 **Phase.** Both.
 
-`cook.sh` executes `cmd` via `/bin/sh -c` in the Cookfile's working directory with the current `cook.env` values merged onto the inherited environment, and returns the captured standard output as a string. A non-zero exit status MUST be reported as a Lua runtime error. The error message's first line MUST take the form `COOK_CMD_FAILED:<line>:<exit-code>:<cmd>`, where `<line>` is the source line of the call (or `0` when not applicable, e.g., a register-phase utility call) and `<exit-code>` is the process exit code. The implementation MUST append the captured standard output and standard error to the error message on subsequent lines, separated by the section headers `\n--- stdout ---\n` and `\n--- stderr ---\n` respectively; an empty stream's section MAY be omitted. The implementation MAY truncate either stream above an implementation-defined byte budget; when it does, it MUST emit a marker that names the count of bytes omitted (e.g., `... (12345 bytes truncated)`). The function name is intentionally shared between phases because the user-visible behaviour — "run this command and give me its stdout, error on non-zero" — is the same in both; only the surrounding scheduling differs.
+`cook.sh` executes `cmd` via `/bin/sh -c` in the Cookfile's working directory with the inherited environment and nothing merged onto it — a declared variable is not a process-environment entry (§{decl.config}), so `$NAME` in the command names an ambient variable, never a build variable — and returns the captured standard output as a string. A non-zero exit status MUST be reported as a Lua runtime error. The error message's first line MUST take the form `COOK_CMD_FAILED:<line>:<exit-code>:<cmd>`, where `<line>` is the source line of the call (or `0` when not applicable, e.g., a register-phase utility call) and `<exit-code>` is the process exit code. The implementation MUST append the captured standard output and standard error to the error message on subsequent lines, separated by the section headers `\n--- stdout ---\n` and `\n--- stderr ---\n` respectively; an empty stream's section MAY be omitted. The implementation MAY truncate either stream above an implementation-defined byte budget; when it does, it MUST emit a marker that names the count of bytes omitted (e.g., `... (12345 bytes truncated)`). The function name is intentionally shared between phases because the user-visible behaviour — "run this command and give me its stdout, error on non-zero" — is the same in both; only the surrounding scheduling differs.
 
 In the **register phase**, `cook.sh` is a utility for control-flow decisions during registration (feature detection, tool discovery, reading version files). It is NOT the mechanism by which work units are recorded; use `cook.add_unit` for that. The capture-mode contract of §{exec.capture} applies: a register-phase `cook.sh` call MUST be deterministic with respect to the Cookfile source and the register-phase record accumulated so far, and MUST NOT modify files under the working directory in a way that affects declared outputs.
 
@@ -28,34 +28,42 @@ When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phas
 
 A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path(s) that were searched.
 
-The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.probes`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
+The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `var`, `cook.probes`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
 
 `cook.load_module` is the resolver behind the `use` declaration (§{mods.use}). The codegen for `use foo` emits `local foo = cook.load_module("foo")` at the top of the Cookfile's register-phase Lua, and prepends the same binding to every execute-phase body unit's `lua_code` payload, so the alias `foo` is in scope for both phases of every recipe in the declaring Cookfile.
 
 Module lifecycle — the top-level chunk's once-per-VM execution, the `init()` call, per-VM caching, cross-VM rehydration, and cycle detection — is specified in §{mods.lifecycle}, not here. This section defines only the call surface.
 
-## 24.3. `cook.env` [#lua.cook-env]
-**Type.** `table`
+## 24.3. `var` [#lua.var]
+**Type.** `table` (read-only outside a `config_body`)
 **Phase.** Both.
 
-`cook.env` is the Cook-managed environment table. It is a regular Lua table with two semantic distinctions from a bare table:
+`var` is the declared-variable namespace of §{decl.config}: a global table whose contents are exactly the names the Cookfile's `config` blocks exported. It is NOT the process environment, and a conforming implementation MUST NOT seed it from one (CS-0172). The table it exposes has three semantic distinctions from a bare table:
 
-- Keys MUST be strings and values MUST be strings; a conforming implementation MUST raise a Lua runtime error on a write whose key is not a string or whose value is not a string. (Numeric and boolean values are NOT auto-coerced; authors converting non-string values use Lua's `tostring`.)
-- The table starts populated with the inherited process environment of the Cook invocation (e.g. `PATH`, `HOME`). Subsequent writes overlay this initial population.
+- **Reads are checked.** `var.NAME` for a name no config block exported MUST raise a Lua runtime error suggesting the closest exported names. Presence-guarding an undeclared variable (`if var.maybe then`) is therefore not a supported idiom — declare it with a default instead.
+- **Writes are refused.** An assignment through `var` outside a `config_body` MUST raise. A declared value is a determinant of every unit keyed against it (§{exec.cache.abstract}); mutating it mid-pass would invalidate a key already computed.
+- **Values carry their declared type** on the register-phase VM: `string`, `number`, or `boolean` per §{decl.config}.
 
-`cook.env` is the source of `$<TOKEN>` env-var resolution (§{xref.resolution} step 3, §{xref.env-namespace}) and is merged onto the child-process environment for every shell unit (§{lua.cook-sh}, `cook.add_unit` shell payload). The implementation MUST track which keys of `cook.env` were consulted by each work unit (the `consulted_env_keys` set per §{xref.resolution}) for the purposes of cache invalidation (§{exec.cache.abstract}).
+On the **execute-phase** VM, values are visible in their **string form** (§{decl.config}). A conforming implementation MUST reject, at register phase, a Lua-body unit (§{steps.lua}) whose statically-recorded reads (§{exec.cache.lua-var-reads}) name a variable whose declared value is not a string — naming the variable and the phase. Silently handing the body a truthy `"false"` is the failure this rule exists to prevent; the author either interpolates `$<NAME>` or branches in a `register` block.
 
-Within a `config_block` body (§{decl.config}), the bare global `env` is bound as an alias of `cook.env` per §{lua.env-alias}. Writes through either name MUST be observable through both.
+Within a `config_body` (§{decl.config}), `var` is the writable output sink instead — see §{lua.var-sink}.
 
 ### Example 24.3.1
 
 ```cook
 config
-    env.CC = "clang"
-    env.CXXFLAGS = "-std=c++20 -O2"
+    var.compiler = "clang"
+    var.optimize = "-O2"
+    var.symbols  = true
+
+cc.toolchain({
+    compiler      = var.compiler,
+    extra_cflags  = var.optimize,
+    debug_symbols = var.symbols,
+})
 ```
 
-The bare `env` inside the config body writes to `cook.env`; the keys `CC` and `CXXFLAGS` are subsequently resolvable as `$<CC>` and `$<CXXFLAGS>` placeholders in recipe bodies (§{phl.cook-step}).
+The config body writes the sink; the top-level module call reads the same names through the read-only global, with `var.symbols` arriving as a boolean. The names are equally resolvable as `$<compiler>` / `$<optimize>` / `$<symbols>` placeholders in recipe bodies (§{phl.cook-step}), where `$<symbols>` interpolates the string `true`.
 
 ## 24.4. `cook.probes` [#lua.cook-probes]
 **Phase.** Both. [Pinned by CS-0070.]

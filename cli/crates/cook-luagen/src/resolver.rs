@@ -4,7 +4,7 @@
 //! decide whether the placeholder resolves to a builtin, an in-scope recipe,
 //! or an env-var runtime lookup. Codegen-time errors are limited to builtin
 //! mode/count violations; the env-declared check is deferred to runtime via
-//! `cook.require_env` (see cook-register/env_api.rs from Task 9).
+//! `cook.require_var` (see cook-register/var_api.rs from Task 9).
 
 use std::collections::BTreeSet;
 
@@ -96,6 +96,19 @@ pub enum ResolveError {
     FileRefBadPath { ident: String },
     #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern")]
     FileRefInOutputPattern { ident: String },
+    /// CS-0172: `$<env.NAME>` named the process-environment namespace, which no
+    /// longer backs declared variables. `$<var.NAME>` is the explicit spelling
+    /// for a declared variable; an ambient process variable is read either as
+    /// an ordinary shell variable (`$NAME` — a step inherits the environment)
+    /// or, when it must be a cache determinant, through an `envs { }` probe.
+    #[error(
+        "placeholder $<env.{key}>: the `env.` prefix is retired — a declared \
+         variable is `$<{key}>` (or `$<var.{key}>` to disambiguate from a \
+         recipe of the same name). For an ambient process variable use `${key}` \
+         in the step body, or declare an `envs {{ {key} }}` probe to make it a \
+         determinant."
+    )]
+    RetiredEnvPrefix { key: String },
 }
 
 /// Three-way outcome of `match_builtin`:
@@ -275,9 +288,14 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
             };
         }
     }
-    // Otherwise env-runtime. Strip the explicit "env." prefix if present.
-    let env_key = ident.strip_prefix("env.").unwrap_or(ident);
-    Resolved::EnvRuntime(env_key.to_string())
+    // Otherwise a declared variable. CS-0172: `var.` is the explicit prefix
+    // that disambiguates a variable from a same-named recipe; the pre-CS-0172
+    // `env.` prefix is retired along with the process-env namespace it named.
+    if let Some(key) = ident.strip_prefix("env.") {
+        return Resolved::Error(ResolveError::RetiredEnvPrefix { key: key.to_string() });
+    }
+    let var_key = ident.strip_prefix("var.").unwrap_or(ident);
+    Resolved::EnvRuntime(var_key.to_string())
 }
 
 fn match_builtin(ident: &str) -> BuiltinMatch {

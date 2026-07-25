@@ -37,7 +37,7 @@ where:
 - **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its `$<file:PATH>` references (§{phl.cook-step}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
 - **command text / Lua chunk** is observable 1 of §17.1;
 - **declared output paths** is observable 3 of §17.1;
-- **consulted environment values** are the post-denylist values of the environment keys the unit reads — `$<KEY>` sigils and the `cook.env.KEY` static reads of §{exec.cache.lua-env-reads};
+- **consulted variable values** are the string forms (§{decl.config}) of the declared variables the unit reads — `$<NAME>` sigils and the `var.NAME` static reads of §{exec.cache.lua-var-reads};
 - **declared probe values** are the canonical values (§{cat.probes.values}) of every probe in the unit's *effective seal set* — the probes the author sealed the unit on (the disposition surface of §8.4.3, an additive set with no project-default and no narrowing form).
 
 The key MUST NOT include any determinant the author did not declare. In particular, host or machine identity — target triple, libc version, locale — is NOT folded into the key unless the author declared it as a probe and sealed on it (`seal host`). The engine infers no machine-identity, tool, or environment determinant of its own; it caches over exactly what the author declared.
@@ -48,24 +48,24 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 
 > **Note (informative).** A local cache index entry is recorded or refreshed only by the unit that actually executed: the reference implementation writes a unit's fingerprint entry on the executed-unit commit path (after the unit's command ran against the recorded input contents), refreshes recorded mtimes on a cache hit only after verifying content-hash equality, and prunes entries during stale-output reconciliation (§{exec.cache.reconcile}). Operations that register, plan, or explain — registration passes, `cook why` (§{exec.cache.why}), and test scoping — never record fingerprints for units they did not execute. Consequently a reported hit always corresponds to a prior genuine execution of the same command over the same input contents.
 
-### 17.1.2. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
+### 17.1.2. Tracking Lua reads of `var` [#exec.cache.lua-var-reads]
 
-> **Normative.** A `cook` step whose `>{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
+> **Normative.** A `cook` step whose `>{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read declared variables through the `var.<NAME>` accessor (§{lua.var}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
 >
 > A conforming implementation MUST recover the consulted key set by static analysis of the Lua source text. It MUST recognise:
 >
-> 1. **Dot access** — `cook.env.IDENT` where `IDENT` matches the conventional environment-key shape `[A-Z_][A-Z0-9_]*`.
-> 2. **String-indexed access** — `cook.env["KEY"]` and `cook.env['KEY']` where the key is a literal string. No case constraint applies because the author has explicitly named the key.
+> 1. **Dot access** — `var.IDENT` for any Lua identifier. No case constraint applies: declared variables are routinely lower-case, and under-recording is the unsafe direction.
+> 2. **String-indexed access** — `var["NAME"]` and `var['NAME']` where the name is a literal string.
 >
 > The analysis MUST ignore occurrences appearing inside Lua short-string literals (`"…"`, `'…'`), long-string literals (`[[…]]`, `[==[…]==]`), line comments (`-- …`), and block comments (`--[[…]]`, `--[==[…]==]`).
 >
-> The analysis MUST NOT record a key for **dynamic-key reads** — `cook.env[var]`, `cook.env[string.upper(x)]`, and the like — because the key is not statically resolvable from the source text. Authors who need cache invalidation on a dynamic-key read MUST surface the key statically (e.g., assign to a local first: `local v = cook.env["KEY"]`).
+> The analysis MUST NOT record a name for **dynamic-key reads** — `var[k]`, `var[string.upper(x)]`, and the like — because the key is not statically resolvable from the source text. Authors who need cache invalidation on a dynamic-key read MUST surface the key statically (e.g., assign to a local first: `local v = var["NAME"]`).
 >
-> The analysis MUST NOT record a key for **writes** — `cook.env.X = …` and `cook.env["X"] = …`. The pattern is distinguished from a read by the assignment operator following the access (an `=` that is not part of `==`, `~=`, `<=`, or `>=`).
+> The analysis MUST NOT record a name for **writes** — `var.X = …` and `var["X"] = …` (which §{lua.var} refuses at runtime in any case). The pattern is distinguished from a read by the assignment operator following the access (an `=` that is not part of `==`, `~=`, `<=`, or `>=`).
 >
 > An implementation MAY record additional keys (over-record) — over-recording only widens the set of cache-invalidating values and never silently serves stale output. An implementation MUST NOT under-record by ignoring a syntactically recognisable read of one of the forms above.
 >
-> The recording mechanism is shared with the shell-side `$<KEY>` sigil capture: the keys flow into the unit's `consulted_env_keys` list and are looked up against `cook.env` at unit-registration time, exactly as shell-body sigils are.
+> The recording mechanism is shared with the shell-side `$<NAME>` sigil capture: the names flow into the unit's `consulted_env_keys` list and are looked up against the declared-variable namespace at unit-registration time, exactly as shell-body sigils are.
 
 > **Note 17.1.2.1 — `envs`-seal vs. auto-fold (informative).** For an environment variable a unit *consumes*, this section's auto-fold already keys the unit on the variable's value. An author SHOULD NOT *additionally* seal an `envs` probe (§{cat.probes.decl}) that names the same consumed variable: the variable would then fold twice — once as a consulted-env value here, and once inside the sealed probe's value (§{exec.cache.single-key}). The two paths are for two different cases, and the author picks one: rely on auto-fold for a *consumed* variable, or declare an `envs` probe and `seal` it for an *unconsumed* one (§{steps.cook-disposition}). Double-folding is not a correctness bug — each fold is over the same value — but it is redundant surface and splits the variable's attribution across two determinants in `cook why` (§{exec.cache.why}).
 
