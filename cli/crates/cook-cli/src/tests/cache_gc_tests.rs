@@ -94,6 +94,8 @@ fn usage_error_names_both_flags_with_examples() {
     let msg = usage_error().to_string();
     assert!(msg.contains("--max-size"), "message was: {msg}");
     assert!(msg.contains("--older-than"), "message was: {msg}");
+    assert!(msg.contains("10GB"), "message was: {msg}");
+    assert!(msg.contains("30d"), "message was: {msg}");
 }
 
 #[test]

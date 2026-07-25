@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cook_engine::cook_cache::backend::{plan_eviction, EvictOutcome, EvictPlan, EvictPolicy, LocalBackend};
-use cook_engine::cook_cache::{parse_size, CloudConfig};
+use cook_engine::cook_cache::{parse_size, CloudConfig, SIZE_LITERAL_HELP};
 
 use crate::cache_du::human_size;
 use crate::cli::{CacheGcArgs, Globals};
@@ -75,7 +75,7 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
     // not an error.
     if !store.exists() {
         let plan = plan_eviction(&[], &policy, now);
-        print_report(&store, &plan, args.dry_run, &EvictOutcome::default());
+        print_report(&store, &plan, args.dry_run, None);
         return Ok(());
     }
 
@@ -91,8 +91,9 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
 
     if args.dry_run || plan.victims.is_empty() {
         // Nothing to apply either because the caller asked for a dry run,
-        // or because the plan chose no victims — either way, no delete.
-        print_report(&store, &plan, args.dry_run, &EvictOutcome::default());
+        // or because the plan chose no victims — either way, no delete, so
+        // there is no real `EvictOutcome` to report.
+        print_report(&store, &plan, args.dry_run, None);
         return Ok(());
     }
 
@@ -102,18 +103,26 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
             store.display()
         ))
     })?;
-    print_report(&store, &plan, false, &outcome);
+    print_report(&store, &plan, false, Some(&outcome));
     Ok(())
 }
 
 /// Print either the dry-run projection or the real-sweep report, per
 /// `dry_run`. Kept as a one-line dispatcher so `cmd_cache_gc` doesn't repeat
-/// the `if` at each of its three call sites.
-fn print_report(store: &Path, plan: &EvictPlan, dry_run: bool, outcome: &EvictOutcome) {
+/// the `if` at each of its call sites.
+///
+/// `outcome` is `None` whenever nothing was actually applied (dry run, empty
+/// plan, or a missing store) — there is no real `EvictOutcome` to fabricate
+/// in those cases, so the "nothing happened" report is rendered directly
+/// rather than handed a placeholder value that a renderer must know to
+/// ignore.
+fn print_report(store: &Path, plan: &EvictPlan, dry_run: bool, outcome: Option<&EvictOutcome>) {
     if dry_run {
         print!("{}", render_dry_run(store, plan));
-    } else {
+    } else if let Some(outcome) = outcome {
         print!("{}", render_applied(store, plan, outcome));
+    } else {
+        print!("{}", render_nothing_to_evict(store));
     }
 }
 
@@ -133,8 +142,8 @@ fn usage_error() -> CookError {
 fn parse_max_size_flag(literal: &str) -> Result<u64, CookError> {
     parse_size(literal).ok_or_else(|| {
         CookError::Other(format!(
-            "invalid --max-size {literal:?}: expected a decimal number with an optional unit \
-             suffix (B, KB, MB, GB, TB, KiB, MiB, GiB, TiB), e.g. \"10GB\" or \"500MB\""
+            "invalid --max-size {literal:?}: expected {SIZE_LITERAL_HELP}, \
+             e.g. \"10GB\" or \"500MB\""
         ))
     })
 }
@@ -149,15 +158,21 @@ fn parse_older_than_flag(literal: &str) -> Result<Duration, CookError> {
     })
 }
 
+/// The shared "no victims" report: an empty plan means the same thing
+/// whether it came from a dry run, a real sweep, or a missing store, so
+/// there is exactly one place that spells out its two lines.
+pub(crate) fn render_nothing_to_evict(store: &Path) -> String {
+    format!("Store: {}\nNothing to evict.\n", store.display())
+}
+
 /// Render the `--dry-run` projection: `Would free: …` sourced from
 /// `plan.freed_bytes` / `plan.victims.len()`, since nothing has actually been
 /// deleted yet — the plan IS the whole story for a dry run.
 pub(crate) fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
-    let mut out = format!("Store: {}\n", store.display());
     if plan.victims.is_empty() {
-        out.push_str("Nothing to evict.\n");
-        return out;
+        return render_nothing_to_evict(store);
     }
+    let mut out = format!("Store: {}\n", store.display());
     out.push_str(&format!(
         "Would free: {} objects, {}\n",
         plan.victims.len(),
@@ -167,7 +182,7 @@ pub(crate) fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
         plan.total_before,
         plan.total_after,
         plan.count_before,
-        plan.count_before - plan.victims.len(),
+        plan.count_before.saturating_sub(plan.victims.len()),
     ));
     out
 }
@@ -181,11 +196,10 @@ pub(crate) fn render_dry_run(store: &Path, plan: &EvictPlan) -> String {
 /// are the enumeration snapshot taken before any deletion and are safe to
 /// reuse here: they don't depend on which victims the policy chose.
 pub(crate) fn render_applied(store: &Path, plan: &EvictPlan, outcome: &EvictOutcome) -> String {
-    let mut out = format!("Store: {}\n", store.display());
     if plan.victims.is_empty() {
-        out.push_str("Nothing to evict.\n");
-        return out;
+        return render_nothing_to_evict(store);
     }
+    let mut out = format!("Store: {}\n", store.display());
     out.push_str(&format!(
         "Freed: {} objects, {}\n",
         outcome.objects,
