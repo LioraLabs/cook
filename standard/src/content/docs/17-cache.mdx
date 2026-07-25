@@ -141,7 +141,22 @@ On a **shared miss**, where the unit is absent from the local index and the cons
 
 Full determinant reporting is per-unit data and therefore belongs to the unit granularity of §{exec.cache.why.aggregation}. An implementation MUST make it reachable: at the unit level, and through a selector that names one unit or a subset of units directly without requiring the whole closure to be rendered at unit granularity.
 
-#### 17.1.6.2. Graph structure and aggregation [#exec.cache.why.aggregation]
+#### 17.1.6.2. Resolving a determinant the run has not produced yet [#exec.cache.why.resolution]
+
+A declared input may be the declared output of another unit in the same closure. Its content at the moment the query runs is therefore not necessarily its content when the consuming unit executes, and the query MUST resolve such an input from the unit that produces it rather than from the working tree. The working tree is authoritative only for an input no unit in the closure produces.
+
+For an input produced within the closure, resolution follows the producer's own classification:
+
+- Producer served from cache. The output bytes are already determined, because a cache hit reproduces a recorded artifact, so the input's content hash is knowable whether or not the artifact has been restored to the working tree. The consuming unit's key is computed over that hash.
+- Producer will rebuild. The output bytes do not exist in their final form and cannot be obtained without executing the producer. The consuming unit's key is **not computable**, and the query MUST NOT report one. It MUST instead report the unit as rebuilding on account of that producer, naming the producer and the input, and MUST report the input as undetermined rather than carrying either the working tree's current bytes or a zero.
+
+This resolution is not a prediction of a future state. The producer's classification is an observation of the cache as it stands, and "these bytes are already determined" is a present fact about a recorded artifact. What the query MUST NOT do is invent a key: a unit whose determinants are not fully resolved has no key, and reporting one over stale or absent bytes would name a value the run will never compute.
+
+Because a unit downstream of a rebuild is reported as rebuilding, the tallies of §{exec.cache.why.aggregation} count it as such. A conforming implementation MUST keep the two distinguishable in any machine-readable form (§{exec.cache.why.formats}): a unit rebuilding because its own determinants changed and a unit rebuilding because it waits on one that is are different findings, and only the first has a key behind it.
+
+> **Note (informative).** Resolving from the working tree alone is wrong in both directions, which is why this section is normative rather than a quality-of-implementation matter. On a cold tree with a warm cache the consumed file is absent although its bytes are fixed, so the consumer reports a rebuild that will not happen; after an edit the file is present but stale, so the consumer reports a hit against bytes that are about to be overwritten. The reference implementation classified units independently until CS-0173 and exhibited both errors on the same four-unit workspace. (CS-0173.)
+
+#### 17.1.6.3. Graph structure and aggregation [#exec.cache.why.aggregation]
 
 The closure is a graph whose vertices are work units and whose edges carry a **kind** recording why the edge exists. A conforming implementation SHOULD distinguish at least: a declared file input feeding a unit; an input reached through a `discovered_inputs` depfile (§{exec.cache.discovered-inputs}); a consumed probe value (§{cat.probes.decl}); entry into a step group; a §{exec.step-groups} sequential barrier; a per-unit cross-recipe ordering edge (`cook.dep_order` / `cook.dep_output`, §{lua.cook-dep-order}); and a whole-recipe barrier (a dep-list entry or `cook.require_recipe`, §{lua.cook-require-recipe}). These kinds are ordered by how much each constrains scheduling, from the data edges that merely carry values through to the whole-recipe barrier, which is the most constraining.
 
@@ -153,18 +168,18 @@ An implementation MUST NOT emit an unaggregated unit-level rendering above an im
 
 > **Note (informative).** The reference implementation offers `--level recipe|group|unit`, defaulting to `recipe`, with a 200-node ceiling on `--level unit` raisable through `--max-nodes`. On DuckDB the recipe level renders 3 nodes for 1711 units. The `group` level collapses each step group to one node with its member count, which is where a recipe's actual parallelism becomes visible. (CS-0171.)
 
-#### 17.1.6.3. Cascade attribution [#exec.cache.why.cascade]
+#### 17.1.6.4. Cascade attribution [#exec.cache.why.cascade]
 
 A unit that will rebuild invalidates every unit downstream of it that consumes its declared outputs, transitively. Reporting each such unit as an independent miss is accurate but not an explanation: it restates the consequence at every vertex and names the cause at none.
 
 Where the graph shows that a unit's miss is reachable from an upstream unit that will itself rebuild, the query SHOULD attribute the downstream unit's miss to that upstream unit by name, in preference to reporting only the downstream unit's own differing determinants. For a unit that will rebuild, the query SHOULD report how many further units its rebuild invalidates, so that the cost of a single changed input is visible at the point where the change enters the graph.
 
-The invalidation count is over every unit downstream of the rebuilding one, not only those the query already classifies as missing. A downstream unit is typically still a cache hit at query time, because the inputs that will invalidate it are outputs the upstream has not rebuilt yet; counting only the units that already miss would report nothing in exactly the case the number exists to illuminate. Because a rebuild that reproduces byte-identical output leaves its consumers' keys intact, the count is an upper bound, and a conforming implementation MUST NOT present it as a count of units that will certainly re-execute.
+The invalidation count is over every unit downstream of the rebuilding one. Because a rebuild that reproduces byte-identical output leaves its consumers' keys intact, the count is an upper bound, and a conforming implementation MUST NOT present it as a count of units that will certainly re-execute.
 
-Attribution and invalidation counting are diagnostics over the graph and the current context. They MUST NOT alter any reported key, tier classification, or determinant value: those describe what the cache holds now, and a query that revised them to describe a predicted future state would no longer be an observation of the current context.
+Attribution and invalidation counting are diagnostics over the graph. They MUST NOT alter any determinant value the query resolved under §{exec.cache.why.resolution}, and they MUST NOT be used to promote a unit's tier classification: a unit reported as served from cache must have been answered by an actual cache lookup, never inferred from its neighbours.
 
 
-#### 17.1.6.4. Observed timing [#exec.cache.why.timing]
+#### 17.1.6.5. Observed timing [#exec.cache.why.timing]
 
 An implementation MAY report, per unit or per aggregated node, the wall time that unit was last **observed** to take, recovered from the implementation's own retained build records rather than measured by the query.
 
@@ -172,7 +187,7 @@ Such reporting is subject to three constraints. First, it MUST be presented as a
 
 > **Note (informative).** The reference implementation reads `elapsed_ms` from the `node-completed` records of the retained `.cook/logs/<build-id>/events.jsonl` streams, joined on the unit's cache key. A failed unit is not a timing source: its elapsed time measures how long it took to fail, which answers a different question. A node's figure is the sum over the units collapsed into it, rendered as "N observed" alongside how many of those units the sum actually covers, and — when any contributing observation is older than the most recent retained build — the age of the oldest one, so a total resting on a stale measurement is not read as a fresh one. Cache-hit records carry no elapsed time, retention defaults to twenty builds, and the records are local to the machine, so a fleet-warm unit that never ran here has no observation at all. This is why the surface reports an observation rather than a projected build time: the data supports the former and not the latter. (CS-0171.)
 
-#### 17.1.6.5. Output formats [#exec.cache.why.formats]
+#### 17.1.6.6. Output formats [#exec.cache.why.formats]
 
 The query MUST offer at least one human-readable rendering and at least one machine-readable rendering. The machine-readable rendering MUST be deterministic: object keys sorted, and `u64` digests as zero-padded lowercase hex strings, matching the manifest's serialisation convention (§{exec.cache.determinant-manifest}). It MUST carry a wire-format schema version, and a structurally incompatible change to the payload MUST bump that version.
 

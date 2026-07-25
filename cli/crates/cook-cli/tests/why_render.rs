@@ -344,3 +344,111 @@ fn a_never_run_workspace_reports_no_timing_rather_than_zero() {
     // any duration ending in zero would satisfy ("400ms observed").
     assert!(!s.contains("observed"), "absence is not zero: {s}");
 }
+
+/// Drop the local index and the built outputs, keeping the shared store and its
+/// config. This is a fresh checkout on a machine whose cache is warm: the exact
+/// shape someone evaluating Cook is in when they first ask what a build will do.
+fn go_cold_keeping_shared_cache(root: &Path) {
+    std::fs::remove_dir_all(root.join(".cook/cache")).unwrap();
+    for f in ["mid.txt", "out.txt"] {
+        let _ = std::fs::remove_file(root.join(f));
+    }
+}
+
+/// CS-0173: the headline tally must match what the build then does.
+///
+/// Before CS-0173 `build` reported a miss here, because `mid.txt` had not been
+/// restored yet and classification hashed the working tree. Its producer is a
+/// cache hit, so those bytes were already determined; only evaluation order
+/// hid them.
+#[test]
+fn cold_tree_with_a_warm_shared_cache_predicts_the_hits_it_will_get() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    go_cold_keeping_shared_cache(tmp.path());
+
+    let out = cook(tmp.path(), &["why", "build", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    for id in ["recipe:gen", "recipe:build"] {
+        let node = v["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == id)
+            .unwrap_or_else(|| panic!("{id} node in {v}"));
+        assert_eq!(node["hits"], 1, "{id} should be predicted a hit: {v}");
+        assert_eq!(node["rebuilds"], 0, "{id} should not rebuild: {v}");
+    }
+}
+
+/// The other half of the same defect. A unit whose input is about to be
+/// rewritten was reported as a hit, because the stale bytes on disk still
+/// matched its recorded key.
+#[test]
+fn a_unit_downstream_of_a_rebuild_is_not_reported_as_a_hit() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    // Change the root source. `gen` must rerun, so `mid.txt` (still on disk,
+    // still matching `build`'s recorded key) is about to change underneath it.
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let build = v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "recipe:build")
+        .expect("build node");
+    assert_eq!(build["hits"], 0, "downstream of a rebuild is not a hit: {v}");
+    assert_eq!(build["rebuilds"], 1, "{v}");
+}
+
+/// A forced unit has no key. The wire format must say so with null rather than
+/// an empty or fabricated string, and must name the cause.
+#[test]
+fn a_forced_unit_reports_no_key_and_names_its_cause() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "build", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = v["units"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["status"] == "forced_by_upstream")
+        .unwrap_or_else(|| panic!("a forced unit in {v}"));
+    assert!(unit["key"].is_null(), "no key for a forced unit: {v}");
+    assert_eq!(unit["forced_by"], "gen", "{v}");
+    assert_eq!(unit["pending_input_path"], "mid.txt", "{v}");
+    // The pending input is reported as pending, NOT as an input with a hash.
+    assert!(
+        unit["determinants"]["inputs"].get("mid.txt").is_none(),
+        "a pending input must not carry a hash: {v}"
+    );
+    assert_eq!(unit["determinants"]["pending_inputs"]["mid.txt"], "gen", "{v}");
+}
+
+/// The plain renderer names the upstream instead of restating the consequence.
+#[test]
+fn plain_output_attributes_a_forced_rebuild_to_its_upstream() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+    write(tmp.path(), "src.txt", "two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "build"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("REBUILD (forced by gen)"), "{s}");
+    assert!(s.contains("key not computable"), "{s}");
+    assert!(s.contains("mid.txt  pending gen"), "{s}");
+}

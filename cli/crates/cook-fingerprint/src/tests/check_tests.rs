@@ -958,3 +958,32 @@ fn symlink_hardening_allows_reentrant_within_anchor() {
     assert!(restore_symlink_checked(anchor, &link, "../sub2/x"));
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
+
+/// CS-0173: `cook why` predicts a downstream unit's key by hashing a shared
+/// artifact's stream with `hash_reader` and feeding the result where a
+/// `hash_file` of the restored file would go. The prediction is sound only
+/// while the two agree, and nothing else in the build would notice if they
+/// stopped: a drift would silently mispredict every downstream key rather than
+/// fail. This is that guard.
+#[test]
+fn hash_reader_agrees_with_hash_file_on_the_same_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    for body in [
+        b"".to_vec(),
+        b"short".to_vec(),
+        b"\x00\xff\x00binary\n".to_vec(),
+        // Larger than the reader's 64 KiB buffer, so it exercises the
+        // multi-chunk update path rather than a single read.
+        vec![b'x'; 200 * 1024],
+    ] {
+        let p = dir.path().join("f");
+        std::fs::write(&p, &body).unwrap();
+        let from_file = super::hash_file(&p).unwrap();
+        let from_reader = super::hash_reader(&mut std::io::Cursor::new(&body)).unwrap();
+        assert_eq!(
+            from_file, from_reader,
+            "hash_file and hash_reader disagree on {} bytes",
+            body.len()
+        );
+    }
+}
