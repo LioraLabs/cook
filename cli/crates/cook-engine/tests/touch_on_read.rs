@@ -230,8 +230,10 @@ fn touch_on_read_fires_e2e_and_is_inert() {
 
     // ---- 6. The touch is inert for build reproduction --------------------
     // `cache verify` re-runs cached shell steps in a sandboxed tempdir copy
-    // and byte-compares against the local `.cook/cache` index; it never reads
-    // the CAS, so this proves reproduction is undisturbed, not CAS integrity.
+    // and byte-compares against the local `.cook/cache` index. The
+    // verification stage itself never reads the CAS (the subcommand's leading
+    // populate build can, since `no_publish` suppresses uploads only), so this
+    // proves reproduction is undisturbed, not CAS integrity.
     // CAS integrity is already implied: the warm restore above succeeded, and
     // every restore drains a `VerifyingReader` that fails at EOF on any
     // bytes-vs-sidecar mismatch. Exit status only — no stdout grepping.
