@@ -236,3 +236,44 @@ fn migration_and_root_lockfile_repro_tracks_every_file_without_warning() {
         assert!(text.contains(expected), "missing {expected} in {text}");
     }
 }
+
+/// COOK-320: two units declaring the same LITERAL output are an ambiguous
+/// graph and must be refused at register phase. Before this, the build ran,
+/// reported success, and never settled: each run rebuilt whichever unit lost
+/// the previous run's race, forever, with no diagnostic.
+#[test]
+fn duplicate_literal_output_is_rejected() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "Cookfile",
+        "recipe dup\n    cook \"same.txt\" {\n        echo one > same.txt\n    }\n    cook \"same.txt\" {\n        echo two > same.txt\n    }\n",
+    );
+
+    let output = cook(tmp.path(), &["dup"]);
+    assert!(!output.status.success(), "expected a register-phase refusal");
+    let err = stderr(&output);
+    assert!(err.contains("same output 'same.txt'"), "stderr:\n{err}");
+    // Both producing sites must be named — finding one of them is the whole
+    // job when the collision is between two of three thousand compile units.
+    assert!(err.contains("echo one > same.txt"), "stderr:\n{err}");
+    assert!(err.contains("echo two > same.txt"), "stderr:\n{err}");
+}
+
+/// The same collision across two recipes is the same defect, so the check is
+/// run-scoped rather than recipe-scoped.
+#[test]
+fn duplicate_literal_output_across_recipes_is_rejected() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "Cookfile",
+        "recipe a\n    cook \"shared.txt\" {\n        echo a > shared.txt\n    }\n\nrecipe b: a\n    cook \"shared.txt\" {\n        echo b > shared.txt\n    }\n",
+    );
+
+    let output = cook(tmp.path(), &["b"]);
+    assert!(!output.status.success(), "expected a register-phase refusal");
+    let err = stderr(&output);
+    assert!(err.contains("same output 'shared.txt'"), "stderr:\n{err}");
+    assert!(err.contains("[a]") && err.contains("[b]"), "stderr:\n{err}");
+}

@@ -63,6 +63,27 @@ pub enum PipelineError {
         sites: Vec<cook_register::RegistrationSite>,
     },
 
+    /// Two work units in the run declared the same `output` path. Carries
+    /// both producing sites so the CLI can name each one. Detected in
+    /// [`super::registers`] once the whole workspace has registered, so it
+    /// covers cross-recipe collisions as well as intra-recipe ones.
+    #[error(
+        "two work units declare the same output '{output}'\n  \
+         first:  [{first_recipe}] {first_unit}\n  \
+         second: [{second_recipe}] {second_unit}\n\n\
+         Only one unit may produce a given path. Two units writing one output \
+         cannot both be satisfied: they race, and every later run rebuilds \
+         whichever lost, so the build never settles. Give each unit a distinct \
+         output."
+    )]
+    DuplicateOutput {
+        output: String,
+        first_recipe: String,
+        first_unit: String,
+        second_recipe: String,
+        second_unit: String,
+    },
+
     /// Catch-all for orchestration-layer errors that don't fit a more
     /// specific variant. Mostly used for diagnostic messages where the
     /// CLI just needs to print the string.

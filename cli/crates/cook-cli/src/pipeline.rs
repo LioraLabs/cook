@@ -58,6 +58,13 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
             msg.push_str("rename one of them.");
             CookError::RecipeCollision(msg)
         }
+        // An ambiguous graph, not a runtime failure: two units cannot both
+        // produce one path. Classified with RecipeCollision — both are "the
+        // Cookfile declares two things sharing one identity", and both are
+        // fixed by editing the Cookfile, not by re-running.
+        PipelineError::DuplicateOutput { .. } => {
+            CookError::RecipeCollision(format!("error: {e}"))
+        }
         PipelineError::UnknownConfig { .. }
         | PipelineError::Workspace(_)
         | PipelineError::InvalidSet(_)

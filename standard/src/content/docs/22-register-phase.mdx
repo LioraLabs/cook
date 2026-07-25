@@ -52,6 +52,12 @@ sidebar:
 
 **Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§{exec.capture}).
 
+**Output uniqueness (CS-0169).** Across a single run, at most one work unit may declare any given **literal** output path. A conforming implementation MUST reject a registration pass in which two units declare the same literal output, with a register-phase diagnostic naming the path and identifying both producing units. The check is run-scoped, not recipe-scoped: two units in *different* recipes declaring one path is the same defect and MUST be rejected on the same terms.
+
+A graph containing such a pair has no correct execution. The two units race to write one path; whichever loses is then seen as drifted on the following run and rebuilt, handing the loss straight back — so the build reports success and never settles, indefinitely, while the surviving artifact is whichever unit most recently won. Because each unit is individually well-formed, no other rule in the model diagnoses this; it is detectable only as the ambiguity it is, at registration.
+
+This clause governs literal paths only. An output **glob** (§{lua.add-unit-output-globs}) and a build-owned **directory** output (§{exec.cache.reconcile}) declare a claim over a *set* rather than over a path, and the meaning of overlapping claims there is determined by output reconciliation. Whether two units may make overlapping set-claims is deliberately left open by this clause.
+
 ### Example 22.1.1
 
 ```lua
