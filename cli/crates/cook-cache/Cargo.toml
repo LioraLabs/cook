@@ -14,6 +14,10 @@ serde_json = "1"
 toml = "0.9"
 thiserror = "1"
 tracing = "0.1"
+# COOK-232 — `CloudConfig::resolved_cache_dir` shares the cache-dir fallback
+# chain with `cook-engine::run::build_cache_ctx`; same version already used
+# by cook-cli and cook-engine.
+dirs = "5"
 # COOK-313 / CS-0166 — xxh3_64 seals the binary recipe index payload.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # CS-0058 — sync HTTP client for CloudBackend. `tls` feature pulls rustls

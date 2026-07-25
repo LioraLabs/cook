@@ -271,6 +271,26 @@ impl CloudConfig {
         self.cache.cache_dir.as_deref()
     }
 
+    /// Resolve the local artifact-store directory with the same precedence
+    /// `cook-engine::run::build_cache_ctx` uses to construct `LocalBackend`:
+    /// `[cache] cache_dir` verbatim (as `PathBuf::from`, no join / canonicalize)
+    /// if set, else `dirs::cache_dir()/cook/cloud`, else
+    /// `std::env::temp_dir()/cook/cloud`.
+    ///
+    /// COOK-232: pulled out of `build_cache_ctx` so `cook cache du` reads the
+    /// exact same directory the engine writes to — one implementation, no
+    /// drift between the two callers.
+    pub fn resolved_cache_dir(&self) -> std::path::PathBuf {
+        self.cache_dir()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::cache_dir()
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("cook")
+                    .join("cloud")
+            })
+    }
+
     /// COOK-232. `[cache] max_size` resolved to a byte budget. `None` when
     /// unset — "no budget, no warning" (today's behaviour). `Err` names the
     /// offending literal when set but unparseable; this never silently

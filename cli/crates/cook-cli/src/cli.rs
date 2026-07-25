@@ -199,6 +199,7 @@ impl Cmd {
             Cmd::Cache(c) => match &c.cmd {
                 CacheCmd::Verify(v) => v.recipe.as_deref(),
                 CacheCmd::Dump(d) => d.recipe.as_deref(),
+                CacheCmd::Du => None,
             },
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
@@ -312,6 +313,14 @@ pub enum CacheCmd {
     /// each input/output record inlined on one line. Read-only. For the
     /// question "why did this rebuild", prefer `cook why`.
     Dump(CacheDumpArgs),
+    /// Report local artifact-store disk usage (COOK-232).
+    ///
+    /// Walks the on-disk CAS and prints a byte/object total, a breakdown by
+    /// artifact kind and by recipe namespace, the oldest/newest artifact,
+    /// and (when `[cache] max_size` is configured) budget usage. When
+    /// `[cloud] enabled = true` the cloud cache is server-managed and this
+    /// prints a note instead of walking anything local.
+    Du,
 }
 
 #[derive(clap::Args, Debug, Clone)]
