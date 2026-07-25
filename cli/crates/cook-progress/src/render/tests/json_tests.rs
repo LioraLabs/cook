@@ -135,6 +135,7 @@ fn node_field_falls_back_to_synthesized_id_when_unknown() {
         recipe: RecipeId::new(0), node: NodeId::new(7),
         elapsed: Duration::from_millis(1),
         kind: NodeKind::Cooked,
+        cache_key: None,
     });
     assert!(s.contains("\"node\":\"node#7\""),
         "expected synthesized fallback; got: {s}");
@@ -176,6 +177,7 @@ fn node_completed_emits_kind_in_wire_format() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: std::time::Duration::from_millis(100),
         kind: NodeKind::Link,
+        cache_key: None,
     });
     assert!(s.contains("\"kind\":\"link\""), "got: {s}");
 }

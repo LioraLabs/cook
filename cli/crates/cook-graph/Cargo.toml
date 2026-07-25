@@ -1,8 +1,8 @@
 [package]
-name = "cook-dag-viewer"
+name = "cook-graph"
 version.workspace = true
 edition = "2021"
-description = "Build-graph model and renderers for `cook dag`"
+description = "Build-graph model, aggregation, and renderers for `cook why`"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }

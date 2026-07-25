@@ -62,7 +62,7 @@ pub struct RegisterSessionBuilder {
     /// When set, the body invocation for this recipe will receive `argv` as
     /// bound chore-parameter values (COOK-36 Task 4).
     ///
-    /// `None` for non-dispatch paths (e.g. `cook list`, `cook dag`).
+    /// `None` for non-dispatch paths (e.g. `cook list`).
     pub(crate) target_recipe: Option<String>,
     /// Positional argv to bind as chore parameters for `target_recipe`.
     /// Empty for normal recipes (which don't accept parameters).
@@ -1176,7 +1176,7 @@ impl BodyDriver {
                 // the target and the no-target branch. Without the `forced`
                 // disjunct, `cook.require_recipe` on a parametric chore would
                 // silently register zero units — and the no-target branch is
-                // the one `cook list`, `cook dag`, and most tests take.
+                // the one `cook list` and most tests take.
                 let (bound, prelude) = build_chore_params_table(
                     lua,
                     &params_meta,

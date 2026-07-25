@@ -121,12 +121,17 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "kind": kind_str(kind),
             "cause": cause,
         }),
-        ProgressEvent::NodeCompleted { recipe, node, elapsed, kind } => json!({
+        ProgressEvent::NodeCompleted { recipe, node, elapsed, kind, cache_key } => json!({
             "type": "node-completed",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "elapsed_ms": duration_ms(*elapsed),
             "kind": kind_str(kind),
+            // CS-0171: the join key `cook why` reads retained timings back by.
+            // `node` above is a display name and collides across units, so it
+            // cannot serve. Null for a non-cacheable node, which has no timing
+            // worth recovering anyway.
+            "cache_key": cache_key,
         }),
         ProgressEvent::NodeFailed { recipe, node, elapsed, error } => json!({
             "type": "node-failed",

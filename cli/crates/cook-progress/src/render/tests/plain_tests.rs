@@ -150,6 +150,7 @@ fn cache_hit_line_uses_full_output_path_not_raw_command() {
         recipe: RecipeId::new(0), node: NodeId::new(1),
         elapsed: Duration::from_millis(50),
         kind: crate::event::NodeKind::Cooked,
+        cache_key: None,
     };
     let mut buf = Vec::new();
     {
@@ -246,6 +247,7 @@ fn internal_recipe_node_row_uses_module_tag_and_no_done_row() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(10),
         kind: crate::event::NodeKind::Generate,
+        cache_key: None,
     };
     let done = ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
@@ -288,6 +290,7 @@ fn probes_collapse_to_one_row() {
                 recipe: RecipeId::new(0), node: NodeId::new(i as u32),
                 elapsed: Duration::from_millis(10),
                 kind: crate::event::NodeKind::Resolve,
+                cache_key: None,
             };
             state.apply(&completed);
             r.handle(&state, &completed).unwrap();
@@ -303,6 +306,7 @@ fn probes_collapse_to_one_row() {
             recipe: RecipeId::new(0), node: NodeId::new(2),
             elapsed: Duration::from_millis(100),
             kind: crate::event::NodeKind::Compile,
+            cache_key: None,
         };
         state.apply(&completed);
         r.handle(&state, &completed).unwrap();

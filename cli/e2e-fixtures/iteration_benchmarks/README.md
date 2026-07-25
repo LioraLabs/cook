@@ -100,7 +100,7 @@ Breakdown for `-j 8`:
 The `dag` subcommand opens an interactive DAG viewer in your browser:
 
 ```sh
-cook dag benchmarks
+cook why benchmarks
 # cook: DAG viewer at http://127.0.0.1:<port>
 # press Ctrl+C to stop
 ```

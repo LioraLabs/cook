@@ -195,7 +195,7 @@ fn cook_why_explains_shared_miss_via_producer_determinant_diff() {
     let _ = fs::remove_dir_all(dir.path().join(".cook/cache"));
 
     // ── Run `cook why build` and assert the named-diff output.
-    let why = run_cook(dir.path(), &["why", "build"]);
+    let why = run_cook(dir.path(), &["why", "build", "--level", "unit"]);
     assert!(
         why.status.success(),
         "why failed: stdout={}\nstderr={}",
@@ -228,7 +228,7 @@ fn cook_why_explains_shared_miss_via_producer_determinant_diff() {
     );
 
     // ── --json must carry the same attributed diff (structured form).
-    let why_json = run_cook(dir.path(), &["why", "build", "--json"]);
+    let why_json = run_cook(dir.path(), &["why", "build", "--format", "json"]);
     assert!(why_json.status.success());
     let js = String::from_utf8_lossy(&why_json.stdout);
     assert!(
@@ -320,7 +320,7 @@ fn cook_why_attributes_imported_unit_to_its_qualified_recipe_name() {
         "imported recipe should have produced api/build/api-build.stamp"
     );
 
-    let why = run_cook(dir.path(), &["why", "build"]);
+    let why = run_cook(dir.path(), &["why", "build", "--level", "unit"]);
     assert!(
         why.status.success(),
         "why failed: stdout={}\nstderr={}",

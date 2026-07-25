@@ -3103,7 +3103,7 @@ fn require_recipe_forces_parametric_chore_when_target_requested() {
 /// Skip arm 2 — parametric chore, NO target requested. Gated only on
 /// `target_recipe.is_none() && Chore && params`, never on reachability, so a
 /// fix that only touches arm 1 leaves this hole open. This is the arm
-/// `cook list`, `cook dag`, and the default test harness all take.
+/// `cook list` and the default test harness both take.
 #[test]
 fn require_recipe_forces_parametric_chore_with_no_target() {
     let dir = TempDir::new().unwrap();
@@ -3142,7 +3142,7 @@ fn require_recipe_forces_parametric_chore_seeded_before_its_requirer() {
 }
 
 /// Skip arm 2, SEEDED FIRST — the no-target twin of the test above, the arm
-/// `cook list` and `cook dag` take.
+/// `cook list` takes.
 #[test]
 fn require_recipe_forces_parametric_chore_seeded_before_its_requirer_no_target() {
     let dir = TempDir::new().unwrap();
@@ -3626,7 +3626,7 @@ cook.__register_surface_chore("achore",
     );
 }
 
-/// The same hole on the no-target path — the one `cook list`, `cook dag`, and
+/// The same hole on the no-target path — the one `cook list` and
 /// most tests take. Skip arm 2 is gated on `target_recipe.is_none()`, never on
 /// reachability, so a fix verified only against arm 1 leaves this open.
 ///

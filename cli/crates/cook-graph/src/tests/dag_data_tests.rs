@@ -471,11 +471,17 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
 }
 
 /// The on-disk cache index is written under the unit's Cookfile-local
-/// `CacheMeta.recipe_name` ("build"), not the (import-qualified)
-/// workspace key the recipe is registered under ("rust.build"). If the
-/// viewer loads the index under the qualified key it finds nothing and
-/// every node renders as never-cached, even when a fresh, matching cache
-/// entry exists. This pins that the index lookup follows cache_meta.
+/// `CacheMeta.recipe_name` ("build"), not the (import-qualified) workspace key
+/// the recipe is registered under ("rust.build"). Loading the index under the
+/// qualified key finds nothing, and every file node then renders as modified
+/// even when a fresh, matching cache entry exists. This pins that the index
+/// lookup follows cache_meta.
+///
+/// CS-0171 note: this used to assert through the per-unit `cached` verdict,
+/// which is gone — the cache verdict now comes from `cook_engine::why`, which
+/// has no second index-name derivation to get wrong. The file-staleness flag
+/// is the remaining consumer of the recipe cache in this crate, so it is what
+/// pins the lookup now.
 #[test]
 fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
     let tmp = TempDir::new().unwrap();
@@ -558,15 +564,25 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
 
     let g = build_dag_data("rust.build", &all_units, &explicit, &cms);
 
-    let node = g
+    let file = g
+        .nodes
+        .iter()
+        .find(|n| n.id == "file:source.cpp")
+        .expect("declared input file node missing");
+    assert_eq!(
+        file.modified,
+        Some(false),
+        "cache index must be looked up under cache_meta.recipe_name (\"build\"), \
+         not the qualified workspace key (\"rust.build\"); a missed lookup has \
+         no recorded mtime/hash to compare against and reports the input as \
+         modified",
+    );
+
+    // And the unit node carries the join key the verdict will arrive on.
+    let unit = g
         .nodes
         .iter()
         .find(|n| n.id == "unit:rust.build:0")
         .expect("unit node missing");
-    assert_eq!(
-        node.cached,
-        Some(true),
-        "cache index must be looked up under cache_meta.recipe_name (\"build\"), \
-         not the qualified workspace key (\"rust.build\")",
-    );
+    assert_eq!(unit.cache_key.as_deref(), Some("k1"));
 }

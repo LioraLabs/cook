@@ -395,8 +395,8 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "clap_complete",
- "cook-dag-viewer",
  "cook-engine",
+ "cook-graph",
  "cook-lang",
  "cook-logs",
  "cook-progress",
@@ -427,21 +427,6 @@ dependencies = [
 [[package]]
 name = "cook-dag"
 version = "0.9.1"
-
-[[package]]
-name = "cook-dag-viewer"
-version = "0.9.1"
-dependencies = [
- "cook-cache",
- "cook-contracts",
- "cook-engine",
- "cook-fingerprint",
- "insta",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
-]
 
 [[package]]
 name = "cook-engine"
@@ -482,6 +467,21 @@ dependencies = [
  "tracing",
  "which",
  "xxhash-rust",
+]
+
+[[package]]
+name = "cook-graph"
+version = "0.9.1"
+dependencies = [
+ "cook-cache",
+ "cook-contracts",
+ "cook-engine",
+ "cook-fingerprint",
+ "insta",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

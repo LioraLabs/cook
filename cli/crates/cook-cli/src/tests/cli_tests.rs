@@ -49,7 +49,6 @@ fn built_in_name_matches_every_subcommand_spelling() {
         (vec!["list"], "list"),
         (vec!["modules", "list"], "modules"),
         (vec!["test"], "test"),
-        (vec!["dag"], "dag"),
         (vec!["logs"], "logs"),
         (vec!["cache", "verify"], "cache"),
         (vec!["serve"], "serve"),
@@ -119,43 +118,59 @@ fn test_subcommand_with_scope() {
 }
 
 #[test]
-fn dag_subcommand_with_level_and_format() {
-    let cli = parse(&["dag", "host", "--level", "group", "--format", "mermaid"]);
+fn why_subcommand_with_level_and_format() {
+    let cli = parse(&["why", "host", "--level", "group", "--format", "mermaid"]);
     match cli.cmd {
-        Some(Cmd::Dag(args)) => {
+        Some(Cmd::Why(args)) => {
             assert_eq!(args.recipe.as_deref(), Some("host"));
             assert_eq!(args.level, "group");
             assert_eq!(args.format, "mermaid");
         }
-        other => panic!("expected Cmd::Dag, got {other:?}"),
+        other => panic!("expected Cmd::Why, got {other:?}"),
     }
 }
 
 #[test]
-fn dag_defaults_to_recipe_level_and_text() {
-    let cli = parse(&["dag"]);
-    match cli.cmd {
-        Some(Cmd::Dag(args)) => {
+fn why_defaults_to_recipe_level_and_text() {
+    match parse(&["why"]).cmd {
+        Some(Cmd::Why(args)) => {
+            assert!(args.recipe.is_none());
             assert_eq!(args.level, "recipe");
             assert_eq!(args.format, "text");
+            assert_eq!(args.max_nodes, 200);
+            assert!(args.unit.is_none());
         }
-        other => panic!("expected Cmd::Dag, got {other:?}"),
+        other => panic!("expected Cmd::Why, got {other:?}"),
     }
 }
 
+/// CS-0171: `--json` folded into `--format json`. One spelling for one thing.
 #[test]
-fn why_subcommand_defaults() {
-    match parse(&["why"]).cmd {
-        Some(Cmd::Why(a)) => { assert!(a.recipe.is_none()); assert!(!a.json); }
+fn why_json_is_spelled_as_a_format() {
+    match parse(&["why", "build", "--format", "json"]).cmd {
+        Some(Cmd::Why(a)) => {
+            assert_eq!(a.recipe.as_deref(), Some("build"));
+            assert_eq!(a.format, "json");
+        }
         other => panic!("expected Cmd::Why, got {other:?}"),
     }
 }
 
 #[test]
-fn why_subcommand_recipe_and_json() {
-    match parse(&["why", "build", "--json"]).cmd {
-        Some(Cmd::Why(a)) => { assert_eq!(a.recipe.as_deref(), Some("build")); assert!(a.json); }
+fn why_unit_selector_parses() {
+    match parse(&["why", "build", "--unit", "main.o"]).cmd {
+        Some(Cmd::Why(a)) => assert_eq!(a.unit.as_deref(), Some("main.o")),
         other => panic!("expected Cmd::Why, got {other:?}"),
+    }
+}
+
+/// `cook dag` is gone outright — no alias, no shim. It never shipped in a
+/// tagged release, so the bare name is free for a recipe again.
+#[test]
+fn dag_is_no_longer_a_reserved_subcommand() {
+    match parse(&["dag"]).cmd {
+        Some(Cmd::Recipe(parts)) => assert_eq!(parts, vec!["dag".to_string()]),
+        other => panic!("expected `dag` to dispatch as a recipe, got {other:?}"),
     }
 }
 
@@ -295,7 +310,6 @@ fn reserved_target_covers_every_target_typed_arm() {
     // surfaces its user-supplied target through it.
     for argv in [
         &["test", "//x"][..],
-        &["dag", "//x"],
         &["cache", "verify", "//x"],
         &["serve", "//x"],
         &["affected", "--since=main", "--recipe=//x"],

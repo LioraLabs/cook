@@ -690,7 +690,7 @@ fn collect_output_glob_warnings_for_recipe(
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
 ///
-/// `pub` because `cook-dag-viewer` performs the same lookup when it loads
+/// `pub` because `cook-graph` performs the same lookup when it loads
 /// per-recipe cache indexes for import members (workspace key "rust.build",
 /// Cookfile-local index name "build").
 pub fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {

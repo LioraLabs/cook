@@ -152,6 +152,14 @@ pub enum ProgressEvent {
         elapsed: Duration,
         #[serde(default)]
         kind: NodeKind,
+        /// CS-0171: the unit's recipe-local cache key — the stable identity
+        /// `cook why` joins retained timings against. `node` is a per-run id
+        /// and `name` collides across distinct units, so neither survives as a
+        /// cross-run join key. It rides on this event because this is the one
+        /// carrying `elapsed`. Additive field — schema v1 readers ignore it
+        /// (`#[serde(default)]`), so PROGRESS_SCHEMA_VERSION does not bump.
+        #[serde(default)]
+        cache_key: Option<String>,
     },
     NodeFailed {
         recipe: RecipeId,

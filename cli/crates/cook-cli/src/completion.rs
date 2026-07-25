@@ -43,7 +43,7 @@ use crate::cli::{Cli, Globals};
 ///
 /// `reserved_names_match_the_parse_tree` pins this against the real command.
 const RESERVED: &[&str] = &[
-    "init", "menu", "list", "modules", "test", "dag", "logs", "cache", "serve", "emit-lua",
+    "init", "menu", "list", "modules", "test", "logs", "cache", "serve", "emit-lua",
     "affected", "why", "help",
 ];
 
@@ -78,7 +78,6 @@ fn completion_command() -> Command {
                 a.add(ArgValueCompleter::new(complete_test_scope))
             })
         })
-        .mut_subcommand("dag", with_recipe_and_bare_preset)
         .mut_subcommand("why", with_recipe_and_bare_preset)
         .mut_subcommand("serve", with_recipe_and_bare_preset)
         .mut_subcommand("cache", |c| {
@@ -113,7 +112,7 @@ fn completion_command() -> Command {
 }
 
 fn with_recipe_and_bare_preset(c: Command) -> Command {
-    // These four, unlike a bare recipe, really do take the preset as a bare
+    // These, unlike a bare recipe, really do take the preset as a bare
     // second positional (`cook why build release`).
     c.mut_arg("recipe", |a| {
         a.add(ArgValueCompleter::new(complete_recipe_only))
@@ -228,7 +227,7 @@ fn filtered(current: &OsStr, candidates: Vec<(String, &'static str)>) -> Vec<Com
         .collect()
 }
 
-/// Recipes only — `dag`, `serve`, `why`, `cache verify` reject chores and
+/// Recipes only — `serve`, `why`, `cache verify` reject chores and
 /// namespaces alike.
 fn complete_recipe_only(current: &OsStr) -> Vec<CompletionCandidate> {
     let candidates = workspace_names()

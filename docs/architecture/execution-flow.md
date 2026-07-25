@@ -134,7 +134,7 @@ pub struct RecipeInfo {
 }
 ```
 
-`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook dag`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` (explicit `: dep`) and inferred-dep edges (next step) create edges.
+`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` (explicit `: dep`) and inferred-dep edges (next step) create edges.
 
 ### 4.2 `RegistryEntry` map — `cli/crates/cook-engine/src/pipeline/registries.rs`
 

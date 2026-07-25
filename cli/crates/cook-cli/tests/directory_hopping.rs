@@ -51,13 +51,13 @@ fn assert_ok(out: &std::process::Output, what: &str) {
     );
 }
 
-/// Run `cook why <target> --json` in `dir` and return (unit key hex,
+/// Run `cook why <target> --format json` in `dir` and return (unit key hex,
 /// unit local cache_key, status) for the single unit of the target recipe.
 fn why_unit(dir: &Path, target: &str) -> (String, String, String) {
-    let out = run_cook(dir, &["why", target, "--json"]);
+    let out = run_cook(dir, &["why", target, "--format", "json"]);
     assert_ok(&out, &format!("cook why {target} in {}", dir.display()));
     let v: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("why --json parses");
+        serde_json::from_slice(&out.stdout).expect("why --format json parses");
     let units = v["units"].as_array().expect("units array");
     assert_eq!(units.len(), 1, "expected exactly one unit, got: {v}");
     (

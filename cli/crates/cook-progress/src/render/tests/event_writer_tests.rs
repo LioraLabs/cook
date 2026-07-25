@@ -36,6 +36,7 @@ fn node_completed_compile_kind_emits_compiled_verb() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(880),
         kind: NodeKind::Compile,
+        cache_key: None,
     };
     let opts = EventWriterOptions { colored: false, ..Default::default() };
     let out = render_one(&state, &ev, opts);
@@ -89,6 +90,7 @@ fn cached_lines_held_until_real_work_then_collapse_after_threshold() {
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(6),
         elapsed: Duration::from_millis(120), kind: NodeKind::Compile,
+        cache_key: None,
     };
     state.apply(&ev);
     w.handle(&mut buf, &state, &ev).unwrap();
@@ -157,6 +159,7 @@ fn probes_group_into_single_resolved_line() {
         let ev = ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(i as u32),
             elapsed: Duration::from_millis(10), kind: NodeKind::Resolve,
+            cache_key: None,
         };
         state.apply(&ev);
         w.handle(&mut buf, &state, &ev).unwrap();
@@ -174,6 +177,7 @@ fn probes_group_into_single_resolved_line() {
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(2),
         elapsed: Duration::from_millis(100), kind: NodeKind::Compile,
+        cache_key: None,
     };
     state.apply(&ev);
     w.handle(&mut buf, &state, &ev).unwrap();
@@ -236,6 +240,7 @@ fn probes_only_work_still_collapses_recipe_summary() {
     let probe = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(2),
         elapsed: Duration::from_millis(20), kind: NodeKind::Resolve,
+        cache_key: None,
     };
     state.apply(&probe);
     w.handle(&mut buf, &state, &probe).unwrap();
@@ -281,6 +286,7 @@ fn internal_recipe_shows_module_tag_and_no_summary() {
     let ev = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(10), kind: NodeKind::Generate,
+        cache_key: None,
     };
     state.apply(&ev);
     w.handle(&mut buf, &state, &ev).unwrap();
@@ -417,6 +423,7 @@ fn quiet_suppresses_per_node_lines_but_keeps_recipe_summary() {
     let completed = ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(100), kind: NodeKind::Compile,
+        cache_key: None,
     };
     state.apply(&completed);
 
@@ -537,6 +544,7 @@ fn terminal_interactive_end_suppresses_subsequent_output() {
         ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(10), kind: NodeKind::Cooked,
+            cache_key: None,
         },
         ProgressEvent::RecipeCompleted {
             recipe: RecipeId::new(0),
@@ -575,6 +583,7 @@ fn node_completed_no_artifact_emits_no_line() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(100),
         kind: NodeKind::Cooked,
+        cache_key: None,
     };
     let opts = EventWriterOptions { colored: false, ..Default::default() };
     let out = render_one(&state, &ev, opts);
@@ -595,6 +604,7 @@ fn node_completed_no_artifact_verbose_still_prints() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(100),
         kind: NodeKind::Cooked,
+        cache_key: None,
     };
     let opts = EventWriterOptions { colored: false, verbose: true, ..Default::default() };
     let out = render_one(&state, &ev, opts);

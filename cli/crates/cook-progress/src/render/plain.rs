@@ -173,7 +173,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 writeln!(self.out, "  {}/{:40}rebuild ({cause})", rname, nname)?;
             }
             ProgressEvent::NodeStarted { .. } => {}
-            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _ } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _, cache_key: _ } => {
                 let nname = self.node_display(state, recipe, node);
                 if let Some(module) = probe_module(&nname) {
                     let module = module.to_string();
