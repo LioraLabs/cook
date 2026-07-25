@@ -477,6 +477,11 @@ impl CacheBackend for LocalBackend {
         let path = self.path_for(key);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("meta.json"));
+        // `path_for` yields a path with no extension, so `with_extension`
+        // here appends rather than replaces — the same construction
+        // `put_manifest` uses to write this sidecar in the first place.
+        // Best-effort: a sidecar that was never written is not an error.
+        let _ = std::fs::remove_file(path.with_extension("provenance.json"));
         Ok(())
     }
 
@@ -682,6 +687,66 @@ impl LocalBackend {
 
         Ok(out)
     }
+
+    /// Execute `plan`: remove the blob and both sidecars for every victim.
+    ///
+    /// Deliberately an **inherent** method, not a `CacheBackend` trait method
+    /// (milestone D2), for the same reason as `enumerate`: a client of a
+    /// shared, multi-tenant store must never be able to issue deletes.
+    /// `plan_eviction` is pure policy shared with the future cloud-side
+    /// sweep; only the local, single-tenant filesystem backend is trusted to
+    /// actually apply it.
+    ///
+    /// Per victim: stat the blob first. If it's present, remove all three
+    /// files (blob, `.meta.json`, `.provenance.json`) and count `size`
+    /// toward the returned `EvictOutcome`. If the blob is already gone —
+    /// a concurrent sweep, or manual interference — remove any stray
+    /// sidecars anyway (cleans up a half-removed object) but count
+    /// nothing: the bytes were already freed by whoever removed the blob
+    /// first, and reporting them again would double-count freed space
+    /// across two concurrent sweeps.
+    ///
+    /// Never returns `Err` for a per-object filesystem failure; every
+    /// removal is best-effort, matching `delete`'s shape. The `BackendResult`
+    /// return type is kept for symmetry with `enumerate` and so a future
+    /// cloud-shaped caller (which *can* fail wholesale, e.g. on an auth or
+    /// connectivity error) has a slot to put it in.
+    ///
+    /// `.tmp` files are never victims — `enumerate` cannot produce them
+    /// (see `is_lowercase_hex`), so `plan.victims` never names one and no
+    /// extra guard is needed here.
+    pub fn apply_eviction(&self, plan: &EvictPlan) -> BackendResult<EvictOutcome> {
+        let mut outcome = EvictOutcome::default();
+
+        for victim in &plan.victims {
+            let path = self.path_for(&victim.key);
+            let blob_present = path.exists();
+
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path.with_extension("meta.json"));
+            let _ = std::fs::remove_file(path.with_extension("provenance.json"));
+
+            if blob_present {
+                outcome.objects += 1;
+                outcome.bytes = outcome.bytes.saturating_add(victim.size);
+            }
+        }
+
+        Ok(outcome)
+    }
+}
+
+/// What a sweep actually removed, as opposed to what the plan projected.
+/// `plan.freed_bytes` / `plan.victims.len()` are the projection at plan time;
+/// this is ground truth as of `apply_eviction`'s actual filesystem walk —
+/// the two can differ when a victim vanished between planning and applying
+/// (see `apply_eviction`'s doc comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EvictOutcome {
+    /// Count of victims whose blob was actually present and removed.
+    pub objects: usize,
+    /// Sum of `size` over those same victims.
+    pub bytes: u64,
 }
 
 #[cfg(test)]

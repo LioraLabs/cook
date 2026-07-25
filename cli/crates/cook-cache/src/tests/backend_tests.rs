@@ -874,3 +874,211 @@ fn touch_on_read_swallows_failure() {
     // Must return normally — no panic, no error to observe.
     touch_on_read(&missing);
 }
+
+// ─── delete / apply_eviction: provenance sidecars must not leak ────────
+//
+// `delete` has never removed `.provenance.json`; the developer's real store
+// has 6,433 orphaned sidecars because of it. `apply_eviction` is the new
+// entry point `cook cache gc` drives through `plan_eviction`'s output.
+//
+// Every test here is rooted at its own `tempfile::tempdir()` — never the
+// real CAS at `~/.cache/cook/cloud`.
+
+/// Put a blob, write a provenance sidecar via `put_manifest`, delete the
+/// key, assert all three on-disk paths (blob, `.meta.json`,
+/// `.provenance.json`) are gone. This test must fail against the unfixed
+/// `delete` (it only ever removed the blob and `.meta.json`).
+#[test]
+fn delete_removes_blob_meta_and_provenance() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x90);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"provenance leak repro", &mut meta).expect("put");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+
+    let blob = backend.path_for(&k);
+    let meta_path = blob.with_extension("meta.json");
+    let prov_path = blob.with_extension("provenance.json");
+    assert!(blob.exists(), "blob must exist before delete");
+    assert!(meta_path.exists(), "meta sidecar must exist before delete");
+    assert!(prov_path.exists(), "provenance sidecar must exist before delete");
+
+    backend.delete(&k).expect("delete ok");
+
+    assert!(!blob.exists(), "delete must remove the blob");
+    assert!(!meta_path.exists(), "delete must remove the meta sidecar");
+    assert!(
+        !prov_path.exists(),
+        "delete must remove the provenance sidecar (the leak this fixes)"
+    );
+}
+
+/// A key that was never given a provenance sidecar deletes cleanly — the
+/// best-effort `remove_file` on a sidecar that was never written is not an
+/// error.
+#[test]
+fn delete_of_a_key_with_no_provenance_is_not_an_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x91);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"no provenance here", &mut meta).expect("put");
+
+    let prov_path = backend.path_for(&k).with_extension("provenance.json");
+    assert!(!prov_path.exists());
+
+    backend.delete(&k).expect("delete without provenance must still be ok");
+    assert!(backend.get(&k).expect("get").is_none());
+}
+
+/// Seed several objects with distinct keys, sizes, and last-access times;
+/// build an `EvictPlan` (via `plan_eviction`) that names only a subset as
+/// victims; apply it; assert the untouched objects still have all three
+/// files, and the outcome reports the victims' bytes.
+#[test]
+fn apply_eviction_removes_only_the_planned_keys() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+
+    let victim_key = key(0xA0);
+    let survivor_key = key(0xA1);
+
+    let mut m_victim = sample_meta();
+    m_victim.size_bytes = 10;
+    put_bytes(&backend, &victim_key, b"0123456789", &mut m_victim).expect("put victim");
+    backend.put_manifest(&victim_key, &sample_manifest()).expect("put_manifest victim");
+
+    let mut m_survivor = sample_meta();
+    m_survivor.size_bytes = 5;
+    put_bytes(&backend, &survivor_key, b"abcde", &mut m_survivor).expect("put survivor");
+    backend
+        .put_manifest(&survivor_key, &sample_manifest())
+        .expect("put_manifest survivor");
+
+    // Both blobs are on disk now with real on-disk sizes; enumerate to get
+    // trustworthy `EvictCandidate.size` (matches `LocalBackend::enumerate`'s
+    // contract — size comes from `fs::metadata`, not the caller-set field).
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(candidates.len(), 2);
+
+    // Plan an age-based eviction that names only `victim_key`: give it an
+    // ancient last_access and the survivor a fresh one, then age-sweep
+    // anything older than a threshold that only catches the victim.
+    let now = 1_000_000_000u64;
+    let mut aged_candidates = candidates.clone();
+    for c in aged_candidates.iter_mut() {
+        if c.key == victim_key {
+            c.last_access = 100; // ancient
+        } else {
+            c.last_access = now - 10; // recent
+        }
+    }
+    let policy = EvictPolicy {
+        max_size: None,
+        older_than: Some(std::time::Duration::from_secs(1000)),
+        low_water: 1.0,
+    };
+    let plan = plan_eviction(&aged_candidates, &policy, now);
+    assert_eq!(plan.victims.len(), 1, "plan must name exactly one victim");
+    assert_eq!(plan.victims[0].key, victim_key);
+
+    let outcome = backend.apply_eviction(&plan).expect("apply_eviction");
+    assert_eq!(outcome.objects, 1);
+    assert_eq!(outcome.bytes, 10);
+
+    // Victim: all three files gone.
+    let victim_blob = backend.path_for(&victim_key);
+    assert!(!victim_blob.exists());
+    assert!(!victim_blob.with_extension("meta.json").exists());
+    assert!(!victim_blob.with_extension("provenance.json").exists());
+
+    // Survivor: untouched, all three files still present.
+    let survivor_blob = backend.path_for(&survivor_key);
+    assert!(survivor_blob.exists());
+    assert!(survivor_blob.with_extension("meta.json").exists());
+    assert!(survivor_blob.with_extension("provenance.json").exists());
+}
+
+/// If a victim's blob is removed out-of-band (a concurrent sweep, or a
+/// developer poking at the store) before `apply_eviction` runs, the object
+/// is already gone: `apply_eviction` must still clean up any stray
+/// sidecars, must not error, and must NOT double-count the bytes in the
+/// outcome (they were already freed by whoever removed the blob first).
+#[test]
+fn apply_eviction_tolerates_a_victim_that_vanished_mid_sweep() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xB0);
+    let mut meta = sample_meta();
+    meta.size_bytes = 7;
+    put_bytes(&backend, &k, b"vanish!", &mut meta).expect("put");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+
+    let blob = backend.path_for(&k);
+    // Simulate a concurrent sweep already having removed the blob, leaving
+    // the sidecars stranded (a half-removed object).
+    std::fs::remove_file(&blob).expect("simulate concurrent removal");
+    assert!(!blob.exists());
+    assert!(blob.with_extension("meta.json").exists());
+    assert!(blob.with_extension("provenance.json").exists());
+
+    let plan = EvictPlan {
+        victims: vec![EvictCandidate {
+            key: k,
+            size: 7,
+            last_access: 1,
+            kind: None,
+            recipe_namespace: String::new(),
+        }],
+        freed_bytes: 7,
+        total_before: 7,
+        total_after: 0,
+        count_before: 1,
+    };
+
+    let outcome = backend
+        .apply_eviction(&plan)
+        .expect("apply_eviction must not error on a vanished blob");
+    assert_eq!(
+        outcome.objects, 0,
+        "a vanished-blob victim must not be counted as removed"
+    );
+    assert_eq!(
+        outcome.bytes, 0,
+        "a vanished-blob victim must not double-count freed bytes"
+    );
+
+    // Stranded sidecars are cleaned up anyway.
+    assert!(!blob.with_extension("meta.json").exists());
+    assert!(!blob.with_extension("provenance.json").exists());
+}
+
+/// An empty plan is a no-op: zero objects, zero bytes, no error.
+#[test]
+fn apply_eviction_of_an_empty_plan_is_a_no_op() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xC0);
+    let mut meta = sample_meta();
+    put_bytes(&backend, &k, b"untouched", &mut meta).expect("put");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+
+    let plan = EvictPlan {
+        victims: Vec::new(),
+        freed_bytes: 0,
+        total_before: 9,
+        total_after: 9,
+        count_before: 1,
+    };
+
+    let outcome = backend.apply_eviction(&plan).expect("apply_eviction empty plan");
+    assert_eq!(outcome.objects, 0);
+    assert_eq!(outcome.bytes, 0);
+
+    // Untouched object still fully present.
+    let blob = backend.path_for(&k);
+    assert!(blob.exists());
+    assert!(blob.with_extension("meta.json").exists());
+    assert!(blob.with_extension("provenance.json").exists());
+}
