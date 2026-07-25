@@ -104,13 +104,17 @@ pub enum RegisterError {
     ///
     /// `cook CHORE_NAME` without the expected positional argument.
     #[error(
-        "chore '{chore}' requires parameter '{name}' (declared at line {line}); \
-         supply it as a positional argument"
+        "chore '{chore}' requires parameter '{name}' ({}); \
+         supply it as a positional argument",
+        chore_site(origin, *line)
     )]
     ChoreParamMissing {
         chore: String,
         name: String,
         line: usize,
+        /// CS-0175: `Some` for a `cook.chore` registration, `None` for a
+        /// surface `chore NAME` block. Selects the declaration-site phrasing.
+        origin: Option<String>,
     },
 
     /// More positional arguments were supplied than the chore declares parameters.
@@ -137,34 +141,47 @@ pub enum RegisterError {
 
     /// A `+NAME` variadic received zero argv elements (requires at least one).
     #[error(
-        "chore '{chore}' requires one or more values for variadic '+{name}' (declared at line {line}); \
-         supply at least one, or change to '*{name}' to allow zero"
+        "chore '{chore}' requires one or more values for variadic '+{name}' ({}); \
+         supply at least one, or change to '*{name}' to allow zero",
+        chore_site(origin, *line)
     )]
-    ChoreVariadicEmpty { chore: String, name: String, line: usize },
+    ChoreVariadicEmpty {
+        chore: String,
+        name: String,
+        line: usize,
+        /// CS-0175: see `ChoreParamMissing::origin`.
+        origin: Option<String>,
+    },
 
     /// A Lua-expression default for a chore parameter raised a Lua error
     /// when evaluated at invocation time.
     #[error(
         "chore '{chore}': default for parameter '{name}' raised a Lua error \
-         (defined at line {line}): {message}"
+         ({}): {message}",
+        chore_site(origin, *line)
     )]
     ChoreParamDefaultLuaError {
         chore: String,
         name: String,
         line: usize,
         message: String,
+        /// CS-0175: see `ChoreParamMissing::origin`.
+        origin: Option<String>,
     },
 
     /// A Lua-expression default for a chore parameter returned a non-string value.
     #[error(
         "chore '{chore}': default for parameter '{name}' must evaluate to a string; \
-         got {ty} (defined at line {line})"
+         got {ty} ({})",
+        chore_site(origin, *line)
     )]
     ChoreParamDefaultLuaNonString {
         chore: String,
         name: String,
         line: usize,
         ty: String,
+        /// CS-0175: see `ChoreParamMissing::origin`.
+        origin: Option<String>,
     },
 
     /// COOK-64 §22.5.9: an `ingredients <probe>` source names a probe `KEY` that was
@@ -197,6 +214,27 @@ pub enum RegisterError {
     ForEachProbeArtifactDep { key: String, path: String },
 }
 
+/// Render the declaration site of a chore parameter for a diagnostic.
+///
+/// A surface `chore NAME` block has a Cookfile line the author can open, so
+/// the message points at it. A `cook.chore` registration (CS-0175) does not:
+/// `caller_line_in_cookfile` walks the Lua stack and lands on the *module's*
+/// own line, which is a real number pointing into a file the author did not
+/// write and cannot act on. Naming the origin instead is the only actionable
+/// thing to say.
+///
+/// This keys on `origin`, deliberately NOT on `line == 0`. The tempting
+/// shortcut — treat 0 as "no line info" — is wrong in both directions here:
+/// a module-registered chore's line is nonzero and meaningless, while a
+/// surface chore whose line genuinely failed to resolve is still a Cookfile
+/// declaration. `origin` is the field that actually distinguishes the two.
+fn chore_site(origin: &Option<String>, line: usize) -> String {
+    match origin {
+        Some(o) => format!("registered by {o}"),
+        None => format!("declared at line {line}"),
+    }
+}
+
 /// One site at which a recipe name was registered during a
 /// `register_cookfile` pass. Carried inside [`RegisterError::RecipeCollision`]
 /// so callers (e.g. the CLI's `cmd_run`) can render a diagnostic naming
@@ -224,6 +262,11 @@ pub enum RegistrationSiteKind {
     /// `cook.recipe(...)` call from a `register` block, top-level module
     /// call, or wrapper Lua function (e.g. `cook_cc.bin`).
     Dynamic,
+    /// `cook.chore(...)` call from a module's own chunk (CS-0175). Distinct
+    /// from `Dynamic` so a collision names the function the author would
+    /// have to go look at — rendering "cook.recipe call" for a chore
+    /// registration sends them to a call that does not exist.
+    DynamicChore,
 }
 
 impl RegistrationSiteKind {
@@ -233,6 +276,7 @@ impl RegistrationSiteKind {
             RegistrationSiteKind::SurfaceRecipe => "surface recipe",
             RegistrationSiteKind::SurfaceChore => "surface chore",
             RegistrationSiteKind::Dynamic => "cook.recipe call",
+            RegistrationSiteKind::DynamicChore => "cook.chore call",
         }
     }
 }
