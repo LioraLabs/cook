@@ -73,6 +73,13 @@ pub struct CacheSection {
     pub ignore_env: Vec<String>,
     #[serde(default)]
     pub cache_dir: Option<String>,
+    /// COOK-232. `[cache] max_size = "20GB"` — the CAS budget consumed by
+    /// `cook cache du`'s over/under-budget line. Absent means "no budget,
+    /// no warning" (today's behaviour). Stored as the raw literal; parsed
+    /// on demand by `CloudConfig::max_size_bytes` so a bad literal is a
+    /// deferred, nameable error rather than a load-time panic.
+    #[serde(default)]
+    pub max_size: Option<String>,
 }
 
 #[derive(Debug)]
@@ -91,6 +98,10 @@ pub enum CloudConfigError {
     /// secondary source; that field was removed to close the
     /// secret-in-checked-in-config foot-gun.
     MissingApiKey,
+    /// COOK-232. `[cache] max_size` was set but its literal did not parse
+    /// as a decimal number with an optional unit suffix. Carries the
+    /// offending literal verbatim so the message can name it.
+    BadMaxSize(String),
 }
 
 impl std::fmt::Display for CloudConfigError {
@@ -114,11 +125,77 @@ impl std::fmt::Display for CloudConfigError {
                  export COOK_CLOUD_API_KEY=<your-token> \
                  (interactive `cook cloud login` is planned in a future release)"
             ),
+            Self::BadMaxSize(lit) => write!(
+                f,
+                "[cache] max_size = {lit:?} is not a valid size — \
+                 expected a decimal number with an optional unit suffix \
+                 (B, KB, MB, GB, TB, KiB, MiB, GiB, TiB), e.g. \"20GB\" or \"512 MiB\""
+            ),
         }
     }
 }
 
 impl std::error::Error for CloudConfigError {}
+
+/// COOK-232. Parse a `[cache] max_size` literal into a byte count.
+///
+/// Accepts a decimal number (fractional allowed, truncated toward zero)
+/// followed by an optional unit suffix, matched case-insensitively, with
+/// optional whitespace between the number and the unit. A bare number is
+/// bytes. `KB`/`MB`/`GB`/`TB` are powers of 1000; `KIB`/`MIB`/`GIB`/`TIB`
+/// are powers of 1024. Negative numbers and anything else that doesn't
+/// match this shape return `None` — the caller turns that into a
+/// `CloudConfigError::BadMaxSize` naming the original literal.
+fn parse_size(literal: &str) -> Option<u64> {
+    let s = literal.trim();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'-' || bytes[i] == b'+') {
+        i += 1;
+    }
+    let mut saw_digit = false;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+        saw_digit = true;
+    }
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+            saw_digit = true;
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+    let (num_part, rest) = s.split_at(i);
+    let number: f64 = num_part.parse().ok()?;
+    if number < 0.0 {
+        return None;
+    }
+    let unit = rest.trim_start();
+    let multiplier: f64 = if unit.is_empty() {
+        1.0
+    } else {
+        match unit.to_ascii_uppercase().as_str() {
+            "B" => 1.0,
+            "KB" => 1_000.0,
+            "MB" => 1_000_000.0,
+            "GB" => 1_000_000_000.0,
+            "TB" => 1_000_000_000_000.0,
+            "KIB" => 1024.0,
+            "MIB" => 1024.0 * 1024.0,
+            "GIB" => 1024.0 * 1024.0 * 1024.0,
+            "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+            _ => return None,
+        }
+    };
+    let total = number * multiplier;
+    if !total.is_finite() {
+        return None;
+    }
+    Some(total as u64)
+}
 
 impl CloudConfig {
     /// Load `.cook/cloud.toml` from `project_root`. Returns `Default` if absent.
@@ -182,6 +259,21 @@ impl CloudConfig {
 
     pub fn cache_dir(&self) -> Option<&str> {
         self.cache.cache_dir.as_deref()
+    }
+
+    /// COOK-232. `[cache] max_size` resolved to a byte budget. `None` when
+    /// unset — "no budget, no warning" (today's behaviour). `Err` names the
+    /// offending literal when set but unparseable; this never silently
+    /// falls back to "no budget" on a typo. The warning that consumes this
+    /// value (`cook cache du`'s over/under-budget line) and the `auto_gc`
+    /// knob both belong to COOK-235, not here.
+    pub fn max_size_bytes(&self) -> Result<Option<u64>, CloudConfigError> {
+        match &self.cache.max_size {
+            None => Ok(None),
+            Some(lit) => parse_size(lit)
+                .map(Some)
+                .ok_or_else(|| CloudConfigError::BadMaxSize(lit.clone())),
+        }
     }
 
     /// Whether this client publishes produced artifacts to the shared store.
