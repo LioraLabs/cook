@@ -124,6 +124,89 @@ impl RecipeCache {
     }
 }
 
+impl RecipeCache {
+    /// Render the index as TOML for `cook cache dump` (CS-0166).
+    ///
+    /// Hand-rendered rather than `toml::to_string` on purpose. Serialising
+    /// `Vec<FileRecord>` through the `toml` crate emits an array-of-tables,
+    /// which restates the full step key as a `[[steps."<key>".inputs]]` header
+    /// before every single record — on DuckDB that shape was 48.8% of a 69 MB
+    /// file, and it is exactly what nobody wanted to read. Inlining each
+    /// record onto one line is both smaller and what a reader actually wants.
+    ///
+    /// Output is for human eyes; there is no reader and no round-trip
+    /// requirement. Values are escaped through `toml::Value` so a path with a
+    /// quote or a backslash still renders as valid TOML.
+    pub fn to_readable_toml(&self) -> String {
+        fn quoted(s: &str) -> String {
+            toml::Value::String(s.to_string()).to_string()
+        }
+        fn record_line(r: &FileRecord) -> String {
+            format!(
+                "  {{ path = {}, mtime = {}, hash = \"{:016x}\" }},",
+                quoted(&r.path),
+                r.mtime,
+                r.hash
+            )
+        }
+
+        let distinct: BTreeSet<&str> = self
+            .steps
+            .values()
+            .flat_map(|s| s.inputs.iter().chain(s.outputs.iter()))
+            .map(|r| &*r.path)
+            .collect();
+        let records: usize = self
+            .steps
+            .values()
+            .map(|s| s.inputs.len() + s.outputs.len())
+            .sum();
+
+        let mut out = String::new();
+        out.push_str(&format!("schema_version = {}\n", self.schema_version));
+        out.push_str(&format!(
+            "# {} step(s), {} record(s), {} distinct path(s)\n",
+            self.steps.len(),
+            records,
+            distinct.len()
+        ));
+
+        if !self.globs.is_empty() {
+            out.push_str("\n[globs]\n");
+            for (pattern, members) in &self.globs {
+                let list: Vec<String> = members.iter().map(|m| quoted(m)).collect();
+                out.push_str(&format!("{} = [{}]\n", quoted(pattern), list.join(", ")));
+            }
+        }
+
+        for (key, step) in &self.steps {
+            out.push_str(&format!("\n[steps.{}]\n", quoted(key)));
+            out.push_str(&format!("command_hash = \"{:016x}\"\n", step.command_hash));
+            out.push_str(&format!(
+                "env_contribution = \"{:016x}\"\n",
+                step.env_contribution
+            ));
+            out.push_str(&format!(
+                "seal_contribution = \"{:016x}\"\n",
+                step.seal_contribution
+            ));
+            for (label, records) in [("inputs", &step.inputs), ("outputs", &step.outputs)] {
+                if records.is_empty() {
+                    out.push_str(&format!("{label} = []\n"));
+                    continue;
+                }
+                out.push_str(&format!("{label} = [\n"));
+                for r in records.iter() {
+                    out.push_str(&record_line(r));
+                    out.push('\n');
+                }
+                out.push_str("]\n");
+            }
+        }
+        out
+    }
+}
+
 /// Extensions of index files this cook no longer reads: pre-v4 bincode
 /// (`.bin`), v4..v6 TOML (`.toml`), and the torn temp files either could
 /// leave behind. `.idx.tmp` is included so a crash mid-save does not leave a
