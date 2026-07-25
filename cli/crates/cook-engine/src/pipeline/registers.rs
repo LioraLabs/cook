@@ -299,7 +299,93 @@ pub fn register_workspace(
         .expect("terminal_outputs mutex poisoned")
         .clone();
 
+    reject_duplicate_outputs(&ws)?;
+
     Ok(ws)
+}
+
+/// Reject a graph in which two work units declare the same `output`.
+///
+/// Such a graph has no correct execution: the two units race to write one
+/// path, the loser is seen as drifted on the next run and rebuilt, and it
+/// hands the loss straight back — a build that reports success and never
+/// settles, forever, with no diagnostic. It is not a hypothetical: `cook_cc`
+/// derived object paths from the source basename until CS-0167, so every tree
+/// with repeated source filenames produced exactly this, and the symptoms
+/// (permanent cache churn, a 128 MB index reserialised on a no-op run, wrong
+/// header dependency sets, hundreds of undefined symbols at link) each cost
+/// real debugging time before the shared cause was found.
+///
+/// Checked across the whole run rather than per recipe: two *recipes* writing
+/// one path is the same defect wearing a different hat, and the per-recipe
+/// check would miss it.
+///
+/// Scope is deliberately **literal output paths only**. An output glob
+/// (`dist/**`) and a build-owned directory output (§17.6, CS-0119) are claims
+/// over a *set*, not over a path, and what overlapping claims should mean is
+/// governed by output reconciliation rather than by unit identity. Two units
+/// declaring `dist/**` may well be a defect too, but it is a different
+/// question with different semantics, and deciding it here would silently
+/// redefine those. Deferred, not overlooked.
+fn reject_duplicate_outputs(ws: &RegisteredWorkspace) -> Result<(), PipelineError> {
+    // output path -> (recipe, short description of the producing unit)
+    let mut seen: BTreeMap<&str, (&str, String)> = BTreeMap::new();
+
+    for (recipe_name, units) in &ws.units_by_recipe {
+        for unit in &units.units {
+            for out in &unit.output_paths {
+                if is_output_pattern(out) || cook_fingerprint::is_dir_output(out) {
+                    continue;
+                }
+                if let Some((first_recipe, first_unit)) = seen.get(out.as_str()) {
+                    return Err(PipelineError::DuplicateOutput {
+                        output: out.clone(),
+                        first_recipe: (*first_recipe).to_string(),
+                        first_unit: first_unit.clone(),
+                        second_recipe: recipe_name.clone(),
+                        second_unit: describe_unit(unit),
+                    });
+                }
+                seen.insert(out.as_str(), (recipe_name.as_str(), describe_unit(unit)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True when an output declaration is a glob pattern rather than a literal
+/// path — see the scope note on [`reject_duplicate_outputs`].
+fn is_output_pattern(out: &str) -> bool {
+    out.contains('*') || out.contains('?') || out.contains('[')
+}
+
+/// One-line rendering of a unit for the duplicate-output diagnostic: the
+/// command text is what an author recognises, so lead with it.
+fn describe_unit(unit: &cook_contracts::CapturedUnit) -> String {
+    use cook_contracts::WorkPayload;
+    let raw = match &unit.payload {
+        WorkPayload::Shell { cmd, .. } | WorkPayload::Interactive { cmd, .. } => cmd.clone(),
+        WorkPayload::LuaChunk { .. } => "<lua step>".to_string(),
+        _ => "<step>".to_string(),
+    };
+    // Shell payloads carry a `set -e` preamble the author never wrote; drop it
+    // and flatten to one line so the two sites line up readably.
+    let body = raw
+        .trim()
+        .strip_prefix("set -e")
+        .unwrap_or_else(|| raw.trim())
+        .trim();
+    let flattened = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut short: String = flattened.chars().take(120).collect();
+    if flattened.chars().count() > 120 {
+        short.push('…');
+    }
+    short
 }
 
 /// Run [`cook_register::list_names`] for every Cookfile in `workspace`
