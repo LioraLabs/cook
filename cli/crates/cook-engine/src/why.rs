@@ -24,7 +24,16 @@ pub enum CacheStatus {
     /// A declared input is absent on disk: the unit cannot be a clean hit and no
     /// key is computed (mirrors `hash_input_paths` returning None). Rendered as
     /// `MISS (input '<path>' missing)`.
+    ///
+    /// CS-0173: reserved for an input **no unit in the closure produces**. An
+    /// input that is merely not restored yet is resolved from its producer
+    /// instead; one whose producer rebuilds is `ForcedByUpstream`.
     MissingInput { path: String },
+    /// CS-0173: an input to this unit is an output of a unit that will itself
+    /// rebuild, so the bytes this unit would consume do not exist yet in their
+    /// final form and cannot be known without running the producer. No key is
+    /// computable, so none is reported.
+    ForcedByUpstream { producer: String, path: String },
 }
 
 /// One determinant difference found when diffing consumer determinants against a
@@ -40,6 +49,27 @@ pub enum DeterminantDiff {
     OutputPaths { ours: Vec<String>, theirs: Vec<String> },
 }
 
+/// CS-0173: what one declared output will contain by the time a downstream unit
+/// reads it, established by classifying the producing unit first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Prediction {
+    /// The producing unit is served from cache, so its output bytes are already
+    /// determined and this is their content hash — whether or not they have been
+    /// restored to the working tree yet.
+    Known(u64),
+    /// The producing unit will rebuild. Its output bytes cannot be known without
+    /// running it, so no downstream key over them is computable.
+    Unknowable,
+}
+
+/// Absolute output path → (what will be there, which recipe puts it there).
+///
+/// Keyed by ABSOLUTE path because a producer and its consumer routinely sit in
+/// different Cookfiles with different working directories: `build/theme.css`
+/// declared in `apps/web/theme` and `theme/build/theme.css` consumed from
+/// `apps/web` are one file, and only the resolved path says so.
+type Predictions = BTreeMap<std::path::PathBuf, (Prediction, String)>;
+
 /// The consumer-side resolved determinants for one unit (the data behind K).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitDeterminants {
@@ -50,6 +80,14 @@ pub struct UnitDeterminants {
     pub output_paths: Vec<String>,
     pub consulted_env: BTreeMap<String, String>,
     pub sealed_probes: BTreeMap<String, String>,
+    /// CS-0173: declared inputs whose content is not yet determined, because the
+    /// unit producing them will itself rebuild. Path → producing recipe name.
+    ///
+    /// A path listed here is deliberately ABSENT from `inputs` rather than
+    /// present with a stale or zero hash. Reporting the bytes currently on disk
+    /// as this unit's determinant would be reporting a value the run will not
+    /// use, which is the precise error CS-0173 exists to remove.
+    pub pending_inputs: BTreeMap<String, String>,
 }
 
 /// Diff the consumer determinants against a producer manifest, in a stable order
@@ -193,6 +231,15 @@ pub fn explain(
     }
 
     let mut units = Vec::new();
+    // CS-0173: what each already-classified unit will leave on disk, threaded
+    // forward so a consumer is classified against its producer's answer rather
+    // than against the working tree's current state.
+    //
+    // Iterating node indices IS a topological order: `Dag::add_node` takes the
+    // indices a node depends on, which must already exist, so every producer
+    // has a lower index than its consumers. Classifying in this order means a
+    // consumer's producers are always resolved before it is reached.
+    let mut predictions: Predictions = BTreeMap::new();
     for idx in 0..dag.len() {
         let node = dag.node(idx).payload();
         let Some(meta) = &node.cache_meta else {
@@ -201,9 +248,39 @@ pub fn explain(
         if meta.output_paths.is_empty() {
             continue;
         }
-        let det = resolve_unit_determinants(node, meta, &probe_store);
-        let key_hex = unit_key_hex(meta, &det);
-        let c = classify(node, meta, cache_ctx, cache_managers, &det, &key_hex);
+        let det = resolve_unit_determinants(node, meta, &probe_store, &predictions);
+        // A unit waiting on bytes that do not exist yet has no computable key.
+        // Report the cause and, deliberately, no key: a key over the stale or
+        // absent bytes would be a number that matches nothing and means nothing.
+        let (key_hex, c) = match det.pending_inputs.iter().next() {
+            Some((path, producer)) => (
+                String::new(),
+                Classification {
+                    status: CacheStatus::ForcedByUpstream {
+                        producer: producer.clone(),
+                        path: path.clone(),
+                    },
+                    local_hit: false,
+                    shared_present: None,
+                    manifest_diff: None,
+                    shared_output_hashes: BTreeMap::new(),
+                },
+            ),
+            None => {
+                let key_hex = unit_key_hex(meta, &det);
+                let c = classify(
+                    node,
+                    meta,
+                    cache_ctx,
+                    cache_managers,
+                    &det,
+                    &key_hex,
+                    &predictions,
+                );
+                (key_hex, c)
+            }
+        };
+        record_predictions(&mut predictions, node, meta, &c, cache_managers);
         let disposition = match meta.sharing {
             cook_contracts::Sharing::Local => Disposition::Local,
             cook_contracts::Sharing::Pinned => Disposition::Pinned,
@@ -246,14 +323,34 @@ fn node_line(node: &WorkNode) -> u32 {
     }
 }
 
-pub(crate) fn resolve_unit_determinants(
+fn resolve_unit_determinants(
     node: &WorkNode,
     meta: &cook_contracts::CacheMeta,
     probe_store: &cook_luaotp::ProbeValueStore,
+    predictions: &Predictions,
 ) -> UnitDeterminants {
     let mut inputs = BTreeMap::new();
+    let mut pending_inputs = BTreeMap::new();
     for p in &meta.input_paths {
-        let h = cook_fingerprint::hash_file(&node.working_dir.join(p)).unwrap_or(0);
+        let abs = node.working_dir.join(p);
+        // CS-0173: an input that some unit in this closure produces is answered
+        // by that producer, never by whatever is on disk right now. Reading disk
+        // is wrong in both directions: on a cold tree the file is absent though
+        // its bytes are already determined by an upstream hit, and after an edit
+        // it is present but stale, holding bytes the run will overwrite before
+        // this unit ever reads them.
+        match predictions.get(&abs) {
+            Some((Prediction::Known(h), _)) => {
+                inputs.insert(p.clone(), *h);
+                continue;
+            }
+            Some((Prediction::Unknowable, producer)) => {
+                pending_inputs.insert(p.clone(), producer.clone());
+                continue;
+            }
+            None => {}
+        }
+        let h = cook_fingerprint::hash_file(&abs).unwrap_or(0);
         inputs.insert(p.clone(), h);
     }
     let seal_contribution = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
@@ -269,6 +366,7 @@ pub(crate) fn resolve_unit_determinants(
         output_paths: meta.output_paths.clone(),
         consulted_env: meta.consulted_env.clone(),
         sealed_probes,
+        pending_inputs,
     }
 }
 
@@ -299,6 +397,12 @@ struct Classification {
     /// `None` when the shared tier is not consulted (`local` sharing or no key).
     shared_present: Option<bool>,
     manifest_diff: Option<Vec<DeterminantDiff>>,
+    /// CS-0173: content hash of each artifact the shared-tier probe drained,
+    /// by the output path it was keyed under. The probe already streams every
+    /// byte for CS-0054 verification, so hashing costs nothing beyond the read
+    /// and yields exactly what a downstream `hash_file` would compute once the
+    /// artifact is restored. Empty when the shared tier was not consulted.
+    shared_output_hashes: BTreeMap<String, u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -309,17 +413,19 @@ fn classify(
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     det: &UnitDeterminants,
     key_hex: &str,
+    predictions: &Predictions,
 ) -> Classification {
     // I1: a declared input absent on disk means the unit cannot be a clean hit
     // and no real key exists (mirrors `hash_input_paths` returning None at
     // executor.rs:710). Attribute the miss to that input rather than fabricating
     // a `0`-hash key that can never match a real manifest.
-    if let Some(p) = first_missing_input(meta, &node.working_dir) {
+    if let Some(p) = first_missing_input(meta, &node.working_dir, predictions) {
         return Classification {
             status: CacheStatus::MissingInput { path: p },
             local_hit: false,
             shared_present: None,
             manifest_diff: None,
+            shared_output_hashes: BTreeMap::new(),
         };
     }
     let local_hit = local_step_hit(node, meta, det, cache_managers);
@@ -329,6 +435,7 @@ fn classify(
             local_hit,
             shared_present: None,
             manifest_diff: None,
+            shared_output_hashes: BTreeMap::new(),
         };
     }
     // C1: read-only shared-store probe — recompute artifact keys and confirm the
@@ -337,7 +444,9 @@ fn classify(
     // COOK-276: probed even on a local hit, so both tiers get an explicit
     // answer (`[HIT (local), MISS (shared)]` instead of a bare tier label
     // that reads as "will rebuild").
-    let shared = shared_artifacts_present(cache_ctx, key_hex, meta);
+    let probed = shared_artifacts_present(cache_ctx, key_hex, meta);
+    let shared = probed.is_some();
+    let shared_output_hashes = probed.unwrap_or_default();
     let manifest_diff = if shared { None } else { manifest_diff(cache_ctx, key_hex, det) };
     let status = if local_hit {
         CacheStatus::LocalHit
@@ -348,32 +457,108 @@ fn classify(
     } else {
         CacheStatus::SharedMiss
     };
-    Classification { status, local_hit, shared_present: Some(shared), manifest_diff }
+    Classification {
+        status,
+        local_hit,
+        shared_present: Some(shared),
+        manifest_diff,
+        shared_output_hashes,
+    }
 }
 
 fn first_missing_input(
     meta: &cook_contracts::CacheMeta,
     working_dir: &Path,
+    predictions: &Predictions,
 ) -> Option<String> {
     meta.input_paths
         .iter()
-        .find(|p| cook_fingerprint::hash_file(&working_dir.join(p)).is_none())
+        .find(|p| {
+            let abs = working_dir.join(p);
+            // CS-0173: an input a producer in this closure will restore is not
+            // missing, it is merely not here yet. Only a path nothing produces
+            // is genuinely absent. (A path whose producer REBUILDS never reaches
+            // this check: it is `ForcedByUpstream` before classify is called.)
+            if predictions.contains_key(&abs) {
+                return false;
+            }
+            cook_fingerprint::hash_file(&abs).is_none()
+        })
         .cloned()
+}
+
+/// CS-0173: record what this unit leaves on disk, for the consumers that follow
+/// it in topological order.
+///
+/// A unit served from cache has determined outputs; one that rebuilds does not,
+/// and saying so is the whole point. The fallbacks are ordered by how directly
+/// each knows the bytes, and the final arm refuses to guess: an output we could
+/// not learn the hash of is `Unknowable`, which costs a downstream unit its key
+/// but never gives it a wrong one.
+fn record_predictions(
+    predictions: &mut Predictions,
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    c: &Classification,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+) {
+    let served = c.local_hit || c.shared_present == Some(true);
+    for p in &meta.output_paths {
+        // A glob output is a pattern, not a path; it names no file a consumer
+        // could declare as an input, so there is nothing to predict.
+        if cook_fingerprint::is_terminal_output(p) {
+            continue;
+        }
+        let abs = node.working_dir.join(p);
+        let prediction = if !served {
+            Prediction::Unknowable
+        } else if let Some(h) = c.shared_output_hashes.get(p) {
+            Prediction::Known(*h)
+        } else if let Some(h) = local_output_hash(node, meta, p, cache_managers) {
+            Prediction::Known(h)
+        } else if let Some(h) = cook_fingerprint::hash_file(&abs) {
+            Prediction::Known(h)
+        } else {
+            Prediction::Unknowable
+        };
+        predictions.insert(abs, (prediction, node.recipe_name.clone()));
+    }
+}
+
+/// The content hash the local index recorded for one of this unit's outputs.
+/// Only meaningful on a local hit, where `needs_rebuild_cook` has already
+/// confirmed the recorded outputs still match what is on disk.
+fn local_output_hash(
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    output_path: &str,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+) -> Option<u64> {
+    let cm = cache_managers.get(&node.recipe_name)?;
+    let cache = cm.get_or_load(&meta.recipe_name);
+    let entry = cache.steps.get(&meta.cache_key)?;
+    entry
+        .outputs
+        .iter()
+        .find(|f| &*f.path == output_path)
+        .map(|f| f.hash)
 }
 
 /// Read-only shared-store probe: recompute the artifact keys and check the
 /// backend has every output, draining each reader for integrity verification
 /// (CS-0054) but NEVER writing to the working tree. `cook why` is read-only.
+/// CS-0173: returns `Some(path → content hash)` when every artifact is present,
+/// `None` on the first absent or unreadable one. The hashes are a by-product of
+/// the drain that already had to happen: they let a consumer of these outputs be
+/// classified before anything is restored.
 fn shared_artifacts_present(
     cache_ctx: &CacheContext,
     key_hex: &str,
     meta: &cook_contracts::CacheMeta,
-) -> bool {
-    let Some(cloud_k) = decode_key_hex(key_hex) else {
-        return false;
-    };
+) -> Option<BTreeMap<String, u64>> {
+    let cloud_k = decode_key_hex(key_hex)?;
     if meta.output_paths.is_empty() {
-        return false;
+        return None;
     }
     // COOK-278: for glob-output units the declared paths are raw patterns, not
     // the concrete names the publish path keyed its artifacts under — probing
@@ -397,20 +582,23 @@ fn shared_artifacts_present(
         Some(list) => list,
         None => &meta.output_paths,
     };
+    let mut hashes = BTreeMap::new();
     for (idx, path) in probe_paths.iter().enumerate() {
         let artifact_k = cook_fingerprint::artifact_key(&cloud_k, idx as u32, path);
         match cache_ctx.backend.get(&artifact_k) {
             Ok(Some(mut reader)) => {
-                // Drain to trigger streaming verify-on-restore; discard bytes.
-                let mut sink = std::io::sink();
-                if std::io::copy(&mut reader, &mut sink).is_err() {
-                    return false;
-                }
+                // Drain to trigger streaming verify-on-restore. CS-0173 keeps
+                // the digest instead of discarding it: the bytes were read
+                // either way, and `hash_reader` is `hash_file`'s streaming twin,
+                // so this is exactly the hash a consumer would compute from the
+                // restored file.
+                let h = cook_fingerprint::hash_reader(&mut reader)?;
+                hashes.insert(path.clone(), h);
             }
-            _ => return false,
+            _ => return None,
         }
     }
-    true
+    Some(hashes)
 }
 
 /// Decode a 64-char lowercase-hex string into a 32-byte cloud key. Returns None

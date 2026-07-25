@@ -25,6 +25,7 @@ fn ours() -> UnitDeterminants {
         output_paths: vec!["build/a.o".into()],
         consulted_env: BTreeMap::from([("CC".into(), "gcc".into())]),
         sealed_probes: BTreeMap::from([("host".into(), "\"x86_64\"".into())]),
+        pending_inputs: BTreeMap::new(),
     }
 }
 

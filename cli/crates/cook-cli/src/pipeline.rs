@@ -2053,6 +2053,11 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
         let status = match &u.status {
             CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
             CacheStatus::PinnedColdMiss => "MISS (local), MISS (shared) — pinned, fetch-only".to_string(),
+            // CS-0173: name the upstream, not the symptom. This unit does not
+            // "miss" in any cache sense; it has no key yet to hit or miss with.
+            CacheStatus::ForcedByUpstream { producer, .. } => {
+                format!("REBUILD (forced by {producer})")
+            }
             _ => {
                 let local = if u.local_hit { "HIT (local)" } else { "MISS (local)" };
                 match u.shared_present {
@@ -2062,9 +2067,16 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
                 }
             }
         };
+        // CS-0173: print no key for a forced unit. There is no honest number to
+        // put here, and printing one would suggest a lookup that never happened.
+        let key_field = if u.key_hex.is_empty() {
+            "key not computable until then".to_string()
+        } else {
+            format!("key {}", u.key_hex)
+        };
         s.push_str(&format!(
-            "\n{} :: {} [{}]  key {}\n",
-            u.recipe_name, u.cache_key, status, u.key_hex
+            "\n{} :: {} [{}]  {}\n",
+            u.recipe_name, u.cache_key, status, key_field
         ));
         s.push_str(&format!("  command_hash      {:016x}\n", u.determinants.command_hash));
         s.push_str(&format!("  env_contribution  {:016x}\n", u.determinants.env_contribution));
@@ -2073,6 +2085,14 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
             s.push_str("  inputs:\n");
             for (p, h) in &u.determinants.inputs {
                 s.push_str(&format!("    {p}  {h:016x}\n"));
+            }
+        }
+        // CS-0173: shown separately from `inputs` and without a hash, because
+        // there is no hash yet — the producing unit has not run.
+        if !u.determinants.pending_inputs.is_empty() {
+            s.push_str("  inputs (not determined yet):\n");
+            for (p, producer) in &u.determinants.pending_inputs {
+                s.push_str(&format!("    {p}  pending {producer}\n"));
             }
         }
         if !u.determinants.output_paths.is_empty() {
@@ -2206,6 +2226,20 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
             );
             "missing_input"
         }
+        // CS-0173: no `key` field is emitted for this status (see below) — the
+        // unit's key is not computable, and a consumer must be able to tell that
+        // apart from a key that happens to miss.
+        CacheStatus::ForcedByUpstream { producer, path } => {
+            status_obj.insert(
+                "forced_by".to_string(),
+                serde_json::Value::String(producer.clone()),
+            );
+            status_obj.insert(
+                "pending_input_path".to_string(),
+                serde_json::Value::String(path.clone()),
+            );
+            "forced_by_upstream"
+        }
     };
 
     let disposition = match u.disposition {
@@ -2240,11 +2274,21 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
         .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
         .collect();
 
+    let pending_inputs: serde_json::Map<String, serde_json::Value> = u
+        .determinants
+        .pending_inputs
+        .iter()
+        .map(|(p, producer)| (p.clone(), serde_json::Value::String(producer.clone())))
+        .collect();
+
     let determinants = serde_json::json!({
         "command_hash": format!("{:016x}", u.determinants.command_hash),
         "env_contribution": format!("{:016x}", u.determinants.env_contribution),
         "seal_contribution": format!("{:016x}", u.determinants.seal_contribution),
         "inputs": serde_json::Value::Object(inputs),
+        // CS-0173: path → producing recipe, for inputs whose content is not
+        // determined yet. Disjoint from `inputs` by construction.
+        "pending_inputs": serde_json::Value::Object(pending_inputs),
         "output_paths": u.determinants.output_paths.clone(),
         "consulted_env": serde_json::Value::Object(consulted_env),
         "sealed_probes": serde_json::Value::Object(sealed_probes),
@@ -2260,7 +2304,17 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     obj.insert("recipe".to_string(), serde_json::Value::String(u.recipe_name.clone()));
     obj.insert("cache_key".to_string(), serde_json::Value::String(u.cache_key.clone()));
-    obj.insert("key".to_string(), serde_json::Value::String(u.key_hex.clone()));
+    // CS-0173: a forced unit has no computable key, and the wire format says so
+    // with null rather than an empty string, so a consumer cannot mistake
+    // "not computable" for "computed, and it is the empty key".
+    obj.insert(
+        "key".to_string(),
+        if u.key_hex.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(u.key_hex.clone())
+        },
+    );
     obj.insert("line".to_string(), serde_json::json!(u.line));
     obj.insert("status".to_string(), serde_json::Value::String(status_str.to_string()));
     for (k, v) in status_obj {

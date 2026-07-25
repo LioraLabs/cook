@@ -34,6 +34,28 @@ pub fn hash_file(path: &Path) -> Option<u64> {
     Some(xxhash_rust::xxh3::xxh3_64(&bytes))
 }
 
+/// Streaming twin of [`hash_file`]: same algorithm over bytes arriving from a
+/// reader rather than a path. Returns None if the stream errors mid-read.
+///
+/// CS-0173: `cook why` predicts a not-yet-restored output's content hash by
+/// hashing the shared store's artifact stream as it drains it. That prediction
+/// is only sound while this function and `hash_file` agree byte-for-byte on
+/// the same content, which is why they live together: a change to one that
+/// missed the other would not fail to compile, it would silently mispredict
+/// every downstream key.
+pub fn hash_reader(r: &mut dyn std::io::Read) -> Option<u64> {
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => return Some(hasher.digest()),
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Hash a sorted env var map into a single u64.
 pub fn hash_env(env: &BTreeMap<String, String>) -> u64 {
     let combined: String = env
