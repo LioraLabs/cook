@@ -13,8 +13,19 @@ recipe test
     ingredients "test/corpus/*.txt"
     test { : $<generate> && tree-sitter test }
 
+# The harness walks the Standard's corpus, which lives outside this member, so
+# it cannot be an ingredient (a `../` pattern escapes the member root) and the
+# script alone was the whole declared input set. That is how CS-0172 turned the
+# tree green while adding three fixtures this grammar rejects: the corpus grew,
+# the key did not move, and the unit replayed a cached pass until v0.10.1 was
+# tagged off it. A `files` probe is the sealable form of a determinant that is
+# not the driver (§22.5.2) — the script drives, the corpus determines.
+probe conformance:corpus
+    files { "//standard/conformance/**" }
+
 recipe conformance
     ingredients "scripts/conformance.mjs"
+    seal conformance:corpus
     test { : $<generate> && node scripts/conformance.mjs }
 
 # The rendered Standard bundles the wasm parser for in-browser highlighting.
