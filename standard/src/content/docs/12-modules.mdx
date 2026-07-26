@@ -193,7 +193,7 @@ A module that mints a recipe under either shape:
 
 The annotation is attribution, not a restriction. A minted recipe is an ordinary member of the discovered set and remains dispatchable by name like any other (§{lua.reg.discovery}); a module author who regards a support recipe as an internal detail conveys that through the annotation and the documentation this subsection requires, not by expecting an implementation to refuse the invocation. See §{rationale.recipe-origin-annotation}.
 
-**Scope: recipes, not chores (CS-0175).** Everything above is scoped to recipes. A module MAY register a chore of its own through `cook.chore` (§{lua.cook-chore}) without any of the shapes above applying, subject to that section's namespace rule and registration window.
+**Scope: recipes, not chores (CS-0176).** Everything above is scoped to recipes. A module MAY register a chore of its own through `cook.chore` (§{lua.cook-chore}) without any of the shapes above applying, subject to that section's namespace rule and registration window.
 
 The distinction is not a loophole in the ownership rule but the reason the rule exists. What the rule protects is the author's build: a recipe is a node in the DAG, and minting one silently changes what `cook` does — what gets built, what it depends on, what the cache covers. A chore changes none of that. It is uncached, absent from the DAG, and does nothing at all until invoked by name; a module that registers one has added a command the author may run, not work the author's build will do.
 

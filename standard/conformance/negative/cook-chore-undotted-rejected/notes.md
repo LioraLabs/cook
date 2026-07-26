@@ -1,4 +1,4 @@
-Pins Standard §{lua.cook-chore} / CS-0175: a module-registered chore MUST carry
+Pins Standard §{lua.cook-chore} / CS-0176: a module-registered chore MUST carry
 a dotted prefix identifying the module, and an undotted name is refused at
 register phase.
 

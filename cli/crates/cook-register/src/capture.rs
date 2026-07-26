@@ -210,7 +210,7 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
 /// Mirrors `unit_api.rs::type_err`, which hardcodes the `cook.add_unit:`
 /// prefix — hence a sibling rather than a reuse.
 ///
-/// `api` names the calling surface (`cook.recipe` or `cook.chore`, CS-0175).
+/// `api` names the calling surface (`cook.recipe` or `cook.chore`, CS-0176).
 /// It is a parameter rather than a hardcoded prefix because `cook.chore`
 /// shares `parse_origin_meta`: reporting `cook.recipe:` for a bad `origin`
 /// passed to `cook.chore` would name a function the author never called.
@@ -261,7 +261,7 @@ fn parse_origin_meta(api: &str, meta: &LuaTable) -> LuaResult<Option<String>> {
 }
 
 /// Validate a `cook.chore` name against the identity of the module that is
-/// registering it (Standard §12.7.8 chore carve-out, CS-0175).
+/// registering it (Standard §12.7.8 chore carve-out, CS-0176).
 ///
 /// §12.7.8's name-ownership MUST — "a recipe's name, and the fact that it is
 /// invocable, belong to the author of the Cookfile" — is scoped to *recipes*.
@@ -291,7 +291,7 @@ fn validate_chore_namespace(name: &str, module: Option<&str>) -> LuaResult<()> {
              namespace is checked against the module registering it, and that identity \
              is only exact while the module's own chunk is running — register chores at \
              module top level, not from a function called later by a Cookfile \
-             (Standard \u{00a7}12.7.8, CS-0175)"
+             (Standard \u{00a7}12.7.8, CS-0176)"
         ))
     })?;
 
@@ -302,14 +302,14 @@ fn validate_chore_namespace(name: &str, module: Option<&str>) -> LuaResult<()> {
         return Err(mlua::Error::runtime(format!(
             "cook.chore: '{name}' must be namespaced. A module-registered chore takes a \
              dotted name whose first segment is its module: try '{short}.{name}' \
-             (Standard \u{00a7}12.7.8, CS-0175)"
+             (Standard \u{00a7}12.7.8, CS-0176)"
         )));
     }
     if prefix != module && prefix != short {
         return Err(mlua::Error::runtime(format!(
             "cook.chore: '{name}' claims namespace '{prefix}', but module '{module}' may \
              only register under '{short}' or '{module}' \
-             (Standard \u{00a7}12.7.8, CS-0175)"
+             (Standard \u{00a7}12.7.8, CS-0176)"
         )));
     }
     Ok(())
@@ -439,7 +439,7 @@ pub fn install_cook_api(
         })?;
     cook.set("recipe", recipe_fn)?;
 
-    // cook.chore(name, meta, fn) — the public module-facing API (CS-0175).
+    // cook.chore(name, meta, fn) — the public module-facing API (CS-0176).
     //
     // Sibling to `cook.recipe`, tagged `RecipeKind::Chore` and `Dynamic`.
     // Exists so a blessed module can offer verbs (`cc.add`, `cc.link`) that

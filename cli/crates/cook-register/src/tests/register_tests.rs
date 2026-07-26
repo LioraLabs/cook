@@ -4180,7 +4180,7 @@ end)
 }
 
 // -----------------------------------------------------------------------
-// CS-0175 — public `cook.chore`, so a module can register namespaced verbs.
+// CS-0176 — public `cook.chore`, so a module can register namespaced verbs.
 //
 // Mirrors the CS-0143 origin block above: same shape of feature (a new
 // public registration surface with metadata the surface paths must not

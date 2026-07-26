@@ -268,7 +268,7 @@ pub fn register_cookfile(
     let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
 
     // 4b. Module-loader state. Built HERE, ahead of the core API install,
-    //     because `cook.chore` (CS-0175) checks its namespace prefix against
+    //     because `cook.chore` (CS-0176) checks its namespace prefix against
     //     `current_module` and so must close over this handle at install time.
     //     `install_remaining_apis` registers the loader itself over it below.
     let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
@@ -1154,7 +1154,7 @@ impl BodyDriver {
             .map(|t| t == name)
             .unwrap_or(false);
         if kind == crate::RecipeKind::Chore {
-            // CS-0175: establish chore unit semantics (no-cache, interactive)
+            // CS-0176: establish chore unit semantics (no-cache, interactive)
             // for the duration of the body.
             //
             // A SURFACE chore gets these from codegen, which wraps the body in
@@ -1457,7 +1457,7 @@ impl BodyDriver {
 
 /// RAII bracket that marks a chore body active for the duration of its
 /// invocation, so units captured inside it get chore semantics — no-cache
-/// and interactive (§7.4, CS-0175).
+/// and interactive (§7.4, CS-0176).
 ///
 /// Sets `BodyCaptureState::current_chore_active`, the same flag
 /// `cook._enter_chore()` / `cook._exit_chore()` drive for surface chores
@@ -2242,7 +2242,7 @@ fn detect_collisions(
             (crate::capture::RegistrationSource::Dynamic { .. }, crate::RecipeKind::Recipe) => {
                 RegistrationSiteKind::Dynamic
             }
-            // CS-0175: a `cook.chore` registration, so the collision names
+            // CS-0176: a `cook.chore` registration, so the collision names
             // `cook.chore` rather than a `cook.recipe` call that never happened.
             (crate::capture::RegistrationSource::Dynamic { .. }, crate::RecipeKind::Chore) => {
                 RegistrationSiteKind::DynamicChore
@@ -2310,7 +2310,7 @@ pub fn list_names(
         .map_err(RegisterError::Lua)?;
 
     // Module-loader state, ahead of the core API install — `cook.chore`
-    // closes over it (CS-0175). `list_names` DOES need this wired properly:
+    // closes over it (CS-0176). `list_names` DOES need this wired properly:
     // it evaluates the top-level chunk, so `use cook_cc` runs the module and
     // its `cook.chore` registrations, which is exactly how `cook menu` comes
     // to list module-provided verbs.
@@ -2435,7 +2435,7 @@ fn install_remaining_apis(
     prepass: crate::module_loader::SharedPrepassStore,
     recipe_forcer: crate::context::SharedRecipeForcer,
     finalizer_queue: crate::on_register_api::SharedFinalizerQueue,
-    // CS-0175: created by the caller, before `install_cook_api`, because
+    // CS-0176: created by the caller, before `install_cook_api`, because
     // `cook.chore` validates its namespace against the module being evaluated
     // and therefore needs this handle at install time — earlier than the
     // module loader itself used to be built.

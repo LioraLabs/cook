@@ -112,7 +112,7 @@ pub enum RegisterError {
         chore: String,
         name: String,
         line: usize,
-        /// CS-0175: `Some` for a `cook.chore` registration, `None` for a
+        /// CS-0176: `Some` for a `cook.chore` registration, `None` for a
         /// surface `chore NAME` block. Selects the declaration-site phrasing.
         origin: Option<String>,
     },
@@ -149,7 +149,7 @@ pub enum RegisterError {
         chore: String,
         name: String,
         line: usize,
-        /// CS-0175: see `ChoreParamMissing::origin`.
+        /// CS-0176: see `ChoreParamMissing::origin`.
         origin: Option<String>,
     },
 
@@ -165,7 +165,7 @@ pub enum RegisterError {
         name: String,
         line: usize,
         message: String,
-        /// CS-0175: see `ChoreParamMissing::origin`.
+        /// CS-0176: see `ChoreParamMissing::origin`.
         origin: Option<String>,
     },
 
@@ -180,7 +180,7 @@ pub enum RegisterError {
         name: String,
         line: usize,
         ty: String,
-        /// CS-0175: see `ChoreParamMissing::origin`.
+        /// CS-0176: see `ChoreParamMissing::origin`.
         origin: Option<String>,
     },
 
@@ -217,7 +217,7 @@ pub enum RegisterError {
 /// Render the declaration site of a chore parameter for a diagnostic.
 ///
 /// A surface `chore NAME` block has a Cookfile line the author can open, so
-/// the message points at it. A `cook.chore` registration (CS-0175) does not:
+/// the message points at it. A `cook.chore` registration (CS-0176) does not:
 /// `caller_line_in_cookfile` walks the Lua stack and lands on the *module's*
 /// own line, which is a real number pointing into a file the author did not
 /// write and cannot act on. Naming the origin instead is the only actionable
@@ -262,7 +262,7 @@ pub enum RegistrationSiteKind {
     /// `cook.recipe(...)` call from a `register` block, top-level module
     /// call, or wrapper Lua function (e.g. `cook_cc.bin`).
     Dynamic,
-    /// `cook.chore(...)` call from a module's own chunk (CS-0175). Distinct
+    /// `cook.chore(...)` call from a module's own chunk (CS-0176). Distinct
     /// from `Dynamic` so a collision names the function the author would
     /// have to go look at — rendering "cook.recipe call" for a chore
     /// registration sends them to a call that does not exist.

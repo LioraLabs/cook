@@ -1,4 +1,4 @@
-Pins Standard §{lua.cook-chore} / CS-0175: a module MAY register a chore of its
+Pins Standard §{lua.cook-chore} / CS-0176: a module MAY register a chore of its
 own, under a name namespaced to that module, and the `use` declaration alone is
 what brings it into existence.
 

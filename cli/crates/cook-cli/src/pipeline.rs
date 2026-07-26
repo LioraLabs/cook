@@ -56,7 +56,7 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
                         "by cook.chore at register-phase"
                     }
                 };
-                // CS-0175: a module-registered chore's line points into the
+                // CS-0176: a module-registered chore's line points into the
                 // MODULE, not the Cookfile, so prefixing it with `Cookfile:`
                 // would send the reader to an unrelated line of their own file.
                 // Name the site without a false location instead.
