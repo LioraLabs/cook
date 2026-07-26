@@ -14,5 +14,10 @@ chore preview
     pnpm build
     pnpm host
 
+# Checks cook-lang against the corpus as it stood at a published tag rather than
+# as it stands here. Imperative by nature — it reconstructs a tree from git
+# history — so it stays a chore; what moved out of Lua is the shell pipeline,
+# which is now a script a shell can run directly rather than a string built with
+# table.concat and handed to cook.exec.
 chore against-tag version=(fs.read("VERSION"):gsub("%s+$", ""))
-    > checks.against_tag(version)
+    scripts/against-tag.sh $<version>

@@ -2,8 +2,6 @@
 --
 -- Repo-local checks for the Cook Standard:
 --   * checks.lint_keywords()        — flag lowercase RFC 2119 keywords in normative chapters (skips fenced blocks and inline code).
---   * checks.against_tag(version)   — verify cook-lang against the conformance corpus
---                                     materialized from the cs-standard/<version> git tag.
 --
 -- `lint_keywords` is a target-maker: called from a recipe body, it registers a
 -- test unit (cook.add_test, §22.4) on the enclosing recipe, so `cook test`
@@ -11,9 +9,10 @@
 -- enclosing recipe's qualified name, and the normative glob set stays the
 -- module's business — the recipe declares no ingredients.
 --
--- `against_tag` still executes synchronously during the register phase via
--- cook.sh / fs.* — it is not a work unit and fails the chore directly via
--- error().
+-- `against_tag` used to live here as a shell pipeline assembled with
+-- table.concat and handed to cook.exec. It is now scripts/against-tag.sh,
+-- invoked directly by the `against-tag` chore: same commands, in a file a shell
+-- can run and a reader can read.
 
 local checks = {}
 
@@ -108,63 +107,6 @@ function checks.scan_keywords()
         )
     end
     print("check-normative-keywords: OK")
-end
-
--- ---------------------------------------------------------------------------
--- checks.against_tag
--- ---------------------------------------------------------------------------
-
-local function rstrip(s)
-    return (s:gsub("%s+$", ""))
-end
-
-local function tag_exists(tag)
-    local ok = pcall(function()
-        cook.sh("git rev-parse --verify --quiet " .. tag)
-    end)
-    return ok
-end
-
-function checks.against_tag(version)
-    if not version or version == "" then
-        error("checks.against_tag: version required (e.g. '0.1' or 'v0.1')")
-    end
-    if version:sub(1, 1) ~= "v" then
-        version = "v" .. version
-    end
-    local tag = "cs-standard/" .. version
-
-    if not tag_exists(tag) then
-        error("checks.against_tag: tag '" .. tag .. "' not found in this repository")
-    end
-
-    -- `git -C <repo_root>` so the pathspec resolves repo-relative even
-    -- though the recipe runs with cwd = standard/. The corpus path is
-    -- absolute because cargo test changes the test's working directory
-    -- to the crate root, so a relative path would no longer resolve.
-    local repo_root = rstrip(cook.sh("git rev-parse --show-toplevel"))
-    local tmpdir = repo_root .. "/standard/.cook/conformance-" .. version
-    local corpus = tmpdir .. "/conformance"
-
-    -- Setup, test, and cleanup are recorded as one non-cached unit so
-    -- cargo test's output streams to the user during the execute phase.
-    local pipeline = table.concat({
-        "set -e",
-        "rm -rf " .. tmpdir,
-        "mkdir -p " .. tmpdir,
-        "git -C " .. repo_root .. " archive " .. tag .. " standard/conformance"
-            .. " | tar -x -C " .. tmpdir .. " --strip-components=1",
-        "test -d " .. corpus .. "/positive"
-            .. " || { echo 'checks.against_tag: tag did not contain standard/conformance/positive' >&2; exit 1; }",
-        "echo 'Running cook-lang conformance harness against " .. tag .. "'",
-        "echo 'Corpus: " .. corpus .. "'",
-        "env COOK_CONFORMANCE_CORPUS=" .. corpus
-            .. " cargo test --manifest-path " .. repo_root .. "/cli/Cargo.toml"
-            .. " -p cook-lang --test conformance",
-        "rm -rf " .. tmpdir,
-    }, "\n")
-
-    cook.exec(pipeline, 0)
 end
 
 return checks
