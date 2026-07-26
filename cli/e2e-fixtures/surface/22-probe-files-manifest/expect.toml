@@ -1,0 +1,39 @@
+# 1. Cold build. The manifest is keyed by workspace-relative path and the
+#    `!"src/gen/*.ts"` exclusion keeps the generated file out of it.
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["build/keys.txt", "build/stamp.txt"]
+equals = { "build/keys.txt" = "src/a.ts\nsrc/b.ts\n" }
+
+# 2. Nothing touched: the probe re-produces the same value, so the sealed unit
+#    is re-served rather than re-run and the nonce survives.
+[[run]]
+args = ["build"]
+[run.assert]
+unchanged = ["build/stamp.txt", "build/keys.txt"]
+
+# 3. Editing a matched file changes its content hash, hence the probe value,
+#    hence the key of every unit sealing it.
+[[run]]
+args = ["build"]
+write = { "src/a.ts" = "export const a = 99\n" }
+[run.assert]
+changed = ["build/stamp.txt"]
+unchanged = ["build/keys.txt"]
+
+# 4. Adding a matched file changes the resolved set, not just a hash.
+[[run]]
+args = ["build"]
+write = { "src/c.ts" = "export const c = 3\n" }
+[run.assert]
+changed = ["build/stamp.txt", "build/keys.txt"]
+equals = { "build/keys.txt" = "src/a.ts\nsrc/b.ts\nsrc/c.ts\n" }
+
+# 5. Editing an EXCLUDED file must move nothing: `!` is honoured in the
+#    fingerprint set, not only in the rendered value.
+[[run]]
+args = ["build"]
+write = { "src/gen/ignored.ts" = "export const gen = 42\n" }
+[run.assert]
+unchanged = ["build/stamp.txt", "build/keys.txt"]

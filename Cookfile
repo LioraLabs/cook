@@ -17,7 +17,11 @@ chore package version target
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
     > release.bump_claim(version)
 
-# Bumps [workspace.package], commits, tags, and pushes. Pushing the tag fires
-# the release build+publish matrix in .github/workflows/release.yml.
+# Gates on a clean tree, an in-sync conformance claim, and a green `cook test`
+# (ci.yml's gate, re-run here against a release binary built from this tree),
+# then bumps [workspace.package], commits, tags, and pushes. Pushing the tag
+# fires the release build+publish matrix in .github/workflows/release.yml —
+# which is why the gate is here and not only in CI: by the time CI fails, the
+# tag is already public.
 chore release version
     > release.cut(version)

@@ -159,6 +159,19 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0163: `io` unreachable in a sandboxed config body — register-phase rejection, not syntactic'],
   ['config-env-output-rejected',
    'CS-0164: `env.NAME` config output sink (now `var.NAME`) — register-phase rejection, not syntactic'],
+  // CS-0172: the declared-variable namespace is a register-phase artefact —
+  // the frozen keyset, the value's Lua type, and the write window all become
+  // knowable only once the config dispatcher has run. Each of these three
+  // Cookfiles is syntactically ordinary: an undeclared `$<NAME>` is the same
+  // placeholder shape as a declared one, a table-valued assignment is opaque
+  // config-body Lua, and a `var.NAME = …` line in a `register` block is
+  // opaque register-body Lua.
+  ['config-var-ambient-env-rejected',
+   'CS-0172: `$<HOME>` against the frozen declared keyset — register-phase rejection, not syntactic'],
+  ['config-var-table-value-rejected',
+   'CS-0172: table-valued declared variable — register-phase type rejection, not syntactic'],
+  ['config-var-write-outside-config-rejected',
+   'CS-0172: `var` write outside a config body — register-phase rejection, not syntactic'],
 ]);
 
 function corpusRoot() {

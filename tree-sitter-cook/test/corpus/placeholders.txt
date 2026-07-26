@@ -281,3 +281,69 @@ recipe html
         (placeholder
           (placeholder_ident))
         (shell_content)))))
+
+================
+Declared-variable placeholder (CS-0164, CS-0172)
+================
+
+config
+    var.CFLAGS = "-O2"
+
+recipe obj
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" {
+        cc $<var.CFLAGS> -c $<in> -o $<out>
+    }
+
+---
+
+(source_file
+  (config_block
+    (lua_code))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string)
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
+Bare declared-variable placeholder (CS-0164)
+================
+
+config
+    var.MODE = "debug"
+
+recipe build
+    cook "build/out.txt" { echo $<MODE> > $<out> }
+
+---
+
+(source_file
+  (config_block
+    (lua_code))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))

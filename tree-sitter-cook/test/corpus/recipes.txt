@@ -115,7 +115,7 @@ Cook with inline lua block
 recipe lib: setup
     ingredients "lib/*.c"
     cook "build/{in.stem}.o" >{
-        cook.sh(cook.env.CC .. " -c " .. input .. " -o " .. output)
+        cook.sh(var.CC .. " -c " .. input .. " -o " .. output)
     }
 
 ---
