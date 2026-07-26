@@ -293,24 +293,43 @@ module.exports = grammar({
 
     // Producer keywords are contextual because these literals occur only
     // after a probe header. JSON/lines decorate shell output; tools/envs
-    // accept a non-empty, one-line list of narrow IDENT names.
+    // accept a non-empty, one-line list of bare names.
+    //
+    // The two name lists take different charsets (CS-0181). A `tools` entry
+    // names an executable on PATH, so it is a TOOL_NAME (= PROBE_SEG, internal
+    // `-` and `.` admitted) and `tree-sitter` / `pkg-config` are spellable. An
+    // `envs` entry names an environment variable and stays the narrow IDENT: a
+    // shell cannot address `FOO-BAR`.
     producer: ($) =>
       seq(
         choice(
           seq(optional(choice("json", "lines")), field("body", $.shell_block)),
-          seq(choice("tools", "envs"), $.name_list),
+          seq("tools", $.tool_name_list),
+          seq("envs", $.env_name_list),
           field("body", $.exec_lua_block),
         ),
         $._newline,
       ),
 
-    name_list: ($) =>
+    tool_name_list: ($) =>
+      seq(
+        "{",
+        alias($._tool_name, $.identifier),
+        repeat(seq(optional(","), alias($._tool_name, $.identifier))),
+        "}",
+      ),
+
+    env_name_list: ($) =>
       seq(
         "{",
         alias($._lua_ident, $.identifier),
         repeat(seq(optional(","), alias($._lua_ident, $.identifier))),
         "}",
       ),
+
+    // TOOL_NAME ::= PROBE_SEG. Same inner class as `_bare_probe_key`'s
+    // segment, without the module-prefix colon: a tool name has no namespace.
+    _tool_name: ($) => token(/[A-Za-z_][A-Za-z0-9_.-]*/),
 
     // A.3.2 `glob_list` — same brace shape as `name_list` (comma/whitespace
     // separated, single physical line), holding quoted glob patterns with

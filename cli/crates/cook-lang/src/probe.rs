@@ -106,10 +106,19 @@ pub(crate) fn parse_probe(
 }
 
 /// Parse a `tools`/`envs` brace name list: `{ a, b c }` → `["a","b","c"]`.
-/// Separators are commas and/or whitespace (mixed allowed). Each name is a bare
-/// `IDENT`. The list MUST be on one physical line and MUST be non-empty. The
-/// `{ … }` here is a NAME LIST, not a shell/Lua body — so a `>{ … }` Lua block
-/// is rejected by the caller before reaching this function.
+/// Separators are commas and/or whitespace (mixed allowed). The list MUST be on
+/// one physical line and MUST be non-empty. The `{ … }` here is a NAME LIST, not
+/// a shell/Lua body — so a `>{ … }` Lua block is rejected by the caller before
+/// reaching this function.
+///
+/// The two kinds take different character sets (CS-0181). An `envs` entry names
+/// an environment variable and stays the narrow `IDENT`: a shell cannot address
+/// `FOO-BAR`, so widening it would admit names nothing could ever set. A `tools`
+/// entry names an executable resolved on PATH, and real ones carry `-` and `.`
+/// routinely — `tree-sitter`, `pkg-config`, `llvm-config`, `wasm-opt` — so it
+/// takes `PROBE_SEG`, the same class CS-0131 gave probe keys. Both still require
+/// an alphabetic-or-underscore head, which is what keeps `tools { cc --version }`
+/// rejected: a flag is not a tool name.
 fn parse_source_name_list(
     body_src: &str,
     line: usize,
@@ -131,17 +140,26 @@ fn parse_source_name_list(
         if tok.is_empty() {
             continue;
         }
+        // CS-0181: `tools` widens to PROBE_SEG; `envs` stays IDENT.
+        let dashes_ok = kind == "tools";
         let mut chars = tok.chars();
         let head_ok = chars
             .next()
             .map(|c| c.is_ascii_alphabetic() || c == '_')
             .unwrap_or(false);
-        let tail_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let tail_ok = chars.all(|c| {
+            c.is_ascii_alphanumeric() || c == '_' || (dashes_ok && (c == '-' || c == '.'))
+        });
         if !head_ok || !tail_ok {
+            let charset = if dashes_ok {
+                "[A-Za-z_][A-Za-z0-9_.-]*"
+            } else {
+                "[A-Za-z_][A-Za-z0-9_]*"
+            };
             return Err(ParseError::Parse {
                 line,
                 message: format!(
-                    "{kind}: invalid name '{tok}'; names must be bare identifiers ([A-Za-z_][A-Za-z0-9_]*)"
+                    "{kind}: invalid name '{tok}'; names must be bare identifiers ({charset})"
                 ),
             });
         }

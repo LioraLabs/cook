@@ -2970,3 +2970,20 @@ The failure is quiet and it outlives the obvious remedy: the value lives in the 
 **What motivated it.** CS-0179's conformance fixture edits a Cookfile and must leave the tree exactly as it found it, including when its own assertions fail. Editing a copy and deleting the copy is the honest way to do that; without a removal primitive the fixture had to edit the tracked file in place and restore it, which is correct only on the happy path. It failed to be, and the residue accumulated across runs — a fixture that is dirty from its first failure onward. That is a small motivation for a language-surface addition, but the gap it exposed is not small: a module that writes a scratch file had no way to clean up after itself.
 
 **Conformance.** Additive; no grammar change, no effect on existing Cookfiles or cache keys. The renumbering is presentational — every cross-reference in the Standard is by slug, and `fs.mkdir_p`, `fs.glob`, `fs.mtime` and the sandbox section keep their anchors, so no link breaks. Historical App. E entries citing the old numbers are left as written, per the convention CS-0173 followed. Pinned by five tests in `cook-lua-stdlib` covering removal, the absent-path boolean, directory refusal, sandbox refusal, and symlink handling.
+
+## CS-0181 — `tools { }` admits the tool names that exist [#changes.cs-0181]
+
+**Date:** 2026-07-26
+**Version:** v0.18
+**Sections affected:** §{grammar-appendix.probes} (`producer` split into `tool_name_list` / `env_name_list`; new `TOOL_NAME` terminal; source-list-kinds paragraph; new tool-name charset paragraph; CS-0131's charset note re-pointed), §{cat.probes.decl} (`tools` producer bullet and the name-list rejection bullet), App. E (this entry). Reference implementation: `cli/crates/cook-lang/src/probe.rs`.
+
+**Summary.** A `tools { }` name list accepted only `IDENT`, so a hyphenated executable could not be named. `tree-sitter`, `pkg-config`, `llvm-config` and `wasm-opt` were all unspellable. `TOOL_NAME` is now `PROBE_SEG` — the recipe-name character set, internal `-` and `.` admitted — which is the class CS-0131 already gave probe keys.
+
+**The Standard contradicted itself.** §{cat.probes.inputs}'s `tools` row gives `"pkg-config"` as its worked example of a tool name, and the §{cat.probes.decl} Lua-API example seals on exactly that. Neither could be written in the native `probe` surface the rest of §22 specifies. CS-0131 is where the two halves parted: it widened `BARE_PROBE_KEY` to `PROBE_SEG` and recorded that it was "leaving the narrow `IDENT` for the `tools`/`envs` `name_list`" — a deliberate choice, but one made about probe keys, with the tool-name consequence unexamined.
+
+**`envs` is deliberately not widened.** An `envs` entry names an environment variable, and a shell cannot address `FOO-BAR`; admitting one would let an author spell a determinant that nothing could ever set, turning a typo into a silently-always-unset input rather than a parse error. The two kinds share a brace shape and nothing else, so the grammar now names them separately instead of pairing them under one `name_list`.
+
+**What motivated it.** `tree-sitter-cook` commits its generated `src/`, and the tree-sitter CLI that generates it is therefore part of the source: 0.25.10, 0.26.9 and 0.26.11 each emit different bytes for one unchanged `grammar.js`. `package.json` pinned the version and CI installed it, but nothing tied that pin to a cache key, because the determinant could not be named. The failure mode this leaves is the bad one: a developer whose `PATH` resolved a different CLI regenerated tracked files in place, with no key moving to say why, and the diff surfaced only as an unexplained dirty tree during a release.
+
+**Conformance.** Strictly widening; every name legal before is legal now, so no existing Cookfile changes meaning and no cache key moves. Both classes keep the `[A-Za-z_]` head, so `tools { cc --version }` stays rejected and the `probe-as-tools-bad-name` negative fixture is unaffected. Pinned by the new positive fixture `probe-tools-hyphenated-name` and by the existing `probe-as-tools-bad-name` / `probe-as-tools-empty` negatives.
+

@@ -50,7 +50,10 @@
 (probe_dep_list
   (string) @function)
 
-(name_list
+(tool_name_list
+  (identifier) @variable)
+
+(env_name_list
   (identifier) @variable)
 
 ; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────

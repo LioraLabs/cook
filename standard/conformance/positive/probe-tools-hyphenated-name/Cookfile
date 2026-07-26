@@ -1,0 +1,7 @@
+probe generate:tool
+    tools { tree-sitter, pkg-config, llvm-config }
+
+recipe generate
+    ingredients "grammar.js"
+    seal generate:tool
+    cook "src/parser.c" { tree-sitter generate }

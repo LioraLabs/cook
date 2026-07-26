@@ -255,6 +255,21 @@
     }
   },
   {
+    "type": "env_name_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "exec_lua_block",
     "named": true,
     "fields": {},
@@ -491,21 +506,6 @@
     }
   },
   {
-    "type": "name_list",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "placeholder",
     "named": true,
     "fields": {},
@@ -620,11 +620,15 @@
       "required": false,
       "types": [
         {
+          "type": "env_name_list",
+          "named": true
+        },
+        {
           "type": "glob_list",
           "named": true
         },
         {
-          "type": "name_list",
+          "type": "tool_name_list",
           "named": true
         }
       ]
@@ -880,6 +884,21 @@
       "types": [
         {
           "type": "test_mods",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tool_name_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]

@@ -58,14 +58,14 @@ probe build-env
     (probe_header
       name: (identifier))
     (producer
-      (name_list
+      (tool_name_list
         (identifier)
         (identifier))))
   (probe
     (probe_header
       name: (identifier))
     (producer
-      (name_list
+      (env_name_list
         (identifier)
         (identifier)))))
 
@@ -144,8 +144,20 @@ probe empty
 probe comma
     envs { CC, }
 
-probe malformed
-    tools { cc-version }
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      name: (identifier))
+    (lua_code)))
+
+================
+Hyphenated tool names (CS-0181)
+================
+
+probe generate:tool
+    tools { tree-sitter, pkg-config }
 
 ---
 
@@ -154,16 +166,35 @@ probe malformed
     (probe_header
       name: (identifier))
     (producer
-      (name_list
-        (identifier
-          (MISSING "_chore_param_name_token1")))))
-  (probe
+      (tool_name_list
+        (identifier)
+        (identifier)))))
+
+================
+A tool name may not start with a dash (CS-0181)
+================
+
+probe flagname
+    tools { --version }
+
+---
+
+(source_file
+  (ERROR
     (probe_header
       name: (identifier))
-    (producer
-      (name_list
-        (identifier)
-        (ERROR))))
+    (lua_code)))
+
+================
+envs is not widened to hyphens (CS-0181)
+================
+
+probe envdash
+    envs { CC-FLAGS }
+
+---
+
+(source_file
   (ERROR
     (probe_header
       name: (identifier))

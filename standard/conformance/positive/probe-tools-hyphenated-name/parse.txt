@@ -1,0 +1,20 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="generate" line=4
+      deps: []
+      ingredients: ["grammar.js"]
+      excludes: []
+      steps:
+        Cook outputs=["src/parser.c"] body=ShellBlock(["tree-sitter generate"]) disposition=[local=false pinned=false record=false seal=["generate:tool"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="generate:tool" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Tools names=["tree-sitter", "pkg-config", "llvm-config"]

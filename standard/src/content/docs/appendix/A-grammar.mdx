@@ -120,9 +120,12 @@ PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_.\-]*/   /* CS-0131: matches BARE_IDENTI
 probe_body       ::= "files" glob_list NEWLINE
                    | ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
-                   | ("tools" | "envs") name_list
+                   | "tools" tool_name_list
+                   | "envs" env_name_list
                    | exec_lua_block
-name_list        ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
+tool_name_list   ::= "{" ( TOOL_NAME ((WS | ",") WS* TOOL_NAME)* )? "}"
+env_name_list    ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
+TOOL_NAME        ::= PROBE_SEG                   /* CS-0181: executable names carry `-` and `.` */
 glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
 glob_pattern     ::= "!"? STRING
 ```
@@ -131,17 +134,30 @@ glob_pattern     ::= "!"? STRING
 
 **Probe body (normative).** A `probe_body` is either a bare `files` glob list, which admits no `ingredients_step`, or an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, `envs`, and `files` are contextual keywords recognised only in this probe-body position. A `files` producer MUST NOT be combined with an `ingredients_step` (CS-0148; §{cat.probes.decl}) — the grammar above encodes this exclusivity structurally rather than as a post-hoc semantic check.
 
-**Source-list kinds (normative).** The `tools` and `envs` forms take a
-`name_list` — a brace-delimited, comma/whitespace-separated list of bare `IDENT`
-names — and the `files` form a `glob_list` — the same brace shape holding quoted
-glob patterns with optional `!` exclude prefixes (`ingredients` pattern syntax,
+**Source-list kinds (normative).** The `tools` and `envs` forms take a name list
+— a brace-delimited, comma/whitespace-separated list of bare names — and the
+`files` form a `glob_list` — the same brace shape holding quoted glob patterns
+with optional `!` exclude prefixes (`ingredients` pattern syntax,
 §{steps.ingredients}) — NOT a `shell_block` or `exec_lua_block`. A conforming
-implementation MUST reject an empty `name_list` or `glob_list` (a `glob_list`
-MUST contain at least one include pattern), a `name_list` entry that is not an
-`IDENT`, a `glob_list` entry that is not a quoted `STRING`, and a body (in
-particular a `>{ … }` `exec_lua_block`) supplied where a name or glob list is
-required (§{cat.probes.decl}). Both list forms are written on a single physical
-line (unlike a multi-line `shell_block`).
+implementation MUST reject an empty name list or `glob_list` (a `glob_list`
+MUST contain at least one include pattern), an `env_name_list` entry that is not
+an `IDENT`, a `tool_name_list` entry that is not a `TOOL_NAME`, a `glob_list`
+entry that is not a quoted `STRING`, and a body (in particular a `>{ … }`
+`exec_lua_block`) supplied where a name or glob list is required
+(§{cat.probes.decl}). Both list forms are written on a single physical line
+(unlike a multi-line `shell_block`).
+
+**Tool-name charset (normative; CS-0181).** A `TOOL_NAME` is a `PROBE_SEG`: the
+recipe-name character set, admitting internal `-` and `.`. A tool name denotes an
+executable resolved on `PATH`, and executable names routinely carry those
+characters — `tree-sitter`, `pkg-config`, `llvm-config`, `wasm-opt`. CS-0131
+widened `BARE_PROBE_KEY` to `PROBE_SEG` while deliberately leaving the whole
+`name_list` narrow; that left the `tools` kind unable to name the very tool
+§{cat.probes.inputs} uses as its worked example. An `env_name_list` entry is
+NOT widened and remains an `IDENT`: it names an environment variable, and a
+shell cannot address `FOO-BAR`, so admitting one would spell a name nothing
+could ever set. Both classes keep the `[A-Za-z_]` head, which is what continues
+to reject `tools { cc --version }` — a flag is not a tool name.
 
 **Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
 
@@ -150,7 +166,7 @@ line (unlike a multi-line `shell_block`).
 - A contiguous third `:IDENT` segment (e.g. `a:b:c`) MUST be rejected. A conforming implementation MUST produce a diagnostic identifying the malformed name and source line. The diagnostic form is: `probe name 'NAME': a probe key is at most \`IDENT:IDENT\`; 'NAME' has too many ':' segments`.
 - The quoted `STRING` form (e.g. `probe "cc:zlib"`) is always unambiguous and bypasses the positional rule entirely.
 
-**Probe-key segment charset (normative; CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` uses the recipe-name character set (`BARE_IDENTIFIER`'s inner class — internal `-` and `.` admitted), NOT the narrow `IDENT` used by the `tools` / `envs` `name_list`. A conforming implementation MUST tokenise a hyphenated bare probe key (`demo:cc-version`) as a single `probe_name`, and MUST accept a hyphenated bare `probe_ref` in the dependency list (`probe x: demo:cc-path`). The module-prefix colon is still the sole segment separator — `-` and `.` never terminate a segment. The `STRING` form remains an exact-equivalent escape hatch for the same key (see the `probe_dep_list` element-shape note below); `"demo:cc-version"` and bare `demo:cc-version` denote the identical probe key.
+**Probe-key segment charset (normative; CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` uses the recipe-name character set (`BARE_IDENTIFIER`'s inner class — internal `-` and `.` admitted), NOT the narrow `IDENT` used by the `env_name_list` (CS-0181 gave the `tool_name_list` this same `PROBE_SEG` class). A conforming implementation MUST tokenise a hyphenated bare probe key (`demo:cc-version`) as a single `probe_name`, and MUST accept a hyphenated bare `probe_ref` in the dependency list (`probe x: demo:cc-path`). The module-prefix colon is still the sole segment separator — `-` and `.` never terminate a segment. The `STRING` form remains an exact-equivalent escape hatch for the same key (see the `probe_dep_list` element-shape note below); `"demo:cc-version"` and bare `demo:cc-version` denote the identical probe key.
 
 **Missing probe name (normative).** If the `probe` keyword is followed by content that does not parse as a valid `probe_name` (e.g. `probe :deps`), the implementation MUST reject the input with a diagnostic of the form: `line N: expected a probe name after \`probe\``.
 
