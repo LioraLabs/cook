@@ -172,6 +172,16 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0172: table-valued declared variable — register-phase type rejection, not syntactic'],
   ['config-var-write-outside-config-rejected',
    'CS-0172: `var` write outside a config body — register-phase rejection, not syntactic'],
+  // CS-0175: a `consumes` pattern is a string inside an opaque `register`-block
+  // Lua call. Only the register pass compiles it, which is where an
+  // unparseable glob is rejected (§17.4 rule 1's narrowing safeguards).
+  ['add-test-consumes-bad-glob',
+   'CS-0175: unparseable `consumes` glob on cook.add_test — register-phase rejection, not syntactic'],
+  // CS-0176: the Cookfile is a bare `use` plus an ordinary recipe. The
+  // rejection fires when the loaded module registers a chore whose name
+  // carries no dotted module prefix (§22.11), which is register-phase.
+  ['cook-chore-undotted-rejected',
+   'CS-0176: undotted `cook.chore` name — register-phase rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
