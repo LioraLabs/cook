@@ -9,10 +9,13 @@
 --                                  tree-sitter.json description).
 --                                  Both-phase: pure fs.* + string.
 --
---   release.cut(version)         — gate on a clean tree, an in-sync
---                                  conformance claim, and a green `cook test`,
---                                  then bump manifest, commit, tag, push — CI
---                                  builds and publishes (release.yml).
+--   release.cut(version)         — bump manifest, commit, tag, push; CI builds
+--                                  and publishes (release.yml). The gate that
+--                                  used to live in here is now the dependency
+--                                  set of `chore release` in the root Cookfile:
+--                                  work units, not Lua control flow. What is
+--                                  left is the mutation, which is imperative by
+--                                  nature and stays here.
 
 local M = {}
 
@@ -117,76 +120,6 @@ end
 
 -- ── cut: helpers ────────────────────────────────────────────────────────────
 
-local function preflight_clean_tree()
-    local ok = try_sh("git diff-index --quiet HEAD --")
-    if not ok then
-        error("[release.cut] working tree has uncommitted changes; commit or stash first")
-    end
-end
-
--- The claim sites and standard/VERSION drifted three cuts apart (v0.15 vs
--- v0.18) because nothing checked them at the one moment it matters. `cut` is
--- that moment: the tag it pushes is what a downstream implementor reads the
--- claim off. Cheap, so it runs before the expensive gate below.
-local function preflight_claim_in_sync()
-    local declared = rstrip(fs.read("standard/VERSION"))
-    local claimed = fs.read("cli/crates/cook-lang/src/lib.rs")
-        :match('pub const COOK_STANDARD_VERSION: &str = "([^"]*)"')
-    if claimed ~= declared then
-        error(string.format(
-            "[release.cut] conformance claim is stale: cook-lang claims v%s, "
-            .. "standard/VERSION says v%s — run `cook bump-claim` and commit",
-            tostring(claimed), declared))
-    end
-    -- grammar.js is the claim site bump_claim was silently failing to rewrite
-    -- for several cuts, so it is checked explicitly rather than assumed to
-    -- follow the Rust constant.
-    local grammar = fs.read("tree-sitter-cook/grammar.js")
-        :match("Conforms to Cook Standard v([0-9]+%.[0-9]+)")
-    if grammar ~= declared then
-        error(string.format(
-            "[release.cut] tree-sitter-cook claims v%s, standard/VERSION says "
-            .. "v%s — run `cook bump-claim` and commit",
-            tostring(grammar), declared))
-    end
-end
-
--- The test gate. `cut` pushes a tag, and that tag fires release.yml's
--- build+publish matrix — by the time CI reports a failure the version is
--- already public, so the gate has to be here, ahead of every mutation.
---
--- It runs the same two commands ci.yml runs, in the same order and against a
--- release binary built from the tree being tagged: `cook test` is self-hosted,
--- so gating on a cook from PATH would test whatever is installed rather than
--- what is about to ship. There is no skip flag on purpose.
---
--- `--rerun` is load-bearing, not belt-and-braces. CI is always cold, but a
--- developer's `.cook` is warm, and several of this repo's test units are
--- deliberately sourceless or under-declared (`cli.test` is sourceless because
--- cargo is already incremental; `ts.conformance` declares its script and not
--- the corpus it walks). A warm-cache `cook test` therefore reports `ok
--- (cached)` for those units no matter what the working tree says — verified:
--- with a corrupt fixture committed into standard/conformance/positive/, a
--- plain `cook test` passed in 0.2s with 4/7 units served from cache. A gate
--- that can be satisfied by a stale record is not a gate.
-local function preflight_tests()
-    print("[release.cut] building the release binary for the test gate...")
-    cook.sh("cargo build --release -p cook-cli --manifest-path cli/Cargo.toml")
-
-    local cook_bin = "cli/target/release/cook"
-    if not fs.exists(cook_bin) then
-        error("[release.cut] " .. cook_bin .. " not found after cargo build")
-    end
-
-    print("[release.cut] running `cook test --rerun` (ci.yml's gate, uncached)...")
-    local ok, err = try_sh("./" .. cook_bin .. " test --rerun")
-    if not ok then
-        error("[release.cut] `cook test` failed; nothing was committed, tagged "
-            .. "or pushed. Fix the failures and rerun.\n" .. tostring(err))
-    end
-    print("[release.cut] test gate green")
-end
-
 local function ensure_tag(version)
     local has_local = try_sh("git rev-parse --verify --quiet '" .. version .. "'")
     if has_local then
@@ -221,9 +154,12 @@ function M.cut(version)
 
     print("[release.cut] version: " .. version)
 
-    preflight_clean_tree()
-    preflight_claim_in_sync()
-    preflight_tests()
+    -- No preflights here. The gate is the dependency list of `chore release`
+    -- plus the two body steps ahead of this one (root Cookfile): a failed test
+    -- unit blocks its dependents (§8.6, CS-0177), and a non-zero shell step
+    -- aborts the chore before this Lua step is reached. Re-checking here would
+    -- be a second, independently-editable copy of the same rules — the drift
+    -- hazard `claim-in-sync` exists to catch, reintroduced one level down.
 
     local bare_version = version:gsub("^v", "")
     local manifest_path = "cli/Cargo.toml"

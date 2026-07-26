@@ -10,6 +10,57 @@ use release
 #   cook cli.build              cargo's dev profile
 #   cook cli.build @profiling   release codegen plus debug info for profilers
 
+# ── release gates ───────────────────────────────────────────────────────────
+#
+# `cook release` pushes a tag, and pushing the tag fires release.yml's
+# build+publish matrix: by the time CI reports a failure the version is already
+# public. The gate therefore lives here, ahead of every mutation, rather than
+# only in CI.
+#
+# It is expressed as work units instead of as Lua control flow. A failed test
+# unit blocks every unit that depends on it (§8.6, CS-0177), so `chore release:
+# <gates>` is a real gate and not an advisory one; `cook test` fans out to the
+# test-bearing gates on every run, not only at release time; and one can be run
+# on its own with `cook test claim-in-sync`.
+
+# The toolchain and the crate sources determine the binary; the workspace
+# manifest and lock drive it. Naming the sources as a `files` probe rather than
+# as ingredients keeps that split honest — they are a sealable determinant, not
+# cargo's iteration driver (§22.5.2) — and it means a toolchain bump re-cuts the
+# binary instead of silently reusing one built by a different rustc.
+probe cook:toolchain
+    tools { cargo rustc }
+
+probe cook:sources
+    files { "cli/crates/**/*.rs" "cli/crates/**/Cargo.toml" }
+
+# The cook that the self-host gate runs under. It has to be built from the tree
+# being tagged: the cook on PATH was installed by getcook.sh, which can only
+# ever serve the *previous* release, so gating with it would never catch a
+# change in this tree that breaks cook's ability to drive its own Cookfiles.
+recipe cook-bin
+    ingredients "cli/Cargo.toml" "cli/Cargo.lock"
+    seal cook:toolchain cook:sources
+    cook "cli/target/release/cook" {
+        cargo build --release -p cook-cli --manifest-path cli/Cargo.toml
+    }
+
+# Every place this repo writes the Standard version it claims to implement.
+# They once drifted three cuts apart (v0.15 vs v0.18) because nothing compared
+# them, and `bump_claim` silently matched no pattern in grammar.js for several
+# cuts running.
+probe claim:sites
+    files { "standard/VERSION" "cli/crates/cook-lang/src/lib.rs" "cli/crates/cook-lang/*.md" "tree-sitter-cook/grammar.js" "tree-sitter-cook/*.json" }
+
+# The tag is what a downstream implementor reads the claim off, so the sites
+# have to agree at exactly this moment. The script drives; the sites determine.
+recipe claim-in-sync
+    ingredients "scripts/check-claim.sh"
+    seal claim:sites
+    test { scripts/check-claim.sh }
+
+# ── chores ──────────────────────────────────────────────────────────────────
+
 # `target` is a Rust host triple and must equal the build host.
 chore package version target
     > dist.package(version, target)
@@ -17,11 +68,23 @@ chore package version target
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
     > release.bump_claim(version)
 
-# Gates on a clean tree, an in-sync conformance claim, and a green `cook test`
-# (ci.yml's gate, re-run here against a release binary built from this tree),
-# then bumps [workspace.package], commits, tags, and pushes. Pushing the tag
-# fires the release build+publish matrix in .github/workflows/release.yml —
-# which is why the gate is here and not only in CI: by the time CI fails, the
-# tag is already public.
-chore release version
+# Bumps [workspace.package], commits, tags, and pushes. `cook-bin` and
+# `claim-in-sync` have already run green by the time this body starts — a failed
+# test blocks its dependents (§8.6, CS-0177), so the dependency list is the gate.
+#
+# The last two gates are body steps rather than recipes, each for its own reason.
+# The clean-tree check asserts a property of the developer's working state, not
+# of the tracked tree, so as a test unit it would turn `cook test` red during
+# ordinary editing. The self-host run has to stay out of the `cook test` fan-out
+# for a harder reason: it re-runs this repo's whole suite, so as a test root it
+# would make a bare `cook test` run that suite twice concurrently — and the two
+# runs fight over target/ (cli's package_chore e2e removes target/cook-stage and
+# runs its own cargo build, which is not safe to do twice at once). A chore body
+# is excluded from the fan-out, so the suite runs exactly once, here, under the
+# binary that is about to ship. Shell steps abort the chore on non-zero and
+# stream their output, so a failure arrives whole rather than as a truncated
+# capture.
+chore release version: cook-bin claim-in-sync
+    git diff-index --quiet HEAD -- || { echo "release: working tree has uncommitted changes; commit or stash first" >&2; exit 1; }
+    $<cook-bin> test
     > release.cut(version)
