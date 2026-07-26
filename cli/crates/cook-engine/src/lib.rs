@@ -682,6 +682,7 @@ impl From<cook_register::RegisterError> for EngineError {
             },
             ref e @ (cook_register::RegisterError::ForEachProbeProduceFailed { .. }
             | cook_register::RegisterError::ForEachNotArray { .. }
+            | cook_register::RegisterError::ForEachFilesProbe { .. }
             | cook_register::RegisterError::ForEachProbeArtifactDep { .. }) => {
                 EngineError::RegistrationFailed {
                     recipe: String::new(),

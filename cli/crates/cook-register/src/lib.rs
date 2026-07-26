@@ -203,6 +203,20 @@ pub enum RegisterError {
     )]
     ForEachNotArray { selector: String, shape: String },
 
+    /// COOK-353: an `ingredients <probe>` source named a `files { … }` probe.
+    /// A `files` producer's value is a MAP of path → content hash (§22.5.2), so
+    /// it can never be the array an `ingredients <probe>` driver iterates. The
+    /// generic non-array diagnostic is technically correct here but unhelpful:
+    /// it reports a shape mismatch when the real answer is that this producer
+    /// kind is seal-only. Named separately so the fix can be stated.
+    #[error(
+        "ingredients <probe> source '{key}' names a `files {{ … }}` probe, whose value is a \
+         map of path to content hash — not the array an ingredients <probe> driver iterates \
+         (§22.5.2, §22.5.9). A `files` probe is a sealable DETERMINANT, not a driver: attach \
+         it with `seal {key}` and give the recipe its own `ingredients \"glob\"` to iterate."
+    )]
+    ForEachFilesProbe { key: String },
+
     /// COOK-64 §22.5.9: an `ingredients <probe>`-feeding probe declares a file input that
     /// is produced by a recipe in this Cookfile — i.e. a build artifact. An
     /// `ingredients <probe>` source MUST be statically evaluable (it is resolved before

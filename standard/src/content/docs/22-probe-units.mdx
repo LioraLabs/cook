@@ -147,7 +147,13 @@ value is determined by the producer form:
   value and therefore the key of every unit that seals this probe — `files` is
   the file-set twin of `tools`, and the idiomatic way to name a set of files
   as a sealable determinant when they are not the consuming recipe's
-  iteration driver. A conforming implementation MUST reject an empty list
+  iteration driver. It is **seal-only** for that reason: the value is a JSON
+  object keyed by path, so a `files` probe can never resolve to the array an
+  `ingredients <probe>` driver iterates (§{cat.probes.for-each}), and naming
+  one in driver position MUST be rejected. A conforming implementation SHOULD
+  say so in terms of the producer kind rather than reporting only the JSON
+  shape, since the fix is to attach the probe with `seal` and give the recipe
+  its own `ingredients` glob to iterate. A conforming implementation MUST reject an empty list
   (`{ }`), an unquoted entry, and a `>{ … }` Lua block. A `files` probe MUST
   NOT also declare an `ingredients` line — the glob set IS its file-input
   fingerprint set, and a second, independently editable set could silently
