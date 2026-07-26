@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_edit" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="app" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_edit.bin({\n        sources = { \"src/main.cpp\" },  -- entry point\n        links   = { \"mathlib\" },\n        standard = cxx_std,\n    })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

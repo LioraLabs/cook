@@ -1,0 +1,8 @@
+use cook_edit
+
+recipe app
+    cook_edit.bin({
+        sources = { "src/main.cpp" },  -- entry point
+        links   = { "mathlib" },
+        standard = cxx_std,
+    })

@@ -2454,11 +2454,20 @@ fn install_remaining_apis(
     cook_lua_stdlib::register_path_api(lua)?;
     cook_lua_stdlib::install_shell_escape_guards(
         lua,
-        cook_lua_stdlib::SandboxSource::confined(project_root),
+        cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
         cook_lua_stdlib::register_platform_api(lua, &cook_tbl)?;
+        // CS-0179: `cook.cookfile.*`, under the same sandbox policy as `fs.*`
+        // — a chore may rewrite the Cookfile that invoked it, never one
+        // outside the project root.
+        cook_lua_stdlib::register_cookfile_api(
+            lua,
+            &cook_tbl,
+            cook_lua_stdlib::WorkingDirSource::Static(builder.working_dir.clone()),
+            cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
+        )?;
     }
 
     // Module loader + remaining cook APIs. `module_state` is the caller's

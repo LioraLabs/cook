@@ -30,6 +30,7 @@
 //! implementation handles both call patterns.
 
 pub mod codec_api;
+pub mod cookfile_api;
 pub mod fs_api;
 pub mod path_api;
 pub mod platform_api;
@@ -41,6 +42,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub use codec_api::{json_to_lua_value, register_codec_api};
+pub use cookfile_api::register_cookfile_api;
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
