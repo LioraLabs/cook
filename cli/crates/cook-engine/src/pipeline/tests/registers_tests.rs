@@ -286,3 +286,56 @@ fn codegen_with_module_recipes_qualifies_extras_with_local_alias_only() {
         ws.root.lua_source
     );
 }
+
+/// COOK-352: `merge_into` must qualify `RecipeUnits::deps` on the same footing
+/// as `recipe_name`, because every consumer downstream compares them against
+/// qualified names.
+///
+/// `run.rs` rebuilds a recipe's coarse barrier set by intersecting `units.deps`
+/// with the qualified closure `edges`. While `deps` carried member-LOCAL names,
+/// that intersection was empty for every recipe in every workspace — the engine
+/// received `deps: []` throughout, and §16.1.2's read-after-write rule could
+/// only ever be satisfied through `dep_edges` (a `$<producer>` body reference).
+/// It rejected legitimate builds with "recipe 'B' does not require 'A'" while
+/// B's header said exactly that.
+///
+/// `cook-engine`'s own `literal_read_after_write.rs` did not catch it: those
+/// tests construct `RecipeUnits` by hand with matching unqualified names, so
+/// they exercise the predicate and never `merge_into`.
+#[test]
+fn register_workspace_qualifies_recipe_units_deps() {
+    let dir = tempfile::tempdir().unwrap();
+    let member = dir.path().join("mem");
+    std::fs::create_dir_all(&member).unwrap();
+    std::fs::write(dir.path().join("Cookfile"), "import mem ./mem\n").unwrap();
+    std::fs::write(
+        member.join("Cookfile"),
+        "recipe gen\n    cook \"out/g.c\" { echo g > $<out> }\n\
+         \nrecipe use: gen\n    cook \"out/f.o\" { echo f > $<out> }\n",
+    )
+    .unwrap();
+
+    let workspace = Workspace::load(
+        &dir.path().join("Cookfile"),
+        dir.path(),
+        &[],
+    )
+    .expect("workspace loads");
+
+    let registered =
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None)
+            .expect("register");
+
+    let use_units = registered
+        .units_by_recipe
+        .get("mem.use")
+        .expect("mem.use registered under its qualified name");
+
+    assert_eq!(
+        use_units.deps,
+        vec!["mem.gen".to_string()],
+        "deps must be workspace-qualified to match `recipe_name` and the \
+         closure `edges` they are intersected against; got {:?}",
+        use_units.deps
+    );
+}

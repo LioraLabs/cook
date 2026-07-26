@@ -817,26 +817,62 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
 /// message. Keep in sync with cook-luaotp's `COOK_CMD_FAIL_STREAM_CAP`.
 const COOK_CMD_FAIL_STREAM_CAP: usize = 64 * 1024;
 
+/// How much of the cap is kept from the FRONT; the rest is kept from the END.
+/// Keep in sync with cook-luaotp's `COOK_CMD_FAIL_STREAM_HEAD` (COOK-351) — a
+/// test runner prints its failure summary last, so head-only truncation
+/// discards exactly the part a reader needs.
+const COOK_CMD_FAIL_STREAM_HEAD: usize = 16 * 1024;
+
+fn line_start_at_or_before(stream: &[u8], at: usize) -> usize {
+    match stream[..at.min(stream.len())].iter().rposition(|b| *b == b'\n') {
+        Some(nl) => nl + 1,
+        None => 0,
+    }
+}
+
+fn line_start_at_or_after(stream: &[u8], at: usize) -> usize {
+    match stream[at.min(stream.len())..].iter().position(|b| *b == b'\n') {
+        Some(off) => at + off + 1,
+        None => stream.len(),
+    }
+}
+
 fn truncate_captured_stream(stream: &[u8]) -> String {
     if stream.is_empty() {
         return String::new();
     }
-    let head_slice = if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
-        &stream[..COOK_CMD_FAIL_STREAM_CAP]
-    } else {
-        stream
-    };
-    let mut head = String::from_utf8_lossy(head_slice).into_owned();
-    if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
-        if !head.ends_with('\n') {
-            head.push('\n');
-        }
-        head.push_str(&format!(
-            "... ({} bytes truncated)\n",
-            stream.len() - COOK_CMD_FAIL_STREAM_CAP
-        ));
+    if stream.len() <= COOK_CMD_FAIL_STREAM_CAP {
+        return String::from_utf8_lossy(stream).into_owned();
     }
-    head
+
+    let tail_budget = COOK_CMD_FAIL_STREAM_CAP - COOK_CMD_FAIL_STREAM_HEAD;
+    let flat_head_end = COOK_CMD_FAIL_STREAM_HEAD;
+    let flat_tail_start = stream.len() - tail_budget;
+
+    // Snap to line boundaries only when it leaves both regions non-empty; a
+    // stream with no newline in a region would otherwise collapse it away.
+    let snapped_head = line_start_at_or_before(stream, flat_head_end);
+    let head_end = if snapped_head > 0 { snapped_head } else { flat_head_end };
+
+    let snapped_tail = line_start_at_or_after(stream, flat_tail_start);
+    let tail_start = if snapped_tail > head_end && snapped_tail < stream.len() {
+        snapped_tail
+    } else {
+        flat_tail_start.max(head_end)
+    };
+
+    let mut out = String::from_utf8_lossy(&stream[..head_end]).into_owned();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "... ({} bytes elided; showing the first {} and last {} bytes) ...\n",
+        tail_start - head_end,
+        head_end,
+        stream.len() - tail_start
+    ));
+    out.push_str(&String::from_utf8_lossy(&stream[tail_start..]));
+    out
 }
 
 /// Build the canonical COOK_CMD_FAILED error string with captured streams

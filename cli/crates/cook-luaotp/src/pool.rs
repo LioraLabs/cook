@@ -1107,33 +1107,83 @@ fn refresh_package_search_paths(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<
 // ---------------------------------------------------------------------------
 
 /// Maximum bytes per captured stream included in a COOK_CMD_FAILED error
-/// message. Larger outputs are truncated with a marker so a chatty failure
+/// message. Larger outputs are elided with a marker so a chatty failure
 /// (e.g., a verbose linker spew) doesn't blow up the error string.
 const COOK_CMD_FAIL_STREAM_CAP: usize = 64 * 1024;
 
-/// Lossy-decode a captured stream and apply the cap. Returns an empty
-/// string for empty input so callers can suppress the corresponding
-/// section header.
+/// How much of the cap is kept from the FRONT; the rest is kept from the END.
+///
+/// Weighted toward the tail on purpose (COOK-351). Every test runner and most
+/// compilers print the *summary* last — the list of failures, the error count,
+/// the assertion text — so keeping only the head discards precisely the part a
+/// reader needs. A `cook release` failure recorded 65,775 bytes of passing
+/// cargo test names and not one of the failures; diagnosing it meant re-running
+/// the command by hand outside cook, which is the opposite of what a build log
+/// is for. The head is still worth keeping: it carries the command banner and
+/// the early setup that says which configuration was running.
+const COOK_CMD_FAIL_STREAM_HEAD: usize = 16 * 1024;
+
+/// Byte index of the start of the line containing `at`, searching backwards, so
+/// an elision boundary lands between lines rather than mid-token.
+fn line_start_at_or_before(stream: &[u8], at: usize) -> usize {
+    match stream[..at.min(stream.len())].iter().rposition(|b| *b == b'\n') {
+        Some(nl) => nl + 1,
+        None => 0,
+    }
+}
+
+/// Byte index just past the newline at or after `at`, so the tail begins on a
+/// line boundary.
+fn line_start_at_or_after(stream: &[u8], at: usize) -> usize {
+    match stream[at.min(stream.len())..].iter().position(|b| *b == b'\n') {
+        Some(off) => at + off + 1,
+        None => stream.len(),
+    }
+}
+
+/// Lossy-decode a captured stream and apply the cap, keeping a head AND a tail
+/// with the middle elided. Returns an empty string for empty input so callers
+/// can suppress the corresponding section header.
 fn truncate_captured_stream(stream: &[u8]) -> String {
     if stream.is_empty() {
         return String::new();
     }
-    let head_slice = if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
-        &stream[..COOK_CMD_FAIL_STREAM_CAP]
-    } else {
-        stream
-    };
-    let mut head = String::from_utf8_lossy(head_slice).into_owned();
-    if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
-        if !head.ends_with('\n') {
-            head.push('\n');
-        }
-        head.push_str(&format!(
-            "... ({} bytes truncated)\n",
-            stream.len() - COOK_CMD_FAIL_STREAM_CAP
-        ));
+    if stream.len() <= COOK_CMD_FAIL_STREAM_CAP {
+        return String::from_utf8_lossy(stream).into_owned();
     }
-    head
+
+    let tail_budget = COOK_CMD_FAIL_STREAM_CAP - COOK_CMD_FAIL_STREAM_HEAD;
+    let flat_head_end = COOK_CMD_FAIL_STREAM_HEAD;
+    let flat_tail_start = stream.len() - tail_budget;
+
+    // Prefer line boundaries so the elision lands between lines rather than
+    // mid-token — but only when snapping leaves both regions non-empty. A
+    // stream with no newline inside the head region snaps back to 0, and one
+    // with none in the tail region snaps forward to len(); either would emit a
+    // marker and nothing else. Fall back to the flat byte split in that case:
+    // an ugly cut beats a dropped region.
+    let snapped_head = line_start_at_or_before(stream, flat_head_end);
+    let head_end = if snapped_head > 0 { snapped_head } else { flat_head_end };
+
+    let snapped_tail = line_start_at_or_after(stream, flat_tail_start);
+    let tail_start = if snapped_tail > head_end && snapped_tail < stream.len() {
+        snapped_tail
+    } else {
+        flat_tail_start.max(head_end)
+    };
+
+    let mut out = String::from_utf8_lossy(&stream[..head_end]).into_owned();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "... ({} bytes elided; showing the first {} and last {} bytes) ...\n",
+        tail_start - head_end,
+        head_end,
+        stream.len() - tail_start
+    ));
+    out.push_str(&String::from_utf8_lossy(&stream[tail_start..]));
+    out
 }
 
 /// Twin of cook-cli/src/diagnostics.rs::sanitize_error — keep in sync.

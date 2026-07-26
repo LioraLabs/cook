@@ -94,8 +94,13 @@ recipe rust: generate
 
 # src/ is generated but tracked. Sourceless on purpose: it asserts a property
 # of the working tree, so a cache hit could hide real drift.
+#
+# `git diff HEAD`, not `git diff`: the latter compares the worktree against the
+# INDEX, so anything staged is invisible to it and drifted generated files pass
+# the gate as long as someone ran `git add`. This unit asserts a property of the
+# TRACKED tree, so it has to compare against the tracked tree (COOK-354).
 recipe check-generated
-    test { tree-sitter generate; git diff --exit-code -- src/ || (echo "src/ is stale — run 'cook ts.generate' and commit the result" >&2; exit 1) }
+    test { tree-sitter generate; git diff HEAD --exit-code -- src/ || (echo "src/ is stale — run 'cook ts.generate' and commit the result" >&2; exit 1) }
 
 chore nvim-install: parser-lib
     mkdir -p $NVIM_SITE/parser

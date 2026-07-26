@@ -1,0 +1,6 @@
+probe sites
+    files { "src/*.txt" }
+
+recipe grade
+    ingredients sites
+    cook "build/out.txt" { echo x > $<out> }

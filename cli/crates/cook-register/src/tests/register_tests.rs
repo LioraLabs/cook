@@ -4407,3 +4407,43 @@ fn cook_chore_body_gets_chore_unit_semantics() {
         "chore semantics not established for a cook.chore body; got: {err}"
     );
 }
+
+/// COOK-353: a `files { … }` probe used as an `ingredients <probe>` source.
+///
+/// Two defects sat on top of each other. The `files` producer lowers to the
+/// reserved `@files-manifest` sentinel, which is deliberately not valid Lua;
+/// the executor intercepts it but the `ingredients <probe>` PRE-PASS did not,
+/// so the sentinel reached the register VM and the combination died with
+/// `syntax error: unexpected symbol near '@'` — an implementation detail
+/// leaking as a parse error.
+///
+/// With the sentinel intercepted, the real answer surfaces: a `files` probe's
+/// value is a MAP of path → content hash, so it can never be the array a
+/// driver iterates. That is a legitimate rejection, but the generic
+/// `ForEachNotArray` reports a shape mismatch when the actionable fact is that
+/// this producer kind is seal-only.
+#[test]
+fn files_probe_as_for_each_source_names_the_seal_only_kind() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/a.txt"), "a\n").unwrap();
+
+    let cookfile = r#"
+probe sites
+    files { "src/*.txt" }
+
+recipe grade
+    ingredients sites
+    cook "build/$<in>.out" { echo x > $<out> }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachFilesProbe { ref key } if key == "sites"),
+        "expected ForEachFilesProbe for 'sites', got {err:?}"
+    );
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("seal sites"),
+        "diagnostic must name the fix, got: {rendered}"
+    );
+}

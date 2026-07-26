@@ -41,6 +41,8 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0095: undeclared probe key — register-phase rejection, not syntactic'],
   ['ingredients-probe-non-array',
    'CS-0095: non-array probe value — register-phase rejection, not syntactic'],
+  ['ingredients-probe-files-kind',
+   'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
   // CS-0101: `$<file:PATH>` parses cleanly anywhere a placeholder does;

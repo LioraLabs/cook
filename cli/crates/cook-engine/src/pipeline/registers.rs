@@ -46,9 +46,15 @@ use crate::registered_workspace::RegisteredWorkspace;
 #[derive(Debug, Clone, Copy)]
 pub enum RegisterMode<'a> {
     /// Dispatch to the named recipe / chore, binding `argv` to its chore
-    /// parameters (COOK-36 Task 4). The target binds only to the root
-    /// Cookfile's builder — chores are always defined in and dispatched from
-    /// the root; import Cookfiles register without argv.
+    /// parameters (COOK-36 Task 4). `name` is the fully-qualified target, so
+    /// the binding lands on whichever member OWNS it: the root binds the name
+    /// verbatim, and an import binds the name with its qualified prefix
+    /// stripped, since a member's bodies are registered under local names.
+    ///
+    /// This used to bind only on the root, on the premise that chores are
+    /// always defined in and dispatched from the root. They are not, and a
+    /// parametric chore in an import was silently skipped as a result
+    /// (COOK-349).
     Dispatch { name: &'a str, argv: &'a [String] },
     /// Register with a target that matches nothing: the register pass behaves
     /// as targeted (the `for_each` probe pre-pass and parametric chore bodies
@@ -264,19 +270,47 @@ pub fn register_workspace(
                     &workspace.workspace_root,
                     &member.dir,
                 ));
-        if is_root {
-            // The dispatch target binds only to the root Cookfile — chores
-            // are always defined in and dispatched from root.
-            builder = match mode {
-                RegisterMode::Dispatch { name, argv } => {
+        // Bind the dispatch target to whichever member OWNS the targeted name.
+        //
+        // This used to bind only on the root Cookfile, on the premise that
+        // "chores are always defined in and dispatched from root". They are
+        // not: a chore may be declared in an imported member and dispatched by
+        // its qualified name (`cook standard.against-tag 0.18`).
+        //
+        // A member's register pass therefore saw `target_recipe: None`, so
+        // `is_target` was false for every name in it. A PARAMLESS chore
+        // survived that — engine.rs invokes it unconditionally — but a
+        // PARAMETRIC one fell through to the skip arm, whose whole job is to
+        // avoid calling a body that would nil-index `__cook_params`. The result
+        // was a chore that registered zero units, reported `0 nodes`, exited 0,
+        // and never ran its body (COOK-349). Silent and success-coded.
+        //
+        // `prefix` carries no trailing dot (qualification is `{prefix}.{name}`),
+        // so a member owns the target when the name starts with `{prefix}.`;
+        // what the member's own pass must see is the LOCAL name, since that is
+        // what its bodies are registered under. Matching the canonical prefix
+        // alone is complete: `merge_into` qualifies every registered name with
+        // exactly this prefix, and uses alias prefixes only to rewrite
+        // cross-Cookfile `requires`, never to register an alias name.
+        builder = match mode {
+            RegisterMode::Dispatch { name, argv } => {
+                if is_root {
                     builder.with_target_argv(name.to_string(), argv.to_vec())
+                } else if let Some(local) = name
+                    .strip_prefix(&prefix)
+                    .and_then(|rest| rest.strip_prefix('.'))
+                    .filter(|local| !local.is_empty())
+                {
+                    builder.with_target_argv(local.to_string(), argv.to_vec())
+                } else {
+                    builder
                 }
-                RegisterMode::Introspect => {
-                    builder.with_target_argv(String::new(), Vec::new())
-                }
-                RegisterMode::Enumerate => builder,
-            };
-        }
+            }
+            RegisterMode::Introspect if is_root => {
+                builder.with_target_argv(String::new(), Vec::new())
+            }
+            RegisterMode::Introspect | RegisterMode::Enumerate => builder,
+        };
 
         let registered =
             register_cookfile(builder, &member.lua_source, cache_ctx.clone())
@@ -485,43 +519,56 @@ fn merge_into(
     // through untouched.
     let local_names: std::collections::BTreeSet<String> =
         rc.names.iter().map(|n| n.name.clone()).collect();
+    // Resolve one dep name to its workspace-global key. Shared by the `names`
+    // requires-rewrite and the `units_by_recipe` deps-rewrite below so the two
+    // views cannot disagree about what a dep name means (COOK-352).
+    let qualify_dep = |req: &String| -> String {
+        // Cross-Cookfile `alias.recipe` requires → the importee's canonical
+        // global key (mirrors `resolve_global_key` and the inferred-deps
+        // analyzer). Without this the analyzer sees the local alias name (e.g.
+        // `proto.proto_lib`) and errors `UnknownRecipe` when the canonical key
+        // is, say, `server.queue.proto.proto_lib` (a diamond / transitive
+        // importee whose prefix differs from the local alias).
+        if let Some((alias, sub)) = req.split_once('.') {
+            if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
+                return if importee_prefix.is_empty() {
+                    sub.to_string()
+                } else {
+                    format!("{importee_prefix}.{sub}")
+                };
+            }
+        }
+        // Intra-Cookfile local name → prefix it with this Cookfile's qualified
+        // prefix. Anything else (already-global, or unknown — rejected
+        // downstream) passes through untouched.
+        if local_names.contains(req) {
+            qualify(req)
+        } else {
+            req.clone()
+        }
+    };
     for n in rc.names {
         let mut qn = n.clone();
         qn.name = qualify(&n.name);
-        qn.requires = n
-            .requires
-            .iter()
-            .map(|req| {
-                // Cross-Cookfile `alias.recipe` requires → the importee's
-                // canonical global key (mirrors `resolve_global_key` and the
-                // inferred-deps analyzer). Without this the analyzer sees the
-                // local alias name (e.g. `proto.proto_lib`) and errors
-                // `UnknownRecipe` when the canonical key is, say,
-                // `server.queue.proto.proto_lib` (a diamond / transitive
-                // importee whose prefix differs from the local alias).
-                if let Some((alias, sub)) = req.split_once('.') {
-                    if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
-                        return if importee_prefix.is_empty() {
-                            sub.to_string()
-                        } else {
-                            format!("{importee_prefix}.{sub}")
-                        };
-                    }
-                }
-                // Intra-Cookfile local name → prefix it with this Cookfile's
-                // qualified prefix. Anything else (already-global, or unknown —
-                // rejected downstream) passes through untouched.
-                if local_names.contains(req) {
-                    qualify(req)
-                } else {
-                    req.clone()
-                }
-            })
-            .collect();
+        qn.requires = n.requires.iter().map(&qualify_dep).collect();
         ws.names.push(qn);
     }
     for (name, mut units) in rc.units_by_recipe {
         let qualified = qualify(&name);
+        // Qualify `deps` on the same footing as `recipe_name` below. These are
+        // header dep-list entries, recorded by the register layer under LOCAL
+        // names; every consumer downstream compares them against qualified
+        // names. `run.rs` intersects them with the qualified closure `edges` to
+        // rebuild the coarse barrier set, and an unqualified-vs-qualified
+        // intersection is empty — so `RecipeUnits::deps` arrived at the engine
+        // EMPTY for every recipe in every workspace, root included.
+        //
+        // The visible symptom was §16.1.2 rejecting a legitimate build and
+        // telling the author their recipe "does not require" a producer named
+        // in its own header, with a hint to add the dep that was already there.
+        // The check could only ever be satisfied through `dep_edges`, i.e. by a
+        // `$<producer>` body reference (COOK-352).
+        units.deps = units.deps.iter().map(&qualify_dep).collect();
         // Restamp the value's `recipe_name` with the workspace-qualified key
         // so the two never disagree. Everything downstream of the merged map
         // — `WorkNode.recipe_name`, the executor's / `cook why`'s per-recipe

@@ -1921,6 +1921,20 @@ fn run_for_each_prepass(
             None => (value, (*source_ref).to_string()),
         };
         if !matches!(resolved_value, serde_json::Value::Array(_)) {
+            // COOK-353: name the `files` case specifically. Its value is a map
+            // by construction, so "got map/record" describes the symptom while
+            // the cause is that the author reached for a driver where this
+            // producer kind only ever works as a seal.
+            if field.is_none()
+                && probe_registry.probes.get(*key).is_some_and(|r| {
+                    r.probe.produce_source
+                        == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+                })
+            {
+                return Err(RegisterError::ForEachFilesProbe {
+                    key: (*key).to_string(),
+                });
+            }
             return Err(RegisterError::ForEachNotArray {
                 selector,
                 shape: json_shape(resolved_value).to_string(),
@@ -2025,6 +2039,24 @@ fn evaluate_prepass_probe(
             })?;
     let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
 
+    // CS-0148 / COOK-353: a `files { … }` probe never runs Lua. Its produce
+    // string is the reserved `@files-manifest` sentinel, which is deliberately
+    // NOT valid Lua (§22 lowering note: "a bare `@` is a syntax error in every
+    // Lua dialect, so a path that tried to run it would fail loudly rather than
+    // silently"). The executor's G4 path intercepts it; this pre-pass — the one
+    // that feeds an `ingredients <probe>` member source — did not, so the
+    // sentinel reached the register VM and the combination of a `files` probe
+    // with §22.5.10's member source was unusable:
+    //
+    //     cook: probe 'sites' feeds an ingredients <probe> source but its
+    //     produce raised: syntax error: unexpected symbol near '@'
+    //
+    // Synthesised from the resolved inputs — the same path→hash pairs the
+    // fingerprint's FILES section just folded — so both paths agree on the
+    // value byte for byte.
+    let files_manifest =
+        probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE;
+
     // Cache GET when a backend is wired; on a miss (or no backend) run
     // `produce` on the register VM, then PUT. Cached bytes that do not parse
     // as probe-value JSON are treated as a miss, never a hard error (CS-0102
@@ -2050,7 +2082,11 @@ fn evaluate_prepass_probe(
             match cached {
                 Some(b) => b,
                 None => {
-                    let b = run_prepass_produce(lua, key, &probe.produce_source)?;
+                    let b = if files_manifest {
+                        cook_contracts::probe_value::encode_files_manifest(&inputs.files)
+                    } else {
+                        run_prepass_produce(lua, key, &probe.produce_source)?
+                    };
                     let mut meta = cook_fingerprint::ArtifactMeta {
                         recipe_namespace: format!("probe:{key}"),
                         command_hash: 0,
@@ -2075,6 +2111,9 @@ fn evaluate_prepass_probe(
                     b
                 }
             }
+        }
+        None if files_manifest => {
+            cook_contracts::probe_value::encode_files_manifest(&inputs.files)
         }
         None => run_prepass_produce(lua, key, &probe.produce_source)?,
     };
