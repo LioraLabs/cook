@@ -621,6 +621,14 @@ not to the budget exactly. Sweeping to exactly `max_size` would leave the store
 one artifact from over-budget, so the next publishing run would sweep again, and
 the one after that. The low-water mark buys several quiet runs between sweeps.
 
+It gets as close to that mark as it can without evicting probe values or input
+manifests, which the size sweep never touches: they are small and cheap to keep,
+and losing them costs more than it reclaims. A store whose bulk is those kinds
+can therefore report a sweep and still sit above the budget. Read the `now` figure
+in the sweep line against your `max_size`; if the gap does not close across
+several runs, `cook cache du` will show you what the sweep is declining to
+evict.
+
 `--no-auto-gc` (or `COOK_NO_AUTO_GC=1`) suppresses the deletion for one run and
 nothing else: the warning still prints, the store is just not touched. That is
 the CI contract: a job stays reproducible while its operator still learns the

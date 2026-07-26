@@ -60,9 +60,17 @@ pub(crate) fn check_budget_after_run(project_root: &Path, published_count: u64, 
     //    Note the gate is "published no outputs", not "the store did not
     //    grow": pre-pass probe values are written outside the publish
     //    counter (COOK-339), so a `published_count == 0` run can still add a
-    //    handful of small objects. Worst case the warning arrives one build
-    //    late, which is the right trade for never walking the store on a
-    //    build that did nothing.
+    //    handful of small objects.
+    //
+    //    Be precise about what that costs, because the honest bound is
+    //    weaker than "one build late". The check is stateless by design
+    //    (step 9's comment, milestone D5): only a publishing run reports. A
+    //    store already over budget therefore stays quiet for as long as
+    //    subsequent runs publish nothing, which on a settled tree is
+    //    indefinitely. That is the accepted trade for never walking the
+    //    store on a build that did nothing; `cook cache du` is the
+    //    on-demand way to ask regardless. See `RunResult::published_count`,
+    //    which states the same bound.
     if published_count == 0 {
         return;
     }
