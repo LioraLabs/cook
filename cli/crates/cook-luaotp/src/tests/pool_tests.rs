@@ -553,14 +553,70 @@ fn format_cmd_failed_omits_empty_stream_sections() {
 fn format_cmd_failed_truncates_huge_stream() {
     let huge = vec![b'.'; COOK_CMD_FAIL_STREAM_CAP * 2];
     let msg = format_cmd_failed(0, 1, "noisy", &huge, b"");
-    assert!(msg.contains("... ("), "expected truncation marker: {}", &msg[..200]);
+    assert!(msg.contains("... ("), "expected elision marker: {}", &msg[..200]);
     assert!(
-        msg.contains("bytes truncated"),
-        "expected 'bytes truncated' marker: {}",
+        msg.contains("bytes elided"),
+        "expected 'bytes elided' marker: {}",
         &msg[..200]
     );
     // Cap plus a small fixed overhead — well under twice the cap.
     assert!(msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024);
+}
+
+/// COOK-351: the tail of a captured stream is where a test runner prints its
+/// failure summary, so it must survive the cap. Head-only truncation recorded
+/// 65,775 bytes of passing test names and none of the failures.
+#[test]
+fn format_cmd_failed_keeps_the_tail_of_a_huge_stream() {
+    let mut huge: Vec<u8> = Vec::new();
+    huge.extend_from_slice(b"BANNER: cargo test starting\n");
+    for i in 0..200_000 {
+        huge.extend_from_slice(format!("test filler_{i} ... ok\n").as_bytes());
+    }
+    huge.extend_from_slice(b"FAILURE SUMMARY: 3 tests failed\n");
+
+    let msg = format_cmd_failed(0, 1, "cargo test", &huge, b"");
+
+    assert!(
+        msg.contains("FAILURE SUMMARY: 3 tests failed"),
+        "the tail — where the summary lives — was discarded"
+    );
+    assert!(
+        msg.contains("BANNER: cargo test starting"),
+        "the head — which says what was running — was discarded"
+    );
+    assert!(
+        msg.contains("bytes elided"),
+        "expected an explicit elision marker naming what was dropped"
+    );
+    assert!(
+        msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024,
+        "elided message must stay within the cap"
+    );
+}
+
+/// A stream just under the cap is passed through whole, with no marker.
+#[test]
+fn format_cmd_failed_passes_through_a_stream_within_the_cap() {
+    let small = vec![b'x'; COOK_CMD_FAIL_STREAM_CAP - 16];
+    let msg = format_cmd_failed(0, 1, "quiet", &small, b"");
+    assert!(!msg.contains("elided"), "under-cap stream must not be elided");
+}
+
+/// A stream with no newlines at all cannot snap to line boundaries; the flat
+/// byte-split fallback must still produce a head, a marker and a tail, and must
+/// never emit an overlapping (duplicated) middle.
+#[test]
+fn format_cmd_failed_handles_a_stream_with_no_newlines() {
+    let mut huge = vec![b'a'; COOK_CMD_FAIL_STREAM_CAP];
+    huge.extend_from_slice(&vec![b'z'; COOK_CMD_FAIL_STREAM_CAP]);
+    let msg = format_cmd_failed(0, 1, "oneline", &huge, b"");
+    assert!(msg.contains("bytes elided"), "expected elision marker");
+    assert!(msg.contains('z'), "tail bytes must survive");
+    assert!(
+        msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024,
+        "fallback must respect the cap"
+    );
 }
 
 // -----------------------------------------------------------------
