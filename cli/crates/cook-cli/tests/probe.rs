@@ -176,7 +176,7 @@ fn probe_produce_does_not_re_execute_on_cache_hit() {
         r#"
 recipe build
         cook.probe("{probe_key}", {{
-            inputs = {{}},
+            inputs = {{ files = {{ "seed.txt" }} }},
             produce = [[
                 -- uniq={uniq}
                 local f = io.open("probe-runs.log", "a")
@@ -195,6 +195,11 @@ recipe build
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+    // CS-0178: the probe MUST declare an input to be cacheable at all. A probe
+    // declaring none has no cache key and re-produces every run, which would
+    // make the "did the fast path engage" question this test asks
+    // unanswerable — the log would grow for a reason unrelated to the shim.
+    fs::write(tmp.path().join("seed.txt"), "seed\n").unwrap();
 
     // First run: produce body MUST execute (cache miss).
     run_cook(tmp.path(), &["build"]).expect("first run should succeed");

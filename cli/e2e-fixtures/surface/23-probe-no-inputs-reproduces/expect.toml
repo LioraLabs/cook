@@ -1,0 +1,37 @@
+# 1. Cold.
+[[run]]
+args = ["show"]
+[run.assert]
+exists = ["build/nonce.txt"]
+
+[[run]]
+args = ["control"]
+[run.assert]
+exists = ["build/control.txt"]
+
+# 2. Nothing touched: the probe re-produces, yields the same value, and the
+#    sealing unit still hits. Re-observing must not cost the consumer its cache.
+[[run]]
+args = ["show"]
+[run.assert]
+unchanged = ["build/nonce.txt"]
+
+# 3. The observed world moves. Before CS-0178 this was invisible forever.
+[[run]]
+args = ["show"]
+write = { "STATE" = "two\n" }
+[run.assert]
+changed = ["build/nonce.txt"]
+
+# 4. Control: a `files` probe is self-keying and unaffected by STATE.
+[[run]]
+args = ["control"]
+[run.assert]
+unchanged = ["build/control.txt"]
+
+# 5. ...but still re-keys on its own declared input.
+[[run]]
+args = ["control"]
+write = { "WATCHED" = "changed\n" }
+[run.assert]
+changed = ["build/control.txt"]

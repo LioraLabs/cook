@@ -92,6 +92,11 @@ fn write_local_cloud_toml(project_dir: &Path, cache_dir: &Path, max_size: Option
 /// Isolation: `.cook/cloud.toml` is written before anything else, pointing
 /// `[cache] cache_dir` at `cache_dir` (expected to be an absolute path
 /// inside the caller's own `TempDir`).
+// `ns:greet` declares a `files` input on purpose. It exists to put a
+// `probe_value` artifact in the store so the by-kind breakdown has a non-file
+// row to report, and CS-0178 makes a probe declaring NO inputs keyless: it
+// re-produces every run and publishes nothing, which would seed a store
+// holding only `file` kinds and quietly gut what these tests assert.
 fn seeded_project(cache_dir: &Path) -> TempDir {
     let dir = TempDir::new().unwrap();
     write_local_cloud_toml(dir.path(), cache_dir, None);
@@ -106,7 +111,7 @@ fn seeded_project(cache_dir: &Path) -> TempDir {
 
 recipe other
         cook.probe("ns:greet", {
-            inputs = {},
+            inputs = { files = { "src/a.txt" } },
             produce = "return { word = \"hi\" }",
         })
         cook.add_unit({

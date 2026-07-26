@@ -1071,7 +1071,28 @@ fn test_iteration_item_propagates() {
 //     a cache miss even when a prior entry exists.
 // -----------------------------------------------------------------
 
+/// A probe that IS cacheable. CS-0178 gives a probe declaring no inputs no
+/// cache key at all — it re-produces every run and publishes nothing — so a
+/// `ProbeInputs::default()` probe cannot be used to exercise the cache
+/// hit/miss path it was written to exercise. The declared env var is never
+/// set; an unset name still populates §22.5.4 section 4 as `<unset>`, which is
+/// deterministic and enough to make the probe keyed. Use `keyless_probe_unit`
+/// when the absence of a key is the point.
 fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
+    cook_contracts::ProbeUnit {
+        key: key.to_string(),
+        produce_source: produce.to_string(),
+        produce_line: 1,
+        inputs: cook_contracts::ProbeInputs {
+            env: vec!["COOK_TEST_PROBE_KEYING".to_string()],
+            ..Default::default()
+        },
+    }
+}
+
+/// A probe declaring nothing: no `env`, `tools`, `files`, or `requires`.
+/// CS-0178 says this has no cache key.
+fn keyless_probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
     cook_contracts::ProbeUnit {
         key: key.to_string(),
         produce_source: produce.to_string(),
@@ -1656,4 +1677,97 @@ fn resolve_output_paths_expands_directory_output() {
     assert!(set.contains("pkg/a.js"));
     assert!(set.contains("pkg/sub/b.wasm"));
     assert_eq!(set.len(), 2); // files only (CS-0064), directory entries dropped
+}
+
+// ---------------------------------------------------------------------------
+// CS-0178 / COOK-343 — a probe declaring no inputs has no cache key
+// ---------------------------------------------------------------------------
+
+/// §22.5.4's fingerprint sections 1-3 (marker, key, produce source) are
+/// constant for a given probe, and 4-7 are empty unless declared. A probe
+/// declaring nothing therefore had a CONSTANT fingerprint and was served from
+/// cache forever — it answered once and never observed again. The produce body
+/// here raises, so a cache hit is the only way the run can succeed: if the
+/// seeded entry is consulted the probe never executes and this passes, which
+/// is precisely the behaviour CS-0178 removes.
+#[test]
+fn keyless_probe_ignores_a_seeded_cache_entry_and_re_executes() {
+    use std::sync::mpsc;
+
+    let (_wd, _tmp) = tmp_dir();
+    let wd = _wd.clone();
+    let cache_ctx = make_cache_ctx(&_tmp);
+
+    let pu = keyless_probe_unit("test:keyless", "error('produce ran')");
+    let fp = fingerprint_for(&pu, &wd);
+    let seeded = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
+    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &seeded);
+
+    let mut dag = Dag::new();
+    let node_id = dag
+        .add_node(probe_work_node("test:keyless", "error('produce ran')", wd), &[])
+        .unwrap();
+    let mut probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+    probe_units_by_node.insert(node_id, pu);
+
+    let (tx, _rx) = mpsc::channel();
+    let result = execute_dag(
+        dag,
+        2,
+        BTreeMap::new(),
+        Some(tx),
+        cache_ctx.clone(),
+        None,
+        &[],
+        &probe_units_by_node,
+        std::sync::Arc::new(BTreeMap::new()),
+    );
+
+    assert!(
+        result.is_err(),
+        "a keyless probe MUST re-produce rather than consult the store; the \
+         seeded entry was served instead, so the raising produce body never ran"
+    );
+}
+
+/// The keyed counterpart, pinning that the rule is about the *absence* of
+/// declared inputs and not about probes generally: the identical setup with
+/// one declared input takes the cache hit and never executes the body.
+#[test]
+fn keyed_probe_still_takes_the_seeded_cache_entry() {
+    use std::sync::mpsc;
+
+    let (_wd, _tmp) = tmp_dir();
+    let wd = _wd.clone();
+    let cache_ctx = make_cache_ctx(&_tmp);
+
+    let pu = probe_unit("test:keyed", "error('produce ran')");
+    let fp = fingerprint_for(&pu, &wd);
+    let seeded = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
+    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &seeded);
+
+    let mut dag = Dag::new();
+    let node_id = dag
+        .add_node(probe_work_node("test:keyed", "error('produce ran')", wd), &[])
+        .unwrap();
+    let mut probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+    probe_units_by_node.insert(node_id, pu);
+
+    let (tx, _rx) = mpsc::channel();
+    let result = execute_dag(
+        dag,
+        2,
+        BTreeMap::new(),
+        Some(tx),
+        cache_ctx.clone(),
+        None,
+        &[],
+        &probe_units_by_node,
+        std::sync::Arc::new(BTreeMap::new()),
+    );
+
+    assert!(
+        result.is_ok(),
+        "a probe with a declared input keeps its key and its cache hit: {result:?}"
+    );
 }

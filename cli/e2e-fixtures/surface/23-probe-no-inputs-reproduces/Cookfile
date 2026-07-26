@@ -1,0 +1,22 @@
+# CS-0178 / COOK-343. §22.5.4's probe fingerprint has seven sections; 1-3
+# (marker, key, produce source) are always present and constant, and 4-7
+# (ENV/TOOLS/FILES/UPSTREAM) are empty unless declared. `world` declares
+# nothing, so its fingerprint was constant and it answered ONCE for the life of
+# the store — a probe whose entire job is to observe never observed again.
+#
+# `watched` is the control: it declares a `files` input, is self-keying, and
+# keeps caching exactly as before.
+
+probe world
+    { cat STATE }
+
+probe watched
+    files { "WATCHED" }
+
+recipe show
+    seal world
+    cook "build/nonce.txt" { mkdir -p build && date +%s%N > $<out> }
+
+recipe control
+    seal watched
+    cook "build/control.txt" { mkdir -p build && date +%s%N > $<out> }
