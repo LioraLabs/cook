@@ -208,6 +208,44 @@ pub fn register_fs_api_with_sandbox(
         })?,
     )?;
 
+    // fs.remove(path) -> boolean (CS-0180)
+    //
+    // Removes a FILE. Returns true if one was removed, false if nothing was
+    // there — a cleanup caller wants "make sure this is gone", and raising on
+    // an already-absent path would force every such caller to guard with
+    // fs.exists, which is a race as well as noise. The boolean keeps the
+    // outcome reported rather than silent.
+    //
+    // A directory is refused rather than removed. There is no recursive form
+    // and this is not the first step toward one: a sandboxed API that can
+    // delete a tree is a much larger thing to get right than one that can
+    // delete a file, and nothing in the Cookfile-editing story needs it.
+    let s = wd_source.clone();
+    let sb = sandbox.clone();
+    fs.set(
+        "remove",
+        lua.create_function(move |_, path: String| {
+            let full = check_path(&sb, "fs.remove", &s.resolve(), &path)?;
+            match std::fs::symlink_metadata(&full) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(mlua::Error::runtime(format!("fs.remove: {e}"))),
+                Ok(meta) if meta.is_dir() => {
+                    return Err(mlua::Error::runtime(format!(
+                        "fs.remove: {} is a directory; fs.remove removes files only",
+                        full.display()
+                    )))
+                }
+                Ok(_) => {}
+            }
+            // Mirrors fs.write (COOK-306): a Lua-side removal changes the
+            // working tree, so no memoised stat may survive it.
+            cook_fingerprint::statmemo::disarm();
+            std::fs::remove_file(&full)
+                .map_err(|e| mlua::Error::runtime(format!("fs.remove: {e}")))?;
+            Ok(true)
+        })?,
+    )?;
+
     let s = wd_source.clone();
     let sb = sandbox.clone();
     fs.set(
@@ -228,7 +266,7 @@ pub fn register_fs_api_with_sandbox(
 /// sandbox policy. On success returns the absolute path the OS call
 /// should use; on failure raises a Lua runtime error tagged with the
 /// `api` label so the user sees which entry rejected the path.
-fn check_path(
+pub(crate) fn check_path(
     sandbox: &SandboxSource,
     api: &'static str,
     working_dir: &std::path::Path,

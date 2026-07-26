@@ -523,6 +523,7 @@ dependencies = [
 name = "cook-lua-stdlib"
 version = "0.10.1"
 dependencies = [
+ "cook-cookfile",
  "cook-fingerprint",
  "glob",
  "mlua",

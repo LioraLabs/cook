@@ -31,12 +31,23 @@ Returns the contents of `path` as a Lua string. A missing or unreadable entry is
 
 Writes `content` to `path`, creating parent directories as needed. Any existing file at `path` is overwritten. Write failure is a Lua runtime error.
 
-## 25.6. `fs.mkdir_p` [#lua.fs-mkdir-p]
+## 25.6. `fs.remove` [#lua.fs-remove]
+**Signature.** `fs.remove(path: string) -> boolean`
+
+Removes the file at `path`. Returns `true` when a file was removed and `false` when nothing was there.
+
+An absent path is NOT an error. The caller of a removal wants the path gone, and it is already gone; raising would oblige every cleanup path to guard with `fs.exists` first, which is both noise and a race. Returning a boolean keeps the outcome reported rather than silent, so a caller that does care can still tell the two cases apart.
+
+A conforming implementation MUST refuse a `path` that is a directory, with an error naming it, and MUST NOT remove it. There is no recursive form. `fs.remove` does not follow symlinks: given a symlink it removes the link and MUST leave the target untouched, whether or not that target is a directory.
+
+Removal is subject to the project-root sandbox (§{lua.fs-sandbox}) exactly as `fs.write` is.
+
+## 25.7. `fs.mkdir_p` [#lua.fs-mkdir-p]
 **Signature.** `fs.mkdir_p(path: string) -> nil`
 
 Creates the directory at `path`, and any missing parent components, if they do not already exist. This function MUST succeed when `path` already exists and is a directory.
 
-## 25.7. `fs.glob` [#lua.fs-glob]
+## 25.8. `fs.glob` [#lua.fs-glob]
 **Signature.** `fs.glob(pattern: string | array of string) -> array of string`
 
 The `pattern` argument is either a single Lua string (a glob pattern) or a 1-indexed Lua sequence of strings (an array of glob patterns).
@@ -49,13 +60,13 @@ If `pattern` is neither a Lua string nor a Lua sequence of strings, the implemen
 
 > The directory-filter rule pairs with §{lua.add-unit}'s path-shape restriction (CS-0063): downstream `cook.add_unit` inputs reject directory paths, so a glob like `dir/*` against a tree that mixes files and sub-directories would otherwise fail with `is a directory` for paths the author never wrote. Filtering at the glob layer makes the common "all files under a directory" pattern well-defined.
 
-### Example 25.7.1 — single-string form
+### Example 25.8.1 — single-string form
 
 ```lua
 local sources = fs.glob("src/*.c")
 ```
 
-### Example 25.7.2 — array form
+### Example 25.8.2 — array form
 
 ```lua
 local sources = fs.glob({"src/*.c", "src/legacy/*.c"})
@@ -63,20 +74,20 @@ local sources = fs.glob({"src/*.c", "src/legacy/*.c"})
 
 Both forms return an array of absolute path strings; the array form's result is the concatenation of the per-pattern results in call order. The two patterns above contribute their matches consecutively: every `src/*.c` match precedes every `src/legacy/*.c` match.
 
-## 25.8. `fs.mtime` [#lua.fs-mtime]
+## 25.9. `fs.mtime` [#lua.fs-mtime]
 **Signature.** `fs.mtime(path: string) -> number`
 
 Returns the modification time of `path` as seconds since the Unix epoch, as a `number`. A missing or unreadable entry is a Lua runtime error.
 
-### Note 25.8.1
+### Note 25.9.1
 
 The `fs.*` surface is intentionally minimal. Authors needing operations not listed here (symlink manipulation, recursive deletion, permission changes) invoke those operations through the shell — `fs.*` is a host-portable subset for the common cases.
 
-### Note 25.8.2
+### Note 25.9.2
 
 The "Phase: Both" classification on `fs.*`, `path.*`, and `cook.platform.*` is a behavioral contract: every observable property of these tables — the function signatures, the working-directory rooting rule, the error-on-I/O-failure rule, the order-implementation-defined rule on `fs.glob`, the platform string values — MUST be identical between the register-phase VM and the execute-phase worker VMs. A conforming implementation realizes this by sharing a single implementation of these tables across the two VMs. The reference implementation does so via the `cook-lua-stdlib` crate (CS-0044), which is the sole installer of `fs.*`, `path.*`, and `cook.platform.*` in both `cook-register` and `cook-luaotp`. Implementations MAY structure the sharing differently, but a register-phase call and an execute-phase call to the same `fs.*`/`path.*`/`cook.platform.*` function with the same arguments MUST produce the same result, modulo the working-directory difference inherent to the multi-Cookfile-import case (§{comp.import}; CS-0017).
 
-## 25.9. Project-root sandbox [#lua.fs-sandbox]
+## 25.10. Project-root sandbox [#lua.fs-sandbox]
 
 Beyond the working-directory rooting rule of §{lua.fs-helpers}, every `fs.*` entry that takes a path argument MUST further confine that path to the **project root** when invoked from a sandboxed context. The project root is the workspace root (§{exec.ws}) — the directory containing the top-level Cookfile in the build invocation, even when an imported Cookfile (§{comp.import}) is the immediate caller.
 
@@ -98,7 +109,7 @@ A conforming implementation MUST NOT apply the lexical normalization to a path w
 
 `path.*` (§{lua.path}) is pure string manipulation and does not perform I/O; the sandbox does not apply to it. Authors MAY freely construct out-of-project path strings via `path.*` — only the I/O-performing surfaces (`fs.*` and the shell escape hatches of §{lua.shell-escape-hatches}) reject them.
 
-## 25.10. Lua-side shell escape hatches [#lua.shell-escape-hatches]
+## 25.11. Lua-side shell escape hatches [#lua.shell-escape-hatches]
 
 The standard Lua library includes two surfaces that run shell commands directly: `os.execute(cmd)` and `io.popen(cmd, mode?)`. Both bypass `cook.sh` (§{lua.cook-sh}) and therefore neither inherits the recipe's working-directory rooting nor contributes to the unit's `command_hash`. Every Lua execution context is sandboxed (§{lua.fs-sandbox}), so a conforming implementation MUST disable these entries in all of them: a call MUST raise a Lua runtime error referencing this section's tag (`CS-0045`) rather than spawning a child process.
 

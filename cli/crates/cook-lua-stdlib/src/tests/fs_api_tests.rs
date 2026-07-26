@@ -491,3 +491,113 @@ fn confined_fs_glob_array_rejects_outside_pattern() {
         .to_string();
     assert!(err.contains("escapes project root"), "got: {err}");
 }
+
+// ---------------------------------------------------------------------------
+// fs.remove (CS-0180)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fs_remove_deletes_a_file_and_reports_true() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("scratch.txt"), "x").unwrap();
+
+    let lua = mlua::Lua::new();
+    super::super::register_fs_api_with_sandbox(
+        &lua,
+        crate::WorkingDirSource::Static(dir.path().to_path_buf()),
+        crate::sandbox::SandboxSource::confined(dir.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let removed: bool = lua.load(r#"return fs.remove("scratch.txt")"#).eval().unwrap();
+    assert!(removed);
+    assert!(!dir.path().join("scratch.txt").exists());
+}
+
+#[test]
+fn fs_remove_reports_false_for_an_absent_file_rather_than_raising() {
+    // Cleanup code wants "make sure this is gone". Raising would force every
+    // caller to guard with fs.exists first, which is both noise and a race.
+    let dir = tempfile::TempDir::new().unwrap();
+    let lua = mlua::Lua::new();
+    super::super::register_fs_api_with_sandbox(
+        &lua,
+        crate::WorkingDirSource::Static(dir.path().to_path_buf()),
+        crate::sandbox::SandboxSource::confined(dir.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let removed: bool = lua.load(r#"return fs.remove("ghost.txt")"#).eval().unwrap();
+    assert!(!removed, "absent file reports false, not an error");
+}
+
+#[test]
+fn fs_remove_refuses_a_directory() {
+    // There is no recursive form, and refusing here is what keeps this from
+    // becoming one by accident.
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+
+    let lua = mlua::Lua::new();
+    super::super::register_fs_api_with_sandbox(
+        &lua,
+        crate::WorkingDirSource::Static(dir.path().to_path_buf()),
+        crate::sandbox::SandboxSource::confined(dir.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = lua.load(r#"fs.remove("sub")"#).exec().unwrap_err().to_string();
+    assert!(err.contains("is a directory"), "got: {err}");
+    assert!(dir.path().join("sub").exists(), "directory must survive");
+}
+
+#[test]
+fn fs_remove_is_refused_outside_the_sandbox() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let outside = dir.path().parent().unwrap().join("cook-fs-remove-outside.txt");
+    std::fs::write(&outside, "keep me").unwrap();
+
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let lua = mlua::Lua::new();
+    super::super::register_fs_api_with_sandbox(
+        &lua,
+        crate::WorkingDirSource::Static(root.clone()),
+        crate::sandbox::SandboxSource::confined(root),
+    )
+    .unwrap();
+
+    let err = lua
+        .load(r#"fs.remove("../../cook-fs-remove-outside.txt")"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("fs.remove"), "tagged with the API: {err}");
+    assert!(outside.exists(), "file outside the root must survive");
+    let _ = std::fs::remove_file(&outside);
+}
+
+#[test]
+fn fs_remove_deletes_a_symlink_without_following_it() {
+    // symlink_metadata, not metadata: removing a symlink must not be refused
+    // because its TARGET is a directory, and must not delete the target.
+    #[cfg(unix)]
+    {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("real_dir");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("link")).unwrap();
+
+        let lua = mlua::Lua::new();
+        super::super::register_fs_api_with_sandbox(
+            &lua,
+            crate::WorkingDirSource::Static(dir.path().to_path_buf()),
+            crate::sandbox::SandboxSource::confined(dir.path().to_path_buf()),
+        )
+        .unwrap();
+
+        let removed: bool = lua.load(r#"return fs.remove("link")"#).eval().unwrap();
+        assert!(removed);
+        assert!(target.exists(), "symlink target must survive");
+    }
+}
