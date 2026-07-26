@@ -73,8 +73,18 @@ pub struct RunResult {
     /// outside this counter (COOK-339), so a run can add a handful of
     /// `probe_value` objects while this still reads 0. Those objects are
     /// kilobytes against a budget in gigabytes, so the only consequence is
-    /// that an over-budget warning may arrive one build later than it strictly
-    /// could — never that a genuinely over-budget store goes unreported.
+    /// that an over-budget warning waits for the next run that publishes
+    /// something.
+    ///
+    /// That bound is the honest one, and it is weaker than "one build later":
+    /// the budget check is stateless by design (no stamp file, no rate
+    /// limiting), so *only* a publishing run reports. A store pushed over
+    /// budget — by the pre-pass writes above, by a concurrent project sharing
+    /// a `[cache] cache_dir`, or by an earlier run whose warning scrolled past
+    /// — stays quietly over budget for as long as subsequent runs publish
+    /// nothing. A settled build publishes nothing and therefore never warns;
+    /// that is the intended cadence, not a defect. `cook cache du` is the
+    /// on-demand way to ask regardless of what the last run published.
     pub published_count: u64,
 }
 

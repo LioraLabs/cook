@@ -47,12 +47,23 @@ impl Drop for EnvRestore {
 /// `COOK_NO_AUTO_GC` env var together (the pure-helper tests above only cover
 /// the value semantics in isolation).
 ///
-/// `#[serial_test::serial]` is load-bearing, not decoration: cargo runs a
-/// crate's unit tests as parallel threads in ONE process, so `set_var` racing
-/// another thread's `getenv` is a genuine data race (it is `unsafe` as of
-/// edition 2024). Nothing else reads `COOK_NO_AUTO_GC` today, but the crate
-/// already depends on `serial_test` for exactly this pattern (see
-/// `modules/tests/driver_tests.rs`), so there is no reason to rely on that.
+/// This is the one test here that mutates the process environment, and the
+/// mitigation is deliberately partial — read what it does and does not buy.
+/// Cargo runs a crate's unit tests as parallel threads in ONE process, so
+/// `set_var` racing another thread's `getenv` is a genuine data race (it is
+/// `unsafe` as of edition 2024). `#[serial_test::serial]` only mutually
+/// excludes other `#[serial]` tests; it does NOT stop the crate's ordinary
+/// parallel tests from calling `getenv` underneath (several reach it
+/// indirectly, e.g. via `resolve_project_root` / `dirs::cache_dir`). It is
+/// therefore a narrowing, not a fix.
+///
+/// It is acceptable here because the variable this test writes,
+/// `COOK_NO_AUTO_GC`, has exactly one reader in the entire crate —
+/// `no_auto_gc_enabled` — and no other test invokes it concurrently. The
+/// value semantics are covered race-free by the pure `no_auto_gc_env_value_enables`
+/// cases above; all this test adds is that the flag and the env var really are
+/// OR-ed together, which cannot be observed without touching the environment.
+/// `EnvRestore` puts the variable back even on unwind.
 #[test]
 #[serial_test::serial]
 fn no_auto_gc_enabled_wires_flag_and_env() {
