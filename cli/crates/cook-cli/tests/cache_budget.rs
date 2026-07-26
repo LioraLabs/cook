@@ -35,11 +35,18 @@
 //! undershoot by at most one object. Few large objects would undershoot the
 //! 80% mark badly enough to make "settles near, not far below" unprovable.
 //!
-//! The fixture also publishes *only* plain-file artifacts: no probes, no
-//! discovered-input manifests, so zero bytes of the size-sweep-exempt kinds
+//! The fan-out fixture also publishes *only* plain-file artifacts: no probes,
+//! no discovered-input manifests, so zero bytes of the size-sweep-exempt kinds
 //! (`discovered_input_sets`, `discovered_inputs`, `probe_value`, `symlink`,
 //! `dir`). Those are never evicted by the size pass, so an exempt-heavy
 //! fixture could not reach the low-water mark at all.
+//!
+//! Test 6 is the deliberate mirror image, on [`EXEMPT_COOKFILE`]: a store whose
+//! every byte IS an exempt kind, which is the only way to reach the sweep's
+//! "planned no victims" arm. It gets its own Cookfile rather than a flag on the
+//! shared one because the two fixtures want opposite things from every unit —
+//! the fan-out one exists to publish evictable bytes, that one exists to
+//! publish none.
 //!
 //! Assertions match stable substrings, never whole formatted lines: sizes
 //! render through `cache_du::human_size`, which always emits one decimal
@@ -56,11 +63,14 @@
 //! *absence of the check's stderr lines*, never that the store is
 //! byte-for-byte unchanged.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
+
+use cook_engine::cook_cache::backend::ArtifactMeta;
 
 fn cook_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_cook"))
@@ -91,6 +101,50 @@ const COOKFILE: &str = r#"recipe build
     cook "out/$<in.stem>.bin" { head -c 100000 /dev/zero | tr "\\0" "x" > $<out>; cat $<in> >> $<out> }
 "#;
 
+/// Test 6's fixture: a project that can publish an all-exempt store, plus one
+/// recipe that deliberately breaks that property as the test's control.
+///
+/// `check` is the load-bearing half, and both of its halves are chosen, not
+/// incidental:
+///
+///   * `probe big` publishes its value with `kind: probe_value` — one of the
+///     five `SIZE_SWEEP_EXEMPT_KINDS` — and bumps the run's publish counter at
+///     that same put site (`executor.rs`, inside its `publish_enabled` guard).
+///     `seq 1 1000` is ~4.9 kB of deterministic bytes: comfortably over the
+///     1 kB budget test 6 configures, byte-identical run to run, and free of
+///     any shell escaping the Cookfile parser would have to survive.
+///   * the consuming unit declares NO outputs, so it publishes no plain-file
+///     artifact at all. It still bumps the publish counter — a publishing unit
+///     writes at least its determinant manifest — which is what lets the run
+///     trip the check's `published_count > 0` gate without putting a single
+///     evictable byte in the store.
+///
+/// The probe is reached via `probes = {…}` on `cook.add_unit`, which is the
+/// EXECUTE-phase probe path. That is load-bearing rather than stylistic:
+/// `ingredients <probe>` fan-out would drive the register-phase pre-pass
+/// instead, whose CAS writes sit outside the publish counter entirely
+/// (COOK-339) — leaving `published_count == 0`, short-circuiting the check at
+/// step 1, and testing nothing.
+///
+/// `file` is the control: one ~113 kB plain-file output, `kind: None`, the one
+/// thing an all-exempt store lacks. Running it on the same fixture, with the
+/// same config, is what proves `auto_gc = true` was genuinely live.
+const EXEMPT_COOKFILE: &str = r#"probe big
+    { seq 1 1000 }
+
+recipe check
+    cook.add_unit({
+        name    = "consume",
+        inputs  = {},
+        outputs = {},
+        probes  = {"big"},
+        command = "true",
+    })
+
+recipe file
+    cook "out/big.bin" { seq 1 20000 > $<out> }
+"#;
+
 /// One isolated fixture: its own scratch `TempDir` containing a project
 /// directory, a (not-yet-created) CAS `cache_dir`, and an `xdg_dir` used only
 /// as the `XDG_CACHE_HOME` belt-and-suspenders. `_scratch` is kept alive for
@@ -109,12 +163,21 @@ impl Fixture {
     /// omits the key entirely, which is the shipped default the warn-only
     /// test pins.
     fn new(max_size: &str, auto_gc: Option<bool>) -> Self {
+        Self::with_cookfile(COOKFILE, max_size, auto_gc)
+    }
+
+    /// The same fixture over an arbitrary Cookfile — test 6 needs a project
+    /// that publishes only exempt kinds, which the fan-out [`COOKFILE`] is
+    /// built to never be. Everything that makes a fixture safe is here and
+    /// nowhere else: the absolute `[cache] cache_dir` inside this fixture's
+    /// own `TempDir`, written before any `cook` invocation.
+    fn with_cookfile(cookfile: &str, max_size: &str, auto_gc: Option<bool>) -> Self {
         let scratch = TempDir::new().unwrap();
         let project_dir = scratch.path().join("project");
         let cache_dir = scratch.path().join("cas");
         let xdg_dir = scratch.path().join("xdg");
         fs::create_dir_all(project_dir.join("src")).unwrap();
-        fs::write(project_dir.join("Cookfile"), COOKFILE).unwrap();
+        fs::write(project_dir.join("Cookfile"), cookfile).unwrap();
         write_cloud_toml(&project_dir, &cache_dir, max_size, auto_gc);
         Self {
             _scratch: scratch,
@@ -166,16 +229,13 @@ impl Fixture {
         stderr_of(&out)
     }
 
-    /// Independently walk this fixture's own `cache_dir`, counting exactly
-    /// the blobs `LocalBackend::enumerate` counts: files whose name is 62
+    /// Independently walk this fixture's own `cache_dir` for exactly the
+    /// blobs `LocalBackend::enumerate` counts: files whose name is 62
     /// lowercase hex characters. Deliberately not `cook cache du` — an
-    /// assertion about the store's size must not depend on another command's
-    /// output formatting.
-    fn store(&self) -> Store {
-        let mut store = Store {
-            objects: 0,
-            bytes: 0,
-        };
+    /// assertion about the store must not depend on another command's output
+    /// formatting.
+    fn blobs(&self) -> Vec<PathBuf> {
+        let mut blobs = Vec::new();
         for entry in walkdir::WalkDir::new(&self.cache_dir).into_iter().flatten() {
             if !entry.file_type().is_file() {
                 continue;
@@ -185,13 +245,49 @@ impl Fixture {
                 && name
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-            if !is_blob {
-                continue;
+            if is_blob {
+                blobs.push(entry.path().to_path_buf());
             }
+        }
+        blobs
+    }
+
+    fn store(&self) -> Store {
+        let mut store = Store {
+            objects: 0,
+            bytes: 0,
+        };
+        for blob in self.blobs() {
             store.objects += 1;
-            store.bytes += entry.metadata().expect("stat blob").len();
+            store.bytes += fs::metadata(&blob).expect("stat blob").len();
         }
         store
+    }
+
+    /// Blob count bucketed by the `kind` each blob's `.meta.json` sidecar
+    /// declares, deserialized through the real [`ArtifactMeta`] rather than
+    /// grepped out of the JSON — a mis-read sidecar must fail loudly here,
+    /// not silently degrade to `kind: None` and turn an exempt object into
+    /// an apparently evictable one.
+    ///
+    /// `None` buckets under `"file"`, `cook cache du`'s display label for a
+    /// plain-file artifact (there is no literal `"file"` kind string in
+    /// production code) — and the one bucket that is NOT exempt from the size
+    /// sweep. Test 6 asserts on the whole map rather than on a count, so an
+    /// unexpected non-exempt object fails it instead of slipping past.
+    fn kinds(&self) -> BTreeMap<String, usize> {
+        let mut by_kind = BTreeMap::new();
+        for blob in self.blobs() {
+            let sidecar = blob.with_extension("meta.json");
+            let bytes =
+                fs::read(&sidecar).unwrap_or_else(|e| panic!("read {}: {e}", sidecar.display()));
+            let meta: ArtifactMeta = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("parse {}: {e}", sidecar.display()));
+            *by_kind
+                .entry(meta.kind.unwrap_or_else(|| "file".to_string()))
+                .or_insert(0) += 1;
+        }
+        by_kind
     }
 }
 
@@ -249,9 +345,9 @@ fn swept(stderr: &str) -> bool {
 
 /// Assert the full three-line warning block: the over-budget headline, the
 /// paste-able remediation command echoing `max_size_literal` verbatim, and
-/// the largest-namespace attribution (this fixture always has a namespace,
-/// so the optional third line is always present).
-fn assert_warning_block(stderr: &str, max_size_literal: &str) {
+/// the largest-namespace attribution (every fixture here has a namespace, so
+/// the optional third line is always present — `largest` names which one).
+fn assert_warning_block(stderr: &str, max_size_literal: &str, largest: &str) {
     assert!(
         stderr.contains("cook: warning: cache store is"),
         "expected the over-budget headline; stderr:\n{stderr}"
@@ -269,8 +365,8 @@ fn assert_warning_block(stderr: &str, max_size_literal: &str) {
         "remediation must echo the configured literal {max_size_literal:?} verbatim; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("cook:          largest: /Cookfile::build"),
-        "expected the largest-namespace attribution; stderr:\n{stderr}"
+        stderr.contains(&format!("cook:          largest: {largest}")),
+        "expected the largest-namespace attribution for {largest:?}; stderr:\n{stderr}"
     );
 }
 
@@ -304,7 +400,7 @@ fn warn_only_rounds(auto_gc: Option<bool>) -> Vec<(bool, Store)> {
             "round {round}: warn-only must never sweep (auto_gc = {auto_gc:?}); stderr:\n{stderr}"
         );
         if round >= 3 {
-            assert_warning_block(&stderr, "2MB");
+            assert_warning_block(&stderr, "2MB", "/Cookfile::build");
         }
         observed.push((warned(&stderr), fx.store()));
     }
@@ -445,7 +541,7 @@ fn a_settled_no_op_build_neither_warns_nor_walks_the_store() {
     let fx = Fixture::new("1kB", None);
 
     let first = fx.build_round(1);
-    assert_warning_block(&first, "1kB");
+    assert_warning_block(&first, "1kB", "/Cookfile::build");
     let after_first = fx.store();
     assert!(
         after_first.bytes > 1_000,
@@ -490,7 +586,7 @@ fn no_auto_gc_disables_the_sweep_but_keeps_the_warning() {
         assert!(out.status.success(), "{label}: build failed: {out:?}");
         let stderr = stderr_of(&out);
 
-        assert_warning_block(&stderr, "2MB");
+        assert_warning_block(&stderr, "2MB", "/Cookfile::build");
         assert!(
             !swept(&stderr),
             "{label}: the sweep must be suppressed; stderr:\n{stderr}"
@@ -551,7 +647,7 @@ fn no_publish_never_triggers_the_check_even_over_budget() {
     let fx = Fixture::new("1kB", None);
 
     let first = fx.build_round(1);
-    assert_warning_block(&first, "1kB");
+    assert_warning_block(&first, "1kB", "/Cookfile::build");
 
     let before = fx.store();
     assert!(
@@ -588,5 +684,97 @@ fn no_publish_never_triggers_the_check_even_over_budget() {
     assert!(
         after.bytes > 1_000,
         "the store must still be over its 1 kB budget after the silent run; {after:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6. An all-exempt over-budget store warns; it does not go silent
+// ---------------------------------------------------------------------------
+
+/// The `SIZE_SWEEP_EXEMPT_KINDS` floor, end to end. `plan_eviction` chooses no
+/// victims over an all-exempt candidate set however far over budget it is, so
+/// `auto_gc = true` sweeps nothing — and the check must fall through to the
+/// warning rather than fall quiet. Deleting that fall-through (making the
+/// no-victims arm `return`) would leave such a store over budget forever with
+/// no signal at all, and this is the only test at any level that would notice.
+///
+/// The two preconditions below are the test, as much as the assertions are.
+/// Without the first the check never runs; without the second the sweep finds a
+/// victim, takes the `outcome: Some(_)` arm, and the run proves test 2's claim
+/// over again instead of this one. See [`EXEMPT_COOKFILE`] for why a probe plus
+/// an output-less unit is what satisfies both at once.
+#[test]
+fn auto_gc_true_warns_when_the_sweep_can_only_find_exempt_kinds() {
+    let fx = Fixture::with_cookfile(EXEMPT_COOKFILE, "1kB", Some(true));
+
+    let out = fx.run(&["check"]);
+    assert!(out.status.success(), "probe-only build failed: {out:?}");
+    let stderr = stderr_of(&out);
+
+    // Precondition 1: the store really is over its budget, so the check
+    // reached step 7 rather than returning at `total <= budget`.
+    let before = fx.store();
+    assert!(
+        before.bytes > 1_000,
+        "precondition: the store must be genuinely over its 1 kB budget; {before:?}"
+    );
+
+    // Precondition 2, the one this test rests on: every object in the store is
+    // a size-sweep-exempt kind, so `plan_eviction` has nothing it is permitted
+    // to evict. Asserted as the whole by-kind map, not as "no `file` objects":
+    // any unexpected kind at all — a discovered-inputs manifest, a stray
+    // directory marker — has to fail here rather than quietly change which arm
+    // the run takes.
+    assert_eq!(
+        fx.kinds(),
+        BTreeMap::from([("probe_value".to_string(), 1usize)]),
+        "precondition: the store must hold exactly one object, of an exempt kind; \
+         a non-exempt object would give the sweep a victim and test the wrong arm"
+    );
+
+    // The claim: over budget, `auto_gc` on, the sweep planned no victims — and
+    // the check warned anyway.
+    assert_warning_block(&stderr, "1kB", "probe:big");
+    assert!(
+        !swept(&stderr),
+        "an all-exempt store has nothing to sweep, so no sweep report may be printed; \
+         stderr:\n{stderr}"
+    );
+    assert_eq!(
+        fx.store(),
+        before,
+        "a sweep that planned no victims must not have removed anything"
+    );
+
+    // Non-vacuity: `auto_gc = true` was genuinely live for the run above.
+    // Same fixture, same config, same over-budget store — the only change is
+    // one non-exempt object, and now it sweeps. Without this control, "warned
+    // instead of sweeping" would be equally satisfied by an `auto_gc` that was
+    // never switched on, and the warning above would prove nothing about the
+    // sweep's no-victims arm.
+    let out = fx.run(&["file"]);
+    assert!(out.status.success(), "control build failed: {out:?}");
+    let stderr = stderr_of(&out);
+    assert!(
+        swept(&stderr),
+        "control: the same fixture must sweep once the store holds a non-exempt \
+         object; stderr:\n{stderr}"
+    );
+    assert!(
+        !warned(&stderr),
+        "control: a successful sweep must not also warn; stderr:\n{stderr}"
+    );
+
+    // And the exemption is what it says it is: the sweep that reclaimed the
+    // control's plain file left the probe value exactly where it was.
+    assert_eq!(
+        fx.kinds(),
+        BTreeMap::from([("probe_value".to_string(), 1usize)]),
+        "the sweep must have evicted the non-exempt object and spared the exempt one"
+    );
+    assert_eq!(
+        fx.store(),
+        before,
+        "the swept store must be back to precisely its all-exempt contents"
     );
 }
