@@ -1,4 +1,12 @@
+# The probe declares a `files` input, and that declaration is what makes it
+# cacheable at all: CS-0178 gives a probe with NO declared inputs no cache key,
+# because sections 1-3 of §22.5.4's fingerprint are constant and 4-7 would be
+# empty — so it would re-produce every run, mint a fresh nonce, and re-key the
+# consumer. Declaring `seed.txt` is what this fixture is actually asserting
+# about: a probe keyed on something reuses its value while that something
+# holds still.
 probe demo:nonce
+    ingredients "seed.txt"
     >{
         local stamp = cook.sh("date +%s%N"):gsub("%s+$", "")
         return { stamp = stamp }

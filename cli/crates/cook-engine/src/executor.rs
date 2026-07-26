@@ -446,6 +446,14 @@ pub fn execute_dag(
     // recomputation. Keyed by dag node id.
     let mut upstream_probe_fingerprints: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     let mut probe_fingerprint_by_node: BTreeMap<usize, [u8; 32]> = BTreeMap::new();
+    // CS-0178 (COOK-343): keys of probes that have NO cache key — those
+    // declaring no `env`/`tools`/`files`/`requires`, plus any probe whose
+    // `requires` closure reaches one. Their fingerprint is still computed and
+    // recorded (downstream folding and `cook why` both read it) but it is
+    // never used to GET or PUT: a keyless probe re-produces on every
+    // invocation in which it is reached.
+    let mut keyless_probes: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
     // Collects TestResult entries synthesized from test-cache hits in process_ready.
     let mut cached_test_results: Vec<crate::TestResult> = Vec::new();
     // Collects Blocked TestResult rows synthesized by cancel_subtree when a
@@ -949,6 +957,7 @@ pub fn execute_dag(
         probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
         upstream_probe_fingerprints: &mut BTreeMap<String, [u8; 32]>,
         probe_fingerprint_by_node: &mut BTreeMap<usize, [u8; 32]>,
+        keyless_probes: &mut std::collections::BTreeSet<String>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -999,6 +1008,7 @@ pub fn execute_dag(
                         probe_units_by_node,
                         upstream_probe_fingerprints,
                         probe_fingerprint_by_node,
+                        keyless_probes,
                     );
                 }
                 submitted
@@ -1134,6 +1144,7 @@ pub fn execute_dag(
                                     probe_units_by_node,
                                     upstream_probe_fingerprints,
                                     probe_fingerprint_by_node,
+                                    keyless_probes,
                                 );
                             }
                             return submitted;
@@ -1188,6 +1199,7 @@ pub fn execute_dag(
                                 probe_units_by_node,
                                 upstream_probe_fingerprints,
                                 probe_fingerprint_by_node,
+                                keyless_probes,
                             );
                         }
                         return submitted;
@@ -1332,6 +1344,43 @@ pub fn execute_dag(
                             // can find it regardless of cache-hit vs. miss path.
                             probe_fingerprint_by_node.insert(id, fp);
 
+                            // CS-0178 (COOK-343): §22.5.4's fingerprint has
+                            // seven sections; 1-3 (marker, key, produce source)
+                            // are always present and constant for a given
+                            // probe, and 4-7 (ENV/TOOLS/FILES/UPSTREAM) are
+                            // empty unless declared. A probe declaring nothing
+                            // therefore has a CONSTANT fingerprint and was a
+                            // permanent cache hit for the life of the store —
+                            // `{ cat STATE }` answered once and never looked
+                            // again, and `rm -rf .cook` did not help because
+                            // the value lives in the shared store. Test units
+                            // have obeyed the mirror-image rule since CS-0138
+                            // (no declared source, no key, always runs); this
+                            // brings probes into line with it.
+                            //
+                            // Keylessness chains through `requires`: a probe
+                            // keyed on an upstream fingerprint that is itself
+                            // constant-but-meaningless would hit cache while
+                            // its upstream re-produced a different value, so
+                            // reaching a keyless probe makes this one keyless
+                            // too. `tools`/`envs`/`files` producers lower to
+                            // sections 5/4/6 and are unaffected: they are
+                            // self-keying, which is why upgrading `cc` still
+                            // re-produces a `tools` probe.
+                            let declares_nothing = probe_unit.inputs.env.is_empty()
+                                && probe_unit.inputs.tools.is_empty()
+                                && probe_unit.inputs.files.is_empty()
+                                && probe_unit.inputs.requires.is_empty();
+                            let upstream_keyless = probe_unit
+                                .inputs
+                                .requires
+                                .iter()
+                                .any(|k| keyless_probes.contains(k));
+                            let is_keyless = declares_nothing || upstream_keyless;
+                            if is_keyless {
+                                keyless_probes.insert(probe_key.clone());
+                            }
+
                             // CS-0157: record where each declared tool resolves
                             // RIGHT NOW as read-view metadata. The canonical
                             // value of a `tools { }` producer carries identity
@@ -1353,11 +1402,17 @@ pub fn execute_dag(
                                     .set_tool_paths(&probe_key, paths);
                             }
 
-                            // Attempt cache GET.
-                            match cook_cache::backend::get_bytes(
-                                cache_ctx.backend.as_ref(),
-                                &fp,
-                            ) {
+                            // Attempt cache GET — unless this probe has no
+                            // key, in which case there is nothing to look up
+                            // and it falls straight through to worker dispatch.
+                            match if is_keyless {
+                                Ok(None)
+                            } else {
+                                cook_cache::backend::get_bytes(
+                                    cache_ctx.backend.as_ref(),
+                                    &fp,
+                                )
+                            } {
                                 // A hit is only accepted when the cached bytes
                                 // parse as probe-value JSON (CS-0102 stale-artifact
                                 // defence, second layer behind the V2 marker).
@@ -1434,6 +1489,7 @@ pub fn execute_dag(
                                             probe_units_by_node,
                                             upstream_probe_fingerprints,
                                             probe_fingerprint_by_node,
+                                            keyless_probes,
                                         );
                                     }
                                     return submitted;
@@ -1579,6 +1635,7 @@ pub fn execute_dag(
                                         probe_units_by_node,
                                         upstream_probe_fingerprints,
                                         probe_fingerprint_by_node,
+                                        keyless_probes,
                                     );
                                 }
                                 return submitted;
@@ -1688,6 +1745,7 @@ pub fn execute_dag(
                                 probe_units_by_node,
                                 upstream_probe_fingerprints,
                                 probe_fingerprint_by_node,
+                                keyless_probes,
                             );
                         }
                         return submitted;
@@ -1869,6 +1927,7 @@ pub fn execute_dag(
             probe_units_by_node,
             &mut upstream_probe_fingerprints,
             &mut probe_fingerprint_by_node,
+            &mut keyless_probes,
         );
     }
 
@@ -2140,6 +2199,7 @@ pub fn execute_dag(
                             probe_units_by_node,
                             &mut upstream_probe_fingerprints,
                             &mut probe_fingerprint_by_node,
+                            &mut keyless_probes,
                         );
                     }
                 }
@@ -2384,6 +2444,7 @@ pub fn execute_dag(
                                 probe_units_by_node,
                                 &mut upstream_probe_fingerprints,
                                 &mut probe_fingerprint_by_node,
+                                &mut keyless_probes,
                             );
                         }
                     } else {
@@ -2475,6 +2536,21 @@ pub fn execute_dag(
                     // G5a: populate upstream_fingerprints for downstream probes.
                     upstream_probe_fingerprints.insert(probe_out.key.clone(), fp);
 
+                    // CS-0178 (COOK-343): a keyless probe publishes nothing.
+                    // Skipping only the GET would leave a stable fingerprint
+                    // addressing a stored value that some other reader — a
+                    // verifier, a future run under a changed rule, another
+                    // machine sharing the store — could still serve, so the
+                    // PUT goes too. The per-run store and the canonical
+                    // .cook/probes/<key>.json copy are already populated above,
+                    // so consumers in THIS build are unaffected.
+                    if keyless_probes.contains(&probe_out.key) {
+                        tracing::debug!(
+                            "probe '{}': keyless (no declared inputs), not published",
+                            probe_out.key,
+                        );
+                    } else {
+
                     // G5b: persist to CacheBackend with kind=probe_value.
                     let mut artifact_meta = ArtifactMeta {
                         recipe_namespace: format!("probe:{}", probe_out.key),
@@ -2517,6 +2593,7 @@ pub fn execute_dag(
                                 probe_out.key, &fp[..4],
                             );
                         }
+                    }
                     }
                 } else {
                     // No fingerprint was computed at dispatch time (probe_units_by_node
@@ -2684,6 +2761,7 @@ pub fn execute_dag(
                     probe_units_by_node,
                     &mut upstream_probe_fingerprints,
                     &mut probe_fingerprint_by_node,
+                    &mut keyless_probes,
                 );
             }
         } else {
@@ -2819,6 +2897,7 @@ pub fn execute_dag(
                         probe_units_by_node,
                         &mut upstream_probe_fingerprints,
                         &mut probe_fingerprint_by_node,
+                        &mut keyless_probes,
                     );
                 }
             } else {
