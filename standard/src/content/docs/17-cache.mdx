@@ -270,7 +270,7 @@ A conforming implementation MAY cache the result of a `test_step` unit (§{steps
 
    The cache key MUST NOT include the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Moving a test within a recipe, or moving a recipe between Cookfiles, MUST NOT bust its cache.
 
-2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed** — that is, the body completed with a success exit status (a shell body exiting zero, or a Lua body raising no error). A test that is **failed** or **blocked** (its build dependency failed) MUST NOT be cached. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
+2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed** — that is, the body completed with a success exit status (a shell body exiting zero, or a Lua body raising no error). A test that is **failed** or **blocked** MUST NOT be cached. A unit is blocked when any dependency of it failed — a build dependency, or (CS-0177, §{steps.test}) another test. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
 
 3. **Replayed payload.** A cache hit MUST produce, for reporting purposes, the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. The duration value of a cache replay is the recorded original duration, not the wall-clock cost of the cache lookup.
 
