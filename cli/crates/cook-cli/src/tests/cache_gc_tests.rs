@@ -1,7 +1,15 @@
-//! Pure unit tests for `cook cache gc`: rendering (dry-run, applied, empty
-//! plan) and argument validation (neither-flag usage error, bad --max-size /
-//! --older-than literals). No filesystem, no `LocalBackend` — every `EvictPlan`
-//! / `EvictOutcome` here is a hand-built fixture.
+//! Unit tests for `cook cache gc`.
+//!
+//! Two groups. The rendering and argument-validation tests (dry-run, applied,
+//! empty plan; neither-flag usage error, bad --max-size / --older-than
+//! literals) are pure: no filesystem, no `LocalBackend`, every `EvictPlan` /
+//! `EvictOutcome` a hand-built fixture.
+//!
+//! The `enumerate_store` / `sweep` seam tests do touch a filesystem, because
+//! the properties they pin are filesystem properties — that a missing store is
+//! not created as a side effect, and that a dry run deletes nothing. Each one
+//! passes an explicit `tempfile::tempdir()` path in, so none of them can reach
+//! the developer's real CAS.
 
 use std::path::{Path, PathBuf};
 

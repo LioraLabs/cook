@@ -107,6 +107,7 @@ pub(crate) fn enumerate_store(store: &Path) -> Result<Option<Vec<EvictCandidate>
 
 /// The result of [`sweep`]: the plan it chose, and — unless `dry_run` or the
 /// plan chose no victims — the outcome of actually applying it.
+#[derive(Debug)]
 pub(crate) struct Sweep {
     pub plan: EvictPlan,
     pub outcome: Option<EvictOutcome>,

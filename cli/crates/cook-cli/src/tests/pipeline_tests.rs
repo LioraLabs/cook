@@ -29,15 +29,34 @@ fn env_value_arbitrary_nonempty_enables() {
     assert!(no_auto_gc_env_value_enables(Some("yes-please")));
 }
 
+/// Restores `COOK_NO_AUTO_GC` to its pre-test value on drop, so an assertion
+/// that fires mid-test cannot leak a set variable into the rest of the test
+/// binary. Restoring in a plain tail statement would be skipped on unwind.
+struct EnvRestore(Option<String>);
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(v) => std::env::set_var("COOK_NO_AUTO_GC", v),
+            None => std::env::remove_var("COOK_NO_AUTO_GC"),
+        }
+    }
+}
+
 /// Proves `no_auto_gc_enabled` actually wires the `--no-auto-gc` flag and the
 /// `COOK_NO_AUTO_GC` env var together (the pure-helper tests above only cover
-/// the value semantics in isolation). This is the only test in the crate that
-/// mutates `COOK_NO_AUTO_GC`; every env manipulation is saved and restored
-/// within this single test function so its steps run sequentially and no
-/// other test can observe an intermediate value.
+/// the value semantics in isolation).
+///
+/// `#[serial_test::serial]` is load-bearing, not decoration: cargo runs a
+/// crate's unit tests as parallel threads in ONE process, so `set_var` racing
+/// another thread's `getenv` is a genuine data race (it is `unsafe` as of
+/// edition 2024). Nothing else reads `COOK_NO_AUTO_GC` today, but the crate
+/// already depends on `serial_test` for exactly this pattern (see
+/// `modules/tests/driver_tests.rs`), so there is no reason to rely on that.
 #[test]
+#[serial_test::serial]
 fn no_auto_gc_enabled_wires_flag_and_env() {
-    let prev = std::env::var("COOK_NO_AUTO_GC").ok();
+    let _restore = EnvRestore(std::env::var("COOK_NO_AUTO_GC").ok());
     std::env::remove_var("COOK_NO_AUTO_GC");
 
     let mut globals = Globals::default();
@@ -71,8 +90,5 @@ fn no_auto_gc_enabled_wires_flag_and_env() {
         "an arbitrary non-empty COOK_NO_AUTO_GC value enables it"
     );
 
-    match prev {
-        Some(v) => std::env::set_var("COOK_NO_AUTO_GC", v),
-        None => std::env::remove_var("COOK_NO_AUTO_GC"),
-    }
+    // `_restore` puts the variable back on drop, including on unwind.
 }

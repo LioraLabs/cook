@@ -56,9 +56,14 @@ pub struct RunResult {
     pub swept: Vec<std::path::PathBuf>,
     pub kept_modified: Vec<std::path::PathBuf>,
     pub output_glob_warnings: Vec<OutputGlobWarning>,
-    /// How many CAS publish operations this run performed. Read once, after
-    /// every worker has joined. Consumed purely as a zero / non-zero gate for
-    /// the end-of-run store-budget check: a run that published no outputs
+    /// How many CAS publish operations this run attempted — each increment
+    /// precedes its `put`, so a failed write still counts. That is the
+    /// conservative direction for a zero / non-zero gate: over-counting costs
+    /// one unnecessary store walk, under-counting would skip a check that was
+    /// due.
+    ///
+    /// Read once, after every worker has joined, and consumed purely as a gate
+    /// for the end-of-run store-budget check: a run that published no outputs
     /// skips walking the shared store entirely, which is what keeps a settled
     /// no-op build at zero added cost.
     ///
