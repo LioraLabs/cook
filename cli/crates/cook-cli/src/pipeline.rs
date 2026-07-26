@@ -648,6 +648,8 @@ fn run_with_progress(
                 swept: vec![],
                 kept_modified: vec![],
                 output_glob_warnings: vec![],
+                // No work ran, so nothing was published.
+                published_count: 0,
             });
         }
         edges.retain(|k, _| reachable.contains(k));

@@ -112,7 +112,7 @@ fn test_executor_runs_single_node() {
     let mut dag = Dag::new();
     dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -132,7 +132,7 @@ fn test_executor_respects_dependencies() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -154,7 +154,7 @@ fn test_executor_failure_cancels_downstream() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::TaskFailures { failures, .. } => {
@@ -180,7 +180,7 @@ fn test_executor_parallel_independent_nodes() {
     }
 
     let start = std::time::Instant::now();
-    let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let elapsed = start.elapsed();
 
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -198,7 +198,7 @@ fn test_executor_empty_dag() {
     let (_wd, _tmp) = tmp_dir();
     let cache_ctx = make_cache_ctx(&_tmp);
     let dag: Dag<WorkNode> = Dag::new();
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok());
 }
 
@@ -213,7 +213,7 @@ fn test_executor_presatisfied_chain() {
     let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
     dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -229,7 +229,7 @@ fn test_executor_failure_does_not_cancel_independent() {
     // B is independent, should succeed
     dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::TaskFailures { failures, .. } => {
@@ -262,7 +262,7 @@ fn test_executor_interactive_node() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -292,7 +292,7 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
     .unwrap();
 
     let (tx, rx) = mpsc::channel::<EngineEvent>();
-    let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
     let mut got_stdout = false;
@@ -408,7 +408,7 @@ fn test_executor_cook162_local_cold_miss_rebuilds() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "local cold-miss should rebuild, got: {result:?}");
     assert!(wd.join("out.txt").exists(), "local unit should have run");
 }
@@ -437,7 +437,7 @@ fn test_executor_cook162_pinned_cold_miss_is_fatal() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let err = result.expect_err("pinned cold-miss must be fatal");
     match err {
         EngineError::TaskFailures { failures, .. } => {
@@ -479,7 +479,7 @@ fn test_executor_cs_0050_creates_missing_output_parent() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
     let out = wd.join("build/out/foo.txt");
@@ -513,7 +513,7 @@ fn test_executor_cs_0050_parent_is_file_diagnostic() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let err = result.expect_err("expected failure when parent is a regular file");
     match err {
         EngineError::TaskFailures { failures, .. } => {
@@ -566,7 +566,7 @@ fn test_executor_cs_0050_idempotent_when_parent_exists() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
     assert!(wd.join("build/foo.txt").exists());
 }
@@ -612,7 +612,7 @@ fn chore_window_groups_consecutive_chore_steps_into_one_pair() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -665,7 +665,7 @@ fn chore_window_failure_mid_run_emits_one_node_failed_with_step_index() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
 
     let events: Vec<_> = rx.try_iter().collect();
     let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
@@ -705,7 +705,7 @@ fn non_chore_interactive_still_emits_per_node_pair() {
         &[]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
 
     let events: Vec<_> = rx.try_iter().collect();
     let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
@@ -759,7 +759,7 @@ fn chore_window_groups_shell_and_lua_into_one_pair() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -816,7 +816,7 @@ fn pure_lua_chore_body_produces_one_drain_window() {
         &[a]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -857,7 +857,7 @@ fn non_chore_lua_chunk_still_dispatches_to_worker_pool() {
             "regular_lua", wd),
         &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 }
 
@@ -905,6 +905,7 @@ fn cook_failure_produces_blocked_test_result() {
     let result = execute_dag(
         dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
     );
 
     // The cook node failed → EngineError::TaskFailures
@@ -962,7 +963,7 @@ fn test_line_number_propagates_from_payload_to_events() {
     ).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let test_results = result.expect("test node should pass");
 
     // TestResult.line must carry 17.
@@ -1023,7 +1024,7 @@ fn test_iteration_item_propagates() {
     ).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let test_results = result.expect("test node should pass");
 
     // TestResult.iteration_item must carry "a.cpp".
@@ -1211,6 +1212,7 @@ fn probe_cache_hit_skips_produce_execution() {
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
@@ -1286,6 +1288,7 @@ fn probe_cache_miss_persists_output() {
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
@@ -1368,6 +1371,7 @@ fn probe_cache_hit_with_non_json_bytes_falls_through_to_miss() {
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
@@ -1459,6 +1463,7 @@ fn probe_fingerprint_changes_invalidate_cache() {
             &[],
             &by_node,
             std::sync::Arc::new(BTreeMap::new()),
+            &std::sync::atomic::AtomicU64::new(0),
         );
         assert!(result.is_ok(), "run1 expected Ok, got: {result:?}");
     }
@@ -1504,6 +1509,7 @@ fn probe_fingerprint_changes_invalidate_cache() {
             &[],
             &by_node,
             std::sync::Arc::new(BTreeMap::new()),
+            &std::sync::atomic::AtomicU64::new(0),
         );
         assert!(result.is_ok(), "run2 expected Ok, got: {result:?}");
 
