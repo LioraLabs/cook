@@ -1,0 +1,24 @@
+# 1. Cold: the property holds.
+[[run]]
+args = ["test"]
+[run.assert]
+exists = ["build/gen.txt"]
+
+# 2. Warm, nothing touched. The test must still RUN (it is source-less), and
+#    still pass.
+[[run]]
+args = ["test"]
+
+# 3. The property stops holding while the barrier dep is untouched. Before the
+#    fix this replayed `ok (cached)` and exited 0 — the false green §8.6 names.
+[[run]]
+args = ["test"]
+write = { "probe.txt" = "bad\n" }
+exit = 1
+[run.assert]
+output_not_contains = ["(cached)"]
+
+# 4. And it stays failing rather than re-replaying.
+[[run]]
+args = ["test"]
+exit = 1
