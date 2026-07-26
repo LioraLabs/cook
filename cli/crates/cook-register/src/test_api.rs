@@ -169,6 +169,52 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             Ok(other) => return Err(type_err("seal", "a table of strings", other.type_name())),
         };
 
+        // opts.consumes — glob allowlist narrowing which PREDECESSOR OUTPUTS
+        // fold into the ready-time fingerprint (§17.4 step 1). Absent folds
+        // all of them, the historical behaviour; a test that states what it
+        // reads stops re-keying on dependency artifacts it never opens
+        // (sourcemaps being the flagship case). Same table-of-strings
+        // discipline as `inputs` / `seal`, never coerced.
+        let consumes: Vec<String> = match tbl.get::<LuaValue>("consumes") {
+            Ok(LuaValue::Nil) | Err(_) => vec![],
+            Ok(LuaValue::Table(t)) => {
+                let mut out = Vec::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    let v = v.map_err(|e| {
+                        LuaError::runtime(format!("cook.add_test: `consumes`: {e}"))
+                    })?;
+                    match v {
+                        LuaValue::String(s) => {
+                            let sv = s.to_string_lossy().to_string();
+                            // Validated with the matcher the engine folds
+                            // with, so a pattern accepted here is the
+                            // pattern that runs. Rejected at register time
+                            // because an unparseable glob matches nothing,
+                            // and "matches nothing" on an allowlist points
+                            // the under-keying way.
+                            if let Err(e) = cook_fingerprint::consumes::validate_pattern(&sv) {
+                                return Err(LuaError::runtime(format!(
+                                    "cook.add_test: `consumes` entry '{sv}' is not a \
+                                     valid glob ({e}); it would match no predecessor \
+                                     output, silently widening the cached-pass window"
+                                )));
+                            }
+                            out.push(sv);
+                        }
+                        other => {
+                            return Err(type_err(
+                                "consumes",
+                                "a table of strings",
+                                other.type_name(),
+                            ))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => return Err(type_err("consumes", "a table of strings", other.type_name())),
+        };
+
         let mut slot = body_slot_add.borrow_mut();
         let body = slot.as_mut().ok_or_else(|| {
             mlua::Error::runtime("cook.add_test called outside a recipe body")
@@ -209,6 +255,7 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             lua_code,
             input_paths,
             seal_keys: seal_keys.clone(),
+            consumes,
         };
         let dep_kind = if let Some(group_idx) = body.current_group {
             DepKind::TestSibling(group_idx)

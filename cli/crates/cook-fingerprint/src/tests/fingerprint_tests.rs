@@ -118,6 +118,7 @@ fn make_test_payload(
 ) -> WorkPayload {
     WorkPayload::Test {
         seal_keys: Default::default(),
+        consumes: Vec::new(),
         cmd: cmd.into(),
         line: 1,
         timeout,

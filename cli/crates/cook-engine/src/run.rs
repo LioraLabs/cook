@@ -155,7 +155,8 @@ pub(crate) fn compute_ready_test_fingerprint(
 ) -> Option<String> {
     let project_root = cache_ctx.project_root.as_path();
     let test_node = dag.node(test_idx).payload();
-    let WorkPayload::Test { input_paths, seal_keys, .. } = test_node.payload.as_ref()? else {
+    let WorkPayload::Test { input_paths, seal_keys, consumes, .. } = test_node.payload.as_ref()?
+    else {
         return None;
     };
 
@@ -174,7 +175,18 @@ pub(crate) fn compute_ready_test_fingerprint(
         };
         for out in &meta.output_paths {
             if cook_fingerprint::is_terminal_output(out) {
-                let pat = if out.ends_with('/') { format!("{out}**") } else { out.clone() };
+                // CS-0085 normalisation, the same the executor applies when
+                // the producing unit captures these outputs
+                // (executor.rs `normalize_glob_pattern`). Without it a
+                // trailing bare `**` resolves to NOTHING here — the glob
+                // crate treats it as directories-only and `resolve_glob`
+                // then drops directories — so a predecessor declaring the
+                // canonical `dist/**` contributed no content to this key at
+                // all. That is under-keying: a real dependency change left
+                // the check's fingerprint untouched and replayed a stale
+                // pass. Directory outputs (`dist/`) were broken the same
+                // way, via the old `{out}**`.
+                let pat = cook_fingerprint::normalize_glob_pattern(out);
                 for rel in cook_fingerprint::resolve_glob(&node.working_dir, &pat) {
                     predecessor_outputs.insert(lexical_normalize(&node.working_dir.join(rel)));
                 }
@@ -183,7 +195,22 @@ pub(crate) fn compute_ready_test_fingerprint(
             }
         }
     }
-    for abs in &predecessor_outputs {
+    // `consumes` narrows WHICH of those outputs fold, without touching the
+    // set itself: `predecessor_outputs` stays whole so step (2) still treats
+    // an excluded artifact as produced-upstream and does not re-admit it
+    // through the test's own glob inputs. A dependency's `dist/**` ingested
+    // wholesale re-keys this check on artifacts it never opens — sourcemaps
+    // above all, which esbuild-family tools rewrite on any comment edit.
+    // Empty filter, or a filter that matches nothing, folds everything
+    // (cook_fingerprint::consumes: over-folding is the safe failure).
+    let all: Vec<PathBuf> = predecessor_outputs.iter().cloned().collect();
+    let folded: Vec<&PathBuf> = match cook_fingerprint::ConsumesFilter::compile(consumes) {
+        Ok(f) => f.select(&all, |p| root_rel_key(project_root, p)),
+        // Patterns are validated at register time; a bad one reaching here
+        // folds everything rather than silently narrowing the key.
+        Err(_) => all.iter().collect(),
+    };
+    for abs in folded {
         let hash = memo_hash(&mut memo, abs);
         pairs.insert(root_rel_key(project_root, abs), hash);
     }

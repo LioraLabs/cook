@@ -460,6 +460,7 @@ version = "0.10.1"
 dependencies = [
  "cook-contracts",
  "glob",
+ "globset",
  "serde",
  "serde_json",
  "sha2",

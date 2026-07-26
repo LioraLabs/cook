@@ -292,6 +292,7 @@ fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode
         process_env_vars: std::collections::BTreeMap::new(),
         payload: Some(WorkPayload::Test {
             seal_keys: Default::default(),
+            consumes: Vec::new(),
             cmd: "check".into(),
             line: 1,
             timeout: 5,
@@ -475,4 +476,259 @@ fn test_fp_two_level_chain_early_cutoff() {
         compute_ready_test_fingerprint(&dag_c, test_c, &ctx, &cook_luaotp::ProbeValueStore::new()),
         "the immediate predecessor's output change must re-key the test"
     );
+}
+
+// -----------------------------------------------------------------------
+// `consumes` — narrowing the predecessor-output fold (§17.4 step 1)
+// -----------------------------------------------------------------------
+
+fn test_work_node_consuming(
+    wd: &std::path::Path,
+    input_paths: &[&str],
+    consumes: &[&str],
+) -> crate::WorkNode {
+    let mut n = test_work_node(wd, input_paths);
+    if let Some(WorkPayload::Test { consumes: c, .. }) = n.payload.as_mut() {
+        *c = consumes.iter().map(|s| s.to_string()).collect();
+    }
+    n
+}
+
+/// A bundler-shaped dependency: one glob output (`dist/**`) covering BOTH
+/// the bundle a consumer imports and the sourcemap sidecar it never opens.
+/// This is refine's `packages/core` in miniature — tsup with
+/// `sourcemap: true`.
+fn bundle_fixture(
+    wd: &std::path::Path,
+    bundle: &str,
+    map: &str,
+    consumes: &[&str],
+) -> (cook_dag::Dag<crate::WorkNode>, usize) {
+    std::fs::create_dir_all(wd.join("dist")).unwrap();
+    std::fs::create_dir_all(wd.join("src")).unwrap();
+    std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+    std::fs::write(wd.join("dist/index.mjs"), bundle).unwrap();
+    std::fs::write(wd.join("dist/index.mjs.map"), map).unwrap();
+
+    let mut dag = cook_dag::Dag::new();
+    let lib = dag
+        .add_node(
+            cook_work_node(wd, "lib", &["src/lib.ts"], &["dist/**"], 11),
+            &[],
+        )
+        .unwrap();
+    let test = dag
+        .add_node(
+            test_work_node_consuming(wd, &["src/own.txt"], consumes),
+            &[lib],
+        )
+        .unwrap();
+    (dag, test)
+}
+
+/// THE CASE THIS SURFACE EXISTS FOR. tsup/esbuild inline `sourcesContent`,
+/// so a comment-only edit upstream rewrites `index.mjs.map` byte-for-byte
+/// while `index.mjs` stays identical. Without `consumes` the whole `dist/**`
+/// folds and the downstream check loses its cached pass over a file it never
+/// opened; with it, the check stays keyed on the bundle alone.
+#[test]
+fn test_fp_stable_when_only_an_unconsumed_sourcemap_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag_a, test_a) = bundle_fixture(wd, "bundle", "map-v1", &["*.mjs"]);
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    let (dag_b, test_b) = bundle_fixture(wd, "bundle", "map-v2", &["*.mjs"]);
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert!(before.is_some());
+    assert_eq!(
+        before, after,
+        "a changed sourcemap the test does not consume must not re-key it"
+    );
+}
+
+/// The same edit WITHOUT `consumes` re-keys the test — i.e. the assertion
+/// above is testing the new behaviour, not an accident of the fixture.
+#[test]
+fn test_fp_rekeys_on_sourcemap_change_without_consumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag_a, test_a) = bundle_fixture(wd, "bundle", "map-v1", &[]);
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    let (dag_b, test_b) = bundle_fixture(wd, "bundle", "map-v2", &[]);
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_ne!(
+        before, after,
+        "the default fold covers every predecessor output, sourcemaps included"
+    );
+}
+
+/// `consumes` narrows, it does not blind: a change to a CONSUMED artifact
+/// still re-keys. Without this the surface would be a way to turn caching
+/// into a lie.
+#[test]
+fn test_fp_rekeys_when_a_consumed_artifact_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag_a, test_a) = bundle_fixture(wd, "bundle-v1", "map", &["*.mjs"]);
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    let (dag_b, test_b) = bundle_fixture(wd, "bundle-v2", "map", &["*.mjs"]);
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_ne!(
+        before, after,
+        "a changed artifact the test DOES consume must still re-key it"
+    );
+}
+
+/// Fail-safe: a `consumes` matching none of the predecessor outputs keeps the
+/// unnarrowed fold. Silently folding nothing would let a stale pass replay —
+/// strictly worse than the over-invalidation the filter removes.
+#[test]
+fn test_fp_falls_back_to_full_fold_when_consumes_matches_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag_a, test_a) = bundle_fixture(wd, "bundle", "map-v1", &["*.wasm"]);
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    let (dag_b, test_b) = bundle_fixture(wd, "bundle", "map-v2", &["*.wasm"]);
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_ne!(
+        before, after,
+        "a consumes matching nothing must fall back to folding everything, \
+         not silently drop the dependency-content determinant"
+    );
+}
+
+/// An excluded artifact stays excluded even when the test's own declared
+/// inputs would otherwise sweep it up: `predecessor_outputs` is still the
+/// full set for step (2)'s produced-upstream filter, so a `dist/**/*` glob
+/// input cannot re-admit the sourcemap through the back door. cook_pnpm's
+/// check units declare exactly that glob, so this is the real shape.
+#[test]
+fn test_fp_excluded_output_is_not_readmitted_via_own_glob_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let build = |map: &str| {
+        std::fs::create_dir_all(wd.join("dist")).unwrap();
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+        std::fs::write(wd.join("dist/index.mjs"), "bundle").unwrap();
+        std::fs::write(wd.join("dist/index.mjs.map"), map).unwrap();
+
+        let mut dag = cook_dag::Dag::new();
+        let lib = dag
+            .add_node(
+                cook_work_node(wd, "lib", &["src/lib.ts"], &["dist/**"], 11),
+                &[],
+            )
+            .unwrap();
+        let test = dag
+            .add_node(
+                test_work_node_consuming(wd, &["src/own.txt", "dist/**/*"], &["*.mjs"]),
+                &[lib],
+            )
+            .unwrap();
+        (dag, test)
+    };
+
+    let (dag_a, test_a) = build("map-v1");
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+    let (dag_b, test_b) = build("map-v2");
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_eq!(
+        before, after,
+        "an unconsumed predecessor output must not re-enter the key through \
+         the test's own glob inputs"
+    );
+}
+
+/// Regression: a predecessor declaring the canonical trailing-`**` glob
+/// output must actually CONTRIBUTE to the test's key. `resolve_glob` drops
+/// directories and the glob crate treats a bare trailing `**` as
+/// directories-only, so before CS-0085 normalisation was applied here,
+/// `dist/**` resolved to the empty set and the fold silently covered
+/// nothing — a real dependency change left the check cached (under-keying,
+/// a stale pass). The executor already normalised the same declaration when
+/// capturing the producer's outputs; only this path did not.
+#[test]
+fn test_fp_folds_trailing_double_star_outputs_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    // No `consumes`: the bundle content alone must move the key.
+    let (dag_a, test_a) = bundle_fixture(wd, "bundle-v1", "map", &[]);
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+    let (dag_b, test_b) = bundle_fixture(wd, "bundle-v2", "map", &[]);
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_ne!(
+        before, after,
+        "a `dist/**` predecessor output must fold into the test key; if this \
+         passes trivially the glob resolved to nothing and the check is \
+         under-keyed against its dependency"
+    );
+}
+
+/// The directory-output spelling (`dist/`) had the identical defect via the
+/// old `{out}**` construction, and is fixed by the same normalisation.
+#[test]
+fn test_fp_folds_directory_outputs_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let build = |bundle: &str| {
+        std::fs::create_dir_all(wd.join("dist")).unwrap();
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+        std::fs::write(wd.join("dist/index.mjs"), bundle).unwrap();
+
+        let mut dag = cook_dag::Dag::new();
+        let lib = dag
+            .add_node(cook_work_node(wd, "lib", &["src/lib.ts"], &["dist/"], 11), &[])
+            .unwrap();
+        let test = dag
+            .add_node(test_work_node_consuming(wd, &["src/own.txt"], &[]), &[lib])
+            .unwrap();
+        (dag, test)
+    };
+
+    let (dag_a, test_a) = build("v1");
+    let before =
+        compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+    let (dag_b, test_b) = build("v2");
+    let after =
+        compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_ne!(before, after, "a `dist/` directory output must fold into the test key");
 }

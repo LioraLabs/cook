@@ -29,6 +29,7 @@ fn mk_test() -> CapturedUnit {
     CapturedUnit {
         payload: WorkPayload::Test {
             seal_keys: Default::default(),
+            consumes: Vec::new(),
             cmd: "true".into(),
             line: 1,
             timeout: 30,
