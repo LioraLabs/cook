@@ -13,7 +13,11 @@ use sha2::{Digest, Sha256};
 
 pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
-    CloudKey, CloudKeyInputs, DeterminantManifest,
+    CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
+};
+pub use cook_fingerprint::evict::{
+    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
+    SIZE_SWEEP_EXEMPT_KINDS,
 };
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
@@ -170,6 +174,24 @@ impl LocalBackend {
     }
 }
 
+/// COOK-233 — best-effort last-access bump on a CAS blob.
+///
+/// LRU eviction (`cook cache gc`) needs to know when an entry was last
+/// used. The signal is the blob file's own mtime, restamped with a single
+/// `utimensat` per cache hit; "LRU order" is therefore ascending *blob*
+/// mtime. The rejected alternative was a `last_access` field inside
+/// `.meta.json` rewritten on every read, which puts write amplification on
+/// the hot read path.
+///
+/// Returns `()` on purpose: a failed touch must never fail a cache read.
+/// Failures are logged at `debug!`, not `warn!` — read-only mounts and
+/// exotic filesystems make this an expected outcome, not an anomaly.
+fn touch_on_read(path: &std::path::Path) {
+    if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::now()) {
+        tracing::debug!("cache last-access: touch {} failed: {e}", path.display());
+    }
+}
+
 impl CacheBackend for LocalBackend {
     fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
         let mut hits = std::collections::BTreeSet::new();
@@ -254,6 +276,31 @@ impl CacheBackend for LocalBackend {
             }
             Err(e) => return Err(BackendError::Other(format!("open {}: {e}", path.display()))),
         };
+
+        // COOK-233 — this is a hit; stamp last-access. Every miss path above
+        // has already returned, so mtime moves only on genuine hits, and
+        // `get` delegates here, so both read entry points are covered.
+        // `batch_query` is an existence probe, not a read, and is excluded.
+        //
+        // SAFETY ARGUMENT — this touch is inert *only because restore is a
+        // byte copy, not a hardlink*. `cook_fingerprint::check::restore_one`
+        // does `read_to_end` -> write tmp -> rename, so the CAS blob and the
+        // restored workspace file are different inodes and restamping the
+        // blob cannot perturb workspace-file mtimes. If restore is ever
+        // changed to hardlink or reflink the blob into the workspace, the two
+        // become the same inode and this touch would corrupt input-freshness
+        // detection. Do not make that change without removing this touch.
+        //
+        // Accepted imprecision (not a defect): the touch fires here, so ANY
+        // read that opens the blob and then abandons it still counts as an
+        // access. That covers a *tampered* blob (`VerifyingReader` only
+        // rejects at EOF, strictly after this point) and every caller-side
+        // bail in `restore_one` — `create_dir_all` failure, `read_to_end`
+        // failure, warm-path xxh3 mismatch. All bump mtime for a read that
+        // ends as a miss. LRU is marginally less precise; there is no
+        // correctness consequence.
+        touch_on_read(&path);
+
         Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))
     }
 
@@ -430,6 +477,11 @@ impl CacheBackend for LocalBackend {
         let path = self.path_for(key);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("meta.json"));
+        // `path_for` yields a path with no extension, so `with_extension`
+        // here appends rather than replaces — the same construction
+        // `put_manifest` uses to write this sidecar in the first place.
+        // Best-effort: a sidecar that was never written is not an error.
+        let _ = std::fs::remove_file(path.with_extension("provenance.json"));
         Ok(())
     }
 
@@ -486,6 +538,221 @@ impl CacheBackend for LocalBackend {
             ))),
         }
     }
+}
+
+/// Exactly `len` lowercase hex characters — the shape used both for shard
+/// directory names (2) and blob file names (62). Anything else (uppercase,
+/// wrong length, non-hex) fails the predicate. This single predicate is what
+/// excludes `.meta.json`, `.provenance.json`, `.tmp`, and `.meta.json.tmp`
+/// sidecars from `LocalBackend::enumerate` — no extension-specific logic
+/// needed.
+fn is_lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+// Deliberately a SEPARATE `impl LocalBackend` block (not folded into the one
+// above `impl CacheBackend for LocalBackend`) so this addition stays
+// non-adjacent to COOK-233's concurrent edits inside `get`/`get_with_meta`.
+impl LocalBackend {
+    /// Walk the on-disk CAS at `{root}/{2 hex}/{62 hex}` and return one
+    /// `EvictCandidate` per blob found. Ordering is unspecified; callers
+    /// that need a stable order (e.g. LRU eviction) must sort.
+    ///
+    /// Deliberately an **inherent** method, not a `CacheBackend` trait
+    /// method (milestone D2): enumerating every artifact a backend holds is
+    /// exactly the capability a client of a shared, multi-tenant store (a
+    /// future `CloudBackend`) must never be granted. Keeping `enumerate`
+    /// off the trait means it can only exist where it's safe — the local,
+    /// single-tenant filesystem backend — so a `Box<dyn CacheBackend>` call
+    /// site can never accidentally acquire it.
+    ///
+    /// Implemented with plain two-level `std::fs::read_dir` (matching
+    /// `path_for`'s `{2}/{62}` layout); no `walkdir` dependency needed for a
+    /// fixed-depth tree.
+    pub fn enumerate(&self) -> BackendResult<Vec<EvictCandidate>> {
+        let mut out = Vec::new();
+
+        let root_entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // `with_config` always `create_dir_all`s the root, so in
+                // practice this only fires for a backend whose root was
+                // removed after construction, or a test pointed directly at
+                // a path that was never created. Either way: no blobs on
+                // disk, so an empty result — not an error — is correct.
+                return Ok(out);
+            }
+            Err(e) => {
+                return Err(BackendError::Other(format!(
+                    "read_dir {}: {e}",
+                    self.root.display()
+                )))
+            }
+        };
+
+        for shard_entry in root_entries {
+            // Per-entry I/O failure below the root is skipped, not fatal —
+            // one unreadable directory entry must not fail a 30k-object walk.
+            let Ok(shard_entry) = shard_entry else {
+                continue;
+            };
+            let shard_os_name = shard_entry.file_name();
+            let Some(shard_name) = shard_os_name.to_str() else {
+                continue;
+            };
+            if !is_lowercase_hex(shard_name, 2) {
+                continue;
+            }
+            let shard_path = shard_entry.path();
+            let Ok(shard_entries) = std::fs::read_dir(&shard_path) else {
+                continue;
+            };
+
+            for blob_entry in shard_entries {
+                let Ok(blob_entry) = blob_entry else {
+                    continue;
+                };
+                let blob_os_name = blob_entry.file_name();
+                let Some(file_name) = blob_os_name.to_str() else {
+                    continue;
+                };
+                if !is_lowercase_hex(file_name, 62) {
+                    continue;
+                }
+
+                let Ok(key_bytes) = hex::decode(format!("{shard_name}{file_name}")) else {
+                    continue;
+                };
+                let Ok(key): Result<CloudKey, _> = key_bytes.try_into() else {
+                    continue;
+                };
+
+                // `DirEntry::metadata()` (not `fs::metadata(path)`): it
+                // stats relative to the already-open directory (cheaper at
+                // scale) and, importantly, does NOT follow symlinks — a
+                // 62-hex-named symlink pointing outside the CAS must not
+                // report its target's size as CAS-resident.
+                let metadata = match blob_entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        tracing::debug!(
+                            "enumerate: unreadable blob metadata at {} ({e}); skipped",
+                            blob_entry.path().display()
+                        );
+                        continue;
+                    }
+                };
+                let size = metadata.len();
+                let last_access = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                // Sidecar read is best-effort: a missing or malformed
+                // `.meta.json` is NOT an error here. The bytes still occupy
+                // disk and MUST still show up so `cook cache du` accounts
+                // for them; we just can't attribute them to a recipe.
+                let meta_path = shard_path.join(format!("{file_name}.meta.json"));
+                let (kind, recipe_namespace) = match std::fs::read(&meta_path) {
+                    Ok(bytes) => match serde_json::from_slice::<ArtifactMeta>(&bytes) {
+                        Ok(meta) => (meta.kind, meta.recipe_namespace),
+                        Err(e) => {
+                            tracing::debug!(
+                                "enumerate: malformed sidecar at {} ({e}); orphan blob",
+                                meta_path.display()
+                            );
+                            (None, String::new())
+                        }
+                    },
+                    Err(e) => {
+                        tracing::debug!(
+                            "enumerate: no sidecar at {} ({e}); orphan blob",
+                            meta_path.display()
+                        );
+                        (None, String::new())
+                    }
+                };
+
+                out.push(EvictCandidate {
+                    key,
+                    size,
+                    last_access,
+                    kind,
+                    recipe_namespace,
+                });
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Execute `plan`: remove the blob and both sidecars for every victim.
+    ///
+    /// Deliberately an **inherent** method, not a `CacheBackend` trait method
+    /// (milestone D2), for the same reason as `enumerate`: a client of a
+    /// shared, multi-tenant store must never be able to issue deletes.
+    /// `plan_eviction` is pure policy shared with the future cloud-side
+    /// sweep; only the local, single-tenant filesystem backend is trusted to
+    /// actually apply it.
+    ///
+    /// Per victim: remove the blob with a single `remove_file` call and
+    /// count `size` toward the returned `EvictOutcome` only if THIS call
+    /// was the one that actually removed it (`Ok`). Stat-then-delete would
+    /// open a TOCTOU window: a concurrent sweep could remove the blob
+    /// between the stat and the delete, and this run would still count
+    /// `size`, double-counting the freed bytes across both sweeps — exactly
+    /// what this method must not do. Deriving "removed" from the delete's
+    /// own result closes that window, and also stops counting a blob whose
+    /// removal failed for some other reason (e.g. a permission error): the
+    /// bytes are still on disk, so they must not be reported as freed.
+    ///
+    /// The sidecars are removed unconditionally (best-effort), whether or
+    /// not the blob was present, so a half-removed object still gets
+    /// cleaned up.
+    ///
+    /// Never returns `Err` for a per-object filesystem failure; every
+    /// removal is best-effort, matching `delete`'s shape. The `BackendResult`
+    /// return type is kept for symmetry with `enumerate` and so a future
+    /// cloud-shaped caller (which *can* fail wholesale, e.g. on an auth or
+    /// connectivity error) has a slot to put it in.
+    ///
+    /// `.tmp` files are never victims — `enumerate` cannot produce them
+    /// (see `is_lowercase_hex`), so `plan.victims` never names one and no
+    /// extra guard is needed here.
+    pub fn apply_eviction(&self, plan: &EvictPlan) -> BackendResult<EvictOutcome> {
+        let mut outcome = EvictOutcome::default();
+
+        for victim in &plan.victims {
+            let path = self.path_for(&victim.key);
+            let blob_removed = std::fs::remove_file(&path).is_ok();
+
+            let _ = std::fs::remove_file(path.with_extension("meta.json"));
+            let _ = std::fs::remove_file(path.with_extension("provenance.json"));
+
+            if blob_removed {
+                outcome.objects += 1;
+                outcome.bytes = outcome.bytes.saturating_add(victim.size);
+            }
+        }
+
+        Ok(outcome)
+    }
+}
+
+/// What a sweep actually removed, as opposed to what the plan projected.
+/// `plan.freed_bytes` / `plan.victims.len()` are the projection at plan time;
+/// this is ground truth as of `apply_eviction`'s actual filesystem walk —
+/// the two can differ when a victim vanished between planning and applying
+/// (see `apply_eviction`'s doc comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EvictOutcome {
+    /// Count of victims whose blob this call's own `remove_file` actually
+    /// removed (i.e. it was still present and the removal succeeded).
+    pub objects: usize,
+    /// Sum of `size` over those same victims.
+    pub bytes: u64,
 }
 
 #[cfg(test)]

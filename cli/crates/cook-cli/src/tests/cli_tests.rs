@@ -304,6 +304,19 @@ fn cache_verify_recipe_and_json() {
 }
 
 #[test]
+fn cache_gc_subcommand_parses_max_size_and_dry_run() {
+    let cli = parse(&["cache", "gc", "--max-size", "1GB", "--dry-run"]);
+    match cli.cmd {
+        Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Gc(a) })) => {
+            assert_eq!(a.max_size.as_deref(), Some("1GB"));
+            assert!(a.older_than.is_none());
+            assert!(a.dry_run);
+        }
+        other => panic!("expected Cmd::Cache gc, got {other:?}"),
+    }
+}
+
+#[test]
 fn reserved_target_covers_every_target_typed_arm() {
     // The dispatcher's single `//`-rejection chokepoint reads
     // Cmd::reserved_target; pin that every target-typed subcommand

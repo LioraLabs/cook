@@ -290,3 +290,252 @@ publish = false
 "#);
     assert!(CloudConfig::load_or_default(dir.path()).is_ok());
 }
+
+// ─── COOK-232: [cache] max_size byte-budget parsing ──────────────────────
+
+#[test]
+fn max_size_absent_yields_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), None);
+}
+
+#[test]
+fn max_size_decimal_units() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "20GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), Some(20_000_000_000));
+}
+
+#[test]
+fn max_size_binary_units() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "20GiB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), Some(21_474_836_480));
+}
+
+#[test]
+fn max_size_lowercase_and_whitespace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "512mb"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), Some(512_000_000));
+
+    let dir2 = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir2.path(),
+        r#"
+[cache]
+max_size = "512 MB"
+"#,
+    );
+    let cfg2 = CloudConfig::load_or_default(dir2.path()).expect("load");
+    assert_eq!(cfg2.max_size_bytes().expect("parse"), Some(512_000_000));
+}
+
+#[test]
+fn max_size_fractional_truncates_toward_zero() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "1.5GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), Some(1_500_000_000));
+}
+
+#[test]
+fn max_size_bare_number_is_bytes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "4096"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.max_size_bytes().expect("parse"), Some(4096));
+}
+
+#[test]
+fn max_size_unparseable_literal_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "twenty gigs"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("twenty gigs"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+#[test]
+fn max_size_negative_literal_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "-5GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("-5GB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A signed-zero literal (`-0`) must not slip past the negative check by
+/// evaluating `-0.0 < 0.0` as false. A leading `-` is rejected outright.
+#[test]
+fn max_size_negative_zero_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "-0"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("-0"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// Same signed-zero case with a unit suffix attached.
+#[test]
+fn max_size_negative_zero_with_unit_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "-0GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("-0GB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A leading `+` is rejected too — a budget literal never needs an
+/// explicit sign, so this is intended, not a regression.
+#[test]
+fn max_size_explicit_plus_sign_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "+5GB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("+5GB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A value that overflows `u64` must error, not silently saturate to
+/// `u64::MAX` (which would read as "effectively no budget").
+#[test]
+fn max_size_overflow_unit_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "999999999TB"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("999999999TB"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+/// A bare-byte literal one past `u64::MAX` must also error rather than
+/// silently saturate.
+#[test]
+fn max_size_overflow_bare_number_errors_naming_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+max_size = "18446744073709551616"
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    let err = cfg.max_size_bytes().expect_err("should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("18446744073709551616"),
+        "error message must name the offending literal, got: {msg}"
+    );
+}
+
+#[test]
+fn max_size_absent_does_not_change_load_or_default_behaviour() {
+    // A cloud.toml that omits [cache] max_size still loads exactly as
+    // before COOK-232 — same validation, same defaults.
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+ignore_env = ["GITHUB_TOKEN"]
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.cache_ignore_env(), &["GITHUB_TOKEN".to_string()]);
+    assert_eq!(cfg.max_size_bytes().expect("parse"), None);
+}

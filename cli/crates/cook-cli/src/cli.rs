@@ -199,6 +199,8 @@ impl Cmd {
             Cmd::Cache(c) => match &c.cmd {
                 CacheCmd::Verify(v) => v.recipe.as_deref(),
                 CacheCmd::Dump(d) => d.recipe.as_deref(),
+                CacheCmd::Du => None,
+                CacheCmd::Gc(_) => None,
             },
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
@@ -312,6 +314,34 @@ pub enum CacheCmd {
     /// each input/output record inlined on one line. Read-only. For the
     /// question "why did this rebuild", prefer `cook why`.
     Dump(CacheDumpArgs),
+    /// Report local artifact-store disk usage (COOK-232).
+    ///
+    /// Walks the on-disk CAS and prints a byte/object total, a breakdown by
+    /// artifact kind and by recipe namespace, the oldest/newest artifact,
+    /// and (when `[cache] max_size` is configured) budget usage. When
+    /// `[cloud] enabled = true` the cloud cache is server-managed and this
+    /// prints a note instead of walking anything local.
+    Du,
+    /// Evict least-recently-used or stale artifacts from the local store.
+    ///
+    /// Manual sweep: requires `--max-size` and/or `--older-than`. Neither
+    /// given is a usage error. When `[cloud] enabled = true` the cloud
+    /// cache is server-managed and this prints a note instead of touching
+    /// anything local.
+    Gc(CacheGcArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheGcArgs {
+    /// Evict least-recently-used artifacts until the store fits (e.g. 10GB, 500MB).
+    #[arg(long = "max-size")]
+    pub max_size: Option<String>,
+    /// Evict artifacts untouched for longer than this (e.g. 30d, 720h).
+    #[arg(long = "older-than")]
+    pub older_than: Option<String>,
+    /// Report what would be freed without deleting anything.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

@@ -765,7 +765,9 @@ collides with a subcommand.
 | Command | Does |
 |---|---|
 | `cook why [recipe]` | explain what a run would do: the build graph with per-node hit/rebuild counts, what each rebuild invalidates downstream, and last-observed timings. `--level recipe\|group\|unit`, `--format text\|mermaid\|dot\|json`, `--unit <pat>` for one unit's full determinants. Read-only |
+| `cook cache du` | report local artifact-store disk usage: total, breakdown by artifact kind and recipe namespace, oldest/newest, and budget usage when `[cache] max_size` is set |
 | `cook cache verify [recipe]` | re-run cached steps, fail on byte-divergence (`--json`) |
+| `cook cache gc --max-size <N>\|--older-than <dur>` | evict least-recently-used or stale artifacts from the local store (`10GB`/`20GiB`, `30d`/`720h`); `--dry-run` to preview |
 | `cook logs [id]` | browse the per-build log archive (`-n N` for the Nth most recent, `--last-failed`) |
 | `cook emit-lua` | print the Lua a Cookfile compiles to |
 | `cook affected --since=<ref>` | list recipes whose inputs changed since a git ref (`--recipe`, `--json`) |

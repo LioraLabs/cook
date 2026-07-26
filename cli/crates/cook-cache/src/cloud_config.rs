@@ -73,6 +73,13 @@ pub struct CacheSection {
     pub ignore_env: Vec<String>,
     #[serde(default)]
     pub cache_dir: Option<String>,
+    /// COOK-232. `[cache] max_size = "20GB"` — the CAS budget consumed by
+    /// `cook cache du`'s over/under-budget line. Absent means "no budget,
+    /// no warning" (today's behaviour). Stored as the raw literal; parsed
+    /// on demand by `CloudConfig::max_size_bytes` so a bad literal is a
+    /// deferred, nameable error rather than a load-time panic.
+    #[serde(default)]
+    pub max_size: Option<String>,
 }
 
 #[derive(Debug)]
@@ -91,7 +98,21 @@ pub enum CloudConfigError {
     /// secondary source; that field was removed to close the
     /// secret-in-checked-in-config foot-gun.
     MissingApiKey,
+    /// COOK-232. `[cache] max_size` was set but its literal did not parse
+    /// as a decimal number with an optional unit suffix. Carries the
+    /// offending literal verbatim so the message can name it.
+    BadMaxSize(String),
 }
+
+/// COOK-234. The `parse_size` accepted-forms vocabulary, shared verbatim
+/// between `CloudConfigError::BadMaxSize`'s message (a bad `[cache] max_size`
+/// in `.cook/cloud.toml`) and `cook cache gc --max-size`'s flag diagnostic
+/// (`cook-cli`'s `cache_gc.rs`). The two call sites name different things —
+/// a config field vs. a CLI flag — so they can't share one `Display`
+/// message outright, but the list of accepted units is exactly one fact and
+/// must not fork into two strings that can drift when a unit is added.
+pub const SIZE_LITERAL_HELP: &str =
+    "a decimal number with an optional unit suffix (B, KB, MB, GB, TB, KiB, MiB, GiB, TiB)";
 
 impl std::fmt::Display for CloudConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -114,11 +135,90 @@ impl std::fmt::Display for CloudConfigError {
                  export COOK_CLOUD_API_KEY=<your-token> \
                  (interactive `cook cloud login` is planned in a future release)"
             ),
+            Self::BadMaxSize(lit) => write!(
+                f,
+                "[cache] max_size = {lit:?} is not a valid size — \
+                 expected {SIZE_LITERAL_HELP}, e.g. \"20GB\" or \"512 MiB\""
+            ),
         }
     }
 }
 
 impl std::error::Error for CloudConfigError {}
+
+/// COOK-232. Parse a `[cache] max_size` literal into a byte count.
+///
+/// Accepts a decimal number (fractional allowed, truncated toward zero)
+/// followed by an optional unit suffix, matched case-insensitively, with
+/// optional whitespace between the number and the unit. A bare number is
+/// bytes. `KB`/`MB`/`GB`/`TB` are powers of 1000; `KIB`/`MIB`/`GIB`/`TIB`
+/// are powers of 1024. A leading sign (`+` or `-`) and anything else that
+/// doesn't match this shape return `None` — the caller turns that into a
+/// `CloudConfigError::BadMaxSize` naming the original literal. A budget
+/// literal never needs an explicit sign, so a value never gets far enough
+/// to be tested as negative (which would otherwise let a signed zero like
+/// `"-0"` slip through, since `-0.0 < 0.0` is false).
+///
+/// A value that doesn't fit in `u64` also returns `None` rather than
+/// silently saturating to `u64::MAX` — a typo like `"999999999TB"` must
+/// not read as "effectively no budget".
+///
+/// `pub`: `cook cache gc --max-size` is this parser's second consumer, so a
+/// byte budget typed on the gc CLI accepts exactly the same literal forms as
+/// `[cache] max_size` in `.cook/cloud.toml`.
+pub fn parse_size(literal: &str) -> Option<u64> {
+    let s = literal.trim();
+    if s.starts_with('-') || s.starts_with('+') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut saw_digit = false;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+        saw_digit = true;
+    }
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+            saw_digit = true;
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+    let (num_part, rest) = s.split_at(i);
+    let number: f64 = num_part.parse().ok()?;
+    let unit = rest.trim_start();
+    let multiplier: f64 = if unit.is_empty() {
+        1.0
+    } else {
+        match unit.to_ascii_uppercase().as_str() {
+            "B" => 1.0,
+            "KB" => 1_000.0,
+            "MB" => 1_000_000.0,
+            "GB" => 1_000_000_000.0,
+            "TB" => 1_000_000_000_000.0,
+            "KIB" => 1024.0,
+            "MIB" => 1024.0 * 1024.0,
+            "GIB" => 1024.0 * 1024.0 * 1024.0,
+            "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+            _ => return None,
+        }
+    };
+    let total = number * multiplier;
+    if !total.is_finite() {
+        return None;
+    }
+    // `u64::MAX` isn't exactly representable as `f64` (it rounds up to
+    // `2^64`), so this comparison correctly rejects anything that would
+    // otherwise saturate via the `as` cast below rather than erroring.
+    if total >= u64::MAX as f64 {
+        return None;
+    }
+    Some(total as u64)
+}
 
 impl CloudConfig {
     /// Load `.cook/cloud.toml` from `project_root`. Returns `Default` if absent.
@@ -182,6 +282,41 @@ impl CloudConfig {
 
     pub fn cache_dir(&self) -> Option<&str> {
         self.cache.cache_dir.as_deref()
+    }
+
+    /// Resolve the local artifact-store directory with the same precedence
+    /// `cook-engine::run::build_cache_ctx` uses to construct `LocalBackend`:
+    /// `[cache] cache_dir` verbatim (as `PathBuf::from`, no join / canonicalize)
+    /// if set, else `dirs::cache_dir()/cook/cloud`, else
+    /// `std::env::temp_dir()/cook/cloud`.
+    ///
+    /// COOK-232: pulled out of `build_cache_ctx` so `cook cache du` reads the
+    /// exact same directory the engine writes to — one implementation, no
+    /// drift between the two callers.
+    pub fn resolved_cache_dir(&self) -> std::path::PathBuf {
+        self.cache_dir()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::cache_dir()
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("cook")
+                    .join("cloud")
+            })
+    }
+
+    /// COOK-232. `[cache] max_size` resolved to a byte budget. `None` when
+    /// unset — "no budget, no warning" (today's behaviour). `Err` names the
+    /// offending literal when set but unparseable; this never silently
+    /// falls back to "no budget" on a typo. The warning that consumes this
+    /// value (`cook cache du`'s over/under-budget line) and the `auto_gc`
+    /// knob both belong to COOK-235, not here.
+    pub fn max_size_bytes(&self) -> Result<Option<u64>, CloudConfigError> {
+        match &self.cache.max_size {
+            None => Ok(None),
+            Some(lit) => parse_size(lit)
+                .map(Some)
+                .ok_or_else(|| CloudConfigError::BadMaxSize(lit.clone())),
+        }
     }
 
     /// Whether this client publishes produced artifacts to the shared store.
