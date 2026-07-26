@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_demo" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["build/out.txt"] body=ShellBlock(["echo built > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

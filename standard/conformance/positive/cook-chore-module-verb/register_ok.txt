@@ -1,0 +1,1 @@
+CS-0175: a module registers a namespaced chore via cook.chore at module top level; `use cook_demo` alone makes `demo.greet` invocable.

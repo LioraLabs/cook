@@ -52,8 +52,19 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
                     cook_engine::cook_register::RegistrationSiteKind::Dynamic => {
                         "by cook.recipe at register-phase"
                     }
+                    cook_engine::cook_register::RegistrationSiteKind::DynamicChore => {
+                        "by cook.chore at register-phase"
+                    }
                 };
-                msg.push_str(&format!("  - Cookfile:{}: {}\n", s.line, kind_str));
+                // CS-0175: a module-registered chore's line points into the
+                // MODULE, not the Cookfile, so prefixing it with `Cookfile:`
+                // would send the reader to an unrelated line of their own file.
+                // Name the site without a false location instead.
+                if s.kind == cook_engine::cook_register::RegistrationSiteKind::DynamicChore {
+                    msg.push_str(&format!("  - {}\n", kind_str));
+                } else {
+                    msg.push_str(&format!("  - Cookfile:{}: {}\n", s.line, kind_str));
+                }
             }
             msg.push_str("rename one of them.");
             CookError::RecipeCollision(msg)

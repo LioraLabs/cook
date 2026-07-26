@@ -209,9 +209,14 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
 ///
 /// Mirrors `unit_api.rs::type_err`, which hardcodes the `cook.add_unit:`
 /// prefix — hence a sibling rather than a reuse.
-fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
+///
+/// `api` names the calling surface (`cook.recipe` or `cook.chore`, CS-0175).
+/// It is a parameter rather than a hardcoded prefix because `cook.chore`
+/// shares `parse_origin_meta`: reporting `cook.recipe:` for a bad `origin`
+/// passed to `cook.chore` would name a function the author never called.
+fn recipe_type_err(api: &str, field: &str, expected: &str, got: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
-        "cook.recipe: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.3, CS-0143)"
+        "{api}: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.3, CS-0143)"
     ))
 }
 
@@ -233,15 +238,17 @@ fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
 /// Deliberately NOT folded into `parse_meta_lists`: that helper is shared
 /// with `cook.__register_surface` / `cook.__register_surface_chore`, and a
 /// surface `recipe NAME` / `chore NAME` block must never acquire an origin
-/// — only the public `cook.recipe` closure calls this function, so that
-/// guarantee is structural rather than a matter of not passing the field.
-fn parse_origin_meta(meta: &LuaTable) -> LuaResult<Option<String>> {
+/// — only the public `cook.recipe` / `cook.chore` closures call this
+/// function, so that guarantee is structural rather than a matter of not
+/// passing the field.
+fn parse_origin_meta(api: &str, meta: &LuaTable) -> LuaResult<Option<String>> {
     match meta.get::<LuaValue>("origin")? {
         LuaValue::Nil => Ok(None),
         LuaValue::String(s) => {
             let s = s.to_string_lossy().to_string();
             if s.is_empty() {
                 return Err(recipe_type_err(
+                    api,
                     "origin",
                     "a non-empty string",
                     "an empty string",
@@ -249,8 +256,63 @@ fn parse_origin_meta(meta: &LuaTable) -> LuaResult<Option<String>> {
             }
             Ok(Some(s))
         }
-        other => Err(recipe_type_err("origin", "a string", other.type_name())),
+        other => Err(recipe_type_err(api, "origin", "a string", other.type_name())),
     }
+}
+
+/// Validate a `cook.chore` name against the identity of the module that is
+/// registering it (Standard §12.7.8 chore carve-out, CS-0175).
+///
+/// §12.7.8's name-ownership MUST — "a recipe's name, and the fact that it is
+/// invocable, belong to the author of the Cookfile" — is scoped to *recipes*.
+/// The carve-out for chores rests entirely on the namespace prefix: a recipe
+/// is a build target in the DAG the author owns, whereas `cc.add` is a tool
+/// the module offers under a name the author can attribute at a glance. The
+/// dotted prefix is what makes that hold rather than merely assert it, so it
+/// is REQUIRED and checked, not conventional.
+///
+/// `module` is the module currently being evaluated. It is deliberately
+/// `current_module` and never `ModuleLoaderState::active_module()`: the
+/// latter falls back to `last_module` ("most recently loaded"), which is not
+/// "the module that owns the running function". With `use cook_cc` followed
+/// by `use cook_pnpm`, a call made from a cook_cc function after both loads
+/// reports `cook_pnpm` — checking a prefix against that would hollow the
+/// carve-out into an assertion again. Requiring registration *during* module
+/// evaluation makes the identity exact by construction.
+///
+/// Accepted prefixes are the module name itself and the module name with a
+/// leading `cook_` stripped: module `cook_cc` admits both `cook_cc.add` and
+/// `cc.add`. The strip exists because blessed modules are named `cook_*` by
+/// convention while their verbs read as `cc.*` / `pnpm.*`.
+fn validate_chore_namespace(name: &str, module: Option<&str>) -> LuaResult<()> {
+    let module = module.ok_or_else(|| {
+        mlua::Error::runtime(format!(
+            "cook.chore: '{name}' was registered outside module evaluation. A chore's \
+             namespace is checked against the module registering it, and that identity \
+             is only exact while the module's own chunk is running — register chores at \
+             module top level, not from a function called later by a Cookfile \
+             (Standard \u{00a7}12.7.8, CS-0175)"
+        ))
+    })?;
+
+    let short = module.strip_prefix("cook_").unwrap_or(module);
+    let prefix = name.split('.').next().unwrap_or("");
+
+    if prefix.is_empty() || !name.contains('.') {
+        return Err(mlua::Error::runtime(format!(
+            "cook.chore: '{name}' must be namespaced. A module-registered chore takes a \
+             dotted name whose first segment is its module: try '{short}.{name}' \
+             (Standard \u{00a7}12.7.8, CS-0175)"
+        )));
+    }
+    if prefix != module && prefix != short {
+        return Err(mlua::Error::runtime(format!(
+            "cook.chore: '{name}' claims namespace '{prefix}', but module '{module}' may \
+             only register under '{short}' or '{module}' \
+             (Standard \u{00a7}12.7.8, CS-0175)"
+        )));
+    }
+    Ok(())
 }
 
 /// Next serial for named-registry keys used by `DefaultedLua` params.
@@ -342,6 +404,7 @@ pub fn install_cook_api(
     working_dir: &PathBuf,
     body_slot: SharedBodySlot,
     recipe_name: &str,
+    module_state: crate::module_loader::SharedModuleLoaderState,
 ) -> LuaResult<Rc<RefCell<Vec<RegisteredRecipe>>>> {
     let recipes: Rc<RefCell<Vec<RegisteredRecipe>>> = Rc::new(RefCell::new(Vec::new()));
     let cook = lua.create_table()?;
@@ -353,7 +416,7 @@ pub fn install_cook_api(
         lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
-            let origin = parse_origin_meta(&meta)?;
+            let origin = parse_origin_meta("cook.recipe", &meta)?;
             let line = caller_line_in_cookfile(lua).unwrap_or(0);
 
             recipes_clone.borrow_mut().push(RegisteredRecipe {
@@ -375,6 +438,59 @@ pub fn install_cook_api(
             Ok(())
         })?;
     cook.set("recipe", recipe_fn)?;
+
+    // cook.chore(name, meta, fn) — the public module-facing API (CS-0175).
+    //
+    // Sibling to `cook.recipe`, tagged `RecipeKind::Chore` and `Dynamic`.
+    // Exists so a blessed module can offer verbs (`cc.add`, `cc.link`) that
+    // a Cookfile author invokes without having declared them — the thing a
+    // surface `chore NAME` block cannot express, since the author would have
+    // to write the block themselves.
+    //
+    // The name MUST be namespaced to the registering module; see
+    // `validate_chore_namespace` for why that is load-time-only and why the
+    // identity comes from `current_module` rather than `active_module()`.
+    //
+    // Note the asymmetry with `cook.recipe` above: chore *unit* semantics
+    // (no-cache, interactive) are NOT established here. For a surface chore
+    // they come from codegen wrapping the body in `cook._enter_chore()` /
+    // `cook._exit_chore()`; a Lua-registered body has no such wrapper, so the
+    // engine brackets the call itself at the `RecipeKind::Chore` branch of
+    // `invoke_body`. Registering here without that bracket would silently
+    // yield cacheable, non-interactive units — a §7.4 violation that no test
+    // of this closure alone would catch.
+    let recipes_dyn_chore = recipes.clone();
+    let chore_module_state = module_state.clone();
+    let chore_pub_fn =
+        lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+            {
+                let state = chore_module_state.borrow();
+                validate_chore_namespace(&name, state.current_module.as_deref())?;
+            }
+            let key = lua.create_registry_value(func)?;
+            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let params = parse_chore_params_meta(lua, &meta)?;
+            let origin = parse_origin_meta("cook.chore", &meta)?;
+            let line = caller_line_in_cookfile(lua).unwrap_or(0);
+
+            recipes_dyn_chore.borrow_mut().push(RegisteredRecipe {
+                name,
+                function: key,
+                metadata: RegisteredMetadata {
+                    ingredients,
+                    excludes,
+                    requires,
+                    params,
+                    origin,
+                },
+                source: RegistrationSource::Dynamic { line },
+                kind: RecipeKind::Chore,
+                // Chores cannot declare a `for_each` driver (§8.3 is recipe-only).
+                for_each: None,
+            });
+            Ok(())
+        })?;
+    cook.set("chore", chore_pub_fn)?;
 
     // cook.__register_surface(name, meta, body) — codegen-private API.
     //
