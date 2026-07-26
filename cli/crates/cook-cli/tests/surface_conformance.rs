@@ -149,6 +149,7 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
             // real ~/.cache/cook/cloud.
             .env("XDG_CACHE_HOME", tmp.path().join("xdg"))
             .env_remove("COOK_NO_PRUNE")
+            .env_remove("COOK_NO_AUTO_GC")
             .env_remove("COOK_NO_PUBLISH")
             .env_remove("COOK_CLOUD_API_KEY")
             .envs(&run.env)

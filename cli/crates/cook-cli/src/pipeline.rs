@@ -587,6 +587,30 @@ fn no_prune_enabled(globals: &Globals) -> bool {
             .unwrap_or(false)
 }
 
+/// Pure env-value semantics for the `COOK_NO_AUTO_GC` escape hatch: any
+/// non-empty value other than `"0"` enables it. Factored out from
+/// `no_auto_gc_enabled` so the five semantic cases (unset, `"1"`, `"0"`,
+/// `""`, an arbitrary non-empty value) can be unit-tested against a plain
+/// `Option<&str>` without any test touching the shared process environment.
+#[allow(dead_code)]
+fn no_auto_gc_env_value_enables(value: Option<&str>) -> bool {
+    value.map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+}
+
+/// Whether the automatic `[cache] auto_gc` store-budget sweep (COOK-235) is
+/// disabled for this run, via `--no-auto-gc` or the `COOK_NO_AUTO_GC`
+/// environment variable (any non-empty value other than `0`). This only
+/// suppresses the deletion — the over-budget warning still prints — so CI can
+/// stay deterministic while an operator still learns the store needs a sweep.
+///
+/// Nothing calls this yet; the store-budget check that consumes it lands in
+/// a follow-up task.
+#[allow(dead_code)]
+fn no_auto_gc_enabled(globals: &Globals) -> bool {
+    globals.no_auto_gc
+        || no_auto_gc_env_value_enables(std::env::var("COOK_NO_AUTO_GC").ok().as_deref())
+}
+
 /// True when this invocation must run in publish-off / read-only mode, set
 /// by `--no-publish` or a non-empty `COOK_NO_PUBLISH` env var. This only
 /// turns publishing OFF; it never overrides a `[cloud] publish = false`
@@ -2492,3 +2516,7 @@ pub fn cmd_cache_dump(
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "tests/pipeline_tests.rs"]
+mod tests;

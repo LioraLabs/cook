@@ -199,8 +199,8 @@ struct PartitionedArgv {
 /// COOK-36 Task 9 + COOK-58 + COOK-193 Task 1: partition the positionals
 /// after the recipe name into argv and preset, applying every trailing
 /// global flag (`--affected`, `--since`, `-v`, `-q`, `-j`, `--color`,
-/// `--output`, `--set`, `-f`, `--root`, `--no-prune`, `--no-publish`) onto
-/// `globals` in place.
+/// `--output`, `--set`, `-f`, `--root`, `--no-prune`, `--no-auto-gc`,
+/// `--no-publish`) onto `globals` in place.
 ///
 /// Preset can come from `@TOKEN` sigil or `--config NAME` / `-c NAME` /
 /// `--config=NAME` flag forms. `--since=<ref>` and `--since <ref>` both
@@ -276,6 +276,10 @@ fn partition_argv(
             }
             "--no-prune" => {
                 globals.no_prune = true;
+                continue;
+            }
+            "--no-auto-gc" => {
+                globals.no_auto_gc = true;
                 continue;
             }
             "--no-publish" => {
