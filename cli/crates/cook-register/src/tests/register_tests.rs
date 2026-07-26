@@ -4178,3 +4178,232 @@ end)
     assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
     assert_eq!(result.unwrap().len(), 1);
 }
+
+// -----------------------------------------------------------------------
+// CS-0176 — public `cook.chore`, so a module can register namespaced verbs.
+//
+// Mirrors the CS-0143 origin block above: same shape of feature (a new
+// public registration surface with metadata the surface paths must not
+// acquire), so the same shape of coverage.
+//
+// Every fixture here loads a real module, because the namespace check reads
+// `current_module` — a `cook.chore` call in top-level Cookfile Lua is
+// rejected by design, and `write_module` is the only way to exercise the
+// accepting path.
+// -----------------------------------------------------------------------
+
+/// Write `<dir>/cook_modules/<name>.lua` so `cook.load_module(name)` resolves.
+fn write_module(dir: &std::path::Path, name: &str, code: &str) {
+    let modules_dir = dir.join("cook_modules");
+    std::fs::create_dir_all(&modules_dir).unwrap();
+    std::fs::write(modules_dir.join(format!("{name}.lua")), code).unwrap();
+}
+
+#[test]
+fn cook_chore_registers_a_namespaced_module_chore() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        local m = {}
+        cook.chore("cc.add", {origin = "cook_cc.add"}, function() end)
+        return m
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, r#"cook.load_module("cook_cc")"#).unwrap();
+
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "cc.add");
+    // Chore, not Recipe: the whole point is that these are commands outside
+    // the DAG, not build targets the author owns (§12.7.8 carve-out).
+    assert_eq!(names[0].kind, crate::RecipeKind::Chore);
+    assert_eq!(names[0].origin, Some("cook_cc.add".to_string()));
+}
+
+#[test]
+fn cook_chore_accepts_the_full_module_name_as_prefix() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // `cook_cc` may register under `cc.` (the stripped form, which is what
+    // the verbs actually read as) or under its own full name. Both are
+    // unambiguously the module's own namespace.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        cook.chore("cook_cc.add", {}, function() end)
+        return {}
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, r#"cook.load_module("cook_cc")"#).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "cook_cc.add");
+}
+
+#[test]
+fn cook_chore_rejects_an_undotted_name() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // An undotted name is exactly the case §12.7.8 forbids: it would let a
+    // module mint a bare invocable name in the author's namespace, which is
+    // the author's to own. The diagnostic suggests the namespaced spelling.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        cook.chore("add", {}, function() end)
+        return {}
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(builder, r#"cook.load_module("cook_cc")"#).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("must be namespaced"), "got: {msg}");
+    assert!(msg.contains("cc.add"), "should suggest the fix, got: {msg}");
+}
+
+#[test]
+fn cook_chore_rejects_another_modules_namespace() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // The namespace is checked against the registering module, not merely
+    // required to exist — without this, `cc.` would be a naming convention
+    // any module could squat, and the §12.7.8 carve-out would rest on an
+    // assertion rather than a guarantee.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_pnpm",
+        r#"
+        cook.chore("cc.add", {}, function() end)
+        return {}
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(builder, r#"cook.load_module("cook_pnpm")"#).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("claims namespace 'cc'"), "got: {msg}");
+    assert!(msg.contains("cook_pnpm"), "should name the module, got: {msg}");
+}
+
+#[test]
+fn cook_chore_rejects_registration_outside_module_evaluation() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // Called from top-level Cookfile Lua there is no module identity to
+    // check against, so the namespace rule has nothing to bite on. Rejecting
+    // is what keeps the rule sound; see `validate_chore_namespace` for why
+    // `active_module()`'s `last_module` fallback cannot stand in here.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(builder, r#"cook.chore("cc.add", {}, function() end)"#).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("outside module evaluation"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn cook_chore_rejects_registration_from_a_post_load_module_function() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // THE case that motivates keying on `current_module` rather than
+    // `active_module()`. Here a maker function runs after the load returned,
+    // when `current_module` is None and `last_module` still says "cook_cc".
+    // `active_module()` would happily accept this and report `cook_cc` — but
+    // it reports the last module LOADED, not the module that owns the running
+    // function, so with a second `use` in between it would attribute the
+    // chore to the wrong module entirely. Rejecting outright keeps identity
+    // exact rather than usually-right.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        local m = {}
+        function m.toolchain()
+            cook.chore("cc.add", {}, function() end)
+        end
+        return m
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = list_names(
+        builder,
+        r#"local cc = cook.load_module("cook_cc") cc.toolchain()"#,
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("outside module evaluation"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn cook_chore_carries_declared_params() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // `__params` is the same metadata channel surface chores use, so a
+    // module-registered chore gets argv binding and the `chore cc.add kind
+    // name` menu rendering for free.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        cook.chore("cc.add", {__params = {
+            {kind = "required", name = "kind"},
+            {kind = "required", name = "name"},
+        }}, function() end)
+        return {}
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, r#"cook.load_module("cook_cc")"#).unwrap();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].params.len(), 2);
+    assert_eq!(names[0].params[0].param_name(), "kind");
+    assert_eq!(names[0].params[1].param_name(), "name");
+}
+
+#[test]
+fn cook_chore_body_gets_chore_unit_semantics() {
+    use crate::{register_cookfile, RegisterSessionBuilder};
+
+    // THE TRAP (§7.4). A surface chore's body is wrapped by codegen in
+    // `cook._enter_chore()` / `cook._exit_chore()`; a `cook.chore` body is a
+    // plain Lua function with no wrapper, so unless the engine brackets the
+    // invocation itself, units captured here would be cacheable and
+    // non-interactive — silently, which is the danger: a chore that appears
+    // to work while caching a command whose entire purpose is to re-run.
+    //
+    // `cache = true` inside a chore body is rejected by `cook.add_unit`
+    // precisely when `current_chore_active` is set, so its rejection is a
+    // direct probe of the bracket being in effect.
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    write_module(
+        tmpdir.path(),
+        "cook_cc",
+        r#"
+        cook.chore("cc.fmt", {}, function()
+            cook.add_unit({command = "clang-format -i src/main.cpp", cache = true})
+        end)
+        return {}
+        "#,
+    );
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default())
+        .with_target_argv("cc.fmt".to_string(), vec![]);
+    let err = register_cookfile(builder, r#"cook.load_module("cook_cc")"#, None).unwrap_err();
+    assert!(
+        err.to_string().contains("cache = true is not permitted in a chore body"),
+        "chore semantics not established for a cook.chore body; got: {err}"
+    );
+}

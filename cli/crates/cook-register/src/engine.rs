@@ -267,6 +267,14 @@ pub fn register_cookfile(
     // 4. Probe registry for this register pass.
     let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
 
+    // 4b. Module-loader state. Built HERE, ahead of the core API install,
+    //     because `cook.chore` (CS-0176) checks its namespace prefix against
+    //     `current_module` and so must close over this handle at install time.
+    //     `install_remaining_apis` registers the loader itself over it below.
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
+        ModuleLoaderState::new(builder.working_dir.clone()),
+    ));
+
     // 5. Install `cook.*` core API. `recipe_name` here is the legacy
     //    closure-capture argument used by `cook.add_unit` for
     //    `cache_meta.recipe_name`; in register_cookfile there is no single
@@ -278,6 +286,7 @@ pub fn register_cookfile(
         &builder.working_dir,
         body_slot.clone(),
         "",
+        module_state.clone(),
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
@@ -326,6 +335,7 @@ pub fn register_cookfile(
         prepass_store.clone(),
         recipe_forcer.clone(),
         finalizer_queue.clone(),
+        module_state,
     )?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
@@ -1144,6 +1154,23 @@ impl BodyDriver {
             .map(|t| t == name)
             .unwrap_or(false);
         if kind == crate::RecipeKind::Chore {
+            // CS-0176: establish chore unit semantics (no-cache, interactive)
+            // for the duration of the body.
+            //
+            // A SURFACE chore gets these from codegen, which wraps the body in
+            // `cook._enter_chore()` / `cook._exit_chore()` (cook-luagen
+            // recipe.rs:1362, :1474); those flip the same `current_chore_active`
+            // flag this guard sets. A `cook.chore` body is a plain Lua function
+            // with no such wrapper, so without this bracket its units would be
+            // cacheable and non-interactive — a silent §7.4 violation, and
+            // silent is the whole problem: the chore would appear to work while
+            // quietly caching a command whose entire purpose is to re-run.
+            //
+            // Bracketing every chore rather than only the `Dynamic` ones keeps
+            // one code path. For a surface chore the codegen enter/exit nests
+            // inside a bracket that is already true, and the guard restores the
+            // flag to its on-entry value either way.
+            let _chore_guard = ChoreActiveGuard::enter(&self.body_slot);
             if is_target {
                 // Targeted chore: bind argv and call with __cook_params.
                 let argv = &builder.target_argv;
@@ -1153,6 +1180,7 @@ impl BodyDriver {
                     argv,
                     name,
                     source_line,
+                    &origin,
                 )?;
                 // Store the prelude on the body slot so cook.add_unit can
                 // prepend it to lua_code units captured in this chore body.
@@ -1187,6 +1215,7 @@ impl BodyDriver {
                     &[],
                     name,
                     source_line,
+                    &origin,
                 )?;
                 self.set_chore_prelude(prelude);
                 func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
@@ -1426,6 +1455,52 @@ impl BodyDriver {
     }
 }
 
+/// RAII bracket that marks a chore body active for the duration of its
+/// invocation, so units captured inside it get chore semantics — no-cache
+/// and interactive (§7.4, CS-0176).
+///
+/// Sets `BodyCaptureState::current_chore_active`, the same flag
+/// `cook._enter_chore()` / `cook._exit_chore()` drive for surface chores
+/// (unit_api.rs). This exists because a `cook.chore` body is a plain Lua
+/// function that codegen never wrapped, so nothing else would set it.
+///
+/// Restores the previous value rather than clearing to `false`, and tolerates
+/// a `None` body slot on drop: the parametric-skip arm of the chore branch
+/// takes the slot and returns while this guard is still alive, so drop must
+/// not assume a body is still there to restore.
+///
+/// The borrow is taken and released inside `enter` and `drop` only — never
+/// held across the body call, which re-enters and borrows the slot itself.
+struct ChoreActiveGuard<'a> {
+    slot: &'a SharedBodySlot,
+    previous: bool,
+}
+
+impl<'a> ChoreActiveGuard<'a> {
+    fn enter(slot: &'a SharedBodySlot) -> Self {
+        let previous = {
+            let mut borrowed = slot.borrow_mut();
+            match borrowed.as_mut() {
+                Some(body) => {
+                    let previous = body.current_chore_active;
+                    body.current_chore_active = true;
+                    previous
+                }
+                None => false,
+            }
+        };
+        Self { slot, previous }
+    }
+}
+
+impl Drop for ChoreActiveGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(body) = self.slot.borrow_mut().as_mut() {
+            body.current_chore_active = self.previous;
+        }
+    }
+}
+
 /// Build the `__cook_params` Lua table from declared parameter metadata and
 /// supplied argv (COOK-36 Task 4).
 ///
@@ -1448,6 +1523,7 @@ fn build_chore_params_table(
     argv: &[String],
     chore_name: &str,
     source_line: usize,
+    origin: &Option<String>,
 ) -> Result<(LuaTable, String), RegisterError> {
     use crate::capture::ChoreParamMeta;
 
@@ -1465,6 +1541,7 @@ fn build_chore_params_table(
                     chore: chore_name.to_string(),
                     name: name.clone(),
                     line: source_line,
+                    origin: origin.clone(),
                 })?;
                 table.set(name.as_str(), value.as_str()).map_err(RegisterError::Lua)?;
                 // Escape the value for Lua string literal.
@@ -1498,6 +1575,7 @@ fn build_chore_params_table(
                                 name: name.clone(),
                                 line: source_line,
                                 message: e.to_string(),
+                                origin: origin.clone(),
                             });
                         }
                     };
@@ -1527,6 +1605,7 @@ fn build_chore_params_table(
                                 name: name.clone(),
                                 line: source_line,
                                 ty: result.type_name().to_string(),
+                                origin: origin.clone(),
                             });
                         }
                     }
@@ -1540,6 +1619,7 @@ fn build_chore_params_table(
                         chore: chore_name.to_string(),
                         name: name.clone(),
                         line: source_line,
+                        origin: origin.clone(),
                     });
                 }
                 // Build Lua sequence table.
@@ -2159,8 +2239,13 @@ fn detect_collisions(
             (crate::capture::RegistrationSource::Static { .. }, crate::RecipeKind::Chore) => {
                 RegistrationSiteKind::SurfaceChore
             }
-            (crate::capture::RegistrationSource::Dynamic { .. }, _) => {
+            (crate::capture::RegistrationSource::Dynamic { .. }, crate::RecipeKind::Recipe) => {
                 RegistrationSiteKind::Dynamic
+            }
+            // CS-0176: a `cook.chore` registration, so the collision names
+            // `cook.chore` rather than a `cook.recipe` call that never happened.
+            (crate::capture::RegistrationSource::Dynamic { .. }, crate::RecipeKind::Chore) => {
+                RegistrationSiteKind::DynamicChore
             }
         };
         let line = match r.source {
@@ -2224,6 +2309,15 @@ pub fn list_names(
     lua.set_named_registry_value("__cook_cookfile_path", cookfile_label.clone())
         .map_err(RegisterError::Lua)?;
 
+    // Module-loader state, ahead of the core API install — `cook.chore`
+    // closes over it (CS-0176). `list_names` DOES need this wired properly:
+    // it evaluates the top-level chunk, so `use cook_cc` runs the module and
+    // its `cook.chore` registrations, which is exactly how `cook menu` comes
+    // to list module-provided verbs.
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
+        ModuleLoaderState::new(builder.working_dir.clone()),
+    ));
+
     // Install cook.* core surface. `recipe_name` is "" — list_names never
     // invokes a body, so cook.add_unit's recipe_name capture is moot here.
     let recipes = install_cook_api(
@@ -2232,6 +2326,7 @@ pub fn list_names(
         &builder.working_dir,
         body_slot.clone(),
         "",
+        module_state.clone(),
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;
@@ -2269,6 +2364,7 @@ pub fn list_names(
         // still be accepted as ordinary register-phase Lua, hence installing
         // the API rather than leaving `cook.on_register_complete` undefined.
         Rc::new(RefCell::new(Vec::new())),
+        module_state,
     )?;
 
     // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
@@ -2339,6 +2435,11 @@ fn install_remaining_apis(
     prepass: crate::module_loader::SharedPrepassStore,
     recipe_forcer: crate::context::SharedRecipeForcer,
     finalizer_queue: crate::on_register_api::SharedFinalizerQueue,
+    // CS-0176: created by the caller, before `install_cook_api`, because
+    // `cook.chore` validates its namespace against the module being evaluated
+    // and therefore needs this handle at install time — earlier than the
+    // module loader itself used to be built.
+    module_state: SharedModuleLoaderState,
 ) -> Result<SharedModuleLoaderState, RegisterError> {
     // Sandbox + fs/path/platform API. Project root falls back to
     // working_dir when no CacheContext is present.
@@ -2360,10 +2461,8 @@ fn install_remaining_apis(
         cook_lua_stdlib::register_platform_api(lua, &cook_tbl)?;
     }
 
-    // Module loader + remaining cook APIs.
-    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
-        ModuleLoaderState::new(builder.working_dir.clone()),
-    ));
+    // Module loader + remaining cook APIs. `module_state` is the caller's
+    // (see the parameter note) — the loader is registered over it here.
     crate::module_loader::register_module_loader(lua, module_state.clone())?;
     crate::module_loader::register_cache_api(lua, module_state.clone(), prepass)?;
     crate::unit_api::register_unit_api(

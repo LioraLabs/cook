@@ -1,0 +1,4 @@
+use cook_demo
+
+recipe build
+    cook "build/out.txt" { echo built > $<out> }

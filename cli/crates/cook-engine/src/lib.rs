@@ -568,6 +568,10 @@ impl From<cook_register::RegisterError> for EngineError {
                             cook_register::RegistrationSiteKind::Dynamic => {
                                 "cook.recipe call"
                             }
+                            // CS-0176: module-registered chore.
+                            cook_register::RegistrationSiteKind::DynamicChore => {
+                                "cook.chore call"
+                            }
                         };
                         format!("{} at line {}", kind, s.line)
                     })
