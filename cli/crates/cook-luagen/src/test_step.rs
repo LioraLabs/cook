@@ -74,7 +74,29 @@ pub(crate) fn generate_test_step(
     // solely from a preceding cook step carry no inputs — the cook step's
     // own cache_meta.input_paths are folded via the predecessor closure in
     // cook-engine/src/run.rs.
-    let inputs_field: &str = if has_ingredients { "inputs = ingredients, " } else { "" };
+    //
+    // CS-0182: a ONE-TO-ONE step is the exception. It emits one unit per item,
+    // and each unit folds only its own item — matching the `cook` sibling on
+    // the identical surface (`inputs = {_cook_in}`) and §17.1 observable 5,
+    // which already states per-member independence for `ingredients <probe>`
+    // fan-out. Folding the whole list here made every unit's key move whenever
+    // any item changed, so a 284-fixture corpus re-ran all 284 on a one-file
+    // edit: fan-out for parallelism, but no per-item reuse.
+    //
+    // The narrowing applies only when the ingredients ARE the iteration source.
+    // With a preceding cook step, `_test_in` is that step's OUTPUT rather than
+    // an ingredient, and the fold belongs to the predecessor closure in
+    // run.rs — declaring an upstream output as the test's own input would
+    // cross the produced-upstream boundary §17.4 rule 1 draws.
+    let one_to_one_over_ingredients =
+        matches!(mode, PlateTestMode::OneToOne) && last_cook_index.is_none() && has_ingredients;
+    let inputs_field: &str = if one_to_one_over_ingredients {
+        "inputs = {_test_in}, "
+    } else if has_ingredients {
+        "inputs = ingredients, "
+    } else {
+        ""
+    };
 
     // CS-0159: the test unit's effective seal set (recipe baseline folded with
     // this step's trailing seal/unseal by the parser). Emitted as a leading

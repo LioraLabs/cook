@@ -2987,3 +2987,20 @@ The failure is quiet and it outlives the obvious remedy: the value lives in the 
 
 **Conformance.** Strictly widening; every name legal before is legal now, so no existing Cookfile changes meaning and no cache key moves. Both classes keep the `[A-Za-z_]` head, so `tools { cc --version }` stays rejected and the `probe-as-tools-bad-name` negative fixture is unaffected. Pinned by the new positive fixture `probe-tools-hyphenated-name` and by the existing `probe-as-tools-bad-name` / `probe-as-tools-empty` negatives.
 
+## CS-0182 — a one-to-one test unit folds its own item, not the whole source set [#changes.cs-0182]
+
+**Date:** 2026-07-26
+**Version:** v0.18
+**Sections affected:** §{exec.cache.test-unit} rule 1 (new `ingredients` bullet; new per-item-folding paragraph), §{steps.iteration-mode-plate-test} (one-to-one mode sentence), App. E (this entry). Reference implementation: `cli/crates/cook-luagen/src/test_step.rs`.
+
+**Summary.** A `test_step` in one-to-one mode over `ingredients` emitted one unit per item, and every one of those units folded the **whole** resolved ingredient set. Editing one file therefore moved the key of every unit in the fan-out. Each unit now folds only its own item.
+
+**The two step kinds disagreed on one surface.** Given `ingredients "src/*.c"`, a `cook` step fanning out to `cook "build/$<in.stem>.o"` keys each object on its own source — that is the reuse the whole cache exists to deliver. A `test` step over the identical line, in the identical mode, keyed every unit on all of them. The codegen shows the divergence directly: `inputs = {_cook_in}` against `inputs = ingredients`, with the item carried alongside in `iteration_item` and used only for the label and `$<in>` substitution. Two fan-outs over one `ingredients` line must not disagree about what a unit depends on.
+
+**It is the rule observable 5 already states.** §{exec.cache.abstract} observable 5 requires per-member independence for `ingredients <probe>` data-member fan-out, in as many words: "editing one member re-runs only that unit." Nothing distinguishes the file-glob fan-out that shares the surface. This entry does not introduce a principle; it applies an existing one to the case that was missed, and promotes the test's own `ingredients` fold from the section's informative note into rule 1's normative list, where it had never been stated.
+
+**What motivated it.** The Cook Standard's own conformance corpus is 284 fixture directories. Driving it from a `test` step is the natural Cook shape — one cached pass/fail unit per fixture, fanned out in parallel — and it was unusable: a one-character edit to one fixture re-ran all 284. The fan-out delivered parallelism and no reuse, which is the half of the bargain that does not need a build system.
+
+**Scope.** The narrowing reaches only a unit's own `ingredients`. Where the iteration source is a preceding `cook` step's outputs, the item is an upstream artifact folded through the consumed-output path, narrowable by `consumes` (CS-0175); an implementation must not reclassify an upstream output as the test's own input to narrow it. That case is left as it stands.
+
+**Conformance.** A key-composition change for one-to-one test units over `ingredients`, and only those: single-unit (`ManyToOne`) and source-less (`OneShot`) tests are untouched, as are all `cook` units. No `CACHE_VERSION` bump. Records written under the old composition address a different digest, so they miss and the unit re-runs — a cold miss, never a false hit, which is the safe direction for a narrowing. No corpus fixture accompanies this entry: the corpus pins parse-level AST shape, and a key composition is not parse-visible; the behaviour is pinned by the reference implementation's codegen tests.
