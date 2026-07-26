@@ -1,0 +1,10 @@
+[package]
+name = "cook-cookfile"
+version.workspace = true
+edition = "2021"
+description = "Structure-preserving Cookfile edits: locate a call, splice a field, append a declaration"
+
+[dependencies]
+thiserror = "2"
+tree-sitter = "0.26"
+tree-sitter-cook = { path = "../../../tree-sitter-cook" }
