@@ -519,43 +519,56 @@ fn merge_into(
     // through untouched.
     let local_names: std::collections::BTreeSet<String> =
         rc.names.iter().map(|n| n.name.clone()).collect();
+    // Resolve one dep name to its workspace-global key. Shared by the `names`
+    // requires-rewrite and the `units_by_recipe` deps-rewrite below so the two
+    // views cannot disagree about what a dep name means (COOK-352).
+    let qualify_dep = |req: &String| -> String {
+        // Cross-Cookfile `alias.recipe` requires → the importee's canonical
+        // global key (mirrors `resolve_global_key` and the inferred-deps
+        // analyzer). Without this the analyzer sees the local alias name (e.g.
+        // `proto.proto_lib`) and errors `UnknownRecipe` when the canonical key
+        // is, say, `server.queue.proto.proto_lib` (a diamond / transitive
+        // importee whose prefix differs from the local alias).
+        if let Some((alias, sub)) = req.split_once('.') {
+            if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
+                return if importee_prefix.is_empty() {
+                    sub.to_string()
+                } else {
+                    format!("{importee_prefix}.{sub}")
+                };
+            }
+        }
+        // Intra-Cookfile local name → prefix it with this Cookfile's qualified
+        // prefix. Anything else (already-global, or unknown — rejected
+        // downstream) passes through untouched.
+        if local_names.contains(req) {
+            qualify(req)
+        } else {
+            req.clone()
+        }
+    };
     for n in rc.names {
         let mut qn = n.clone();
         qn.name = qualify(&n.name);
-        qn.requires = n
-            .requires
-            .iter()
-            .map(|req| {
-                // Cross-Cookfile `alias.recipe` requires → the importee's
-                // canonical global key (mirrors `resolve_global_key` and the
-                // inferred-deps analyzer). Without this the analyzer sees the
-                // local alias name (e.g. `proto.proto_lib`) and errors
-                // `UnknownRecipe` when the canonical key is, say,
-                // `server.queue.proto.proto_lib` (a diamond / transitive
-                // importee whose prefix differs from the local alias).
-                if let Some((alias, sub)) = req.split_once('.') {
-                    if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
-                        return if importee_prefix.is_empty() {
-                            sub.to_string()
-                        } else {
-                            format!("{importee_prefix}.{sub}")
-                        };
-                    }
-                }
-                // Intra-Cookfile local name → prefix it with this Cookfile's
-                // qualified prefix. Anything else (already-global, or unknown —
-                // rejected downstream) passes through untouched.
-                if local_names.contains(req) {
-                    qualify(req)
-                } else {
-                    req.clone()
-                }
-            })
-            .collect();
+        qn.requires = n.requires.iter().map(&qualify_dep).collect();
         ws.names.push(qn);
     }
     for (name, mut units) in rc.units_by_recipe {
         let qualified = qualify(&name);
+        // Qualify `deps` on the same footing as `recipe_name` below. These are
+        // header dep-list entries, recorded by the register layer under LOCAL
+        // names; every consumer downstream compares them against qualified
+        // names. `run.rs` intersects them with the qualified closure `edges` to
+        // rebuild the coarse barrier set, and an unqualified-vs-qualified
+        // intersection is empty — so `RecipeUnits::deps` arrived at the engine
+        // EMPTY for every recipe in every workspace, root included.
+        //
+        // The visible symptom was §16.1.2 rejecting a legitimate build and
+        // telling the author their recipe "does not require" a producer named
+        // in its own header, with a hint to add the dep that was already there.
+        // The check could only ever be satisfied through `dep_edges`, i.e. by a
+        // `$<producer>` body reference (COOK-352).
+        units.deps = units.deps.iter().map(&qualify_dep).collect();
         // Restamp the value's `recipe_name` with the workspace-qualified key
         // so the two never disagree. Everything downstream of the merged map
         // — `WorkNode.recipe_name`, the executor's / `cook why`'s per-recipe
