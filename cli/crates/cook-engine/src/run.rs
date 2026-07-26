@@ -160,6 +160,38 @@ pub(crate) fn compute_ready_test_fingerprint(
         return None;
     };
 
+    // §8.6.1 / §17.4 rule 1 (COOK-342): whether a test is cached at all is
+    // derived from the recipe's DECLARED source, and must be decided before
+    // any fold — not inferred afterwards from whatever happened to land in
+    // `pairs`. §8.6.1 defines the source as the preceding cook step's outputs,
+    // falling back to the recipe's resolved ingredients; §17.4 rule 1 admits
+    // only outputs the test CONSUMES (source-list flattening) or REFERENCES
+    // (`$<NAME>` / `cook.dep_output`, both of which land in `input_paths`).
+    //
+    // A dep-list entry (`recipe check: build`) is none of those. It is a
+    // whole-recipe ordering barrier, and it was minting a key for tests the
+    // Standard says have none: `test { cargo test }` — §8.6.1's Example 8.6.2
+    // verbatim — became cacheable, and its correctness became hostage to a
+    // file it never reads. It re-ran only when the unrelated dependency
+    // changed, which is the false green §8.6 names outright.
+    //
+    // The guard is deliberately on the declared source rather than on the
+    // predecessor fold, so a test that DOES declare a source keeps folding
+    // every predecessor's outputs exactly as before — CS-0175's `consumes`
+    // narrowing operates on that fold and is untouched.
+    let has_declared_source = !input_paths.is_empty()
+        || dag.deps(test_idx).iter().any(|&pred| {
+            let node = dag.node(pred).payload();
+            node.recipe_name == test_node.recipe_name
+                && node
+                    .cache_meta
+                    .as_ref()
+                    .is_some_and(|m| !m.output_paths.is_empty())
+        });
+    if !has_declared_source {
+        return None;
+    }
+
     let mut memo: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut pairs: BTreeMap<String, String> = BTreeMap::new();
 

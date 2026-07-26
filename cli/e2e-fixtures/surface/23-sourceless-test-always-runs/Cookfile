@@ -1,0 +1,14 @@
+# COOK-342 / §8.6.1 Example 8.6.2. `assert-tree`'s test declares no
+# ingredients and its body references no iteration item, so it is source-less
+# and MUST run on every invocation. The `gen` dep is a whole-recipe ordering
+# barrier, not a source: the engine used to fold its outputs into the test's
+# key, which made this test cacheable and tied its verdict to a file it never
+# opens — it would replay a pass over a probe.txt that had since gone bad, and
+# only notice once seed.txt happened to change.
+
+recipe gen
+    ingredients "seed.txt"
+    cook "build/gen.txt" { mkdir -p build && cp $<in> $<out> }
+
+recipe assert-tree: gen
+    test { grep -q ok probe.txt }

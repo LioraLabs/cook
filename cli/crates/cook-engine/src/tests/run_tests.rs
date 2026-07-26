@@ -732,3 +732,100 @@ fn test_fp_folds_directory_outputs_at_all() {
 
     assert_ne!(before, after, "a `dist/` directory output must fold into the test key");
 }
+
+// ---------------------------------------------------------------------------
+// COOK-342 — a source-less test has no key, whatever sits upstream of it
+// ---------------------------------------------------------------------------
+
+/// A test node in its OWN recipe, declaring no ingredients, downstream of a
+/// cook node belonging to a DIFFERENT recipe — i.e. `recipe check: build`
+/// with a bare `test { cargo test }` body. This is cli/Cookfile:36.
+fn sourceless_test_behind_bare_dep(
+    wd: &std::path::Path,
+    dep_output: &str,
+) -> (cook_dag::Dag<crate::WorkNode>, usize) {
+    std::fs::create_dir_all(wd.join("src")).unwrap();
+    std::fs::create_dir_all(wd.join("build")).unwrap();
+    std::fs::write(wd.join("src/lib.txt"), "lib-src").unwrap();
+    std::fs::write(wd.join("build/lib.txt"), dep_output).unwrap();
+
+    let mut dag = cook_dag::Dag::new();
+    let lib = dag
+        .add_node(
+            cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
+            &[],
+        )
+        .unwrap();
+    // No ingredients, and `lib` is a different recipe, so nothing here is a
+    // declared source: not the preceding cook step of §8.6.1 (that is
+    // same-recipe), and not a `$<NAME>` reference (which would land in
+    // input_paths).
+    let mut t = test_work_node(wd, &[]);
+    t.recipe_name = "check".into();
+    let test = dag.add_node(t, &[lib]).unwrap();
+    (dag, test)
+}
+
+/// §8.6.1 / §17.4 rule 1, and §8.6.1's Example 8.6.2 verbatim: a test with
+/// no consumed output and no `ingredients` has NO cache key and runs
+/// uncached. A dep-list entry is a whole-recipe ordering barrier, not a
+/// source, so it must not mint one.
+#[test]
+fn sourceless_test_behind_a_bare_dep_has_no_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag, test) = sourceless_test_behind_bare_dep(wd, "ok");
+    let fp = compute_ready_test_fingerprint(&dag, test, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert!(
+        fp.is_none(),
+        "a source-less test keyed off a bare dep edge is the false green \
+         §8.6 names: its real inputs are opaque to Cook, so it must always run"
+    );
+}
+
+/// The teeth of it. Keying the source-less test on the barrier's outputs
+/// made its correctness hostage to a file it never reads: the test only
+/// re-ran when the unrelated dependency changed.
+#[test]
+fn sourceless_test_key_does_not_track_an_unrelated_dep() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    let (dag_a, test_a) = sourceless_test_behind_bare_dep(wd, "before");
+    let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx, &cook_luaotp::ProbeValueStore::new());
+    let (dag_b, test_b) = sourceless_test_behind_bare_dep(wd, "after");
+    let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx, &cook_luaotp::ProbeValueStore::new());
+
+    assert_eq!(before, None);
+    assert_eq!(after, None, "still no key once the dep's output moves");
+}
+
+/// The guard is on the DECLARED source, not on the accumulated fold, so a
+/// test that DOES declare ingredients keeps its key and keeps folding its
+/// predecessors' outputs — the CS-0175 shape must be untouched.
+#[test]
+fn test_with_own_ingredients_behind_a_dep_still_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let ctx = make_cache_ctx(wd);
+
+    std::fs::create_dir_all(wd.join("src")).unwrap();
+    std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+    let (_, _) = sourceless_test_behind_bare_dep(wd, "ok");
+    let mut dag = cook_dag::Dag::new();
+    let lib = dag
+        .add_node(
+            cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
+            &[],
+        )
+        .unwrap();
+    let mut t = test_work_node(wd, &["src/own.txt"]);
+    t.recipe_name = "check".into();
+    let test = dag.add_node(t, &[lib]).unwrap();
+    let fp = compute_ready_test_fingerprint(&dag, test, &ctx, &cook_luaotp::ProbeValueStore::new());
+    assert!(fp.is_some(), "a declared ingredient is a source and mints a key");
+}
