@@ -46,9 +46,15 @@ use crate::registered_workspace::RegisteredWorkspace;
 #[derive(Debug, Clone, Copy)]
 pub enum RegisterMode<'a> {
     /// Dispatch to the named recipe / chore, binding `argv` to its chore
-    /// parameters (COOK-36 Task 4). The target binds only to the root
-    /// Cookfile's builder — chores are always defined in and dispatched from
-    /// the root; import Cookfiles register without argv.
+    /// parameters (COOK-36 Task 4). `name` is the fully-qualified target, so
+    /// the binding lands on whichever member OWNS it: the root binds the name
+    /// verbatim, and an import binds the name with its qualified prefix
+    /// stripped, since a member's bodies are registered under local names.
+    ///
+    /// This used to bind only on the root, on the premise that chores are
+    /// always defined in and dispatched from the root. They are not, and a
+    /// parametric chore in an import was silently skipped as a result
+    /// (COOK-349).
     Dispatch { name: &'a str, argv: &'a [String] },
     /// Register with a target that matches nothing: the register pass behaves
     /// as targeted (the `for_each` probe pre-pass and parametric chore bodies
@@ -264,19 +270,47 @@ pub fn register_workspace(
                     &workspace.workspace_root,
                     &member.dir,
                 ));
-        if is_root {
-            // The dispatch target binds only to the root Cookfile — chores
-            // are always defined in and dispatched from root.
-            builder = match mode {
-                RegisterMode::Dispatch { name, argv } => {
+        // Bind the dispatch target to whichever member OWNS the targeted name.
+        //
+        // This used to bind only on the root Cookfile, on the premise that
+        // "chores are always defined in and dispatched from root". They are
+        // not: a chore may be declared in an imported member and dispatched by
+        // its qualified name (`cook standard.against-tag 0.18`).
+        //
+        // A member's register pass therefore saw `target_recipe: None`, so
+        // `is_target` was false for every name in it. A PARAMLESS chore
+        // survived that — engine.rs invokes it unconditionally — but a
+        // PARAMETRIC one fell through to the skip arm, whose whole job is to
+        // avoid calling a body that would nil-index `__cook_params`. The result
+        // was a chore that registered zero units, reported `0 nodes`, exited 0,
+        // and never ran its body (COOK-349). Silent and success-coded.
+        //
+        // `prefix` carries no trailing dot (qualification is `{prefix}.{name}`),
+        // so a member owns the target when the name starts with `{prefix}.`;
+        // what the member's own pass must see is the LOCAL name, since that is
+        // what its bodies are registered under. Matching the canonical prefix
+        // alone is complete: `merge_into` qualifies every registered name with
+        // exactly this prefix, and uses alias prefixes only to rewrite
+        // cross-Cookfile `requires`, never to register an alias name.
+        builder = match mode {
+            RegisterMode::Dispatch { name, argv } => {
+                if is_root {
                     builder.with_target_argv(name.to_string(), argv.to_vec())
+                } else if let Some(local) = name
+                    .strip_prefix(&prefix)
+                    .and_then(|rest| rest.strip_prefix('.'))
+                    .filter(|local| !local.is_empty())
+                {
+                    builder.with_target_argv(local.to_string(), argv.to_vec())
+                } else {
+                    builder
                 }
-                RegisterMode::Introspect => {
-                    builder.with_target_argv(String::new(), Vec::new())
-                }
-                RegisterMode::Enumerate => builder,
-            };
-        }
+            }
+            RegisterMode::Introspect if is_root => {
+                builder.with_target_argv(String::new(), Vec::new())
+            }
+            RegisterMode::Introspect | RegisterMode::Enumerate => builder,
+        };
 
         let registered =
             register_cookfile(builder, &member.lua_source, cache_ctx.clone())

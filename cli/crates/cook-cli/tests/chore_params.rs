@@ -937,3 +937,135 @@ fn chore_variadic_star_with_one_argv_binds_single_element_table() {
     assert!(stdout.contains("count=1"), "stdout: {stdout}");
     assert!(stdout.contains("first=main.lua"), "stdout: {stdout}");
 }
+
+// ---------------------------------------------------------------------------
+// COOK-349: a parametric chore in an imported member must actually run
+// ---------------------------------------------------------------------------
+
+/// Build a two-Cookfile workspace: root imports `sub`, and `sub` declares both
+/// a paramless and a parametric chore.
+fn member_chore_workspace(tmp: &Path) {
+    fs::create_dir_all(tmp.join("sub")).unwrap();
+    fs::write(tmp.join("Cookfile"), "import sub ./sub\n").unwrap();
+    fs::write(
+        tmp.join("sub/Cookfile"),
+        concat!(
+            "chore noparam\n",
+            "    > print(\"NOPARAM ran\")\n",
+            "\n",
+            "chore withparam version=\"9\"\n",
+            "    > print(\"WITHPARAM ran \" .. version)\n",
+            "\n",
+            "chore shellparam version=\"9\"\n",
+            "    echo \"SHELLPARAM ran $<version>\"\n",
+        ),
+    )
+    .unwrap();
+}
+
+/// The regression. Binding the dispatch target only on the ROOT Cookfile left
+/// a member's register pass with `target_recipe: None`, so a parametric chore
+/// there was neither targeted nor reachable and fell through to the skip arm:
+/// zero units, `0 nodes`, exit 0, body never invoked. Silent and success-coded,
+/// which is the worst possible shape for "your chore did nothing".
+#[test]
+fn parametric_chore_in_imported_member_runs_its_body() {
+    let tmp = TempDir::new().unwrap();
+    member_chore_workspace(tmp.path());
+
+    let out = run_cook_raw(tmp.path(), &["sub.withparam", "7"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook sub.withparam 7 failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("WITHPARAM ran 7"),
+        "member chore body did not run\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+/// Same defect, shell body rather than Lua — the skip arm did not discriminate,
+/// so both kinds were dropped.
+#[test]
+fn parametric_shell_chore_in_imported_member_runs_its_body() {
+    let tmp = TempDir::new().unwrap();
+    member_chore_workspace(tmp.path());
+
+    let out = run_cook_raw(tmp.path(), &["sub.shellparam", "7"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook sub.shellparam 7 failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("SHELLPARAM ran 7"),
+        "member shell chore body did not run\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+/// A paramless member chore always worked (engine.rs invokes it unconditionally)
+/// and must keep working — the fix must not regress the arm that was fine.
+#[test]
+fn paramless_chore_in_imported_member_still_runs() {
+    let tmp = TempDir::new().unwrap();
+    member_chore_workspace(tmp.path());
+
+    let out = run_cook_raw(tmp.path(), &["sub.noparam"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "cook sub.noparam failed: {stdout}");
+    assert!(
+        stdout.contains("NOPARAM ran"),
+        "paramless member chore regressed\nstdout: {stdout}"
+    );
+}
+
+/// Binding the target inside the member also means member targets finally get
+/// the argv validation of §7.1.2, which they silently skipped before: excess
+/// argv against a paramless chore was simply ignored.
+#[test]
+fn excess_argv_to_member_chore_is_diagnosed_not_ignored() {
+    let tmp = TempDir::new().unwrap();
+    member_chore_workspace(tmp.path());
+
+    let out = run_cook_raw(tmp.path(), &["sub.noparam", "7"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "excess argv to a member chore should be an error"
+    );
+    assert!(
+        stderr.contains("takes 0 parameter(s)"),
+        "expected the excess-argv diagnostic\nstderr: {stderr}"
+    );
+}
+
+/// The target must be bound on the member that OWNS the name, at any import
+/// depth — the prefix match is against the canonical qualified prefix, so a
+/// transitively imported member resolves the same way.
+#[test]
+fn parametric_chore_in_nested_member_runs_its_body() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("sub/deep")).unwrap();
+    fs::write(tmp.path().join("Cookfile"), "import sub ./sub\n").unwrap();
+    fs::write(tmp.path().join("sub/Cookfile"), "import deep ./deep\n").unwrap();
+    fs::write(
+        tmp.path().join("sub/deep/Cookfile"),
+        "chore nested version=\"9\"\n    > print(\"NESTED ran \" .. version)\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["sub.deep.nested", "5"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook sub.deep.nested 5 failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("NESTED ran 5"),
+        "nested member chore body did not run\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
