@@ -1,0 +1,21 @@
+# 1. Green: the dependent chore runs.
+[[run]]
+args = ["ship"]
+[run.assert]
+exists = ["shipped.txt"]
+
+# 2. Red: the dependent is cancelled, not merely reported-on afterwards.
+[[run]]
+args = ["ship"]
+write = { "src/a.txt" = "bad\n", "shipped.txt" = "STALE\n" }
+exit = 1
+[run.assert]
+output_contains = ["upstream-failed"]
+equals = { "shipped.txt" = "STALE\n" }
+
+# 3. A sibling is not a dependent: the suite still runs and reports it.
+[[run]]
+args = ["test"]
+exit = 1
+[run.assert]
+output_contains = ["sibling", "FAILED"]

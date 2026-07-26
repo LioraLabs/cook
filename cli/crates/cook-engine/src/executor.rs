@@ -2771,12 +2771,28 @@ pub fn execute_dag(
                 .error
                 .unwrap_or_else(|| "unknown error".to_string());
 
-            // Test semantic failures (result.test_output.is_some()) are "soft":
-            // the outcome is already recorded in test_results as TestOutcome::Failed
-            // or TestOutcome::TimedOut. We do NOT add them to the hard `failures`
-            // list — that list is for infrastructure failures (spawn errors, etc.).
-            // Dependents of failed tests are NOT cancelled: a test failing does not
-            // block sibling or downstream tests.
+            // Test semantic failures (result.test_output.is_some()) stay "soft" in
+            // the one sense that matters for exit accounting: the outcome is already
+            // recorded in test_results as TestOutcome::Failed or TestOutcome::TimedOut
+            // and drives the exit code through the test reporter, so it does NOT join
+            // the hard `failures` list, which is for infrastructure errors (spawn
+            // failures and the like).
+            //
+            // COOK-341: it is NOT soft for scheduling. A failed test cancels its
+            // dependents exactly as a failed cook step does. Every other step kind
+            // already worked this way — a failed `cook` emits `skipped
+            // (upstream-failed)` for everything downstream — and the test kind's
+            // exemption meant a dependent ran its body over a tree its own gate had
+            // just rejected. `chore ship: checks` printed SHIPPED with `checks` red
+            // and only then exited 1, which for a release chore means the tag is
+            // already pushed by the time the failure is reported.
+            //
+            // Siblings are untouched, because a sibling is not a dependent: `cook
+            // test` still runs and reports the whole suite rather than stopping at
+            // the first red. Cancelled test units are reported as TestOutcome::Blocked
+            // with `blocked_by` naming the cause — the outcome §17.4 rule 2 already
+            // defines and forbids caching, previously reachable only when a *build*
+            // dependency failed.
             //
             // Hard failures (test_output is None for a Test payload, or any non-Test
             // payload failure) go into `failures` as before and cancel dependents.
@@ -2797,7 +2813,23 @@ pub fn execute_dag(
                     },
                 );
                 finish_recipe_node(&mut recipe_trackers, &recipe_name, false, false, &event_tx);
-                // Complete the node in the DAG so dependents can proceed.
+                // COOK-341: cancel the dependent subtree before completing the node.
+                // `cancel_subtree` marks each dependent in `cancelled`, which
+                // `process_ready` consults, so the ordering matters: complete first
+                // and a dependent could be dispatched in the same drain below.
+                for &dep_id in dag.node(result.id).dependents() {
+                    cancel_subtree(
+                        &dag,
+                        dep_id,
+                        &mut cancelled,
+                        &event_tx,
+                        &mut recipe_trackers,
+                        &result.node_name,
+                        &mut blocked_results,
+                    );
+                }
+                // Complete the node in the DAG so the drain proceeds; dependents
+                // just cancelled are skipped by `process_ready`.
                 let newly_ready = dag.complete(result.id);
                 for id in newly_ready {
                     pending += process_ready(
@@ -2869,6 +2901,13 @@ pub fn execute_dag(
         // process_ready) with test_results (from actual executions).
         let mut all = cached_test_results;
         all.extend(test_results);
+        // COOK-341: Blocked rows now also arise on this path. A failed test
+        // cancels its dependents without joining the hard `failures` list, so
+        // the run still returns Ok and these rows would otherwise be dropped —
+        // the suite would report a dependent as neither run nor blocked, just
+        // absent. Before COOK-341 `cancel_subtree` fired only for hard
+        // failures, which always take the Err arm, so this was vacuously empty.
+        all.extend(blocked_results);
         Ok(all)
     } else {
         // Build partial_test_results: everything accumulated so far (including

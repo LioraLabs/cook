@@ -1,0 +1,17 @@
+# COOK-341. A failed test cancels its dependents, exactly as a failed cook step
+# already did. `ship` must not run its body while `checks` is red — for a
+# release chore, "exit 1 afterwards" means the tag is already pushed.
+#
+# `sibling` is not a dependent, so it still runs: `cook test` reports the whole
+# suite rather than halting at the first red.
+
+recipe checks
+    ingredients "src/*.txt"
+    test { grep -q ok $<in> }
+
+recipe sibling
+    ingredients "src/*.txt"
+    test { echo sibling-ran }
+
+chore ship: checks
+    echo "SHIPPED" > shipped.txt
