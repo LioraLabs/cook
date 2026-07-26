@@ -1,5 +1,6 @@
 //! cook — the user-facing binary for the Cook build system.
 
+mod cache_budget;
 mod cache_du;
 mod cache_gc;
 mod cli;

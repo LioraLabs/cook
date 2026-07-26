@@ -592,7 +592,6 @@ fn no_prune_enabled(globals: &Globals) -> bool {
 /// `no_auto_gc_enabled` so the five semantic cases (unset, `"1"`, `"0"`,
 /// `""`, an arbitrary non-empty value) can be unit-tested against a plain
 /// `Option<&str>` without any test touching the shared process environment.
-#[allow(dead_code)]
 fn no_auto_gc_env_value_enables(value: Option<&str>) -> bool {
     value.map(|v| !v.is_empty() && v != "0").unwrap_or(false)
 }
@@ -602,10 +601,6 @@ fn no_auto_gc_env_value_enables(value: Option<&str>) -> bool {
 /// environment variable (any non-empty value other than `0`). This only
 /// suppresses the deletion — the over-budget warning still prints — so CI can
 /// stay deterministic while an operator still learns the store needs a sweep.
-///
-/// Nothing calls this yet; the store-budget check that consumes it lands in
-/// a follow-up task.
-#[allow(dead_code)]
 fn no_auto_gc_enabled(globals: &Globals) -> bool {
     globals.no_auto_gc
         || no_auto_gc_env_value_enables(std::env::var("COOK_NO_AUTO_GC").ok().as_deref())
@@ -722,6 +717,16 @@ fn run_with_progress(
                 warning.pattern, warning.recipe
             );
         }
+
+        // COOK-235. Same placement rationale as the lines above: after the
+        // renderer released the terminal. Inside the `Ok` arm because a
+        // failed run has no trustworthy publish count — and the check is a
+        // no-op unless this run actually published something.
+        crate::cache_budget::check_budget_after_run(
+            &project_root,
+            r.published_count,
+            no_auto_gc_enabled(globals),
+        );
     }
 
     result.map_err(engine_error_to_cook_error)
@@ -1151,6 +1156,15 @@ pub fn cmd_test(
     // simplest way to guarantee that is to scope the closure inside the
     // run-or-skip branch so it falls out of scope by the end of the
     // expression.
+    //
+    // COOK-235: `cook test` publishes artifacts exactly like `cook build`, so
+    // it owes the same end-of-run budget check. The `Ok` arm below discards
+    // its `RunResult` down to `test_results`, so the publish count has to be
+    // captured out of that arm before the value is dropped. It stays 0 on
+    // every other path: the skip-the-executor branch ran nothing, and the
+    // `TaskFailures` arm carries no `RunResult` — a failed run has no
+    // trustworthy publish count.
+    let mut published_count: u64 = 0;
     let test_results: Vec<cook_engine::TestResult> = if candidate_recipe_names.is_empty() {
         // Nothing in the candidate set (e.g. `--filter` matched no recipe).
         // Skip the executor and return an empty result. The reporter still
@@ -1195,7 +1209,10 @@ pub fn cmd_test(
             no_publish_enabled(globals),
             on_event,
         ) {
-            Ok(r) => r.test_results,
+            Ok(r) => {
+                published_count = r.published_count;
+                r.test_results
+            }
             Err(cook_engine::EngineError::TaskFailures {
                 partial_test_results,
                 ..
@@ -1256,6 +1273,16 @@ pub fn cmd_test(
     });
 
     reporter.finish(&test_results);
+
+    // COOK-235, after the reporter released the terminal. Deliberately before
+    // the failed-tests return: a red test run still published whatever its
+    // upstream cook-steps produced, so the store grew either way and the
+    // budget applies either way.
+    crate::cache_budget::check_budget_after_run(
+        &project_root,
+        published_count,
+        no_auto_gc_enabled(globals),
+    );
 
     if any_failed {
         Err(crate::error::CookError::TestFailure(
