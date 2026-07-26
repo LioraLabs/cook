@@ -6,6 +6,7 @@
 //! queued and run on the main thread after the pool drains.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -393,6 +394,19 @@ fn iso8601_now() -> String {
 /// `dep_outputs` — read-only terminal-outputs snapshot threaded into each
 /// worker VM so execute-phase `cook.dep_output` / `dep_output_list` resolve
 /// (§24.7).
+///
+/// `published` — counter the caller owns and reads back once this returns.
+/// Every CAS publish site below bumps it by one. It exists purely as a zero /
+/// non-zero gate for the caller's end-of-run store-budget check: a run that
+/// published no outputs skips walking the shared store entirely. Deliberately
+/// coarse — it counts publish *operations*, not objects or bytes — because
+/// nothing consumes the magnitude.
+///
+/// It counts what *this* function publishes. The register-phase probe pre-pass
+/// runs before `execute_dag` and writes probe values to the CAS without
+/// consulting `publish_enabled` or this counter (COOK-339), so "counter is 0"
+/// means "this run published no outputs", not "the store is byte-identical".
+/// See `RunResult::published_count`.
 pub fn execute_dag(
     dag: Dag<WorkNode>,
     num_workers: usize,
@@ -403,6 +417,7 @@ pub fn execute_dag(
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
     dep_outputs: cook_luaotp::WorkerDepOutputs,
+    published: &AtomicU64,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
     if dag.is_empty() {
@@ -958,6 +973,7 @@ pub fn execute_dag(
         upstream_probe_fingerprints: &mut BTreeMap<String, [u8; 32]>,
         probe_fingerprint_by_node: &mut BTreeMap<usize, [u8; 32]>,
         keyless_probes: &mut std::collections::BTreeSet<String>,
+        published: &AtomicU64,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -1009,6 +1025,7 @@ pub fn execute_dag(
                         upstream_probe_fingerprints,
                         probe_fingerprint_by_node,
                         keyless_probes,
+                        published,
                     );
                 }
                 submitted
@@ -1145,6 +1162,7 @@ pub fn execute_dag(
                                     upstream_probe_fingerprints,
                                     probe_fingerprint_by_node,
                                     keyless_probes,
+                                    published,
                                 );
                             }
                             return submitted;
@@ -1200,6 +1218,7 @@ pub fn execute_dag(
                                 upstream_probe_fingerprints,
                                 probe_fingerprint_by_node,
                                 keyless_probes,
+                                published,
                             );
                         }
                         return submitted;
@@ -1490,6 +1509,7 @@ pub fn execute_dag(
                                             upstream_probe_fingerprints,
                                             probe_fingerprint_by_node,
                                             keyless_probes,
+                                            published,
                                         );
                                     }
                                     return submitted;
@@ -1574,6 +1594,7 @@ pub fn execute_dag(
                                         target: None,
                                     }
                                     .as_probe_value();
+                                    published.fetch_add(1, Ordering::Relaxed);
                                     if let Err(e) = cook_cache::backend::put_bytes(
                                         cache_ctx.backend.as_ref(),
                                         &fp,
@@ -1636,6 +1657,7 @@ pub fn execute_dag(
                                         upstream_probe_fingerprints,
                                         probe_fingerprint_by_node,
                                         keyless_probes,
+                                        published,
                                     );
                                 }
                                 return submitted;
@@ -1746,6 +1768,7 @@ pub fn execute_dag(
                                 upstream_probe_fingerprints,
                                 probe_fingerprint_by_node,
                                 keyless_probes,
+                                published,
                             );
                         }
                         return submitted;
@@ -1928,6 +1951,7 @@ pub fn execute_dag(
             &mut upstream_probe_fingerprints,
             &mut probe_fingerprint_by_node,
             &mut keyless_probes,
+            published,
         );
     }
 
@@ -2200,6 +2224,7 @@ pub fn execute_dag(
                             &mut upstream_probe_fingerprints,
                             &mut probe_fingerprint_by_node,
                             &mut keyless_probes,
+                            published,
                         );
                     }
                 }
@@ -2411,6 +2436,7 @@ pub fn execute_dag(
                                     &working_dir,
                                     &pool.probe_value_store(),
                                     &cache_ctx,
+                                    published,
                                 );
                             }
                         }
@@ -2445,6 +2471,7 @@ pub fn execute_dag(
                                 &mut upstream_probe_fingerprints,
                                 &mut probe_fingerprint_by_node,
                                 &mut keyless_probes,
+                                published,
                             );
                         }
                     } else {
@@ -2577,6 +2604,7 @@ pub fn execute_dag(
                     // consumers and downstream probes still read the value; only
                     // the shared-backend put is skipped.
                     if cache_ctx.publish_enabled {
+                        published.fetch_add(1, Ordering::Relaxed);
                         if let Err(e) = cook_cache::backend::put_bytes(
                             cache_ctx.backend.as_ref(),
                             &fp,
@@ -2661,6 +2689,7 @@ pub fn execute_dag(
                         &working_dir,
                         &pool.probe_value_store(),
                         &cache_ctx,
+                        published,
                     );
                 }
             }
@@ -2762,6 +2791,7 @@ pub fn execute_dag(
                     &mut upstream_probe_fingerprints,
                     &mut probe_fingerprint_by_node,
                     &mut keyless_probes,
+                    published,
                 );
             }
         } else {
@@ -2930,6 +2960,7 @@ pub fn execute_dag(
                         &mut upstream_probe_fingerprints,
                         &mut probe_fingerprint_by_node,
                         &mut keyless_probes,
+                        published,
                     );
                 }
             } else {
@@ -3021,6 +3052,7 @@ fn publish_completion(
     working_dir: &std::path::Path,
     probe_store: &cook_luaotp::ProbeValueStore,
     cache_ctx: &CacheContext,
+    published: &AtomicU64,
 ) {
     // CS-0085 §17.6: expand any glob patterns in output_paths against the
     // unit's working directory before recording.
@@ -3106,6 +3138,11 @@ fn publish_completion(
     // COOK-168: publish-off / read-only client mode suppresses ALL uploads
     // globally; fetch-by-key is unaffected.
     let publish_to_backend = !meta.sharing.is_local() && cache_ctx.publish_enabled;
+    // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
+    // unit is about to write at least a determinant manifest to the store.
+    if publish_to_backend {
+        published.fetch_add(1, Ordering::Relaxed);
+    }
 
     // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
     // Each artifact is keyed by artifact_key(cloud_key, idx, path) so a future

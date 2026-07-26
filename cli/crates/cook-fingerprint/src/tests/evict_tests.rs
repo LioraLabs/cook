@@ -287,6 +287,48 @@ fn is_size_sweep_exempt_is_case_sensitive() {
 }
 
 #[test]
+fn auto_sets_max_size_none_older_than_and_default_low_water() {
+    let policy = EvictPolicy::auto(1_000);
+    assert_eq!(policy.max_size, Some(1_000));
+    assert_eq!(policy.older_than, None);
+    assert_eq!(policy.low_water, DEFAULT_LOW_WATER);
+}
+
+#[test]
+fn auto_sweep_plans_down_to_low_water_and_no_further() {
+    // Above-budget store of plain files (kind: None); auto's low_water=0.8
+    // must sweep down to <= 32, but not past what's necessary (total_after
+    // must not be driven to zero).
+    let f1 = candidate(0x01, 10, 1, None);
+    let f2 = candidate(0x02, 10, 2, None);
+    let f3 = candidate(0x03, 10, 3, None);
+    let f4 = candidate(0x04, 10, 4, None);
+    let candidates = vec![f1.clone(), f2.clone(), f3.clone(), f4.clone()];
+
+    let policy = EvictPolicy::auto(40); // target = 32
+    let plan = plan_eviction(&candidates, &policy, 1_000);
+
+    assert_eq!(plan.victims, vec![f1]);
+    assert!(plan.total_after <= 32, "must sweep to at most 0.8 * max_size");
+    assert!(plan.total_after > 0, "must not overshoot past what's necessary");
+}
+
+#[test]
+fn auto_sweep_over_all_exempt_candidates_evicts_nothing() {
+    // Entirely exempt-kind candidates, far above budget: auto must not evict
+    // any of them, and must not panic computing a negative/unreachable target.
+    let e1 = candidate(0x01, 500, 1, Some("probe_value"));
+    let e2 = candidate(0x02, 500, 2, Some("dir"));
+    let candidates = vec![e1.clone(), e2.clone()];
+
+    let policy = EvictPolicy::auto(10); // target = 8, unreachable via exempt kinds
+    let plan = plan_eviction(&candidates, &policy, 1_000);
+
+    assert!(plan.victims.is_empty());
+    assert_eq!(plan.total_after, 1_000);
+}
+
+#[test]
 fn neither_knob_set_frees_nothing_even_with_real_candidates_present() {
     // `empty_candidates_plan_frees_nothing` only exercises this branch over
     // an empty list, where a no-op implementation would also pass. Pin it

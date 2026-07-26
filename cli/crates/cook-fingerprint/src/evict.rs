@@ -124,6 +124,22 @@ impl EvictPolicy {
             low_water: 1.0,
         }
     }
+
+    /// Automatic end-of-run sweep: sweep to [`DEFAULT_LOW_WATER`] (0.8) of
+    /// `max_size`, leaving headroom so the next few publishing runs do not
+    /// re-trigger a sweep. Age is not part of the automatic sweep
+    /// (`older_than: None`); `--older-than` stays a deliberate manual act.
+    ///
+    /// `max_size` is a bare `u64`, not `Option<u64>`: the automatic sweep
+    /// only ever runs when a budget is configured, so there is no "no
+    /// budget" case to represent here.
+    pub fn auto(max_size: u64) -> Self {
+        Self {
+            max_size: Some(max_size),
+            older_than: None,
+            low_water: DEFAULT_LOW_WATER,
+        }
+    }
 }
 
 /// The result of applying an [`EvictPolicy`] to a candidate list. Pure data;

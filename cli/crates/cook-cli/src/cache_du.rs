@@ -214,8 +214,10 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
 
 /// `Budget: <used> of <budget> (<pct>% used)`, with a suffix once `total`
 /// reaches `budget`: exact equality reads ` — AT BUDGET` (COOK-235's
-/// warn-and-sweep threshold is "at or over", so `du` must agree at the
-/// boundary); strictly over reads ` — OVER BUDGET by <overage>`. Printing
+/// warn-and-sweep threshold is strictly over, so a store sitting exactly at
+/// its budget is within it and does not warn — this label says the store is
+/// on the boundary, not that it has crossed it); strictly over reads
+/// ` — OVER BUDGET by <overage>`. Printing
 /// `OVER BUDGET by 0 B` at exact equality would read as a bug, so that case
 /// is called out separately instead of falling through the `>` arm.
 fn budget_line(total: u64, budget: u64) -> String {
@@ -234,7 +236,11 @@ fn budget_line(total: u64, budget: u64) -> String {
     line
 }
 
-fn percent_used(total: u64, budget: u64) -> u64 {
+/// `pub(crate)`: the end-of-run budget check (COOK-235) reuses this exact
+/// rounding so the percentage in its warning is the same figure `du` would
+/// print for the same store — one shared vocabulary for CAS percentages, no
+/// second rounding rule, exactly as with its `human_size` neighbour.
+pub(crate) fn percent_used(total: u64, budget: u64) -> u64 {
     if budget == 0 {
         return if total == 0 { 0 } else { 100 };
     }

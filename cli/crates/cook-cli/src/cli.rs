@@ -83,6 +83,12 @@ pub struct Globals {
     #[arg(long = "no-prune", global = true)]
     pub no_prune: bool,
 
+    /// Skip the automatic `[cache] auto_gc` sweep for this run. The budget
+    /// warning still prints; only the deletion is suppressed. Also settable via
+    /// `COOK_NO_AUTO_GC=1`.
+    #[arg(long = "no-auto-gc", global = true)]
+    pub no_auto_gc: bool,
+
     /// Read-only / publish-off client mode: fetch cached artifacts by key but
     /// never publish locally-produced artifacts to the shared store. Also
     /// settable via `COOK_NO_PUBLISH=1` or `[cloud] publish = false` in

@@ -80,6 +80,17 @@ pub struct CacheSection {
     /// deferred, nameable error rather than a load-time panic.
     #[serde(default)]
     pub max_size: Option<String>,
+    /// `[cache] auto_gc = true` opts in to an automatic sweep
+    /// down to the low-water mark when the CAS budget (`max_size`) is
+    /// exceeded. Defaults to `false` (warn-only) — milestone decision D4:
+    /// Cook's CAS is machine-global by default, so an automatic sweep
+    /// could delete artifacts belonging to a project the user is not even
+    /// building right now. Enforcement is opt-in; the default must never
+    /// silently flip. Deliberately uncoupled from `max_size` at load
+    /// time: `auto_gc = true` with no `max_size` set is not an error,
+    /// it's just a no-op (no budget, no check, no sweep).
+    #[serde(default)]
+    pub auto_gc: bool,
 }
 
 #[derive(Debug)]
@@ -317,6 +328,25 @@ impl CloudConfig {
                 .map(Some)
                 .ok_or_else(|| CloudConfigError::BadMaxSize(lit.clone())),
         }
+    }
+
+    /// The raw `[cache] max_size` literal exactly as the user
+    /// typed it, for echoing back in the `cook cache gc --max-size
+    /// <literal>` remediation line. Returns the literal verbatim — even
+    /// one `max_size_bytes()` would reject — so this is a raw echo, not a
+    /// validated accessor; it never re-renders through a byte formatter,
+    /// so `"20GB"` stays `"20GB"` rather than becoming `"20 GB"`.
+    pub fn max_size_literal(&self) -> Option<&str> {
+        self.cache.max_size.as_deref()
+    }
+
+    /// Whether an exceeded `[cache] max_size` budget triggers an
+    /// automatic sweep to the low-water mark, versus warn-only. Defaults
+    /// to `false` — see the field doc on `CacheSection::auto_gc` for the
+    /// milestone-D4 rationale. Uncoupled from `max_size`: `true` with no
+    /// budget configured means no check ever runs, not an error.
+    pub fn auto_gc(&self) -> bool {
+        self.cache.auto_gc
     }
 
     /// Whether this client publishes produced artifacts to the shared store.

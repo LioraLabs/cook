@@ -584,6 +584,79 @@ cache_dir` in `.cook/cloud.toml` at a path your team can reach and there is no
 server to run. See [Sharing a cache across a team](docs/shared-cache.md) for the
 setup, the toolchain-sealing step it depends on, and the operational edges.
 
+### Keeping the store in budget
+
+The local store grows without bound. `cook cache du` reports what is in it and
+`cook cache gc` evicts on demand; two more keys in `[cache]` make it account for
+itself at the end of every build:
+
+```toml
+[cache]
+max_size = "20GB"   # unset (the default) means no budget and no warning
+auto_gc  = false    # the default: advisory only. true sweeps to 80% of the budget
+```
+
+With `max_size` set and `auto_gc` left alone, a run that published something and
+left the store over budget says so on stderr:
+
+```
+cook: warning: cache store is 23.1 GB, over the 20.0 GB budget (116%)
+cook:          run `cook cache gc --max-size 20GB` to reclaim 3.1 GB
+cook:          largest: /Cookfile::duckdb 11.0 GB (48%)
+```
+
+The remediation command echoes your literal verbatim, so you can paste it. The
+`largest:` line names the recipe namespace accounting for the most bytes, with
+its share of the store, so you know what is filling it up; objects cook can no
+longer attribute to a recipe count under `(unattributed)`.
+
+Opt in with `auto_gc = true` and the same run sweeps instead of warning:
+
+```
+cook: cache store was 23.1 GB, over the 20.0 GB budget — swept 4.2 GB (312 objects), now 18.9 GB
+```
+
+The sweep evicts least-recently-used artifacts down to **80% of the budget**,
+not to the budget exactly. Sweeping to exactly `max_size` would leave the store
+one artifact from over-budget, so the next publishing run would sweep again, and
+the one after that. The low-water mark buys several quiet runs between sweeps.
+
+It gets as close to that mark as it can without evicting probe values or input
+manifests, which the size sweep never touches: they are small and cheap to keep,
+and losing them costs more than it reclaims. A store whose bulk is those kinds
+can therefore report a sweep and still sit above the budget. Read the `now` figure
+in the sweep line against your `max_size`; if the gap does not close across
+several runs, `cook cache du` will show you what the sweep is declining to
+evict.
+
+`--no-auto-gc` (or `COOK_NO_AUTO_GC=1`) suppresses the deletion for one run and
+nothing else: the warning still prints, the store is just not touched. That is
+the CI contract: a job stays reproducible while its operator still learns the
+store needs a sweep.
+
+Three things the check will not do:
+
+- **Fail your build.** An unreadable config, a typo'd `max_size`, an unwalkable
+  store, a sweep that errors: each degrades to a `cook: warning:` line. A typo
+  warns rather than quietly meaning "no budget".
+- **Cost a settled build anything.** It runs only after a run that published
+  outputs, and that test comes before the config load and the store walk. An
+  incremental build with nothing to do never looks at the store, so a store can
+  sit over budget quietly while you are not publishing. There is no stamp file
+  and no rate limiting either: every over-budget publishing run reports, and
+  `cook cache du` asks on demand regardless.
+- **Touch a server-managed cloud cache.** The budget covers the local store
+  only; a cloud backend runs its own retention.
+
+One caveat if `[cache] cache_dir` points at a mount you share with your team.
+With `auto_gc = true` there, your machine sweeps a store holding your
+teammates' objects, and several machines can sweep it concurrently.
+Touch-on-read helps (the access time lives on the shared file, so recency
+genuinely is shared) but the concurrent sweep is a real race. That is why
+`auto_gc` is opt-in rather than on: enabling it on a shared store is opting into
+that. On your own store the stakes are low, because a wrong eviction costs a
+rebuild and not data.
+
 ## Dropping into Lua
 
 Most Cookfiles are pure surface syntax. Underneath, every Cookfile compiles to
@@ -767,7 +840,7 @@ collides with a subcommand.
 | `cook why [recipe]` | explain what a run would do: the build graph with per-node hit/rebuild counts, what each rebuild invalidates downstream, and last-observed timings. `--level recipe\|group\|unit`, `--format text\|mermaid\|dot\|json`, `--unit <pat>` for one unit's full determinants. Read-only |
 | `cook cache du` | report local artifact-store disk usage: total, breakdown by artifact kind and recipe namespace, oldest/newest, and budget usage when `[cache] max_size` is set |
 | `cook cache verify [recipe]` | re-run cached steps, fail on byte-divergence (`--json`) |
-| `cook cache gc --max-size <N>\|--older-than <dur>` | evict least-recently-used or stale artifacts from the local store (`10GB`/`20GiB`, `30d`/`720h`); `--dry-run` to preview |
+| `cook cache gc --max-size <N>\|--older-than <dur>` | evict least-recently-used or stale artifacts from the local store (`10GB`/`20GiB`, `30d`/`720h`); `--dry-run` to preview. [`[cache] auto_gc`](#keeping-the-store-in-budget) runs the size sweep for you |
 | `cook logs [id]` | browse the per-build log archive (`-n N` for the Nth most recent, `--last-failed`) |
 | `cook emit-lua` | print the Lua a Cookfile compiles to |
 | `cook affected --since=<ref>` | list recipes whose inputs changed since a git ref (`--recipe`, `--json`) |
@@ -779,7 +852,9 @@ collides with a subcommand.
 
 **Global flags worth knowing:** `-f/--file`, `--root`, `-j/--jobs`, `-q/--quiet`,
 `-v/--verbose`, `--color`, `--output auto|plain|json`, `--set KEY=VALUE`
-(repeatable), `--since <ref>` + `--affected`, `--no-prune`, `--no-publish`.
+(repeatable), `--since <ref>` + `--affected`, `--no-prune`, `--no-auto-gc`
+(skip the [`[cache] auto_gc`](#keeping-the-store-in-budget) sweep for this run;
+the over-budget warning still prints), `--no-publish`.
 
 **Tab completion** is served by the `cook` binary itself, so it always matches
 the Cookfile in front of you: it completes your recipes and chores (and config

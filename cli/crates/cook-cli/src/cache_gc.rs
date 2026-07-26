@@ -5,9 +5,13 @@
 //! workspace registration, so `gc` works even when the Cookfile no longer
 //! parses. `render_dry_run` and `render_applied` are pure functions over an
 //! `EvictPlan` / `EvictOutcome` — no I/O — so the output is unit-testable
-//! without a filesystem. `cmd_cache_gc` is the thin I/O shell: resolve the
-//! project root and config, parse the flags, enumerate the local CAS (unless
-//! it doesn't exist), plan the sweep, apply it unless `--dry-run`, print.
+//! without a filesystem. `enumerate_store` and `sweep` are the reusable
+//! enumerate-plan-apply middle, free of flag parsing, config loading, the
+//! clock, and printing — the seam a future end-of-run budget check reuses so
+//! the manual and automatic sweeps can never drift apart. `cmd_cache_gc` is
+//! the thin I/O shell built on top of them: resolve the project root and
+//! config, parse the flags, enumerate the local CAS (unless it doesn't
+//! exist), sweep it, print.
 //!
 //! `SystemTime::now()` is read exactly once, here, so `plan_eviction` (in
 //! `cook-fingerprint`) stays pure and reusable server-side.
@@ -15,7 +19,9 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use cook_engine::cook_cache::backend::{plan_eviction, EvictOutcome, EvictPlan, EvictPolicy, LocalBackend};
+use cook_engine::cook_cache::backend::{
+    plan_eviction, EvictCandidate, EvictOutcome, EvictPlan, EvictPolicy, LocalBackend,
+};
 use cook_engine::cook_cache::{parse_size, CloudConfig, SIZE_LITERAL_HELP};
 
 use crate::cache_du::human_size;
@@ -67,43 +73,75 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
     // `--max-size N` evicts to exactly N (low_water 1.0), per the ticket.
     let policy = EvictPolicy::manual(max_size, older_than);
 
-    // `gc` must never create the store as a side effect of merely
-    // inspecting it: `LocalBackend::with_config` (which `LocalBackend::new`
-    // calls) unconditionally `create_dir_all`s the root, so a missing store
-    // is handled here, BEFORE constructing a backend at all — mirroring
-    // `du`'s identical early return. A missing store is a zero-work report,
-    // not an error.
-    if !store.exists() {
+    // A missing store is a zero-work report, not an error: `enumerate_store`
+    // returns `None` rather than creating anything, mirroring `du`'s
+    // identical early return.
+    let Some(candidates) = enumerate_store(&store)? else {
         print!("{}", render_nothing_to_evict(&store));
         return Ok(());
-    }
+    };
 
-    let backend = LocalBackend::new(store.clone());
+    let Sweep { plan, outcome } = sweep(&store, &candidates, &policy, now, args.dry_run)?;
+    print_report(&store, &plan, args.dry_run, outcome.as_ref());
+    Ok(())
+}
+
+/// Enumerate the local CAS at `store`. `Ok(None)` when the store directory
+/// does not exist — a missing store is zero work, not an error, and this
+/// must never create it as a side effect (`LocalBackend::with_config`
+/// `create_dir_all`s its root, so the existence check happens BEFORE a
+/// backend is constructed).
+pub(crate) fn enumerate_store(store: &Path) -> Result<Option<Vec<EvictCandidate>>, CookError> {
+    if !store.exists() {
+        return Ok(None);
+    }
+    let backend = LocalBackend::new(store.to_path_buf());
     let candidates = backend.enumerate().map_err(|e| {
         CookError::Other(format!(
             "enumerating cache store {}: {e}",
             store.display()
         ))
     })?;
+    Ok(Some(candidates))
+}
 
-    let plan = plan_eviction(&candidates, &policy, now);
+/// The result of [`sweep`]: the plan it chose, and — unless `dry_run` or the
+/// plan chose no victims — the outcome of actually applying it.
+#[derive(Debug)]
+pub(crate) struct Sweep {
+    pub plan: EvictPlan,
+    pub outcome: Option<EvictOutcome>,
+}
 
-    if args.dry_run || plan.victims.is_empty() {
-        // Nothing to apply either because the caller asked for a dry run,
-        // or because the plan chose no victims — either way, no delete, so
-        // there is no real `EvictOutcome` to report.
-        print_report(&store, &plan, args.dry_run, None);
-        return Ok(());
+/// Plan `candidates` under `policy` at `now`, and apply the plan unless
+/// `dry_run` or the plan chose no victims. `Sweep.outcome` is `None` in
+/// exactly those two cases — there is no real `EvictOutcome` to fabricate,
+/// so neither case constructs a `LocalBackend` (which would
+/// `create_dir_all` `store`) at all.
+pub(crate) fn sweep(
+    store: &Path,
+    candidates: &[EvictCandidate],
+    policy: &EvictPolicy,
+    now: u64,
+    dry_run: bool,
+) -> Result<Sweep, CookError> {
+    let plan = plan_eviction(candidates, policy, now);
+
+    if dry_run || plan.victims.is_empty() {
+        return Ok(Sweep { plan, outcome: None });
     }
 
+    let backend = LocalBackend::new(store.to_path_buf());
     let outcome = backend.apply_eviction(&plan).map_err(|e| {
         CookError::Other(format!(
             "evicting from cache store {}: {e}",
             store.display()
         ))
     })?;
-    print_report(&store, &plan, false, Some(&outcome));
-    Ok(())
+    Ok(Sweep {
+        plan,
+        outcome: Some(outcome),
+    })
 }
 
 /// Print either the dry-run projection or the real-sweep report, per

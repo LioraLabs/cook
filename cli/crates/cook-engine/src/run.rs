@@ -56,6 +56,36 @@ pub struct RunResult {
     pub swept: Vec<std::path::PathBuf>,
     pub kept_modified: Vec<std::path::PathBuf>,
     pub output_glob_warnings: Vec<OutputGlobWarning>,
+    /// How many CAS publish operations this run attempted — each increment
+    /// precedes its `put`, so a failed write still counts. That is the
+    /// conservative direction for a zero / non-zero gate: over-counting costs
+    /// one unnecessary store walk, under-counting would skip a check that was
+    /// due.
+    ///
+    /// Read once, after every worker has joined, and consumed purely as a gate
+    /// for the end-of-run store-budget check: a run that published no outputs
+    /// skips walking the shared store entirely, which is what keeps a settled
+    /// no-op build at zero added cost.
+    ///
+    /// Read the gate precisely: this counts **published outputs**, which is
+    /// narrower than "the store did not grow". The register-phase probe
+    /// pre-pass writes probe values to the CAS outside every publish guard and
+    /// outside this counter (COOK-339), so a run can add a handful of
+    /// `probe_value` objects while this still reads 0. Those objects are
+    /// kilobytes against a budget in gigabytes, so the only consequence is
+    /// that an over-budget warning waits for the next run that publishes
+    /// something.
+    ///
+    /// That bound is the honest one, and it is weaker than "one build later":
+    /// the budget check is stateless by design (no stamp file, no rate
+    /// limiting), so *only* a publishing run reports. A store pushed over
+    /// budget — by the pre-pass writes above, by a concurrent project sharing
+    /// a `[cache] cache_dir`, or by an earlier run whose warning scrolled past
+    /// — stays quietly over budget for as long as subsequent runs publish
+    /// nothing. A settled build publishes nothing and therefore never warns;
+    /// that is the intended cadence, not a defect. `cook cache du` is the
+    /// on-demand way to ask regardless of what the last run published.
+    pub published_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -559,6 +589,8 @@ where
             swept: vec![],
             kept_modified: vec![],
             output_glob_warnings: vec![],
+            // Nothing was ever dispatched, so nothing published.
+            published_count: 0,
         });
     }
 
@@ -655,6 +687,12 @@ where
     let dep_outputs: cook_luaotp::WorkerDepOutputs =
         std::sync::Arc::new(registered_workspace.terminal_outputs.clone());
 
+    // CAS publish counter for the end-of-run store-budget check. Owned here,
+    // bumped once per publish inside the executor, read back below once every
+    // worker has joined. Only its zero / non-zero-ness is consumed. See
+    // `RunResult::published_count` for what the gate does and does not claim.
+    let published = std::sync::atomic::AtomicU64::new(0);
+
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
     let exec_result = std::thread::scope(|s| {
         let on_event_ref = on_event;
@@ -674,6 +712,7 @@ where
             rerun_patterns,
             &probe_units_by_node,
             dep_outputs,
+            &published,
         );
 
         // execute_dag drops the sender end on return, so the bridge thread's
@@ -699,11 +738,15 @@ where
     };
 
     let output_glob_warnings = collect_output_glob_warnings(registered_workspace, reachable);
+    // Every worker has joined by now (execute_dag returned), so a single
+    // relaxed load sees the run's total.
+    let published_count = published.load(std::sync::atomic::Ordering::Relaxed);
     Ok(RunResult {
         test_results,
         swept,
         kept_modified,
         output_glob_warnings,
+        published_count,
     })
 }
 

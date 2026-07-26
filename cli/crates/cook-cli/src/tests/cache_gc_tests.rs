@@ -1,11 +1,20 @@
-//! Pure unit tests for `cook cache gc`: rendering (dry-run, applied, empty
-//! plan) and argument validation (neither-flag usage error, bad --max-size /
-//! --older-than literals). No filesystem, no `LocalBackend` — every `EvictPlan`
-//! / `EvictOutcome` here is a hand-built fixture.
+//! Unit tests for `cook cache gc`.
+//!
+//! Two groups. The rendering and argument-validation tests (dry-run, applied,
+//! empty plan; neither-flag usage error, bad --max-size / --older-than
+//! literals) are pure: no filesystem, no `LocalBackend`, every `EvictPlan` /
+//! `EvictOutcome` a hand-built fixture.
+//!
+//! The `enumerate_store` / `sweep` seam tests do touch a filesystem, because
+//! the properties they pin are filesystem properties — that a missing store is
+//! not created as a side effect, and that a dry run deletes nothing. Each one
+//! passes an explicit `tempfile::tempdir()` path in, so none of them can reach
+//! the developer's real CAS.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cook_engine::cook_cache::backend::{EvictCandidate, EvictOutcome, EvictPlan};
+use tempfile::tempdir;
 
 use super::*;
 
@@ -121,5 +130,94 @@ fn good_older_than_literal_parses_via_humantime() {
     assert_eq!(
         parse_older_than_flag("30d").unwrap(),
         std::time::Duration::from_secs(30 * 86_400)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// enumerate_store / sweep — the reusable enumerate-plan-apply seam
+// ---------------------------------------------------------------------------
+
+/// Write a real blob at the same `{2 hex}/{62 hex}` layout `LocalBackend`
+/// uses, so a dry-run / victim-free test can assert against an actual file
+/// on disk rather than only the returned `Sweep`.
+fn write_blob(store: &Path, key: [u8; 32], size: u64) {
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    let dir = store.join(&hex[..2]);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(&hex[2..]), vec![b'x'; size as usize]).unwrap();
+}
+
+fn blob_path(store: &Path, key: [u8; 32]) -> PathBuf {
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    store.join(&hex[..2]).join(&hex[2..])
+}
+
+#[test]
+fn enumerate_store_on_nonexistent_path_returns_none_and_creates_nothing() {
+    let tmp = tempdir().unwrap();
+    let store = tmp.path().join("does-not-exist");
+
+    let result = enumerate_store(&store).unwrap();
+
+    assert!(result.is_none());
+    assert!(
+        !store.exists(),
+        "enumerate_store must never create the store as a side effect of checking it"
+    );
+}
+
+#[test]
+fn enumerate_store_on_empty_existing_directory_returns_some_empty_vec() {
+    let tmp = tempdir().unwrap();
+    let store = tmp.path().join("cas");
+    std::fs::create_dir_all(&store).unwrap();
+
+    let result = enumerate_store(&store).unwrap();
+
+    assert_eq!(result, Some(Vec::new()));
+}
+
+#[test]
+fn sweep_dry_run_returns_none_outcome_and_deletes_nothing_on_disk() {
+    let tmp = tempdir().unwrap();
+    let store = tmp.path().join("cas");
+    std::fs::create_dir_all(&store).unwrap();
+    let candidate = dummy_candidate(1);
+    write_blob(&store, candidate.key, 1);
+
+    // `max_size: Some(0)` means the size pass WOULD evict the only
+    // candidate if this were a real sweep — proving it's `dry_run`, not an
+    // empty plan, that suppresses the delete.
+    let policy = EvictPolicy::manual(Some(0), None);
+    let result = sweep(&store, &[candidate.clone()], &policy, 0, true).unwrap();
+
+    assert_eq!(result.plan.victims.len(), 1, "the policy must have chosen a victim");
+    assert!(result.outcome.is_none());
+    assert!(
+        blob_path(&store, candidate.key).exists(),
+        "a dry run must not delete anything on disk"
+    );
+}
+
+#[test]
+fn sweep_with_victim_free_plan_returns_none_outcome_without_calling_apply_eviction() {
+    let tmp = tempdir().unwrap();
+    // Never created: if `sweep` constructed a `LocalBackend` (which
+    // `apply_eviction` requires) it would `create_dir_all` this path as a
+    // side effect, so its continued absence is proof `apply_eviction` was
+    // never reached.
+    let store = tmp.path().join("does-not-exist");
+    let candidate = dummy_candidate(1);
+
+    // Neither pass runs (both policy knobs are `None`), so the plan is
+    // empty regardless of the candidate.
+    let policy = EvictPolicy::manual(None, None);
+    let result = sweep(&store, &[candidate], &policy, 0, false).unwrap();
+
+    assert!(result.plan.victims.is_empty());
+    assert!(result.outcome.is_none());
+    assert!(
+        !store.exists(),
+        "a victim-free plan must never construct a backend / touch the store"
     );
 }
