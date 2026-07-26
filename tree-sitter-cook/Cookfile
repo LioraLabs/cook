@@ -1,44 +1,82 @@
 config
     var.NVIM_SITE = var.NVIM_SITE or (host.env("HOME", "") .. "/.local/share/nvim/site")
 
-# One run produces all three outputs. src/tree_sitter/*.h tracks the CLI
-# version rather than grammar.js, so it stays undeclared.
+# src/ is generated but tracked, so the CLI that generates it is part of the
+# source: 0.25.10, 0.26.9 and 0.26.11 each emit different bytes for the same
+# grammar.js (bd4fe6b0), and src/tree_sitter/*.h tracks the CLI rather than the
+# grammar. package.json pins the version and ci.yml installs it, but until
+# CS-0181 the determinant could not be named — `tools` took the narrow IDENT and
+# `tree-sitter` has a hyphen. So a developer whose PATH resolved a different CLI
+# regenerated tracked files in place with no key moving to say why.
+probe generate:tool
+    tools { tree-sitter }
+
+# One run produces all six. The three headers were undeclared for as long as the
+# CLI was: they track the CLI rather than grammar.js, so declaring them under a
+# key that could not see the CLI would have made a cache hit restore three files
+# the CLI had just written differently. With `generate:tool` sealed the key does
+# see it, so they are declared — and a restore now covers everything
+# `tree-sitter generate` writes, which is what `check-generated` diffs.
 recipe generate
     ingredients "grammar.js"
-    cook "src/parser.c" "src/node-types.json" "src/grammar.json" {
+    seal generate:tool
+    cook "src/parser.c" "src/node-types.json" "src/grammar.json"
+        "src/tree_sitter/alloc.h" "src/tree_sitter/array.h" "src/tree_sitter/parser.h" {
         tree-sitter generate
     }
 
 recipe test
     ingredients "test/corpus/*.txt"
+    seal generate:tool
     test { : $<generate> && tree-sitter test }
 
-# The harness walks the Standard's corpus, which lives outside this member, so
-# it cannot be an ingredient (a `../` pattern escapes the member root) and the
-# script alone was the whole declared input set. That is how CS-0172 turned the
-# tree green while adding three fixtures this grammar rejects: the corpus grew,
-# the key did not move, and the unit replayed a cached pass until v0.10.1 was
-# tagged off it. A `files` probe is the sealable form of a determinant that is
-# not the driver (§22.5.2) — the script drives, the corpus determines.
-probe conformance:corpus
-    files { "//standard/conformance/**" }
+# One unit per fixture, fanned out over the Standard's corpus (CS-0182). The
+# body references $<in>, which puts the step in one-to-one mode (§8.6.1), and
+# each unit keys on its own fixture alone — so editing one fixture re-runs one
+# unit and the other 283 stay cached. The `//` prefix anchors the glob at the
+# workspace root, which is what lets a member reach a sibling member's tree; a
+# bare `../` pattern would escape the member root and is rejected.
+#
+# This replaces a single unit sealed on a `files` probe over the whole corpus.
+# That shape was correct but coarse: any fixture edit re-graded all 284. It was
+# also the shape CS-0172 caught being *too* coarse in the other direction —
+# before the seal existed the script alone was the declared input set, the
+# corpus grew, the key did not move, and the unit replayed a cached pass until
+# v0.10.1 was tagged off it. Per-fixture keys retire both failure modes: nothing
+# is under-declared, and nothing re-runs that did not change.
+recipe conformance: parser-lib
+    ingredients "//standard/conformance/positive/*/Cookfile"
+        "//standard/conformance/negative/*/Cookfile"
+    test { node scripts/conformance.mjs --case $<in> }
 
-recipe conformance
-    ingredients "scripts/conformance.mjs"
-    seal conformance:corpus
-    test { : $<generate> && node scripts/conformance.mjs }
+# The whole corpus in one process. Same harness, no fan-out: this is the form
+# CI and a human want when the question is "is the grammar green", where 284
+# process spawns buy nothing. Sourceless on purpose — it is a convenience view
+# over work `conformance` already caches per fixture, so caching it too would
+# only add a second, coarser key to invalidate.
+chore conformance-all: parser-lib
+    node scripts/conformance.mjs
 
 # The rendered Standard bundles the wasm parser for in-browser highlighting.
 recipe wasm: generate
-    ingredients "grammar.js" "src/parser.c" "src/scanner.c"
+    ingredients "grammar.js" "src/scanner.c"
+    seal generate:tool
     cook "../standard/public/tree-sitter-cook.wasm" {
-        mkdir -p ../standard/public && tree-sitter build --wasm . -o $<out>
+        mkdir -p ../standard/public
+        : $<generate>
+        tree-sitter build --wasm . -o $<out>
     }
 
-recipe nvim-parser: generate
-    ingredients "src/parser.c" "src/scanner.c"
+# Named `parser-lib` rather than `nvim-parser` because it has two consumers now:
+# the nvim install chore below, and every `conformance` fan-out unit, which
+# grades its fixture against this artifact instead of building a parser of its
+# own. Declaring it once as a dependency is what keeps the fan-out affordable.
+recipe parser-lib: generate
+    ingredients "src/scanner.c"
+    seal generate:tool
     cook "build/parser/cook.so" {
         mkdir -p build/parser
+        : $<generate>
         tree-sitter build . -o $<out>
     }
 
@@ -59,9 +97,9 @@ recipe rust: generate
 recipe check-generated
     test { tree-sitter generate; git diff --exit-code -- src/ || (echo "src/ is stale — run 'cook ts.generate' and commit the result" >&2; exit 1) }
 
-chore nvim-install: nvim-parser
+chore nvim-install: parser-lib
     mkdir -p $NVIM_SITE/parser
-    cp $<nvim-parser> $NVIM_SITE/parser/cook.so
+    cp $<parser-lib> $NVIM_SITE/parser/cook.so
     echo "installed parser → $NVIM_SITE/parser/cook.so"
     bash scripts/clean-stale-nvim-parsers.sh
     bash scripts/install-nvim-queries.sh

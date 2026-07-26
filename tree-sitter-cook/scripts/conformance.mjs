@@ -340,6 +340,72 @@ async function buildParser() {
   }
 }
 
+/// Grade exactly one fixture, named by its Cookfile path, and exit 0/1.
+///
+/// This is the entry point the `conformance` recipe fans out over (CS-0182):
+/// one cached pass/fail unit per fixture, each keyed on that fixture alone, so
+/// editing one re-runs one. The whole-corpus `main()` below is unchanged and
+/// stays the way to grade everything in a single process (CI, manual runs).
+///
+/// The parser is NOT built here. Building it 284 times would cost more than the
+/// grading does, so the recipe declares `parser-lib` as a dependency and this
+/// path asserts the artifact rather than producing it — the fan-out unit's job
+/// is to grade a fixture, not to compile a grammar.
+async function runOneCase(cookfilePath) {
+  const name = basename(dirname(cookfilePath));
+  const kind = basename(dirname(dirname(cookfilePath)));
+
+  if (kind !== 'positive' && kind !== 'negative') {
+    console.error(`--case: expected a path under positive/ or negative/, got ${cookfilePath}`);
+    process.exit(2);
+  }
+  try {
+    await stat(PARSER_LIB);
+  } catch {
+    console.error(`--case: parser library not found: ${PARSER_LIB}`);
+    console.error(`hint: this mode expects the parser to be built already (cook ts.parser-lib)`);
+    process.exit(2);
+  }
+
+  const result = await parseCase(cookfilePath);
+
+  if (!result.parsed) {
+    console.log(`ERROR  ${kind}/${name} (tree-sitter invocation failed)`);
+    console.log(fmtBlock(result.output));
+    process.exit(1);
+  }
+
+  if (kind === 'positive') {
+    if (result.ok) {
+      console.log(`OK     positive/${name}`);
+      process.exit(0);
+    }
+    console.log(`FAIL   positive/${name}`);
+    console.log(fmtBlock(result.output));
+    process.exit(1);
+  }
+
+  // negative
+  const skip = SEMANTIC_ONLY_NEGATIVES.get(name);
+  if (skip) {
+    if (result.ok) {
+      console.log(`SKIP   negative/${name} (${skip})`);
+      process.exit(0);
+    }
+    // Overtaken by a grammar tightening: the skip entry should shrink. This is
+    // a failure in per-case mode rather than a note, because there is no
+    // end-of-run summary to collect notes into — the unit IS the report.
+    console.log(`NOTE   negative/${name} now rejected — remove from SEMANTIC_ONLY_NEGATIVES`);
+    process.exit(1);
+  }
+  if (result.ok) {
+    console.log(`FAIL   negative/${name} (accepted, expected reject)`);
+    process.exit(1);
+  }
+  console.log(`OK     negative/${name} (rejected)`);
+  process.exit(0);
+}
+
 async function main() {
   const root = corpusRoot();
   try {
@@ -402,8 +468,17 @@ async function selfTest() {
   console.log('Conformance harness self-test passed.');
 }
 
+const caseFlag = process.argv.indexOf('--case');
+
 if (process.argv.includes('--self-test')) {
   await selfTest();
+} else if (caseFlag !== -1) {
+  const target = process.argv[caseFlag + 1];
+  if (!target) {
+    console.error('--case requires a path to a fixture Cookfile');
+    process.exit(2);
+  }
+  await runOneCase(target);
 } else {
   await main();
 }
