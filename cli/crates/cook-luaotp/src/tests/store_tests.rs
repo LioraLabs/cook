@@ -15,7 +15,7 @@ fn get_miss_without_dir_is_none() {
 #[test]
 fn get_reads_through_to_probe_file() {
     let tmp = tempfile::tempdir().unwrap();
-    cook_contracts::probe_value::write_probe_file(tmp.path(), "cc:zlib", b"42\n").unwrap();
+    cook_probe::store::materialize_value(tmp.path(), "cc:zlib", b"42\n").unwrap();
     let store = ProbeValueStore::new();
     store.attach_dir(tmp.path().to_path_buf());
     assert_eq!(store.get("cc:zlib"), Some(b"42\n".to_vec()));

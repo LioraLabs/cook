@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    decode_json, encode_canonical_json, encode_files_manifest, probe_file_name,
+    FILES_MANIFEST_PRODUCE,
+};
 use serde_json::json;
 
 // ── files-manifest tests (CS-0148) ──────────────────────────────────────
@@ -120,16 +123,4 @@ fn probe_file_name_is_injective() {
     sorted.sort();
     sorted.dedup();
     assert_eq!(sorted.len(), names.len(), "duplicate file names: {names:?}");
-}
-
-#[test]
-fn write_probe_file_creates_dir_and_writes_atomically() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("probes");
-    let p = write_probe_file(&dir, "cc:zlib", b"42\n").unwrap();
-    assert_eq!(p, dir.join("cc:zlib.json"));
-    assert_eq!(std::fs::read(&p).unwrap(), b"42\n");
-    // Overwrite goes through rename, not truncate-in-place.
-    write_probe_file(&dir, "cc:zlib", b"43\n").unwrap();
-    assert_eq!(std::fs::read(&p).unwrap(), b"43\n");
 }

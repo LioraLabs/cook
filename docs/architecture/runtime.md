@@ -78,7 +78,7 @@ The `catch_unwind` boundary converts Rust panics into failure `WorkResult`s so t
 
 | Payload | Handler | Notes |
 |---|---|---|
-| `Shell { cmd, line }` | `execute_shell` (`pool.rs:804`) | `/bin/sh -c cmd` in `working_dir` with merged env. Output is line-split and tagged `(OutputStream::Stdout, _)` or `(_, Stderr)` so downstream renderers preserve fd-of-origin (CS-0035). Failure shapes a `COOK_CMD_FAILED:line:code:cmd` string with truncated captured streams. |
+| `Shell { cmd, line }` | `execute_shell` (`pool.rs:804`) | `/bin/sh -c cmd` in `working_dir` with merged env. Output is line-split and tagged `(OutputStream::Stdout, _)` or `(_, Stderr)` so downstream renderers preserve fd-of-origin (CS-0035). Failures use the shared `CommandFailure` JSON transport with bounded captured streams. |
 | `LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore }` | `execute_lua_chunk` (`pool.rs:883`) | Sets `inputs` / `outputs` / `input` / `output` / `input_1`..`input_N` Lua globals, then `lua.load(code).exec()`. Sandbox policy was already installed into the per-item slot by the loop. |
 | `Interactive { .. }` | Surfaces `"BUG: interactive step dispatched to worker pool"` (`pool.rs:776`) — the engine drains interactive units through a dedicated foreground window before dispatch. |
 | `Test { cmd, line, timeout, should_fail, suite_name, test_name, .. }` | `execute_test` (`pool.rs:944`) | Spawns `/bin/sh -c cmd` with piped stdio, drains stdout/stderr in separate threads (to avoid pipe-buffer deadlocks), polls for completion against `timeout_secs`, and produces a `TestOutput` carrying duration, timed_out, exit_success, exit_code, and the `should_fail` inversion. |

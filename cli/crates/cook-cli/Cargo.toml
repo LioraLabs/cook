@@ -18,6 +18,7 @@ path = "src/lib.rs"
 # only on what it needs to render progress, watch files, and dispatch. Other
 # crates are reached transitively through cook-engine's public API.
 cook-lang = { path = "../cook-lang" }
+cook-contracts = { path = "../cook-contracts" }
 cook-progress = { path = "../cook-progress" }
 cook-engine = { path = "../cook-engine" }
 cook-logs = { path = "../cook-logs" }

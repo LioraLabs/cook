@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{OnceLock, mpsc};
 
+use cook_contracts::CommandFailure;
 use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, RegisterMode, Workspace};
 use cook_engine::RegisteredWorkspace;
 
@@ -465,30 +466,41 @@ fn strip_set_e(cmd: &str) -> &str {
     cmd.strip_prefix("set -e\n").unwrap_or(cmd)
 }
 
+fn render_command_failure(failure: &CommandFailure) -> String {
+    let command = strip_set_e(failure.command());
+    let mut message = if failure.line() == 0 {
+        format!("command failed (exit {}): {command}", failure.exit_code())
+    } else {
+        format!(
+            "Cookfile:{}: command failed (exit {}): {command}",
+            failure.line(),
+            failure.exit_code()
+        )
+    };
+    if !failure.stdout().is_empty() {
+        message.push_str("\n--- stdout ---\n");
+        message.push_str(failure.stdout().as_str());
+        if !message.ends_with('\n') {
+            message.push('\n');
+        }
+    }
+    if !failure.stderr().is_empty() {
+        if !message.ends_with('\n') {
+            message.push('\n');
+        }
+        message.push_str("--- stderr ---\n");
+        message.push_str(failure.stderr().as_str());
+    }
+    message
+}
+
 /// Map cook-engine errors to CookError.
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
         cook_engine::EngineError::TaskFailures { failures, .. } => {
             if let Some((_, _recipe_name, msg)) = failures.first() {
-                if msg.contains("COOK_CMD_FAILED:") {
-                    let parts: Vec<&str> = msg
-                        .split("COOK_CMD_FAILED:")
-                        .nth(1)
-                        .unwrap_or("0:1:unknown")
-                        .splitn(3, ':')
-                        .collect();
-                    let line = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0usize);
-                    let code = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1i32);
-                    let command = strip_set_e(parts.get(2).copied().unwrap_or("unknown"));
-                    if line == 0 {
-                        CookError::CommandFailed(format!(
-                            "command failed (exit {code}): {command}"
-                        ))
-                    } else {
-                        CookError::CommandFailed(format!(
-                            "Cookfile:{line}: command failed (exit {code}): {command}"
-                        ))
-                    }
+                if let Some(failure) = CommandFailure::from_wire(msg) {
+                    CookError::CommandFailed(render_command_failure(&failure))
                 } else {
                     CookError::Other(msg.clone())
                 }

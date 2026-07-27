@@ -280,7 +280,7 @@ On success the engine emits `EngineEvent::Finished { success: true }`, the rende
 
 ### 9.2 What the user sees on failure
 
-A failed work unit in `execute_dag` produces an `EngineError::TaskFailures`. `engine_error_to_cook_error` (`cook-cli/src/pipeline.rs:344`) inspects the first failure: if the message contains the `COOK_CMD_FAILED:<line>:<code>:<cmd>` sentinel emitted by the cook runtime, it decodes it into `Cookfile:<line>: command failed (exit <code>): <cmd>`; otherwise it forwards the raw message. Cycle / unknown-recipe / registration / cache / output-collision errors map to dedicated `CookError` variants.
+A failed work unit in `execute_dag` produces an `EngineError::TaskFailures`. `engine_error_to_cook_error` (`cook-cli/src/pipeline.rs`) inspects the first failure: if it contains the internal marker-prefixed `CommandFailure` JSON, the CLI decodes it into a user-facing command diagnostic; otherwise it forwards the raw message. Cycle / unknown-recipe / registration / cache / output-collision errors map to dedicated `CookError` variants.
 
 `main.rs:33` prints `cook: {e}` to stderr (unless the variant is `TestFailure`) and calls `process::exit(e.exit_code())`.
 

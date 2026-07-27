@@ -1,0 +1,11 @@
+[package]
+name = "cook-probe"
+version.workspace = true
+edition = "2021"
+description = "Shared stateful probe lifecycle for the Cook build system"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+
+[dev-dependencies]
+tempfile = "3"

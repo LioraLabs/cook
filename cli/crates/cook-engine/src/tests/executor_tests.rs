@@ -241,6 +241,55 @@ fn test_executor_failure_does_not_cancel_independent() {
     }
 }
 
+#[test]
+fn command_failure_event_summarizes_without_transport_payload() {
+    use std::sync::mpsc;
+
+    let (wd, _tmp) = tmp_dir();
+    let cache_ctx = make_cache_ctx(&_tmp);
+    let command = "printf raw-output; exit 7";
+    let mut dag = Dag::new();
+    dag.add_node(
+        work_node(
+            WorkPayload::Shell {
+                cmd: command.into(),
+                line: 23,
+            },
+            "failure",
+            wd,
+        ),
+        &[],
+    )
+    .unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    let _ = execute_dag(
+        dag,
+        1,
+        BTreeMap::new(),
+        Some(tx),
+        cache_ctx,
+        None,
+        &[],
+        &BTreeMap::new(),
+        Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
+    );
+    let error = rx
+        .try_iter()
+        .find_map(|event| match event {
+            EngineEvent::NodeFailed { error, .. } => Some(error),
+            _ => None,
+        })
+        .expect("command failure should emit NodeFailed");
+
+    assert!(!error.contains("COOK_CMD_FAILED:"), "{error}");
+    assert!(!error.contains("\"exit_code\":"), "{error}");
+    assert!(error.contains("line 23"), "{error}");
+    assert!(error.contains("exit 7"), "{error}");
+    assert!(error.contains(command), "{error}");
+}
+
 // 8. Interactive node runs after pool drains
 #[test]
 fn test_executor_interactive_node() {
@@ -264,6 +313,22 @@ fn test_executor_interactive_node() {
 
     let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
+}
+
+#[test]
+fn interactive_command_failure_uses_shared_json_contract() {
+    let (wd, _tmp) = tmp_dir();
+    let command = "printf 'key:value\\n\"quoted\"'\nexit 7";
+    let wire = run_interactive_on_main(command, 23, &wd, &BTreeMap::new())
+        .expect_err("interactive command should fail");
+    let failure =
+        cook_contracts::CommandFailure::from_wire(&wire).expect("canonical command failure JSON");
+
+    assert_eq!(failure.line(), 23);
+    assert_eq!(failure.exit_code(), 7);
+    assert_eq!(failure.command(), command);
+    assert_eq!(failure.stdout().as_str(), "");
+    assert_eq!(failure.stderr().as_str(), "");
 }
 
 // 9. CS-0035: OutputLine events carry true fd-of-origin in the `stream`

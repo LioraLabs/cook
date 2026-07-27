@@ -6,7 +6,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use cook_contracts::{
-    CapturedUnit, DepKind, WorkPayload, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
+    CapturedStream, CapturedUnit, CommandFailure, DepKind, WorkPayload,
+    REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
 };
 
 use crate::{RecipeKind, SharedBodySlot};
@@ -813,98 +814,11 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
     None
 }
 
-/// Maximum bytes per captured stream included in a COOK_CMD_FAILED error
-/// message. Keep in sync with cook-luaotp's `COOK_CMD_FAIL_STREAM_CAP`.
-const COOK_CMD_FAIL_STREAM_CAP: usize = 64 * 1024;
-
-/// How much of the cap is kept from the FRONT; the rest is kept from the END.
-/// Keep in sync with cook-luaotp's `COOK_CMD_FAIL_STREAM_HEAD` (COOK-351) — a
-/// test runner prints its failure summary last, so head-only truncation
-/// discards exactly the part a reader needs.
-const COOK_CMD_FAIL_STREAM_HEAD: usize = 16 * 1024;
-
-fn line_start_at_or_before(stream: &[u8], at: usize) -> usize {
-    match stream[..at.min(stream.len())].iter().rposition(|b| *b == b'\n') {
-        Some(nl) => nl + 1,
-        None => 0,
-    }
-}
-
-fn line_start_at_or_after(stream: &[u8], at: usize) -> usize {
-    match stream[at.min(stream.len())..].iter().position(|b| *b == b'\n') {
-        Some(off) => at + off + 1,
-        None => stream.len(),
-    }
-}
-
-fn truncate_captured_stream(stream: &[u8]) -> String {
-    if stream.is_empty() {
-        return String::new();
-    }
-    if stream.len() <= COOK_CMD_FAIL_STREAM_CAP {
-        return String::from_utf8_lossy(stream).into_owned();
-    }
-
-    let tail_budget = COOK_CMD_FAIL_STREAM_CAP - COOK_CMD_FAIL_STREAM_HEAD;
-    let flat_head_end = COOK_CMD_FAIL_STREAM_HEAD;
-    let flat_tail_start = stream.len() - tail_budget;
-
-    // Snap to line boundaries only when it leaves both regions non-empty; a
-    // stream with no newline in a region would otherwise collapse it away.
-    let snapped_head = line_start_at_or_before(stream, flat_head_end);
-    let head_end = if snapped_head > 0 { snapped_head } else { flat_head_end };
-
-    let snapped_tail = line_start_at_or_after(stream, flat_tail_start);
-    let tail_start = if snapped_tail > head_end && snapped_tail < stream.len() {
-        snapped_tail
-    } else {
-        flat_tail_start.max(head_end)
-    };
-
-    let mut out = String::from_utf8_lossy(&stream[..head_end]).into_owned();
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str(&format!(
-        "... ({} bytes elided; showing the first {} and last {} bytes) ...\n",
-        tail_start - head_end,
-        head_end,
-        stream.len() - tail_start
-    ));
-    out.push_str(&String::from_utf8_lossy(&stream[tail_start..]));
-    out
-}
-
-/// Build the canonical COOK_CMD_FAILED error string with captured streams
-/// inlined. Mirrors the helper in cook-luaotp's pool.rs; duplicated here
-/// to avoid creating a cross-crate dep edge for a 30-line formatter. The
-/// first line preserves the legacy `COOK_CMD_FAILED:<line>:<code>:<cmd>`
-/// shape so the parser at `cook-cli/src/pipeline.rs:348` continues to
-/// extract line/code while flowing the trailing captured streams through
-/// to the user.
-fn format_cmd_failed(line: usize, code: i32, cmd: &str, stdout: &[u8], stderr: &[u8]) -> String {
-    let mut msg = format!("COOK_CMD_FAILED:{line}:{code}:{cmd}");
-    let stdout_str = truncate_captured_stream(stdout);
-    if !stdout_str.is_empty() {
-        msg.push_str("\n--- stdout ---\n");
-        msg.push_str(&stdout_str);
-        if !msg.ends_with('\n') {
-            msg.push('\n');
-        }
-    }
-    let stderr_str = truncate_captured_stream(stderr);
-    if !stderr_str.is_empty() {
-        msg.push_str("--- stderr ---\n");
-        msg.push_str(&stderr_str);
-    }
-    msg
-}
-
 fn run_shell_command(
     cmd: &str,
     wd: &std::path::Path,
     env: &HashMap<String, String>,
-    _line: usize,
+    line: usize,
     _recipe_name: &str,
 ) -> mlua::Result<String> {
     let mut child_env: HashMap<String, String> = std::env::vars().collect();
@@ -922,13 +836,14 @@ fn run_shell_command(
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(1);
-        return Err(mlua::Error::runtime(format_cmd_failed(
-            _line,
+        return Err(mlua::Error::runtime(CommandFailure::new(
+            line,
             code,
             cmd,
-            &output.stdout,
-            &output.stderr,
-        )));
+            CapturedStream::from_bytes(&output.stdout),
+            CapturedStream::from_bytes(&output.stderr),
+        )
+        .to_wire()));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -938,3 +853,7 @@ fn run_shell_command(
 #[cfg(test)]
 #[path = "tests/display_token_tests.rs"]
 mod display_token_tests;
+
+#[cfg(test)]
+#[path = "tests/capture_tests.rs"]
+mod capture_tests;

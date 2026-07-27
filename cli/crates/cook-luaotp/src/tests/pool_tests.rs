@@ -162,10 +162,51 @@ fn test_pool_reports_shell_failure() {
     assert!(!result.success);
     assert_eq!(result.id, 42);
     let err = result.error.as_ref().expect("expected error message");
-    assert!(
-        err.contains("COOK_CMD_FAILED:7:1:false"),
-        "unexpected error format: {err}"
-    );
+    let failure =
+        cook_contracts::CommandFailure::from_wire(err).expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 7);
+    assert_eq!(failure.exit_code(), 1);
+    assert_eq!(failure.command(), "false");
+
+    pool.shutdown();
+}
+
+#[test]
+fn worker_command_failure_uses_shared_json_contract() {
+    let (pool, rx, dir) = make_pool(1);
+    let command = "printf 'out:key\\n'; printf 'err \"quoted\"\\n' >&2\nexit 7";
+
+    pool.submit(WorkItem {
+        process_env_vars: HashMap::new(),
+        id: 43,
+        payload: WorkPayload::Shell {
+            cmd: command.to_string(),
+            line: 23,
+        },
+        recipe_name: "json_failure".to_string(),
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
+
+    let result = rx.recv().unwrap();
+    let wire = result.error.expect("expected command failure");
+    let failure =
+        cook_contracts::CommandFailure::from_wire(&wire).expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 23);
+    assert_eq!(failure.exit_code(), 7);
+    assert_eq!(failure.command(), command);
+    assert_eq!(failure.stdout().as_str(), "out:key\n");
+    assert_eq!(failure.stderr().as_str(), "err \"quoted\"\n");
+    let expected = cook_contracts::CommandFailure::new(
+        23,
+        7,
+        command,
+        cook_contracts::CapturedStream::from_bytes(b"out:key\n"),
+        cook_contracts::CapturedStream::from_bytes(b"err \"quoted\"\n"),
+    )
+    .to_wire();
+    assert_eq!(wire, expected);
 
     pool.shutdown();
 }
@@ -259,7 +300,15 @@ fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_co
     let result = run_lua_chunk_in_worker(r#"error("kaboom")"#);
     assert!(!result.success, "expected error() to fail the chunk");
     let err = result.error.as_deref().unwrap_or("");
+    let expected = format!(
+        "[rec] {}",
+        cook_contracts::lua_error::sanitize(
+            "lua error: runtime error: Cookfile:1: kaboom\nstack traceback:\n\t[C]: in ?",
+            false
+        )
+    );
     assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+    assert_eq!(err, expected, "worker and shared Lua sanitation must agree");
     assert!(
         !err.contains("stack traceback"),
         "error must not contain a raw Lua traceback by default; got: {err}"
@@ -269,7 +318,7 @@ fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_co
         "error must not contain the raw mlua wrapper prefixes; got: {err}"
     );
 
-    // SAFETY (test-only): COOK_BACKTRACE is read by `sanitize_lua_error`
+    // SAFETY (test-only): COOK_BACKTRACE is read when constructing the error
     // at error-construction time inside the worker thread spawned by
     // `run_lua_chunk_in_worker`, which we join on before removing the
     // var below, so there is no cross-thread race within this test.
@@ -517,106 +566,6 @@ fn test_output_carries_exit_code() {
         exit_code: Some(7),
     };
     assert_eq!(to.exit_code, Some(7));
-}
-
-// SHI-188: format_cmd_failed embeds captured stdout/stderr.
-#[test]
-fn format_cmd_failed_includes_captured_streams() {
-    let msg = format_cmd_failed(
-        42,
-        1,
-        "cc bad.c",
-        b"compiling bad.c\n",
-        b"bad.c:1: error: undeclared identifier\n",
-    );
-    // Legacy prefix preserved so the pipeline.rs parser still extracts
-    // line/code.
-    assert!(
-        msg.starts_with("COOK_CMD_FAILED:42:1:cc bad.c"),
-        "missing legacy prefix: {msg}"
-    );
-    // Both captured streams flow through.
-    assert!(msg.contains("--- stdout ---\ncompiling bad.c"), "stdout missing: {msg}");
-    assert!(
-        msg.contains("--- stderr ---\nbad.c:1: error: undeclared identifier"),
-            "stderr missing: {msg}"
-    );
-}
-
-#[test]
-fn format_cmd_failed_omits_empty_stream_sections() {
-    let msg = format_cmd_failed(0, 2, "false", b"", b"");
-    assert_eq!(msg, "COOK_CMD_FAILED:0:2:false");
-}
-
-#[test]
-fn format_cmd_failed_truncates_huge_stream() {
-    let huge = vec![b'.'; COOK_CMD_FAIL_STREAM_CAP * 2];
-    let msg = format_cmd_failed(0, 1, "noisy", &huge, b"");
-    assert!(msg.contains("... ("), "expected elision marker: {}", &msg[..200]);
-    assert!(
-        msg.contains("bytes elided"),
-        "expected 'bytes elided' marker: {}",
-        &msg[..200]
-    );
-    // Cap plus a small fixed overhead — well under twice the cap.
-    assert!(msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024);
-}
-
-/// COOK-351: the tail of a captured stream is where a test runner prints its
-/// failure summary, so it must survive the cap. Head-only truncation recorded
-/// 65,775 bytes of passing test names and none of the failures.
-#[test]
-fn format_cmd_failed_keeps_the_tail_of_a_huge_stream() {
-    let mut huge: Vec<u8> = Vec::new();
-    huge.extend_from_slice(b"BANNER: cargo test starting\n");
-    for i in 0..200_000 {
-        huge.extend_from_slice(format!("test filler_{i} ... ok\n").as_bytes());
-    }
-    huge.extend_from_slice(b"FAILURE SUMMARY: 3 tests failed\n");
-
-    let msg = format_cmd_failed(0, 1, "cargo test", &huge, b"");
-
-    assert!(
-        msg.contains("FAILURE SUMMARY: 3 tests failed"),
-        "the tail — where the summary lives — was discarded"
-    );
-    assert!(
-        msg.contains("BANNER: cargo test starting"),
-        "the head — which says what was running — was discarded"
-    );
-    assert!(
-        msg.contains("bytes elided"),
-        "expected an explicit elision marker naming what was dropped"
-    );
-    assert!(
-        msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024,
-        "elided message must stay within the cap"
-    );
-}
-
-/// A stream just under the cap is passed through whole, with no marker.
-#[test]
-fn format_cmd_failed_passes_through_a_stream_within_the_cap() {
-    let small = vec![b'x'; COOK_CMD_FAIL_STREAM_CAP - 16];
-    let msg = format_cmd_failed(0, 1, "quiet", &small, b"");
-    assert!(!msg.contains("elided"), "under-cap stream must not be elided");
-}
-
-/// A stream with no newlines at all cannot snap to line boundaries; the flat
-/// byte-split fallback must still produce a head, a marker and a tail, and must
-/// never emit an overlapping (duplicated) middle.
-#[test]
-fn format_cmd_failed_handles_a_stream_with_no_newlines() {
-    let mut huge = vec![b'a'; COOK_CMD_FAIL_STREAM_CAP];
-    huge.extend_from_slice(&vec![b'z'; COOK_CMD_FAIL_STREAM_CAP]);
-    let msg = format_cmd_failed(0, 1, "oneline", &huge, b"");
-    assert!(msg.contains("bytes elided"), "expected elision marker");
-    assert!(msg.contains('z'), "tail bytes must survive");
-    assert!(
-        msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024,
-        "fallback must respect the cap"
-    );
 }
 
 // -----------------------------------------------------------------

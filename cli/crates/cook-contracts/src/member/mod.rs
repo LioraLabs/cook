@@ -8,7 +8,7 @@
 //!
 //! Per §8.3 the rendering is **compact key-sorted JSON for a record** (or any
 //! table) and **the scalar's bare string form otherwise** (no surrounding JSON
-//! quotes). Key-sorting goes through [`crate::probe_value`]'s canonicaliser so
+//! quotes). Key-sorting goes through [`crate::probe::value`]'s canonicaliser so
 //! a record's rendering is independent of field insertion order (and of
 //! serde_json's `preserve_order` feature).
 
@@ -24,8 +24,9 @@
 pub fn member_to_string(json: &serde_json::Value) -> String {
     match json {
         serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(&crate::probe_value::canonical_value(other))
-            .unwrap_or_default(),
+        other => {
+            serde_json::to_string(&crate::probe::value::canonical_value(other)).unwrap_or_default()
+        }
     }
 }
 

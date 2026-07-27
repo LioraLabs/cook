@@ -13,6 +13,10 @@ fn strips_traceback_and_wrappers() {
 fn preserves_recipe_tag() {
     let raw = "[boom] lua error: runtime error: Cookfile:2: kaboom\nstack traceback:\n\t[C]: in ?";
     assert_eq!(sanitize_error(raw, false), "[boom] Cookfile:2: kaboom");
+    assert_eq!(
+        sanitize_error(raw, false),
+        cook_contracts::lua_error::sanitize(raw, false)
+    );
 }
 
 #[test]

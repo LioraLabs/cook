@@ -1,8 +1,13 @@
-use super::*;
+use cook_contracts::*;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[test]
 fn work_payload_shell_construction() {
-    let p = WorkPayload::Shell { cmd: "gcc -c foo.c".into(), line: 1 };
+    let p = WorkPayload::Shell {
+        cmd: "gcc -c foo.c".into(),
+        line: 1,
+    };
     match &p {
         WorkPayload::Shell { cmd, line } => {
             assert_eq!(cmd, "gcc -c foo.c");
@@ -14,7 +19,10 @@ fn work_payload_shell_construction() {
 
 #[test]
 fn shell_display_name_strips_set_e_and_is_single_line() {
-    let p = WorkPayload::Shell { cmd: "set -e\nwc -w < a.txt > b.count".into(), line: 1 };
+    let p = WorkPayload::Shell {
+        cmd: "set -e\nwc -w < a.txt > b.count".into(),
+        line: 1,
+    };
     let d = p.display_name();
     assert!(!d.contains("set -e"), "got: {d}");
     assert!(!d.contains('\n'), "got: {d}");
@@ -25,15 +33,31 @@ fn shell_display_name_strips_set_e_and_is_single_line() {
 fn shell_display_name_degenerate_body_is_never_blank() {
     // A body that is nothing but the `set -e` preamble must still yield a
     // non-blank label (inline renderer surfaces this string directly).
-    let p = WorkPayload::Shell { cmd: "set -e".into(), line: 1 };
-    assert!(!p.display_name().is_empty(), "blank label for set -e-only body");
-    let empty = WorkPayload::Shell { cmd: String::new(), line: 1 };
-    assert!(!empty.display_name().is_empty(), "blank label for empty body");
+    let p = WorkPayload::Shell {
+        cmd: "set -e".into(),
+        line: 1,
+    };
+    assert!(
+        !p.display_name().is_empty(),
+        "blank label for set -e-only body"
+    );
+    let empty = WorkPayload::Shell {
+        cmd: String::new(),
+        line: 1,
+    };
+    assert!(
+        !empty.display_name().is_empty(),
+        "blank label for empty body"
+    );
 }
 
 #[test]
 fn work_payload_interactive_construction() {
-    let p = WorkPayload::Interactive { cmd: "docker run -it ubuntu".into(), line: 5, is_chore: false };
+    let p = WorkPayload::Interactive {
+        cmd: "docker run -it ubuntu".into(),
+        line: 5,
+        is_chore: false,
+    };
     assert!(matches!(p, WorkPayload::Interactive { line: 5, .. }));
 }
 
@@ -44,14 +68,23 @@ fn interactive_payload_carries_is_chore_flag() {
         line: 5,
         is_chore: true,
     };
-    assert!(matches!(chore_unit, WorkPayload::Interactive { is_chore: true, .. }));
+    assert!(matches!(
+        chore_unit,
+        WorkPayload::Interactive { is_chore: true, .. }
+    ));
 
     let inline_interactive = WorkPayload::Interactive {
         cmd: "build/bin/lua -e 'print(1)'".into(),
         line: 12,
         is_chore: false,
     };
-    assert!(matches!(inline_interactive, WorkPayload::Interactive { is_chore: false, .. }));
+    assert!(matches!(
+        inline_interactive,
+        WorkPayload::Interactive {
+            is_chore: false,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -66,7 +99,15 @@ fn work_payload_lua_chunk_construction() {
         line: 1,
     };
     match &p {
-        WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore, line: _ } => {
+        WorkPayload::LuaChunk {
+            code,
+            inputs,
+            outputs,
+            ingredient_groups,
+            step_kind,
+            is_chore,
+            line: _,
+        } => {
             assert_eq!(*step_kind, StepKind::Cook);
             assert_eq!(code, "print('hi')");
             assert_eq!(inputs, &vec!["in.txt".to_string()]);
@@ -90,7 +131,10 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
         is_chore: true,
         line: 1,
     };
-    assert!(matches!(chore_unit, WorkPayload::LuaChunk { is_chore: true, .. }));
+    assert!(matches!(
+        chore_unit,
+        WorkPayload::LuaChunk { is_chore: true, .. }
+    ));
 }
 
 #[test]
@@ -108,7 +152,14 @@ fn work_payload_test_construction() {
         lua_code: None,
         input_paths: vec![],
     };
-    assert!(matches!(p, WorkPayload::Test { timeout: 30, should_fail: false, .. }));
+    assert!(matches!(
+        p,
+        WorkPayload::Test {
+            timeout: 30,
+            should_fail: false,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -183,7 +234,7 @@ fn cache_meta_construction_with_discovered_inputs() {
 fn cache_meta_default_discovered_inputs_is_none() {
     let m = CacheMeta {
         recipe_name: "r".into(),
-            project_id: "p".into(),
+        project_id: "p".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
         input_paths: vec![],
@@ -226,9 +277,9 @@ fn cache_meta_carries_seal_keys() {
 fn cache_meta_carries_record_flag() {
     let mut meta = CacheMeta {
         recipe_name: "r".into(),
-            project_id: String::new(),
-            cookfile_path: String::new(),
-            cache_key: "k".into(),
+        project_id: String::new(),
+        cookfile_path: String::new(),
+        cache_key: "k".into(),
         input_paths: vec![],
         output_paths: vec!["out".into()],
         command_hash: 0,
@@ -247,7 +298,10 @@ fn cache_meta_carries_record_flag() {
 #[test]
 fn captured_unit_construction() {
     let unit = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "echo hi".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "echo hi".into(),
+            line: 1,
+        },
         cache_meta: None,
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -277,12 +331,15 @@ fn recipe_units_construction() {
     env.insert("CC".into(), "gcc".into());
     env.insert("AR".into(), "ar".into());
 
-        let recipe = RecipeUnits {
-            recipe_name: "build".into(),
+    let recipe = RecipeUnits {
+        recipe_name: "build".into(),
         deps: vec!["fetch".into(), "generate".into()],
         units: vec![
             CapturedUnit {
-                payload: WorkPayload::Shell { cmd: "gcc -c a.c".into(), line: 1 },
+                payload: WorkPayload::Shell {
+                    cmd: "gcc -c a.c".into(),
+                    line: 1,
+                },
                 cache_meta: None,
                 dep_kind: DepKind::StepGroup(0),
                 probes: vec![],
@@ -291,7 +348,10 @@ fn recipe_units_construction() {
                 output_paths: Vec::new(),
             },
             CapturedUnit {
-                payload: WorkPayload::Shell { cmd: "gcc -c b.c".into(), line: 2 },
+                payload: WorkPayload::Shell {
+                    cmd: "gcc -c b.c".into(),
+                    line: 2,
+                },
                 cache_meta: None,
                 dep_kind: DepKind::StepGroup(0),
                 probes: vec![],
@@ -337,7 +397,10 @@ fn recipe_units_with_terminal_outputs() {
 
 #[test]
 fn work_payload_clone() {
-    let original = WorkPayload::Shell { cmd: "make".into(), line: 1 };
+    let original = WorkPayload::Shell {
+        cmd: "make".into(),
+        line: 1,
+    };
     let cloned = original.clone();
     assert!(matches!(cloned, WorkPayload::Shell { line: 1, .. }));
 }
@@ -362,18 +425,18 @@ fn probe_unit_round_trips_through_serde() {
             tools: vec!["pkg-config".into()],
             files: vec![],
             requires: vec!["cc:compiler".into()],
-            },
-        };
-        let s = serde_json::to_string(&p).unwrap();
-        let r: ProbeUnit = serde_json::from_str(&s).unwrap();
-        assert_eq!(r.key, "cc:zlib");
+        },
+    };
+    let s = serde_json::to_string(&p).unwrap();
+    let r: ProbeUnit = serde_json::from_str(&s).unwrap();
+    assert_eq!(r.key, "cc:zlib");
     assert_eq!(r.inputs.requires, vec!["cc:compiler"]);
-    }
+}
 
-    #[test]
-    fn work_payload_probe_variant_constructs() {
-        let p = WorkPayload::Probe {
-            key: "cc:zlib".into(),
+#[test]
+fn work_payload_probe_variant_constructs() {
+    let p = WorkPayload::Probe {
+        key: "cc:zlib".into(),
         produce: "return 42".into(),
         line: 1,
     };
@@ -389,7 +452,10 @@ fn probe_unit_round_trips_through_serde() {
 
 #[test]
 fn captured_unit_probes_defaults_to_empty() {
-    let p = WorkPayload::Shell { cmd: "echo hi".into(), line: 1 };
+    let p = WorkPayload::Shell {
+        cmd: "echo hi".into(),
+        line: 1,
+    };
     let cu = CapturedUnit {
         payload: p,
         cache_meta: None,
@@ -427,7 +493,10 @@ fn recipe_units_probes_defaults_to_empty() {
 #[test]
 fn captured_unit_with_cache() {
     let unit = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "gcc -o app main.c".into(), line: 5 },
+        payload: WorkPayload::Shell {
+            cmd: "gcc -o app main.c".into(),
+            line: 5,
+        },
         cache_meta: Some(CacheMeta {
             recipe_name: "compile".into(),
             project_id: String::new(),
@@ -440,7 +509,7 @@ fn captured_unit_with_cache() {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-        sharing: Default::default(),
+            sharing: Default::default(),
             record: false,
         }),
         dep_kind: DepKind::StepGroup(0),

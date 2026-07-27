@@ -171,8 +171,20 @@ fn parse_search_output_extracts_name_version() {
 
 #[test]
 fn truncate_stream_caps_long_output() {
-    let big = vec![b'A'; STREAM_CAP_BYTES + 100];
-    let truncated = truncate_stream(&big);
-    assert!(truncated.contains("100 more bytes"));
+    let mut big = vec![b'A'; 64 * 1024 + 100];
+    big.extend_from_slice(b"\ntail diagnostic");
+    let truncated = cook_contracts::CapturedStream::from_bytes(&big);
+    let truncated = truncated.as_str();
+    assert!(truncated.contains("bytes elided"));
+    assert!(truncated.contains("tail diagnostic"));
     assert!(truncated.len() < big.len());
+}
+
+#[test]
+fn truncate_stream_is_utf8_safe_across_the_old_byte_boundary() {
+    let mut big = vec![b'A'; 64 * 1024 - 1];
+    big.extend_from_slice("é".as_bytes());
+    big.extend(std::iter::repeat_n(b'Z', 100));
+    let truncated = cook_contracts::CapturedStream::from_bytes(&big);
+    assert!(truncated.as_str().contains("ZZZZ"));
 }

@@ -1,4 +1,4 @@
-use super::*;
+use super::member_to_string;
 
 #[test]
 fn renders_record_key_sorted_compact() {

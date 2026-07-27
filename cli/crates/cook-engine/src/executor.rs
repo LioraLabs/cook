@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, TestCache, TestCacheEntry, TestCacheOutcome, ThreadSafeCacheManager};
-use cook_contracts::WorkPayload;
+use cook_contracts::{CapturedStream, CommandFailure, WorkPayload};
 use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
     artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
@@ -291,10 +291,31 @@ fn run_interactive_on_main(
 
     if !status.success() {
         let code = status.code().unwrap_or(1);
-        return Err(format!("COOK_CMD_FAILED:{}:{}:{}", line, code, cmd));
+        return Err(CommandFailure::new(
+            line,
+            code,
+            cmd,
+            CapturedStream::from_bytes(&[]),
+            CapturedStream::from_bytes(&[]),
+        )
+        .to_wire());
     }
 
     Ok(())
+}
+
+fn progress_error(error: &str) -> String {
+    CommandFailure::from_wire(error).map_or_else(
+        || error.to_owned(),
+        |failure| {
+            format!(
+                "command at line {} exited with code {}: {}",
+                failure.line(),
+                failure.exit_code(),
+                failure.command()
+            )
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,7 +1472,7 @@ pub fn execute_dag(
                                         .project_root
                                         .join(".cook")
                                         .join("probes");
-                                    if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                                    if let Err(e) = cook_probe::store::materialize_value(
                                         &probes_dir,
                                         &probe_key,
                                         &bytes,
@@ -1563,7 +1584,7 @@ pub fn execute_dag(
                                     .project_root
                                     .join(".cook")
                                     .join("probes");
-                                if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                                if let Err(e) = cook_probe::store::materialize_value(
                                     &probes_dir,
                                     &probe_key,
                                     &bytes,
@@ -2300,7 +2321,7 @@ pub fn execute_dag(
                     }
 
                     let err_msg = last_err.unwrap_or_else(|| "unknown".into());
-                    let summary = format!("step {}/{}: {}", k, n, err_msg);
+                    let summary = format!("step {}/{}: {}", k, n, progress_error(&err_msg));
                     emit(
                         &event_tx,
                         EngineEvent::NodeFailed {
@@ -2311,7 +2332,11 @@ pub fn execute_dag(
                             error: summary.clone(),
                         },
                     );
-                    failures.push((window[k - 1], chore_recipe.clone(), summary));
+                    failures.push((
+                        window[k - 1],
+                        chore_recipe.clone(),
+                        format!("step {}/{}: {}", k, n, err_msg),
+                    ));
 
                     // Cascade cancellation through any dependents of the
                     // failing step and the skipped tail.
@@ -2483,7 +2508,7 @@ pub fn execute_dag(
                                 unit: id,
                                 node_name: node_name.clone(),
                                 elapsed: interactive_elapsed,
-                                error: err_msg.clone(),
+                                error: progress_error(&err_msg),
                             },
                         );
                         failures.push((id, recipe_name.clone(), err_msg));
@@ -2530,7 +2555,7 @@ pub fn execute_dag(
         if let Some(ref probe_out) = result.probe_output {
             if result.success {
                 let probes_dir = cache_ctx.project_root.join(".cook").join("probes");
-                if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                if let Err(e) = cook_probe::store::materialize_value(
                     &probes_dir,
                     &probe_out.key,
                     &probe_out.bytes,
@@ -2917,7 +2942,7 @@ pub fn execute_dag(
                         // around execution (queue wait excluded) — see
                         // `WorkResult::duration` in cook-luaotp/src/pool.rs.
                         elapsed: result.duration,
-                        error: err_msg.clone(),
+                        error: progress_error(&err_msg),
                     },
                 );
                 finish_recipe_node(&mut recipe_trackers, &recipe_name, false, false, &event_tx);
@@ -2975,7 +3000,7 @@ pub fn execute_dag(
                         // around execution (queue wait excluded) — see
                         // `WorkResult::duration` in cook-luaotp/src/pool.rs.
                         elapsed: result.duration,
-                        error: err_msg.clone(),
+                        error: progress_error(&err_msg),
                     },
                 );
 

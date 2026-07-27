@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/cook-contracts",
+    "crates/cook-probe",
     "crates/cook-lang",
     "crates/cook-cookfile",
     "crates/cook-progress",

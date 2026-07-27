@@ -12,9 +12,6 @@
 //! probe values by `Value` equality before encoding.
 
 use serde_json::Value as JsonValue;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The reserved `produce` string of a `files { … }` probe (CS-0148). Not
 /// executable Lua (a bare `@` is a syntax error), so no hand-written produce
@@ -140,33 +137,6 @@ pub fn probe_file_name(key: &str) -> String {
     out
 }
 
-/// Atomically materialise canonical probe bytes at `<dir>/<probe_file_name(key)>`
-/// (write to a temp file in the same dir, then rename). Creates `dir` if absent.
-///
-/// The temp file name includes both the process id and a per-process
-/// monotonic counter so that concurrent threads writing the same key do not
-/// share a tmp path and tear each other's writes.
-pub fn write_probe_file(
-    dir: &std::path::Path,
-    key: &str,
-    bytes: &[u8],
-) -> std::io::Result<std::path::PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let name = probe_file_name(key);
-    let final_path = dir.join(&name);
-    let seq = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = dir.join(format!(".{name}.tmp-{}-{seq}", std::process::id()));
-    if let Err(e) = std::fs::write(&tmp_path, bytes) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e);
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, &final_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e);
-    }
-    Ok(final_path)
-}
-
 #[cfg(test)]
-#[path = "tests/probe_value_tests.rs"]
+#[path = "tests/value_tests.rs"]
 mod tests;

@@ -2125,7 +2125,7 @@ fn evaluate_prepass_probe(
         .unwrap_or_else(|| working_dir.to_path_buf())
         .join(".cook")
         .join("probes");
-    if let Err(e) = cook_contracts::probe_value::write_probe_file(&probes_dir, key, &bytes) {
+    if let Err(e) = cook_probe::store::materialize_value(&probes_dir, key, &bytes) {
         eprintln!(
             "cook: warning: probe '{key}': failed to write {}: {e}",
             probes_dir.display()

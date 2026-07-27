@@ -34,6 +34,22 @@ if [ -s /tmp/.check-test-layout.$$ ]; then
 fi
 rm -f /tmp/.check-test-layout.$$
 
+# Rule 1b --- test functions stranded outside a tests/ directory.
+#
+# Rule 1 catches inline `mod` bodies, but not an external test module placed
+# beside production code. The convention's useful invariant is stronger: one
+# `**/tests/**` glob excludes every test body.
+for f in $(find crates/*/src -name '*.rs' -not -path '*/tests/*' | sort); do
+    if grep -nE '^[[:space:]]*#\[(.*::)?test([^]]*)?\]' "$f" \
+        >/tmp/.check-test-functions.$$ 2>/dev/null; then
+        while IFS=: read -r line _; do
+            echo "$f:$line: test function outside a tests/ directory"
+        done </tmp/.check-test-functions.$$
+        status=1
+    fi
+done
+rm -f /tmp/.check-test-functions.$$
+
 # Rule 2 --- dead naming affixes on integration tests.
 for f in $(find crates/*/tests -maxdepth 1 -name '*.rs' 2>/dev/null | sort); do
     b=$(basename "$f")

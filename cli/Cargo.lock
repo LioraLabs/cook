@@ -396,6 +396,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "clap_complete",
+ "cook-contracts",
  "cook-engine",
  "cook-graph",
  "cook-lang",
@@ -449,6 +450,7 @@ dependencies = [
  "cook-lang",
  "cook-luagen",
  "cook-luaotp",
+ "cook-probe",
  "cook-register",
  "dotenvy",
  "filetime",
@@ -548,8 +550,17 @@ dependencies = [
  "cook-contracts",
  "cook-fingerprint",
  "cook-lua-stdlib",
+ "cook-probe",
  "mlua",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "cook-probe"
+version = "0.10.1"
+dependencies = [
+ "cook-contracts",
  "tempfile",
 ]
 
@@ -578,6 +589,7 @@ dependencies = [
  "cook-lang",
  "cook-lua-stdlib",
  "cook-luagen",
+ "cook-probe",
  "glob",
  "mlua",
  "serde",

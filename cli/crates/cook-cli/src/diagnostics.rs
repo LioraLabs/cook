@@ -1,6 +1,4 @@
 //! Presentation-layer cleanup for user-facing diagnostics.
-//! A twin of the wrapper-stripping/traceback truncation lives in
-//! cook-luaotp/src/pool.rs for execute-phase WorkResult errors — keep in sync.
 
 /// Whether `-v/--verbose` (or `COOK_BACKTRACE=1` set directly) requests that
 /// raw Lua stack tracebacks be preserved in error output.
@@ -12,23 +10,7 @@ pub fn backtrace_enabled() -> bool {
 /// traceback (unless `keep_traceback`) and drops the "lua error: " /
 /// "runtime error: " wrapper prefixes, preserving a leading "[recipe] " tag.
 pub fn sanitize_error(msg: &str, keep_traceback: bool) -> String {
-    let mut m = msg.to_string();
-    if !keep_traceback {
-        if let Some(pos) = m.find("\nstack traceback:") {
-            m.truncate(pos);
-        }
-    }
-    let (tag, rest): (&str, &str) = if m.starts_with('[') {
-        match m.find("] ") {
-            Some(i) => (&m[..i + 2], &m[i + 2..]),
-            None => ("", m.as_str()),
-        }
-    } else {
-        ("", m.as_str())
-    };
-    let rest = rest.strip_prefix("lua error: ").unwrap_or(rest);
-    let rest = rest.strip_prefix("runtime error: ").unwrap_or(rest);
-    format!("{tag}{rest}")
+    cook_contracts::lua_error::sanitize(msg, keep_traceback)
 }
 
 /// Best-effort source location extraction from a rendered diagnostic.

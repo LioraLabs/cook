@@ -15,13 +15,9 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use anyhow::{anyhow, Context, Result};
+use cook_contracts::CapturedStream;
 
 use crate::modules::lockfile::LockedModule;
-
-// Per-stream cap matching SHI-188's `cook.exec` failure truncation.
-// Keep in sync with COOK_CMD_FAIL_STREAM_CAP in cli/crates/cook-luaotp/src/pool.rs
-// and cli/crates/cook-register/src/capture.rs.
-const STREAM_CAP_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RocksDriver {
@@ -167,26 +163,13 @@ impl RocksDriver {
                 "luarocks failed: {} {}\n--- stdout ---\n{}\n--- stderr ---\n{}\n--- exit {} ---",
                 bin.display(),
                 argv_quoted,
-                truncate_stream(&out.stdout),
-                truncate_stream(&out.stderr),
+                CapturedStream::from_bytes(&out.stdout).as_str(),
+                CapturedStream::from_bytes(&out.stderr).as_str(),
                 out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
             ));
         }
         Ok(out)
     }
-}
-
-fn truncate_stream(bytes: &[u8]) -> String {
-    let s = String::from_utf8_lossy(bytes);
-    if s.len() <= STREAM_CAP_BYTES {
-        return s.into_owned();
-    }
-    let truncated = &s[..STREAM_CAP_BYTES];
-    format!(
-        "{}... ({} more bytes)",
-        truncated,
-        s.len() - STREAM_CAP_BYTES
-    )
 }
 
 fn parse_list_output(stdout: &[u8]) -> Vec<InstalledRock> {
