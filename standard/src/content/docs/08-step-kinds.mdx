@@ -416,7 +416,11 @@ The same two outputs are produced by a Lua block. The `inputs` and `outputs` nam
 The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic, and under CS-0022 with a bare-string-removal diagnostic. Since CS-0099 the `using` token itself is rejected at this position with the migration diagnostic of §{grammar-appendix.steps} ("`using` is rejected"); conformance fixture `cs0099-using-keyword-rejected` pins it.
 
 ## 8.6. `test` step [#steps.test]
-A `test_step` (§{grammar-appendix.steps}, `test_step`) registers a work unit that reports pass/fail rather than producing artifacts. It has a body — either a `shell_block` or an `exec_lua_block` (§{grammar-appendix.steps}) — and admits no leading `STRING`. The body follows the keyword directly, and MAY be followed by a `test_mods` tail (§{steps.cook-disposition.test-tail}).
+A `test_step` (§{grammar-appendix.steps}, `test_step`) registers a work unit that is **reported as a test**. It has a body — either a `shell_block` or an `exec_lua_block` (§{grammar-appendix.steps}) — and admits no leading `STRING`. The body follows the keyword directly, and MAY be followed by a `test_mods` tail (§{steps.cook-disposition.test-tail}).
+
+**What makes a unit a test (CS-0186).** The kind selects the **reporter**, and nothing else: a test unit is a target of the implementation's test runner, contributes to its pass/fail tally and to the process exit status of §{exec.exit-status}, and is named in its report. That is the whole of the distinction. In every other respect it is an ordinary work unit — registered by the one registration function (§{lua.add-unit}, CS-0185), scheduled by the same graph, and cached by the same rules under the same key (§{exec.cache.single-key}).
+
+This section formerly drew the distinction the other way round, as a unit that "reports pass/fail rather than producing artifacts". The two halves of that are separate claims and only the first is the definition. A test declares no outputs (§{lua.add-unit} requires it), but declaring no outputs is a *consequence* of what a test is for, not the thing that makes it one: it decides that a cache hit replays a verdict instead of restoring bytes (§{exec.cache.effect-kind}), which is a fact about caching that an output-less step kind which is **not** a test would share. Neither property may be inferred from the other, which is what keeps that door open.
 
 ```ebnf
 test_step ::= "test" body test_mods? NEWLINE
