@@ -48,8 +48,8 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 | `lua_block` (`>{ … }`)                       | §{steps.lua} | **execute** | yes — same admitted positions as `lua_line` (CS-0134) |
 | `cook STR >{ … }` (cook-body Lua)   | §{steps.cook-single}, §{steps.cook-multi} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
 | `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
-| `test { … }` (shell block)                   | §{steps.test}  | **execute** | yes — recorded with shell payload via `cook.add_test`, with §{phl.plate-test} substitutions |
-| `test >{ … }` (Lua block)                    | §{steps.test}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_test`, with §{lua.using-block-globals-plate-test} bindings |
+| `test { … }` (shell block)                   | §{steps.test}  | **execute** | yes — recorded with shell payload via `cook.add_unit` (`step_kind = "test"`, CS-0185), with §{phl.plate-test} substitutions |
+| `test >{ … }` (Lua block)                    | §{steps.test}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_unit` (`step_kind = "test"`, CS-0185), with §{lua.using-block-globals-plate-test} bindings |
 
 Three corollaries:
 
