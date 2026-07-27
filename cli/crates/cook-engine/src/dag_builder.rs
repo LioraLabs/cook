@@ -435,7 +435,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             // so pruning them does not desync step-group accounting —
             // step-group bookkeeping below (group_dag_ids, barrier
             // promotion on group boundaries) only fires for the
-            // `DepKind::StepGroup` / `DepKind::TestSibling` variants,
+            // `DepKind::StepGroup` variant,
             // never for probes. A future change that broadens probes'
             // `dep_kind` MUST revisit this skip to keep the accounting
             // consistent.
@@ -460,7 +460,6 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 match &unit.dep_kind {
                     DepKind::Sequential => barrier.clone(),
                     DepKind::StepGroup(_) => barrier.clone(),
-                    DepKind::TestSibling(_) => barrier.clone(),
                     // `DepKind` is `#[non_exhaustive]`; treat any future variant
                     // conservatively as a sequential barrier until the dag-builder
                     // is taught the new semantics.
@@ -593,18 +592,6 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                         if pos + 1 == group_size {
                             // Last member processed: group members become the
                             // new barrier.
-                            barrier = group_dag_ids[gi].clone();
-                        }
-                    }
-                }
-                DepKind::TestSibling(gi) => {
-                    // Same group tracking as StepGroup — but edges will be
-                    // annotated as TestSibling so cancel_subtree skips them.
-                    group_dag_ids.entry(*gi).or_default().push(dag_id);
-
-                    if let Some(&(_, pos)) = unit_group_info.get(&unit_idx) {
-                        let group_size = ru.step_groups[*gi].len();
-                        if pos + 1 == group_size {
                             barrier = group_dag_ids[gi].clone();
                         }
                     }

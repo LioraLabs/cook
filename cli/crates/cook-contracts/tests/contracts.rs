@@ -321,8 +321,6 @@ fn dep_kind_variants() {
     let seq = DepKind::Sequential;
     assert!(matches!(seq, DepKind::Sequential));
 
-    let ts = DepKind::TestSibling(1);
-    assert!(matches!(ts, DepKind::TestSibling(1)));
 }
 
 #[test]

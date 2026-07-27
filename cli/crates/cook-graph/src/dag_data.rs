@@ -391,7 +391,6 @@ fn build_nodes(
             let (dep_kind_str, group_index) = match &unit.dep_kind {
                 DepKind::StepGroup(idx) => ("step_group".to_string(), Some(*idx)),
                 DepKind::Sequential => ("sequential".to_string(), None),
-                DepKind::TestSibling(idx) => ("test_sibling".to_string(), Some(*idx)),
                 // `DepKind` is `#[non_exhaustive]`; surface unknown future
                 // variants to the viewer as a generic label so the UI doesn't
                 // silently drop them.
@@ -589,7 +588,7 @@ fn build_nodes(
                     }
                     barrier = vec![unit_id.clone()];
                 }
-                DepKind::StepGroup(gi) | DepKind::TestSibling(gi) => {
+                DepKind::StepGroup(gi) => {
                     let group = &ru.step_groups[*gi];
                     let is_first = group.first() == Some(&unit_idx);
                     if is_first {
