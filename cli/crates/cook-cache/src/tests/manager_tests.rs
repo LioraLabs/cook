@@ -231,16 +231,23 @@ fn manager_construction_sweeps_superseded_indexes() {
         // Legacy bincode index + torn tmp from an interrupted pre-v4 write.
         std::fs::write(dir.path().join("old_recipe.bin"), b"\x03legacy").expect("bin");
     std::fs::write(dir.path().join("old_recipe.bin.tmp"), b"torn").expect("tmp");
-    // Things the sweep must NOT touch: the live `.idx` index, and subdirs
-    // (the tests/ JSON cache lives under the same root).
+    // Things the sweep must NOT touch: the live `.idx` index, and subdirs —
+    // except `tests/`, the removed test-result store, which it now takes
+    // (CS-0186).
     store::RecipeCache::new().save(dir.path(), "current").expect("save");
     std::fs::create_dir_all(dir.path().join("tests/ab")).expect("mkdir");
-        std::fs::write(dir.path().join("tests/ab/abcd1234.json"), b"{}").expect("json");
+    std::fs::write(dir.path().join("tests/ab/abcd1234.json"), b"{}").expect("json");
+    std::fs::create_dir_all(dir.path().join("cc-state")).expect("mkdir");
+    std::fs::write(dir.path().join("cc-state/probe.json"), b"{}").expect("json");
     let _mgr = ThreadSafeCacheManager::new(dir.path().to_path_buf());
     assert!(!dir.path().join("old_recipe.bin").exists(), ".bin swept");
     assert!(!dir.path().join("old_recipe.bin.tmp").exists(), ".bin.tmp swept");
     assert!(dir.path().join("current.idx").exists(), "live index untouched");
-    assert!(dir.path().join("tests/ab/abcd1234.json").exists(), "test cache untouched");
+    assert!(!dir.path().join("tests").exists(), "removed test-result store swept");
+    assert!(
+        dir.path().join("cc-state/probe.json").exists(),
+        "every other subdirectory untouched"
+    );
 }
 
 #[test]

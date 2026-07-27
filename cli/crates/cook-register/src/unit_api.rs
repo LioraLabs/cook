@@ -725,11 +725,19 @@ pub fn register_unit_api(
                 output_paths.len()
             )));
         }
-        // Test units do not carry cache metadata yet: their results are still
-        // served by the separate test-result store. Unifying the two records
-        // is the next step of COOK-360, and doing it here would put them on
-        // the artifact publish path while that store still answers for them.
-        let cache_enabled = cache_enabled && !is_test;
+        // CS-0186: a test unit carries cache metadata like any other unit.
+        // The gate that stood here — `cache_enabled && !is_test` — kept test
+        // units out of the step index while a separate result store answered
+        // for them. Both halves of that are gone in the same change, because
+        // either alone leaves two stores disagreeing: attaching the metadata
+        // without serving the hits would publish records nothing reads, and
+        // serving them without the metadata has nothing to read.
+        //
+        // What makes this safe is that an empty output list is now a fact with
+        // its own meaning (§17.1.1.1) rather than a synonym for uncacheable:
+        // `cacheability` sends this unit down the ResultOnly arm, which looks
+        // up a verdict instead of artifacts, and the publish path files a
+        // record with no outputs to upload.
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,

@@ -187,8 +187,14 @@ fn sweep_removes_superseded_indexes_only() {
     }
     std::fs::write(d.join("cook_cc.json"), b"{}").expect("write");
     make_populated_cache().save(d, "live").expect("save");
+    // CS-0186: the removed test-result store, which the sweep now takes.
     std::fs::create_dir_all(d.join("tests")).expect("mkdir");
     std::fs::write(d.join("tests").join("a.json"), b"{}").expect("write");
+    // Any OTHER subdirectory is still off limits — that is the invariant the
+    // `tests/` case used to stand for, and it needs its own witness now that
+    // `tests/` has become the exception rather than the example.
+    std::fs::create_dir_all(d.join("cc-state")).expect("mkdir");
+    std::fs::write(d.join("cc-state").join("probe.json"), b"{}").expect("write");
 
     sweep_superseded_indexes(d);
 
@@ -204,8 +210,12 @@ fn sweep_removes_superseded_indexes_only() {
     assert!(d.join("cook_cc.json").is_file(), "module state must survive");
     assert!(d.join("live.idx").is_file(), "the live index must survive");
     assert!(
-        d.join("tests").join("a.json").is_file(),
-        "subdirectories are never touched"
+        !d.join("tests").exists(),
+        "the removed test-result store goes with the records it held (CS-0186)"
+    );
+    assert!(
+        d.join("cc-state").join("probe.json").is_file(),
+        "every other subdirectory is still never touched"
     );
 }
 

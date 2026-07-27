@@ -226,12 +226,21 @@ const INDEX_EXT: &str = ".idx";
 /// directly inside `cache_dir`. There is no migration — the index is
 /// regeneratable, so a superseded file is dead weight, not data.
 ///
-/// Non-recursive on purpose: `.cook/cache/tests/` (the JSON test cache) and
-/// any other subdirectory are never touched. The artifact store lives under
-/// a different root entirely (`~/.cache/cook/...`) and is out of scope.
+/// Non-recursive on purpose, with one exception. Subdirectories are not
+/// walked; the artifact store lives under a different root entirely
+/// (`~/.cache/cook/...`) and is out of scope. The exception is
+/// `.cook/cache/tests/`, the removed test-result store (CS-0186): its entries
+/// are records this build can no longer read, filed under a key nothing
+/// computes, so the whole directory is dead weight and goes in one call.
+/// Cook created it, so Cook removes it rather than leaving a stale tree for an
+/// author to wonder about.
+///
 /// Idempotent and infallible: a missing dir or a failed unlink is ignored
 /// (the next construction retries).
 pub fn sweep_superseded_indexes(cache_dir: &Path) {
+    // CS-0186. Removed by name, never by pattern: this deletes a directory
+    // tree, and the one it may delete is the one Cook wrote itself.
+    let _ = std::fs::remove_dir_all(cache_dir.join("tests"));
     let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
