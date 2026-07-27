@@ -881,6 +881,7 @@ fn cache_meta_for(recipe: &str, outputs: &[&str]) -> cook_contracts::CacheMeta {
         cookfile_path: String::new(),
         cache_key: format!("k_{recipe}"),
         input_paths: vec![],
+        consumes: Vec::new(),
         output_paths: outputs.iter().map(|s| s.to_string()).collect(),
         command_hash: 0,
         env_contribution: 0,

@@ -195,6 +195,58 @@ pub fn is_terminal_output(s: &str) -> bool {
     has_glob_meta(s) || is_dir_output(s)
 }
 
+/// A unit's declared inputs, with any non-literal entry resolved against the
+/// tree, narrowed by an optional `consumes` allowlist (§17.4 rule 1, CS-0186).
+///
+/// **One function, every unit.** Nothing here asks what kind of step produced
+/// the unit. A `cook` unit's inputs are literal paths — `ingredients` resolve
+/// at register phase — so for one of those this returns the declared list
+/// unchanged and costs a metacharacter scan per entry. A unit that declares an
+/// input its producer had not yet written, which is how a `test` unit declares
+/// a consumed output, gets that entry resolved here instead.
+///
+/// Called when the unit is READY, so a declared `dist/**` names the files its
+/// producer has by then written (§18). Terminal entries are normalised exactly
+/// as the producing unit normalises them when capturing the same declaration
+/// (CS-0085): one declaration MUST NOT resolve to two different file sets
+/// depending on which side is looking at it, and a bare trailing `**` silently
+/// resolving to nothing is the under-keying direction.
+///
+/// **Order is preserved and duplicates are dropped.** `check_inputs` compares
+/// the recorded and current lists element-wise, so sorting the result would
+/// read as an input-set change on every unit in the project.
+pub fn resolve_declared_inputs(
+    input_paths: &[String],
+    consumes: &[String],
+    working_dir: &Path,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(input_paths.len());
+    let push = |p: String, out: &mut Vec<String>| {
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    for entry in input_paths {
+        if is_terminal_output(entry) {
+            let pattern = normalize_glob_pattern(entry);
+            for rel in resolve_glob(working_dir, &pattern) {
+                push(rel, &mut out);
+            }
+        } else {
+            push(entry.clone(), &mut out);
+        }
+    }
+    // CS-0175: narrowing errs toward the under-keyed direction, so a filter
+    // matching none of the candidates is inert rather than emptying the set.
+    // `ConsumesFilter::select` holds that rule; a pattern that fails to compile
+    // (rejected at register phase, so unreachable here) keeps the full set for
+    // the same reason.
+    match ConsumesFilter::compile(consumes) {
+        Ok(filter) => filter.select(&out, |p| p.clone()).into_iter().cloned().collect(),
+        Err(_) => out,
+    }
+}
+
 pub fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
     if pattern == "**" {
         std::borrow::Cow::Borrowed("**/*")

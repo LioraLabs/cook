@@ -346,3 +346,129 @@ fn terminal_output_covers_globs_and_dir_outputs() {
     assert!(is_terminal_output("a/**"));        // glob
     assert!(!is_terminal_output("build/app"));  // literal
 }
+
+// ===========================================================================
+// resolve_declared_inputs — one resolution, every unit (§17.4 rule 1, CS-0186)
+//
+// The engine used to reconstruct a test unit's inputs by walking its DAG
+// predecessors, in a function that could only serve units it knew to be tests.
+// WHICH paths a unit declares is now decided by the lowering; this is the only
+// thing left, and it does the same job for a `cook` unit and a `test` unit
+// without being told which it has.
+// ===========================================================================
+
+fn tree(files: &[&str]) -> tempfile::TempDir {
+    let d = tempfile::tempdir().expect("tempdir");
+    for f in files {
+        let p = d.path().join(f);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"x").unwrap();
+    }
+    d
+}
+
+fn resolve(inputs: &[&str], consumes: &[&str], dir: &std::path::Path) -> Vec<String> {
+    let inputs: Vec<String> = inputs.iter().map(|s| s.to_string()).collect();
+    let consumes: Vec<String> = consumes.iter().map(|s| s.to_string()).collect();
+    crate::resolve_declared_inputs(&inputs, &consumes, dir)
+}
+
+/// The overwhelmingly common case, and the one that must not change: a unit
+/// whose inputs are literal paths gets them back verbatim, in declaration
+/// order. `check_inputs` compares recorded against current ELEMENT-WISE, so
+/// reordering here would read as an input-set change on every unit in a
+/// project.
+#[test]
+fn literal_inputs_are_returned_in_declaration_order() {
+    let d = tree(&["b.c", "a.c"]);
+    assert_eq!(resolve(&["b.c", "a.c"], &[], d.path()), vec!["b.c", "a.c"]);
+}
+
+/// A literal input is NOT checked against the filesystem. A declared input that
+/// is missing is a rebuild reason for `check_inputs` to report, not something to
+/// silently drop here — dropping it would shrink the set and hand back a hit.
+#[test]
+fn a_missing_literal_input_is_kept() {
+    let d = tree(&[]);
+    assert_eq!(resolve(&["gone.c"], &[], d.path()), vec!["gone.c"]);
+}
+
+/// The case that made this function necessary: a unit declaring a consumed
+/// output whose producer had not run at registration. By the time the unit is
+/// ready the producer has, and the entry names files.
+#[test]
+fn a_glob_entry_resolves_to_the_files_it_names() {
+    let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
+    assert_eq!(
+        resolve(&["dist/**"], &[], d.path()),
+        vec!["dist/index.mjs", "dist/index.mjs.map"]
+    );
+}
+
+/// CS-0085's normalisation, applied on the reading side exactly as the
+/// producing side applies it when capturing the same declaration. Without it a
+/// bare trailing `**` resolves to nothing — the glob crate treats it as
+/// directories-only — and the unit is silently under-keyed against its
+/// dependency, which is a stale pass rather than a wasted rebuild.
+#[test]
+fn a_directory_entry_resolves_to_its_subtree() {
+    let d = tree(&["dist/a.js", "dist/nested/b.js"]);
+    let got = resolve(&["dist/"], &[], d.path());
+    assert!(got.contains(&"dist/a.js".to_string()), "got {got:?}");
+    assert!(got.contains(&"dist/nested/b.js".to_string()), "got {got:?}");
+}
+
+#[test]
+fn a_glob_matching_nothing_contributes_nothing() {
+    let d = tree(&["a.c"]);
+    assert!(resolve(&["nope/**"], &[], d.path()).is_empty());
+}
+
+/// One path reached two ways is one input. A unit's recorded set must not
+/// depend on how many declarations happened to name a file.
+#[test]
+fn duplicates_are_dropped_keeping_first_position() {
+    let d = tree(&["a.c", "b.c"]);
+    assert_eq!(
+        resolve(&["a.c", "*.c", "b.c"], &[], d.path()),
+        vec!["a.c", "b.c"],
+        "the glob re-names a.c and b.c; neither may appear twice"
+    );
+}
+
+// --- consumes (CS-0175) ---
+
+/// The case the surface exists for: an esbuild-family sourcemap the consumer
+/// never opens, rewritten byte-for-byte by a comment-only edit upstream.
+#[test]
+fn consumes_narrows_the_resolved_set() {
+    let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
+    assert_eq!(resolve(&["dist/**"], &["*.mjs"], d.path()), vec!["dist/index.mjs"]);
+}
+
+/// Narrowing errs toward the UNDER-keyed direction, where a stale hit replays
+/// against inputs that have moved. A filter matching nothing is therefore
+/// inert, never a set of nothing.
+#[test]
+fn a_consumes_matching_nothing_is_inert() {
+    let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
+    assert_eq!(
+        resolve(&["dist/**"], &["*.wasm"], d.path()),
+        vec!["dist/index.mjs", "dist/index.mjs.map"]
+    );
+}
+
+#[test]
+fn an_empty_consumes_narrows_nothing() {
+    let d = tree(&["dist/a.mjs", "dist/b.map"]);
+    assert_eq!(resolve(&["dist/**"], &[], d.path()).len(), 2);
+}
+
+/// A pattern that cannot compile keeps the full set. Patterns are rejected at
+/// register phase so this is unreachable in a real build, and the fallback is
+/// the safe direction rather than a silent narrowing.
+#[test]
+fn an_uncompilable_consumes_keeps_the_full_set() {
+    let d = tree(&["dist/a.mjs"]);
+    assert_eq!(resolve(&["dist/**"], &["["], d.path()), vec!["dist/a.mjs"]);
+}

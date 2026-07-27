@@ -235,7 +235,25 @@ The N units registered inside the function body form one step group; the N compi
 
 The surface `cook` step (§{steps.cook-single}, §{steps.cook-multi}) routes through `cook.step_group` implicitly. Authors of Cook modules (Part IV) typically call `cook.step_group` explicitly to record a fan-out workload.
 
-## 22.6. Recipe discovery [#lua.reg.discovery]
+## 22.6. `cook.prior_outputs` [#lua.prior-outputs]
+**Signature.** `cook.prior_outputs() -> list of string`
+**Phase.** Register-phase only.
+
+Returns the declared output paths of the **preceding output-producing step** in the enclosing recipe body: the outputs of the most recently completed `cook.step_group` (§{lua.step-group}), or of the most recent `cook.add_unit` (§{lua.add-unit}) that declared outputs and was not part of a group, whichever happened later. Returns an empty list when no step in the body has declared an output yet.
+
+This is §{steps.iteration-mode-plate-test}'s iteration source, made available to the code that lowers a `test_step`. That step's source is the preceding `cook` step's outputs, falling back to the recipe's resolved `ingredients`, and CS-0186 requires the chain to be resolved into the unit's declared inputs at register phase (§{exec.cache.test-unit} rule 1) rather than reconstructed later from the unit's position in the graph.
+
+**Why it is asked for here rather than computed by the lowering (CS-0186).** A recipe body's units do not all come from steps the parser lowered. A module target-maker declares its units by calling `cook.add_unit` directly (§{mods}), so a lowering that resolved the source from the *syntax* it had just translated would see nothing for them, and a `test` step following such a unit would find no source at all. Asking at register phase sees every unit in the body however it was registered, which is what makes the declared input set complete for both.
+
+An implementation MUST NOT return outputs from an enclosing or sibling recipe: the result is scoped to the body currently being registered. It MUST return an empty list rather than raising when called before any producing step, because that is the ordinary case for a recipe whose source is its `ingredients`, and for one that has no source at all.
+
+A conforming implementation MUST raise a Lua runtime error when `cook.prior_outputs` is called from execute-phase Lua, naming the function and the calling step kind, as every register-phase-only API does.
+
+### Note 22.6.1
+
+Nothing requires an author to call this. It exists for the lowering and for module code that wants the same fallback chain a `test` step gets; a hand-written unit declares its `inputs` outright.
+
+## 22.7. Recipe discovery [#lua.reg.discovery]
 
 A conforming implementation's **recipe-discovery procedure** is the operation that enumerates the names a Cookfile registration pass has made available for dispatch. The discovered set MUST include every recipe registered by `cook.recipe` (§{lua.cook-recipe}) during the pass, regardless of registration site (surface `recipe NAME` declarations, surface `chore NAME` declarations, `register` block bodies, top-level module calls, or wrapper Lua functions).
 
@@ -249,7 +267,7 @@ Extending that requirement beyond dispatch: a conforming implementation MUST NOT
 
 A module author who describes a minted recipe — a support recipe in particular (§{mods.authoring.minting}) — as "non-invocable by intent" is stating **authorial intent**, and the annotation is the mechanism by which that intent reaches the user: it tells a reader who did not write the name who did, and why it exists. It carries no engine-enforced prohibition. The Standard defines no invocability tier below "registered"; a registered name is dispatchable. See §{rationale.recipe-origin-annotation}.
 
-## 22.7. `cook.recipe_name` [#lua.cook-recipe-name]
+## 22.8. `cook.recipe_name` [#lua.cook-recipe-name]
 **Signature.** `cook.recipe_name() -> string`
 **Phase.** Register-phase only.
 
@@ -259,13 +277,13 @@ A module author who describes a minted recipe — a support recipe in particular
 
 A conforming implementation MUST raise a register-phase Lua error when `cook.recipe_name` is called outside a recipe body. The diagnostic MUST name the API (`cook.recipe_name`) and state the inside-a-recipe-body requirement. This obligation applies to any register-phase Lua that is not currently executing inside a recipe body — a top-level call, a `register` block body, and a `for_each`-feeding probe's `produce` body when that `produce` is evaluated on the register-phase VM as part of the pre-pass (§{cat.probes.for-each}) are all outside a recipe body and MUST error. A probe's `produce` body is not a recipe body in general; an ordinary (non-`for_each`-feeding) probe's `produce` runs on an execute-phase worker VM, where `cook.recipe_name` is not registered at all, so this MUST does not — and cannot — extend to that case.
 
-### Note 22.7.1
+### Note 22.8.1
 
 Because the returned name is fully-qualified (per §22.4), a module deriving artifact identity from `cook.recipe_name()` sees the import prefix folded in wherever one applies: a recipe declared `recipe idLib` and imported under prefix `lib` yields `cook.recipe_name() == "lib.idLib"`, which — if a module strings it directly into an artifact or path template — can produce forms like `liblib.idLib.a` or `build/obj/lib.idLib/`. This is legal but visually ugly, and it creates a tension for a module that resolves link references written against *bare* recipe names (as authors normally write them, e.g. `$<idLib>`): such a module would disagree with a qualified derivation taken from `cook.recipe_name()` inside an imported Cookfile, even though both name the same recipe. Root Cookfiles (no import prefix) are unaffected, since the qualified and bare forms coincide there.
 
 The remedy is already available: `recipe.name` (§{lua.recipe-global}) is bound in the same scope and holds the bare declared name. A module deriving a filename SHOULD read `recipe.name` and reserve `cook.recipe_name()` for identity, rather than stripping a prefix back off the qualified form. The two accessors are complementary, and choosing between them per use is the module author's call.
 
-## 22.8. `cook.require_recipe` [#lua.cook-require-recipe]
+## 22.9. `cook.require_recipe` [#lua.cook-require-recipe]
 **Signature.** `cook.require_recipe(name: string) -> nil`
 **Phase.** Register-phase only.
 
@@ -312,7 +330,7 @@ This section relates to §{lua.cook-recipe-name} exactly as Note 22.7.1 anticipa
 - **A forced recipe is reachable by definition,** so a skip predicated on reachability MUST NOT apply to it. This extends to a recipe forced *transitively*, via the dependencies of a forced recipe: the edge places `N` in the caller's build closure, and every recipe `N` requires is in that closure with it, so a skip that stands down for `N` but applies to `N`'s own dependency reopens the same register/execute disagreement one level down. In particular a parametric chore (§{chores.params}) that is forced MUST be evaluated with no argv supplied, exactly as §{chores.parametric-deps} requires of a chore reached as a dependency of the invocation's target — a required parameter with no default then surfaces a legitimate register-time configuration error, rather than the recipe vanishing.
 - **Where evaluation is genuinely unavailable, erroring is conforming;** it is the silence that is not. An implementation whose `for_each` data sources (§{cat.probes.for-each}) are resolved by a pre-pass keyed on the static dependency graph MAY reject a `cook.require_recipe` naming a `for_each` recipe whose source that pre-pass did not resolve. Such an implementation MUST say so, and SHOULD direct the author to declare the dependency statically as well (`recipe A : N`), which brings `N` into the pre-pass's view and makes the same call succeed. This is a bounded implementation limit, not a property of the API: nothing in this section prevents an implementation from resolving the source on demand at force time instead.
 
-### Note 22.8.1
+### Note 22.9.1
 
 The motivating case is a module that must resolve a link reference from inside a recipe body it does not own. A C/C++ target maker resolving `links = {"idLib"}` reads `idLib`'s export (§{lua.cook-exports-imports}) to obtain its library path and transitive link info (§{cat.cc.transitive}). Since CS-0161 that read resolves on its own: `cook.import` forces the referent's body when called from inside a recipe body (§{lua.cook-imports}), because forcing is a property of reading an export rather than of declaring an edge. What follows describes why `cook.require_recipe` was the original answer, and remains the right one wherever the caller wants the whole-recipe edge as well.
 
@@ -320,7 +338,7 @@ Registration order within a pass is dependency-driven, not declaration order: tw
 
 `cook.require_recipe` is what lets a module bootstrap that edge from inside a recipe body it does not own. On seeing `links = {"idLib"}`, the maker calls `cook.require_recipe("idLib")`: `idLib`'s body is forced to completion, so the subsequent `cook.import("idLib")` resolves, and the recorded edge makes `idLib` build before the linking recipe. The author declared the dependency in their module's vocabulary; the module translated it into the Standard's.
 
-## 22.9. `cook.on_register_complete` [#lua.cook-on-register-complete]
+## 22.10. `cook.on_register_complete` [#lua.cook-on-register-complete]
 **Signature.** `cook.on_register_complete(fn: function) -> nil`
 **Phase.** Register-phase only.
 
@@ -342,11 +360,11 @@ Registration order within a pass is dependency-driven, not declaration order: tw
 
 **Discovery surfaces MAY skip the queue.** A listing surface that enumerates the discovered recipe set without invoking any recipe body (§{lua.reg.discovery}) MAY complete its enumeration without draining queued callbacks: because callback registration is rejected (see above), a callback cannot alter the discovered set, so nothing such a surface reports depends on having run them. A call to `cook.on_register_complete` reached by such a surface MUST still be accepted — it is register-phase Lua like any other — and its callback simply MUST NOT be required to run on that pass.
 
-### Note 22.9.1
+### Note 22.10.1
 
 The motivating case is a module that accumulates per-target state across many recipe bodies and must act on the complete set exactly once, rather than once per target. A `compile_commands()`-style top-level call in a C/C++ module wants to write one `compile_commands.json` covering every `cc.bin` / `cc.lib` target the Cookfile registers — but the module cannot know, from inside any single target's body, whether more targets remain to register. Before `cook.on_register_complete`, the only way to sequence this was a fake ordering dependency — declaring an aggregation recipe that depends on every target, and keeping that list in sync by hand. Queuing the aggregation as a callback removes the fake dependency: the module calls `cook.on_register_complete(fn)` once, and `fn` runs with every target's contribution already recorded, however many targets the Cookfile ultimately declares.
 
-## 22.10. `cook.dep_order` [#lua.cook-dep-order]
+## 22.11. `cook.dep_order` [#lua.cook-dep-order]
 **Signature.** `cook.dep_order(name: string) -> nil`
 **Phase.** Register-phase only.
 
@@ -364,13 +382,13 @@ This is what makes `cook.dep_order` a *replacement* for `cook.require_recipe` ra
 
 **Errors.** A conforming implementation MUST raise a register-phase Lua error when `cook.dep_order` is called outside a recipe body, naming the API and stating the inside-a-recipe-body requirement, mirroring `cook.dep_output`'s error model.
 
-### Note 22.10.1
+### Note 22.11.1
 
 The division of labour among the three edge-writing APIs. All three force the referent's body and place it in the build closure; they differ in what ordering and what data they carry. `cook.require_recipe` adds the coarse whole-recipe edge and nothing else — every unit of the caller waits for every unit of the referent. `cook.dep_output` mints a per-unit *consuming* edge: paths are returned and folded into that unit's cache inputs. `cook.dep_order` mints the per-unit edge alone, with no paths and no cache fold.
 
 A C/C++ module needs the forcing everywhere and the barrier nowhere, so it uses `cook.dep_order` for the whole link path. The placement matters and follows from §{lua.step-group}: a reference accumulated inside a step group is discarded when that group closes, so a maker forces its links inside an empty group — the bodies are evaluated, the exports become readable, and no compile unit inherits an edge — then calls `cook.dep_order` again immediately before the archive or link unit, where the ordering genuinely belongs. `cook.require_recipe` stays appropriate for a referent every unit of the caller consumes, such as a generated configuration header, where the coarse barrier is both correct and free.
 
-## 22.11. `cook.chore` [#lua.cook-chore]
+## 22.12. `cook.chore` [#lua.cook-chore]
 **Signature.** `cook.chore(name: string, metadata: table, body: function) -> nil`
 **Phase.** Register-phase only, and only during module evaluation (see **Registration window** below).
 
@@ -394,7 +412,7 @@ The restriction follows from the namespace rule rather than from any property of
 
 **Relation to §{mods.authoring.minting}.** That subsection's categorical MUST — a recipe's name and its invocability belong to the author of the Cookfile — is scoped to *recipes*, and does not forbid this API. A recipe is a build target in the DAG the author owns, and minting one silently enlarges what the author's build does. A chore is a command: uncached, outside the DAG, and inert until invoked by name. `cc.add` is a tool the module offers, not a target the author should have had to declare. The namespace prefix is what keeps that distinction legible at the point of use — an author reading `cook cc.add lib math` can see that the verb came from a module and which one, without opening anything.
 
-## 22.12. `cook.cookfile` [#lua.cook-cookfile]
+## 22.13. `cook.cookfile` [#lua.cook-cookfile]
 **Signature.** `cook.cookfile.splice_field(path, recipe, field, entry) -> true`
 **Signature.** `cook.cookfile.append(path, text) -> true`
 **Signature.** `cook.cookfile.find_call(path, recipe) -> table | nil`

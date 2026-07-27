@@ -725,6 +725,38 @@ pub fn register_unit_api(
                 output_paths.len()
             )));
         }
+        let consumes: Vec<String> = match tbl.get::<LuaValue>("consumes") {
+            Ok(LuaValue::Nil) | Err(_) => vec![],
+            Ok(LuaValue::Table(t)) => {
+                let mut out = Vec::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    match v.map_err(|e| LuaError::runtime(format!("cook.add_unit: `consumes`: {e}")))? {
+                        LuaValue::String(sv) => {
+                            let sv = sv.to_string_lossy().to_string();
+                            // Validated with the matcher the engine folds with, so a
+                            // pattern accepted here is the pattern that runs.
+                            // Rejected at register time because an unparseable glob
+                            // matches nothing, and "matches nothing" on an allowlist
+                            // points the under-keying way.
+                            if let Err(e) = cook_fingerprint::consumes::validate_pattern(&sv) {
+                                return Err(LuaError::runtime(format!(
+                                    "cook.add_unit: `consumes` entry '{sv}' is not a \
+                                     valid glob ({e}); it would match no predecessor \
+                                     output, silently widening the cached-pass window"
+                                )));
+                            }
+                            out.push(sv);
+                        }
+                        other => {
+                            return Err(type_err("consumes", "a table of strings", other.type_name()))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => return Err(type_err("consumes", "a table of strings", other.type_name())),
+        };
+
         // CS-0186: a test unit carries cache metadata like any other unit.
         // The gate that stood here — `cache_enabled && !is_test` — kept test
         // units out of the step index while a separate result store answered
@@ -738,6 +770,26 @@ pub fn register_unit_api(
         // `cacheability` sends this unit down the ResultOnly arm, which looks
         // up a verdict instead of artifacts, and the publish path files a
         // record with no outputs to upload.
+        //
+        // CS-0186 §17.4 rule 1: nothing to key on means no key. A unit with no
+        // declared output, no declared input and no materialised data member
+        // has nothing whose movement could invalidate it, so caching it would
+        // serve its first result forever.
+        //
+        // One rule, every unit, and it fires only where it must. A `cook` unit
+        // always declares an output, so it never fires for one. It fires for
+        // `test { cargo test }` — no output, no source, nothing iterated —
+        // whose true inputs are the whole source tree and therefore opaque
+        // here; a key over the command text alone would be a false green. It
+        // does NOT fire for a fan-out unit that declares no file but carries a
+        // member, because the member is an observable input (§17.1 observable
+        // 5) and is already folded into `command_hash` above. Before CS-0186
+        // that case was refused along with the source-less one, so a `test`
+        // fanned out over `ingredients <probe>` re-ran on every invocation
+        // while its `cook` sibling over the same source cached per member.
+        let nothing_to_key_on =
+            output_paths.is_empty() && cache_input_paths.is_empty() && member.is_none();
+        let cache_enabled = cache_enabled && !nothing_to_key_on;
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -753,6 +805,7 @@ pub fn register_unit_api(
                 cookfile_path,
                 cache_key,
                 input_paths: cache_input_paths.clone(),
+                consumes: consumes.clone(),
                 output_paths: output_paths.clone(),
                 command_hash,
                 env_contribution: env_contribution_val,
@@ -845,37 +898,6 @@ pub fn register_unit_api(
                 if sv.is_empty() { None } else { Some(sv) }
             }
             Ok(other) => return Err(type_err("iteration_item", "a string", other.type_name())),
-        };
-        let consumes: Vec<String> = match tbl.get::<LuaValue>("consumes") {
-            Ok(LuaValue::Nil) | Err(_) => vec![],
-            Ok(LuaValue::Table(t)) => {
-                let mut out = Vec::new();
-                for v in t.sequence_values::<LuaValue>() {
-                    match v.map_err(|e| LuaError::runtime(format!("cook.add_unit: `consumes`: {e}")))? {
-                        LuaValue::String(sv) => {
-                            let sv = sv.to_string_lossy().to_string();
-                            // Validated with the matcher the engine folds with, so a
-                            // pattern accepted here is the pattern that runs.
-                            // Rejected at register time because an unparseable glob
-                            // matches nothing, and "matches nothing" on an allowlist
-                            // points the under-keying way.
-                            if let Err(e) = cook_fingerprint::consumes::validate_pattern(&sv) {
-                                return Err(LuaError::runtime(format!(
-                                    "cook.add_unit: `consumes` entry '{sv}' is not a \
-                                     valid glob ({e}); it would match no predecessor \
-                                     output, silently widening the cached-pass window"
-                                )));
-                            }
-                            out.push(sv);
-                        }
-                        other => {
-                            return Err(type_err("consumes", "a table of strings", other.type_name()))
-                        }
-                    }
-                }
-                out
-            }
-            Ok(other) => return Err(type_err("consumes", "a table of strings", other.type_name())),
         };
 
         // is_chore is read BEFORE the if/else below (and before the later
@@ -1280,6 +1302,34 @@ pub fn register_unit_api(
         result
     })?;
     cook.set("step_group", step_group_fn)?;
+
+    // CS-0186 §8.6.1: the outputs of the preceding output-producing step in
+    // the enclosing recipe body — the iteration source a `test` step falls back
+    // on when the recipe declares no `ingredients`.
+    //
+    // Read at REGISTER phase rather than baked into codegen, which is what
+    // makes it see every unit however it was registered. A parse-time local
+    // (`_cook_outputs_N`) only exists for a `cook` step the parser lowered, so
+    // a `test` following a unit declared by `cook.add_unit` — which is how
+    // every module target-maker declares its units — had no source at all, and
+    // the engine covered for it by walking the unit's DAG predecessors. That
+    // walk is what CS-0186 removes: it worked on the graph, so it could only be
+    // justified for units already known to be tests, and it left the engine
+    // holding an input set the declaration did not contain.
+    //
+    // `last_cook_step_outputs` is already maintained for both routes — drained
+    // from a completed `cook.step_group`, and set directly by a `Sequential`
+    // `add_unit` with outputs (§10.4.1) — so both see the same answer here.
+    let body_slot_prior = body_slot.clone();
+    let prior_outputs_fn = lua.create_function(move |lua, ()| {
+        let slot = body_slot_prior.borrow();
+        let outputs: Vec<String> = slot
+            .as_ref()
+            .map(|b| b.last_cook_step_outputs.clone())
+            .unwrap_or_default();
+        lua.create_sequence_from(outputs)
+    })?;
+    cook.set("prior_outputs", prior_outputs_fn)?;
 
     Ok(())
 }

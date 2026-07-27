@@ -17,6 +17,7 @@ fn make_meta(output_paths: Vec<String>) -> CacheMeta {
         cookfile_path: String::new(),
         cache_key: "step".into(),
         input_paths: vec!["src.c".into()],
+        consumes: Vec::new(),
         output_paths,
         command_hash: 0xC0DE,
         env_contribution: 0,

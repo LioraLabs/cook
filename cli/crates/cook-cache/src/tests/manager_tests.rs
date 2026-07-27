@@ -26,6 +26,7 @@ fn make_cache_meta(input_paths: Vec<String>, output_paths: Vec<String>) -> cook_
         cookfile_path: String::new(),
         cache_key: "step_one".into(),
         input_paths,
+        consumes: Vec::new(),
         output_paths,
         command_hash: 0xdeadbeef,
         env_contribution: 0,

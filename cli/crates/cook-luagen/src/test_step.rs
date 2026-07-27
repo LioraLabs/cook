@@ -74,45 +74,69 @@ pub(crate) fn generate_test_step(
         return Err(CodegenError::EmptySource { line });
     }
 
-    // Iteration source per Standard §4.8.1: same fallback chain as
-    // plate (preceding cook step's outputs, or the resolved ingredient
-    // set). The `ingredients` local emitted by `recipe.rs` carries the
-    // §4.3 union; `recipe.ingredients[1]` would drop globs 2..N.
-    let source_expr = if let Some(idx) = last_cook_index {
-        format!("_cook_outputs_{}", idx)
-    } else {
-        "ingredients".to_string()
-    };
+    // Iteration source per §8.6.1: the preceding step's outputs, falling back
+    // to the resolved ingredient set. The `ingredients` local emitted by
+    // `recipe.rs` carries the §4.3 union; `recipe.ingredients[1]` would drop
+    // globs 2..N.
+    //
+    // The chain is evaluated at REGISTER phase, through `cook.prior_outputs()`,
+    // rather than resolved here to a parse-time local. `_cook_outputs_N` exists
+    // only for a `cook` step the parser lowered, so a `test` following a unit
+    // declared by `cook.add_unit` — how every module target-maker declares its
+    // units — saw no source and fell back to `ingredients` or to nothing. The
+    // engine covered for that by walking the unit's DAG predecessors, which is
+    // exactly what CS-0186 removes. Asking at register phase sees every unit
+    // however it was registered, and keeps the answer in the declaration.
+    let src = format!("_test_src{line}");
+    let source_expr = src.clone();
+    out.push_str(&format!("    local {src} = cook.prior_outputs()\n"));
+    if has_ingredients {
+        out.push_str(&format!(
+            "    if #{src} == 0 then {src} = ingredients end\n"
+        ));
+    }
+    // `last_cook_index` no longer selects the source; it survives only as the
+    // "is there a preceding producing step at parse time" signal the
+    // empty-source guard above uses.
+    let _ = last_cook_index;
 
-    // COOK-84: when the recipe declares ingredients, every add_test in this
-    // step carries the resolved ingredient file list so the engine can fold
-    // the files' content into the test fingerprint (§17.4.1). Tests sourced
-    // solely from a preceding cook step carry no inputs — the cook step's
-    // own cache_meta.input_paths are folded via the predecessor closure in
-    // cook-engine/src/run.rs.
+    // CS-0186 §17.4 rule 1: the iteration source is resolved into the unit's
+    // DECLARED inputs, here, at the point the unit is recorded. The engine no
+    // longer reconstructs it by walking the unit's predecessors — it could only
+    // do that for units it knew to be tests, which made the step kind a fact
+    // the cache had to consult, and left the engine holding an input set the
+    // declaration did not contain.
     //
-    // CS-0182: a ONE-TO-ONE step is the exception. It emits one unit per item,
-    // and each unit folds only its own item — matching the `cook` sibling on
-    // the identical surface (`inputs = {_cook_in}`) and §17.1 observable 5,
-    // which already states per-member independence for `ingredients <probe>`
-    // fan-out. Folding the whole list here made every unit's key move whenever
-    // any item changed, so a 284-fixture corpus re-ran all 284 on a one-file
-    // edit: fan-out for parallelism, but no per-item reuse.
+    // The mode decides the shape, and the mode is the sigil deduction: a body
+    // referencing the iteration item reads ONE item, so that is what its unit
+    // declares. What the source happens to BE — resolved ingredients, or the
+    // preceding cook step's outputs — decides only what `_test_in` holds.
     //
-    // The narrowing applies only when the ingredients ARE the iteration source.
-    // With a preceding cook step, `_test_in` is that step's OUTPUT rather than
-    // an ingredient, and the fold belongs to the predecessor closure in
-    // run.rs — declaring an upstream output as the test's own input would
-    // cross the produced-upstream boundary §17.4 rule 1 draws.
-    let one_to_one_over_ingredients =
-        matches!(mode, PlateTestMode::OneToOne) && last_cook_index.is_none() && has_ingredients;
-    let inputs_field: &str = if one_to_one_over_ingredients {
-        "inputs = {_test_in}, "
-    } else if has_ingredients {
-        "inputs = ingredients, "
-    } else {
-        ""
+    // CS-0182 made the one-to-one narrowing conditional on the source being
+    // `ingredients`, on the ground that an upstream output declared as an input
+    // would be a reclassification. CS-0186 withdraws that: in one-to-one mode
+    // the item IS what the unit reads (`test { ./$<in> }` runs one binary), so
+    // declaring it is the declaration being accurate. The exclusion cost §8.6's
+    // own Example 8.6.1 any reuse at all — both units of `ingredients "src/*.c"`
+    // → `cook "build/$<in.stem>"` → `test { ./$<in> }` recorded all four paths,
+    // so editing one source re-ran the whole fan-out.
+    //
+    // Declaring the item rather than the ingredient behind it is also what
+    // restores early cutoff: the unit for `build/a` declares `build/a`, so
+    // editing `src/a.c` re-runs it only if the rebuilt bytes actually moved.
+    let inputs_field: String = match mode {
+        // One item per unit, whatever the source is.
+        PlateTestMode::OneToOne => "inputs = {_test_in}, ".to_string(),
+        // The unit reads the whole source, so the whole source is its input
+        // set. Emitted unconditionally: whether a source EXISTS is a
+        // register-phase fact, not a parse-time one, and `source_expr` is
+        // §8.6.1's fallback chain evaluated there. A recipe that supplies
+        // nothing yields an empty list, which leaves the unit with nothing to
+        // key on and therefore no key — `test { cargo test }`, running every
+        // invocation, which is the rule rather than an accident of codegen.
+        _ => format!("inputs = {source_expr}, "),
     };
+    let inputs_field: &str = &inputs_field;
 
     // CS-0159: the test unit's effective seal set (recipe baseline folded with
     // this step's trailing seal/unseal by the parser). Emitted as a leading

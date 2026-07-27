@@ -12,6 +12,7 @@ fn meta(cache_key: &str, output_paths: &[&str]) -> CacheMeta {
         cookfile_path: "Cookfile".to_string(),
         cache_key: cache_key.to_string(),
         input_paths: vec![],
+        consumes: Vec::new(),
         output_paths: output_paths.iter().map(|s| s.to_string()).collect(),
         command_hash: 0xbeef,
         env_contribution: 0,

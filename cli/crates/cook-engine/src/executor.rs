@@ -676,11 +676,8 @@ pub fn execute_dag(
     // list at its own door — and §17.4 rule 4's cross-machine replay is
     // withdrawn as never-delivered, not quietly reimplemented here.
     fn check_observing_node(
-        dag: &Dag<WorkNode>,
-        node_id: usize,
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-        cache_ctx: &CacheContext,
         probe_store: &cook_luaotp::ProbeValueStore,
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
@@ -692,14 +689,28 @@ pub fn execute_dag(
             Some(cm) => cm,
             None => return CacheDecision::Miss(None),
         };
-        // Ready time: every predecessor has completed, so the outputs this
-        // unit consumes are materialised and can be named. `None` is a unit
-        // with no declared source, which §8.6.1 says has no key at all — it
-        // runs, and `publish_completion` is skipped for it by the same call.
-        let current_inputs = match observing_inputs(dag, node_id, meta, cache_ctx) {
-            Some(paths) => paths,
-            None => return CacheDecision::Miss(None),
-        };
+        // Ready time: every predecessor has completed, so a declared input
+        // naming a consumed output resolves to the files that output now holds
+        // (§17.4 rule 1). The same call serves a producing unit; nothing here
+        // asks what kind of step this came from.
+        let current_inputs = cook_fingerprint::resolve_declared_inputs(
+            &meta.input_paths,
+            &meta.consumes,
+            &work_node.working_dir,
+        );
+        // No empty-set guard here. Whether a unit has anything to key on is
+        // settled once, at registration (§17.4 rule 1): a unit with no output,
+        // no declared input and no materialised member never gets a CacheMeta,
+        // so it never reaches this arm. Re-deciding it here on the RESOLVED set
+        // would refuse the units that rule deliberately admits — a fan-out unit
+        // over `ingredients <probe>` declares no file at all and is keyed on its
+        // member, which reaches the key through `command_hash`.
+        //
+        // A declared pattern that resolves to nothing is not a hazard either: it
+        // means the producer wrote nothing, the unit read nothing, and the empty
+        // set is recorded as such. When the producer later writes something the
+        // resolved set differs from the recorded one and `check_inputs` reports
+        // the change, so this self-corrects rather than hitting forever.
         let input_refs: Vec<&str> = current_inputs.iter().map(String::as_str).collect();
         let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
         // The env-moved probe wants the identity without its env suffix, the
@@ -743,29 +754,6 @@ pub fn execute_dag(
         CacheDecision::Miss(cause)
     }
 
-    /// The input set an observing unit is judged against, resolved at ready
-    /// time. `None` means the unit has no cache key and MUST run (§8.6.1).
-    ///
-    /// A `Test` unit's source is implicit — the preceding `cook` step's
-    /// outputs, or the recipe's ingredients — so its set is resolved from the
-    /// graph. Any other output-less unit has declared its inputs outright and
-    /// is judged against exactly those, like a producing unit.
-    fn observing_inputs(
-        dag: &Dag<WorkNode>,
-        node_id: usize,
-        meta: &cook_contracts::CacheMeta,
-        cache_ctx: &CacheContext,
-    ) -> Option<Vec<String>> {
-        match dag.node(node_id).payload().payload {
-            Some(WorkPayload::Test { .. }) => crate::run::consumed_inputs_at_ready_time(
-                dag,
-                node_id,
-                &cache_ctx.project_root,
-            ),
-            _ => Some(meta.input_paths.clone()),
-        }
-    }
-
     // ----- helper: check cache for a work node -----
     // Returns true if the node can be skipped (cache hit). When `cache_ctx`
     // exposes a backend, a hit-but-drifted entry is restored from the
@@ -783,8 +771,6 @@ pub fn execute_dag(
     //     fetch-by-key. A cold miss in BOTH stores is a hard error — the unit
     //     MUST NOT be rebuilt; the caller raises a failure.
     fn check_node_cache(
-        dag: &Dag<WorkNode>,
-        node_id: usize,
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
@@ -799,14 +785,7 @@ pub fn execute_dag(
             // verdict rather than restoring bytes (§17.1.1.1). CS-0186 folded
             // the separate result store in here, at this arm and nowhere else.
             Cacheability::ResultOnly => {
-                return check_observing_node(
-                    dag,
-                    node_id,
-                    work_node,
-                    cache_managers,
-                    cache_ctx,
-                    probe_store,
-                );
+                return check_observing_node(work_node, cache_managers, probe_store);
             }
             Cacheability::Artifacts => {}
         }
@@ -852,7 +831,16 @@ pub fn execute_dag(
         } else {
             meta.output_paths.clone()
         };
-        let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+        // The same resolution an observing unit gets. A producing unit's
+        // inputs are literal paths today, so this returns them unchanged; it is
+        // called anyway because "how a unit's inputs are computed" must have
+        // exactly one answer (CS-0186).
+        let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
+            &meta.input_paths,
+            &meta.consumes,
+            &work_node.working_dir,
+        );
+        let input_refs: Vec<&str> = resolved_inputs.iter().map(|s| s.as_str()).collect();
         let current_outputs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
         let recipe_namespace =
             recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
@@ -1166,7 +1154,7 @@ pub fn execute_dag(
                     let decision = if force_rerun {
                         CacheDecision::Miss(Some("forced by --rerun".to_string()))
                     } else {
-                        check_node_cache(dag, id, work_node, cache_managers, cache_ctx, &pool.probe_value_store())
+                        check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store())
                     };
                     let (served, cause) = match decision {
                         CacheDecision::Hit => (true, None),
@@ -1627,7 +1615,7 @@ pub fn execute_dag(
             Some(payload) => {
                 // Check cache before executing.
                 // COOK-162: `pinned` cold-miss aborts the node like a failed step.
-                let miss_cause = match check_node_cache(dag, id, work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     CacheDecision::Hit => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         emit(
@@ -2531,38 +2519,28 @@ pub fn execute_dag(
             if let Some(meta) = &dag.node(result.id).payload().cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
                     let working_dir = dag.node(result.id).payload().working_dir.clone();
-                    // CS-0186: an observing unit records the input set it was
-                    // JUDGED against, which for a test unit is resolved from
-                    // the graph rather than declared (§17.4 rule 1). Resolved
-                    // again here rather than carried from the check, because
-                    // the check may not have run at all — a `--rerun` skips
-                    // it — and a record written from `meta.input_paths` alone
-                    // would omit every consumed predecessor output, so the next
-                    // run would see an input-set change and never hit.
+                    // CS-0186: a unit records the input set it was JUDGED
+                    // against. Resolved again here rather than carried from the
+                    // check, because the check may not have run at all — a
+                    // `--rerun` skips it — and the two must agree or the next
+                    // run reads an input-set change that is not there.
                     //
-                    // `None` is a source-less test: no key, no record (§8.6.1).
-                    // Publishing one would file an entry under a key nothing
-                    // ever looks up, and `cook why` would report a key for a
-                    // unit that cannot be served.
-                    use cook_contracts::cache::record::{cacheability, Cacheability};
-                    let observing =
-                        matches!(cacheability(Some(meta)), Cacheability::ResultOnly);
-                    let observed_inputs = if observing {
-                        observing_inputs(&dag, result.id, meta, &cache_ctx)
-                    } else {
-                        None
-                    };
-                    if !observing || observed_inputs.is_some() {
-                        publish_completion(
-                            cm,
-                            meta,
-                            observed_inputs.as_deref(),
-                            &working_dir,
-                            &pool.probe_value_store(),
-                            &cache_ctx,
-                            published,
-                        );
-                    }
+                    // One call for every unit. For a producing unit whose
+                    // inputs are all literal paths this returns them unchanged.
+                    let observed_inputs = cook_fingerprint::resolve_declared_inputs(
+                        &meta.input_paths,
+                        &meta.consumes,
+                        &working_dir,
+                    );
+                    publish_completion(
+                        cm,
+                        meta,
+                        Some(&observed_inputs),
+                        &working_dir,
+                        &pool.probe_value_store(),
+                        &cache_ctx,
+                        published,
+                    );
                 }
             }
 

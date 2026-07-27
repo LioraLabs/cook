@@ -857,7 +857,12 @@ cook.recipe("chore_then_recipe", {}, function()
     cook.add_unit({command = "echo in chore", cache = false})
     cook._exit_chore()
     -- After exiting chore context, cache = true is permitted.
-    cook.add_unit({command = "echo normal", cache = true})
+    -- Declares an output because CS-0186's "nothing to key on" rule refuses a
+    -- unit with no output, no input and no member: its only determinants would
+    -- be the command and the env, so it would hit forever after one run. The
+    -- subject here is that `cache = true` is ACCEPTED outside a chore, which an
+    -- uncacheable-for-another-reason unit cannot demonstrate.
+    cook.add_unit({command = "echo normal", cache = true, outputs = {"out.txt"}})
 end)
 "#;
     let result = register_cookfile(rt, lua_src, None, None);

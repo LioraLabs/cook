@@ -14,6 +14,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         cookfile_path: String::new(),
         cache_key: String::new(),
         input_paths: inputs.iter().map(|s| s.to_string()).collect(),
+        consumes: Vec::new(),
         output_paths: vec![],
         command_hash: 0,
         env_contribution: 0,
