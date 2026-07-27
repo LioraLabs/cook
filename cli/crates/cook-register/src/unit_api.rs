@@ -1276,9 +1276,30 @@ pub fn register_unit_api(
     Ok(())
 }
 
+/// The marker that opens an observing unit's identity (§17.1.1.1, CS-0186).
+///
+/// Producing keys are a declared output path, optionally suffixed with the env
+/// contribution. Observing keys are a digest, and the two share one index, so
+/// the digest is written in a form no declared output path takes. `:` is not a
+/// path separator on any supported platform and a workspace-relative output
+/// beginning with one is not a path any Cookfile writes.
+///
+/// A collision would not be a correctness failure — the two units' output
+/// counts disagree, so each is judged stale against the other's record and
+/// rebuilds rather than replaying it — but they would then clobber each other
+/// on every run, which is the permanent-churn shape CS-0169 exists to refuse.
+/// `reject_duplicate_outputs` refuses it there, on the same terms, and this
+/// marker is what makes reaching that refusal near-impossible in the first
+/// place.
+pub const OBSERVING_KEY_MARKER: char = ':';
+
 /// Build a local cache key that encodes env_contribution so simultaneous
 /// variant builds (e.g. different env-selected toolchains) coexist without
 /// overwriting each other.
+///
+/// Two shapes, one convention: `<identity>` or `<identity>@<env-hex>`. What
+/// serves as the identity is what the unit's effect kind (§17.1.1.1) leaves
+/// available.
 fn build_local_cache_key(
     _cookfile_path: &str,
     _recipe: &str,
@@ -1287,20 +1308,69 @@ fn build_local_cache_key(
     command_hash: u64,
     env_contribution: u64,
 ) -> String {
-    if let Some(first) = output_paths.first() {
-        if env_contribution != 0 {
-            format!("{first}@{:x}", env_contribution)
-        } else {
-            first.clone()
-        }
+    let identity = match output_paths.first() {
+        // A producing unit is identified by a declared output path, which
+        // CS-0169 makes claimable by at most one unit.
+        Some(first) => first.clone(),
+        // An observing unit has no output path, so it is identified by a
+        // digest of its DECLARATION (CS-0186).
+        None => observing_identity(inputs, command_hash),
+    };
+    if env_contribution != 0 {
+        format!("{identity}@{env_contribution:x}")
     } else {
-        let base = inputs.first().map(|s| s.as_str()).unwrap_or("");
-        if env_contribution != 0 {
-            format!("{}@{:x}:{:x}", base, command_hash, env_contribution)
-        } else {
-            format!("{}@{:x}", base, command_hash)
-        }
+        identity
     }
+}
+
+/// The identity of a unit that declares no outputs: a digest over the paths it
+/// declares and the command it runs.
+///
+/// Three exclusions are normative (§17.1.1.1), and each is load-bearing:
+///
+/// * **Not the input CONTENTS.** This is the one that decides the design. An
+///   identity that moved whenever the contents moved would never be found
+///   twice, so no prior record would ever be available to compare against,
+///   every invalidation would present as a first-ever build, and `cook why`
+///   could report a key but never a cause. Identity says WHICH UNIT; the
+///   recorded determinants and input records say WHETHER IT MAY BE REPLAYED.
+/// * **Not the recipe name, and not the source position.** §17.4 requires that
+///   moving a test within a recipe, or a recipe between Cookfiles, not bust its
+///   cache. Both are already in scope here — `build_local_cache_key` takes
+///   `_cookfile_path` and `_recipe` and has never used either — and they stay
+///   unused deliberately rather than by omission.
+/// * **Nothing further.** Two units in one index with identical declarations
+///   are separated by no determinant, so they share one record and replaying
+///   either for the other cannot be observed.
+///
+/// What it replaces: `<first-input>@<command-hash>`. That form was weakly
+/// unique — every unit sharing a first input and a command text collided, and
+/// a unit declaring NO inputs keyed as the empty string plus its command hash,
+/// so two such units in one recipe were one entry. It was nearly unreachable
+/// while output-less units were nearly never cached, and CS-0186 makes it
+/// carry every test unit in the project.
+///
+/// Paths are deduplicated, order-preserving, for the same reason the test
+/// payload's input list is (COOK-84): a path named by both `inputs` and a
+/// step-group dep arrived twice, and a unit's identity must not depend on how
+/// many ways a file was reached. Order is otherwise kept as declared, which is
+/// deterministic per registration; sorting would additionally erase a
+/// reordering that IS a declaration change.
+fn observing_identity(inputs: &[String], command_hash: u64) -> String {
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    let mut seen: Vec<&str> = Vec::with_capacity(inputs.len());
+    for p in inputs {
+        if seen.contains(&p.as_str()) {
+            continue;
+        }
+        seen.push(p.as_str());
+        // NUL-terminated so ["ab", "c"] and ["a", "bc"] cannot hash alike;
+        // a path cannot contain NUL, so the separator is unambiguous.
+        hasher.update(p.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(&command_hash.to_le_bytes());
+    format!("{}{:016x}", OBSERVING_KEY_MARKER, hasher.digest())
 }
 
 /// Retrieve the cookfile-relative path stored in the Lua named registry value
