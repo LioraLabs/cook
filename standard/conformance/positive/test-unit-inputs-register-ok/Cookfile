@@ -1,6 +1,6 @@
 register
     cook.recipe("t", {requires = {}}, function()
-        cook.add_test({lua_code = "assert(true)", inputs = {"data.txt"}, consumes = {"["}, line = 2})
+        cook.add_unit({step_kind = "test", lua_code = "assert(true)", inputs = {"data.txt"}, line = 2})
     end)
 
 recipe noop

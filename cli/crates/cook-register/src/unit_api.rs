@@ -844,7 +844,22 @@ pub fn register_unit_api(
                 let mut out = Vec::new();
                 for v in t.sequence_values::<LuaValue>() {
                     match v.map_err(|e| LuaError::runtime(format!("cook.add_unit: `consumes`: {e}")))? {
-                        LuaValue::String(sv) => out.push(sv.to_string_lossy().to_string()),
+                        LuaValue::String(sv) => {
+                            let sv = sv.to_string_lossy().to_string();
+                            // Validated with the matcher the engine folds with, so a
+                            // pattern accepted here is the pattern that runs.
+                            // Rejected at register time because an unparseable glob
+                            // matches nothing, and "matches nothing" on an allowlist
+                            // points the under-keying way.
+                            if let Err(e) = cook_fingerprint::consumes::validate_pattern(&sv) {
+                                return Err(LuaError::runtime(format!(
+                                    "cook.add_unit: `consumes` entry '{sv}' is not a \
+                                     valid glob ({e}); it would match no predecessor \
+                                     output, silently widening the cached-pass window"
+                                )));
+                            }
+                            out.push(sv);
+                        }
                         other => {
                             return Err(type_err("consumes", "a table of strings", other.type_name()))
                         }

@@ -710,8 +710,8 @@ fn test_test_step_codegen() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.add_test("),
-        "expected cook.add_test in:\n{output}"
+        output.contains("cook.add_unit({step_kind = \"test\""),
+        "expected a test unit via cook.add_unit in:\n{output}"
     );
     assert!(
         output.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
@@ -2211,7 +2211,7 @@ fn test_test_step_shell_one_to_one() {
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
     );
-    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
     // CS-0135: no timeout/should_fail/name modifiers are emitted.
     assert!(!lua.contains("timeout ="), "should not emit timeout, got:\n{lua}");
     assert!(!lua.contains("should_fail ="), "should not emit should_fail, got:\n{lua}");
@@ -2227,7 +2227,7 @@ fn test_test_step_shell_batched_form_is_gone() {
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
     );
-    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -2246,7 +2246,7 @@ fn test_test_step_batched_via_lua_inputs() {
         lua.contains("local inputs = {"),
         "expected 'local inputs = {{...}}' binding, got:\n{lua}"
     );
-    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -2258,7 +2258,7 @@ fn test_test_step_shell_one_shot() {
         !lua.contains("for _, _test_in"),
         "one-shot should not emit a loop, got:\n{lua}"
     );
-    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -3322,7 +3322,7 @@ fn for_each_test_fans_out_per_member() {
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
     assert!(lua.contains("cook.member_to_string(item[\"input\"])"), "test body should interpolate $<in.input>, got:\n{lua}");
-    assert!(lua.contains("cook.add_test({command = "), "missing test add_test, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\", command = "), "missing test add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -3357,7 +3357,7 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
     // CS-0127: unlike `cook` command bodies, `WorkPayload::Test` runs
     // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
     // old codegen wrapped a probe-bearing test command in a deferred
-    // `function() return ... end` closure, but `cook.add_test`'s strict
+    // `function() return ... end` closure, but the register surface's strict
     // `command` typing (this same commit) now hard-rejects that closure at
     // register time instead of degrading silently. Codegen must fail loudly
     // instead, naming the probe key and the offending line.
@@ -3569,7 +3569,7 @@ fn test_step_with_ingredients_emits_inputs_field() {
     let src = "recipe unit\n    ingredients \"src/*.rs\"\n    test {\n        cargo test\n    }\n";
     let lua = generate_lua_for_test(src);
     assert!(lua.contains("inputs = ingredients,"),
-        "add_test must carry the resolved ingredient list:\n{lua}");
+        "a test unit must carry the resolved ingredient list:\n{lua}");
 }
 
 #[test]

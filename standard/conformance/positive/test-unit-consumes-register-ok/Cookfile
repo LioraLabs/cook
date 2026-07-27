@@ -1,0 +1,7 @@
+register
+    cook.recipe("t", {requires = {}}, function()
+        cook.add_unit({step_kind = "test", lua_code = "assert(true)", inputs = {"data.txt"}, consumes = {"*.d.ts", "dist/**/*.mjs"}, line = 2})
+    end)
+
+recipe noop
+    test >{ cook.sh("true") }
