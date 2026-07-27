@@ -186,6 +186,105 @@ fn each_determinant_is_reported_in_order() {
     );
 }
 
+// -------------------------------------------------------------------------
+// Wire format
+// -------------------------------------------------------------------------
+
+#[test]
+fn a_record_survives_a_wire_round_trip_unchanged() {
+    let before = producing_record();
+    let after = UnitRecord::from_wire(before.clone().into_wire()).expect("round trips");
+    assert_eq!(after, before);
+}
+
+#[test]
+fn the_wire_round_trips_through_json() {
+    let wire = producing_record().into_wire();
+    let json = serde_json::to_string(&wire).expect("serialize");
+    let back: UnitRecordWire = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back, wire);
+    assert_eq!(UnitRecord::from_wire(back).expect("valid"), producing_record());
+}
+
+#[test]
+fn a_wire_record_is_stamped_with_the_current_schema_version() {
+    assert_eq!(producing_record().into_wire().schema_version, RECORD_SCHEMA_VERSION);
+}
+
+#[test]
+fn a_superseded_schema_is_rejected_rather_than_migrated() {
+    let mut wire = producing_record().into_wire();
+    wire.schema_version = RECORD_SCHEMA_VERSION - 1;
+    assert_eq!(
+        UnitRecord::from_wire(wire).expect_err("must not be read"),
+        WireError::SchemaVersion {
+            found: RECORD_SCHEMA_VERSION - 1,
+            expected: RECORD_SCHEMA_VERSION
+        }
+    );
+}
+
+#[test]
+fn a_stored_record_naming_no_path_is_rejected() {
+    let mut wire = producing_record().into_wire();
+    wire.inputs[0].path = "".into();
+    assert_eq!(UnitRecord::from_wire(wire).expect_err("no path"), WireError::EmptyPath);
+}
+
+/// The reason the wire carries `Arc<str>` rather than `String`: the binary
+/// index builds one allocation per distinct path and clones pointers into
+/// every record naming it. Decoding must not quietly undo that.
+#[test]
+fn decoding_preserves_a_shared_path_allocation() {
+    let shared: std::sync::Arc<str> = std::sync::Arc::from("shared/header.h");
+    let mut wire = producing_record().into_wire();
+    wire.inputs = vec![
+        FileRecordWire { path: shared.clone(), mtime: 1, hash: 0x11 },
+        FileRecordWire { path: shared.clone(), mtime: 2, hash: 0x22 },
+    ];
+
+    let decoded = UnitRecord::from_wire(wire).expect("valid");
+
+    assert_eq!(decoded.inputs().len(), 2);
+    assert_eq!(decoded.inputs()[0].path(), "shared/header.h");
+    // Same allocation, not merely equal text.
+    assert_eq!(
+        decoded.inputs()[0].path().as_ptr(),
+        decoded.inputs()[1].path().as_ptr(),
+        "decoding allocated a second copy of an interned path"
+    );
+}
+
+/// A decoded record keeps the determinants it was STORED with. If `from_wire`
+/// rebuilt them from a declaration, drift could never be observed — the record
+/// would always agree with whatever it had just been rebuilt from.
+#[test]
+fn a_decoded_record_keeps_its_stored_determinants_so_drift_stays_visible() {
+    let mut wire = producing_record().into_wire();
+    wire.command_hash = 0x01d;
+
+    let decoded = UnitRecord::from_wire(wire).expect("valid");
+
+    assert_eq!(decoded.command_hash(), 0x01d);
+    assert_eq!(
+        determinant_drift(&decoded, &Determinants::new("k", 0xbeef, 0, 0x5ea1)),
+        Some(DeterminantDrift::CommandHash)
+    );
+}
+
+/// A declaration can change under a stored record. Agreement is asked again on
+/// the way back, not assumed from the fact that it once held.
+#[test]
+fn a_stored_record_is_re_checked_against_the_declaration_it_comes_back_to() {
+    let decoded = UnitRecord::from_wire(producing_record().into_wire()).expect("valid");
+
+    assert!(decoded.agrees_with(&meta("k", &["out.o"])).is_ok());
+    assert_eq!(
+        decoded.agrees_with(&meta("k", &[])).expect_err("now declares no outputs"),
+        RecordMismatch::ObservingUnitHasOutputs { found: 1 }
+    );
+}
+
 /// The rule is indifferent to effect kind — that is the whole point.
 #[test]
 fn an_observing_unit_obeys_the_same_determinant_rule() {

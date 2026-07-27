@@ -84,7 +84,12 @@ pub fn effect_kind(meta: &CacheMeta) -> EffectKind {
 }
 
 /// How a unit's run ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Derives serde directly rather than getting a parallel wire enum: it is a
+/// fieldless enum with no invariant and no private state, so there is no
+/// constructor for a deserializer to bypass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UnitOutcome {
     Passed,
     Failed,
@@ -184,10 +189,7 @@ impl UnitRecord {
         seal_contribution: u64,
         observation: Observation,
     ) -> Result<Self, RecordMismatch> {
-        if effect_kind(meta) == EffectKind::Observed && !outputs.is_empty() {
-            return Err(RecordMismatch::ObservingUnitHasOutputs { found: outputs.len() });
-        }
-        Ok(Self {
+        let record = Self {
             key: meta.cache_key.clone(),
             inputs,
             outputs,
@@ -195,7 +197,11 @@ impl UnitRecord {
             env_contribution: meta.env_contribution,
             seal_contribution,
             observation,
-        })
+        };
+        // The invariant is stated once, in `agrees_with`, and asked here at
+        // birth and again whenever a record comes back from storage.
+        record.agrees_with(meta)?;
+        Ok(record)
     }
 
     pub fn key(&self) -> &str {
@@ -309,6 +315,182 @@ pub fn determinant_drift(
         return Some(DeterminantDrift::Seal);
     }
     None
+}
+
+// -------------------------------------------------------------------------
+// Wire format
+//
+// The LOGICAL on-disk shape lives here: field set, meaning, version, and the
+// validity rules for reading one back. The CONTAINER layout does not — the
+// binary index writes a string table and a flat record pool that entries index
+// into by `(start, len)`, which is a statement about many records sharing one
+// file, not about what a record is. That stays in `cook-cache`, and encodes to
+// and from these types so both codecs agree on the shape by construction.
+// -------------------------------------------------------------------------
+
+/// Bumped whenever the recorded shape or its meaning changes.
+///
+/// Continues `cook_fingerprint::record::CACHE_VERSION` (7 at the time of
+/// writing) rather than starting a fresh counter, so the existing
+/// invalidate-on-bump path keeps working and a new number cannot collide with
+/// an index already on disk. Superseded records are DELETED, not migrated
+/// (CS-0166); nothing here reads an older shape.
+pub const RECORD_SCHEMA_VERSION: u32 = 8;
+
+/// Transport shape for [`FileRecord`].
+///
+/// `path` is `Arc<str>`, not `String`, so the binary decoder can build one
+/// allocation per distinct path and clone pointers into every record naming
+/// it. A `String` here would silently undo that interning on every load.
+///
+/// Note serde does not itself preserve sharing: a JSON round trip allocates
+/// per occurrence. The `Arc` is here so the binary codec's interning has
+/// somewhere to land, not because serde performs it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FileRecordWire {
+    pub path: Arc<str>,
+    pub mtime: u64,
+    pub hash: u64,
+}
+
+/// Transport shape for [`Observation`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ObservationWire {
+    pub outcome: UnitOutcome,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_secs: f64,
+    pub recorded_at: String,
+}
+
+/// Transport shape for [`UnitRecord`].
+///
+/// Public fields, because it has no invariant of its own — it is bytes given a
+/// shape. Every invariant is established on the way out of it, by
+/// [`UnitRecord::from_wire`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UnitRecordWire {
+    pub schema_version: u32,
+    pub key: String,
+    pub inputs: Vec<FileRecordWire>,
+    pub outputs: Vec<FileRecordWire>,
+    pub command_hash: u64,
+    pub env_contribution: u64,
+    pub seal_contribution: u64,
+    pub observation: ObservationWire,
+}
+
+/// Why stored bytes could not become a record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WireError {
+    /// The stored shape is not the one this build reads. Stores discard rather
+    /// than migrate (CS-0166).
+    SchemaVersion { found: u32, expected: u32 },
+    /// A stored file record named no path.
+    EmptyPath,
+}
+
+impl FileRecord {
+    pub fn into_wire(self) -> FileRecordWire {
+        FileRecordWire { path: self.path, mtime: self.mtime, hash: self.hash }
+    }
+
+    pub fn from_wire(wire: FileRecordWire) -> Result<Self, WireError> {
+        Self::new(wire.path, wire.mtime, wire.hash).ok_or(WireError::EmptyPath)
+    }
+}
+
+impl Observation {
+    pub fn into_wire(self) -> ObservationWire {
+        ObservationWire {
+            outcome: self.outcome,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            duration_secs: self.duration_secs,
+            recorded_at: self.recorded_at,
+        }
+    }
+
+    pub fn from_wire(wire: ObservationWire) -> Self {
+        Self {
+            outcome: wire.outcome,
+            stdout: wire.stdout,
+            stderr: wire.stderr,
+            duration_secs: wire.duration_secs,
+            recorded_at: wire.recorded_at,
+        }
+    }
+}
+
+impl UnitRecord {
+    /// Consumes the record so every field moves. `&self` would clone the
+    /// captured streams, which are unbounded.
+    pub fn into_wire(self) -> UnitRecordWire {
+        UnitRecordWire {
+            schema_version: RECORD_SCHEMA_VERSION,
+            key: self.key,
+            inputs: self.inputs.into_iter().map(FileRecord::into_wire).collect(),
+            outputs: self.outputs.into_iter().map(FileRecord::into_wire).collect(),
+            command_hash: self.command_hash,
+            env_contribution: self.env_contribution,
+            seal_contribution: self.seal_contribution,
+            observation: self.observation.into_wire(),
+        }
+    }
+
+    /// Read a record back.
+    ///
+    /// Deliberately takes NO declaration. An earlier design had it rebuild the
+    /// determinants from a `CacheMeta`, which would have made
+    /// [`determinant_drift`] structurally unable to fire: the record would
+    /// always have agreed with whatever it was just rebuilt from. A stored
+    /// record must keep the determinants it was STORED with; that is the
+    /// entire basis on which drift is detectable.
+    ///
+    /// Relating a decoded record to a declaration is a separate question, and
+    /// a separate pure rule: [`Self::agrees_with`].
+    pub fn from_wire(wire: UnitRecordWire) -> Result<Self, WireError> {
+        if wire.schema_version != RECORD_SCHEMA_VERSION {
+            return Err(WireError::SchemaVersion {
+                found: wire.schema_version,
+                expected: RECORD_SCHEMA_VERSION,
+            });
+        }
+        // `into_iter().map().collect()` over identically-laid-out element
+        // types reuses the source buffer, so decoding costs the allocations
+        // the codec already made and no more.
+        let inputs = wire
+            .inputs
+            .into_iter()
+            .map(FileRecord::from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        let outputs = wire
+            .outputs
+            .into_iter()
+            .map(FileRecord::from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            key: wire.key,
+            inputs,
+            outputs,
+            command_hash: wire.command_hash,
+            env_contribution: wire.env_contribution,
+            seal_contribution: wire.seal_contribution,
+            observation: Observation::from_wire(wire.observation),
+        })
+    }
+
+    /// Does this record still describe a run of the unit `meta` declares?
+    ///
+    /// The same one-directional invariant [`Self::record`] establishes at
+    /// birth, asked of a record that has come back from storage — where the
+    /// declaration may since have changed underneath it.
+    pub fn agrees_with(&self, meta: &CacheMeta) -> Result<(), RecordMismatch> {
+        if effect_kind(meta) == EffectKind::Observed && !self.outputs.is_empty() {
+            return Err(RecordMismatch::ObservingUnitHasOutputs { found: self.outputs.len() });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
