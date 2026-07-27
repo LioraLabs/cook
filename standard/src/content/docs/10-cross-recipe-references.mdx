@@ -141,7 +141,7 @@ A placeholder `$<TOKEN>` whose `TOKEN` begins with `var.` is reserved as the exp
 
 The reserved namespace prevents resolution ambiguity. A Cookfile that declares both a recipe named `foo` and a variable `var.foo` will see bare `$<foo>` resolve to the recipe (per the rule order) and `$<var.foo>` resolve to the variable. The recipe-naming rules of §{lexical.keywords} forbid `var` as either the first or last dotted segment of a recipe name, so a recipe cannot be reached via `$<var.X>` form by construction.
 
-The pre-CS-0172 spelling of this namespace was `env.`, which named the process environment the declared values then shared. With the namespaces separated (§{decl.config}), `$<env.NAME>` is retired: a conforming implementation MUST reject it with a diagnostic naming both replacements — `$<var.NAME>` for a declared variable, and, for an ambient process variable, either an ordinary shell `$NAME` in the step body or an `envs { }` probe (§{probe.envs}) when it must be a determinant.
+The pre-CS-0172 spelling of this namespace was `env.`, which named the process environment the declared values then shared. With the namespaces separated (§{decl.config}), `$<env.NAME>` is retired: a conforming implementation MUST reject it with a diagnostic naming both replacements — `$<var.NAME>` for a declared variable, and, for an ambient process variable, either an ordinary shell `$NAME` in the step body or an `envs { }` probe (§{cat.probes.decl}) when it must be a determinant.
 
 ## 10.8. The `file:` placeholder namespace [#xref.file-namespace]
 

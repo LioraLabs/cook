@@ -69,7 +69,7 @@ A `config_body` MAY be empty — that is, the next top-level construct or EOF MA
 
 A `config_body` declares named values by ordinary assignment onto a sink table named `var` (`var.NAME = <expr>`). Each such assignment *exports* `NAME`. A `local` binding in a `config_body` is scratch and is NOT exported.
 
-The **declared-variable namespace is exactly the set of names the config blocks export** (CS-0172). It has no other source: not the ambient process environment, not a dotenv-style file, not a CLI flag. A conforming implementation MUST NOT seed the namespace from the environment of the `cook` process, and MUST reject a `$<NAME>` (§{xref.resolution}) or a Lua `var.NAME` read naming an unexported name, with a diagnostic that suggests the closest exported names (§{diag}).
+The **declared-variable namespace is exactly the set of names the config blocks export** (CS-0172). It has no other source: not the ambient process environment, not a dotenv-style file, not a CLI flag. A conforming implementation MUST NOT seed the namespace from the environment of the `cook` process, and MUST reject a `$<NAME>` (§{xref.resolution}) or a Lua `var.NAME` read naming an unexported name, with a diagnostic that suggests the closest exported names (§{exec.diag}).
 
 An exported value MUST be a string, a number, or a boolean. A conforming implementation MUST reject any other type — table, function, nil — with a load-time error naming the offending variable. Lists and structured values are composed in a `register` block (§{decl.register}), which has the full Lua library, not in the sandbox.
 
@@ -80,7 +80,7 @@ A declared variable is read two ways, which differ in type:
 
 Outside a `config_body`, `var` is read-only: a conforming implementation MUST reject an assignment through it. A declared value is a cache determinant of every unit that consulted it (§{exec.cache.abstract}), so a later mutation would invalidate a key already computed against it.
 
-A conforming implementation MUST NOT place a declared value into the process environment of any step it spawns. Reading one as a shell variable (`$NAME`) is therefore not a supported channel; the ambient environment reaches a build through exactly two declared doors: `host.env` inside a `config_body` (§{decl.config-sandbox}), and an `envs { }` probe (§{probe.envs}), which records the host value as a keyed determinant.
+A conforming implementation MUST NOT place a declared value into the process environment of any step it spawns. Reading one as a shell variable (`$NAME`) is therefore not a supported channel; the ambient environment reaches a build through exactly two declared doors: `host.env` inside a `config_body` (§{decl.config-sandbox}), and an `envs { }` probe (§{cat.probes.decl}), which records the host value as a keyed determinant.
 
 The sink is named `var` and not `env`: a config block's values are named build variables, not entries in any process environment. A conforming implementation MUST report a load-time error, pointing the author at the `var` sink, when a `config_body` reads a global named `env` (the pre-CS-0164 sink name).
 

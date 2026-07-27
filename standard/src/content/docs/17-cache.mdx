@@ -37,7 +37,7 @@ where:
 - **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its `$<file:PATH>` references (§{phl.cook-step}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
 - **command text / Lua chunk** is observable 1 of §17.1;
 - **declared output paths** is observable 3 of §17.1;
-- **consulted variable values** are the string forms (§{decl.config}) of the declared variables the unit reads — `$<NAME>` sigils and the `var.NAME` static reads of §{exec.cache.lua-var-reads};
+- **consulted variable values** are the string forms (§{decl.config}) of the declared variables the unit reads — `$<NAME>` sigils and the `var.NAME` static reads of §{exec.cache.lua-variable-reads};
 - **declared probe values** are the canonical values (§{cat.probes.values}) of every probe in the unit's *effective seal set* — the probes the author sealed the unit on (the disposition surface of §8.4.3, an additive set with no project-default and no narrowing form).
 
 The key MUST NOT include any determinant the author did not declare. In particular, host or machine identity — target triple, libc version, locale — is NOT folded into the key unless the author declared it as a probe and sealed on it (`seal host`). The engine infers no machine-identity, tool, or environment determinant of its own; it caches over exactly what the author declared.
@@ -48,7 +48,7 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 
 > **Note (informative).** A local cache index entry is recorded or refreshed only by the unit that actually executed: the reference implementation writes a unit's fingerprint entry on the executed-unit commit path (after the unit's command ran against the recorded input contents), refreshes recorded mtimes on a cache hit only after verifying content-hash equality, and prunes entries during stale-output reconciliation (§{exec.cache.reconcile}). Operations that register, plan, or explain — registration passes, `cook why` (§{exec.cache.why}), and test scoping — never record fingerprints for units they did not execute. Consequently a reported hit always corresponds to a prior genuine execution of the same command over the same input contents.
 
-### 17.1.2. Tracking Lua reads of `var` [#exec.cache.lua-var-reads]
+### 17.1.2. Tracking Lua reads of `var` [#exec.cache.lua-variable-reads]
 
 > **Normative.** A `cook` step whose `>{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read declared variables through the `var.<NAME>` accessor (§{lua.var}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
 >
