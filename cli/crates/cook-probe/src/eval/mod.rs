@@ -34,9 +34,13 @@ use cook_contracts::ProbeUnit;
 /// The one genuinely phase-specific step: run a `produce` source on this
 /// phase's Lua VM and return its canonical value bytes.
 ///
-/// Implementors are the register VM (sandboxed, single-threaded, in-process)
-/// and the worker VM (execute-phase policy). The sequence around the call is
-/// identical, which is the whole point of the seam.
+/// This is the seam for a caller that produces SYNCHRONOUSLY — the register
+/// pre-pass, which runs the source inline on the register VM. The executor
+/// cannot use it: it hands the work to a thread pool and returns to the
+/// scheduler, so a blocking call here would serialise probe production behind
+/// the scheduler thread. That caller drives [`lookup`] and [`record`] directly
+/// and keeps its own dispatch in between; [`evaluate`] is the two of them plus
+/// a `ProduceRunner`, which is exactly what a synchronous caller needs.
 pub trait ProduceRunner {
     fn run(&self, key: &str, source: &str) -> Result<Vec<u8>, String>;
 }
@@ -134,21 +138,45 @@ pub struct Evaluated {
     pub warnings: Vec<String>,
 }
 
-/// Evaluate one probe.
+/// Where a probe's bytes came from. Decides whether they get published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueSource {
+    /// Served by the cache. Already stored, so [`record`] must not re-publish.
+    Cache,
+    /// Newly produced — by a VM, or synthesised for a producer kind that needs
+    /// none. Published subject to keylessness and `publish_enabled`.
+    Produced,
+}
+
+/// Everything decided before a value exists: the fingerprint, whether there is
+/// a key at all, where the declared tools resolve, and either the bytes (when
+/// no VM is needed) or nothing (when the caller must produce).
+pub struct Lookup {
+    pub fingerprint: [u8; 32],
+    pub keyless: bool,
+    pub tool_paths: BTreeMap<String, String>,
+    pub warnings: Vec<String>,
+    /// `Some` when the value is already determined without running a VM:
+    /// either the cache served it, or the producer kind is synthesised
+    /// (CS-0148 `files { }`). `None` means the caller must produce.
+    pub resolved: Option<(Vec<u8>, ValueSource)>,
+}
+
+/// Steps 1-5: resolve inputs, fingerprint, decide keylessness, resolve tool
+/// locations, consult the cache, and intercept producer kinds that need no VM.
 ///
 /// `upstream_fps` must already hold a fingerprint for every key in
 /// `probe.inputs.requires`; `keyless_upstreams` must hold the keys among them
 /// that are themselves keyless. Both are the caller's to maintain, because
 /// ordering `requires` is a scheduling concern and scheduling is exactly what
 /// the two phases do differently for reasons that are not incidental.
-pub fn evaluate(
+pub fn lookup(
     probe: &ProbeUnit,
     ctx: &EvalCtx<'_>,
-    runner: &dyn ProduceRunner,
     env_lookup: &dyn Fn(&str) -> Option<String>,
     upstream_fps: &BTreeMap<String, [u8; 32]>,
     keyless_upstreams: &BTreeSet<String>,
-) -> Result<Evaluated, ProbeError> {
+) -> Result<Lookup, ProbeError> {
     let key = probe.key.as_str();
     let mut warnings = Vec::new();
 
@@ -185,7 +213,6 @@ pub fn evaluate(
     }
 
     // 5. Cache GET, unless there is no key to look up.
-    let mut cache_hit = false;
     let cached: Option<Vec<u8>> = match (&ctx.cache, keyless) {
         (Some(access), false) => match cook_cache::backend::get_bytes(access.backend, &fingerprint) {
             Ok(Some(bytes)) if cook_contracts::probe_value::decode_json(&bytes).is_ok() => {
@@ -216,42 +243,74 @@ pub fn evaluate(
         _ => None,
     };
 
-    // 6. On a miss, produce. A `files { }` probe never reaches a VM: its
-    //    produce string is the reserved `@files-manifest` sentinel, which is
-    //    deliberately not valid Lua so that a path which tried to run it would
-    //    fail loudly. The value is synthesised from the same path→hash pairs
-    //    the fingerprint's FILES section just folded, so every phase agrees on
-    //    it byte for byte.
-    let bytes = match cached {
-        Some(bytes) => {
-            cache_hit = true;
-            bytes
-        }
-        None if is_files_manifest(probe) => {
-            cook_contracts::probe_value::encode_files_manifest(&inputs.files)
-        }
-        None => runner
-            .run(key, &probe.produce_source)
-            .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?,
+    // 6. Decide whether a VM is needed at all. A `files { }` probe never
+    //    reaches one: its produce string is the reserved `@files-manifest`
+    //    sentinel, deliberately not valid Lua so that a path which tried to run
+    //    it would fail loudly. The value is synthesised from the same path→hash
+    //    pairs the fingerprint's FILES section just folded, so every phase
+    //    agrees on it byte for byte.
+    let resolved = match cached {
+        Some(bytes) => Some((bytes, ValueSource::Cache)),
+        None if is_files_manifest(probe) => Some((
+            cook_contracts::probe_value::encode_files_manifest(&inputs.files),
+            ValueSource::Produced,
+        )),
+        None => None,
     };
 
-    // 7. Publish, then materialise the canonical local copy. A keyless probe
-    //    publishes nothing: skipping only the GET would leave a stable
-    //    fingerprint addressing a stored value that another reader — a
-    //    verifier, another machine on the shared store, a future run under a
-    //    changed rule — could still be served.
+    Ok(Lookup { fingerprint, keyless, tool_paths, warnings, resolved })
+}
+
+/// What [`record`] did.
+#[derive(Debug, Clone, Default)]
+pub struct Recorded {
+    pub warnings: Vec<String>,
+    /// True when bytes were actually written to the shared store. Reported
+    /// rather than left for the caller to re-derive from source/keylessness/
+    /// `publish_enabled` — re-deriving it is how a rule ends up implemented
+    /// twice, which is the defect this crate exists to retire.
+    pub published: bool,
+}
+
+/// Steps 6-7: publish the value if it is new, then materialise the canonical
+/// local copy. Returns any non-fatal conditions; never prints.
+///
+/// Split from [`lookup`] because the executor produces asynchronously: it looks
+/// up at dispatch, hands a miss to a worker, returns to the scheduler, and
+/// records whatever the worker eventually sends back.
+/// Takes the fingerprint and keylessness rather than a whole [`Lookup`], so a
+/// caller whose value arrived from a worker long after the lookup — the
+/// executor — can record it without reconstructing one.
+pub fn record(
+    key: &str,
+    ctx: &EvalCtx<'_>,
+    fingerprint: &[u8; 32],
+    keyless: bool,
+    bytes: &[u8],
+    source: ValueSource,
+) -> Recorded {
+    let mut warnings = Vec::new();
+    let mut published = false;
+
+    // A keyless probe publishes nothing. Skipping only the GET would leave a
+    // stable fingerprint addressing a stored value that another reader — a
+    // verifier, another machine on the shared store, a future run under a
+    // changed rule — could still be served.
     if let Some(access) = &ctx.cache {
-        if !cache_hit && !keyless && access.publish_enabled {
+        if source == ValueSource::Produced && !keyless && access.publish_enabled {
             let mut meta = probe_artifact_meta(key, bytes.len());
-            // Non-fatal: the value is already in hand for this invocation, so
-            // a publish failure costs later runs a hit and costs this one
-            // nothing.
-            if let Err(e) =
-                cook_cache::backend::put_bytes(access.backend, &fingerprint, &bytes, &mut meta)
-            {
-                warnings.push(format!(
+            // Non-fatal: the value is already in hand for this invocation, so a
+            // publish failure costs later runs a hit and costs this one nothing.
+            match cook_cache::backend::put_bytes(
+                access.backend,
+                fingerprint,
+                bytes,
+                &mut meta,
+            ) {
+                Ok(()) => published = true,
+                Err(e) => warnings.push(format!(
                     "probe '{key}': cache backend put failed ({e}); continuing without caching"
-                ));
+                )),
             }
         }
     }
@@ -259,14 +318,51 @@ pub fn evaluate(
     // CS-0102: the canonical local copy at `.cook/probes/<key>.json`, holding
     // the same bytes as the per-run store and the CAS artifact. Non-fatal.
     let probes_dir = ctx.probes_dir();
-    if let Err(e) = crate::store::materialize_value(&probes_dir, key, &bytes) {
+    if let Err(e) = crate::store::materialize_value(&probes_dir, key, bytes) {
         warnings.push(format!(
             "probe '{key}': failed to write {}: {e}",
             probes_dir.display()
         ));
     }
 
-    Ok(Evaluated { bytes, fingerprint, keyless, cache_hit, tool_paths, warnings })
+    Recorded { warnings, published }
+}
+
+/// [`lookup`] + produce + [`record`], for a caller that produces synchronously.
+pub fn evaluate(
+    probe: &ProbeUnit,
+    ctx: &EvalCtx<'_>,
+    runner: &dyn ProduceRunner,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+    upstream_fps: &BTreeMap<String, [u8; 32]>,
+    keyless_upstreams: &BTreeSet<String>,
+) -> Result<Evaluated, ProbeError> {
+    let key = probe.key.as_str();
+    let mut found = lookup(probe, ctx, env_lookup, upstream_fps, keyless_upstreams)?;
+
+    let (bytes, source) = match found.resolved.take() {
+        Some(pair) => pair,
+        None => (
+            runner
+                .run(key, &probe.produce_source)
+                .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?,
+            ValueSource::Produced,
+        ),
+    };
+
+    let mut warnings = std::mem::take(&mut found.warnings);
+    warnings.extend(
+        record(key, ctx, &found.fingerprint, found.keyless, &bytes, source).warnings,
+    );
+
+    Ok(Evaluated {
+        bytes,
+        fingerprint: found.fingerprint,
+        keyless: found.keyless,
+        cache_hit: source == ValueSource::Cache,
+        tool_paths: found.tool_paths,
+        warnings,
+    })
 }
 
 /// CS-0148: a `files { }` producer is intercepted, never run.
