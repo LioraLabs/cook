@@ -56,12 +56,18 @@
 //! tests brittle against `human_size` rounding rather than against
 //! behaviour.
 //!
-//! Known accepted gap (COOK-339): `evaluate_prepass_probe` writes probe
-//! values to the CAS outside every `publish_enabled` guard and outside the
-//! publish counter, so a `published_count == 0` run can still add a handful
-//! of small objects. The two silence tests below therefore assert the
-//! *absence of the check's stderr lines*, never that the store is
-//! byte-for-byte unchanged.
+//! Known accepted gap, narrowed by COOK-359: the register-phase probe
+//! pre-pass publishes probe values without incrementing the publish counter,
+//! so a `published_count == 0` run can still add a handful of small objects.
+//! The two silence tests below therefore assert the *absence of the check's
+//! stderr lines*, never that the store is byte-for-byte unchanged.
+//!
+//! The other half of this note used to say the pre-pass wrote outside every
+//! `publish_enabled` guard (COOK-339). That is fixed: the pre-pass evaluates
+//! through `cook_probe::eval`, whose `record` honours `publish_enabled`, and
+//! a `--no-publish` run now adds nothing to the store. It was also never
+//! reachable before, because the pre-pass had no backend at all — which is
+//! the defect COOK-359 was really about.
 
 use std::collections::BTreeMap;
 use std::fs;
