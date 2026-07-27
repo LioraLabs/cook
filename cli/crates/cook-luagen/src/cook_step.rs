@@ -5,7 +5,7 @@ use cook_lang::ast::*;
 use crate::lua_var;
 use crate::resolver::{IterMode, OutputShape};
 use crate::template::{
-    analyze_output_pattern, expand_command_template, expand_output_pattern, ConsultedEnv,
+    expand_command_template, expand_output_pattern, output_pattern_kind_with_recipes, ConsultedEnv,
     OutputPatternKind,
 };
 
@@ -202,7 +202,7 @@ pub(crate) fn generate_cook_step(
     prev_cook_index: Option<usize>,
     ingredients: &[String],
     recipe_names: &BTreeSet<String>,
-) {
+) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: one accumulator per cook step, tagged by the step's position in
     // the recipe body so hoisted locals are unique within the recipe chunk.
     let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
@@ -234,7 +234,7 @@ pub(crate) fn generate_cook_step(
     let pattern_kind = if cook_step.outputs[0].is_lua_expr() {
         OutputPatternKind::Literal
     } else {
-        analyze_output_pattern(cook_step.outputs[0].as_str(), recipe_names)
+        output_pattern_kind_with_recipes(cook_step.outputs[0].as_str(), recipe_names)
     };
 
     match mode {
@@ -263,15 +263,9 @@ pub(crate) fn generate_cook_step(
                 Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
-                    let (lua_expr, probe_keys) = match expand_command_template(
+                    let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted, &mut file_refs,
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => (
-                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
-                            std::collections::BTreeSet::new(),
-                        ),
-                    };
+                    )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
                         "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
@@ -322,7 +316,7 @@ pub(crate) fn generate_cook_step(
         }
         CookMode::OneToOne => {
             let iter_source = match &pattern_kind {
-                OutputPatternKind::DepDriven { dep_name, .. } => {
+                OutputPatternKind::DepDriven { dep_name } => {
                     format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
                 }
                 OutputPatternKind::OwnInputAccessor => input_source.clone(),
@@ -332,29 +326,22 @@ pub(crate) fn generate_cook_step(
             // CS-0101 compute-then-emit: expand the output pattern and body
             // BEFORE pushing the for-header so file-ref hoists precede the loop.
             let mut consulted = ConsultedEnv::new();
-            let out_expr = match &pattern_kind {
-                OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
-                OutputPatternKind::OwnInputAccessor => {
-                    expand_output_pattern(cook_step.outputs[0].as_str(), &mut consulted)
-                }
-                OutputPatternKind::Literal => {
-                    format!("\"{}\"", crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str()))
-                }
-            };
+            // COOK-357: one lowering for every pattern kind. The `Literal`
+            // arm used to emit the raw escaped pattern, so a sigil the
+            // classifier did not look for (anything but `$<in…>` and
+            // `$<recipe.ACCESSOR>`) survived into the output path verbatim:
+            // `cook "out/all-$<suffix>.o"` wrote a file called `out/all-$`
+            // and let /bin/sh read `$<suffix>` as a redirect.
+            let out_expr =
+                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, &mut consulted)?;
 
             let add_unit_line = match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
-                    let (lua_expr, probe_keys) = match expand_command_template(
+                    let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted, &mut file_refs,
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => (
-                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
-                            std::collections::BTreeSet::new(),
-                        ),
-                    };
+                    )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
                         "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
@@ -398,30 +385,23 @@ pub(crate) fn generate_cook_step(
             ));
 
             let mut consulted = ConsultedEnv::new();
-            let out_expr = match &pattern_kind {
-                OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
-                OutputPatternKind::OwnInputAccessor => {
-                    expand_output_pattern(cook_step.outputs[0].as_str(), &mut consulted)
-                }
-                OutputPatternKind::Literal => {
-                    format!("\"{}\"", crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str()))
-                }
-            };
+            // COOK-357: one lowering for every pattern kind. The `Literal`
+            // arm used to emit the raw escaped pattern, so a sigil the
+            // classifier did not look for (anything but `$<in…>` and
+            // `$<recipe.ACCESSOR>`) survived into the output path verbatim:
+            // `cook "out/all-$<suffix>.o"` wrote a file called `out/all-$`
+            // and let /bin/sh read `$<suffix>` as a redirect.
+            let out_expr =
+                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, &mut consulted)?;
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
 
             match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
-                    let (lua_expr, probe_keys) = match expand_command_template(
+                    let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted, &mut file_refs,
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => (
-                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
-                            std::collections::BTreeSet::new(),
-                        ),
-                    };
+                    )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     // CS-0101: non-loop step — hoists go right before add_unit.
                     if !file_refs.is_empty() {
@@ -451,7 +431,7 @@ pub(crate) fn generate_cook_step(
         }
         CookMode::OneToMany => {
             let iter_source = match &pattern_kind {
-                OutputPatternKind::DepDriven { dep_name, .. } => {
+                OutputPatternKind::DepDriven { dep_name } => {
                     format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
                 }
                 _ => input_source.clone(),
@@ -462,7 +442,7 @@ pub(crate) fn generate_cook_step(
             let mut consulted = ConsultedEnv::new();
             let mut outs_block = String::from("        local _cook_outs = {\n");
             for pat in &cook_step.outputs {
-                let expr = expand_output_pattern(pat.as_str(), &mut consulted);
+                let expr = expand_output_pattern(pat.as_str(), recipe_names, &mut consulted)?;
                 outs_block.push_str(&format!("            {},\n", expr));
             }
             outs_block.push_str("        };\n");
@@ -476,15 +456,9 @@ pub(crate) fn generate_cook_step(
                         OutputShape::Multi(cook_step.outputs.len()),
                         recipe_names,
                     );
-                    let (lua_expr, probe_keys) = match expand_command_template(
+                    let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &oto_many_ctx, &mut consulted, &mut file_refs,
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => (
-                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
-                            std::collections::BTreeSet::new(),
-                        ),
-                    };
+                    )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
                         "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
@@ -548,15 +522,9 @@ pub(crate) fn generate_cook_step(
                         OutputShape::Multi(cook_step.outputs.len()),
                         recipe_names,
                     );
-                    let (lua_expr, probe_keys) = match expand_command_template(
+                    let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &block_ctx, &mut consulted, &mut file_refs,
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => (
-                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
-                            std::collections::BTreeSet::new(),
-                        ),
-                    };
+                    )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     // CS-0101: non-loop step — hoists go right before add_unit.
                     if !file_refs.is_empty() {
@@ -588,6 +556,7 @@ pub(crate) fn generate_cook_step(
             }
         }
     }
+    Ok(())
 }
 
 /// COOK-63 §8.3: lower a `cook` step inside a `for_each` recipe to one
@@ -607,7 +576,7 @@ pub(crate) fn generate_for_each_cook_step(
     index: usize,
     step_pos: usize,
     recipe_names: &BTreeSet<String>,
-) {
+) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
     let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
@@ -621,16 +590,6 @@ pub(crate) fn generate_for_each_cook_step(
         count_to_output_shape(cook_step.outputs.len()),
         recipe_names,
     );
-    let sigil_err = |e: crate::resolver::ResolveError| {
-        (
-            format!(
-                "\"[[SIGIL_ERROR: {}]]\"",
-                crate::lua_string::escape_lua_string(&e.to_string())
-            ),
-            BTreeSet::new(),
-        )
-    };
-
     // CS-0101 compute-then-emit: expand the output paths and body BEFORE
     // pushing the member-loop header so file-ref hoists precede the loop.
     //
@@ -641,21 +600,17 @@ pub(crate) fn generate_for_each_cook_step(
     // only outputs[0] registered; the rest were silently dropped and later
     // swept as orphans by stale-output reconciliation.
     let mut consulted = ConsultedEnv::new();
-    let out_exprs: Vec<String> = cook_step
-        .outputs
-        .iter()
-        .map(|pat| {
-            crate::template::expand_for_each_template(
-                pat.as_str(),
-                &ctx,
-                &mut consulted,
-                &mut file_refs,
-                crate::template::ProbeLowering::CacheGet,
-            )
-            .unwrap_or_else(sigil_err)
-            .0
-        })
-        .collect();
+    let mut out_exprs: Vec<String> = Vec::with_capacity(cook_step.outputs.len());
+    for pat in &cook_step.outputs {
+        let (expr, _) = crate::template::expand_for_each_template(
+            pat.as_str(),
+            &ctx,
+            &mut consulted,
+            &mut file_refs,
+            crate::template::ProbeLowering::CacheGet,
+        )?;
+        out_exprs.push(expr);
+    }
     let multi = out_exprs.len() > 1;
     let out_field = if multi { "outputs = _cook_outs" } else { "output = _cook_out" };
 
@@ -668,8 +623,7 @@ pub(crate) fn generate_for_each_cook_step(
                 &mut consulted,
                 &mut file_refs,
                 crate::template::ProbeLowering::LiteralSigil,
-            )
-            .unwrap_or_else(sigil_err);
+            )?;
             // COOK-187 / CS-0122: probe refs stay literal sigil text in the
             // command string — never a deferred function (see
             // expand_command_template's doc comment for the rationale).
@@ -719,6 +673,7 @@ pub(crate) fn generate_for_each_cook_step(
         if multi { "_cook_outs[1]" } else { "_cook_out" }
     ));
     out.push_str("    end\n");
+    Ok(())
 }
 
 #[cfg(test)]

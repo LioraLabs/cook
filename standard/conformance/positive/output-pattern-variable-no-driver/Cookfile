@@ -1,0 +1,6 @@
+config
+    var.suffix = "dev"
+
+recipe bundle
+    ingredients "*.c"
+    cook "out/all-$<suffix>.o" { cat $<in> > $<out> }

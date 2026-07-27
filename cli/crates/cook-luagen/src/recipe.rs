@@ -11,7 +11,7 @@ use crate::sigil;
 use crate::template::ConsultedEnv;
 use crate::test_step;
 
-/// Error raised by `generate_with_names_checked` when codegen-phase
+/// Error raised by [`generate_checked`] when codegen-phase
 /// validation rejects a Cookfile.
 ///
 /// Per Cook Standard § 5.4, `$<lib.ACCESSOR>` is only valid in a step whose
@@ -47,12 +47,11 @@ pub enum CodegenError {
     /// CS-0024 plate/test mode or placeholder validation failure.
     #[error("{0}")]
     PlateTest(#[from] crate::test_step::CodegenError),
-    /// CS-0033/CS-0127: a `$<...>` sigil in a shell command resolved to an
-    /// error (e.g. malformed `out_N`, a builtin used in the wrong mode)
-    /// instead of a valid substitution. Previously `expand_shell_command_sigil`
-    /// swallowed this into a `[[SIGIL_ERROR: ...]]` string literal embedded in
-    /// the emitted command, so the recipe "compiled" and failed cryptically
-    /// only at execute time. Propagated instead (COOK-188).
+    /// CS-0033/CS-0127: a `$<...>` sigil resolved to an error (a malformed
+    /// `out_N`, a builtin used in the wrong mode, a probe ref or bracket index
+    /// where none is valid) instead of a valid substitution. Every expander
+    /// returns this; nothing embeds a marker string in the emitted Lua and
+    /// greps for it afterwards (COOK-188, COOK-357).
     #[error("line {line}: recipe '{recipe}': {source}")]
     SigilResolve {
         recipe: String,
@@ -72,67 +71,33 @@ pub enum CodegenError {
     },
 }
 
-pub fn generate(cookfile: &Cookfile) -> String {
-    generate_with_names(cookfile, &BTreeSet::new())
-        .expect("generate: unexpected codegen error (use generate_with_names_checked for validated codegen)")
-}
-
-/// Lower `cookfile` and return any register-time warnings alongside the Lua
-/// source.
+/// Lower `cookfile` after running codegen-phase validation, returning the Lua
+/// source together with any register-time warnings.
 ///
-/// Current warnings:
-/// - **Empty-output reference (Cook Standard § 5.5).** When a `{NAME}` or
-///   `{NAME.ACCESSOR}` reference names a recipe whose output list at register
-///   time is empty (i.e. has no cook steps and no ingredients), we emit a
-///   warning naming both the referrer and referent. The reference itself is
-///   still lowered — the substitution is the empty string — so callers must
-///   not treat this as an error.
-pub fn generate_with_names_and_warnings(
+/// The one production entry point (COOK-357). `parse.rs` and `workspace.rs`
+/// used to call `generate_with_names_checked` and then
+/// `generate_with_names_and_warnings`, lowering the whole Cookfile a second
+/// time only to throw the Lua away and keep the warnings — and the second
+/// entry point `.expect()`ed on codegen errors, which was safe only because
+/// the checked call had already run.
+///
+/// Validation covers Cook Standard § 5.4 (`$<lib.ACCESSOR>` is valid only in a
+/// step whose output pattern declares `lib` as an iteration driver) and
+/// CS-0033 § 6.7 (bare accessors in output patterns, `$<out_N>` in
+/// single-output steps, `$<out>` in multi-output steps, `$<lib.ACCESSOR>`
+/// inside a cook-step body).
+///
+/// Warnings currently cover the § 5.5 empty-output reference: a `$<NAME>` or
+/// `$<NAME.ACCESSOR>` naming a recipe whose register-time output list is empty.
+/// The reference is still lowered (the substitution is the empty string), so
+/// callers must not treat a warning as an error.
+pub fn generate_checked(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
-) -> (String, Vec<String>) {
-    let warnings = warn_empty_output_refs(cookfile, recipe_names);
-    let output = generate_with_names(cookfile, recipe_names)
-        .expect("generate_with_names_and_warnings: unexpected codegen error");
-    (output, warnings)
-}
-
-/// Lower `cookfile` after running codegen-phase validation. Returns an error
-/// if any `{NAME.ACCESSOR}` placeholder appears where no output pattern in the
-/// same step declares `NAME` as an iteration driver (Cook Standard § 5.4).
-pub fn generate_with_names_checked(
-    cookfile: &Cookfile,
-    recipe_names: &BTreeSet<String>,
-) -> Result<String, CodegenError> {
+) -> Result<(String, Vec<String>), CodegenError> {
     validate_accessor_placement(cookfile, recipe_names)?;
-    let generated = generate_with_names(cookfile, recipe_names)?;
-    scan_for_sigil_errors(&generated).map_err(|message| CodegenError::PlaceholderViolation {
-        recipe: "(unknown)".to_string(),
-        message,
-        line: 0,
-    })?;
-    Ok(generated)
-}
-
-/// Post-lowering safety net (COOK-191/CS-0126): a SIGIL_ERROR sentinel in
-/// checked output means a placeholder failed to lower — surface it as a
-/// codegen error instead of letting the marker flow into a command at
-/// runtime. Every `"[[SIGIL_ERROR: <message>]]"` emission site (template.rs,
-/// cook_step.rs, recipe.rs, test_step.rs) funnels through
-/// `generate_with_names`, so scanning the fully-generated string here catches
-/// any of them in one place, regardless of which validator (if any) upstream
-/// missed the shape. There is no recipe/line context left at this point —
-/// the generated string is flat text — so `generate_with_names_checked`
-/// reports `line: 0` / `recipe: "(unknown)"`, matching the `step_line`
-/// fallback convention above for step kinds with no known line.
-pub(crate) fn scan_for_sigil_errors(generated: &str) -> Result<(), String> {
-    const MARK: &str = "[[SIGIL_ERROR: ";
-    if let Some(start) = generated.find(MARK) {
-        let rest = &generated[start + MARK.len()..];
-        let msg = rest.split("]]").next().unwrap_or(rest);
-        return Err(msg.to_string());
-    }
-    Ok(())
+    let warnings = warn_empty_output_refs(cookfile, recipe_names);
+    Ok((generate_with_names(cookfile, recipe_names)?, warnings))
 }
 
 /// Detect references whose referent has an empty output list and return one
@@ -229,9 +194,10 @@ fn check_output_pattern_no_bare_accessors(
         let inner = span.ident.as_str();
 
         // CS-0101: `$<file:PATH>` is an input reference, not an iteration
-        // driver — it is rejected in cook output patterns. (This is the
-        // checked-path rejection; `output_pattern_ident_to_lua` carries the
-        // matching SIGIL_ERROR sentinel for the unchecked `generate` path.)
+        // driver — it is rejected in cook output patterns. This is the
+        // up-front rejection, which names the recipe and line;
+        // `output_pattern_ident_to_lua` returns the same typed error for any
+        // caller that reaches the pattern without passing through here.
         if inner.starts_with("file:") {
             let e = crate::resolver::ResolveError::FileRefInOutputPattern {
                 ident: inner.to_string(),
@@ -540,10 +506,8 @@ fn emit_body_unit_with_names(
                         recipes_in_scope: recipe_names,
                     };
                     let mut consulted = ConsultedEnv::new();
-                    // COOK-188: propagate instead of embedding a
-                    // `[[SIGIL_ERROR: ...]]` sentinel — an unresolvable
-                    // placeholder here previously "compiled" and failed only
-                    // at execute time.
+                    // COOK-188: an unresolvable placeholder is propagated, not
+                    // swallowed — it used to "compile" and fail at execute time.
                     let lua_expr = crate::template::expand_sigil_template(
                         command,
                         &ctx,
@@ -955,7 +919,7 @@ pub fn generate_with_names(
                     cs.outputs.iter().all(|p| {
                         !p.is_lua_expr()
                             && matches!(
-                                crate::template::analyze_output_pattern(
+                                crate::template::output_pattern_kind_with_recipes(
                                     p.as_str(),
                                     recipe_names
                                 ),
@@ -1021,7 +985,12 @@ pub fn generate_with_names(
                                     cook_index,
                                     i,
                                     recipe_names,
-                                );
+                                )
+                                .map_err(|source| CodegenError::SigilResolve {
+                                    recipe: recipe.name.clone(),
+                                    line: *line,
+                                    source,
+                                })?;
                             } else {
                                 generate_cook_step(
                                     &mut out,
@@ -1032,7 +1001,12 @@ pub fn generate_with_names(
                                     prev_cook_index,
                                     &recipe.ingredients,
                                     recipe_names,
-                                );
+                                )
+                                .map_err(|source| CodegenError::SigilResolve {
+                                    recipe: recipe.name.clone(),
+                                    line: *line,
+                                    source,
+                                })?;
                             }
                             out.push_str("    end)\n");
                             prev_cook_index = Some(cook_index);
@@ -1190,9 +1164,7 @@ fn step_kind_name(step: &Step) -> String {
 /// Returns a Lua expression suitable for the `command =` field of `cook.add_unit`.
 /// Commands with no sigil placeholders are emitted as Lua long-string literals.
 ///
-/// Returns `Err` if any placeholder fails to resolve (COOK-188) — callers must
-/// propagate this into the `Result`-returning compile path rather than
-/// embedding a `[[SIGIL_ERROR: ...]]` sentinel into the emitted command.
+/// Returns `Err` if any placeholder fails to resolve (COOK-188).
 fn expand_shell_command_sigil(
     command: &str,
     recipe_names: &BTreeSet<String>,
@@ -1299,7 +1271,7 @@ pub fn compile_chore(
     recipe_names: &BTreeSet<String>,
 ) -> String {
     compile_chore_checked(chore, uses, recipe_names)
-        .expect("compile_chore: unexpected codegen error (use generate_with_names_checked for validated codegen)")
+        .expect("compile_chore: unexpected codegen error (use generate_checked for validated codegen)")
 }
 
 fn compile_chore_checked(

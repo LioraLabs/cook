@@ -189,3 +189,79 @@ fn dollar_lt_followed_by_dollar_lt() {
     assert_eq!(spans[0].ident, "x");
     assert_eq!(spans[0].range, 2..6);
 }
+
+// ─── CS-0074 probe-ref grammar (COOK-357) ───────────────────────────────────
+//
+// One walker for `$<key:path>` idents, shared with cook-register's
+// `cook.add_unit` capture. Before COOK-357 these lived twice: privately in
+// `resolver::parse_probe_ref` and again as a closure in
+// cook-register/src/unit_api.rs.
+
+#[test]
+fn parses_probe_ref_bare_key() {
+    let r = probe_ref("cc:zlib").expect("probe-shaped");
+    assert_eq!(r.key(), "cc:zlib");
+    assert_eq!(r.path(), &[]);
+    assert_eq!(r.lua_access(), r#"cook.probes.get("cc:zlib")"#);
+}
+
+#[test]
+fn parses_probe_ref_field() {
+    let r = probe_ref("cc:zlib.cflags").expect("probe-shaped");
+    assert_eq!(r.key(), "cc:zlib");
+    assert_eq!(r.path(), &[Seg::Field("cflags".to_string())]);
+    assert_eq!(r.lua_access(), r#"cook.probes.get("cc:zlib").cflags"#);
+}
+
+#[test]
+fn parses_probe_ref_field_indexed() {
+    let r = probe_ref("cc:zlib.cflags[2]").expect("probe-shaped");
+    assert_eq!(r.key(), "cc:zlib");
+    assert_eq!(
+        r.path(),
+        &[Seg::Field("cflags".to_string()), Seg::Index("2".to_string())]
+    );
+    assert_eq!(r.lua_access(), r#"cook.probes.get("cc:zlib").cflags[2]"#);
+}
+
+#[test]
+fn probe_ref_key_ends_at_first_dot_or_bracket_after_the_colon() {
+    // The colon discriminator is part of the KEY; a dot BEFORE it does not
+    // start the path (`demo:cc-version.ver` keys on `demo:cc-version`).
+    let r = probe_ref("demo:cc-version.ver").expect("probe-shaped");
+    assert_eq!(r.key(), "demo:cc-version");
+    assert_eq!(r.path(), &[Seg::Field("ver".to_string())]);
+}
+
+#[test]
+fn probe_ref_index_directly_on_the_key() {
+    let r = probe_ref("list:items[1]").expect("probe-shaped");
+    assert_eq!(r.key(), "list:items");
+    assert_eq!(r.lua_access(), r#"cook.probes.get("list:items")[1]"#);
+}
+
+#[test]
+fn probe_ref_rejects_idents_without_a_colon() {
+    assert!(probe_ref("in.stem").is_none());
+    assert!(probe_ref("out_1").is_none());
+    assert!(probe_ref("HOME").is_none());
+}
+
+#[test]
+fn probe_ref_rejects_the_reserved_file_namespace() {
+    // CS-0101: `file:` is dispatched before the colon discriminator. Folding
+    // the exclusion into the walker keeps the rule in one place instead of
+    // relying on every caller to pre-filter (resolver and unit_api each did).
+    assert!(probe_ref("file:src/x.css").is_none());
+    assert!(probe_ref("file:dir/*.css").is_none());
+}
+
+#[test]
+fn probe_ref_escapes_the_key_for_the_lua_literal() {
+    // Unreachable through `scan` (the IDENT charset admits neither `"` nor
+    // `\`), but `probe_ref` is public: one escape rule, not three. Before
+    // COOK-357 the resolver escaped `\` and `"`, unit_api additionally
+    // escaped `\n`/`\r`/`\0`, and neither agreed with the other.
+    let r = probe_ref(r#"k:a"b"#).expect("probe-shaped");
+    assert_eq!(r.lua_access(), r#"cook.probes.get("k:a\"b")"#);
+}

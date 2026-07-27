@@ -474,14 +474,20 @@ pub(crate) fn cook_step_ctx<'a>(
 
 // ─── Output pattern analysis (sigil-based) ───────────────────────────────────
 
-/// Result of analyzing an output pattern for dep-driven or own-input iteration.
+/// What drives iteration for an output pattern.
+///
+/// Classification only. Lowering the pattern to Lua is
+/// [`expand_output_pattern`], which is the same call for every variant and is
+/// the only half that can fail. Before COOK-357 this enum also carried the
+/// dep-driven case's pre-rendered `lua_expr`, which meant classifying a pattern
+/// silently lowered it too, on a path with nowhere to report an error.
 pub(crate) enum OutputPatternKind {
-    /// Pattern is fully literal — many-to-one (no iteration source in output).
+    /// No iteration source in the pattern — many-to-one.
     Literal,
-    /// Pattern contains `$<in.ACCESSOR>` — one-to-one over own inputs.
+    /// Pattern contains `$<in>` / `$<in.ACCESSOR>` — one-to-one over own inputs.
     OwnInputAccessor,
     /// Pattern contains `$<recipe.ACCESSOR>` — one-to-one over that dep's outputs.
-    DepDriven { dep_name: String, lua_expr: String },
+    DepDriven { dep_name: String },
 }
 
 /// Determine the iteration kind of an output pattern WITH full recipe-name knowledge.
@@ -489,95 +495,51 @@ pub(crate) fn output_pattern_kind_with_recipes(
     pattern: &str,
     recipe_names: &BTreeSet<String>,
 ) -> OutputPatternKind {
-    let spans = sigil::scan(pattern);
-    for span in &spans {
-        let ident = &span.ident;
-        if ident == "in" || ident.starts_with("in.") {
-            return OutputPatternKind::OwnInputAccessor;
-        }
+    if sigil::scan(pattern)
+        .iter()
+        .any(|span| crate::resolver::is_own_input_ref(&span.ident))
+    {
+        return OutputPatternKind::OwnInputAccessor;
     }
-    // Check for dep-driven (recipe.accessor) in output pattern.
-    if let Some((dep, accessor)) = first_dep_accessor_sigil(pattern, recipe_names) {
-        let mut _discard = ConsultedEnv::new();
-        let lua_expr = expand_dep_driven_output_pattern(&dep, &accessor, pattern, recipe_names, &mut _discard);
-        return OutputPatternKind::DepDriven { dep_name: dep, lua_expr };
+    match first_dep_accessor_sigil(pattern, recipe_names) {
+        Some(dep_name) => OutputPatternKind::DepDriven { dep_name },
+        None => OutputPatternKind::Literal,
     }
-    OutputPatternKind::Literal
 }
 
-/// Analyze an output pattern (alias kept for callers using the old name).
-pub(crate) fn analyze_output_pattern(
-    pattern: &str,
-    recipe_names: &BTreeSet<String>,
-) -> OutputPatternKind {
-    output_pattern_kind_with_recipes(pattern, recipe_names)
+/// Walk a pattern's `$<TOKEN.SUFFIX>` placeholders and return the first TOKEN
+/// that is a recipe in scope carrying a known path accessor.
+fn first_dep_accessor_sigil(pattern: &str, recipe_names: &BTreeSet<String>) -> Option<String> {
+    sigil::scan(pattern).into_iter().find_map(|span| {
+        let (prefix, suffix) = span.ident.rsplit_once('.')?;
+        (ACCESSORS.contains(&suffix) && recipe_names.contains(prefix)).then(|| prefix.to_string())
+    })
 }
 
-/// Walk a pattern's `$<TOKEN.SUFFIX>` placeholders and return the first whose
-/// TOKEN is in `recipe_names` and SUFFIX is a known path accessor.
-fn first_dep_accessor_sigil(
-    pattern: &str,
-    recipe_names: &BTreeSet<String>,
-) -> Option<(String, String)> {
-    for span in sigil::scan(pattern) {
-        let ident = &span.ident;
-        if let Some(dot_pos) = ident.rfind('.') {
-            let prefix = &ident[..dot_pos];
-            let suffix = &ident[dot_pos + 1..];
-            if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
-                return Some((prefix.to_string(), suffix.to_string()));
-            }
-        }
-    }
-    None
-}
-
-/// Expand a dep-driven output pattern (e.g. `build/$<protos.stem>.o`) into a Lua expression.
-/// Normalizes `$<dep.accessor>` → `path.accessor(_cook_in)` by substituting
-/// via the sigil path with the dep-driven context.
-pub(crate) fn expand_dep_driven_output_pattern(
-    _dep_name: &str,
-    _accessor: &str,
+/// Expand an output pattern using sigil-based substitution.
+///
+/// One entry point for every output-pattern kind, dep-driven or not (COOK-357).
+/// It previously forked: the dep-driven caller passed the real recipe set while
+/// the ordinary caller passed an empty one, so a bare `$<name>` lowered to
+/// `cook.dep_output` in one pattern and `cook.require_var` in another purely
+/// because the first pattern happened to carry a dep accessor elsewhere.
+pub(crate) fn expand_output_pattern(
     pattern: &str,
     recipe_names: &BTreeSet<String>,
     out: &mut ConsultedEnv,
-) -> String {
-    // In a dep-driven output pattern, $<dep.accessor> expands to path.accessor(_cook_in)
-    // because iteration is over the dep's outputs (so _cook_in holds the dep output).
-    // We use OneToOne mode and Single output shape to match the step context.
+) -> Result<String, ResolveError> {
+    // `$<dep.accessor>` normalises to `path.accessor(_cook_in)`: iteration is
+    // over the dep's outputs, so `_cook_in` holds the dep output. OneToOne /
+    // Single match that step context.
     let ctx = ResolveCtx {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: recipe_names,
     };
-    expand_sigil_output_pattern(pattern, &ctx, out)
-}
 
-/// Expand an output pattern using sigil-based substitution.
-/// In output patterns, `$<dep.accessor>` where dep is a recipe expands to
-/// `path.accessor(_cook_in)` (dep-driven iteration normalizes to own-input).
-pub(crate) fn expand_output_pattern(pattern: &str, out: &mut ConsultedEnv) -> String {
-    // Output patterns only admit: $<in>, $<in.accessor> → own-input iteration
-    // Everything else is an env var or literal (output patterns don't reference recipes
-    // via their accessor in the body — that goes through dep_name → lua_expr).
-    let ctx = ResolveCtx {
-        mode: IterMode::OneToOne,
-        outputs: OutputShape::Single,
-        recipes_in_scope: &BTreeSet::new(),
-    };
-    expand_sigil_output_pattern(pattern, &ctx, out)
-}
-
-/// Expand an output pattern with sigil substitution in dep-driven context.
-/// `$<dep.acc>` → `path.acc(_cook_in)` when dep is in scope as a recipe.
-fn expand_sigil_output_pattern(
-    pattern: &str,
-    ctx: &ResolveCtx<'_>,
-    out: &mut ConsultedEnv,
-) -> String {
     let spans = sigil::scan(pattern);
     if spans.is_empty() {
-        return format!("\"{}\"", escape_lua_string(pattern));
+        return Ok(format!("\"{}\"", escape_lua_string(pattern)));
     }
 
     let mut parts: Vec<String> = Vec::new();
@@ -589,11 +551,7 @@ fn expand_sigil_output_pattern(
             parts.push(format!("\"{}\"", escape_lua_string(literal)));
         }
 
-        // In output patterns, dep.accessor references should expand to path.accessor(_cook_in)
-        // because this is where dep-driven iteration is declared.
-        let ident = &span.ident;
-        let lua_expr = output_pattern_ident_to_lua(ident, ctx, out);
-        parts.push(lua_expr);
+        parts.push(output_pattern_ident_to_lua(&span.ident, &ctx, out)?);
 
         last_end = span.range.end;
     }
@@ -603,13 +561,13 @@ fn expand_sigil_output_pattern(
         parts.push(format!("\"{}\"", escape_lua_string(literal)));
     }
 
-    if parts.is_empty() {
+    Ok(if parts.is_empty() {
         "\"\"".to_string()
     } else if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
         parts.join(" .. ")
-    }
+    })
 }
 
 /// Convert an output-pattern sigil ident to a Lua expression.
@@ -619,79 +577,53 @@ fn output_pattern_ident_to_lua(
     ident: &str,
     ctx: &ResolveCtx<'_>,
     out: &mut ConsultedEnv,
-) -> String {
+) -> Result<String, ResolveError> {
     // Check if this is a recipe accessor that should normalize to path.X(_cook_in).
     if let Some(dot_pos) = ident.rfind('.') {
         let prefix = &ident[..dot_pos];
         let suffix = &ident[dot_pos + 1..];
         if ACCESSORS.contains(&suffix) && ctx.recipes_in_scope.contains(prefix) {
             // dep.accessor → path.accessor(_cook_in) (dep-driven normalization)
-            return format!("path.{}(_cook_in)", suffix);
+            return Ok(format!("path.{}(_cook_in)", suffix));
         }
     }
 
     // Otherwise use normal resolution.
-    let resolved = crate::resolver::resolve(ident, ctx);
-    match resolved {
-        Resolved::Builtin(b) => builtin_to_lua(b),
+    match crate::resolver::resolve(ident, ctx) {
+        Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
         Resolved::Recipe { name, accessor } => {
             let escaped = escape_lua_string(&name);
-            if let Some(acc) = accessor {
-                format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped)
-            } else {
-                format!("cook.dep_output(\"{}\")", escaped)
-            }
+            Ok(match accessor {
+                Some(acc) => format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped),
+                None => format!("cook.dep_output(\"{}\")", escaped),
+            })
         }
         Resolved::EnvRuntime(key) => {
             out.record(&key);
-            format!("cook.require_var(\"{}\")", escape_lua_string(&key))
+            Ok(format!("cook.require_var(\"{}\")", escape_lua_string(&key)))
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
-        Resolved::ProbeRef { access, .. } => format!("tostring({})", access),
+        Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
         // CS-0101: a file reference is an input, not an iteration driver — it is
-        // invalid in a cook output pattern. The checked codegen path rejects it
-        // up front (`check_output_pattern_no_bare_accessors`); this sentinel
-        // covers the unchecked `generate` path, mirroring RecipeMember below.
-        Resolved::FileRef { pattern } => {
-            let e = ResolveError::FileRefInOutputPattern {
-                ident: format!("file:{}", pattern),
-            };
-            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-        }
-        // CS-0101: a malformed file-ref path is a hard error, not an env-var
-        // fallback — keep the typed diagnostic visible.
-        Resolved::Error(e @ ResolveError::FileRefBadPath { .. }) => {
-            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-        }
-        // COOK-221 / CS-0137: bracket-index diagnostics are hard errors, not
-        // env-var fallbacks — keep the typed diagnostic visible (mirrors
-        // FileRefBadPath above).
-        Resolved::Error(
-            e @ (ResolveError::RecipeMemberEmptyIndex { .. }
-            | ResolveError::RecipeMemberBadIndex { .. }
-            | ResolveError::RecipeMemberUnknownRecipe { .. }),
-        ) => {
-            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-        }
-        Resolved::Error(_) => {
-            // In output patterns, errors fall through to env lookup for backward compat
-            // with patterns that use $<TOKEN> where TOKEN is an env var name.
-            out.record(ident);
-            format!("cook.require_var(\"{}\")", escape_lua_string(ident))
-        }
-        // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns have no
-        // fan-out body context and `item` is not in scope. Emit a sentinel string that
-        // surfaces as a Lua load-time string so the error is visible without a runtime panic.
-        Resolved::RecipeMember { name } => {
-            // Single-escape via the typed error's Display, matching every other
-            // SIGIL_ERROR site (recipe.rs, cook_step.rs, …) and keeping the prose
-            // identical to the typed error `resolved_to_lua` returns for the same case.
-            let e = ResolveError::RecipeMemberOutsideFanout {
-                ident: format!("{}[in]", name),
-            };
-            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-        }
+        // invalid in a cook output pattern.
+        Resolved::FileRef { pattern } => Err(ResolveError::FileRefInOutputPattern {
+            ident: format!("file:{}", pattern),
+        }),
+        // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
+        // have no fan-out body context and `item` is not in scope.
+        Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
+            ident: format!("{}[in]", name),
+        }),
+        // COOK-357: every resolver error is now a codegen error here. It used to
+        // fork — file-ref and bracket-index errors became `[[SIGIL_ERROR: …]]`
+        // string literals, everything else silently fell through to
+        // `cook.require_var(ident)` "for backward compat". That fallback turned
+        // e.g. `$<out_2>` in a single-output pattern into a lookup for a
+        // variable literally named `out_2`, reporting a missing config block
+        // instead of the wrong-output-count diagnostic the same sigil gets in a
+        // step body.
+        Resolved::Error(e) => Err(e),
     }
 }
 
@@ -744,13 +676,9 @@ pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, Plate
 
 /// Scan a shell-body text for any `$<in>` or `$<in.ACCESSOR>` placeholder.
 fn body_text_has_in_placeholder_sigil(text: &str) -> bool {
-    for span in sigil::scan(text) {
-        let ident = &span.ident;
-        if ident == "in" || ident.starts_with("in.") {
-            return true;
-        }
-    }
-    false
+    sigil::scan(text)
+        .iter()
+        .any(|span| crate::resolver::is_own_input_ref(&span.ident))
 }
 
 /// Scan a Lua source text for a free-identifier reference to `name`.
@@ -768,68 +696,25 @@ fn lua_has_free_identifier(code: &str, name: &str) -> bool {
     let bytes = code.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        let b = bytes[i];
-
-        // Skip line comments: `-- … <newline>`.
-        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            // Long comment: `--[[ … ]]` or `--[==[ … ]==]`.
-            if i + 2 < bytes.len() && bytes[i + 2] == b'[' {
-                let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 3..]);
-                if let Some(after_open_pos) = after_open {
-                    let close_marker = format!("]{}]", "=".repeat(eq_count));
-                    if let Some(rel) = code[i + 3 + after_open_pos..].find(&close_marker) {
-                        i = i + 3 + after_open_pos + rel + close_marker.len();
-                        continue;
-                    } else {
-                        return false; // unterminated — treat as unscannable
-                    }
-                }
+        // Strings and comments are not code (see `crate::lua_scan`). An
+        // unterminated one makes the rest unscannable; report "not found"
+        // rather than guessing where it ends.
+        match crate::lua_scan::skip_non_code(code, bytes, i) {
+            crate::lua_scan::Skip::Ended(next) => {
+                i = next;
+                continue;
             }
-            // Line comment.
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
+            crate::lua_scan::Skip::Unterminated => return false,
+            crate::lua_scan::Skip::Code => {}
         }
 
-        // Skip short strings.
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            i += 1; // skip closing quote
-            continue;
-        }
-
-        // Skip long strings: `[[ … ]]` or `[==[ … ]==]`.
-        if b == b'[' {
-            let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 1..]);
-            if let Some(after_open_pos) = after_open {
-                let close_marker = format!("]{}]", "=".repeat(eq_count));
-                if let Some(rel) = code[i + 1 + after_open_pos..].find(&close_marker) {
-                    i = i + 1 + after_open_pos + rel + close_marker.len();
-                    continue;
-                } else {
-                    return false;
-                }
-            }
-        }
-
-        // Identifier match.
-        if is_lua_ident_start(b) {
-            let ident_start = i;
-            while i < bytes.len() && is_lua_ident_cont(bytes[i]) {
-                i += 1;
-            }
-            let before_is_field_access = ident_start > 0
-                && (bytes[ident_start - 1] == b'.' || bytes[ident_start - 1] == b':');
-            if !before_is_field_access && &code[ident_start..i] == name {
+        if crate::lua_scan::is_ident_start(bytes[i]) {
+            let start = i;
+            i = crate::lua_scan::ident_end(bytes, i);
+            // `x.name` / `x:name` is a property or method, not a free read.
+            let is_field_access =
+                start > 0 && (bytes[start - 1] == b'.' || bytes[start - 1] == b':');
+            if !is_field_access && &code[start..i] == name {
                 return true;
             }
             continue;
@@ -838,29 +723,6 @@ fn lua_has_free_identifier(code: &str, name: &str) -> bool {
         i += 1;
     }
     false
-}
-
-/// Helper: at byte position `bytes[0]` we're past the leading `[`. If the
-/// next chars are `=*[`, we have a long-bracket open. Returns
-/// (equality count, byte offset just past the second `[`).
-fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
-    let mut eq = 0;
-    while eq < bytes.len() && bytes[eq] == b'=' {
-        eq += 1;
-    }
-    if eq < bytes.len() && bytes[eq] == b'[' {
-        (eq, Some(eq + 1))
-    } else {
-        (0, None)
-    }
-}
-
-fn is_lua_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_'
-}
-
-fn is_lua_ident_cont(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 // ─── CS-0024: placeholder validator ─────────────────────────────────────────
@@ -898,76 +760,102 @@ fn validate_sigil_token(
     line: &str,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), PlateTestPlaceholderError> {
-    // CS-0101: `$<file:PATH>` is valid in any plate/test body mode (it is a
-    // pure substitution, independent of the iteration source). Accepted before
-    // the shape checks below; a malformed path surfaces from the expansion
-    // path as a SIGIL_ERROR sentinel.
-    if ident.starts_with("file:") {
-        return Ok(());
-    }
+    // COOK-357: classification comes from the resolver, so this validator and
+    // `expand_plate_test_body` cannot disagree about what an ident IS. It used
+    // to re-derive every shape by hand (`ident == "out" || starts_with("out.")
+    // || …`), which is how the two drifted: the validator recognised
+    // `$<in.ACCESSOR>` by prefix while the expander lowered it blindly, so
+    // `$<in.bogus>` passed validation and emitted `path.bogus(_test_in)`.
+    //
+    // The mode/shape RULES stay here: they are what makes a plate/test body
+    // different from a cook body, not a different answer to the same question.
+    let ctx = ResolveCtx {
+        mode: IterMode::OneToOne,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipe_names,
+    };
 
-    // $<out>, $<out_N>, $<out.X>, $<out_N.X>: all rejected.
-    if ident == "out"
-        || ident.starts_with("out.")
-        || (ident.starts_with("out_") && ident[4..].chars().next().map_or(false, |c| c.is_ascii_digit()))
-    {
+    // A plate/test step declares no outputs, so every `$<out…>` form is
+    // rejected. The resolver reports the count violation; this surfaces the
+    // step-kind reason instead, which is the more actionable message.
+    if crate::resolver::is_output_ref(ident) {
         return Err(PlateTestPlaceholderError::OutForbidden {
             token: format!("$<{}>", ident),
         });
     }
 
-    // $<in> or $<in.X>: must be in OneToOne.
-    if ident == "in" || ident.starts_with("in.") {
-        if mode != PlateTestMode::OneToOne {
-            return Err(PlateTestPlaceholderError::BadPlaceholder {
-                token: format!("$<{}>", ident),
-                mode_name: format!("{:?}", mode),
-                line: line.to_string(),
-            });
-        }
-        return Ok(());
-    }
-
-    // Bare path-accessor: rejected.
-    if matches!(ident, "stem" | "name" | "ext" | "dir") {
+    // Bare path-accessor: rejected before the resolver would read it as a
+    // variable name.
+    if ACCESSORS.contains(&ident) {
         return Err(PlateTestPlaceholderError::BareAccessor {
             accessor: ident.to_string(),
         });
     }
 
-    // $<NAME.ACCESSOR> where NAME is a recipe in scope: rejected (§5.4 firewall).
-    if let Some((prefix, suffix)) = ident.rsplit_once('.') {
-        if recipe_names.contains(prefix) && matches!(suffix, "stem" | "name" | "ext" | "dir") {
-            return Err(PlateTestPlaceholderError::LibAccessor {
-                name: prefix.to_string(),
-                accessor: suffix.to_string(),
-            });
+    match crate::resolver::resolve(ident, &ctx) {
+        // §5.4 firewall: a plate/test step has no output pattern, so it can
+        // never name `NAME` as an iteration driver.
+        Resolved::Recipe { name, accessor: Some(accessor) } => {
+            Err(PlateTestPlaceholderError::LibAccessor { name, accessor })
         }
+        // `$<in>` / `$<in.ACCESSOR>` need a per-item source.
+        Resolved::Builtin(BuiltinKind::In | BuiltinKind::InAccessor(_))
+            if mode != PlateTestMode::OneToOne =>
+        {
+            Err(PlateTestPlaceholderError::BadPlaceholder {
+                token: format!("$<{}>", ident),
+                mode_name: format!("{:?}", mode),
+                line: line.to_string(),
+            })
+        }
+        // Everything else is either valid or carries a resolver error that
+        // `expand_plate_test_body` reports with the recipe and line attached.
+        _ => Ok(()),
     }
-
-    Ok(())
 }
 
 // ─── CS-0024: parametric plate/test body expander ───────────────────────────
 
-/// Plate/test variant: substitute `$<in>` to `iter_var` (a shell body is
-/// per-item or one-shot only — see [`PlateTestMode`]), and reject `$<out>` /
-/// `$<out_N>` (use `validate_plate_test_placeholders` before calling).
-/// `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
-/// is a recipe; otherwise to `cook.require_var(NAME)`.
+/// Expand a plate/test shell body.
+///
+/// COOK-357: this reaches sigil meaning through [`resolve`] like every other
+/// expander. It used to hand-roll its own dispatch chain
+/// (`file:` -> `in` -> `in.ACCESSOR` -> recipe -> var), which is why the same
+/// ident answered differently here than in a cook body: there was no probe-ref
+/// arm, so `$<sys:os>` fell through to the variable path and reported a missing
+/// config block; no bracket-index arm, so `$<dep[in]>` did the same; no
+/// retired-`env.` arm, so `$<env.HOME>` advised declaring a variable literally
+/// named `env.HOME`; and `in.ACCESSOR` was not checked against the accessor
+/// set, so `$<in.bogus>` emitted `path.bogus(...)` and surfaced as a raw Lua
+/// "attempt to call a nil value".
+///
+/// The mechanism that legitimately differs stays here: `$<in>` binds the
+/// caller's `iter_var` (a plate/test unit has no `_cook_in`), and a plate/test
+/// step declares no outputs, so `$<out>` is rejected upstream by
+/// [`validate_plate_test_placeholders`].
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,
     iter_var: &str,
     out: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
-) -> String {
+) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
-        return format!("\"{}\"", escape_lua_string(template));
+        return Ok((format!("\"{}\"", escape_lua_string(template)), BTreeSet::new()));
     }
 
+    // A plate/test body iterates one-to-one over its source and declares no
+    // outputs. `OneShot` bodies bind `iter_var` to `""` at the call site rather
+    // than changing the mode, so `$<in>` keeps one meaning here.
+    let ctx = ResolveCtx {
+        mode: IterMode::OneToOne,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipe_names,
+    };
+
     let mut parts: Vec<String> = Vec::new();
+    let mut probe_keys: BTreeSet<String> = BTreeSet::new();
     let mut last_end = 0usize;
 
     for span in &spans {
@@ -976,30 +864,21 @@ pub(crate) fn expand_plate_test_body(
             parts.push(format!("\"{}\"", escape_lua_string(literal)));
         }
 
-        let ident = &span.ident;
-        // CS-0101: `file:` dispatch first (a plate/test body is substitution-
-        // only — no `file_refs` unit field — but the hoisted local still
-        // substitutes). A bad path lowers to the SIGIL_ERROR sentinel,
-        // matching the other non-Result expansion surfaces.
-        let lua = if let Some(resolved) = crate::resolver::match_file_ref(ident) {
-            match resolved {
-                Resolved::FileRef { pattern } => file_refs.local_for(&pattern),
-                Resolved::Error(e) => {
-                    format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-                }
-                _ => unreachable!("match_file_ref returns FileRef or Error only"),
+        let lua = match crate::resolver::resolve(&span.ident, &ctx) {
+            // The one substitution that is genuinely plate/test-specific: the
+            // iteration variable is the caller's, not `_cook_in`.
+            Resolved::Builtin(BuiltinKind::In) => iter_var.to_string(),
+            Resolved::Builtin(BuiltinKind::InAccessor(acc)) => {
+                format!("path.{}({})", acc, iter_var)
             }
-        } else if ident == "in" {
-            iter_var.to_string()
-        } else if let Some(acc) = ident.strip_prefix("in.") {
-            format!("path.{}({})", acc, iter_var)
-        } else if recipe_names.contains(ident.as_str()) {
-            format!("cook.dep_output(\"{}\")", escape_lua_string(ident))
-        } else {
-            // CS-0172: `var.` is the explicit disambiguating prefix.
-            let key = ident.strip_prefix("var.").unwrap_or(ident);
-            out.record(key);
-            format!("cook.require_var(\"{}\")", escape_lua_string(key))
+            // Collected, not lowered on the caller's behalf: a test command has
+            // no execute-phase probe substitution, so the caller rejects the
+            // step. See `test_step::reject_probe_refs_in_command`.
+            Resolved::ProbeRef { ref key, ref access } => {
+                probe_keys.insert(key.clone());
+                format!("tostring({})", access)
+            }
+            other => resolved_to_lua(other, &span.ident, out, file_refs)?,
         };
         parts.push(lua);
 
@@ -1011,13 +890,14 @@ pub(crate) fn expand_plate_test_body(
         parts.push(format!("\"{}\"", escape_lua_string(literal)));
     }
 
-    if parts.is_empty() {
+    let concat = if parts.is_empty() {
         "\"\"".to_string()
     } else if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
         parts.join(" .. ")
-    }
+    };
+    Ok((concat, probe_keys))
 }
 
 // ─── cook step shell body expansion (sigil-based) ─────────────────────────

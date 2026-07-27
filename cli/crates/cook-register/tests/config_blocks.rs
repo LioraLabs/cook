@@ -4,13 +4,13 @@
 
 use cook_contracts::RecipeUnits;
 use cook_lang::parse;
-use cook_luagen::generate;
+use cook_luagen::generate_checked;
 use cook_register::engine::{register_cookfile, RegisterSessionBuilder};
 use std::collections::HashMap;
 
 fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
     let cookfile = parse(source).expect("parse");
-    let lua_source = generate(&cookfile);
+    let lua_source = generate_lua(&cookfile);
     let tmp = tempfile::TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_selected_config(selected.map(|s| s.to_string()));
@@ -63,4 +63,11 @@ fn no_config_blocks_still_builds() {
     let source = "recipe build\n";
     let units = compile_and_run(source, None);
     assert!(units.env_vars.get("GREETING").is_none());
+}
+
+/// COOK-357: the crate exposes one codegen entry point. These tests want the
+/// Lua and never the § 5.5 warnings.
+fn generate_lua(cookfile: &cook_lang::ast::Cookfile) -> String {
+    let names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
+    generate_checked(cookfile, &names).expect("codegen").0
 }

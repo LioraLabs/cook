@@ -1,5 +1,6 @@
 mod cook_step;
 pub mod lua_var;
+mod lua_scan;
 mod lua_string;
 mod probe;
 mod recipe;
@@ -14,7 +15,4 @@ pub mod dep_ref;
 #[path = "tests/luagen_tests.rs"]
 mod tests;
 
-pub use recipe::{
-    compile_chore, generate, generate_with_names, generate_with_names_and_warnings,
-    generate_with_names_checked, CodegenError,
-};
+pub use recipe::{compile_chore, generate_checked, CodegenError};

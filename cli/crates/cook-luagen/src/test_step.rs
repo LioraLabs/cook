@@ -26,7 +26,23 @@ pub enum CodegenError {
          step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
-    #[error("probe-value reference(s) {keys:?} in a `test` shell command inside a `for_each` recipe at line {line} are not supported — read the probe value in a Lua test body (`test >{{ ... }}`) instead (CS-0127)")]
+    /// CS-0127 / COOK-357. A test unit's `cmd` runs verbatim via `/bin/sh`;
+    /// unlike `cook.add_unit`, nothing rewrites a probe-bearing test command
+    /// into an execute-time `cook.probes.get` chunk (see COOK-360, which
+    /// removes the distinction and with it this error).
+    ///
+    /// Both test paths raise this one error. The fan-out path always did; the
+    /// plain path instead let the reference fall through to the variable
+    /// lookup and reported `no config block declares '<key>'`, advice that
+    /// could not work. Routing the plain path through the shared resolver
+    /// without this arm would substitute at REGISTER time, where the probe is
+    /// unmaterialised — a nil read dressed up as a value.
+    #[error(
+        "probe-value reference(s) {keys:?} in a `test` shell command at line {line} \
+         are not supported — a test command runs verbatim, with no execute-time \
+         probe substitution. Read the value in a Lua test body \
+         (`test >{{ cook.probes.get(\"<key>\") ... }}`) instead (CS-0127)"
+    )]
     ProbeRefInTestCommand { line: usize, keys: Vec<String> },
     #[error("test placeholder error at line {line}: {source}")]
     SigilResolve {
@@ -124,7 +140,11 @@ pub(crate) fn generate_test_step(
             PlateTestMode::OneToOne => {
                 let cmd_text = build_shell_block_command(lines);
                 let mut consulted = ConsultedEnv::new();
-                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", &mut consulted, &mut file_refs);
+                let (cmd_expr, probe_keys) = expand_plate_test_body(
+                    &cmd_text, recipe_names, "_test_in", &mut consulted, &mut file_refs,
+                )
+                .map_err(|source| CodegenError::SigilResolve { line, source })?;
+                reject_probe_refs_in_command(line, probe_keys)?;
                 if !file_refs.is_empty() {
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
@@ -141,7 +161,11 @@ pub(crate) fn generate_test_step(
             PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
                 let cmd_text = build_shell_block_command(lines);
                 let mut consulted = ConsultedEnv::new();
-                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &mut consulted, &mut file_refs);
+                let (cmd_expr, probe_keys) = expand_plate_test_body(
+                    &cmd_text, recipe_names, "\"\"", &mut consulted, &mut file_refs,
+                )
+                .map_err(|source| CodegenError::SigilResolve { line, source })?;
+                reject_probe_refs_in_command(line, probe_keys)?;
                 if !file_refs.is_empty() {
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
@@ -235,20 +259,7 @@ pub(crate) fn generate_for_each_test_step(
                 crate::template::ProbeLowering::CacheGet,
             )
             .map_err(|source| CodegenError::SigilResolve { line, source })?;
-            // CS-0127: `WorkPayload::Test` runs `cmd` verbatim via `/bin/sh`
-            // — there is no execute-phase probe-substitution machinery for
-            // test commands the way `cook.add_unit` rewrites a probe-bearing
-            // command into a LuaChunk (unit_api.rs's
-            // `try_expand_probe_templates`). The old codegen wrapped the
-            // command in `function() return ... end`, but that closure now
-            // hard-errors at `cook.add_test` register time (CS-0127's
-            // strict `command` typing) instead of silently degrading. Fail
-            // loudly at codegen time instead, with an actionable fix.
-            if !probe_keys.is_empty() {
-                // BTreeSet already yields keys in sorted order.
-                let keys: Vec<String> = probe_keys.into_iter().collect();
-                return Err(CodegenError::ProbeRefInTestCommand { line, keys });
-            }
+            reject_probe_refs_in_command(line, probe_keys)?;
             let cmd_expr = cmd_concat;
             if !file_refs.is_empty() {
                 out.push_str(&file_refs.hoist_lines("    "));
@@ -275,6 +286,22 @@ pub(crate) fn generate_for_each_test_step(
         }
     }
     Ok(())
+}
+
+/// The single refusal site for a probe-value reference in a `test` shell
+/// command, shared by the plain and fan-out test paths (COOK-357).
+fn reject_probe_refs_in_command(
+    line: usize,
+    probe_keys: BTreeSet<String>,
+) -> Result<(), CodegenError> {
+    if probe_keys.is_empty() {
+        return Ok(());
+    }
+    // BTreeSet already yields keys in sorted order.
+    Err(CodegenError::ProbeRefInTestCommand {
+        line,
+        keys: probe_keys.into_iter().collect(),
+    })
 }
 
 fn build_shell_block_command(lines: &[String]) -> String {

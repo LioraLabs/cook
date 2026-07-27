@@ -1,8 +1,41 @@
+use std::collections::BTreeSet;
+
 use cook_lang::ast::*;
 
 use crate::compile_chore;
-use crate::generate;
 use crate::lua_string::escape_lua_string;
+
+// COOK-357 collapsed the four public codegen entry points into one,
+// `generate_checked`. These tests exercise the lowering below that validation
+// layer, so they reach for the crate-internal lowering directly rather than
+// keeping retired aliases alive on the public API.
+
+/// Lower with an empty recipe-name set and no codegen-phase validation.
+fn generate(cookfile: &Cookfile) -> String {
+    generate_with_names(cookfile, &BTreeSet::new()).expect("codegen")
+}
+
+fn generate_with_names(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<String, crate::CodegenError> {
+    crate::recipe::generate_with_names(cookfile, recipe_names)
+}
+
+/// Lower WITH validation, discarding the § 5.5 warnings most tests ignore.
+fn generate_with_names_checked(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<String, crate::CodegenError> {
+    crate::generate_checked(cookfile, recipe_names).map(|(lua, _)| lua)
+}
+
+fn generate_with_names_and_warnings(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> (String, Vec<String>) {
+    crate::generate_checked(cookfile, recipe_names).expect("codegen")
+}
 
 fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
     Cookfile {
@@ -922,7 +955,7 @@ fn test_dep_ref_in_command_emits_dep_output() {
             },
         ],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         output.contains(r#"cook.dep_output("libmath")"#),
         "expected cook.dep_output for libmath, got:\n{output}"
@@ -952,7 +985,7 @@ fn test_env_var_still_works_when_not_recipe() {
             line: 3,
         }],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         output.contains(r#"cook.require_var("CC")"#),
         "CC is not a recipe name, should be env var via cook.require_var, got:\n{output}"
@@ -994,7 +1027,7 @@ fn test_bare_shell_dep_ref_lowers_to_register_time_eval() {
             }],
         ),
     ]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     // The lua_code value must be built by Lua-string concat (so cook.dep_output
     // runs at register time) — NOT a single long-string that ships the call to
     // the worker. Marker: `string.format("%q"` is the pre-quoting bridge.
@@ -1034,7 +1067,7 @@ fn test_bare_shell_env_ref_lowers_to_register_time_eval() {
             interactive: false,
         }],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     let req_call_pos = output
         .find(r#"cook.require_var("HOME")"#)
         .expect("expected cook.require_var(\"HOME\") call");
@@ -1065,7 +1098,7 @@ fn test_bare_shell_no_sigil_keeps_long_string_shape() {
             interactive: false,
         }],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     // Match `lua_code = [` followed by zero-or-more `=` and another `[` —
     // i.e., a Lua long-string literal at any bracket level (`[[`, `[=[`, `[==[`, …).
     let has_long_string_lua_code = output
@@ -1119,7 +1152,7 @@ fn test_dep_ref_in_test_command() {
             },
         ],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         output.contains(r#"cook.dep_output("app")"#),
         "expected cook.dep_output for app in test step, got:\n{output}"
@@ -1145,7 +1178,7 @@ fn test_dep_driven_iteration_codegen() {
             line: 2,
         }],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         output.contains(r#"cook.dep_output_list("protos")"#),
         "should use dep_output_list for iteration, got:\n{output}"
@@ -1187,7 +1220,7 @@ fn test_dep_driven_followed_by_many_to_one() {
             },
         ],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     // Second step uses _cook_outputs_1 (from first step), not dep outputs
     assert!(
         output.contains("table.concat(_cook_outputs_1"),
@@ -1214,7 +1247,7 @@ fn test_mixed_dep_iteration_and_substitution() {
             line: 2,
         }],
     )]);
-    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let output = generate_with_names(&cookfile, &names).expect("codegen");
     // Iteration driven by protos
     assert!(output.contains(r#"cook.dep_output_list("protos")"#));
     // String substitution of core in command
@@ -1322,7 +1355,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
 fn test_config_body_line_alignment_unnamed_no_uses() {
     let source = "config\n    env.X = bad()\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
-    let out = crate::generate(&cookfile);
+    let out = generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
     // Source line 2 (`env.X = bad()`) must land at generated line 2
     // (0-indexed index 1).
@@ -1338,7 +1371,7 @@ fn test_config_body_line_alignment_unnamed_no_uses() {
 fn test_config_body_line_alignment_with_leading_use() {
     let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
-    let out = crate::generate(&cookfile);
+    let out = generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
     // Source line 3 (`env.Y = "1"`) must land at generated line 3
     // (0-indexed index 2).
@@ -1355,7 +1388,7 @@ fn test_config_body_line_alignment_named_block() {
     let source =
         "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
-    let out = crate::generate(&cookfile);
+    let out = generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
     // env.A is source line 2 -> generated line 2 (index 1).
     assert!(
@@ -1377,7 +1410,7 @@ fn test_config_body_line_alignment_named_block() {
 fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
     let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
-    let out = crate::generate(&cookfile);
+    let out = generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
     // Source line 2 is a `#` comment -> generated line 2 must be empty
     // (line count preserved, not skipped).
@@ -1478,7 +1511,7 @@ fn test_cross_recipe_deps_codegen_integration() {
     assert!(dep_recipe_names.contains("libstr"));
 
     // Codegen produces correct Lua
-    let lua = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let lua = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(lua.contains(r#"cook.dep_output("libmath")"#), "missing dep_output for libmath");
     assert!(lua.contains(r#"cook.dep_output("libstr")"#), "missing dep_output for libstr");
 
@@ -1506,7 +1539,7 @@ fn blockstep_shell_multi_output() {
     }
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     // Outputs table:
     assert!(lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#), "missing outs table: {lua}");
     // Single add_unit call with all three commands joined, fail-fast via set -e:
@@ -1529,7 +1562,7 @@ fn blockstep_lua_multi_output() {
     }
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     // Lua block with N > 1 outputs -> BlockStep, not OneToOne.
     assert!(
         lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#),
@@ -1564,7 +1597,7 @@ fn onetoone_lua_emits_lua_code_not_function() {
     }
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         !lua.contains("lua = function()"),
         "OneToOne+LuaBlock must not emit lua = function(); got:\n{lua}"
@@ -1617,7 +1650,7 @@ fn test_empty_output_reference_warns_not_errors() {
         ),
     ]);
     let (output, warnings) =
-        crate::generate_with_names_and_warnings(&cookfile, &names);
+        generate_with_names_and_warnings(&cookfile, &names);
     assert!(!warnings.is_empty(), "expected empty-output warning");
     assert!(
         warnings
@@ -1654,7 +1687,7 @@ fn test_accessor_placeholder_in_using_string_without_driver_is_rejected() {
             }],
         ),
     ]);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "accessor placeholder in shell-block without matching driver must error"
@@ -1686,7 +1719,7 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             }],
         ),
     ]);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "accessor placeholder in test command must error"
@@ -1710,7 +1743,7 @@ fn test_accessor_placeholder_in_bare_shell_rejected() {
             }],
         ),
     ]);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "accessor placeholder in bare shell must error"
@@ -1745,7 +1778,7 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
             }],
         ),
     ]);
-    let result = crate::generate_with_names_checked(&cookfile_ok, &names);
+    let result = generate_with_names_checked(&cookfile_ok, &names);
     assert!(
         result.is_ok(),
         "dep-driven output pattern with valid body should pass, got: {:?}",
@@ -2016,7 +2049,7 @@ fn cs_0022_validate_placeholders_returns_error_not_panic() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "{{out_1}} in single-output step must error, not panic"
@@ -2042,7 +2075,7 @@ fn cs_0130_bare_in_in_many_to_one_is_valid() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_ok(),
         "$<in> in many-to-one step must be accepted, got: {:?}",
@@ -2068,7 +2101,7 @@ fn cs_0130_in_accessor_in_many_to_one_returns_error() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "$<in.stem> in many-to-one step must error"
@@ -2088,7 +2121,7 @@ fn cs_0022_bare_stem_in_output_pattern_returns_error() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "bare $<stem> in output pattern must error"
@@ -2115,7 +2148,7 @@ recipe "build"
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "$<libmath.dir> in a cook-step body must error"
@@ -2137,7 +2170,7 @@ fn cs_0022_out_bare_in_multi_output_returns_error() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(result.is_err(), "$<out> in multi-output step must error");
     let err_str = result.unwrap_err().to_string();
     assert!(err_str.contains("out"), "error must name $<out>, got: {err_str}");
@@ -2157,7 +2190,7 @@ recipe "build"
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(result.is_err(), "mixed iteration drivers must error");
     // The coherence error message mentions the patterns
     let err_str = result.unwrap_err().to_string();
@@ -2173,7 +2206,7 @@ recipe "build"
 fn test_test_step_shell_one_to_one() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
@@ -2189,7 +2222,7 @@ fn test_test_step_shell_batched_form_is_gone() {
     // CS-0130: a shell test body is per-item ($<in>) or one-shot only.
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
@@ -2204,7 +2237,7 @@ fn test_test_step_batched_via_lua_inputs() {
     // was removed.
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{ os.execute(\"run-suite \" .. table.concat(inputs, \" \")) }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         !lua.contains("for _, _test_in in ipairs"),
         "many-to-one should not emit a _test_in loop, got:\n{lua}"
@@ -2220,7 +2253,7 @@ fn test_test_step_batched_via_lua_inputs() {
 fn test_test_step_shell_one_shot() {
     let src = "recipe r\n    test { echo smoke-test }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         !lua.contains("for _, _test_in"),
         "one-shot should not emit a loop, got:\n{lua}"
@@ -2232,7 +2265,7 @@ fn test_test_step_shell_one_shot() {
 fn test_test_step_lua_one_to_one() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        cook.sh(\"./ \" .. input)\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
@@ -2248,7 +2281,7 @@ fn test_test_step_lua_one_to_one() {
 fn test_test_step_lua_many_to_one() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        for _, b in ipairs(inputs) do cook.sh(\"./ \" .. b) end\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         !lua.contains("for _, _test_in in ipairs"),
         "many-to-one should not emit a _test_in loop, got:\n{lua}"
@@ -2264,7 +2297,7 @@ fn test_test_step_lua_many_to_one() {
 fn test_test_step_lua_one_shot() {
     let src = "recipe r\n    test >{\n        os.execute(\"echo smoke\")\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
+    let lua = generate(&cookfile);
     assert!(
         !lua.contains("for _, _test_in"),
         "one-shot should not emit a loop, got:\n{lua}"
@@ -2284,7 +2317,7 @@ fn test_test_out_rejected() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
+    let err = generate_with_names(&cookfile, &names).unwrap_err();
     let msg = format!("{}", err);
     assert!(
         msg.contains("$<out>") || msg.contains("out"),
@@ -2301,7 +2334,7 @@ fn test_test_shell_in_and_all_named_env_coexist() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { echo $<in> $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let lua = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let lua = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected one-to-one test loop, got:\n{lua}"
@@ -2318,7 +2351,7 @@ fn test_test_lua_mixed_input_and_inputs_rejected() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        print(input)\n        print(inputs[1])\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
+    let err = generate_with_names(&cookfile, &names).unwrap_err();
     let msg = format!("{}", err);
     assert!(
         msg.contains("input") && msg.contains("inputs"),
@@ -2332,7 +2365,7 @@ fn test_test_bare_stem_rejected() {
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<stem>.out }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
+    let err = generate_with_names(&cookfile, &names).unwrap_err();
     let msg = format!("{}", err);
     assert!(
         msg.contains("stem"),
@@ -2346,7 +2379,7 @@ fn test_test_lib_accessor_rejected() {
     let src = "recipe lib\n    ingredients \"x/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\nrecipe r: lib\n    cook \"build/app\" { cc $<lib> -o $<out> }\n    test { echo $<lib.stem> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
+    let err = generate_with_names(&cookfile, &names).unwrap_err();
     let msg = format!("{}", err);
     assert!(
         msg.contains("firewall") || msg.contains("lib"),
@@ -2358,7 +2391,7 @@ fn test_test_lib_accessor_rejected() {
 
 fn generate_lua_for_test(cookfile_text: &str) -> String {
     let cookfile = cook_lang::parse(cookfile_text).expect("parse");
-    crate::generate(&cookfile)
+    generate(&cookfile)
 }
 
 #[test]
@@ -2782,7 +2815,7 @@ recipe broken
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     let err = result.expect_err("bare $<lib> in output pattern must be rejected");
     let msg = err.to_string();
     assert!(
@@ -2813,7 +2846,7 @@ recipe driven
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_ok(),
         "dep-driven $<lib.stem> in output pattern must remain accepted, got: {:?}",
@@ -2835,7 +2868,7 @@ recipe link
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_ok(),
         "bare $<lib> in a cook-step body must remain accepted, got: {:?}",
@@ -3228,9 +3261,20 @@ fn for_each_probe_cook_bare_out_rejected_on_multi_output() {
     // §{steps.cook-multi} uniformly: bare `$<out>` is ambiguous when a step
     // declares more than one output — fan-out steps included.
     let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" { gen $<out> }\n";
-    let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(lua.contains("SIGIL_ERROR"),
-        "bare $<out> on a multi-output fan-out step must be rejected, got:\n{lua}");
+    // COOK-357: this used to assert on a `SIGIL_ERROR` marker embedded in the
+    // emitted Lua. The rejection is now a typed codegen error carrying the
+    // recipe and line.
+    let err = generate_with_names(&cook_lang::parse(src).unwrap(), &BTreeSet::new())
+        .expect_err("bare $<out> on a multi-output fan-out step must be rejected");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("'Out' requires exactly 1 declared output(s); step declares 2"),
+        "expected the output-count diagnostic, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("recipe 'art'") && rendered.contains("line 3"),
+        "diagnostic must name recipe and line, got: {rendered}"
+    );
 }
 
 #[test]
@@ -3319,7 +3363,7 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
     // instead, naming the probe key and the offending line.
     let src = "recipe eval\n    ingredients cards\n    test {\n        $<foo:bar>\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
-    let err = crate::generate_with_names(&cookfile, &std::collections::BTreeSet::new())
+    let err = generate_with_names(&cookfile, &std::collections::BTreeSet::new())
         .expect_err("expected a codegen error for a probe ref in a for_each test shell command");
     let msg = err.to_string();
     assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
@@ -3336,7 +3380,7 @@ fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
     let src = "chore bad\n    echo $<out_0>\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names_checked(&cookfile, &names)
+    let err = generate_with_names_checked(&cookfile, &names)
         .expect_err("malformed $<out_0> must fail checked codegen");
     let msg = err.to_string();
     assert!(
@@ -3344,7 +3388,7 @@ fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
         "diagnostic should name the bad placeholder, got: {msg}"
     );
 
-    let unchecked_err = crate::generate_with_names(&cookfile, &names)
+    let unchecked_err = generate_with_names(&cookfile, &names)
         .expect_err("unchecked codegen should error instead of emitting a sentinel");
     assert!(
         !unchecked_err.to_string().contains("[[SIGIL_ERROR:"),
@@ -3377,7 +3421,7 @@ chore setup
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    crate::generate_with_names_checked(&cookfile, &names)
+    generate_with_names_checked(&cookfile, &names)
         .expect("all current Step variants should have codegen arms");
 }
 
@@ -3542,7 +3586,7 @@ fn test_step_without_ingredients_emits_no_inputs_field() {
 fn checked_lua(src: &str) -> String {
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    crate::generate_with_names_checked(&cookfile, &names).expect("codegen")
+    generate_with_names_checked(&cookfile, &names).expect("codegen")
 }
 
 #[test]
@@ -3635,7 +3679,7 @@ fn file_ref_in_output_pattern_is_codegen_error() {
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
         "$<file:PATH> in an output pattern must be a codegen error"
@@ -3787,26 +3831,46 @@ fn test_compile_chore_merges_explicit_and_inferred_requires() {
     );
 }
 
-// ─── COOK-191/CS-0126: SIGIL_ERROR chokepoint — checked codegen scans and
-// hard-errors on any sentinel that survives lowering ───────────────────────
+// ─── COOK-191/CS-0126, superseded by COOK-357 ────────────────────────────
+//
+// The sentinel chokepoint is gone. Lowering no longer embeds
+// `"[[SIGIL_ERROR: …]]"` string literals in the emitted Lua for the checked
+// path to grep back out; every expander returns a typed `ResolveError` that
+// codegen wraps with the recipe and line. The two helper tests that covered
+// `scan_for_sigil_errors` went with it — what replaces them is that no
+// generated Lua can carry the marker at all, asserted below.
 
 #[test]
-fn test_scan_for_sigil_errors_extracts_inner_message_verbatim() {
-    let generated = "x = \"[[SIGIL_ERROR: placeholder $<file:../evil>: file reference paths must be relative]]\"";
-    let result = crate::recipe::scan_for_sigil_errors(generated);
-    assert_eq!(
-        result.unwrap_err(),
-        "placeholder $<file:../evil>: file reference paths must be relative",
-        "helper must extract the inner text with no SIGIL_ERROR marker and no [[ / ]] delimiters"
+fn no_lowering_path_emits_a_sigil_error_marker() {
+    // A body sigil that cannot resolve is an error, not a string literal.
+    let recipe = make_recipe(
+        "r",
+        vec![],
+        vec![],
+        vec![Step::Cook {
+            step: CookStep {
+                outputs: vec![OutputPattern::Quoted("out/a.o".to_string())],
+                body: Some(Body::ShellBlock(vec!["echo $<out_0>".to_string()])),
+                disposition: Default::default(),
+            },
+            line: 3,
+        }],
     );
-}
-
-#[test]
-fn test_scan_for_sigil_errors_ok_when_no_sentinel_present() {
-    let generated = "cook.add_unit({command = \"echo hi\"})\n";
+    let cookfile = make_cookfile(vec![recipe]);
+    let err = generate_with_names(&cookfile, &BTreeSet::new())
+        .expect_err("malformed out_N must fail codegen");
+    let rendered = err.to_string();
     assert!(
-        crate::recipe::scan_for_sigil_errors(generated).is_ok(),
-        "generated Lua with no sentinel must not be flagged"
+        !rendered.contains("SIGIL_ERROR"),
+        "diagnostic must be the typed error, not the retired marker: {rendered}"
+    );
+    assert!(
+        rendered.contains("malformed out_N"),
+        "diagnostic must name the actual problem: {rendered}"
+    );
+    assert!(
+        rendered.contains("line 3") && rendered.contains("'r'"),
+        "typed errors carry recipe and line, which the marker scan could not: {rendered}"
     );
 }
 
@@ -3822,7 +3886,7 @@ fn test_bad_file_ref_path_in_test_body_is_checked_codegen_error() {
     let src = "recipe r\n    test { echo $<file:../evil> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let result = generate_with_names_checked(&cookfile, &names);
     let err = result.expect_err(
         "a $<file:../evil> path escape in a test body must be a checked-codegen error, not a silently-emitted sentinel",
     );

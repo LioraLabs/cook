@@ -127,8 +127,11 @@ fn lua_escape(s: &str) -> String {
 /// into a Lua chunk string that performs the substitution using `cook.probes.get`
 /// at execute time and invokes `cook.sh` with the fully-resolved command.
 ///
-/// Detection uses the same `cook_luagen::sigil::scan` scanner that codegen uses,
-/// ensuring one source of truth for the probe-sigil grammar.
+/// Detection AND lowering use `cook_luagen::sigil` — `scan` for the placeholder
+/// grammar, `probe_ref` for the key/path split and the `cook.probes.get(...)`
+/// access expression — so this path and codegen cannot disagree about what a
+/// probe sigil means (COOK-357; before that the walker was copied here and the
+/// two escaped the key differently).
 ///
 /// Returns `Some(lua_code_string, keys)` when probe sigils are detected, `None`
 /// when the command is plain (no rewriting needed).
@@ -150,83 +153,36 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
         ));
     }
 
-    // Filter to probe-shaped sigils (ident contains `:`), excluding the
-    // reserved `file:` namespace (rejected above — belt and braces).
-    let probe_spans: Vec<_> = spans
-        .iter()
-        .filter(|s| s.ident.contains(':') && !s.ident.starts_with("file:"))
-        .collect();
-    if probe_spans.is_empty() {
+    // Parse every probe-shaped sigil once, keeping the span alongside its
+    // parsed reference. `probe_ref` owns the colon discriminator AND the
+    // `file:` exclusion, so there is no second filter to keep in step.
+    let refs: Vec<(&cook_luagen::sigil::PlaceholderSpan, Option<cook_luagen::sigil::ProbeRef>)> =
+        spans.iter().map(|s| (s, cook_luagen::sigil::probe_ref(&s.ident))).collect();
+    if refs.iter().all(|(_, r)| r.is_none()) {
         return Ok(None);
     }
 
     // Collect distinct probe keys in order of first appearance.
     let mut seen_keys = std::collections::BTreeSet::new();
     let mut keys: Vec<String> = vec![];
-    for span in &probe_spans {
-        // Key is everything before the first `.` or `[` after the `:`.
-        let colon = span.ident.find(':').unwrap();
-        let after_colon = &span.ident[colon + 1..];
-        let path_start = after_colon.find(|c: char| c == '.' || c == '[')
-            .map(|p| colon + 1 + p)
-            .unwrap_or(span.ident.len());
-        let key = &span.ident[..path_start];
+    for (_, r) in refs.iter().filter(|(_, r)| r.is_some()) {
+        let key = r.as_ref().unwrap().key();
         if seen_keys.insert(key.to_string()) {
             keys.push(key.to_string());
         }
     }
 
-    // Build the Lua access expression for a probe sigil ident.
-    // Returns the `cook.probes.get("key").field[N]...` expression.
-    let build_access = |ident: &str| -> String {
-        let colon = ident.find(':').unwrap();
-        let after_colon = &ident[colon + 1..];
-        let path_start = after_colon.find(|c: char| c == '.' || c == '[')
-            .map(|p| colon + 1 + p)
-            .unwrap_or(ident.len());
-        let key = &ident[..path_start];
-        let path_str = &ident[path_start..];
-
-        let mut access = format!("cook.probes.get(\"{}\")", lua_escape(key));
-        let mut chars = path_str.chars().peekable();
-        while let Some(&c) = chars.peek() {
-            match c {
-                '.' => {
-                    chars.next();
-                    let mut name = String::new();
-                    while let Some(&nc) = chars.peek() {
-                        if nc.is_alphanumeric() || nc == '_' { name.push(nc); chars.next(); }
-                        else { break; }
-                    }
-                    if !name.is_empty() { access.push('.'); access.push_str(&name); }
-                }
-                '[' => {
-                    chars.next();
-                    let mut idx = String::new();
-                    while let Some(&nc) = chars.peek() {
-                        if nc == ']' { chars.next(); break; }
-                        idx.push(nc); chars.next();
-                    }
-                    access.push('['); access.push_str(&idx); access.push(']');
-                }
-                _ => { chars.next(); }
-            }
-        }
-        access
-    };
-
     // Build the command as a Lua concatenation expression over all spans.
     let mut parts: Vec<String> = vec![];
     let mut cursor = 0usize;
 
-    for span in &spans {
+    for (span, probe) in &refs {
         if span.range.start > cursor {
             parts.push(format!("\"{}\"", lua_escape(&command[cursor..span.range.start])));
         }
-        if span.ident.contains(':') {
+        if let Some(r) = probe {
             // Probe-value sigil → cache read.
-            let access = build_access(&span.ident);
-            parts.push(format!("tostring({})", access));
+            parts.push(format!("tostring({})", r.lua_access()));
         } else {
             // Non-probe sigil in a register-block add_unit command — treat as
             // literal (the sigil text, including $<...>). These are unusual but

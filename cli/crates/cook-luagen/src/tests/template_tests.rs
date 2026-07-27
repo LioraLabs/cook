@@ -304,26 +304,25 @@ fn recipe_member_bad_index_errors_in_fanout_body() {
     );
 }
 
-// COOK-221 / CS-0137: in an OUTPUT PATTERN the bracket-index diagnostics
-// must surface as a SIGIL_ERROR sentinel (hard error via the checked-path
-// sentinel scan), never fall back to cook.require_var.
+// COOK-221 / CS-0137, retyped by COOK-357: in an OUTPUT PATTERN the
+// bracket-index diagnostics are typed errors, never a fall-back to
+// cook.require_var and no longer a SIGIL_ERROR string literal.
 #[test]
-fn recipe_member_bracket_errors_are_sentinels_in_output_patterns() {
+fn recipe_member_bracket_errors_are_typed_in_output_patterns() {
+    let names = BTreeSet::new();
     let mut env = ConsultedEnv::new();
-    let lua = expand_output_pattern("build/$<render[]>.o", &mut env);
+
+    let res = expand_output_pattern("build/$<render[]>.o", &names, &mut env);
     assert!(
-        lua.contains("[[SIGIL_ERROR:") && lua.contains("was respelled"),
-        "expected SIGIL_ERROR sentinel with did-you-mean, got: {lua}"
-    );
-    assert!(
-        !lua.contains("cook.require_var"),
-        "bracket error must not fall through to env lookup, got: {lua}"
+        matches!(res, Err(ResolveError::RecipeMemberEmptyIndex { .. })),
+        "expected the did-you-mean error, got: {res:?}"
     );
 
-    let lua = expand_output_pattern("build/$<render[key]>.o", &mut env);
+    let res = expand_output_pattern("build/$<render[key]>.o", &names, &mut env);
     assert!(
-        lua.contains("[[SIGIL_ERROR:") && lua.contains("member-field joins are not part of v1.0"),
-        "expected SIGIL_ERROR sentinel for reserved index, got: {lua}"
+        matches!(res, Err(ResolveError::RecipeMemberBadIndex { .. })),
+        "expected the reserved-index error, got: {res:?}"
     );
+
     assert!(env.keys.is_empty(), "no env keys must be recorded for bracket errors");
 }

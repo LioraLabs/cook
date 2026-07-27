@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: [ConfigBlock name=None body="    var.suffix = \"dev\"" line=1]
+  recipes:
+    Recipe name="bundle" line=4
+      deps: []
+      ingredients: ["*.c"]
+      excludes: []
+      steps:
+        Cook outputs=["out/all-$<suffix>.o"] body=ShellBlock(["cat $<in> > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

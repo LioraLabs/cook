@@ -22,7 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use cook_lang::parse;
-use cook_luagen::generate;
+use cook_luagen::generate_checked;
 use cook_register::engine::{register_cookfile, RegisterSessionBuilder};
 
 fn corpus_root() -> PathBuf {
@@ -75,7 +75,7 @@ fn register_positive_conformance_corpus() {
         };
 
         // Step 2: codegen.
-        let lua_source = generate(&cookfile);
+        let lua_source = generate_lua(&cookfile);
 
         // Step 3: register. Use the fixture directory as the working directory
         // so any sibling files are visible to the register phase.
@@ -134,7 +134,7 @@ fn register_negative_conformance_corpus() {
 
         // Step 2: codegen MUST succeed cleanly. If it doesn't, this fixture
         // belongs in the codegen harness, not here.
-        let lua_source = generate(&cookfile);
+        let lua_source = generate_lua(&cookfile);
 
         // Step 3: drive the register phase with the fixture directory as
         // working_dir. `cook.add_unit`'s directory check will then see
@@ -174,4 +174,11 @@ fn register_negative_conformance_corpus() {
         cases_seen,
         failures.join("\n")
     );
+}
+
+/// COOK-357: the crate exposes one codegen entry point. These tests want the
+/// Lua and never the § 5.5 warnings.
+fn generate_lua(cookfile: &cook_lang::ast::Cookfile) -> String {
+    let names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
+    generate_checked(cookfile, &names).expect("codegen").0
 }
