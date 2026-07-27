@@ -254,9 +254,21 @@ pub fn explain(
         let Some(meta) = &node.cache_meta else {
             continue;
         };
-        if meta.output_paths.is_empty() {
-            continue;
-        }
+        // COOK-350: an output-less unit is reported like any other. The guard
+        // that stood here skipped every one of them, so a whole unit kind was
+        // invisible to the transparency surface: `cook why --level unit`
+        // printed a test's body text and nothing else, and the header counted
+        // `0 hit, 0 rebuild` for units demonstrably being served from cache.
+        // The answer to "why did my test re-run" was to go and instrument it.
+        //
+        // It skipped them because before CS-0186 an empty output list meant
+        // "not in the step index" — true then, since a separate store answered
+        // for tests, and false now. Nothing below needs an output: the key is
+        // over determinants and input contents, and §17.1.1.1 gives an
+        // output-less unit an identity of its own.
+        //
+        // The two other empty-output guards in this file and in verify.rs stay.
+        // They mean "nothing in the CAS to publish", which remains correct.
         let det = resolve_unit_determinants(node, meta, &probe_store, &predictions);
         // A unit waiting on bytes that do not exist yet has no computable key.
         // Report the cause and, deliberately, no key: a key over the stale or
@@ -342,7 +354,15 @@ fn resolve_unit_determinants(
 ) -> UnitDeterminants {
     let mut inputs = BTreeMap::new();
     let mut pending_inputs = BTreeMap::new();
-    for p in &meta.input_paths {
+    // CS-0186: the same resolution the cache performs, so `cook why` reports
+    // the set the unit is actually keyed on rather than the raw declaration.
+    // A declared pattern whose producer has not run resolves to nothing here —
+    // `cook why` is read-only and does not build — which is honest: that is
+    // what the cache would compute at this moment too. A literal input a unit
+    // in this closure produces is answered by `predictions` below, unchanged.
+    let declared =
+        cook_fingerprint::resolve_declared_inputs(&meta.input_paths, &meta.consumes, &node.working_dir);
+    for p in &declared {
         let abs = node.working_dir.join(p);
         // CS-0173: an input that some unit in this closure produces is answered
         // by that producer, never by whatever is on disk right now. Reading disk
@@ -460,6 +480,24 @@ fn classify(
     // COOK-276: probed even on a local hit, so both tiers get an explicit
     // answer (`[HIT (local), MISS (shared)]` instead of a bare tier label
     // that reads as "will rebuild").
+    // CS-0186: an OBSERVING unit has no shared tier to report on. It publishes
+    // nothing to the store — there is no artifact, and a manifest alone could
+    // never be served against, since `fetch_by_key` refuses an empty output
+    // list — so probing would report `MISS (shared)` for something that cannot
+    // be a hit, and a "no producer manifest published" diff for a key nothing
+    // was ever going to publish. Both read as a fixable absence. `None` is the
+    // honest answer: the question does not apply.
+    use cook_contracts::cache::record::{effect_kind, EffectKind};
+    if effect_kind(meta) == EffectKind::Observed {
+        return Classification {
+            status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::SharedMiss },
+            local_hit,
+            local_cause,
+            shared_present: None,
+            manifest_diff: None,
+            shared_output_hashes: BTreeMap::new(),
+        };
+    }
     let probed = shared_artifacts_present(cache_ctx, key_hex, meta);
     let shared = probed.is_some();
     let shared_output_hashes = probed.unwrap_or_default();
