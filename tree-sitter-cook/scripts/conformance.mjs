@@ -45,12 +45,6 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
-  // CS-0101: `$<file:PATH>` parses cleanly anywhere a placeholder does;
-  // these rejections are codegen-phase / register-phase.
-  ['cs0101-file-ref-in-output-pattern',
-   'CS-0101: file-ref placeholder in an output pattern — codegen-phase rejection, not syntactic'],
-  ['cs0101-file-ref-missing-file',
-   'CS-0101: file-ref to a missing file — register-phase rejection, not syntactic'],
   // CS-0022 Phase G: codegen-only rejections — Cookfile parses cleanly,
   // rejection is enforced by cook-luagen::generate_with_names_checked.
   ['017-bare-stem-rejected',

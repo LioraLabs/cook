@@ -33,41 +33,7 @@ fn member_sigil_matches_in_head() {
 
 // CS-0101: `file:` dispatch precedes the probe-ref colon dispatch.
 #[test]
-fn file_prefix_resolves_to_file_ref_not_probe() {
-    let r = empty();
-    let ctx = ctx_oneshot_none(&r);
-    assert_eq!(
-        resolve("file:tokens.css", &ctx),
-        Resolved::FileRef { pattern: "tokens.css".to_string() }
-    );
-    assert_eq!(
-        resolve("file:templates/*.html", &ctx),
-        Resolved::FileRef { pattern: "templates/*.html".to_string() }
-    );
-}
-
-#[test]
-fn file_ref_absolute_path_is_error() {
-    let r = empty();
-    let ctx = ctx_oneshot_none(&r);
-    assert!(matches!(
-        resolve("file:/etc/passwd", &ctx),
-        Resolved::Error(ResolveError::FileRefBadPath { .. })
-    ));
-}
-
-#[test]
-fn file_ref_parent_escape_is_error() {
-    let r = empty();
-    let ctx = ctx_oneshot_none(&r);
-    assert!(matches!(
-        resolve("file:../secret.css", &ctx),
-        Resolved::Error(ResolveError::FileRefBadPath { .. })
-    ));
-}
-
-#[test]
-fn non_file_colon_ident_still_probe_ref() {
+fn a_colon_ident_is_a_probe_ref() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
     assert!(matches!(resolve("cc:zlib.cflags", &ctx), Resolved::ProbeRef { .. }));
@@ -349,5 +315,43 @@ fn non_trailing_bracket_group_falls_through_unchanged() {
         assert_eq!(
             resolve("render[in].stem", &ctx_member(&recipes)),
         Resolved::EnvRuntime("render[in].stem".to_string())
+    );
+}
+
+// --- CS-0187: the retired `file:` prefix -----------------------------------
+
+/// Removing the namespace without a diagnostic does not make the retired form
+/// fail cleanly: `file:tokens.css` is all generic-ident characters, so it falls
+/// through to the probe colon dispatch and reports an undeclared probe key
+/// `file:tokens`. Naming the retirement is what CS-0172 did for `env.`, and it
+/// is the difference between "that surface is gone, here is what replaced it"
+/// and a diagnostic about a probe the author never wrote.
+#[test]
+fn the_retired_file_prefix_is_refused_by_name() {
+    let r = empty();
+    let ctx = ctx_oneshot_none(&r);
+    let got = resolve("file:tokens.css", &ctx);
+    assert!(
+        matches!(&got, Resolved::Error(ResolveError::RetiredFilePrefix { path }) if path == "tokens.css"),
+        "got {got:?}"
+    );
+    let rendered = match got {
+        Resolved::Error(e) => e.to_string(),
+        other => panic!("expected an error, got {other:?}"),
+    };
+    assert!(rendered.contains("CS-0187"), "the diagnostic names the entry: {rendered}");
+    assert!(rendered.contains("files"), "and the replacement: {rendered}");
+    assert!(rendered.contains("seal"), "and how it becomes a determinant: {rendered}");
+}
+
+/// A path shape the generic ident charset cannot hold (`/`) strict-bails to
+/// literal text before resolution is ever reached, so the refusal above cannot
+/// be the whole story — which is exactly why the diagnostic matters for the
+/// shapes that DO reach it.
+#[test]
+fn a_slashed_retired_path_never_reaches_the_resolver() {
+    assert!(
+        crate::sigil::scan("$<file:templates/*.html>").is_empty(),
+        "`/` is outside the generic ident charset, so the sequence stays literal"
     );
 }

@@ -11,7 +11,7 @@ fn empty_string() {
     let r = empty_recipes();
     let ctx = ctx_os_n0(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"\"");
 }
 
@@ -27,7 +27,7 @@ fn in_in_many_to_one() {
         recipes_in_scope: &r,
     };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_in");
 }
 
@@ -40,7 +40,7 @@ fn out_n_in_multi_output() {
         recipes_in_scope: &r,
     };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("cp $<out_1> $<out_2>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("cp $<out_1> $<out_2>", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"cp \" .. _cook_outs[1] .. \" \" .. _cook_outs[2]");
 }
 
@@ -50,6 +50,6 @@ fn recipe_with_accessor() {
     r.insert("lib".to_string());
     let ctx = ctx_os_n0(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<lib>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("$<lib>", &ctx, &mut env).unwrap();
     assert_eq!(result, "cook.dep_output(\"lib\")");
 }

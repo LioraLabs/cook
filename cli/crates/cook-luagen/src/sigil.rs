@@ -7,7 +7,6 @@
 //!   out_indexed      := "out_" DIGIT+
 //!   out_indexed_acc  := "out_" DIGIT+ "." accessor
 //!   probe_ref        := ALPHA (ALPHA | DIGIT | "_" | ".")* ":" ...
-//!   file_ref         := "file:" PATH_CHAR+
 //!   ACC              := "stem" | "name" | "ext" | "dir"
 //!   ALPHA            := "a"…"z" | "A"…"Z" | "_"
 //!   PATH_CHAR        := ALPHA | DIGIT | "_" | "." | "-" | "/" | "*"
@@ -18,13 +17,6 @@
 //! single spans. The resolver dispatches on the presence of `:` to select
 //! between existing register-time semantics and the new probe-cache-read path.
 //!
-//! CS-0101: The `file:` namespace uses an extended path charset that admits
-//! `/` and `*` (for literal paths and glob patterns). At least one path
-//! character after the prefix is required; strict-bail applies (no forward
-//! search past an out-of-charset byte).  The prefix dispatch occurs before
-//! the generic IDENT-continue loop so that `$<file:dir/*.css>` is a single
-//! well-formed span. Other `xxx:` namespaces continue to use the generic
-//! charset — `$<myfile:x.css>` tokenises via the generic loop.
 //!
 //! Anything not matching the strict shape is literal shell text. The scanner
 //! does not search forward for a `>` past a malformed inner — a `$<foo bar>`
@@ -79,24 +71,6 @@ fn try_match_placeholder(text: &str, start: usize) -> Option<PlaceholderSpan> {
     }
     i += 1;
 
-    // CS-0101: the `file:` namespace admits a path charset (`/`, `*`)
-    // that the generic IDENT charset does not. At least one path char
-    // is required; strict-bail otherwise (the sequence stays literal).
-    const FILE_PREFIX: &str = "file:";
-    if text[ident_start..].starts_with(FILE_PREFIX) {
-        let path_start = ident_start + FILE_PREFIX.len();
-        let mut j = path_start;
-        while j < bytes.len() && is_file_path_continue(bytes[j]) {
-            j += 1;
-        }
-        if j == path_start || j >= bytes.len() || bytes[j] != b'>' {
-            return None;
-        }
-        return Some(PlaceholderSpan {
-            range: start..j + 1,
-            ident: text[ident_start..j].to_string(),
-        });
-    }
 
     // Subsequent characters: ALPHA | DIGIT | _ | . | : | [ | ]
     while i < bytes.len() && is_ident_continue(bytes[i]) {
@@ -178,14 +152,10 @@ impl ProbeRef {
 
 /// Parse a probe-shaped IDENT, or `None` when `ident` is not one.
 ///
-/// Probe-shaped means: contains a `:`, and does not begin with the reserved
-/// `file:` prefix (CS-0101, dispatched ahead of the colon discriminator). The
-/// `file:` exclusion lives here so the rule has one home; every caller used to
-/// pre-filter it and they did not agree on how.
+/// Probe-shaped means: contains a `:`. CS-0187 removed the one namespace that
+/// was dispatched ahead of the colon discriminator, so a colon now means a
+/// probe reference and nothing else.
 pub fn probe_ref(ident: &str) -> Option<ProbeRef> {
-    if ident.starts_with("file:") {
-        return None;
-    }
     let colon = ident.find(':')?;
 
     // The key ends at the first `.` or `[` that appears AFTER the colon.
@@ -247,11 +217,6 @@ fn is_alpha(b: u8) -> bool {
 #[inline]
 fn is_ident_continue(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':' || b == b'[' || b == b']' || b == b'-'
-}
-
-#[inline]
-fn is_file_path_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/' | b'*')
 }
 
 #[cfg(test)]

@@ -144,25 +144,8 @@ fn file_ref_literal_path() {
 }
 
 #[test]
-fn file_ref_with_slash_and_star() {
-    assert_eq!(idents("$<file:templates/*.html>"), vec!["file:templates/*.html"]);
-    assert_eq!(idents("$<file:voice/narrator.wav>"), vec!["file:voice/narrator.wav"]);
-}
-
-#[test]
-fn file_ref_empty_path_is_literal() {
-    assert!(scan("$<file:>").is_empty());
-}
-
-#[test]
 fn file_ref_with_space_is_literal() {
     assert!(scan("$<file:a b.css>").is_empty());
-}
-
-#[test]
-fn file_ref_strict_bail_no_forward_search() {
-    // out-of-charset byte (`[`) bails; no forward search for `>`
-    assert!(scan("$<file:a[0].css> x").is_empty());
 }
 
 #[test]
@@ -245,15 +228,6 @@ fn probe_ref_rejects_idents_without_a_colon() {
     assert!(probe_ref("in.stem").is_none());
     assert!(probe_ref("out_1").is_none());
     assert!(probe_ref("HOME").is_none());
-}
-
-#[test]
-fn probe_ref_rejects_the_reserved_file_namespace() {
-    // CS-0101: `file:` is dispatched before the colon discriminator. Folding
-    // the exclusion into the walker keeps the rule in one place instead of
-    // relying on every caller to pre-filter (resolver and unit_api each did).
-    assert!(probe_ref("file:src/x.css").is_none());
-    assert!(probe_ref("file:dir/*.css").is_none());
 }
 
 #[test]

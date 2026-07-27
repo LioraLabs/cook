@@ -150,17 +150,6 @@ pub(crate) fn count_to_output_shape(n: usize) -> OutputShape {
     }
 }
 
-/// CS-0101: render the optional `, file_refs = {...}` cook.add_unit field.
-/// Empty when no `$<file:PATH>` sigils were seen, so pre-CS-0101 goldens stay
-/// byte-identical.
-fn file_refs_field(file_refs: &crate::template::FileRefs) -> String {
-    if file_refs.is_empty() {
-        String::new()
-    } else {
-        format!(", file_refs = {}", file_refs.to_lua_table())
-    }
-}
-
 /// COOK-161 + COOK-162 + COOK-163: render the optional `, seal = {...},
 /// sharing = "local"|"pinned", record = true` cook.add_unit fields from the
 /// step's disposition. Empty when the step declares no seal, the default
@@ -198,14 +187,12 @@ pub(crate) fn generate_cook_step(
     cook_step: &CookStep,
     line: usize,
     index: usize,
-    step_pos: usize,
     prev_cook_index: Option<usize>,
     ingredients: &[String],
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: one accumulator per cook step, tagged by the step's position in
     // the recipe body so hoisted locals are unique within the recipe chunk.
-    let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
     let mode = cook_step_mode_with_names(cook_step, recipe_names);
     let iter_mode = cook_mode_to_iter_mode(&mode);
     let output_shape = count_to_output_shape(cook_step.outputs.len());
@@ -264,12 +251,12 @@ pub(crate) fn generate_cook_step(
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &ctx, &mut consulted, &mut file_refs,
+                        &combined, &ctx, &mut consulted,
                     )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -286,9 +273,6 @@ pub(crate) fn generate_cook_step(
                 }
             };
 
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
                 input_source
@@ -340,12 +324,12 @@ pub(crate) fn generate_cook_step(
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &ctx, &mut consulted, &mut file_refs,
+                        &combined, &ctx, &mut consulted,
                     )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -362,9 +346,6 @@ pub(crate) fn generate_cook_step(
                 }
             };
 
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
                 iter_source
@@ -400,16 +381,13 @@ pub(crate) fn generate_cook_step(
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &ctx, &mut consulted, &mut file_refs,
+                        &combined, &ctx, &mut consulted,
                     )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     // CS-0101: non-loop step — hoists go right before add_unit.
-                    if !file_refs.is_empty() {
-                        out.push_str(&file_refs.hoist_lines("    "));
-                    }
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        input_source, lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                        input_source, lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -457,12 +435,12 @@ pub(crate) fn generate_cook_step(
                         recipe_names,
                     );
                     let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &oto_many_ctx, &mut consulted, &mut file_refs,
+                        &combined, &oto_many_ctx, &mut consulted,
                     )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -477,9 +455,6 @@ pub(crate) fn generate_cook_step(
                 None => unreachable!("OneToMany mode requires a using-clause"),
             };
 
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
                 iter_source
@@ -523,16 +498,13 @@ pub(crate) fn generate_cook_step(
                         recipe_names,
                     );
                     let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &block_ctx, &mut consulted, &mut file_refs,
+                        &combined, &block_ctx, &mut consulted,
                     )?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     // CS-0101: non-loop step — hoists go right before add_unit.
-                    if !file_refs.is_empty() {
-                        out.push_str(&file_refs.hoist_lines("    "));
-                    }
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -574,12 +546,10 @@ pub(crate) fn generate_for_each_cook_step(
     out: &mut String,
     cook_step: &CookStep,
     index: usize,
-    step_pos: usize,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
-    let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
     // OneShot rejects `$<in>` (the member binds via `item`, not the path
     // input). The output shape follows the declared template count so bare
     // `$<out>` works on a single-output step and `$<out_N>` resolves against
@@ -606,7 +576,6 @@ pub(crate) fn generate_for_each_cook_step(
             pat.as_str(),
             &ctx,
             &mut consulted,
-            &mut file_refs,
             crate::template::ProbeLowering::CacheGet,
         )?;
         out_exprs.push(expr);
@@ -621,7 +590,6 @@ pub(crate) fn generate_for_each_cook_step(
                 &combined,
                 &ctx,
                 &mut consulted,
-                &mut file_refs,
                 crate::template::ProbeLowering::LiteralSigil,
             )?;
             // COOK-187 / CS-0122: probe refs stay literal sigil text in the
@@ -629,8 +597,8 @@ pub(crate) fn generate_for_each_cook_step(
             // expand_command_template's doc comment for the rationale).
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
-                "        cook.add_unit({{inputs = {{}}, {}, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",
-                out_field, cmd_concat, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{inputs = {{}}, {}, command = {}, probes = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
+                out_field, cmd_concat, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
             )
         }
         Some(Body::LuaBlock(code)) => {
@@ -652,9 +620,6 @@ pub(crate) fn generate_for_each_cook_step(
         }
     };
 
-    if !file_refs.is_empty() {
-        out.push_str(&file_refs.hoist_lines("    "));
-    }
     out.push_str("    for _, item in ipairs(_items) do\n");
     if multi {
         out.push_str("        local _cook_outs = {\n");

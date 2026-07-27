@@ -506,31 +506,11 @@ pub fn register_unit_api(
                 std::mem::take(&mut body.pending_member_dep_input_paths),
             )
         };
-        // CS-0101: resolve `file_refs` patterns (file-reference placeholders)
-        // and fold the matches into this unit's cache input set. Resolution
-        // failures are load-time diagnostics (missing literal / empty glob).
-        // Paths go into cache_meta.input_paths ONLY — never WorkPayload
-        // inputs, which drive _cook_in iteration.
-        // CS-0127: `file_refs` must be a table of strings — never coerced.
-        let file_ref_patterns: Vec<String> = match tbl.get::<LuaValue>("file_refs") {
-            Ok(LuaValue::Nil) | Err(_) => Vec::new(),
-            Ok(LuaValue::Table(t)) => collect_string_list(&t, "file_refs")?,
-            Ok(other) => return Err(type_err("file_refs", "a table of strings", other.type_name())),
-        };
-        let mut file_ref_paths: Vec<String> = Vec::new();
-        for pat in &file_ref_patterns {
-            let resolved = crate::file_ref::resolve_file_ref(&wd_for_add_unit, pat)
-                .map_err(|e| LuaError::runtime(format!("cook.add_unit: {e}")))?;
-            file_ref_paths.extend(resolved);
-        }
-        file_ref_paths.sort();
-        file_ref_paths.dedup();
 
         // §17.1.1.2: each entry is classified HERE, once, and carries the
         // answer from here on. `inputs` and the dep-output paths are strings
-        // whose provenance this call cannot see, so they are classified against
-        // the tree; `file_refs` were resolved from the tree by this phase a few
-        // lines above, so they are paths by construction and need no test.
+        // whose provenance this call cannot see, so they are classified
+        // against the tree.
         //
         // Deduplicated, order of first occurrence (COOK-84): a path named by
         // both `inputs` and a step-group dep arrives twice, and what a unit
@@ -549,9 +529,6 @@ pub fn register_unit_api(
                 .chain(member_dep_input_paths.iter().map(|s| s.as_str()))
             {
                 push(classify_declared_input(&wd_for_add_unit, p));
-            }
-            for p in &file_ref_paths {
-                push(cook_contracts::cache::DeclaredInput::path(p));
             }
             out
         };

@@ -92,7 +92,7 @@ fn no_placeholders_returns_quoted_literal() {
     let r = empty_recipes();
     let ctx = ctx_oneone_single(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("echo hello", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("echo hello", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"echo hello\"");
     assert!(env.keys.is_empty());
 }
@@ -104,13 +104,13 @@ fn shell_brace_idioms_survive_verbatim() {
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
 
-    let result = expand_sigil_template("{a,b,c}", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("{a,b,c}", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"{a,b,c}\"");
 
-    let result2 = expand_sigil_template("${HOME:-x}", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result2 = expand_sigil_template("${HOME:-x}", &ctx, &mut env).unwrap();
     assert_eq!(result2, "\"${HOME:-x}\"");
 
-    let result3 = expand_sigil_template("awk '{print $1}'", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result3 = expand_sigil_template("awk '{print $1}'", &ctx, &mut env).unwrap();
     assert_eq!(result3, "\"awk '{print $1}'\"");
 
     assert!(env.keys.is_empty(), "no env keys should be recorded for shell braces");
@@ -121,7 +121,7 @@ fn in_lowers_to_cook_in_in_one_to_one() {
     let r = empty_recipes();
     let ctx = ctx_oneone_single(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("$<in>", &ctx, &mut env).unwrap();
     assert_eq!(result, "_cook_in");
 }
 
@@ -130,7 +130,7 @@ fn out_lowers_to_cook_out_in_single_output() {
     let r = empty_recipes();
     let ctx = ctx_oneone_single(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<out>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("$<out>", &ctx, &mut env).unwrap();
     assert_eq!(result, "_cook_out");
 }
 
@@ -140,7 +140,7 @@ fn recipe_lowers_to_dep_output() {
     r.insert("libmath".to_string());
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("gcc $<libmath>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("gcc $<libmath>", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"gcc \" .. cook.dep_output(\"libmath\")");
 }
 
@@ -149,7 +149,7 @@ fn env_var_lowers_to_require_var() {
     let r = empty_recipes();
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("$<HOME>", &ctx, &mut env).unwrap();
     assert_eq!(result, "cook.require_var(\"HOME\")");
     assert!(env.keys.contains("HOME"), "HOME should be recorded");
 }
@@ -159,7 +159,7 @@ fn var_prefix_strips_to_require_var() {
     let r = empty_recipes();
     let ctx = ctx_oneshot_none(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<var.HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("$<var.HOME>", &ctx, &mut env).unwrap();
     assert_eq!(result, "cook.require_var(\"HOME\")");
     assert!(env.keys.contains("HOME"));
 }
@@ -176,7 +176,7 @@ fn builtin_in_wrong_mode_returns_err() {
         recipes_in_scope: &r,
     };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<in>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+    let result = expand_sigil_template("$<in>", &os_ctx, &mut env);
     assert!(result.is_err(), "expected error for $<in> in one-shot mode");
 
     // $<in.ACCESSOR> requires the input set be singular — still rejected
@@ -187,11 +187,11 @@ fn builtin_in_wrong_mode_returns_err() {
         recipes_in_scope: &r,
     };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env, &mut FileRefs::new("t"));
+    let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env);
     assert!(result.is_err(), "expected error for $<in.stem> in many-to-one mode");
 
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<in.stem>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+    let result = expand_sigil_template("$<in.stem>", &os_ctx, &mut env);
     assert!(result.is_err(), "expected error for $<in.stem> in one-shot mode");
 }
 
@@ -200,7 +200,7 @@ fn mixed_template_with_literal_and_placeholders() {
     let r = empty_recipes();
     let ctx = ctx_oneone_single(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"gcc -c \" .. _cook_in .. \" -o \" .. _cook_out");
 }
 
@@ -209,7 +209,7 @@ fn in_stem_expands_to_path_stem() {
     let r = empty_recipes();
     let ctx = ctx_oneone_single(&r);
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+    let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env).unwrap();
     assert_eq!(result, "\"build/\" .. path.stem(_cook_in) .. \".o\"");
 }
 
@@ -238,7 +238,6 @@ fn recipe_member_lowers_to_dep_output_member() {
             "bin/mux --video $<render[in]>",
         &ctx,
         &mut env,
-        &mut FileRefs::new("t"),
         ProbeLowering::CacheGet,
     )
     .unwrap();
@@ -255,7 +254,7 @@ fn recipe_member_in_plain_command_is_error() {
     recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env, &mut FileRefs::new("t"));
+        let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env);
     assert!(
         matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
         "expected RecipeMemberOutsideFanout, got: {res:?}"
@@ -274,7 +273,6 @@ fn recipe_member_empty_index_errors_in_fanout_body() {
             "bin/mux --video $<render[]>",
         &ctx,
         &mut env,
-        &mut FileRefs::new("t"),
         ProbeLowering::CacheGet,
     );
     assert!(
@@ -295,7 +293,6 @@ fn recipe_member_bad_index_errors_in_fanout_body() {
             "bin/mux --video $<render[key]>",
         &ctx,
         &mut env,
-        &mut FileRefs::new("t"),
         ProbeLowering::CacheGet,
     );
     assert!(

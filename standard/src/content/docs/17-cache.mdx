@@ -16,7 +16,6 @@ The **observable inputs** of a work unit are those of its properties that are de
 3. The list of output paths declared for the unit.
 4. The recipe's resolved environment (§{lua}).
 5. For a unit produced by an `ingredients <probe>` source (§{steps.ingredients}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. (This composes with the probe-value cache of §{cat.probes.exec}, which fingerprints the member *set*: the two layers are independent.)
-6. For a unit whose command text contains one or more file references (`$<file:PATH>`, §{phl.cook-step}, CS-0101), the resolved path list and the content of each resolved file, on the same footing as observable 2 plus the declared-input-content consideration below. Editing a referenced file MUST invalidate exactly the units that reference it; a glob gaining or losing a match MUST invalidate via the path-list change. The reference implementation realises this by appending the resolved paths to the unit's recorded input set.
 
 > **Note (informative).** An implementation MAY realise the materialised-member observable (5) by folding the canonical member rendering into the unit's command-text contribution (observable 1) rather than as a distinct fingerprint field; the two are observably equivalent because both make the member part of the inputs the fingerprint depends on. The reference implementation takes this approach: the codegen attaches the canonical member to each fan-out unit, which is mixed into the command hash at registration.
 
@@ -34,7 +33,7 @@ A cacheable work unit — one whose register-phase record enables caching (§{ex
 
 where:
 
-- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its `$<file:PATH>` references (§{phl.cook-step}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
+- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
 - **command text / Lua chunk** is observable 1 of §17.1;
 - **declared output paths** is observable 3 of §17.1;
 - **consulted variable values** are the string forms (§{decl.config}) of the declared variables the unit reads — `$<NAME>` sigils and the `var.NAME` static reads of §{exec.cache.lua-variable-reads};
@@ -82,7 +81,7 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 >
 > The two are not distinguishable by spelling, and this is why the rule is normative rather than a matter of convenience. `*`, `?` and `[` are ordinary characters in a filename on every platform this Standard targets: `app/[slug]/page.tsx` is a file — and a routing convention whole frameworks are built on — while reading as a character class to any matcher. An implementation that classifies at match time therefore expands that entry, matches nothing, and drops it from the unit's input set. The drop is identical on the check side and on the record side, so the two agree, the unit reports a hit, and the file it was keyed on has changed. Neither the key, nor the record, nor a report derived from them shows the hole, and a sibling entry without metacharacters keeps the unit looking alive.
 >
-> A conforming implementation MUST classify as a **path** every entry it obtained by resolving something against the working tree itself: the expansion of an `ingredients` glob (§{steps.ingredients}), a `$<file:PATH>` reference (§{phl.cook-step}), and any other register-phase resolution. Whatever characters such a name contains, the implementation has already seen the file it names. An entry that arrives as an unresolved declaration — a `cook.add_unit` `inputs` entry (§{lua.add-unit}), or a declared output of another unit consumed by this one — MAY be classified by its spelling, on the same terms and by the same test its producer applies when capturing that same declaration (§{exec.cache.output-globs} rule 1); one declaration MUST NOT mean a pattern to its producer and a path to its consumer.
+> A conforming implementation MUST classify as a **path** every entry it obtained by resolving something against the working tree itself: the expansion of an `ingredients` glob (§{steps.ingredients}), and any other register-phase resolution. Whatever characters such a name contains, the implementation has already seen the file it names. An entry that arrives as an unresolved declaration — a `cook.add_unit` `inputs` entry (§{lua.add-unit}), or a declared output of another unit consumed by this one — MAY be classified by its spelling, on the same terms and by the same test its producer applies when capturing that same declaration (§{exec.cache.output-globs} rule 1); one declaration MUST NOT mean a pattern to its producer and a path to its consumer.
 >
 > **Late resolution.** A pattern MUST be expanded when the unit becomes ready (§{exec.output-materialisation}), not at registration and not never: a consumed output declared `dist/**` names no file until its producer has run. The expansion MUST apply the same normalisation §{exec.cache.output-globs} rule 1 applies when the producing unit captures that entry, in particular CS-0085's trailing-`**` normalisation. A pattern expanding to nothing contributes nothing, and what remains is then subject to §{exec.cache.test-unit} rule 1's nothing-to-key-on rule.
 >
@@ -318,7 +317,6 @@ One thing is specific, and everything else in this section follows from it: a te
    The set comprises:
    - the iteration source of §{steps.iteration-mode-plate-test}, narrowed by mode per the rule immediately below;
    - every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution});
-   - the unit's `$<file:PATH>` references, on the same footing as any other unit (§{exec.cache.abstract} observable 6).
 
    Inputs are folded by **content**, and the timing that requires is stated in the note at the end of this section.
 

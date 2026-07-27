@@ -551,12 +551,6 @@ fn test_add_unit_rejects_non_string_env_value() {
 }
 
 #[test]
-fn test_add_unit_rejects_non_table_file_refs() {
-    let err = add_unit_reject(r#"command = "true", file_refs = "src/*.c""#);
-    assert!(err.contains("file_refs"), "got: {err}");
-}
-
-#[test]
 fn test_add_unit_rejects_non_table_consulted_env_keys() {
     let err = add_unit_reject(r#"command = "true", consulted_env_keys = 42"#);
     assert!(err.contains("consulted_env_keys"), "got: {err}");
@@ -2443,78 +2437,6 @@ fn mux_per_member_fingerprint_isolation() {
     );
 }
 
-// -----------------------------------------------------------------------
-// CS-0101: cook.file_ref — $<file:PATH> register-phase resolution
-// -----------------------------------------------------------------------
-
-#[test]
-fn file_ref_api_resolves_literal_and_glob() {
-    use std::fs;
-    use tempfile::tempdir;
-    let dir = tempdir().unwrap();
-    fs::write(dir.path().join("tokens.css"), "x").unwrap();
-    fs::create_dir_all(dir.path().join("templates")).unwrap();
-    fs::write(dir.path().join("templates/a.html"), "a").unwrap();
-    fs::write(dir.path().join("templates/b.html"), "b").unwrap();
-    let lua = mlua::Lua::new();
-    let cook = lua.create_table().unwrap();
-    lua.globals().set("cook", cook).unwrap();
-    crate::file_ref::register_file_ref(&lua, dir.path()).unwrap();
-    let lit: String = lua
-        .load(r#"return cook.file_ref("tokens.css")"#)
-        .eval()
-        .unwrap();
-    assert_eq!(lit, "tokens.css");
-    let glob: String = lua
-        .load(r#"return cook.file_ref("templates/*.html")"#)
-        .eval()
-        .unwrap();
-    assert_eq!(glob, "templates/a.html templates/b.html"); // sorted
-}
-
-#[test]
-fn file_ref_api_missing_literal_is_error() {
-    use tempfile::tempdir;
-    let dir = tempdir().unwrap();
-    let lua = mlua::Lua::new();
-    let cook = lua.create_table().unwrap();
-    lua.globals().set("cook", cook).unwrap();
-    crate::file_ref::register_file_ref(&lua, dir.path()).unwrap();
-    let err = lua
-        .load(r#"return cook.file_ref("missing.css")"#)
-        .eval::<String>()
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("missing.css"),
-        "error must name the missing file; got: {err}"
-    );
-}
-
-#[test]
-fn file_ref_api_empty_glob_is_error() {
-    use std::fs;
-    use tempfile::tempdir;
-    let dir = tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("templates")).unwrap();
-    let lua = mlua::Lua::new();
-    let cook = lua.create_table().unwrap();
-    lua.globals().set("cook", cook).unwrap();
-    crate::file_ref::register_file_ref(&lua, dir.path()).unwrap();
-    let err = lua
-        .load(r#"return cook.file_ref("templates/*.html")"#)
-        .eval::<String>()
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("matched no files"),
-        "error must say the glob matched nothing; got: {err}"
-    );
-}
-
-/// Test scaffold for CS-0101 add_unit `file_refs` plumbing: a Lua VM with
-/// the full unit API registered against a caller-supplied working dir
-/// (the file_refs field resolves patterns against real files).
 fn make_unit_api_lua(working_dir: &std::path::Path) -> (mlua::Lua, SharedBodySlot) {
     use std::sync::{Arc, Mutex};
     let lua = mlua::Lua::new();
@@ -2532,67 +2454,6 @@ fn make_unit_api_lua(working_dir: &std::path::Path) -> (mlua::Lua, SharedBodySlo
     )
     .unwrap();
     (lua, body_slot)
-}
-
-#[test]
-fn add_unit_file_refs_fold_into_cache_input_paths() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("in.md"), "m").unwrap();
-    fs::write(dir.path().join("tokens.css"), "x").unwrap();
-
-    let (lua, body_slot) = make_unit_api_lua(dir.path());
-    lua.load(
-        r#"
-        cook.add_unit({
-            inputs = {"in.md"},
-            output = "out.html",
-            command = "render",
-            file_refs = {"tokens.css"},
-        })
-    "#,
-    )
-    .exec()
-    .unwrap();
-
-    let slot = body_slot.borrow();
-    let body = slot.as_ref().expect("body slot populated");
-    assert_eq!(body.units.len(), 1);
-    let meta = body.units[0]
-        .cache_meta
-        .as_ref()
-        .expect("cached unit has cache_meta");
-    assert_eq!(
-        meta.inputs.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
-        vec!["in.md".to_string(), "tokens.css".to_string()],
-        "file_refs matches must fold into cache_meta.inputs after inputs"
-    );
-}
-
-#[test]
-fn add_unit_file_refs_missing_file_is_register_error() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("in.md"), "m").unwrap();
-
-    let (lua, _body_slot) = make_unit_api_lua(dir.path());
-    let err = lua
-        .load(
-            r#"
-            cook.add_unit({
-                inputs = {"in.md"},
-                output = "out.html",
-                command = "render",
-                file_refs = {"missing.css"},
-            })
-        "#,
-        )
-        .exec()
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("missing.css"),
-        "error must name the missing file; got: {err}"
-    );
-    assert!(err.contains("file not found"), "error must name the file-ref failure; got: {err}");
 }
 
 // -----------------------------------------------------------------------

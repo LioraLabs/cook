@@ -157,7 +157,6 @@ pub(crate) fn generate_test_step(
     // substitution — hoisted locals, but NO `file_refs` unit field. The
     // accumulator is shared by the as-name and body expansions (patterns
     // dedupe), and hoists are emitted before the first unit line of each arm.
-    let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
 
     match &test_step.body {
         Body::ShellBlock(lines) => match mode {
@@ -165,13 +164,10 @@ pub(crate) fn generate_test_step(
                 let cmd_text = build_shell_block_command(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) = expand_plate_test_body(
-                    &cmd_text, recipe_names, "_test_in", &mut consulted, &mut file_refs,
+                    &cmd_text, recipe_names, "_test_in", &mut consulted,
                 )
                 .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
-                if !file_refs.is_empty() {
-                    out.push_str(&file_refs.hoist_lines("    "));
-                }
                 out.push_str(&format!(
                     "    for _, _test_in in ipairs({}) do\n        cook.add_unit({{step_kind = \"test\", command = {}, {}{}line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
                     source_expr, cmd_expr, inputs_field, seal_field, line, consulted.to_lua_table()
@@ -186,13 +182,10 @@ pub(crate) fn generate_test_step(
                 let cmd_text = build_shell_block_command(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) = expand_plate_test_body(
-                    &cmd_text, recipe_names, "\"\"", &mut consulted, &mut file_refs,
+                    &cmd_text, recipe_names, "\"\"", &mut consulted,
                 )
                 .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
-                if !file_refs.is_empty() {
-                    out.push_str(&file_refs.hoist_lines("    "));
-                }
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", command = {}, {}{}line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
                     cmd_expr, inputs_field, seal_field, line, consulted.to_lua_table()
@@ -201,9 +194,6 @@ pub(crate) fn generate_test_step(
         },
         Body::LuaBlock(code) => match mode {
             PlateTestMode::OneToOne => {
-                if !file_refs.is_empty() {
-                    out.push_str(&file_refs.hoist_lines("    "));
-                }
                 out.push_str(&format!(
                     "    for _, _test_in in ipairs({}) do\n",
                     source_expr
@@ -216,9 +206,6 @@ pub(crate) fn generate_test_step(
                 out.push_str("    end\n");
             }
             PlateTestMode::ManyToOne => {
-                if !file_refs.is_empty() {
-                    out.push_str(&file_refs.hoist_lines("    "));
-                }
                 // Serialise the inputs table at register time into the lua_code string.
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}{}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
@@ -226,9 +213,6 @@ pub(crate) fn generate_test_step(
                 ));
             }
             PlateTestMode::OneShot => {
-                if !file_refs.is_empty() {
-                    out.push_str(&file_refs.hoist_lines("    "));
-                }
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", lua_code = {}, {}{}line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
                     lua_chunk_literal(code), inputs_field, seal_field, line
@@ -281,7 +265,6 @@ pub(crate) fn generate_for_each_test_step(
     };
     let seal_field: &str = &seal_field;
     // CS-0101: substitution only (cache = false) — hoists, no file_refs field.
-    let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
 
     match &test_step.body {
         Body::ShellBlock(lines) => {
@@ -291,15 +274,11 @@ pub(crate) fn generate_for_each_test_step(
                 &combined,
                 &ctx,
                 &mut consulted,
-                &mut file_refs,
                 crate::template::ProbeLowering::CacheGet,
             )
             .map_err(|source| CodegenError::SigilResolve { line, source })?;
             reject_probe_refs_in_command(line, probe_keys)?;
             let cmd_expr = cmd_concat;
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(MEMBER_SOURCE_LINE);
             out.push_str(&format!(
@@ -311,9 +290,6 @@ pub(crate) fn generate_for_each_test_step(
         Body::LuaBlock(code) => {
             // §8.3: the Lua body sees the member as `item`; execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(MEMBER_SOURCE_LINE);
             out.push_str(&format!(

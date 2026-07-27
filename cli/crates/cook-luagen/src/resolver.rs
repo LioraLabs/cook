@@ -67,11 +67,6 @@ pub enum Resolved {
     /// `key` is the probe key (everything before the first `.` or `[`).
     /// `access` is the ready-to-emit Lua expression (e.g. `cook.probes.get("cc:zlib").cflags`).
     ProbeRef { key: String, access: String },
-    /// CS-0101: `$<file:PATH>` — a file reference. Interpolates the resolved
-    /// match list and (for cacheable units) folds each file's content into
-    /// the unit fingerprint. Dispatched on the `file:` prefix BEFORE the
-    /// probe-ref colon dispatch.
-    FileRef { pattern: String },
     Error(ResolveError),
 }
 
@@ -92,10 +87,6 @@ pub enum ResolveError {
     RecipeMemberBadIndex { ident: String, index: String },
     #[error("placeholder $<{ident}>: `[in]` names a per-member recipe output, but no recipe named '{name}' is in scope")]
     RecipeMemberUnknownRecipe { ident: String, name: String },
-    #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments")]
-    FileRefBadPath { ident: String },
-    #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern")]
-    FileRefInOutputPattern { ident: String },
     /// CS-0172: `$<env.NAME>` named the process-environment namespace, which no
     /// longer backs declared variables. `$<var.NAME>` is the explicit spelling
     /// for a declared variable; an ambient process variable is read either as
@@ -109,6 +100,19 @@ pub enum ResolveError {
          determinant."
     )]
     RetiredEnvPrefix { key: String },
+    /// CS-0187: `$<file:PATH>` is removed. Without a diagnostic the retired
+    /// form does not fail cleanly — it falls through to the probe colon
+    /// dispatch, so `$<file:tokens.css>` reports an undeclared probe key
+    /// `file:tokens`, and a path containing `/` strict-bails to literal shell
+    /// text instead. Both are worse than being told what happened, which is
+    /// the same reasoning CS-0172 applied to the retired `env.` prefix.
+    #[error(
+        "placeholder $<file:{path}>: the `file:` prefix is retired (CS-0187). \
+         Declare the file as an input instead: a `files {{ \"{path}\" }}` probe \
+         sealed on the unit that reads it (`seal <probe>`) makes its content a \
+         cache determinant, and the step body names the path directly."
+    )]
+    RetiredFilePrefix { path: String },
 }
 
 /// Three-way outcome of `match_builtin`:
@@ -138,24 +142,6 @@ pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
         Some(field) if !field.is_empty() => Some(BuiltinKind::ItemField(field.to_string())),
         _ => None,
     }
-}
-
-/// CS-0101: dispatch the `file:` namespace. Returns `Some` for any ident with
-/// the `file:` prefix — either a well-formed [`Resolved::FileRef`] or a
-/// [`ResolveError::FileRefBadPath`] for absolute paths and `..` escapes (the
-/// sigil scanner's path charset admits `/`, `.`, and `-`, so both shapes are
-/// reachable and MUST be rejected here). Shared by [`resolve`] and the
-/// plate/test body expander so the validation lives in exactly one place.
-pub fn match_file_ref(ident: &str) -> Option<Resolved> {
-    let path = ident.strip_prefix("file:")?;
-    if path.starts_with('/') || path.split('/').any(|seg| seg == "..") {
-        return Some(Resolved::Error(ResolveError::FileRefBadPath {
-            ident: ident.to_string(),
-        }));
-    }
-    Some(Resolved::FileRef {
-        pattern: path.to_string(),
-    })
 }
 
 /// True when `ident` references the step's own iteration source.
@@ -205,10 +191,13 @@ pub fn is_output_ref(ident: &str) -> bool {
 }
 
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
-    // CS-0101: `file:` namespace — dispatched before the probe-ref colon
-    // discriminator so `$<file:x.css>` never parses as probe key `file:x`.
-    if let Some(resolved) = match_file_ref(ident) {
-        return resolved;
+    // CS-0187: the retired `file:` prefix, refused ahead of the probe colon
+    // dispatch — the position the removed namespace occupied — so the
+    // diagnostic names the retirement rather than an undeclared probe key.
+    if let Some(path) = ident.strip_prefix("file:") {
+        return Resolved::Error(ResolveError::RetiredFilePrefix {
+            path: path.to_string(),
+        });
     }
 
     // CS-0074: probe-value reference — IDENT contains `:`.
