@@ -208,6 +208,16 @@ pub fn register_cookfile(
     builder: RegisterSessionBuilder,
     lua_source: &str,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    // `probe_cache_ctx`: the backend the `ingredients <probe>` pre-pass
+    // evaluates probes against (COOK-359). Deliberately SEPARATE from
+    // `cache_ctx`, which carries unit-registration identity: installing that
+    // one as Lua app_data puts `project_id` into `recipe_namespace`, and §5.3
+    // feeds the namespace into the cloud key — so wiring it would rekey every
+    // artifact in every store and make the key depend on what the checkout
+    // directory happens to be called. Probe evaluation needs a backend and
+    // nothing else, so it gets exactly that. Unifying the two is COOK-364,
+    // which is a cache-identity decision rather than a probe fix.
+    probe_cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
 ) -> Result<crate::RegisteredCookfile, RegisterError> {
     // Shared with the body-invocation driver (step 12), which outlives this
     // function's stack frame: the Lua closure backing `cook.require_recipe`
@@ -420,7 +430,7 @@ pub fn register_cookfile(
         &recipes.borrow(),
         &probe_registry.borrow(),
         &builder.working_dir,
-        cache_ctx.as_ref(),
+        probe_cache_ctx.as_ref(),
         &prepass_store,
         &reachable_from_target,
         builder.target_recipe.is_some(),

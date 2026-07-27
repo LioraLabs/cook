@@ -808,12 +808,37 @@ fn build_registered_workspace(
     // recipe set before the register pass runs bodies.
     pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
+    // COOK-359: the register pass evaluates probes — an `ingredients <probe>`
+    // driver's value decides the DAG's shape, so it must be known before any
+    // recipe body runs. That evaluation needs a backend for the same reason the
+    // execute phase does: §22.5.8's cache-hit clause names no consumption path,
+    // so a probe costs the same whether a unit seals it or a recipe fans out
+    // over it.
+    //
+    // This was `None`. Not "no cache configured" — nobody had wired it, and
+    // every caller in the tree passed the literal, so the register-side GET/PUT
+    // block had never run against a backend in any invocation. An
+    // `ingredients <probe>` driver re-produced on every single build while the
+    // identical probe consumed through a seal was served from cache.
+    //
+    // It goes in the probe slot ONLY. The `cache_ctx` argument below stays
+    // `None` on purpose: that one is installed as Lua app_data and puts
+    // `project_id` into `recipe_namespace`, which §5.3 feeds into the cloud
+    // key — so passing it would rekey every artifact in every store and make
+    // the key depend on what the checkout directory happens to be called.
+    // That is a cache-identity decision, not a probe fix; it is COOK-364.
+    let probe_cache_ctx = cook_engine::build_cache_ctx_for_cli(
+        &resolve_project_root(globals)?,
+        globals.no_publish,
+    )
+    .map_err(engine_error_to_cook_error)?;
     let registered = pipeline::register_workspace(
         &workspace,
         config,
         &globals.set,
         mode,
         /*cache_ctx*/ None,
+        Some(probe_cache_ctx),
     )
     .map_err(pipeline_error_to_cook_error)?;
     for warning in &registered.warnings { eprintln!("cook: warning: {warning}"); }
