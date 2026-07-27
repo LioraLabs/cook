@@ -560,7 +560,9 @@ dependencies = [
 name = "cook-probe"
 version = "0.10.1"
 dependencies = [
+ "cook-cache",
  "cook-contracts",
+ "cook-fingerprint",
  "tempfile",
 ]
 
