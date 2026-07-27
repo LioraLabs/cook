@@ -53,6 +53,42 @@ fn declared_outputs_make_a_producing_unit() {
 }
 
 // -------------------------------------------------------------------------
+// Cacheability keeps three states apart that were long expressed as two
+// -------------------------------------------------------------------------
+
+#[test]
+fn no_declaration_means_never_cached() {
+    assert_eq!(cacheability(None), Cacheability::Uncacheable);
+}
+
+/// The state the implementation had no way to say: cacheable, but with
+/// nothing in the artifact store. Tests today; any other output-less step
+/// kind later, without further change here.
+#[test]
+fn a_declaration_without_outputs_is_cached_by_result() {
+    assert_eq!(cacheability(Some(&meta("k", &[]))), Cacheability::ResultOnly);
+}
+
+#[test]
+fn a_declaration_with_outputs_is_cached_by_artifact() {
+    assert_eq!(cacheability(Some(&meta("k", &["out.o"]))), Cacheability::Artifacts);
+}
+
+/// Absence of a declaration is the ONLY thing cacheability adds over
+/// effect_kind — the two agree wherever both are defined.
+#[test]
+fn cacheability_agrees_with_effect_kind_wherever_both_apply() {
+    for outputs in [&[][..], &["out.o"][..]] {
+        let m = meta("k", outputs);
+        let expected = match effect_kind(&m) {
+            EffectKind::Observed => Cacheability::ResultOnly,
+            EffectKind::Produced => Cacheability::Artifacts,
+        };
+        assert_eq!(cacheability(Some(&m)), expected);
+    }
+}
+
+// -------------------------------------------------------------------------
 // The constructor is the only way in, which is what makes the derived
 // accessor on the record trustworthy.
 // -------------------------------------------------------------------------

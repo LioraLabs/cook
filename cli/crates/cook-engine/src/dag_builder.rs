@@ -638,17 +638,24 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
     Ok(dag)
 }
 
-/// A unit is presatisfied (cached) when it has an empty shell command and no
-/// cache_meta.
+/// A unit is presatisfied (cached) when it has an empty shell command and
+/// takes no part in caching.
+///
+/// COOK-360: the second half was written as `cache_meta.is_none()`, which
+/// conflated "never cached" with "cached, but with no outputs". Exactly
+/// equivalent today — nothing yet declares a cacheable output-less unit — and
+/// stated so that when one does, it is not silently swept in here as a no-op.
 fn is_presatisfied(unit: &CapturedUnit) -> bool {
+    let uncacheable = cook_contracts::cache::record::cacheability(unit.cache_meta.as_ref())
+        == cook_contracts::cache::record::Cacheability::Uncacheable;
     match &unit.payload {
-        WorkPayload::Shell { cmd, .. } => cmd.is_empty() && unit.cache_meta.is_none(),
+        WorkPayload::Shell { cmd, .. } => cmd.is_empty() && uncacheable,
         // CS-0127 §22.4: a lua-body test (`lua_code` populated) always has an
         // empty `cmd` by construction — that must NOT be mistaken for the
         // legacy empty-shell-command no-op. Only a genuinely empty test (no
         // `cmd` AND no `lua_code`) is presatisfied.
         WorkPayload::Test { cmd, lua_code, .. } => {
-            cmd.is_empty() && lua_code.is_none() && unit.cache_meta.is_none()
+            cmd.is_empty() && lua_code.is_none() && uncacheable
         }
         _ => false,
     }

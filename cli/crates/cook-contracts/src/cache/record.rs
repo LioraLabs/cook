@@ -83,6 +83,42 @@ pub fn effect_kind(meta: &CacheMeta) -> EffectKind {
     }
 }
 
+/// What kind of cache participation a unit's declaration admits.
+///
+/// Three states that the reference implementation long expressed as two, by
+/// letting a missing [`CacheMeta`] stand for both "not cacheable" and "has no
+/// outputs". Those are different claims: a chore body may never be cached at
+/// all (§7.4), while a unit that declares no outputs is perfectly cacheable —
+/// its hit simply replays a recorded outcome instead of restoring bytes.
+///
+/// Keeping them apart is also what lets a step kind be added later whose units
+/// are output-less WITHOUT being tests: it is [`crate::StepKind`], not the
+/// output list, that says how a unit is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cacheability {
+    /// Never cached. Chore bodies and interactive units.
+    Uncacheable,
+    /// Cached, with nothing in the artifact store: a hit replays the recorded
+    /// outcome. Every unit declaring no outputs.
+    ResultOnly,
+    /// Cached, with artifacts to publish and restore.
+    Artifacts,
+}
+
+/// The three-state rule, as a pure function over the declaration.
+///
+/// Defined in terms of [`effect_kind`] rather than repeating it: absence of a
+/// declaration is the only thing this adds.
+pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
+    match meta {
+        None => Cacheability::Uncacheable,
+        Some(m) => match effect_kind(m) {
+            EffectKind::Observed => Cacheability::ResultOnly,
+            EffectKind::Produced => Cacheability::Artifacts,
+        },
+    }
+}
+
 /// How a unit's run ended.
 ///
 /// Derives serde directly rather than getting a parallel wire enum: it is a
