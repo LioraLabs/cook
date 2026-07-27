@@ -868,13 +868,14 @@ pub fn hash_input_paths(input_paths: &[&str], working_dir: &std::path::Path) -> 
 // COOK-360: `needs_rebuild_plate` lived here — the output-less rebuild check.
 // It was `needs_rebuild_cook` with the output half deleted: the same three
 // early-return predicates in the same order, the same `check_inputs` call,
-// then a `StepEntry` with `outputs: vec![]`. It had no production caller;
-// test units are cached through `TestCache` (a separate store keyed by
-// `compute_ready_test_fingerprint`), never through the step index. Passing
-// an empty output slice to `needs_rebuild_cook` takes exactly the path the
-// copy hard-coded — the discovered-inputs block is skipped, output
-// augmentation is skipped, the output-count check passes `0 == 0`, and the
-// output walk is empty — so the copy is deleted rather than rewired.
+// then a `StepEntry` with `outputs: vec![]`. It had no production caller,
+// because at the time test units were cached in a separate store and nothing
+// else declared no outputs. CS-0186 folded that store in here, and an
+// observing unit is judged by `needs_rebuild_cook` with an empty output slice
+// — exactly the path the copy hard-coded: the discovered-inputs block is
+// skipped, output augmentation is skipped, the output-count check passes
+// `0 == 0`, and the output walk is empty. The copy is deleted rather than
+// rewired, and the one function judges both kinds.
 
 #[cfg(test)]
 #[path = "tests/check_tests.rs"]

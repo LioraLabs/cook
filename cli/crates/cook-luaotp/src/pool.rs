@@ -734,6 +734,16 @@ fn register_worker_cook_table(
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "prior_outputs",
+        "cook.prior_outputs: register-only API called from execute-phase Lua. \
+         It answers about the recipe body currently being registered, and no body is \
+         being registered once execute-phase Lua runs. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
 
     lua.globals().set("cook", cook)?;
     Ok(())

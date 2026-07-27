@@ -106,10 +106,6 @@ pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Test-fingerprint file inputs — COOK-84 transitive-closure hashing
-// ---------------------------------------------------------------------------
-
 /// Unified engine entry point.
 ///
 /// Walks the unified work-unit DAG across every reachable recipe in
@@ -397,11 +393,11 @@ where
     // managers, so the in-memory caches it updates are visible here afterwards.
     let recon_managers = cache_managers.clone();
 
-    // 6. Build the probe_units_by_node lookup from the unified DAG. A test
-    //    unit's input set is not precomputed here: COOK-211 moved it to ready
-    //    time (`consumed_inputs_at_ready_time`), where a consumed dependency's
-    //    output is materialised on disk — impossible upfront, before any dep
-    //    has run.
+    // 6. Build the probe_units_by_node lookup from the unified DAG. No test
+    //    unit bookkeeping rides along: a test unit's inputs are on its
+    //    `CacheMeta` like every other unit's (CS-0186), and the engine expands
+    //    any pattern among them when the unit is ready — impossible upfront,
+    //    before the dependency that writes them has run.
     let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
         .probes
         .iter()
