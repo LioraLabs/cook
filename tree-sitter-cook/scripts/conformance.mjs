@@ -184,6 +184,14 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // carries no dotted module prefix (§22.11), which is register-phase.
   ['cook-chore-undotted-rejected',
    'CS-0176: undotted `cook.chore` name — register-phase rejection, not syntactic'],
+  // CS-0184 §10.2.4: a placeholder is one syntactic shape wherever it appears.
+  // What a given ident MEANS, and whether the position it sits in can honour
+  // that meaning, is decided by the codegen resolver — so both of these parse
+  // exactly like a legal placeholder and are refused a phase later.
+  ['061-probe-ref-in-test-command',
+   'CS-0184 §10.2.4: probe-value ref in a verbatim test command — codegen refusal, not syntactic'],
+  ['062-retired-env-prefix-in-test-body',
+   'CS-0184 §10.2.4: retired `env.` prefix in a test body — codegen rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
