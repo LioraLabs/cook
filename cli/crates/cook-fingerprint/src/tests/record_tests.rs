@@ -71,9 +71,10 @@ env_contribution = "00"
     assert_eq!(entry.command_hash, 0xDEADBEEFCAFE0001u64);
 }
 
+/// COOK-360: one version for every record store, owned by cook-contracts.
 #[test]
-fn cache_version_is_7() {
-    assert_eq!(CACHE_VERSION, 7);
+fn cache_version_is_the_shared_record_schema_version() {
+    assert_eq!(CACHE_VERSION, cook_contracts::cache::record::RECORD_SCHEMA_VERSION);
 }
 
 #[test]

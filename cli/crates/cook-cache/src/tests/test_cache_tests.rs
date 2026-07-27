@@ -3,7 +3,7 @@ use tempfile::tempdir;
 
 fn make_entry(fp: &str) -> TestCacheEntry {
     TestCacheEntry {
-        schema_version: 1,
+        schema_version: cook_fingerprint::CACHE_VERSION,
         fingerprint: fp.to_string(),
         outcome: TestCacheOutcome::Passed,
         stdout: "ok\n".to_string(),
@@ -70,13 +70,13 @@ fn schema_version_mismatch_returns_none() {
     let fp = "sha256:versiontest00000";
     let mut entry = make_entry(fp);
     // Tamper with schema_version to simulate a future format.
-    entry.schema_version = 2;
+    entry.schema_version = cook_fingerprint::CACHE_VERSION + 1;
     let path = cache.path_for(fp);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, serde_json::to_vec(&entry).unwrap()).unwrap();
     assert!(
         cache.lookup(fp).is_none(),
-        "schema_version != 1 must return None"
+        "a schema_version other than the shared one must return None"
     );
 }
 

@@ -41,7 +41,18 @@ pub mod hex_u64 {
 /// key) enables cold fetch-by-key sharing for depfile (cc) units. v7
 /// (COOK-313 / CS-0166): the index is a binary `<recipe>.idx` with an
 /// interned path table (see `cook_cache::index_bin`), replacing v4..v6 TOML.
-pub const CACHE_VERSION: u32 = 7;
+/// COOK-360: one version, owned by `cook-contracts`.
+///
+/// There were two. This counter versioned the step index; `TestCacheEntry`
+/// carried its own `schema_version`, pinned at 1, for the parallel
+/// test-result store. Two stores holding the same kind of thing were free to
+/// disagree about what shape it had, and a change to one could not invalidate
+/// the other.
+///
+/// Re-exported rather than aliased so every existing `CACHE_VERSION` reference
+/// keeps working while there is exactly one value behind them all. 7 → 8:
+/// superseded indexes are swept, not migrated (CS-0166).
+pub use cook_contracts::cache::record::RECORD_SCHEMA_VERSION as CACHE_VERSION;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {

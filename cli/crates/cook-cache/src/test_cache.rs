@@ -90,7 +90,11 @@ impl TestCache {
         }
         let bytes = std::fs::read(&path).ok()?;
         let entry: TestCacheEntry = serde_json::from_slice(&bytes).ok()?;
-        if entry.schema_version != 1 {
+        // COOK-360: this store is on its way out; until it goes, it validates
+        // against the one shared version rather than its own private `1`, so a
+        // shape change cannot invalidate the step index while leaving stale
+        // test results readable.
+        if entry.schema_version != cook_fingerprint::CACHE_VERSION {
             return None;
         }
         if entry.fingerprint != fingerprint {

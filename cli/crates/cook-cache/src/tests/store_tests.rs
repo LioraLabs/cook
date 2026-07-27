@@ -37,9 +37,12 @@ fn make_populated_cache() -> RecipeCache {
     cache
 }
 
+/// COOK-360: one version for every record store, owned by cook-contracts.
+/// The name no longer states the number, so bumping the shape does not
+/// require renaming the test that guards it.
 #[test]
-fn version_is_seven() {
-    assert_eq!(CACHE_VERSION, 7);
+fn cache_version_is_the_shared_record_schema_version() {
+    assert_eq!(CACHE_VERSION, cook_contracts::cache::record::RECORD_SCHEMA_VERSION);
 }
 
 #[test]

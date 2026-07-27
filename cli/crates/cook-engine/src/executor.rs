@@ -2594,7 +2594,8 @@ pub fn execute_dag(
                 // Write passing test result to the content-addressed cache.
                 if let (Some(tc), Some(fp)) = (test_cache, fp_opt) {
                     let entry = TestCacheEntry {
-                        schema_version: 1,
+                        // COOK-360: one shared version, not this store's private 1.
+                        schema_version: cook_fingerprint::CACHE_VERSION,
                         fingerprint: fp.clone(),
                         outcome: TestCacheOutcome::Passed,
                         stdout: to.stdout.clone(),
