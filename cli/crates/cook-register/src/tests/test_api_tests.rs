@@ -1,4 +1,5 @@
 use super::*;
+use cook_contracts::{DepKind, WorkPayload};
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::BodyCaptureState;
@@ -9,12 +10,30 @@ fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> 
     })
 }
 
+/// CS-0185: these cases were written against `cook.add_test` and now exercise
+/// the one registration function that replaced it. The harness registers
+/// `cook.add_unit` under the recipe name the suite assertions already expected,
+/// and `register_test_api` too — which now only binds the raising stub, so the
+/// removal itself stays covered here alongside the behaviour it replaced.
 fn make_lua_with_test_api() -> (Lua, SharedBodySlot) {
+    use std::sync::{Arc, Mutex};
+    use std::collections::BTreeMap;
     let lua = Lua::new();
     lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
     let body_slot: SharedBodySlot =
         Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    let terminal_outputs: crate::SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    crate::unit_api::register_unit_api(
+        &lua,
+        body_slot.clone(),
+        "unit",
+        terminal_outputs,
+        working_dir,
+    )
+    .unwrap();
     register_test_api(&lua, body_slot.clone()).unwrap();
+    body_slot.borrow_mut().as_mut().unwrap().current_recipe = Some("unit".to_string());
     (lua, body_slot)
 }
 
@@ -22,9 +41,8 @@ fn make_lua_with_test_api() -> (Lua, SharedBodySlot) {
 fn test_add_test_basic() {
     let (lua, capture_state) = make_lua_with_test_api();
     lua.load(r#"
-            cook.add_test({
+            cook.add_unit({step_kind = "test", 
                 command = "./run_tests",
-                suite = "unit",
             })
         "#).exec().unwrap();
 
@@ -38,10 +56,10 @@ fn test_add_test_basic() {
             // engine executor, populated with their prior absent-defaults.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(suite_name, "unit");
+            assert_eq!(suite_name, "unit"); // the enclosing recipe
             // No current_recipe in this harness — the derived
             // `<recipe>_test<N>` label degrades to a bare ordinal.
-            assert_eq!(test_name, "_test1");
+            assert_eq!(test_name, "unit_test0"); // CS-0185: <recipe>_test<line>
         }
         _ => panic!("expected Test payload"),
     }
@@ -67,9 +85,8 @@ fn test_add_test_propagates_step_group_dep_refs_to_dep_edges() {
         .push("upstream".to_string());
 
     lua.load(r#"
-            cook.add_test({
+            cook.add_unit({step_kind = "test", 
                 command = "./check",
-                suite = "s",
             })
         "#).exec().unwrap();
 
@@ -83,9 +100,8 @@ fn test_add_test_propagates_step_group_dep_refs_to_dep_edges() {
 fn test_add_test_defaults() {
     let (lua, capture_state) = make_lua_with_test_api();
     lua.load(r#"
-            cook.add_test({
+            cook.add_unit({step_kind = "test", 
                 command = "./test",
-                suite = "s",
             })
         "#).exec().unwrap();
 
@@ -94,7 +110,7 @@ fn test_add_test_defaults() {
         WorkPayload::Test { timeout, should_fail, test_name, .. } => {
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(test_name, "_test1");
+            assert_eq!(test_name, "unit_test0"); // CS-0185: <recipe>_test<line>
         }
         _ => panic!("expected Test payload"),
     }
@@ -114,7 +130,7 @@ fn add_test_defaults_suite_to_recipe_name() {
         .current_recipe = Some("frontend.unit".to_string());
 
     lua.load(r#"
-            cook.add_test({ command = "true" })
+            cook.add_unit({step_kind = "test",  command = "true" })
         "#).exec().unwrap();
 
     let state = body_ref(&capture_state);
@@ -127,7 +143,7 @@ fn add_test_defaults_suite_to_recipe_name() {
 }
 
 #[test]
-fn add_test_derives_name_from_recipe_and_ordinal() {
+fn test_unit_name_derives_from_recipe_and_line() {
     let (lua, capture_state) = make_lua_with_test_api();
     capture_state
         .borrow_mut()
@@ -136,8 +152,8 @@ fn add_test_derives_name_from_recipe_and_ordinal() {
         .current_recipe = Some("rust-test".to_string());
 
     lua.load(r#"
-            cook.add_test({ command = "true" })
-            cook.add_test({ command = "false" })
+            cook.add_unit({step_kind = "test",  command = "true",  line = 4 })
+            cook.add_unit({step_kind = "test",  command = "false", line = 7 })
         "#).exec().unwrap();
 
     let state = body_ref(&capture_state);
@@ -149,7 +165,10 @@ fn add_test_derives_name_from_recipe_and_ordinal() {
             _ => panic!("expected Test payload"),
         })
         .collect();
-    assert_eq!(names, ["rust-test_test1", "rust-test_test2"]);
+    // CS-0185: the discriminator is the LINE, not an ordinal. Both are unique
+    // within a recipe — two test steps cannot share a line — but a line needs
+    // no counting over the units already recorded.
+    assert_eq!(names, ["rust-test_test4", "rust-test_test7"]);
 }
 
 #[test]
@@ -162,7 +181,7 @@ fn add_test_rejects_empty_command() {
         .current_recipe = Some("r".to_string());
 
         let res = lua.load(r#"
-        cook.add_test({ command = "" })
+        cook.add_unit({step_kind = "test",  command = "" })
     "#).exec();
 
     assert!(res.is_err(), "empty command must be rejected");
@@ -179,7 +198,7 @@ fn add_test_rejects_missing_command() {
         .current_recipe = Some("r".to_string());
 
         let res = lua.load(r#"
-        cook.add_test({ name = "x" })
+        cook.add_unit({step_kind = "test",  name = "x" })
     "#).exec();
 
     assert!(res.is_err(), "missing command must be rejected");
@@ -199,9 +218,8 @@ fn add_test_rejects_missing_command() {
 fn add_test_captures_inputs_into_payload() {
     let (lua, capture_state) = make_lua_with_test_api();
     lua.load(r#"
-            cook.add_test({
+            cook.add_unit({step_kind = "test", 
                 command = "cargo test",
-                suite = "s",
                 name = "t",
                 inputs = { "src/lib.rs", "src/main.rs" },
             })
@@ -222,9 +240,8 @@ fn add_test_unions_step_group_dep_input_paths() {
         .step_group_dep_input_paths
         .extend(["../core/build/core.so".to_string(), "src/lib.rs".to_string()]);
     lua.load(r#"
-            cook.add_test({
+            cook.add_unit({step_kind = "test", 
                 command = "pytest",
-                suite = "s",
                 name = "t",
                 inputs = { "src/lib.rs" },
             })
@@ -246,7 +263,7 @@ fn add_test_without_inputs_still_carries_dep_paths() {
         .step_group_dep_input_paths
         .push("build/lib.txt".to_string());
     lua.load(r#"
-            cook.add_test({ command = "true", suite = "s", name = "t" })
+            cook.add_unit({step_kind = "test",  command = "true", name = "t" })
         "#).exec().unwrap();
     let state = body_ref(&capture_state);
     match &state.units[0].payload {
@@ -271,7 +288,7 @@ fn add_test_accepts_lua_code_without_command() {
         .current_recipe = Some("r".to_string());
 
         lua.load(r#"
-        cook.add_test({ lua_code = "assert(true)", suite = "s", name = "t" })
+        cook.add_unit({step_kind = "test",  lua_code = "assert(true)", name = "t" })
     "#).exec().unwrap();
 
     let state = body_ref(&capture_state);
@@ -297,7 +314,7 @@ fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
         .current_recipe = Some("r".to_string());
 
         lua.load(r#"
-        cook.add_test({ command = "true", lua_code = "", suite = "s", name = "t" })
+        cook.add_unit({step_kind = "test",  command = "true", lua_code = "", name = "t" })
     "#).exec().unwrap();
 
     let state = body_ref(&capture_state);
@@ -314,7 +331,7 @@ fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
 fn add_test_rejects_both_command_and_lua_code() {
     let (lua, _capture_state) = make_lua_with_test_api();
     let res = lua.load(r#"
-            cook.add_test({ command = "true", lua_code = "assert(true)" })
+            cook.add_unit({step_kind = "test",  command = "true", lua_code = "assert(true)" })
         "#).exec();
 
     assert!(res.is_err(), "both command and lua_code must be rejected");
@@ -325,7 +342,7 @@ fn add_test_rejects_both_command_and_lua_code() {
 fn add_test_rejects_non_string_command() {
     let (lua, _capture_state) = make_lua_with_test_api();
     let res = lua.load(r#"
-            cook.add_test({ command = function() end })
+            cook.add_unit({step_kind = "test",  command = function() end })
         "#).exec();
 
     let msg = format!("{:?}", res);
@@ -338,30 +355,12 @@ fn add_test_rejects_non_string_command() {
 fn add_test_rejects_non_string_lua_code() {
     let (lua, _capture_state) = make_lua_with_test_api();
     let res = lua.load(r#"
-            cook.add_test({ lua_code = 42 })
+            cook.add_unit({step_kind = "test",  lua_code = 42 })
         "#).exec();
 
     assert!(res.is_err(), "non-string lua_code must be rejected");
     assert!(format!("{:?}", res).contains("lua_code"), "got: {:?}", res);
 }
-
-#[test]
-fn add_test_explicit_suite_overrides_default() {
-    let (lua, capture_state) = make_lua_with_test_api();
-    capture_state
-        .borrow_mut()
-        .as_mut()
-        .expect("body slot populated for test")
-        .current_recipe = Some("r".to_string());
-
-        lua.load(r#"
-        cook.add_test({ command = "true", suite = "explicit" })
-    "#).exec().unwrap();
-
-    let state = body_ref(&capture_state);
-    let suite = match &state.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => suite_name,
-        _ => panic!(),
-    };
-    assert_eq!(suite, "explicit");
-}
+// CS-0185: `suite` is removed, so there is no override left to test. Passing
+// it is refused — pinned by `a_test_unit_may_not_declare_a_suite` in the
+// unit_api tests, next to the other §22.4 refusals.

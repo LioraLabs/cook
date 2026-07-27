@@ -1370,69 +1370,29 @@ fn add_unit_accepts_directory_output_trailing_slash() {
 // CS-0185: one registration function
 // -------------------------------------------------------------------------
 
-/// A test unit recorded through `cook.add_unit` is the same unit `cook.add_test`
-/// recorded. This is what makes the codegen switch mechanical: the emitter can
-/// change which function it calls without changing what it produces.
+/// CS-0185: `cook.add_test` is removed, and calling it raises rather than
+/// resolving to nil — the diagnostic has to name the replacement, which
+/// `attempt to call a nil value` cannot.
 ///
-/// Two fields are expected to differ and are asserted separately rather than
-/// skipped: `test_name`, because CS-0185 derives it from the LINE while the old
-/// function still counts an ordinal, and nothing else.
+/// This replaces the equivalence test that stood here through commits 1 and 2,
+/// which asserted that both functions recorded the same unit. That was the
+/// claim that made switching codegen safe; it cannot be restated now that
+/// there is only one function, and the switch it guarded has landed.
 #[test]
-fn add_unit_records_the_same_test_unit_add_test_did() {
+fn add_test_is_removed_and_names_its_replacement() {
     let (lua, slot) = make_lua_with_unit_api("checks");
     crate::test_api::register_test_api(&lua, slot.clone()).unwrap();
-    // `add_unit` learns the recipe at registration; `add_test` reads it from
-    // the body. Set it so the harness matches production, where codegen does.
-    slot.borrow_mut().as_mut().unwrap().current_recipe = Some("checks".to_string());
 
-    lua.load(
-        r#"
-        cook.add_test({ command = "./run", inputs = {"a.c"}, line = 9,
-                        iteration_item = "a.c", consumes = {"*.d.ts"} })
-        cook.add_unit({ step_kind = "test", command = "./run", inputs = {"a.c"}, line = 9,
-                        iteration_item = "a.c", consumes = {"*.d.ts"} })
-        "#,
-    )
-    .exec()
-    .unwrap();
-
-    let state = body_ref(&slot);
-    assert_eq!(state.units.len(), 2, "one unit from each function");
-    let (old, new) = (&state.units[0], &state.units[1]);
-
-    // Neither carries cache metadata: test results are still served by the
-    // separate result store, and unifying the records is a later step.
-    assert!(old.cache_meta.is_none() && new.cache_meta.is_none());
-    // DepKind has no PartialEq; both are Sequential outside a step group.
-    assert!(matches!(old.dep_kind, DepKind::Sequential));
-    assert!(matches!(new.dep_kind, DepKind::Sequential));
-    assert_eq!(old.output_paths, new.output_paths);
-
-    match (&old.payload, &new.payload) {
-        (
-            WorkPayload::Test { cmd: c1, line: l1, timeout: t1, should_fail: f1,
-                                suite_name: s1, test_name: n1, iteration_item: i1,
-                                lua_code: lc1, input_paths: p1, seal_keys: k1, consumes: cs1 },
-            WorkPayload::Test { cmd: c2, line: l2, timeout: t2, should_fail: f2,
-                                suite_name: s2, test_name: n2, iteration_item: i2,
-                                lua_code: lc2, input_paths: p2, seal_keys: k2, consumes: cs2 },
-        ) => {
-            assert_eq!(c1, c2);
-            assert_eq!(l1, l2);
-            assert_eq!(t1, t2);
-            assert_eq!(f1, f2);
-            assert_eq!(s1, s2);
-            assert_eq!(i1, i2);
-            assert_eq!(lc1, lc2);
-            assert_eq!(p1, p2);
-            assert_eq!(k1, k2);
-            assert_eq!(cs1, cs2);
-            // The one intended difference (CS-0185 supersedes CS-0160).
-            assert_eq!(n1, "checks_test1", "old rule: ordinal");
-            assert_eq!(n2, "checks_test9", "new rule: line");
-        }
-        _ => panic!("both functions must record a Test payload"),
-    }
+    let err = lua
+        .load(r#"cook.add_test({ command = "./run" })"#)
+        .exec()
+        .expect_err("cook.add_test must raise");
+    let msg = err.to_string();
+    assert!(msg.contains("was removed"), "got: {msg}");
+    assert!(msg.contains("step_kind = \"test\""), "must name the replacement: {msg}");
+    assert!(msg.contains("CS-0185"), "must cite the entry: {msg}");
+    // Nothing was recorded on the way out.
+    assert_eq!(body_ref(&slot).units.len(), 0);
 }
 
 /// §22.4: outputs and test-ness are independent facts, so an output on a test

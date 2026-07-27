@@ -4,7 +4,7 @@
 --   * checks.lint_keywords()        — flag lowercase RFC 2119 keywords in normative chapters (skips fenced blocks and inline code).
 --
 -- `lint_keywords` is a target-maker: called from a recipe body, it registers a
--- test unit (cook.add_test, §22.4) on the enclosing recipe, so `cook test`
+-- test unit (cook.add_unit, step_kind = "test", §22.4) on the enclosing recipe, so `cook test`
 -- reports it and an unchanged corpus does not re-scan. `suite` defaults to the
 -- enclosing recipe's qualified name, and the normative glob set stays the
 -- module's business — the recipe declares no ingredients.
@@ -71,11 +71,15 @@ local function normative_files()
     return files
 end
 
--- Register-phase. Call from inside a recipe body: cook.add_test attaches the
--- unit to the enclosing recipe and has no body slot to attach to at top level.
+-- Register-phase. Call from inside a recipe body: the unit attaches to the
+-- enclosing recipe and there is no body slot to attach to at top level.
 -- `inputs` keys the scan, so editing a non-normative chapter does not re-run it.
+--
+-- CS-0185: recorded through cook.add_unit with step_kind = "test" and no
+-- outputs. A test unit is an ordinary work unit; cook.add_test was removed.
 function checks.lint_keywords()
-    cook.add_test({
+    cook.add_unit({
+        step_kind = "test",
         lua_code = 'require("checks").scan_keywords()',
         inputs = normative_files(),
     })

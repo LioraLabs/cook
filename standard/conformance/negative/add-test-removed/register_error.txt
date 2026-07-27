@@ -1,0 +1,1 @@
+cook.add_test was removed

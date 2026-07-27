@@ -901,6 +901,23 @@ pub fn register_unit_api(
                 String::new()
             }
         };
+        // CS-0185 §22.4: a test unit MUST carry exactly one non-empty body.
+        // `cook.add_test` enforced this and `cook.add_unit` does not, because a
+        // declaration-only cook unit — outputs, no command — is legal. A test
+        // unit with no body is not: it would pass vacuously, which is the false
+        // green the test kind exists to prevent.
+        if is_test {
+            let has_cmd = !command.is_empty();
+            let has_lua = lua_code.as_deref().is_some_and(|c| !c.is_empty());
+            if has_cmd == has_lua {
+                return Err(LuaError::runtime(format!(
+                    "cook.add_unit: a step_kind = \"test\" unit requires exactly one of \
+                     `command` or `lua_code`, non-empty — got {} (Cook Standard \u{00a7}22.4, \
+                     CS-0185)",
+                    if has_cmd { "both" } else { "neither" }
+                )));
+            }
+        }
         let payload = if is_test {
             // CS-0185: a test unit is recorded here, by the one registration
             // function, from the same fields every other unit uses. Named from
@@ -908,7 +925,14 @@ pub fn register_unit_api(
             // recipe body and this branch sits with the others instead of
             // after the body borrow.
             WorkPayload::Test {
-                cmd: if lua_code.is_some() { String::new() } else { command },
+                // An empty `lua_code` reads as ABSENT, matching the removed
+                // function: `{ command = "true", lua_code = "" }` is a command
+                // test, not a body-less one.
+                cmd: if lua_code.as_deref().is_some_and(|c| !c.is_empty()) {
+                    String::new()
+                } else {
+                    command
+                },
                 line,
                 // CS-0135 removed the `timeout` modifier and there is no
                 // per-test time bound in v1.0, so the executor's kill loop
@@ -921,8 +945,21 @@ pub fn register_unit_api(
                 suite_name: current_recipe.clone(),
                 test_name: format!("{}_test{}", current_recipe, line),
                 iteration_item,
-                lua_code,
-                input_paths: cache_input_paths,
+                lua_code: lua_code.filter(|c| !c.is_empty()),
+                // BUG: `cache_input_paths` chains without deduplicating, so a
+                // path named by both `inputs` and a step-group dep appeared
+                // twice. The removed function deduped, order-preserving
+                // (COOK-84), and a test unit's folded input set must not
+                // depend on how many ways a file was reached.
+                input_paths: {
+                    let mut out: Vec<String> = Vec::with_capacity(cache_input_paths.len());
+                    for p in cache_input_paths {
+                        if !out.contains(&p) {
+                            out.push(p);
+                        }
+                    }
+                    out
+                },
                 seal_keys: seal_keys.clone(),
                 consumes,
             }

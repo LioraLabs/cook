@@ -244,13 +244,11 @@ fn test_add_test_captures_test_unit() {
     let lua_src = r#"
 cook.recipe("tests", {}, function()
     cook.step_group(function()
-        cook.add_test({
+        cook.add_unit({step_kind = "test", 
             command = "./run_test_a",
-            suite = "unit",
         })
-        cook.add_test({
+        cook.add_unit({step_kind = "test", 
             command = "./run_test_b",
-            suite = "unit",
         })
     end)
 end)
@@ -265,8 +263,8 @@ end)
             // engine executor. test_name derives as `<recipe>_test<N>`.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(suite_name, "unit");
-            assert_eq!(test_name, "tests_test1");
+            assert_eq!(suite_name, "tests"); // CS-0185: the enclosing recipe
+            assert_eq!(test_name, "tests_test0"); // CS-0185: <recipe>_test<line>; no line passed
         }
         _ => panic!("expected Test payload"),
     }
@@ -287,7 +285,7 @@ fn test_add_test_defaults_suite_to_recipe_name_via_engine() {
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.recipe("my_tests", {}, function()
-    cook.add_test({
+    cook.add_unit({step_kind = "test", 
         command = "./run",
         name = "t",
     })
@@ -315,7 +313,7 @@ fn test_add_test_defaults_suite_includes_qualified_prefix() {
     let shared: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     let lua_src = r#"
 cook.recipe("tests", {}, function()
-    cook.add_test({
+    cook.add_unit({step_kind = "test", 
         command = "./run",
         name = "t",
     })
@@ -341,7 +339,7 @@ fn test_add_test_rejects_empty_command_via_engine() {
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.recipe("r", {}, function()
-    cook.add_test({ command = "" })
+    cook.add_unit({step_kind = "test",  command = "" })
 end)
 "#;
     let result = register_cookfile(rt, lua_src, None, None);

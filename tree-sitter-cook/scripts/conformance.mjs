@@ -103,6 +103,8 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // `step_kind = "test"` is now accepted.
   ['test-unit-declares-output-rejected',
    'CS-0185: output on a step_kind = "test" unit — register-phase rejection, not syntactic'],
+  ['add-test-removed',
+   'CS-0185: cook.add_test was removed — register-phase rejection, not syntactic'],
   ['test-unit-suite-rejected',
    'CS-0185: suite on a step_kind = "test" unit — register-phase rejection, not syntactic'],
   // CS-0155: a literal-output first cook step in an ingredients <probe>
