@@ -97,11 +97,14 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // it must be a (non-empty) string.
   ['recipe-origin-not-a-string',
    '§22.3 cook.recipe `origin` field type check — register-time semantic, not syntactic'],
-  // CS-0153: `cook.add_unit({step_kind = "test"})` is an ordinary spec-table
-  // field syntactically; only the register pass knows a test work unit is
-  // registrable solely through `cook.add_test` (§22.4).
-  ['add-unit-step-kind-test-rejected',
-   'CS-0153: step_kind = "test" on cook.add_unit — register-phase rejection, not syntactic'],
+  // CS-0185: a spec-table field is syntactically ordinary either way; only the
+  // register pass knows a test unit declares no outputs and accepts no `suite`
+  // (§22.4). CS-0153's `add-unit-step-kind-test-rejected` was withdrawn here —
+  // `step_kind = "test"` is now accepted.
+  ['test-unit-declares-output-rejected',
+   'CS-0185: output on a step_kind = "test" unit — register-phase rejection, not syntactic'],
+  ['test-unit-suite-rejected',
+   'CS-0185: suite on a step_kind = "test" unit — register-phase rejection, not syntactic'],
   // CS-0155: a literal-output first cook step in an ingredients <probe>
   // recipe parses cleanly; only the register pass knows there is no
   // preceding step whose outputs it could gather (§8.4.1).

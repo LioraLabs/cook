@@ -1365,3 +1365,96 @@ fn add_unit_accepts_directory_output_trailing_slash() {
         "unit must be recorded"
     );
 }
+
+// -------------------------------------------------------------------------
+// CS-0185: one registration function
+// -------------------------------------------------------------------------
+
+/// A test unit recorded through `cook.add_unit` is the same unit `cook.add_test`
+/// recorded. This is what makes the codegen switch mechanical: the emitter can
+/// change which function it calls without changing what it produces.
+///
+/// Two fields are expected to differ and are asserted separately rather than
+/// skipped: `test_name`, because CS-0185 derives it from the LINE while the old
+/// function still counts an ordinal, and nothing else.
+#[test]
+fn add_unit_records_the_same_test_unit_add_test_did() {
+    let (lua, slot) = make_lua_with_unit_api("checks");
+    crate::test_api::register_test_api(&lua, slot.clone()).unwrap();
+    // `add_unit` learns the recipe at registration; `add_test` reads it from
+    // the body. Set it so the harness matches production, where codegen does.
+    slot.borrow_mut().as_mut().unwrap().current_recipe = Some("checks".to_string());
+
+    lua.load(
+        r#"
+        cook.add_test({ command = "./run", inputs = {"a.c"}, line = 9,
+                        iteration_item = "a.c", consumes = {"*.d.ts"} })
+        cook.add_unit({ step_kind = "test", command = "./run", inputs = {"a.c"}, line = 9,
+                        iteration_item = "a.c", consumes = {"*.d.ts"} })
+        "#,
+    )
+    .exec()
+    .unwrap();
+
+    let state = body_ref(&slot);
+    assert_eq!(state.units.len(), 2, "one unit from each function");
+    let (old, new) = (&state.units[0], &state.units[1]);
+
+    // Neither carries cache metadata: test results are still served by the
+    // separate result store, and unifying the records is a later step.
+    assert!(old.cache_meta.is_none() && new.cache_meta.is_none());
+    // DepKind has no PartialEq; both are Sequential outside a step group.
+    assert!(matches!(old.dep_kind, DepKind::Sequential));
+    assert!(matches!(new.dep_kind, DepKind::Sequential));
+    assert_eq!(old.output_paths, new.output_paths);
+
+    match (&old.payload, &new.payload) {
+        (
+            WorkPayload::Test { cmd: c1, line: l1, timeout: t1, should_fail: f1,
+                                suite_name: s1, test_name: n1, iteration_item: i1,
+                                lua_code: lc1, input_paths: p1, seal_keys: k1, consumes: cs1 },
+            WorkPayload::Test { cmd: c2, line: l2, timeout: t2, should_fail: f2,
+                                suite_name: s2, test_name: n2, iteration_item: i2,
+                                lua_code: lc2, input_paths: p2, seal_keys: k2, consumes: cs2 },
+        ) => {
+            assert_eq!(c1, c2);
+            assert_eq!(l1, l2);
+            assert_eq!(t1, t2);
+            assert_eq!(f1, f2);
+            assert_eq!(s1, s2);
+            assert_eq!(i1, i2);
+            assert_eq!(lc1, lc2);
+            assert_eq!(p1, p2);
+            assert_eq!(k1, k2);
+            assert_eq!(cs1, cs2);
+            // The one intended difference (CS-0185 supersedes CS-0160).
+            assert_eq!(n1, "checks_test1", "old rule: ordinal");
+            assert_eq!(n2, "checks_test9", "new rule: line");
+        }
+        _ => panic!("both functions must record a Test payload"),
+    }
+}
+
+/// §22.4: outputs and test-ness are independent facts, so an output on a test
+/// unit is an author error rather than a silent reclassification.
+#[test]
+fn a_test_unit_may_not_declare_outputs() {
+    let (lua, _slot) = make_lua_with_unit_api("checks");
+    let err = lua
+        .load(r#"cook.add_unit({ step_kind = "test", command = "./run", output = "out.o" })"#)
+        .exec()
+        .expect_err("outputs on a test unit must be refused");
+    assert!(err.to_string().contains("declares no outputs"), "got: {err}");
+}
+
+/// `suite` is removed, and passing it is an error rather than a silent no-op:
+/// a caller who writes it means something by it.
+#[test]
+fn a_test_unit_may_not_declare_a_suite() {
+    let (lua, _slot) = make_lua_with_unit_api("checks");
+    let err = lua
+        .load(r#"cook.add_unit({ step_kind = "test", command = "./run", suite = "x" })"#)
+        .exec()
+        .expect_err("suite must be refused");
+    assert!(err.to_string().contains("`suite` was removed"), "got: {err}");
+}

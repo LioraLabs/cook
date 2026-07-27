@@ -1,6 +1,6 @@
 register
     cook.recipe("r", {requires = {}}, function()
-        cook.add_unit({command = "true", step_kind = "test"})
+        cook.add_unit({command = "true", step_kind = "test", suite = "x"})
     end)
 
 recipe noop

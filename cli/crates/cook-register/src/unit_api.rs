@@ -314,18 +314,15 @@ pub fn register_unit_api(
                 match sv.as_str() {
                     "chore" => cook_contracts::StepKind::Chore,
                     "cook" => cook_contracts::StepKind::Cook,
-                    "test" => {
-                        return Err(LuaError::runtime(
-                            "cook.add_unit: step_kind = \"test\" is not permitted — a test \
-                             work unit is registered with cook.add_test (\u{00a7}22.4); \
-                             step_kind accepts \"cook\" or \"chore\""
-                                .to_string(),
-                        ))
-                    }
+                    // CS-0185 supersedes CS-0153's refusal. A test unit is an
+                    // ordinary work unit; this is what makes it one, and the
+                    // registration bookkeeping now happens here rather than in
+                    // a second function that had to be kept in step.
+                    "test" => cook_contracts::StepKind::Test,
                     _ => {
                         return Err(type_err(
                             "step_kind",
-                            "one of \"cook\", \"chore\"",
+                            "one of \"cook\", \"test\", \"chore\"",
                             &format!("{sv:?}"),
                         ))
                     }
@@ -333,6 +330,8 @@ pub fn register_unit_api(
             }
             Ok(other) => return Err(type_err("step_kind", "a string", other.type_name())),
         };
+        // CS-0185: read before `step_kind` is moved into a payload variant below.
+        let is_test = matches!(step_kind, cook_contracts::StepKind::Test);
 
         // §{chores.no-caching}: cache = true is not permitted inside a chore body.
         {
@@ -714,6 +713,23 @@ pub fn register_unit_api(
             Err(_) => false,
         };
 
+        // CS-0185 §22.4: a test unit MUST declare no outputs. The empty output
+        // list is what makes its hit replay a recorded outcome rather than
+        // restore artifacts; `step_kind` is what makes it a test. Neither is
+        // inferred from the other, so an output here is an author error and
+        // not a silent reclassification.
+        if is_test && !output_paths.is_empty() {
+            return Err(LuaError::runtime(format!(
+                "cook.add_unit: a step_kind = \"test\" unit declares no outputs, \
+                 but {} was given (Cook Standard \u{00a7}22.4, CS-0185)",
+                output_paths.len()
+            )));
+        }
+        // Test units do not carry cache metadata yet: their results are still
+        // served by the separate test-result store. Unifying the two records
+        // is the next step of COOK-360, and doing it here would put them on
+        // the artifact publish path while that store still answers for them.
+        let cache_enabled = cache_enabled && !is_test;
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -728,7 +744,7 @@ pub fn register_unit_api(
                 project_id,
                 cookfile_path,
                 cache_key,
-                input_paths: cache_input_paths,
+                input_paths: cache_input_paths.clone(),
                 output_paths: output_paths.clone(),
                 command_hash,
                 env_contribution: env_contribution_val,
@@ -803,6 +819,42 @@ pub fn register_unit_api(
             }
         }
 
+        // CS-0185 §22.4: the two fields a test unit adds. `suite` is NOT among
+        // them — it is removed, and passing it is an error rather than a
+        // silent no-op, since a caller writing it means something by it.
+        if is_test && !matches!(tbl.get::<LuaValue>("suite"), Ok(LuaValue::Nil) | Err(_)) {
+            return Err(LuaError::runtime(
+                "cook.add_unit: `suite` was removed with cook.add_test; a test unit \
+                 belongs to the recipe that registers it (Cook Standard \u{00a7}22.4, \
+                 CS-0185)"
+                    .to_string(),
+            ));
+        }
+        let iteration_item: Option<String> = match tbl.get::<LuaValue>("iteration_item") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(v)) => {
+                let sv = v.to_string_lossy().to_string();
+                if sv.is_empty() { None } else { Some(sv) }
+            }
+            Ok(other) => return Err(type_err("iteration_item", "a string", other.type_name())),
+        };
+        let consumes: Vec<String> = match tbl.get::<LuaValue>("consumes") {
+            Ok(LuaValue::Nil) | Err(_) => vec![],
+            Ok(LuaValue::Table(t)) => {
+                let mut out = Vec::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    match v.map_err(|e| LuaError::runtime(format!("cook.add_unit: `consumes`: {e}")))? {
+                        LuaValue::String(sv) => out.push(sv.to_string_lossy().to_string()),
+                        other => {
+                            return Err(type_err("consumes", "a table of strings", other.type_name()))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => return Err(type_err("consumes", "a table of strings", other.type_name())),
+        };
+
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
         let is_chore = {
@@ -811,6 +863,17 @@ pub fn register_unit_api(
                 LuaError::runtime("cook.add_unit called outside a recipe body")
             })?;
             body.current_chore_active
+        };
+        // CS-0185: the ENCLOSING recipe names a test unit. Read here with the
+        // other pre-payload body reads, because `add_unit` is registered once
+        // per Lua state and `rname` is the registration-time name rather than
+        // the recipe currently running. This is a field read, not a count over
+        // the units already recorded, so it needs no ordering with them.
+        let current_recipe: String = {
+            let slot = body_slot_add.borrow();
+            slot.as_ref()
+                .and_then(|b| b.current_recipe.clone())
+                .unwrap_or_default()
         };
         // COOK-36 Task 4: when capturing a lua_code unit inside a chore body,
         // prepend the param-binding prelude so the execute-phase worker sees
@@ -823,7 +886,32 @@ pub fn register_unit_api(
                 String::new()
             }
         };
-        let payload = if let Some(code) = lua_code {
+        let payload = if is_test {
+            // CS-0185: a test unit is recorded here, by the one registration
+            // function, from the same fields every other unit uses. Named from
+            // its LINE rather than an ordinal, so naming needs nothing from the
+            // recipe body and this branch sits with the others instead of
+            // after the body borrow.
+            WorkPayload::Test {
+                cmd: if lua_code.is_some() { String::new() } else { command },
+                line,
+                // CS-0135 removed the `timeout` modifier and there is no
+                // per-test time bound in v1.0, so the executor's kill loop
+                // never fires. Retained on the payload for a planned 1.x
+                // re-add.
+                timeout: u64::MAX,
+                // CS-0135 removed the `should_fail` modifier; inversion is
+                // written into the body instead (`! grep -q ...`).
+                should_fail: false,
+                suite_name: current_recipe.clone(),
+                test_name: format!("{}_test{}", current_recipe, line),
+                iteration_item,
+                lua_code,
+                input_paths: cache_input_paths,
+                seal_keys: seal_keys.clone(),
+                consumes,
+            }
+        } else if let Some(code) = lua_code {
             let (final_code, chunk_line) = if !chore_param_prelude.is_empty() && is_chore {
                 // The prelude is normally one `local NAME = "VALUE"\n` line
                 // per bound chore param. Left as-is, N params would shift

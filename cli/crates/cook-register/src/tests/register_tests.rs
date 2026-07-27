@@ -462,17 +462,33 @@ fn test_add_unit_rejects_non_string_step_kind() {
     assert!(err.contains("step_kind"), "got: {err}");
 }
 
-// CS-0153 §22.1: `step_kind = "test"` is no longer an accepted value on
-// `cook.add_unit` — a test work unit is registrable only through
-// `cook.add_test` (§22.4). Silently accepting `step_kind = "test"` here
-// would build a unit invisible to `cook test` (WorkPayload::Test carries no
-// StepKind; only `cook.add_test` constructs that payload), letting a test
-// gate go green over a failing check.
+// CS-0185 §22.1 supersedes CS-0153: `step_kind = "test"` is accepted, and
+// records a test work unit. CS-0153 had refused it on the ground that such a
+// unit would be "invisible to `cook test`" — true only while the registration
+// bookkeeping lived in a second function, which is the circularity CS-0185
+// removes. With one function the bookkeeping happens at the point that sets
+// the kind, so the hazard the refusal guarded cannot arise.
 #[test]
-fn test_add_unit_rejects_step_kind_test() {
-    let err = add_unit_reject(r#"command = "true", step_kind = "test""#);
-    assert!(err.contains("step_kind"), "got: {err}");
-    assert!(err.contains("cook.add_test"), "got: {err}");
+fn test_add_unit_accepts_step_kind_test() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("r", {}, function()
+    cook.add_unit({ command = "true", step_kind = "test", line = 4 })
+end)
+"#;
+    let units = register_cookfile(rt, lua_src, None, None)
+        .expect("step_kind = \"test\" must register");
+    let r = units.units_by_recipe.get("r").expect("recipe r missing");
+    assert_eq!(r.units.len(), 1);
+    match &r.units[0].payload {
+        WorkPayload::Test { cmd, test_name, .. } => {
+            assert_eq!(cmd, "true");
+            // CS-0185 names from the line, not an ordinal.
+            assert_eq!(test_name, "r_test4");
+        }
+        other => panic!("expected a Test payload, got {other:?}"),
+    }
 }
 
 // CS-0153 §22.1: the surviving accepted values — `"cook"` and `"chore"` —
