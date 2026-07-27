@@ -193,7 +193,9 @@ The constraint: a `step_kind = "test"` unit MUST declare no outputs. A conformin
 
 `inputs`, `seal`, `command`, `lua_code` and `line` are §{lua.add-unit}'s fields and carry §{lua.add-unit}'s meanings; they are not restated here, and an implementation MUST NOT give them a second meaning on a test unit. Exactly one of `command` / `lua_code` MUST be supplied non-empty, by §{lua.add-unit}'s rule.
 
-**Test unit naming (CS-0160).** A test unit accepts no `name` field (CS-0135). A conforming implementation MUST derive its name as `<recipe>_test<N>`, where `<recipe>` is the enclosing recipe's fully-qualified name and `<N>` is the 1-based ordinal of this test unit among the test units recorded so far in the enclosing recipe body. The derived name is the unit's label in progress and log output, and it composes with `iteration_item` in the test identity (e.g. `checks:checks_test1[src/a.c]`).
+**Test unit naming (CS-0185, superseding CS-0160).** A test unit accepts no `name` field (CS-0135). A conforming implementation MUST derive its name as `<recipe>_test<LINE>`, where `<recipe>` is the enclosing recipe's fully-qualified name and `<LINE>` is the `line` field — the Cookfile line of the originating `test_step`. The derived name is the unit's label in progress and log output, and it composes with `iteration_item` in the test identity (e.g. `checks:checks_test9[src/a.c]`).
+
+CS-0160 derived `<N>` as the 1-based ordinal of the unit among the test units recorded so far in the enclosing recipe body. Both discriminators are unique within a recipe — two `test_step`s cannot share a line — but an ordinal must be counted, which requires the registration API to inspect the units already recorded before it can name the one it is recording. The line is already a field of the call. The rule therefore states the cheaper of two equally correct discriminators, and a name is a label rather than a key: it enters no fingerprint (§{exec.cache.test-unit}).
 
 A conforming implementation MUST apply field defaults and raise register-phase Lua errors for invalid field values at the time the call is made, not deferred to execute time, per §{lua.add-unit}.
 

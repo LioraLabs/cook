@@ -3009,7 +3009,7 @@ The failure is quiet and it outlives the obvious remedy: the value lives in the 
 
 **Date:** 2026-07-27
 **Version:** v0.18
-**Sections affected:** §{lua.add-unit} (`step_kind` accepts `"test"`), §{lua.cook-add-test} (rewritten: `cook.add_test` removed, test-unit fields stated by reference). Supersedes CS-0153's refusal. Reference implementation: `cli/crates/cook-register/src/{unit_api,test_api}.rs`, `cli/crates/cook-luagen/src/test_step.rs`.
+**Sections affected:** §{lua.add-unit} (`step_kind` accepts `"test"`), §{lua.cook-add-test} (rewritten: `cook.add_test` removed, test-unit fields stated by reference, naming rule restated). Supersedes CS-0153's refusal and CS-0160's naming derivation. Reference implementation: `cli/crates/cook-register/src/{unit_api,test_api}.rs`, `cli/crates/cook-luagen/src/test_step.rs`.
 
 **Summary.** A test unit is an ordinary work unit with `step_kind = "test"` and no declared outputs, recorded by `cook.add_unit`. The separate `cook.add_test` is removed — not aliased, not deprecated — and calling it is a register-phase error naming the replacement.
 
@@ -3020,6 +3020,8 @@ CS-0153 had made the split self-defending: `cook.add_unit` was required to REJEC
 The entry also fixes the inference this milestone exists to remove. An empty output list and being a test are now stated as independent facts: the empty list is what makes a cache hit replay a recorded outcome instead of restoring artifacts, and `step_kind` is what selects the reporter. Neither may be derived from the other. A conforming implementation MUST reject outputs on a `"test"` unit, and MUST NOT treat an output-less unit as a test.
 
 **Backward compatibility.** Breaking, for Cookfiles and modules that call `cook.add_test` directly. Authors writing `test { … }` are unaffected: the step lowers to the new form and no surface syntax changes. `cook.add_test` is not retained in any form; a call raises rather than warning, on the ground that a shim would preserve exactly the ambiguity the entry removes. `step_kind` gaining an accepted value is additive for every existing `cook.add_unit` call.
+
+Test unit names change shape. CS-0160 derived `<recipe>_test<N>` with `<N>` the unit's 1-based ordinal among the test units recorded so far in the recipe body; the derivation is now `<recipe>_test<LINE>`, the Cookfile line of the originating step. Both are unique within a recipe — two `test_step`s cannot share a line — but an ordinal must be COUNTED, which forces the registration API to inspect the units already recorded before it can name the one it is recording, and that inspection is the only reason the naming step needs the recipe body at all. The line is already a field of the call. A name enters no fingerprint, so nothing is re-keyed; what changes is displayed identities and therefore any saved `--rerun` pattern matching on `_test<N>`.
 
 Removing `suite` changes machine-readable output: the `"suite"` key disappears from the JSON test report. Consumers MUST read `"recipe"`, which carried the same string. The Lua chunk name for a Lua-body test becomes `@test:<recipe>:<name>`, so a runtime error inside a test body reports a chunk name derived from the same identity every other diagnostic uses; this is a change in reported text, not in behaviour.
 
