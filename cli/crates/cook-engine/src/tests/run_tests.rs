@@ -240,19 +240,6 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
 // compute_ready_test_fingerprint — COOK-211 ready-time content fold (§17.4)
 // -----------------------------------------------------------------------
 
-fn make_cache_ctx(wd: &std::path::Path) -> CacheContext {
-    use cook_cache::{backend::LocalBackend, cloud_config::CloudConfig};
-    use cook_fingerprint::EnvDenylist;
-    CacheContext {
-        denylist: std::sync::Arc::new(EnvDenylist::baseline()),
-        backend: std::sync::Arc::new(LocalBackend::new(wd.join("cloud"))),
-        cloud_config: std::sync::Arc::new(CloudConfig::default()),
-        project_root: wd.to_path_buf(),
-        project_id: "test".to_string(),
-        publish_enabled: true,
-    }
-}
-
 fn cook_work_node(
     wd: &std::path::Path,
     recipe: &str,

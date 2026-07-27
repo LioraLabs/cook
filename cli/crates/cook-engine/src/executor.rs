@@ -3000,7 +3000,27 @@ fn publish_completion(
     // COOK-162 §3: `local` units never publish to the shared store.
     // COOK-168: publish-off / read-only client mode suppresses ALL uploads
     // globally; fetch-by-key is unaffected.
-    let publish_to_backend = !meta.sharing.is_local() && cache_ctx.publish_enabled;
+    //
+    // CS-0186: nor does an OBSERVING unit. It has no artifact to upload, and
+    // the manifest alone would be unreachable — `fetch_by_key` refuses an
+    // empty output list at its own door, so nothing could ever be served
+    // against the key it was filed under. Writing it would be a store write
+    // per test unit per run for no reader, and each one would trip the
+    // `published` counter, whose whole purpose is to let a settled build skip
+    // the end-of-run store walk entirely.
+    //
+    // This is also what keeps the code honest about §17.4 rule 4. CS-0186
+    // withdrew cross-machine replay as never delivered; publishing half of the
+    // apparatus for it would leave the implementation reaching for a path the
+    // Standard says is not there. When the payload question is answered, a
+    // shared observation is what makes this arm meaningful again, and this is
+    // the line that changes.
+    let observing = matches!(
+        cook_contracts::cache::record::effect_kind(meta),
+        cook_contracts::cache::record::EffectKind::Observed
+    );
+    let publish_to_backend =
+        !observing && !meta.sharing.is_local() && cache_ctx.publish_enabled;
     // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
     // unit is about to write at least a determinant manifest to the store.
     if publish_to_backend {

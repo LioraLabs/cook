@@ -1833,3 +1833,113 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
         "a probe with a declared input keeps its key and its cache hit: {result:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// CS-0186: an observing unit records locally and publishes nothing
+// ---------------------------------------------------------------------------
+
+fn publish_ctx(wd: &std::path::Path) -> cook_cache::cache_ctx::CacheContext {
+    use cook_cache::{backend::LocalBackend, cloud_config::CloudConfig};
+    cook_cache::cache_ctx::CacheContext {
+        denylist: std::sync::Arc::new(cook_fingerprint::EnvDenylist::baseline()),
+        backend: std::sync::Arc::new(LocalBackend::new(wd.join("cloud"))),
+        cloud_config: std::sync::Arc::new(CloudConfig::default()),
+        project_root: wd.to_path_buf(),
+        project_id: "p".to_string(),
+        publish_enabled: true,
+    }
+}
+
+fn meta_for(cache_key: &str, inputs: &[&str], outputs: &[&str]) -> cook_contracts::CacheMeta {
+    cook_contracts::CacheMeta {
+        recipe_name: "r".into(),
+        project_id: "p".into(),
+        cookfile_path: "Cookfile".into(),
+        cache_key: cache_key.into(),
+        input_paths: inputs.iter().map(|s| s.to_string()).collect(),
+        output_paths: outputs.iter().map(|s| s.to_string()).collect(),
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        consulted_env: Default::default(),
+        discovered_inputs: None,
+        seal_keys: Default::default(),
+        sharing: Default::default(),
+        record: false,
+    }
+}
+
+/// The shared store is for artifacts, and an observing unit has none. A
+/// determinant manifest filed under its cloud key could never be served
+/// against — `fetch_by_key` refuses an empty output list — so writing one is a
+/// store write per test unit per run for no reader, and it would trip the
+/// `published` counter that lets a settled build skip the end-of-run store
+/// walk. §17.4 rule 4 is withdrawn, and this is the code saying so.
+#[test]
+fn an_observing_unit_publishes_nothing_to_the_shared_store() {
+    let dir = TempDir::new().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+
+    let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
+    let ctx = publish_ctx(wd);
+    let published = std::sync::atomic::AtomicU64::new(0);
+    let meta = meta_for(":0123456789abcdef", &["in.txt"], &[]);
+
+    publish_completion(
+        &cm,
+        &meta,
+        Some(&["in.txt".to_string()]),
+        wd,
+        &cook_luaotp::ProbeValueStore::new(),
+        &ctx,
+        &published,
+    );
+
+    assert_eq!(
+        published.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "an observing unit must not count as a publish"
+    );
+    assert!(
+        !wd.join("cloud").exists() || std::fs::read_dir(wd.join("cloud")).unwrap().next().is_none(),
+        "nothing may reach the shared store"
+    );
+    // It DOES record locally — that is the whole point of the fold.
+    let idx = cm.get_or_load("r");
+    assert!(
+        idx.steps.contains_key(":0123456789abcdef"),
+        "the local record is what serves the verdict"
+    );
+}
+
+/// The control: the same call for a producing unit does publish, so the
+/// assertion above is testing the effect-kind gate rather than a broken
+/// fixture.
+#[test]
+fn a_producing_unit_still_publishes() {
+    let dir = TempDir::new().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+    std::fs::write(wd.join("out.txt"), "y").unwrap();
+
+    let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
+    let ctx = publish_ctx(wd);
+    let published = std::sync::atomic::AtomicU64::new(0);
+    let meta = meta_for("out.txt", &["in.txt"], &["out.txt"]);
+
+    publish_completion(
+        &cm,
+        &meta,
+        None,
+        wd,
+        &cook_luaotp::ProbeValueStore::new(),
+        &ctx,
+        &published,
+    );
+
+    assert_eq!(published.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(
+        std::fs::read_dir(wd.join("cloud")).unwrap().next().is_some(),
+        "a producing unit's artifact and manifest reach the store"
+    );
+}
