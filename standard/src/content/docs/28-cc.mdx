@@ -332,7 +332,7 @@ Repeat top-level `cc.compile_commands()` calls MUST be idempotent: at most one f
 
 A `cc.compile_commands()` call made from inside a recipe body MUST be rejected with a register-phase error naming the top-level form. (This is a hard break from the pre-0.14 recipe-body invocation.)
 
-The finalizer runs on the register-phase VM after the registration pass has closed the target set (§{lua.cook-on-register-complete}), so its inputs MUST be sourced from the implementation's module-held known-target state — live per §22.9 when the callback fires — and from `cook.import`'s per-target `compile_info`. The completeness guarantee is by construction: the finalizer snapshots the module-held target state only once every recipe body has registered its targets, so no target can be missing from the database.
+The finalizer runs on the register-phase VM after the registration pass has closed the target set (§{lua.cook-on-register-complete}), so its inputs MUST be sourced from the implementation's module-held known-target state — live per §{lua.cook-on-register-complete} when the callback fires — and from `cook.import`'s per-target `compile_info`. The completeness guarantee is by construction: the finalizer snapshots the module-held target state only once every recipe body has registered its targets, so no target can be missing from the database.
 
 ### 28.3.12. cc.register_finder [#cat.cc.register-finder]
 
