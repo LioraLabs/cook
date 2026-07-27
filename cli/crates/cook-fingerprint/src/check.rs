@@ -843,42 +843,16 @@ pub fn hash_input_paths(input_paths: &[&str], working_dir: &std::path::Path) -> 
     Some(hashes)
 }
 
-/// Check if a plate layer (no output) needs to re-run.
-pub fn needs_rebuild_plate(
-    entry: Option<&StepEntry>,
-    current_inputs: &[&str],
-    command_hash: u64,
-    env_contribution: u64,
-    seal_contribution: u64,
-    working_dir: &Path,
-) -> (RebuildResult, Option<StepEntry>) {
-    let entry = match entry {
-        None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
-        Some(e) => e,
-    };
-    if entry.command_hash != command_hash {
-        return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.env_contribution != env_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
-    }
-    if entry.seal_contribution != seal_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
-    }
-    match check_inputs(&entry.inputs, current_inputs, working_dir) {
-        Err(reason) => (RebuildResult::Rebuild(reason), None),
-        Ok(updated_inputs) => {
-            let updated = StepEntry {
-                inputs: updated_inputs,
-                outputs: vec![],
-                command_hash: entry.command_hash,
-                env_contribution: entry.env_contribution,
-                seal_contribution: entry.seal_contribution,
-            };
-            (RebuildResult::Skip, Some(updated))
-        }
-    }
-}
+// COOK-360: `needs_rebuild_plate` lived here — the output-less rebuild check.
+// It was `needs_rebuild_cook` with the output half deleted: the same three
+// early-return predicates in the same order, the same `check_inputs` call,
+// then a `StepEntry` with `outputs: vec![]`. It had no production caller;
+// test units are cached through `TestCache` (a separate store keyed by
+// `compute_ready_test_fingerprint`), never through the step index. Passing
+// an empty output slice to `needs_rebuild_cook` takes exactly the path the
+// copy hard-coded — the discovered-inputs block is skipped, output
+// augmentation is skipped, the output-count check passes `0 == 0`, and the
+// output walk is empty — so the copy is deleted rather than rewired.
 
 #[cfg(test)]
 #[path = "tests/check_tests.rs"]

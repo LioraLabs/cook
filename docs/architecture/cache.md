@@ -36,7 +36,7 @@ import from the crate that owns the type.
 | Module | Defines |
 |---|---|
 | `lib.rs` | `hash_str`, `compute_test_fingerprint`, `FingerprintInputs`, `resolve_glob` |
-| `check.rs` | `needs_rebuild_cook`, `needs_rebuild_plate`, `hash_env`, `hash_file`, `stat_mtime`, `RebuildResult`, `RebuildReason`, `RestoreCtx`, `install_depfile_parser` |
+| `check.rs` | `needs_rebuild_cook`, `hash_env`, `hash_file`, `stat_mtime`, `RebuildResult`, `RebuildReason`, `RestoreCtx`, `install_depfile_parser` |
 | `record.rs` | `FileRecord`, `StepEntry`, `CACHE_VERSION` (currently `4`) |
 | `context.rs` | `ExecutionContext`, `MachineIdentity`, `ToolHash`, `step_context_hash` |
 | `envkey.rs` | `EnvDenylist`, `env_contribution` |
@@ -228,11 +228,18 @@ via `cache.tools` in `.cook/cloud.toml` or split them onto separate lines.
 
 ## Invalidation cascade
 
-`needs_rebuild_cook` (`cli/crates/cook-fingerprint/src/check.rs:154`) is the
-entry point for steps that produce output files; `needs_rebuild_plate`
-(check.rs:393) handles output-less steps. Both return
+`needs_rebuild_cook` (`cli/crates/cook-fingerprint/src/check.rs`) is the entry
+point for every step-index unit, whether or not it produces output files: a
+unit with no declared outputs passes an empty output slice. It returns
 `(RebuildResult, Option<StepEntry>)`. A `Skip` carries an updated entry with
 refreshed mtime values; a `Rebuild(reason)` carries `None`.
+
+There was a second entry point, `needs_rebuild_plate`, for output-less steps.
+It was the same function with the output half deleted and had no production
+caller, so COOK-360 removed it. Note that test units do not reach this check
+at all — they are cached through `TestCache` (`cook-cache/src/test_cache.rs`),
+a store parallel to the step index, keyed by `compute_ready_test_fingerprint`
+rather than by a `StepEntry`.
 
 Checks short-circuit on the first failing predicate:
 
