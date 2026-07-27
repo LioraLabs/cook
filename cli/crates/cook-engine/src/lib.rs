@@ -412,7 +412,6 @@ pub struct TestResult {
     pub namespace: String,
     pub recipe: String,
     pub name: String,
-    pub suite: String,
     pub iteration_item: Option<String>,
     pub outcome: TestOutcome,
     pub duration: std::time::Duration,

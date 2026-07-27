@@ -47,7 +47,7 @@ fn sealed(pairs: &[(&str, &str)]) -> FingerprintInputs {
 /// surface is additive, so no existing test-cache entry is invalidated.
 #[test]
 fn seal_empty_set_leaves_fingerprint_unchanged() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     assert_eq!(
         compute_test_fingerprint(&p, &empty_inputs()),
         compute_test_fingerprint(&p, &sealed(&[]))
@@ -58,7 +58,7 @@ fn seal_empty_set_leaves_fingerprint_unchanged() {
 /// different key. This is the whole point of sealing a test.
 #[test]
 fn seal_value_change_busts_fingerprint() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     let a = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]));
     let b = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-14")]));
     assert_ne!(a, b);
@@ -67,7 +67,7 @@ fn seal_value_change_busts_fingerprint() {
 /// Sealing at all changes the key relative to not sealing.
 #[test]
 fn seal_presence_changes_fingerprint() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     assert_ne!(
         compute_test_fingerprint(&p, &empty_inputs()),
         compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]))
@@ -78,7 +78,7 @@ fn seal_presence_changes_fingerprint() {
 /// affect the key (the engine passes a BTreeMap, but the hash sorts too).
 #[test]
 fn seal_fold_is_order_insensitive() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     let a = compute_test_fingerprint(&p, &sealed(&[("a", "1"), ("b", "2")]));
     let b = compute_test_fingerprint(&p, &sealed(&[("b", "2"), ("a", "1")]));
     assert_eq!(a, b);
@@ -87,7 +87,7 @@ fn seal_fold_is_order_insensitive() {
 /// Key and value are not interchangeable — swapping them MUST NOT collide.
 #[test]
 fn seal_key_value_swap_does_not_collide() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     let a = compute_test_fingerprint(&p, &sealed(&[("k", "v")]));
     let b = compute_test_fingerprint(&p, &sealed(&[("v", "k")]));
     assert_ne!(a, b);
@@ -97,7 +97,7 @@ fn seal_key_value_swap_does_not_collide() {
 /// confusable with an env-var contribution of the same key/value.
 #[test]
 fn seal_does_not_collide_with_env_contribution() {
-    let p = make_test_payload("./t", 0, false, "s", "t");
+    let p = make_test_payload("./t", 0, false, "t");
     let as_seal = compute_test_fingerprint(&p, &sealed(&[("K", "V")]));
     let as_env = compute_test_fingerprint(
         &p,
@@ -113,7 +113,6 @@ fn make_test_payload(
     cmd: &str,
     timeout: u64,
     should_fail: bool,
-    suite_name: &str,
     test_name: &str,
 ) -> WorkPayload {
     WorkPayload::Test {
@@ -123,7 +122,6 @@ fn make_test_payload(
         line: 1,
         timeout,
         should_fail,
-        suite_name: suite_name.into(),
         test_name: test_name.into(),
         iteration_item: None,
         lua_code: None,
@@ -134,11 +132,11 @@ fn make_test_payload(
 #[test]
 fn test_unit_fingerprint_includes_timeout() {
     let fp_30 = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "r", "t"),
+        &make_test_payload("true", 30, false, "t"),
         &empty_inputs(),
     );
     let fp_60 = compute_test_fingerprint(
-        &make_test_payload("true", 60, false, "r", "t"),
+        &make_test_payload("true", 60, false, "t"),
         &empty_inputs(),
     );
     assert_ne!(
@@ -150,11 +148,11 @@ fn test_unit_fingerprint_includes_timeout() {
 #[test]
 fn test_unit_fingerprint_includes_should_fail() {
     let fp_t = compute_test_fingerprint(
-        &make_test_payload("true", 30, true, "r", "t"),
+        &make_test_payload("true", 30, true, "t"),
         &empty_inputs(),
     );
     let fp_f = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "r", "t"),
+        &make_test_payload("true", 30, false, "t"),
         &empty_inputs(),
     );
     assert_ne!(fp_t, fp_f);
@@ -164,32 +162,23 @@ fn test_unit_fingerprint_includes_should_fail() {
 fn test_unit_fingerprint_independent_of_test_name() {
     // Renaming via `as` (the test_name) MUST NOT bust fingerprint per CS-0061 §3.3.
     let fp_a = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "r", "alpha"),
+        &make_test_payload("true", 30, false, "alpha"),
         &empty_inputs(),
     );
     let fp_b = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "r", "beta"),
+        &make_test_payload("true", 30, false, "beta"),
         &empty_inputs(),
     );
     assert_eq!(fp_a, fp_b, "renaming a test MUST NOT bust its fingerprint");
 }
 
-#[test]
-fn test_unit_fingerprint_independent_of_suite_name() {
-    let fp_a = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "recipe_a", "t"),
-        &empty_inputs(),
-    );
-    let fp_b = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "recipe_b", "t"),
-        &empty_inputs(),
-    );
-    assert_eq!(fp_a, fp_b);
-}
+// CS-0185: `test_unit_fingerprint_independent_of_suite_name` stood here. The
+// fingerprint excluded `suite_name` as display metadata; the field is now
+// removed outright, so there is nothing left for a key to be independent of.
 
 #[test]
 fn test_unit_fingerprint_deterministic() {
-    let payload = make_test_payload("run_tests.sh", 120, false, "suite", "test1");
+    let payload = make_test_payload("run_tests.sh", 120, false, "test1");
     let inputs = FingerprintInputs {
         sealed_probes: vec![],
         cook_outputs: vec![("out/lib.a".into(), "sha256:abc".into())],
@@ -205,11 +194,11 @@ fn test_unit_fingerprint_deterministic() {
 #[test]
 fn test_unit_fingerprint_includes_cmd() {
     let fp_a = compute_test_fingerprint(
-        &make_test_payload("cmd_a", 30, false, "r", "t"),
+        &make_test_payload("cmd_a", 30, false, "t"),
         &empty_inputs(),
     );
     let fp_b = compute_test_fingerprint(
-        &make_test_payload("cmd_b", 30, false, "r", "t"),
+        &make_test_payload("cmd_b", 30, false, "t"),
         &empty_inputs(),
     );
     assert_ne!(fp_a, fp_b, "different commands must produce different fingerprints");
@@ -275,7 +264,7 @@ fn test_unit_fingerprint_cook_outputs_order_independent() {
         ],
         ..Default::default()
     };
-    let payload = make_test_payload("true", 30, false, "r", "t");
+    let payload = make_test_payload("true", 30, false, "t");
     assert_eq!(
         compute_test_fingerprint(&payload, &inputs_a),
         compute_test_fingerprint(&payload, &inputs_b),

@@ -49,14 +49,13 @@ fn test_add_test_basic() {
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
-        WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
+        WorkPayload::Test { cmd, timeout, should_fail, test_name, .. } => {
             assert_eq!(cmd, "./run_tests");
             // CS-0135: cook.add_test no longer accepts timeout/should_fail/
             // name; WorkPayload::Test still carries these fields for the
             // engine executor, populated with their prior absent-defaults.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(suite_name, "unit"); // the enclosing recipe
             // No current_recipe in this harness — the derived
             // `<recipe>_test<N>` label degrades to a bare ordinal.
             assert_eq!(test_name, "unit_test0"); // CS-0185: <recipe>_test<line>
@@ -136,10 +135,12 @@ fn add_test_defaults_suite_to_recipe_name() {
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     let payload = match &state.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => suite_name,
+        // CS-0185: `suite` is gone; the enclosing recipe — qualified prefix and
+        // all — now reaches the unit through its derived NAME instead.
+        WorkPayload::Test { test_name, .. } => test_name,
         _ => panic!("expected Test payload"),
     };
-    assert_eq!(payload, "frontend.unit");
+    assert_eq!(payload, "frontend.unit_test0");
 }
 
 #[test]

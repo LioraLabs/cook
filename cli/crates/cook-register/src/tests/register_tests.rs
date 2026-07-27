@@ -256,14 +256,13 @@ end)
     let result = register_one(rt, lua_src, "tests");
     assert_eq!(result.units.len(), 2);
     match &result.units[0].payload {
-        WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
+        WorkPayload::Test { cmd, timeout, should_fail, test_name, .. } => {
             assert_eq!(cmd, "./run_test_a");
             // CS-0135: cook.add_test no longer accepts timeout/should_fail/
             // name; WorkPayload::Test still carries these fields for the
             // engine executor. test_name derives as `<recipe>_test<N>`.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(suite_name, "tests"); // CS-0185: the enclosing recipe
             assert_eq!(test_name, "tests_test0"); // CS-0185: <recipe>_test<line>; no line passed
         }
         _ => panic!("expected Test payload"),
@@ -294,9 +293,10 @@ end)
     let result = register_one(rt, lua_src, "my_tests");
     assert_eq!(result.units.len(), 1);
     match &result.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => {
-            assert_eq!(suite_name, "my_tests",
-                "suite should default to recipe name when omitted");
+        WorkPayload::Test { test_name, .. } => {
+            // CS-0185: the enclosing recipe reaches the unit through its name.
+            assert_eq!(test_name, "my_tests_test0",
+                "a test unit is named for the recipe that registers it");
         }
         _ => panic!("expected Test payload"),
     }
@@ -324,9 +324,9 @@ end)
         .with_qualified_prefix("mylib".to_string());
     let result = register_one(rt, lua_src, "tests");
     match &result.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => {
-            assert_eq!(suite_name, "mylib.tests",
-                "suite default must include the qualified prefix");
+        WorkPayload::Test { test_name, .. } => {
+            assert_eq!(test_name, "mylib.tests_test0",
+                "the qualified prefix must reach the unit's name");
         }
         _ => panic!("expected Test payload"),
     }

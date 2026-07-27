@@ -555,7 +555,6 @@ fn test_pool_drop_cleans_up_workers() {
 #[test]
 fn test_output_carries_exit_code() {
     let to = TestOutput {
-        suite_name: "s".into(),
         test_name: "t".into(),
         stdout: String::new(),
         stderr: String::new(),

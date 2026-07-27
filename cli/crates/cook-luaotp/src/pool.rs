@@ -46,7 +46,6 @@ pub struct WorkItem {
 
 #[derive(Clone, Debug)]
 pub struct TestOutput {
-    pub suite_name: String,
     pub test_name: String,
     pub stdout: String,
     pub stderr: String,
@@ -1203,7 +1202,7 @@ fn execute_work_item(
                 duration: Duration::ZERO,
             }
         }
-        WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, lua_code, .. } => {
+        WorkPayload::Test { cmd, line, timeout, should_fail, test_name, lua_code, .. } => {
             match lua_code {
                 Some(code) => execute_lua_test(
                     lua,
@@ -1211,11 +1210,10 @@ fn execute_work_item(
                     code,
                     *timeout,
                     *should_fail,
-                    suite_name,
                     test_name,
                     node_name,
                 ),
-                None => execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name),
+                None => execute_test(work.id, cmd, *line, *timeout, *should_fail, test_name, working_dir, env_vars, node_name),
             }
         }
         WorkPayload::Probe { key, produce, line } => {
@@ -1526,7 +1524,6 @@ fn execute_lua_test(
     code: &str,
     timeout_secs: u64,
     should_fail: bool,
-    suite_name: &str,
     test_name: &str,
     node_name: String,
 ) -> WorkResult {
@@ -1549,7 +1546,7 @@ fn execute_lua_test(
         },
     );
 
-    let chunk_name = format!("@test:{suite_name}:{test_name}");
+    let chunk_name = format!("@test:{test_name}");
     let exec_result = lua.load(code).set_name(&chunk_name).exec();
 
     // Always remove the hook before returning — it captures `start` and
@@ -1581,7 +1578,6 @@ fn execute_lua_test(
         success,
         error: if success { None } else { Some(format!("test failed: {test_name}")) },
         test_output: Some(TestOutput {
-            suite_name: suite_name.to_string(),
             test_name: test_name.to_string(),
             stdout: String::new(),
             stderr,
@@ -1604,7 +1600,6 @@ fn execute_test(
     _line: usize,
     timeout_secs: u64,
     should_fail: bool,
-    suite_name: &str,
     test_name: &str,
     working_dir: &PathBuf,
     env_vars: &HashMap<String, String>,
@@ -1637,7 +1632,6 @@ fn execute_test(
                 success: false,
                 error: Some(format!("failed to spawn test: {e}")),
                 test_output: Some(TestOutput {
-                    suite_name: suite_name.to_string(),
                     test_name: test_name.to_string(),
                     stdout: String::new(),
                     stderr: format!("failed to spawn: {e}"),
@@ -1728,7 +1722,6 @@ fn execute_test(
         success,
         error: if success { None } else { Some(format!("test failed: {test_name}")) },
         test_output: Some(TestOutput {
-            suite_name: suite_name.to_string(),
             test_name: test_name.to_string(),
             stdout,
             stderr,

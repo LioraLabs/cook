@@ -34,7 +34,6 @@ fn mk_test() -> CapturedUnit {
             line: 1,
             timeout: 30,
             should_fail: false,
-            suite_name: "r".into(),
                 test_name: "t".into(),
             iteration_item: None,
             lua_code: None,

@@ -942,7 +942,6 @@ pub fn register_unit_api(
                 // CS-0135 removed the `should_fail` modifier; inversion is
                 // written into the body instead (`! grep -q ...`).
                 should_fail: false,
-                suite_name: current_recipe.clone(),
                 test_name: format!("{}_test{}", current_recipe, line),
                 iteration_item,
                 lua_code: lua_code.filter(|c| !c.is_empty()),

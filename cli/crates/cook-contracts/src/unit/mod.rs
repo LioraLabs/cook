@@ -52,7 +52,6 @@ pub enum WorkPayload {
         line: usize,
         timeout: u64,
         should_fail: bool,
-        suite_name: String,
         test_name: String,
         iteration_item: Option<String>,
         /// CS-0127 §22.4: exactly one of `cmd` / `lua_code` is populated —

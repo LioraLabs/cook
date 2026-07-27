@@ -8,7 +8,6 @@ fn mk_failed(id: &str, stdout: &str, stderr: &str, exit_code: Option<i32>) -> Te
         namespace: String::new(),
         recipe: id.split(':').next().unwrap_or("").to_string(),
         name: id.split(':').nth(1).unwrap_or("").to_string(),
-        suite: String::new(),
         iteration_item: None,
         outcome: TestOutcome::Failed,
         duration: Duration::from_millis(23),
