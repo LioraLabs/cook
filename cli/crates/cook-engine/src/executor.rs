@@ -1364,296 +1364,142 @@ pub fn execute_dag(
                 let node_name = format!("probe:{}", probe_key);
 
                 if let Some(probe_unit) = probe_units_by_node.get(&id) {
-                    // Resolve fingerprint inputs. CS-0172: an `envs { }` probe
-                    // records AMBIENT PROCESS environment values (§22.5.2) — the
-                    // whole point of the probe is to make a host value a keyed
-                    // determinant — so the lookup reads the process
-                    // environment, not the declared-variable namespace. The two
-                    // were the same table before CS-0172, which let a config
-                    // block redefine what the probe recorded about the host.
+                    // G4 (CS-0074): everything decided before a probe value
+                    // exists — fingerprint, keylessness, tool locations, the
+                    // cache lookup, and the producer kinds that need no VM —
+                    // belongs to `cook_probe::eval` and is shared with the
+                    // register pre-pass (COOK-359). What stays here is what is
+                    // genuinely the scheduler's: dispatch, events, node
+                    // completion, and fingerprint propagation.
+                    //
+                    // CS-0172: an `envs { }` probe records AMBIENT PROCESS
+                    // environment values (§22.5.2) — the whole point of the
+                    // probe is to make a host value a keyed determinant — so
+                    // the lookup reads the process environment, not the
+                    // declared-variable namespace. The two were the same table
+                    // before CS-0172, which let a config block redefine what
+                    // the probe recorded about the host.
                     let env_lookup = |name: &str| std::env::var(name).ok();
-                    match cook_fingerprint::probe::resolve_probe_inputs(
+                    let eval_ctx = cook_probe::eval::EvalCtx {
+                        working_dir: &work_node.working_dir,
+                        cache: Some(cook_probe::eval::CacheAccess {
+                            backend: cache_ctx.backend.as_ref(),
+                            project_root: &cache_ctx.project_root,
+                            publish_enabled: cache_ctx.publish_enabled,
+                        }),
+                    };
+                    match cook_probe::eval::lookup(
                         probe_unit,
-                        &work_node.working_dir,
+                        &eval_ctx,
                         &env_lookup,
                         upstream_probe_fingerprints,
+                        keyless_probes,
                     ) {
-                        Ok(inputs) => {
-                            let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
-                            // Store fingerprint now so G5 and downstream probes
-                            // can find it regardless of cache-hit vs. miss path.
-                            probe_fingerprint_by_node.insert(id, fp);
-
-                            // CS-0178 (COOK-343): §22.5.4's fingerprint has
-                            // seven sections; 1-3 (marker, key, produce source)
-                            // are always present and constant for a given
-                            // probe, and 4-7 (ENV/TOOLS/FILES/UPSTREAM) are
-                            // empty unless declared. A probe declaring nothing
-                            // therefore has a CONSTANT fingerprint and was a
-                            // permanent cache hit for the life of the store —
-                            // `{ cat STATE }` answered once and never looked
-                            // again, and `rm -rf .cook` did not help because
-                            // the value lives in the shared store. Test units
-                            // have obeyed the mirror-image rule since CS-0138
-                            // (no declared source, no key, always runs); this
-                            // brings probes into line with it.
-                            //
-                            // Keylessness chains through `requires`: a probe
-                            // keyed on an upstream fingerprint that is itself
-                            // constant-but-meaningless would hit cache while
-                            // its upstream re-produced a different value, so
-                            // reaching a keyless probe makes this one keyless
-                            // too. `tools`/`envs`/`files` producers lower to
-                            // sections 5/4/6 and are unaffected: they are
-                            // self-keying, which is why upgrading `cc` still
-                            // re-produces a `tools` probe.
-                            let declares_nothing = probe_unit.inputs.env.is_empty()
-                                && probe_unit.inputs.tools.is_empty()
-                                && probe_unit.inputs.files.is_empty()
-                                && probe_unit.inputs.requires.is_empty();
-                            let upstream_keyless = probe_unit
-                                .inputs
-                                .requires
-                                .iter()
-                                .any(|k| keyless_probes.contains(k));
-                            let is_keyless = declares_nothing || upstream_keyless;
-                            if is_keyless {
+                        Ok(found) => {
+                            for w in &found.warnings {
+                                tracing::warn!("{w}");
+                            }
+                            // Store the fingerprint now so G5 and downstream
+                            // probes find it whether this node hits or misses.
+                            probe_fingerprint_by_node.insert(id, found.fingerprint);
+                            if found.keyless {
                                 keyless_probes.insert(probe_key.clone());
                             }
-
-                            // CS-0157: record where each declared tool resolves
-                            // RIGHT NOW as read-view metadata. The canonical
-                            // value of a `tools { }` producer carries identity
-                            // only ({ hash }); the path a Lua consumer or
-                            // `cook why` sees comes from this per-run channel,
-                            // so it can never go stale inside a cached value.
-                            // Set on dispatch — before the hit/miss fork — so
-                            // both paths cover it.
-                            if !inputs.tools.is_empty() {
-                                let mut paths = std::collections::BTreeMap::new();
-                                for (name, _hash) in &inputs.tools {
-                                    if let Some(p) =
-                                        cook_fingerprint::resolve_tool_path(name)
-                                    {
-                                        paths.insert(name.clone(), p);
-                                    }
-                                }
+                            // CS-0157: where each declared tool resolves RIGHT
+                            // NOW, as a per-run read view. Set before the
+                            // hit/miss fork so both paths carry it — a cached
+                            // value must not be the source of a location.
+                            if !found.tool_paths.is_empty() {
                                 pool.probe_value_store()
-                                    .set_tool_paths(&probe_key, paths);
+                                    .set_tool_paths(&probe_key, found.tool_paths.clone());
                             }
 
-                            // Attempt cache GET — unless this probe has no
-                            // key, in which case there is nothing to look up
-                            // and it falls straight through to worker dispatch.
-                            match if is_keyless {
-                                Ok(None)
-                            } else {
-                                cook_cache::backend::get_bytes(
-                                    cache_ctx.backend.as_ref(),
-                                    &fp,
-                                )
-                            } {
-                                // A hit is only accepted when the cached bytes
-                                // parse as probe-value JSON (CS-0102 stale-artifact
-                                // defence, second layer behind the V2 marker).
-                                Ok(Some(bytes))
-                                    if cook_contracts::probe_value::decode_json(&bytes)
-                                        .is_ok() =>
-                                {
-                                    // Cache hit — populate store and complete without dispatch.
-                                    tracing::debug!(
-                                        "probe '{}': cache hit (fp={:x?})",
-                                        probe_key,
-                                        &fp[..4],
-                                    );
-                                    // CS-0102: materialise the canonical local copy at
-                                    // .cook/probes/<key>.json. Non-fatal on failure.
-                                    let probes_dir = cache_ctx
-                                        .project_root
-                                        .join(".cook")
-                                        .join("probes");
-                                    if let Err(e) = cook_probe::store::materialize_value(
-                                        &probes_dir,
-                                        &probe_key,
-                                        &bytes,
-                                    ) {
-                                        tracing::warn!(
-                                            "probe '{}': failed to write {}: {e}",
-                                            probe_key,
-                                            probes_dir.display(),
-                                        );
-                                    }
-                                    {
-                                        pool.probe_value_store()
-                                            .insert(&probe_key, bytes);
-                                    }
-                                    // Propagate fingerprint so downstream probes can resolve
-                                    // their own upstream_probe_fingerprints entries (mirrors
-                                    // what the worker-result handler does on a cache miss).
-                                    upstream_probe_fingerprints.insert(probe_key.clone(), fp);
-                                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                                    emit(
-                                        event_tx,
-                                        EngineEvent::NodeCacheHit {
-                                            recipe: work_node.recipe_name.clone(),
-                                            unit: id,
-                                            node_name: node_name.clone(),
-                                            artifact: None,
-                                            // No Probe variant; `display()` special-cases the
-                                            // `probe:` name prefix, so the default is correct.
-                                            kind: NodeKind::Cooked,
-                                        },
-                                    );
-                                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
-
-                                    *finished += 1;
-                                    let newly_ready = dag.complete(id);
-                                    let mut submitted = 0;
-                                    for nid in newly_ready {
-                                        submitted += process_ready(
-                                            dag,
-                                            nid,
-                                            pool,
-                                            cancelled,
-                                            finished,
-                                            interactive_queue,
-                                            event_tx,
-                                            trackers,
-                                            cache_managers,
-                                            cache_ctx,
-                                            failures,
-                                            test_cache,
-                                            cached_test_results,
-                                            rerun_patterns,
-                                            blocked_results,
-                                            probe_units_by_node,
-                                            upstream_probe_fingerprints,
-                                            probe_fingerprint_by_node,
-                                            keyless_probes,
-                                            published,
-                                        );
-                                    }
-                                    return submitted;
-                                }
-                                Ok(Some(_)) => {
-                                    // Cached bytes are not probe-value JSON —
-                                    // treat as a miss and re-run produce. Evict
-                                    // the stale entry so the post-run put (G5)
-                                    // can self-heal the key with canonical JSON
-                                    // (CS-0055 conflict detection would reject
-                                    // an overwrite of differing bytes).
-                                    tracing::warn!(
-                                        "probe '{}': cached bytes are not probe-value JSON \
-                                         (pre-CS-0102 artifact?); treating as miss",
-                                        probe_key,
-                                    );
-                                    if let Err(e) = cache_ctx.backend.delete(&fp) {
-                                        tracing::warn!("probe '{}': failed to evict stale cache entry: {e}", probe_key);
-                                    }
-                                }
-                                Ok(None) => {
-                                    // Cache miss — fall through to worker dispatch.
-                                    tracing::debug!(
-                                        "probe '{}': cache miss, dispatching to worker",
-                                        probe_key,
-                                    );
-                                }
-                                Err(e) => {
-                                    // Backend error — treat as miss, log, dispatch.
-                                    tracing::warn!(
-                                        "probe '{}': cache backend error on get ({e}); treating as miss",
-                                        probe_key,
-                                    );
-                                }
-                            }
-
-                            // CS-0148: a `files { … }` probe (reserved produce
-                            // sentinel) never dispatches to a worker. On a miss,
-                            // synthesise the value from the resolved inputs —
-                            // the same path→hash pairs the fingerprint's FILES
-                            // section just folded — then complete the node
-                            // exactly as the worker-result path would.
-                            if probe_unit.produce_source
-                                == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
-                            {
+                            // A value already in hand: the cache served it, or
+                            // the producer kind is synthesised (CS-0148
+                            // `files { }`). Either way no worker is involved,
+                            // so the node completes here.
+                            if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
-                                let bytes = cook_contracts::probe_value::encode_files_manifest(
-                                    &inputs.files,
-                                );
-                                let probes_dir = cache_ctx
-                                    .project_root
-                                    .join(".cook")
-                                    .join("probes");
-                                if let Err(e) = cook_probe::store::materialize_value(
-                                    &probes_dir,
+                                let recorded = cook_probe::eval::record(
                                     &probe_key,
-                                    &bytes,
-                                ) {
-                                    tracing::warn!(
-                                        "probe '{}': failed to write {}: {e}",
-                                        probe_key,
-                                        probes_dir.display(),
-                                    );
+                                    &eval_ctx,
+                                    &found.fingerprint,
+                                    found.keyless,
+                                    bytes,
+                                    *source,
+                                );
+                                for w in &recorded.warnings {
+                                    tracing::warn!("{w}");
+                                }
+                                if recorded.published {
+                                    published.fetch_add(1, Ordering::Relaxed);
                                 }
                                 pool.probe_value_store().insert(&probe_key, bytes.clone());
-                                upstream_probe_fingerprints.insert(probe_key.clone(), fp);
-                                if cache_ctx.publish_enabled {
-                                    let mut artifact_meta = ArtifactMeta {
-                                        recipe_namespace: format!("probe:{}", probe_key),
-                                        command_hash: 0,
-                                        env_contribution: 0,
-                                        seal_contribution: 0,
-                                        schema_version: CACHE_VERSION,
-                                        size_bytes: bytes.len() as u64,
-                                        tags: std::collections::BTreeSet::new(),
-                                        consulted_env_keys: std::collections::BTreeSet::new(),
-                                        output_index: 0,
-                                        output_path: format!("probe:{}", probe_key),
-                                        content_hash: ArtifactMeta::zero_content_hash(),
-                                        kind: None,
-                                        mode: ArtifactMeta::default_mode(),
-                                        target: None,
-                                    }
-                                    .as_probe_value();
-                                    published.fetch_add(1, Ordering::Relaxed);
-                                    if let Err(e) = cook_cache::backend::put_bytes(
-                                        cache_ctx.backend.as_ref(),
-                                        &fp,
-                                        &bytes,
-                                        &mut artifact_meta,
-                                    ) {
-                                        tracing::warn!(
-                                            "probe '{}': failed to persist files manifest: {e}",
+                                // Propagate the fingerprint so downstream probes
+                                // can resolve their own upstream entries, exactly
+                                // as the worker-result handler does on a miss.
+                                upstream_probe_fingerprints
+                                    .insert(probe_key.clone(), found.fingerprint);
+                                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                                match source {
+                                    // Served by the cache: report a hit.
+                                    cook_probe::eval::ValueSource::Cache => {
+                                        tracing::debug!(
+                                            "probe '{}': cache hit (fp={:x?})",
                                             probe_key,
+                                            &found.fingerprint[..4],
+                                        );
+                                        emit(
+                                            event_tx,
+                                            EngineEvent::NodeCacheHit {
+                                                recipe: work_node.recipe_name.clone(),
+                                                unit: id,
+                                                node_name: node_name.clone(),
+                                                artifact: None,
+                                                // No Probe variant; `display()`
+                                                // special-cases the `probe:` name
+                                                // prefix, so the default is correct.
+                                                kind: NodeKind::Cooked,
+                                            },
+                                        );
+                                    }
+                                    // Synthesised without a VM: this is work that
+                                    // ran, so it reports as a started-and-completed
+                                    // node rather than a hit.
+                                    cook_probe::eval::ValueSource::Produced => {
+                                        emit(
+                                            event_tx,
+                                            EngineEvent::NodeStarted {
+                                                recipe: work_node.recipe_name.clone(),
+                                                unit: id,
+                                                node_name: node_name.clone(),
+                                                artifact: None,
+                                                fallback_label: node_name.clone(),
+                                                kind: NodeKind::Cooked,
+                                                cause: None,
+                                                cache_key: node_cache_key(work_node),
+                                            },
+                                        );
+                                        emit(
+                                            event_tx,
+                                            EngineEvent::NodeCompleted {
+                                                recipe: work_node.recipe_name.clone(),
+                                                unit: id,
+                                                node_name: node_name.clone(),
+                                                elapsed: started.elapsed(),
+                                                kind: NodeKind::Cooked,
+                                                cache_key: node_cache_key(work_node),
+                                            },
                                         );
                                     }
                                 }
-                                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                                emit(
+                                finish_recipe_node(
+                                    trackers,
+                                    &work_node.recipe_name,
+                                    true,
+                                    false,
                                     event_tx,
-                                    EngineEvent::NodeStarted {
-                                        recipe: work_node.recipe_name.clone(),
-                                        unit: id,
-                                        node_name: node_name.clone(),
-                                        artifact: None,
-                                        fallback_label: node_name.clone(),
-                                        kind: NodeKind::Cooked,
-                                        cause: None,
-                                        cache_key: node_cache_key(work_node),
-                                    },
                                 );
-                                emit(
-                                    event_tx,
-                                    EngineEvent::NodeCompleted {
-                                        recipe: work_node.recipe_name.clone(),
-                                        unit: id,
-                                        node_name: node_name.clone(),
-                                        elapsed: started.elapsed(),
-                                        kind: NodeKind::Cooked,
-                                        cache_key: node_cache_key(work_node),
-                                    },
-                                );
-                                finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
                                 *finished += 1;
                                 let newly_ready = dag.complete(id);
                                 let mut submitted = 0;
@@ -1683,12 +1529,18 @@ pub fn execute_dag(
                                 }
                                 return submitted;
                             }
+
+                            tracing::debug!(
+                                "probe '{}': no value in hand, dispatching to worker",
+                                probe_key,
+                            );
                         }
                         Err(e) => {
                             // Fingerprint resolution failed (e.g. missing upstream).
                             // This is a hard error — the probe cannot be fingerprinted
                             // so it cannot safely proceed.
-                            let err_msg = format!("probe '{}': fingerprint resolution failed: {e}", probe_key);
+                            let err_msg =
+                                format!("probe '{}': fingerprint resolution failed: {}", probe_key, e.message());
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             emit(
                                 event_tx,
@@ -2545,122 +2397,68 @@ pub fn execute_dag(
         pending -= 1;
         finished += 1;
 
-        // G3 (CS-0074): if this result carries a probe output, write it into
-        // the ProbeValueStore immediately so that consumer units
-        // dispatched after this point can read it via cook.probes.get (§22.5.7).
-        // CS-0102: first materialise the canonical local copy at
-        // .cook/probes/<key>.json with the worker's bytes verbatim, so the
-        // file, the per-run store, and the CAS artifact (G5 below) hold
-        // byte-identical content. Non-fatal on failure.
+        // G3/G5 (CS-0074): a result carrying probe output completes the probe.
+        // Publishing and materialising are `cook_probe::eval::record` — the
+        // same call the no-worker paths at dispatch make, so a probe's value
+        // reaches the store and `.cook/probes/` by one route however it was
+        // produced (COOK-359). What stays here is the scheduler's share:
+        // propagating the fingerprint and populating the per-run store.
         if let Some(ref probe_out) = result.probe_output {
             if result.success {
-                let probes_dir = cache_ctx.project_root.join(".cook").join("probes");
-                if let Err(e) = cook_probe::store::materialize_value(
-                    &probes_dir,
-                    &probe_out.key,
-                    &probe_out.bytes,
-                ) {
-                    tracing::warn!(
-                        "probe '{}': failed to write {}: {e}",
-                        probe_out.key,
-                        probes_dir.display(),
-                    );
-                }
-            }
-            pool.probe_value_store()
-                .insert(&probe_out.key, probe_out.bytes.clone());
-        }
+                match probe_fingerprint_by_node.get(&result.id) {
+                    Some(&fp) => {
+                        // Populate upstream_fingerprints for downstream probes.
+                        upstream_probe_fingerprints.insert(probe_out.key.clone(), fp);
 
-        // G5 (CS-0074): persist probe output to CacheBackend after the worker
-        // returns with bytes on a cache miss. Reuses the fingerprint computed at
-        // dispatch time (G4) stored in `probe_fingerprint_by_node`, so we never
-        // recompute for the same node. Also populates `upstream_probe_fingerprints`
-        // so downstream probes can include this probe's fingerprint in their own.
-        //
-        // This block runs for *every* result (success or failure) so that the
-        // fingerprint map is always populated before newly-ready nodes are
-        // processed (the `dag.complete(result.id)` call below may unblock
-        // downstream probes). On failure, we skip the backend put but still
-        // record the fingerprint so the map is consistent.
-        if let Some(ref probe_out) = result.probe_output {
-            if result.success {
-                if let Some(&fp) = probe_fingerprint_by_node.get(&result.id) {
-                    // G5a: populate upstream_fingerprints for downstream probes.
-                    upstream_probe_fingerprints.insert(probe_out.key.clone(), fp);
-
-                    // CS-0178 (COOK-343): a keyless probe publishes nothing.
-                    // Skipping only the GET would leave a stable fingerprint
-                    // addressing a stored value that some other reader — a
-                    // verifier, a future run under a changed rule, another
-                    // machine sharing the store — could still serve, so the
-                    // PUT goes too. The per-run store and the canonical
-                    // .cook/probes/<key>.json copy are already populated above,
-                    // so consumers in THIS build are unaffected.
-                    if keyless_probes.contains(&probe_out.key) {
-                        tracing::debug!(
-                            "probe '{}': keyless (no declared inputs), not published",
-                            probe_out.key,
-                        );
-                    } else {
-
-                    // G5b: persist to CacheBackend with kind=probe_value.
-                    let mut artifact_meta = ArtifactMeta {
-                        recipe_namespace: format!("probe:{}", probe_out.key),
-                        command_hash: 0,
-                        env_contribution: 0,
-                        seal_contribution: 0,
-                        schema_version: CACHE_VERSION,
-                        size_bytes: probe_out.bytes.len() as u64,
-                        tags: std::collections::BTreeSet::new(),
-                        consulted_env_keys: std::collections::BTreeSet::new(),
-                        output_index: 0,
-                        output_path: format!("probe:{}", probe_out.key),
-                        content_hash: ArtifactMeta::zero_content_hash(),
-                        kind: None,
-                        mode: ArtifactMeta::default_mode(),
-                        target: None,
-                    }
-                    .as_probe_value();
-                    // COOK-168: publish-off / read-only client mode suppresses
-                    // ALL shared-store uploads, including probe values — fetch
-                    // by key is unaffected. The canonical local copy
-                    // (.cook/probes/<key>.json) and the per-run ProbeValueStore
-                    // were already populated above (CS-0102 / G3), so same-build
-                    // consumers and downstream probes still read the value; only
-                    // the shared-backend put is skipped.
-                    if cache_ctx.publish_enabled {
-                        published.fetch_add(1, Ordering::Relaxed);
-                        if let Err(e) = cook_cache::backend::put_bytes(
-                            cache_ctx.backend.as_ref(),
+                        let working_dir = dag.node(result.id).payload().working_dir.clone();
+                        let eval_ctx = cook_probe::eval::EvalCtx {
+                            working_dir: &working_dir,
+                            cache: Some(cook_probe::eval::CacheAccess {
+                                backend: cache_ctx.backend.as_ref(),
+                                project_root: &cache_ctx.project_root,
+                                publish_enabled: cache_ctx.publish_enabled,
+                            }),
+                        };
+                        // CS-0178 keylessness and COOK-168 publish suppression
+                        // are decided inside `record`; the counter follows what
+                        // it reports rather than re-deriving the condition.
+                        let recorded = cook_probe::eval::record(
+                            &probe_out.key,
+                            &eval_ctx,
                             &fp,
+                            keyless_probes.contains(&probe_out.key),
                             &probe_out.bytes,
-                            &mut artifact_meta,
-                        ) {
-                            tracing::warn!(
-                                "probe '{}': cache backend put failed ({}); continuing without caching",
-                                probe_out.key, e,
-                            );
-                        } else {
+                            cook_probe::eval::ValueSource::Produced,
+                        );
+                        for w in &recorded.warnings {
+                            tracing::warn!("{w}");
+                        }
+                        if recorded.published {
+                            published.fetch_add(1, Ordering::Relaxed);
                             tracing::debug!(
                                 "probe '{}': cached output (fp={:x?})",
                                 probe_out.key, &fp[..4],
                             );
                         }
                     }
+                    None => {
+                        // No fingerprint was computed at dispatch time (probe_units_by_node
+                        // had no entry for this node — caching disabled for this probe).
+                        // Still populate upstream_fingerprints with a sentinel so
+                        // downstream probes that `requires` this probe don't error.
+                        // We use a zero fingerprint as "unfingerprinted" (not cacheable).
+                        // Downstream probes that consume it will include this sentinel,
+                        // which means they too will be un-cacheable if they rely on it.
+                        // This is acceptable: the missing-metadata path is the "no probe
+                        // data available" edge case (tests, non-run.rs callers).
+                        upstream_probe_fingerprints.insert(probe_out.key.clone(), [0u8; 32]);
                     }
-                } else {
-                    // No fingerprint was computed at dispatch time (probe_units_by_node
-                    // had no entry for this node — caching disabled for this probe).
-                    // Still populate upstream_fingerprints with a sentinel so
-                    // downstream probes that `requires` this probe don't error.
-                    // We use a zero fingerprint as "unfingerprinted" (not cacheable).
-                    // Downstream probes that consume it will include this sentinel,
-                    // which means they too will be un-cacheable if they rely on it.
-                    // This is acceptable: the missing-metadata path is the "no probe
-                    // data available" edge case (tests, non-run.rs callers).
-                    upstream_probe_fingerprints.insert(probe_out.key.clone(), [0u8; 32]);
                 }
             }
+            // The per-run store is populated whether or not the unit succeeded,
+            // matching the pre-existing G3 ordering.
+            pool.probe_value_store()
+                .insert(&probe_out.key, probe_out.bytes.clone());
         }
 
         let node = dag.node(result.id);

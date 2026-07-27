@@ -223,6 +223,9 @@ pub fn register_workspace(
     env_overrides: &[String],
     mode: RegisterMode<'_>,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    // Backend for the `ingredients <probe>` pre-pass only — see
+    // `register_cookfile`'s parameter of the same name (COOK-359).
+    probe_cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
 ) -> Result<RegisteredWorkspace, PipelineError> {
     let shared_outputs: SharedTerminalOutputs =
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
@@ -313,7 +316,12 @@ pub fn register_workspace(
         };
 
         let registered =
-            register_cookfile(builder, &member.lua_source, cache_ctx.clone())
+            register_cookfile(
+                builder,
+                &member.lua_source,
+                cache_ctx.clone(),
+                probe_cache_ctx.clone(),
+            )
                 .map_err(map_register_error)?;
         merge_into(&mut ws, &prefix, &alias_qp, registered);
         ws.working_dir_by_prefix

@@ -208,6 +208,16 @@ pub fn register_cookfile(
     builder: RegisterSessionBuilder,
     lua_source: &str,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    // `probe_cache_ctx`: the backend the `ingredients <probe>` pre-pass
+    // evaluates probes against (COOK-359). Deliberately SEPARATE from
+    // `cache_ctx`, which carries unit-registration identity: installing that
+    // one as Lua app_data puts `project_id` into `recipe_namespace`, and §5.3
+    // feeds the namespace into the cloud key — so wiring it would rekey every
+    // artifact in every store and make the key depend on what the checkout
+    // directory happens to be called. Probe evaluation needs a backend and
+    // nothing else, so it gets exactly that. Unifying the two is COOK-364,
+    // which is a cache-identity decision rather than a probe fix.
+    probe_cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
 ) -> Result<crate::RegisteredCookfile, RegisterError> {
     // Shared with the body-invocation driver (step 12), which outlives this
     // function's stack frame: the Lua closure backing `cook.require_recipe`
@@ -420,7 +430,7 @@ pub fn register_cookfile(
         &recipes.borrow(),
         &probe_registry.borrow(),
         &builder.working_dir,
-        cache_ctx.as_ref(),
+        probe_cache_ctx.as_ref(),
         &prepass_store,
         &reachable_from_target,
         builder.target_recipe.is_some(),
@@ -1884,6 +1894,9 @@ fn run_for_each_prepass(
     let env_lookup = |name: &str| std::env::var(name).ok();
     let mut upstream_fps: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     let mut done: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // CS-0178 keylessness, accumulated across the whole pre-pass so it can
+    // propagate along `requires` chains.
+    let mut keyless: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Evaluate each driver probe (and its transitive `requires`) in
     // dependency order. Probe cycles are already rejected (step 9 above), so
@@ -1899,6 +1912,7 @@ fn run_for_each_prepass(
             prepass_store,
             &mut upstream_fps,
             &mut done,
+            &mut keyless,
             &mut Vec::new(),
         )?;
     }
@@ -1997,6 +2011,10 @@ fn evaluate_prepass_probe(
     prepass_store: &crate::module_loader::SharedPrepassStore,
     upstream_fps: &mut BTreeMap<String, [u8; 32]>,
     done: &mut std::collections::BTreeSet<String>,
+    // CS-0178: keys already found to have no cache key. A probe reaching one
+    // is itself keyless, so this must be populated in `requires` order — which
+    // the recursion below already guarantees.
+    keyless: &mut std::collections::BTreeSet<String>,
     in_progress: &mut Vec<String>,
 ) -> Result<(), RegisterError> {
     if done.contains(key) {
@@ -2025,145 +2043,93 @@ fn evaluate_prepass_probe(
             prepass_store,
             upstream_fps,
             done,
+            keyless,
             in_progress,
         )?;
     }
     in_progress.pop();
 
-    // Resolve fingerprint inputs + compute fingerprint (mirrors executor G4).
-    let inputs =
-        cook_fingerprint::probe::resolve_probe_inputs(probe, working_dir, env_lookup, upstream_fps)
-            .map_err(|e| RegisterError::ForEachProbeProduceFailed {
-                key: key.to_string(),
-                message: e,
-            })?;
-    let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
-
-    // CS-0148 / COOK-353: a `files { … }` probe never runs Lua. Its produce
-    // string is the reserved `@files-manifest` sentinel, which is deliberately
-    // NOT valid Lua (§22 lowering note: "a bare `@` is a syntax error in every
-    // Lua dialect, so a path that tried to run it would fail loudly rather than
-    // silently"). The executor's G4 path intercepts it; this pre-pass — the one
-    // that feeds an `ingredients <probe>` member source — did not, so the
-    // sentinel reached the register VM and the combination of a `files` probe
-    // with §22.5.10's member source was unusable:
-    //
-    //     cook: probe 'sites' feeds an ingredients <probe> source but its
-    //     produce raised: syntax error: unexpected symbol near '@'
-    //
-    // Synthesised from the resolved inputs — the same path→hash pairs the
-    // fingerprint's FILES section just folded — so both paths agree on the
-    // value byte for byte.
-    let files_manifest =
-        probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE;
-
-    // Cache GET when a backend is wired; on a miss (or no backend) run
-    // `produce` on the register VM, then PUT. Cached bytes that do not parse
-    // as probe-value JSON are treated as a miss, never a hard error (CS-0102
-    // stale-artifact defence — the V2 fingerprint marker already makes
-    // pre-CS-0102 entries unreachable; this is the second layer).
-    let bytes: Vec<u8> = match cache_ctx {
-        Some(ctx) => {
-            let cached = match cook_cache::backend::get_bytes(ctx.backend.as_ref(), &fp) {
-                Ok(Some(b)) if cook_contracts::probe_value::decode_json(&b).is_ok() => Some(b),
-                Ok(Some(_)) => {
-                    eprintln!(
-                        "cook: warning: probe '{key}': cached bytes are not \
-                         probe-value JSON (pre-CS-0102 artifact?); treating as miss"
-                    );
-                    // Evict the stale entry so the put below can self-heal the
-                    // key (CS-0055 conflict detection rejects overwrites with
-                    // differing bytes).
-                    let _ = ctx.backend.delete(&fp);
-                    None
-                }
-                _ => None,
-            };
-            match cached {
-                Some(b) => b,
-                None => {
-                    let b = if files_manifest {
-                        cook_contracts::probe_value::encode_files_manifest(&inputs.files)
-                    } else {
-                        run_prepass_produce(lua, key, &probe.produce_source)?
-                    };
-                    let mut meta = cook_fingerprint::ArtifactMeta {
-                        recipe_namespace: format!("probe:{key}"),
-                        command_hash: 0,
-                        env_contribution: 0,
-                        seal_contribution: 0,
-                        schema_version: cook_fingerprint::CACHE_VERSION,
-                        size_bytes: b.len() as u64,
-                        tags: std::collections::BTreeSet::new(),
-                        consulted_env_keys: std::collections::BTreeSet::new(),
-                        output_index: 0,
-                        output_path: format!("probe:{key}"),
-                        content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
-                        kind: None,
-                        mode: cook_fingerprint::ArtifactMeta::default_mode(),
-                        target: None,
-                    }
-                    .as_probe_value();
-                    // A cache PUT failure is non-fatal — the value is already in
-                    // hand for this pass; we simply forgo persisting it.
-                    let _ =
-                        cook_cache::backend::put_bytes(ctx.backend.as_ref(), &fp, &b, &mut meta);
-                    b
-                }
-            }
-        }
-        None if files_manifest => {
-            cook_contracts::probe_value::encode_files_manifest(&inputs.files)
-        }
-        None => run_prepass_produce(lua, key, &probe.produce_source)?,
+    // Everything from resolving the declared inputs to materialising the
+    // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
+    // call the executor makes, so the two phases cannot drift again: the
+    // fingerprint, the CS-0178 keylessness rule, the cache lookup and publish,
+    // the CS-0148 `files { }` interception, and the CS-0102 local copy all have
+    // one implementation. The register VM is the only phase-specific part, and
+    // it is the parameter.
+    let eval_ctx = cook_probe::eval::EvalCtx {
+        working_dir,
+        cache: cache_ctx.map(|ctx| cook_probe::eval::CacheAccess {
+            backend: ctx.backend.as_ref(),
+            project_root: &ctx.project_root,
+            publish_enabled: ctx.publish_enabled,
+        }),
     };
-
-    // CS-0102: materialise the canonical local copy at .cook/probes/<key>.json.
-    // Non-fatal on failure — the in-memory value is already in hand.
-    let probes_dir = cache_ctx
-        .map(|ctx| ctx.project_root.clone())
-        .unwrap_or_else(|| working_dir.to_path_buf())
-        .join(".cook")
-        .join("probes");
-    if let Err(e) = cook_probe::store::materialize_value(&probes_dir, key, &bytes) {
-        eprintln!(
-            "cook: warning: probe '{key}': failed to write {}: {e}",
-            probes_dir.display()
-        );
+    let evaluated = cook_probe::eval::evaluate(
+        probe,
+        &eval_ctx,
+        &RegisterVmRunner { lua },
+        env_lookup,
+        upstream_fps,
+        keyless,
+    )
+    .map_err(|e| RegisterError::ForEachProbeProduceFailed {
+        key: key.to_string(),
+        message: e.message().to_string(),
+    })?;
+    for warning in &evaluated.warnings {
+        eprintln!("cook: warning: {warning}");
     }
+    // CS-0178 keylessness propagates along `requires`, so a probe that reaches
+    // this one must see that it had no key.
+    if evaluated.keyless {
+        keyless.insert(key.to_string());
+    }
+    // `evaluated.tool_paths` is deliberately dropped here. CS-0157's resolved
+    // locations are a read view for execute-phase Lua consumers, served from
+    // the per-run ProbeValueStore; the pre-pass store holds decoded values for
+    // fan-out and has no such channel. If one is ever added, this is where it
+    // gets populated.
 
-    let jv = cook_contracts::probe_value::decode_json(&bytes).map_err(|e| {
+    let jv = cook_contracts::probe_value::decode_json(&evaluated.bytes).map_err(|e| {
         RegisterError::ForEachProbeProduceFailed {
             key: key.to_string(),
             message: format!("decode cached value: {e}"),
         }
     })?;
     prepass_store.borrow_mut().insert(key.to_string(), jv);
-    upstream_fps.insert(key.to_string(), fp);
+    upstream_fps.insert(key.to_string(), evaluated.fingerprint);
     done.insert(key.to_string());
     Ok(())
+}
+
+/// The register phase's half of the `cook_probe::eval` seam: run a probe's
+/// `produce` source on the REGISTER VM.
+///
+/// This is the one step the two phases genuinely do differently — the executor
+/// runs the same source on a worker VM under execute-phase policy — and it is
+/// the reason the whole sequence used to exist twice.
+struct RegisterVmRunner<'a> {
+    lua: &'a Lua,
+}
+
+impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
+    fn run(&self, key: &str, source: &str) -> Result<Vec<u8>, String> {
+        run_prepass_produce(self.lua, key, source)
+    }
 }
 
 /// Run a probe's `produce` source on the register VM and return the
 /// canonical-JSON bytes (mirrors `cook-luaotp`'s execute-VM `execute_probe`;
 /// CS-0102).
-fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, RegisterError> {
+fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, String> {
     let wrapped = format!("return (function()\n{}\nend)()", produce);
     let chunk = format!("@probe:{key}");
     let value: LuaValue = lua
         .load(&wrapped)
         .set_name(&chunk)
         .eval()
-        .map_err(|e| RegisterError::ForEachProbeProduceFailed {
-            key: key.to_string(),
-            message: e.to_string(),
-        })?;
-    let jv = crate::probe_value::lua_to_json(&value).map_err(|e| {
-        RegisterError::ForEachProbeProduceFailed {
-            key: key.to_string(),
-            message: e,
-        }
-    })?;
+        .map_err(|e| e.to_string())?;
+    let jv = crate::probe_value::lua_to_json(&value)?;
     Ok(crate::probe_value::encode_canonical_json(&jv))
 }
 
