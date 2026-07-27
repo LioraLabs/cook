@@ -155,33 +155,34 @@ fn producing_record() -> UnitRecord {
 #[test]
 fn unmoved_determinants_permit_a_replay() {
     let r = producing_record();
-    assert_eq!(determinant_drift(&r, &Determinants::new("k", 0xbeef, 0, 0x5ea1)), None);
+    assert_eq!(determinant_drift(&r.determinants(), &Determinants::new(0xbeef, 0, 0x5ea1)), None);
 }
 
+/// Store integrity is a different question from invalidation, and is asked
+/// separately: a record whose determinants are untouched can still be the
+/// wrong record to have been handed back.
 #[test]
-fn a_key_filed_elsewhere_is_rejected_before_anything_else() {
+fn a_record_knows_which_key_it_was_filed_under() {
     let r = producing_record();
-    // Every other determinant has ALSO moved; the key is still reported,
-    // because placement is never trusted over content.
-    assert_eq!(
-        determinant_drift(&r, &Determinants::new("other", 0xffff, 0xffff, 0xffff)),
-        Some(DeterminantDrift::Key)
-    );
+    assert!(r.is_addressed_by("k"));
+    assert!(!r.is_addressed_by("other"));
+    // Its determinants are meanwhile unmoved — the two questions are independent.
+    assert_eq!(determinant_drift(&r.determinants(), &Determinants::new(0xbeef, 0, 0x5ea1)), None);
 }
 
 #[test]
 fn each_determinant_is_reported_in_order() {
     let r = producing_record();
     assert_eq!(
-        determinant_drift(&r, &Determinants::new("k", 0xffff, 0, 0x5ea1)),
+        determinant_drift(&r.determinants(), &Determinants::new(0xffff, 0, 0x5ea1)),
         Some(DeterminantDrift::CommandHash)
     );
     assert_eq!(
-        determinant_drift(&r, &Determinants::new("k", 0xbeef, 0xffff, 0x5ea1)),
+        determinant_drift(&r.determinants(), &Determinants::new(0xbeef, 0xffff, 0x5ea1)),
         Some(DeterminantDrift::Env)
     );
     assert_eq!(
-        determinant_drift(&r, &Determinants::new("k", 0xbeef, 0, 0xffff)),
+        determinant_drift(&r.determinants(), &Determinants::new(0xbeef, 0, 0xffff)),
         Some(DeterminantDrift::Seal)
     );
 }
@@ -267,7 +268,7 @@ fn a_decoded_record_keeps_its_stored_determinants_so_drift_stays_visible() {
 
     assert_eq!(decoded.command_hash(), 0x01d);
     assert_eq!(
-        determinant_drift(&decoded, &Determinants::new("k", 0xbeef, 0, 0x5ea1)),
+        determinant_drift(&decoded.determinants(), &Determinants::new(0xbeef, 0, 0x5ea1)),
         Some(DeterminantDrift::CommandHash)
     );
 }
@@ -297,9 +298,9 @@ fn an_observing_unit_obeys_the_same_determinant_rule() {
     )
     .expect("agrees");
     assert_eq!(r.effect_kind(), EffectKind::Observed);
-    assert_eq!(determinant_drift(&r, &Determinants::new("k", 0xbeef, 0, 0x5ea1)), None);
+    assert_eq!(determinant_drift(&r.determinants(), &Determinants::new(0xbeef, 0, 0x5ea1)), None);
     assert_eq!(
-        determinant_drift(&r, &Determinants::new("k", 0xffff, 0, 0x5ea1)),
+        determinant_drift(&r.determinants(), &Determinants::new(0xffff, 0, 0x5ea1)),
         Some(DeterminantDrift::CommandHash)
     );
 }

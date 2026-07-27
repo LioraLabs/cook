@@ -1,10 +1,22 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
+
 use crate::{
     hash_str,
     record::{FileRecord, StepEntry, CACHE_VERSION},
 };
+
+/// COOK-360: the judge half of observe / judge / repair reports which
+/// determinant moved; this crate's callers speak in rebuild reasons.
+fn drift_reason(drift: DeterminantDrift) -> RebuildReason {
+    match drift {
+        DeterminantDrift::CommandHash => RebuildReason::CommandHashChanged,
+        DeterminantDrift::Env => RebuildReason::EnvChanged,
+        DeterminantDrift::Seal => RebuildReason::SealChanged,
+    }
+}
 
 /// Hash of an empty file. Empty files are treated as signals (marker files)
 /// where mtime changes always trigger rebuilds, even if content is unchanged.
@@ -241,16 +253,22 @@ pub fn needs_rebuild_cook(
         None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
         Some(e) => e,
     };
-    if entry.command_hash != command_hash {
-        return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.env_contribution != env_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
-    }
-    if entry.seal_contribution != seal_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
+
+    // ---- JUDGE (COOK-360) -------------------------------------------------
+    // A pure comparison of recorded determinants against current ones. No
+    // filesystem access, no backend, no repair — and therefore shared with
+    // every other store rather than hand-rolled per store. Everything below
+    // this point OBSERVES the world (stat, hash) and then REPAIRS it
+    // (restore), which is why those halves stay in this crate and this rule
+    // does not.
+    if let Some(drift) = determinant_drift(
+        &Determinants::new(entry.command_hash, entry.env_contribution, entry.seal_contribution),
+        &Determinants::new(command_hash, env_contribution, seal_contribution),
+    ) {
+        return (RebuildResult::Rebuild(drift_reason(drift)), None);
     }
 
+    // ---- OBSERVE ----------------------------------------------------------
     // Discovered inputs: absorb-and-forget (COOK-313).
     //
     // A unit with `discovered_inputs` records a FAT entry — declared inputs
@@ -358,6 +376,10 @@ pub fn needs_rebuild_cook(
         }
     }
 
+    // ---- REPAIR -----------------------------------------------------------
+    // Observation found outputs missing or drifted. This half does not decide
+    // anything: it tries to make the world match the record, and reports
+    // failure as a rebuild.
     if !needs_restore.is_empty() {
         let restored = match restore_ctx {
             Some(ctx) => try_restore(

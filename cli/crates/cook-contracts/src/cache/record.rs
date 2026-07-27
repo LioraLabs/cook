@@ -232,6 +232,20 @@ impl UnitRecord {
         &self.observation
     }
 
+    /// The values whose movement invalidates this record.
+    pub fn determinants(&self) -> Determinants {
+        Determinants::new(self.command_hash, self.env_contribution, self.seal_contribution)
+    }
+
+    /// Did the store hand back the record that was asked for?
+    ///
+    /// Store integrity, not invalidation — see [`Determinants`]. A
+    /// content-addressed store MUST ask this rather than trust placement,
+    /// which is what the test-result store validates by hand today.
+    pub fn is_addressed_by(&self, key: &str) -> bool {
+        self.key == key
+    }
+
     /// Trustworthy because [`Self::record`] is the only way in.
     pub fn effect_kind(&self) -> EffectKind {
         if self.outputs.is_empty() {
@@ -256,62 +270,69 @@ impl UnitRecord {
     }
 }
 
-/// The current values a record is judged against.
+/// The three values whose movement invalidates a record, independent of any
+/// file on disk.
+///
+/// Deliberately does NOT carry the cache key. Whether a store handed back the
+/// record that was asked for is a question about the STORE — see
+/// [`UnitRecord::is_addressed_by`] — and it is a different question with a
+/// different meaning when it fails. Conflating them was tempting because both
+/// are cheap comparisons, but Cook's local index keys on unit IDENTITY (an
+/// output path) rather than on content, so a key match there implies nothing
+/// about determinants and a determinant match implies nothing about the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Determinants<'a> {
-    key: &'a str,
+pub struct Determinants {
     command_hash: u64,
     env_contribution: u64,
     seal_contribution: u64,
 }
 
-impl<'a> Determinants<'a> {
-    pub fn new(
-        key: &'a str,
-        command_hash: u64,
-        env_contribution: u64,
-        seal_contribution: u64,
-    ) -> Self {
-        Self { key, command_hash, env_contribution, seal_contribution }
+impl Determinants {
+    pub fn new(command_hash: u64, env_contribution: u64, seal_contribution: u64) -> Self {
+        Self { command_hash, env_contribution, seal_contribution }
+    }
+
+    pub fn command_hash(&self) -> u64 {
+        self.command_hash
+    }
+
+    pub fn env_contribution(&self) -> u64 {
+        self.env_contribution
+    }
+
+    pub fn seal_contribution(&self) -> u64 {
+        self.seal_contribution
     }
 }
 
 /// Which determinant moved out from under a record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeterminantDrift {
-    /// The record was filed under a different key than the one being asked
-    /// for. A store that addresses entries by content must reject this rather
-    /// than trust placement.
-    Key,
     CommandHash,
     Env,
     Seal,
 }
 
-/// The rule both cache stores share, as a pure function.
+/// The judgment both cache stores share, as a pure function.
 ///
-/// Returns the first determinant that moved, or `None` when the record is
-/// still addressed by its determinants and may be replayed. Says nothing about
-/// files on disk: that is an observation, and observation belongs to the
-/// crates that own I/O.
+/// Returns the first determinant that moved, or `None` when nothing did. Says
+/// nothing whatever about files on disk: that is an OBSERVATION, and
+/// observation belongs to the crates that own I/O. This is the judge half of
+/// observe / judge / repair.
 ///
-/// Order matters and matches the live implementation — key, command, env,
-/// seal — so that the reported cause stays stable as this replaces the
-/// hand-rolled predicate chains.
+/// Order is command, env, seal — the live implementation's order — so the
+/// reported cause stays stable as this replaces the hand-rolled chains.
 pub fn determinant_drift(
-    record: &UnitRecord,
-    current: &Determinants<'_>,
+    stored: &Determinants,
+    current: &Determinants,
 ) -> Option<DeterminantDrift> {
-    if record.key() != current.key {
-        return Some(DeterminantDrift::Key);
-    }
-    if record.command_hash() != current.command_hash {
+    if stored.command_hash != current.command_hash {
         return Some(DeterminantDrift::CommandHash);
     }
-    if record.env_contribution() != current.env_contribution {
+    if stored.env_contribution != current.env_contribution {
         return Some(DeterminantDrift::Env);
     }
-    if record.seal_contribution() != current.seal_contribution {
+    if stored.seal_contribution != current.seal_contribution {
         return Some(DeterminantDrift::Seal);
     }
     None
