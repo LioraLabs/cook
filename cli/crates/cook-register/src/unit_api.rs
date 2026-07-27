@@ -46,6 +46,47 @@ fn validate_input_not_directory(working_dir: &Path, path: &str) -> Result<(), St
     Ok(())
 }
 
+/// Classify one declared input entry as a path or a pattern (§17.1.1.2,
+/// CS-0186). This is the ONLY place the question is asked; everything
+/// downstream reads the answer off the declaration.
+///
+/// **An entry naming an existing regular file is a path, whatever is in its
+/// name.** That arm is what the rule is for: `ingredients "pages/*.tsx"` is
+/// resolved here at register phase, so `pages/[id].tsx` reaches this call as a
+/// file the register phase has already seen in the tree, and re-reading it as a
+/// character class would expand it, match nothing, and drop it out of the
+/// unit's key. The same holds for a module's own `fs.glob` results, which is
+/// why the test is over the tree rather than over a list of the routes by which
+/// an entry can arrive — one test, and every register-phase resolution
+/// satisfies it by construction.
+///
+/// **Anything else is decided by the same test its producer applies to the same
+/// declaration.** An entry that is not a file here is either a consumed output
+/// whose producer has not run (`dist/**`, `dist/`, `build/app.o`) or a plain
+/// miss; in both cases the string IS the declaration, and §17.6 rule 1's test
+/// is the one that must answer, or one declaration would mean a pattern to the
+/// unit capturing it and a path to the unit reading it.
+///
+/// A directory is not a regular file, so `dist/` falls to the second arm and is
+/// classified a pattern there — which is what it is (CS-0119).
+fn classify_declared_input(working_dir: &Path, path: &str) -> cook_contracts::cache::DeclaredInput {
+    let resolved: PathBuf = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        working_dir.join(path)
+    };
+    // `metadata` rather than `symlink_metadata`: a symlink to a regular file is
+    // a file the unit reads, and the cache hashes what it points at.
+    if std::fs::metadata(&resolved).map(|m| m.is_file()).unwrap_or(false) {
+        return cook_contracts::cache::DeclaredInput::path(path);
+    }
+    if cook_fingerprint::is_terminal_output(path) {
+        cook_contracts::cache::DeclaredInput::pattern(path)
+    } else {
+        cook_contracts::cache::DeclaredInput::path(path)
+    }
+}
+
 /// Validate that a path string supplied as a `cook.add_unit` output does not
 /// already exist as a directory. Output paths are typically not yet created
 /// at register time, so a missing path is fine; what we reject is the case
@@ -485,13 +526,35 @@ pub fn register_unit_api(
         file_ref_paths.sort();
         file_ref_paths.dedup();
 
-        let cache_input_paths: Vec<String> = inputs
-            .iter()
-            .cloned()
-            .chain(dep_input_paths.into_iter())
-            .chain(member_dep_input_paths.into_iter())
-            .chain(file_ref_paths.into_iter())
-            .collect();
+        // §17.1.1.2: each entry is classified HERE, once, and carries the
+        // answer from here on. `inputs` and the dep-output paths are strings
+        // whose provenance this call cannot see, so they are classified against
+        // the tree; `file_refs` were resolved from the tree by this phase a few
+        // lines above, so they are paths by construction and need no test.
+        //
+        // Deduplicated, order of first occurrence (COOK-84): a path named by
+        // both `inputs` and a step-group dep arrives twice, and what a unit
+        // declares must not depend on how many ways a file was reached.
+        let cache_inputs: Vec<cook_contracts::cache::DeclaredInput> = {
+            let mut out: Vec<cook_contracts::cache::DeclaredInput> = Vec::new();
+            let mut push = |e: cook_contracts::cache::DeclaredInput| {
+                if !out.iter().any(|prev| prev.path == e.path) {
+                    out.push(e);
+                }
+            };
+            for p in inputs
+                .iter()
+                .map(|s| s.as_str())
+                .chain(dep_input_paths.iter().map(|s| s.as_str()))
+                .chain(member_dep_input_paths.iter().map(|s| s.as_str()))
+            {
+                push(classify_declared_input(&wd_for_add_unit, p));
+            }
+            for p in &file_ref_paths {
+                push(cook_contracts::cache::DeclaredInput::path(p));
+            }
+            out
+        };
 
         // Read consulted_env_keys from the table and look up values in the
         // declared-variable store (CS-0172) — the resolved `var` namespace the
@@ -787,25 +850,37 @@ pub fn register_unit_api(
         // that case was refused along with the source-less one, so a `test`
         // fanned out over `ingredients <probe>` re-ran on every invocation
         // while its `cook` sibling over the same source cached per member.
-        let nothing_to_key_on =
-            output_paths.is_empty() && cache_input_paths.is_empty() && member.is_none();
-        let cache_enabled = cache_enabled && !nothing_to_key_on;
+        //
+        // This is the DECLARED half of the rule. The engine asks it again when
+        // the unit is ready, over the RESOLVED list, because a declaration can
+        // be non-empty and resolve to nothing (§17.4 rule 1). Both sides call
+        // `has_something_to_key_on` so there is one rule and two vantage points
+        // rather than two rules.
+        let member_keyed = member.is_some();
+        let cache_enabled = cache_enabled
+            && cook_contracts::cache::record::has_something_to_key_on(
+                output_paths.len(),
+                cache_inputs.len(),
+                member_keyed,
+            );
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
                 &rname,
                 &output_paths,
-                &cache_input_paths,
+                &cache_inputs,
                 command_hash,
                 env_contribution_val,
+                &seal_keys,
             );
             Some(CacheMeta {
                 recipe_name: rname.clone(),
                 project_id,
                 cookfile_path,
                 cache_key,
-                input_paths: cache_input_paths.clone(),
+                inputs: cache_inputs.clone(),
                 consumes: consumes.clone(),
+                member_keyed,
                 output_paths: output_paths.clone(),
                 command_hash,
                 env_contribution: env_contribution_val,
@@ -975,22 +1050,6 @@ pub fn register_unit_api(
                 test_name: format!("{}_test{}", current_recipe, line),
                 iteration_item,
                 lua_code: lua_code.filter(|c| !c.is_empty()),
-                // BUG: `cache_input_paths` chains without deduplicating, so a
-                // path named by both `inputs` and a step-group dep appeared
-                // twice. The removed function deduped, order-preserving
-                // (COOK-84), and a test unit's folded input set must not
-                // depend on how many ways a file was reached.
-                input_paths: {
-                    let mut out: Vec<String> = Vec::with_capacity(cache_input_paths.len());
-                    for p in cache_input_paths {
-                        if !out.contains(&p) {
-                            out.push(p);
-                        }
-                    }
-                    out
-                },
-                seal_keys: seal_keys.clone(),
-                consumes,
             }
         } else if let Some(code) = lua_code {
             let (final_code, chunk_line) = if !chore_param_prelude.is_empty() && is_chore {
@@ -1320,14 +1379,38 @@ pub fn register_unit_api(
     // `last_cook_step_outputs` is already maintained for both routes — drained
     // from a completed `cook.step_group`, and set directly by a `Sequential`
     // `add_unit` with outputs (§10.4.1) — so both see the same answer here.
+    // With a `member` argument it answers for that member alone (§22.6): the
+    // outputs of the unit the preceding step registered FOR that member. A
+    // fan-out `test` needs exactly this and neither of its neighbours — the
+    // whole set costs the fan-out its per-member reuse (§17.1 observable 5),
+    // and an empty set leaves the unit keyed on nothing its producer wrote,
+    // which is a member-keyed unit replaying a pass over an artifact that has
+    // since gone bad. Last-wins per member, matching how `member_outputs` is
+    // built for the cross-recipe `$<recipe[in]>` join.
+    //
+    // The fallback is not a convenience: a `for_each` recipe may follow a step
+    // that GATHERED rather than fanned out (§{cat.probes.for-each}), and that
+    // step's one unit carries no member. Its outputs are what every member unit
+    // then reads.
     let body_slot_prior = body_slot.clone();
-    let prior_outputs_fn = lua.create_function(move |lua, ()| {
+    let prior_outputs_fn = lua.create_function(move |lua, member: Option<String>| {
         let slot = body_slot_prior.borrow();
-        let outputs: Vec<String> = slot
-            .as_ref()
-            .map(|b| b.last_cook_step_outputs.clone())
-            .unwrap_or_default();
-        lua.create_sequence_from(outputs)
+        let body = match slot.as_ref() {
+            Some(b) => b,
+            None => return lua.create_sequence_from(Vec::<String>::new()),
+        };
+        if let Some(m) = member.filter(|m| !m.is_empty()) {
+            let own: Option<Vec<String>> = body
+                .units
+                .iter()
+                .filter(|u| u.member.as_deref() == Some(m.as_str()) && !u.output_paths.is_empty())
+                .map(|u| u.output_paths.clone())
+                .next_back();
+            if let Some(paths) = own {
+                return lua.create_sequence_from(paths);
+            }
+        }
+        lua.create_sequence_from(body.last_cook_step_outputs.clone())
     })?;
     cook.set("prior_outputs", prior_outputs_fn)?;
 
@@ -1346,9 +1429,9 @@ pub fn register_unit_api(
 /// counts disagree, so each is judged stale against the other's record and
 /// rebuilds rather than replaying it — but they would then clobber each other
 /// on every run, which is the permanent-churn shape CS-0169 exists to refuse.
-/// `reject_duplicate_outputs` refuses it there, on the same terms, and this
-/// marker is what makes reaching that refusal near-impossible in the first
-/// place.
+/// Nothing else refuses it for us: `reject_duplicate_outputs` compares DECLARED
+/// OUTPUTS, and an observing unit declares none, so this marker is the whole of
+/// what keeps the two spaces apart.
 pub const OBSERVING_KEY_MARKER: char = ':';
 
 /// Build a local cache key that encodes env_contribution so simultaneous
@@ -1362,9 +1445,10 @@ fn build_local_cache_key(
     _cookfile_path: &str,
     _recipe: &str,
     output_paths: &[String],
-    inputs: &[String],
+    inputs: &[cook_contracts::cache::DeclaredInput],
     command_hash: u64,
     env_contribution: u64,
+    seal_keys: &std::collections::BTreeSet<String>,
 ) -> String {
     let identity = match output_paths.first() {
         // A producing unit is identified by a declared output path, which
@@ -1372,7 +1456,7 @@ fn build_local_cache_key(
         Some(first) => first.clone(),
         // An observing unit has no output path, so it is identified by a
         // digest of its DECLARATION (CS-0186).
-        None => observing_identity(inputs, command_hash),
+        None => observing_identity(inputs, command_hash, seal_keys),
     };
     if env_contribution != 0 {
         format!("{identity}@{env_contribution:x}")
@@ -1397,10 +1481,19 @@ fn build_local_cache_key(
 ///   cache. Both are already in scope here — `build_local_cache_key` takes
 ///   `_cookfile_path` and `_recipe` and has never used either — and they stay
 ///   unused deliberately rather than by omission.
-/// * **Nothing further.** Two units in one index with identical declarations
-///   are separated by no determinant, so they share one record and replaying
-///   either for the other cannot be observed.
+/// * **Nothing further than the determinants the declaration carries.** Two
+///   units in one index that no such determinant separates share one record,
+///   and replaying either for the other cannot be observed.
 ///
+///   The **effective seal key set** is one of those determinants, which is why
+///   it is hashed here. Sealed VALUES cannot be — they are execute-phase, and
+///   this runs at register phase — but leaving the KEYS out too makes
+///   `test { ./run } seal toolchain` and a bare `test { ./run }` in one recipe
+///   one identity. They then share a record whose recorded seal contribution
+///   matches at most one of them, so each invalidates the other on every run:
+///   not a false green, but the permanent churn CS-0169 exists to refuse.
+///
+
 /// What it replaces: `<first-input>@<command-hash>`. That form was weakly
 /// unique — every unit sharing a first input and a command text collided, and
 /// a unit declaring NO inputs keyed as the empty string plus its command hash,
@@ -1414,20 +1507,34 @@ fn build_local_cache_key(
 /// many ways a file was reached. Order is otherwise kept as declared, which is
 /// deterministic per registration; sorting would additionally erase a
 /// reordering that IS a declaration change.
-fn observing_identity(inputs: &[String], command_hash: u64) -> String {
+fn observing_identity(
+    inputs: &[cook_contracts::cache::DeclaredInput],
+    command_hash: u64,
+    seal_keys: &std::collections::BTreeSet<String>,
+) -> String {
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     let mut seen: Vec<&str> = Vec::with_capacity(inputs.len());
-    for p in inputs {
-        if seen.contains(&p.as_str()) {
+    for entry in inputs {
+        let p = entry.path.as_str();
+        if seen.contains(&p) {
             continue;
         }
-        seen.push(p.as_str());
+        seen.push(p);
         // NUL-terminated so ["ab", "c"] and ["a", "bc"] cannot hash alike;
-        // a path cannot contain NUL, so the separator is unambiguous.
+        // a path cannot contain NUL, so the separator is unambiguous. The kind
+        // rides along because it is part of what was declared: the same string
+        // read as a file and read as a pattern are two different declarations
+        // (§17.1.1.2).
         hasher.update(p.as_bytes());
-        hasher.update(b"\0");
+        hasher.update(if entry.is_pattern() { b"\0*" } else { b"\0=" });
     }
     hasher.update(&command_hash.to_le_bytes());
+    // The seal key set, sorted by the BTreeSet it arrives in: the same keys
+    // declared in a different order are the same declaration.
+    for key in seal_keys {
+        hasher.update(key.as_bytes());
+        hasher.update(b"\0");
+    }
     format!("{}{:016x}", OBSERVING_KEY_MARKER, hasher.digest())
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use cook_contracts::WorkPayload;
+use cook_contracts::cache::DeclaredInput;
 
 #[test]
 fn empty_dirs_under_reports_only_empty_dirs() {
@@ -27,182 +27,12 @@ fn test_hash_str_differs() {
     assert_ne!(h1, h2);
 }
 
-fn empty_inputs() -> FingerprintInputs {
-    FingerprintInputs::default()
-}
-
-// ── CS-0159: sealed-probe fold in the test fingerprint ──────────────
-
-fn sealed(pairs: &[(&str, &str)]) -> FingerprintInputs {
-    FingerprintInputs {
-        sealed_probes: pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        ..Default::default()
-    }
-}
-
-/// A test that seals nothing hashes exactly as it did pre-CS-0159 — the
-/// surface is additive, so no existing test-cache entry is invalidated.
-#[test]
-fn seal_empty_set_leaves_fingerprint_unchanged() {
-    let p = make_test_payload("./t", 0, false, "t");
-    assert_eq!(
-        compute_test_fingerprint(&p, &empty_inputs()),
-        compute_test_fingerprint(&p, &sealed(&[]))
-    );
-}
-
-/// A sealed probe's VALUE is a determinant: same key, different value =>
-/// different key. This is the whole point of sealing a test.
-#[test]
-fn seal_value_change_busts_fingerprint() {
-    let p = make_test_payload("./t", 0, false, "t");
-    let a = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]));
-    let b = compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-14")]));
-    assert_ne!(a, b);
-}
-
-/// Sealing at all changes the key relative to not sealing.
-#[test]
-fn seal_presence_changes_fingerprint() {
-    let p = make_test_payload("./t", 0, false, "t");
-    assert_ne!(
-        compute_test_fingerprint(&p, &empty_inputs()),
-        compute_test_fingerprint(&p, &sealed(&[("toolchain", "gcc-13")]))
-    );
-}
-
-/// The fold is order-insensitive — the author's declaration order MUST NOT
-/// affect the key (the engine passes a BTreeMap, but the hash sorts too).
-#[test]
-fn seal_fold_is_order_insensitive() {
-    let p = make_test_payload("./t", 0, false, "t");
-    let a = compute_test_fingerprint(&p, &sealed(&[("a", "1"), ("b", "2")]));
-    let b = compute_test_fingerprint(&p, &sealed(&[("b", "2"), ("a", "1")]));
-    assert_eq!(a, b);
-}
-
-/// Key and value are not interchangeable — swapping them MUST NOT collide.
-#[test]
-fn seal_key_value_swap_does_not_collide() {
-    let p = make_test_payload("./t", 0, false, "t");
-    let a = compute_test_fingerprint(&p, &sealed(&[("k", "v")]));
-    let b = compute_test_fingerprint(&p, &sealed(&[("v", "k")]));
-    assert_ne!(a, b);
-}
-
-/// The sealed fold occupies its own slot: a sealed probe MUST NOT be
-/// confusable with an env-var contribution of the same key/value.
-#[test]
-fn seal_does_not_collide_with_env_contribution() {
-    let p = make_test_payload("./t", 0, false, "t");
-    let as_seal = compute_test_fingerprint(&p, &sealed(&[("K", "V")]));
-    let as_env = compute_test_fingerprint(
-        &p,
-        &FingerprintInputs {
-            env_keys: vec![("K".to_string(), "V".to_string())],
-            ..Default::default()
-        },
-    );
-    assert_ne!(as_seal, as_env);
-}
-
-fn make_test_payload(
-    cmd: &str,
-    timeout: u64,
-    should_fail: bool,
-    test_name: &str,
-) -> WorkPayload {
-    WorkPayload::Test {
-        seal_keys: Default::default(),
-        consumes: Vec::new(),
-        cmd: cmd.into(),
-        line: 1,
-        timeout,
-        should_fail,
-        test_name: test_name.into(),
-        iteration_item: None,
-        lua_code: None,
-        input_paths: vec![],
-    }
-}
-
-#[test]
-fn test_unit_fingerprint_includes_timeout() {
-    let fp_30 = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "t"),
-        &empty_inputs(),
-    );
-    let fp_60 = compute_test_fingerprint(
-        &make_test_payload("true", 60, false, "t"),
-        &empty_inputs(),
-    );
-    assert_ne!(
-        fp_30, fp_60,
-        "different timeouts must produce different fingerprints"
-    );
-}
-
-#[test]
-fn test_unit_fingerprint_includes_should_fail() {
-    let fp_t = compute_test_fingerprint(
-        &make_test_payload("true", 30, true, "t"),
-        &empty_inputs(),
-    );
-    let fp_f = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "t"),
-        &empty_inputs(),
-    );
-    assert_ne!(fp_t, fp_f);
-}
-
-#[test]
-fn test_unit_fingerprint_independent_of_test_name() {
-    // Renaming via `as` (the test_name) MUST NOT bust fingerprint per CS-0061 §3.3.
-    let fp_a = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "alpha"),
-        &empty_inputs(),
-    );
-    let fp_b = compute_test_fingerprint(
-        &make_test_payload("true", 30, false, "beta"),
-        &empty_inputs(),
-    );
-    assert_eq!(fp_a, fp_b, "renaming a test MUST NOT bust its fingerprint");
-}
-
-// CS-0185: `test_unit_fingerprint_independent_of_suite_name` stood here. The
-// fingerprint excluded `suite_name` as display metadata; the field is now
-// removed outright, so there is nothing left for a key to be independent of.
-
-#[test]
-fn test_unit_fingerprint_deterministic() {
-    let payload = make_test_payload("run_tests.sh", 120, false, "test1");
-    let inputs = FingerprintInputs {
-        sealed_probes: vec![],
-        cook_outputs: vec![("out/lib.a".into(), "sha256:abc".into())],
-        dep_outputs: vec![],
-        env_keys: vec![("CC".into(), "gcc".into())],
-    };
-    let fp1 = compute_test_fingerprint(&payload, &inputs);
-    let fp2 = compute_test_fingerprint(&payload, &inputs);
-    assert_eq!(fp1, fp2);
-    assert!(fp1.starts_with("sha256:"));
-}
-
-#[test]
-fn test_unit_fingerprint_includes_cmd() {
-    let fp_a = compute_test_fingerprint(
-        &make_test_payload("cmd_a", 30, false, "t"),
-        &empty_inputs(),
-    );
-    let fp_b = compute_test_fingerprint(
-        &make_test_payload("cmd_b", 30, false, "t"),
-        &empty_inputs(),
-    );
-    assert_ne!(fp_a, fp_b, "different commands must produce different fingerprints");
-}
+// CS-0186: the `compute_test_fingerprint` tests stood here — ten of them, over
+// a hash function and an input struct that existed for the one unit kind with
+// its own store. The store is gone and so is the function; a test unit is
+// judged by `needs_rebuild_cook` over its `CacheMeta`, which the cook-engine
+// and cook-register suites cover on the one path every unit shares. Nothing
+// here was worth keeping alive by keeping its subject alive.
 
 #[test]
 fn glob_meta_literal_paths_return_false() {
@@ -244,32 +74,6 @@ fn glob_meta_brace_returns_false() {
     // future CS once the reference engine supports it.
     assert!(!has_glob_meta("{a,b}.txt"));
     assert!(!has_glob_meta("src/{lib,app}/main.c"));
-}
-
-#[test]
-fn test_unit_fingerprint_cook_outputs_order_independent() {
-    let inputs_a = FingerprintInputs {
-        sealed_probes: vec![],
-        cook_outputs: vec![
-            ("a".into(), "hash1".into()),
-            ("b".into(), "hash2".into()),
-        ],
-        ..Default::default()
-    };
-    let inputs_b = FingerprintInputs {
-        sealed_probes: vec![],
-        cook_outputs: vec![
-            ("b".into(), "hash2".into()),
-            ("a".into(), "hash1".into()),
-        ],
-        ..Default::default()
-    };
-    let payload = make_test_payload("true", 30, false, "t");
-    assert_eq!(
-        compute_test_fingerprint(&payload, &inputs_a),
-        compute_test_fingerprint(&payload, &inputs_b),
-        "cook_outputs insertion order must not affect fingerprint"
-    );
 }
 
 #[test]
@@ -367,10 +171,19 @@ fn tree(files: &[&str]) -> tempfile::TempDir {
     d
 }
 
-fn resolve(inputs: &[&str], consumes: &[&str], dir: &std::path::Path) -> Vec<String> {
-    let inputs: Vec<String> = inputs.iter().map(|s| s.to_string()).collect();
+/// A declared path: one file, used as written.
+fn f(s: &str) -> DeclaredInput {
+    DeclaredInput::path(s)
+}
+
+/// A declared pattern: expanded against the tree when the unit is ready.
+fn g(s: &str) -> DeclaredInput {
+    DeclaredInput::pattern(s)
+}
+
+fn resolve(inputs: &[DeclaredInput], consumes: &[&str], dir: &std::path::Path) -> Vec<String> {
     let consumes: Vec<String> = consumes.iter().map(|s| s.to_string()).collect();
-    crate::resolve_declared_inputs(&inputs, &consumes, dir)
+    crate::resolve_declared_inputs(inputs, &consumes, dir)
 }
 
 /// The overwhelmingly common case, and the one that must not change: a unit
@@ -381,7 +194,7 @@ fn resolve(inputs: &[&str], consumes: &[&str], dir: &std::path::Path) -> Vec<Str
 #[test]
 fn literal_inputs_are_returned_in_declaration_order() {
     let d = tree(&["b.c", "a.c"]);
-    assert_eq!(resolve(&["b.c", "a.c"], &[], d.path()), vec!["b.c", "a.c"]);
+    assert_eq!(resolve(&[f("b.c"), f("a.c")], &[], d.path()), vec!["b.c", "a.c"]);
 }
 
 /// A literal input is NOT checked against the filesystem. A declared input that
@@ -390,7 +203,7 @@ fn literal_inputs_are_returned_in_declaration_order() {
 #[test]
 fn a_missing_literal_input_is_kept() {
     let d = tree(&[]);
-    assert_eq!(resolve(&["gone.c"], &[], d.path()), vec!["gone.c"]);
+    assert_eq!(resolve(&[f("gone.c")], &[], d.path()), vec!["gone.c"]);
 }
 
 /// The case that made this function necessary: a unit declaring a consumed
@@ -400,7 +213,7 @@ fn a_missing_literal_input_is_kept() {
 fn a_glob_entry_resolves_to_the_files_it_names() {
     let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
     assert_eq!(
-        resolve(&["dist/**"], &[], d.path()),
+        resolve(&[g("dist/**")], &[], d.path()),
         vec!["dist/index.mjs", "dist/index.mjs.map"]
     );
 }
@@ -413,7 +226,7 @@ fn a_glob_entry_resolves_to_the_files_it_names() {
 #[test]
 fn a_directory_entry_resolves_to_its_subtree() {
     let d = tree(&["dist/a.js", "dist/nested/b.js"]);
-    let got = resolve(&["dist/"], &[], d.path());
+    let got = resolve(&[g("dist/")], &[], d.path());
     assert!(got.contains(&"dist/a.js".to_string()), "got {got:?}");
     assert!(got.contains(&"dist/nested/b.js".to_string()), "got {got:?}");
 }
@@ -421,7 +234,7 @@ fn a_directory_entry_resolves_to_its_subtree() {
 #[test]
 fn a_glob_matching_nothing_contributes_nothing() {
     let d = tree(&["a.c"]);
-    assert!(resolve(&["nope/**"], &[], d.path()).is_empty());
+    assert!(resolve(&[g("nope/**")], &[], d.path()).is_empty());
 }
 
 /// One path reached two ways is one input. A unit's recorded set must not
@@ -430,7 +243,7 @@ fn a_glob_matching_nothing_contributes_nothing() {
 fn duplicates_are_dropped_keeping_first_position() {
     let d = tree(&["a.c", "b.c"]);
     assert_eq!(
-        resolve(&["a.c", "*.c", "b.c"], &[], d.path()),
+        resolve(&[f("a.c"), g("*.c"), f("b.c")], &[], d.path()),
         vec!["a.c", "b.c"],
         "the glob re-names a.c and b.c; neither may appear twice"
     );
@@ -443,7 +256,7 @@ fn duplicates_are_dropped_keeping_first_position() {
 #[test]
 fn consumes_narrows_the_resolved_set() {
     let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
-    assert_eq!(resolve(&["dist/**"], &["*.mjs"], d.path()), vec!["dist/index.mjs"]);
+    assert_eq!(resolve(&[g("dist/**")], &["*.mjs"], d.path()), vec!["dist/index.mjs"]);
 }
 
 /// Narrowing errs toward the UNDER-keyed direction, where a stale hit replays
@@ -453,7 +266,7 @@ fn consumes_narrows_the_resolved_set() {
 fn a_consumes_matching_nothing_is_inert() {
     let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
     assert_eq!(
-        resolve(&["dist/**"], &["*.wasm"], d.path()),
+        resolve(&[g("dist/**")], &["*.wasm"], d.path()),
         vec!["dist/index.mjs", "dist/index.mjs.map"]
     );
 }
@@ -461,7 +274,7 @@ fn a_consumes_matching_nothing_is_inert() {
 #[test]
 fn an_empty_consumes_narrows_nothing() {
     let d = tree(&["dist/a.mjs", "dist/b.map"]);
-    assert_eq!(resolve(&["dist/**"], &[], d.path()).len(), 2);
+    assert_eq!(resolve(&[g("dist/**")], &[], d.path()).len(), 2);
 }
 
 /// A pattern that cannot compile keeps the full set. Patterns are rejected at
@@ -470,5 +283,89 @@ fn an_empty_consumes_narrows_nothing() {
 #[test]
 fn an_uncompilable_consumes_keeps_the_full_set() {
     let d = tree(&["dist/a.mjs"]);
-    assert_eq!(resolve(&["dist/**"], &["["], d.path()), vec!["dist/a.mjs"]);
+    assert_eq!(resolve(&[g("dist/**")], &["["], d.path()), vec!["dist/a.mjs"]);
+}
+
+// --- B1: a path is a path, whatever is in its name (§17.1.1.2) ------------
+
+/// The defect this classification exists to prevent, at the layer that would
+/// commit it. `pages/[id].tsx` is a FILE — the framework routing convention —
+/// and the register phase handed it here as one. A resolver that re-read the
+/// string would treat `[id]` as a character class, match nothing, and drop the
+/// entry from the unit's key: silently, on this side and on the recording side
+/// alike, so the two agree and the unit hits over a file that changed.
+#[test]
+fn a_path_containing_glob_metacharacters_is_not_expanded() {
+    let d = tree(&["pages/[id].tsx", "pages/plain.tsx"]);
+    assert_eq!(
+        resolve(&[f("pages/[id].tsx"), f("pages/plain.tsx")], &[], d.path()),
+        vec!["pages/[id].tsx", "pages/plain.tsx"]
+    );
+}
+
+/// The same name declared as a pattern IS expanded — the kind decides, and
+/// nothing else does. (`[id]` as a class matches no single-character file here,
+/// so the expansion is empty, which is exactly what made the defect silent.)
+#[test]
+fn the_same_name_declared_as_a_pattern_is_expanded() {
+    let d = tree(&["pages/[id].tsx"]);
+    assert!(resolve(&[g("pages/[id].tsx")], &[], d.path()).is_empty());
+}
+
+// --- B4: consumes narrows expansions, never declared paths ---------------
+
+/// `consumes` says "of what this pattern covers, I read only these". It says
+/// nothing about a file the unit named outright, and MUST NOT be able to delete
+/// one: dropping `src/own.txt` here would leave the unit unkeyed on a file the
+/// author declared, so editing it would move nothing.
+#[test]
+fn consumes_never_removes_a_declared_path() {
+    let d = tree(&["src/own.txt", "dist/index.mjs", "dist/index.mjs.map"]);
+    assert_eq!(
+        resolve(&[f("src/own.txt"), g("dist/**")], &["*.mjs"], d.path()),
+        vec!["src/own.txt", "dist/index.mjs"]
+    );
+}
+
+/// A unit declaring only paths is unaffected by any filter, including one that
+/// matches none of them — there is no expansion to narrow.
+#[test]
+fn consumes_over_paths_alone_is_inert() {
+    let d = tree(&["src/own.txt", "src/other.txt"]);
+    assert_eq!(
+        resolve(&[f("src/own.txt"), f("src/other.txt")], &["*.mjs"], d.path()),
+        vec!["src/own.txt", "src/other.txt"]
+    );
+}
+
+/// The cook_pnpm shape, and the half of CS-0175's withdrawn safeguard that was
+/// doing real work: an excluded artifact must not re-enter through a SECOND
+/// pattern the unit declares in its own right. A check unit declaring the
+/// dependency's whole subtree and consuming `*.mjs` keys on the bundle alone.
+#[test]
+fn an_excluded_artifact_does_not_re_enter_through_another_pattern() {
+    let d = tree(&["src/own.txt", "dist/index.mjs", "dist/index.mjs.map"]);
+    assert_eq!(
+        resolve(
+            &[f("src/own.txt"), g("dist/**"), g("dist/**/*")],
+            &["*.mjs"],
+            d.path()
+        ),
+        vec!["src/own.txt", "dist/index.mjs"]
+    );
+}
+
+/// Narrowing is over the pattern-derived candidates only, so a filter that
+/// matches none of THEM is inert even though the unit's declared paths would
+/// not have matched either. Without the split, a unit whose only pattern
+/// expanded to unmatched files would fall back to the full set and quietly
+/// re-admit what the author excluded.
+#[test]
+fn the_inert_fallback_is_judged_over_pattern_derived_candidates() {
+    let d = tree(&["src/own.txt", "dist/index.mjs.map"]);
+    assert_eq!(
+        resolve(&[f("src/own.txt"), g("dist/**")], &["*.wasm"], d.path()),
+        vec!["src/own.txt", "dist/index.mjs.map"],
+        "no candidate matched, so the unnarrowed expansion stands"
+    );
 }

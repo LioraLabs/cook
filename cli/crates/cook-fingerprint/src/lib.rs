@@ -22,7 +22,7 @@ pub mod statmemo;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
+use cook_contracts::cache::DeclaredInput;
 
 pub use backend::{
     artifact_key, cloud_key, recipe_namespace, ArtifactMeta, BackendError, BackendResult,
@@ -51,125 +51,11 @@ pub fn hash_str(s: &str) -> u64 {
     xxhash_rust::xxh3::xxh3_64(s.as_bytes())
 }
 
-// ---------------------------------------------------------------------------
-// Test-unit fingerprint (CS-0061 §3.3)
-// ---------------------------------------------------------------------------
-
-/// Environmental and file-system inputs that contribute to a test unit's
-/// content-addressed fingerprint. Matches the analogous inputs used for
-/// recipe-step fingerprints but is kept separate so the test cache can
-/// evolve independently.
-///
-/// All four `Vec` fields are sorted before hashing, so insertion order is
-/// irrelevant — callers should not pre-sort them.
-#[derive(Debug, Default, Clone)]
-pub struct FingerprintInputs {
-    /// `(path, content_fingerprint)` for cook-step outputs consumed by the test.
-    pub cook_outputs: Vec<(String, String)>,
-    /// `(path, content_fingerprint)` for dep-step outputs consumed by the test.
-    pub dep_outputs: Vec<(String, String)>,
-    /// `(key, value)` for env-var contributions.
-    pub env_keys: Vec<(String, String)>,
-    /// CS-0159: `(probe_key, canonical_value)` for every probe in the test
-    /// unit's effective seal set (§17.4 rule 1). Resolved from the execute-phase
-    /// `ProbeValueStore` at ready time by the engine, using the same
-    /// absent-key-folds-to-empty-string rule as a cook unit's
-    /// `resolve_sealed_probes`, so producer and consumer agree on the digest.
-    pub sealed_probes: Vec<(String, String)>,
-}
-
-/// Hash a sorted list of `(key, value)` pairs into `h`.
-fn hash_pairs(h: &mut Sha256, v: &[(String, String)]) {
-    let mut s: Vec<&(String, String)> = v.iter().collect();
-    s.sort();
-    for (k, val) in s {
-        h.update(k.as_bytes());
-        h.update(b"=");
-        h.update(val.as_bytes());
-        h.update(b"\0");
-    }
-}
-
-/// Compute a content-addressed fingerprint for a test unit per CS-0061 §3.3.
-///
-/// Inputs (hashed in this stable order):
-///   1. `cmd` — the substituted command text
-///   2. `timeout` — big-endian u64 bytes
-///   3. `should_fail` — 0x00 (false) or 0x01 (true)
-///   4. `cook_outputs` — sorted by `(path, fingerprint)`
-///   5. `dep_outputs`  — sorted by `(path, fingerprint)`
-///   6. `env_keys`     — sorted by `(key, value)`
-///
-/// **Excluded:** `suite_name`, `test_name` — these are display metadata.
-/// Renaming a test via `as STRING` MUST NOT bust its fingerprint (§3.3).
-///
-/// # Panics
-/// Panics if `payload` is not `WorkPayload::Test { .. }`. This function is
-/// intentionally test-only; callers must route non-Test payloads elsewhere.
-pub fn compute_test_fingerprint(
-    payload: &cook_contracts::WorkPayload,
-    inputs: &FingerprintInputs,
-) -> String {
-    let (cmd, timeout, should_fail, lua_code) = match payload {
-        cook_contracts::WorkPayload::Test {
-            cmd,
-            timeout,
-            should_fail,
-            lua_code,
-            ..
-        } => (cmd.as_str(), *timeout, *should_fail, lua_code.as_deref()),
-        _ => panic!("compute_test_fingerprint: not a Test payload"),
-    };
-
-    let mut h = Sha256::new();
-
-    // 1. cmd
-    h.update(cmd.as_bytes());
-    h.update(b"\0");
-
-    // 1b. lua_code (CS-0127 §22.4): a lua-body test has an empty `cmd` by
-    // construction, so its content is carried entirely by `lua_code`. Fold
-    // it into the hash so two lua tests with different bodies get distinct
-    // fingerprints, and editing a lua test's body busts its cache key
-    // instead of colliding on the shared empty-`cmd` hash.
-    h.update(lua_code.unwrap_or("").as_bytes());
-    h.update(b"\0");
-
-    // 2. timeout (big-endian u64)
-    h.update(timeout.to_be_bytes());
-    h.update(b"\0");
-
-    // 3. should_fail (0 or 1)
-    h.update([if should_fail { 1u8 } else { 0u8 }]);
-    h.update(b"\0");
-
-    // 4-6. sorted pair lists
-    hash_pairs(&mut h, &inputs.cook_outputs);
-    hash_pairs(&mut h, &inputs.dep_outputs);
-    hash_pairs(&mut h, &inputs.env_keys);
-
-    // 7. sealed probe values (CS-0159, §17.4 rule 1).
-    //
-    //    The domain tag is load-bearing, not decoration. `hash_pairs` uses one
-    //    encoding for every pair list and the lists are hashed back-to-back,
-    //    so without a separator a sealed probe named `K` with value `V` would
-    //    hash byte-identically to an env-var contribution `K=V` — two
-    //    materially different determinants colliding on one key, i.e. a false
-    //    cache hit. NUL cannot occur in an env key or a probe key, so the tag
-    //    is unambiguous.
-    //
-    //    The tag is emitted ONLY for a non-empty set, which keeps the surface
-    //    purely additive: a test that seals nothing hashes exactly as it did
-    //    pre-CS-0159, so no `CACHE_VERSION` bump is needed and existing
-    //    test-cache entries stay valid. A newly-sealed test has no prior entry
-    //    to collide with.
-    if !inputs.sealed_probes.is_empty() {
-        h.update(b"\0seal\0");
-        hash_pairs(&mut h, &inputs.sealed_probes);
-    }
-
-    format!("sha256:{:x}", h.finalize())
-}
+// A test-unit fingerprint used to live here: `FingerprintInputs` and
+// `compute_test_fingerprint`, a second hash function over a second input
+// struct, for the one unit kind that had its own store. CS-0186 gave every unit
+// one record under one key, and both went with the store — `needs_rebuild_cook`
+// judges a test unit now, on the same determinants as any other.
 
 /// Returns true if the string contains any glob metacharacter recognised by
 /// the reference implementation's `glob = "0.3"` matcher: `*`, `?`, `[`.
@@ -195,18 +81,27 @@ pub fn is_terminal_output(s: &str) -> bool {
     has_glob_meta(s) || is_dir_output(s)
 }
 
-/// A unit's declared inputs, with any non-literal entry resolved against the
-/// tree, narrowed by an optional `consumes` allowlist (§17.4 rule 1, CS-0186).
+/// A unit's declared inputs, with every pattern entry expanded against the
+/// tree and the expansion narrowed by an optional `consumes` allowlist
+/// (§17.1.1.2, CS-0186).
 ///
 /// **One function, every unit.** Nothing here asks what kind of step produced
-/// the unit. A `cook` unit's inputs are literal paths — `ingredients` resolve
-/// at register phase — so for one of those this returns the declared list
-/// unchanged and costs a metacharacter scan per entry. A unit that declares an
-/// input its producer had not yet written, which is how a `test` unit declares
-/// a consumed output, gets that entry resolved here instead.
+/// the unit. A `cook` unit whose inputs are all paths gets its declared list
+/// back unchanged; a unit that declared an input its producer had not yet
+/// written — which is how any unit declares a consumed output — gets that entry
+/// expanded here instead.
+///
+/// **Nothing here re-reads a string to decide what it is.** Whether an entry is
+/// a path or a pattern was settled where the entry entered the declaration
+/// (`cook.add_unit`), by the phase that knew where it came from. Deciding it
+/// here, by scanning for `*`, `?` and `[`, is what §17.1.1.2 forbids and why:
+/// those are ordinary filename characters, so a real `pages/[id].tsx` would be
+/// expanded, match nothing, and vanish from the key — on this side and on the
+/// recording side alike, so the two agree and the unit hits over a file that
+/// changed.
 ///
 /// Called when the unit is READY, so a declared `dist/**` names the files its
-/// producer has by then written (§18). Terminal entries are normalised exactly
+/// producer has by then written (§18). Pattern entries are normalised exactly
 /// as the producing unit normalises them when capturing the same declaration
 /// (CS-0085): one declaration MUST NOT resolve to two different file sets
 /// depending on which side is looking at it, and a bare trailing `**` silently
@@ -216,35 +111,69 @@ pub fn is_terminal_output(s: &str) -> bool {
 /// the recorded and current lists element-wise, so sorting the result would
 /// read as an input-set change on every unit in the project.
 pub fn resolve_declared_inputs(
-    input_paths: &[String],
+    inputs: &[DeclaredInput],
     consumes: &[String],
     working_dir: &Path,
 ) -> Vec<String> {
-    let mut out: Vec<String> = Vec::with_capacity(input_paths.len());
-    let push = |p: String, out: &mut Vec<String>| {
-        if !out.contains(&p) {
-            out.push(p);
-        }
-    };
-    for entry in input_paths {
-        if is_terminal_output(entry) {
-            let pattern = normalize_glob_pattern(entry);
+    // Pass 1: expand, keeping the pattern-derived paths apart from the ones
+    // the unit named outright. Only the former are `consumes`'s business
+    // (§17.1.1.2 rule 1): a filter able to delete a declared path would drop a
+    // determinant the declaration states in so many words.
+    let mut resolved: Vec<(String, bool)> = Vec::with_capacity(inputs.len());
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut from_pattern: BTreeSet<String> = BTreeSet::new();
+    for entry in inputs {
+        if entry.is_pattern() {
+            let pattern = normalize_glob_pattern(&entry.path);
             for rel in resolve_glob(working_dir, &pattern) {
-                push(rel, &mut out);
+                from_pattern.insert(rel.clone());
+                if seen.insert(rel.clone()) {
+                    resolved.push((rel, true));
+                }
             }
-        } else {
-            push(entry.clone(), &mut out);
+        } else if seen.insert(entry.path.clone()) {
+            resolved.push((entry.path.clone(), false));
         }
+    }
+    if consumes.is_empty() {
+        return resolved.into_iter().map(|(p, _)| p).collect();
+    }
+    // A path reached BOTH ways is pattern-derived for narrowing purposes: an
+    // artifact excluded from one pattern's expansion must not re-enter through
+    // another pattern that also covers it. It is only safe from the filter when
+    // the unit named it as a path.
+    let candidates: Vec<String> = resolved
+        .iter()
+        .filter(|(p, by_pattern)| *by_pattern || from_pattern.contains(p))
+        .map(|(p, _)| p.clone())
+        .collect();
+    if candidates.is_empty() {
+        return resolved.into_iter().map(|(p, _)| p).collect();
     }
     // CS-0175: narrowing errs toward the under-keyed direction, so a filter
     // matching none of the candidates is inert rather than emptying the set.
     // `ConsumesFilter::select` holds that rule; a pattern that fails to compile
     // (rejected at register phase, so unreachable here) keeps the full set for
     // the same reason.
-    match ConsumesFilter::compile(consumes) {
-        Ok(filter) => filter.select(&out, |p| p.clone()).into_iter().cloned().collect(),
-        Err(_) => out,
-    }
+    let admitted: BTreeSet<String> = match ConsumesFilter::compile(consumes) {
+        Ok(filter) => filter
+            .select(&candidates, |p| p.clone())
+            .into_iter()
+            .cloned()
+            .collect(),
+        Err(_) => candidates.iter().cloned().collect(),
+    };
+    resolved
+        .into_iter()
+        .filter(|(p, by_pattern)| {
+            if *by_pattern || from_pattern.contains(p) {
+                admitted.contains(p)
+            } else {
+                true
+            }
+        })
+        .map(|(p, _)| p)
+        .collect()
 }
 
 pub fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {

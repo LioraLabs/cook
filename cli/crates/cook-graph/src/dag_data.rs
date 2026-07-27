@@ -308,8 +308,8 @@ fn build_nodes(
                         producer_by_output
                             .insert(out.clone(), format!("unit:{}:{}", recipe_name, unit_idx));
                     }
-                    for inp in &meta.input_paths {
-                        declared_input_paths.insert(inp.clone());
+                    for inp in &meta.inputs {
+                        declared_input_paths.insert(inp.path.clone());
                     }
                 }
             }
@@ -426,8 +426,12 @@ fn build_nodes(
                     cache.steps.get(&meta.cache_key).cloned()
                 });
 
-                // Issue 3: Deduplicate input_paths before iterating to avoid duplicate edges.
-                let unique_paths: BTreeSet<&String> = meta.input_paths.iter().collect();
+                // Issue 3: Deduplicate the declared entries before iterating
+                // to avoid duplicate edges. A pattern entry is drawn as what it
+                // is — the declaration — rather than as its expansion: the
+                // graph reports what the unit declared (§17.1.1.2).
+                let unique_paths: BTreeSet<&String> =
+                    meta.inputs.iter().map(|e| &e.path).collect();
 
                 for path in unique_paths {
                     // An input that another unit produces is an intermediate
@@ -495,7 +499,7 @@ fn build_nodes(
             // remains rendering-correct on stale or absent state.
             if let Some(meta) = &unit.cache_meta {
                 if let Some(di) = &meta.discovered_inputs {
-                    let source = meta.input_paths.first().map(String::as_str);
+                    let source = meta.inputs.first().map(|e| e.path.as_str());
                     let discovered = read_discovered_paths(di, source, &ru.working_dir);
                     for path in discovered {
                         // Same as the declared-input case above: a discovered

@@ -391,8 +391,9 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
         project_id: "test".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
-        input_paths: vec![],
+        inputs: vec![],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: output_paths.into_iter().map(String::from).collect(),
         command_hash: 0,
         env_contribution: 0,
@@ -949,8 +950,6 @@ fn cook_failure_produces_blocked_test_result() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 1,
                 timeout: 30,
@@ -958,7 +957,6 @@ fn cook_failure_produces_blocked_test_result() {
                 test_name: "my_test".to_string(),
                 iteration_item: None,
                 lua_code: None,
-                input_paths: vec![],
             },
             "blocked_by_build",
             wd.clone(),
@@ -1008,8 +1006,6 @@ fn test_line_number_propagates_from_payload_to_events() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,
@@ -1017,7 +1013,6 @@ fn test_line_number_propagates_from_payload_to_events() {
                 test_name: "my_test".to_string(),
                 iteration_item: None,
                 lua_code: None,
-                input_paths: vec![],
             },
             "my_recipe",
             wd,
@@ -1068,8 +1063,6 @@ fn test_iteration_item_propagates() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,
@@ -1077,7 +1070,6 @@ fn test_iteration_item_propagates() {
                 test_name: "my_test".to_string(),
                 iteration_item: Some("a.cpp".into()),
                 lua_code: None,
-                input_paths: vec![],
             },
             "my_recipe",
             wd,
@@ -1857,8 +1849,9 @@ fn meta_for(cache_key: &str, inputs: &[&str], outputs: &[&str]) -> cook_contract
         project_id: "p".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: cache_key.into(),
-        input_paths: inputs.iter().map(|s| s.to_string()).collect(),
+        inputs: inputs.iter().map(|s| (*s).into()).collect(),
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: outputs.iter().map(|s| s.to_string()).collect(),
         command_hash: 0xbeef,
         env_contribution: 0,
@@ -1890,7 +1883,6 @@ fn an_observing_unit_publishes_nothing_to_the_shared_store() {
     publish_completion(
         &cm,
         &meta,
-        Some(&["in.txt".to_string()]),
         wd,
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,
@@ -1932,7 +1924,6 @@ fn a_producing_unit_still_publishes() {
     publish_completion(
         &cm,
         &meta,
-        None,
         wd,
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,

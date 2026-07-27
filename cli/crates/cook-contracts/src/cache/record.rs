@@ -87,6 +87,33 @@ pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
     }
 }
 
+/// Whether a unit has anything whose movement could invalidate a record of it
+/// (§17.4 rule 1, CS-0138 generalised by CS-0186).
+///
+/// **Asked twice, over the same three terms.** Once at registration, over the
+/// DECLARED input list, where it decides whether the unit gets a key at all;
+/// and again when the unit is ready, over the RESOLVED one, where it decides
+/// whether a key may be served. The two can disagree, and only in one
+/// direction: a declaration is non-empty and resolves to nothing, which is what
+/// a pattern covering a directory its producer left empty does. Asking only at
+/// registration admits such a unit and then keys it on nothing at all — its
+/// first verdict replayed for the life of the store, which is the false green
+/// the rule exists to refuse, reached through a declaration rather than through
+/// the absence of one.
+///
+/// Stated over all three terms rather than over inputs alone because a unit
+/// fanned out over `ingredients <probe>` may declare no file by design: its
+/// member is an observable input (§17.1 observable 5) and is what it is keyed
+/// on. A `seal` is deliberately NOT a term — it narrows reuse of a key that
+/// exists and never mints one (CS-0159).
+pub fn has_something_to_key_on(
+    output_count: usize,
+    input_count: usize,
+    member_keyed: bool,
+) -> bool {
+    output_count > 0 || input_count > 0 || member_keyed
+}
+
 /// The three values whose movement invalidates a record, independent of any
 /// file on disk.
 ///
@@ -158,10 +185,21 @@ pub fn determinant_drift(
 
 /// Bumped whenever the recorded shape or its meaning changes.
 ///
-/// Continues `cook_fingerprint::record::CACHE_VERSION` rather than starting a
-/// fresh counter, so the existing invalidate-on-bump path keeps working and a
-/// new number cannot collide with an index already on disk. Superseded records
-/// are DELETED, not migrated (CS-0166); nothing reads an older shape.
+/// It continues the count `cook_fingerprint::record` used to own rather than
+/// starting a fresh one, so the existing invalidate-on-bump path keeps working
+/// and a new number cannot collide with an index already on disk. That name is
+/// now a re-export of this constant, so 8 follows CS-0166's 7 and there is one
+/// counter rather than a second one starting over. Superseded records are
+/// DELETED, not migrated (CS-0166); nothing reads an older shape.
+///
+/// CS-0186 does NOT bump it, and the reason is worth keeping next to the
+/// number. Folding observing units into this index changes which units write
+/// records and under what identity, and it changes producing units' recorded
+/// input sets (patterns expand, duplicates drop, `consumes` can narrow) — but
+/// it changes no recorded SHAPE, which is what a version exists to reject. An
+/// old binary and a new one sharing a `.cook` each judge the other's record
+/// stale and rebuild: correct, and slower, which is what a cache is allowed to
+/// be. The bump comes with whatever answers §17.1.1.1's payload question.
 ///
 /// There were two of these. This counter versioned the step index while the
 /// removed test-result store carried its own, so two stores holding the same

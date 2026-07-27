@@ -140,8 +140,6 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
 #[test]
 fn work_payload_test_construction() {
     let p = WorkPayload::Test {
-        seal_keys: Default::default(),
-        consumes: Vec::new(),
         cmd: "./run_tests".into(),
         line: 10,
         timeout: 30,
@@ -149,7 +147,6 @@ fn work_payload_test_construction() {
         test_name: "test_foo".into(),
         iteration_item: None,
         lua_code: None,
-        input_paths: vec![],
     };
     assert!(matches!(
         p,
@@ -168,8 +165,9 @@ fn cache_meta_construction() {
         project_id: String::new(),
         cookfile_path: String::new(),
         cache_key: "abc123".into(),
-        input_paths: vec!["src/main.rs".into()],
+        inputs: vec!["src/main.rs".into()],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec!["target/debug/app".into()],
         command_hash: 42,
         env_contribution: 0,
@@ -181,7 +179,7 @@ fn cache_meta_construction() {
     };
     assert_eq!(m.recipe_name, "build");
     assert_eq!(m.command_hash, 42);
-    assert_eq!(m.input_paths.len(), 1);
+    assert_eq!(m.inputs.len(), 1);
     assert_eq!(m.output_paths.len(), 1);
 }
 
@@ -192,8 +190,9 @@ fn cache_meta_no_output() {
         project_id: String::new(),
         cookfile_path: String::new(),
         cache_key: "def456".into(),
-        input_paths: vec![],
+        inputs: vec![],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec![],
         command_hash: 0,
         env_contribution: 0,
@@ -213,8 +212,9 @@ fn cache_meta_construction_with_discovered_inputs() {
         project_id: "p".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
-        input_paths: vec!["src/a.c".into()],
+        inputs: vec!["src/a.c".into()],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec!["build/a.o".into()],
         command_hash: 0xdead,
         env_contribution: 0,
@@ -239,8 +239,9 @@ fn cache_meta_default_discovered_inputs_is_none() {
         project_id: "p".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
-        input_paths: vec![],
+        inputs: vec![],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec![],
         command_hash: 0,
         env_contribution: 0,
@@ -263,8 +264,9 @@ fn cache_meta_carries_seal_keys() {
         project_id: String::new(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
-        input_paths: vec![],
+        inputs: vec![],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec!["x.o".into()],
         command_hash: 1,
         env_contribution: 0,
@@ -284,8 +286,9 @@ fn cache_meta_carries_record_flag() {
         project_id: String::new(),
         cookfile_path: String::new(),
         cache_key: "k".into(),
-        input_paths: vec![],
+        inputs: vec![],
         consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec!["out".into()],
         command_hash: 0,
         env_contribution: 0,
@@ -505,8 +508,9 @@ fn captured_unit_with_cache() {
             project_id: String::new(),
             cookfile_path: String::new(),
             cache_key: "key123".into(),
-            input_paths: vec!["main.c".into()],
+            inputs: vec!["main.c".into()],
             consumes: Vec::new(),
+            member_keyed: false,
             output_paths: vec!["app".into()],
             command_hash: 9999,
             env_contribution: 0,

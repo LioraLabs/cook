@@ -77,7 +77,7 @@ fn test_add_unit_basic() {
 
     let meta = unit.cache_meta.as_ref().expect("expected cache_meta");
     assert_eq!(meta.recipe_name, "my_recipe");
-    assert_eq!(meta.input_paths, vec!["main.c"]);
+    assert_eq!(paths(&meta.inputs), vec!["main.c"]);
     assert_eq!(meta.output_paths, vec!["main".to_string()]);
     assert_eq!(meta.command_hash, hash_str("gcc -o main main.c"));
 
@@ -510,9 +510,9 @@ fn add_unit_appends_resolved_dep_paths_to_input_paths() {
         .as_ref()
         .expect("cache_meta present");
     assert_eq!(
-        meta.input_paths,
+        paths(&meta.inputs),
         vec!["build/greet.o".to_string(), "build/util.o".to_string()],
-        "cross-recipe dep paths must land in cache_meta.input_paths"
+        "cross-recipe dep paths must land in cache_meta.inputs"
     );
 
     // WorkPayload inputs MUST remain empty — those drive iteration vars.
@@ -1476,9 +1476,29 @@ fn a_test_unit_in_a_step_group_is_grouped_like_any_other_unit() {
 /// the key composition: driving them through the Lua surface would let a
 /// declaration detail decide whether the assertion held.
 fn key(outputs: &[&str], inputs: &[&str], command_hash: u64, env: u64) -> String {
+    keyed(outputs, inputs, command_hash, env, &[])
+}
+
+/// The same, with an effective seal key set — the determinant §17.1.1.1
+/// exclusion 3 requires the identity to separate units by.
+fn keyed(
+    outputs: &[&str],
+    inputs: &[&str],
+    command_hash: u64,
+    env: u64,
+    seal: &[&str],
+) -> String {
     let outputs: Vec<String> = outputs.iter().map(|s| s.to_string()).collect();
-    let inputs: Vec<String> = inputs.iter().map(|s| s.to_string()).collect();
-    build_local_cache_key("Cookfile", "r", &outputs, &inputs, command_hash, env)
+    let inputs: Vec<cook_contracts::cache::DeclaredInput> =
+        inputs.iter().map(|s| (*s).into()).collect();
+    let seal: std::collections::BTreeSet<String> =
+        seal.iter().map(|s| s.to_string()).collect();
+    build_local_cache_key("Cookfile", "r", &outputs, &inputs, command_hash, env, &seal)
+}
+
+/// The declared paths of a unit, kinds dropped.
+fn paths(inputs: &[cook_contracts::cache::DeclaredInput]) -> Vec<String> {
+    inputs.iter().map(|e| e.path.clone()).collect()
 }
 
 #[test]
@@ -1582,9 +1602,12 @@ fn the_identity_is_stable_across_everything_but_the_declaration() {
 #[test]
 fn neither_the_recipe_nor_the_cookfile_reaches_the_identity() {
     let outputs: Vec<String> = vec![];
-    let inputs = vec!["a.c".to_string()];
-    let here = build_local_cache_key("Cookfile", "check", &outputs, &inputs, 0xbeef, 0);
-    let moved = build_local_cache_key("sub/Cookfile", "verify", &outputs, &inputs, 0xbeef, 0);
+    let inputs: Vec<cook_contracts::cache::DeclaredInput> = vec!["a.c".into()];
+    let seal = std::collections::BTreeSet::new();
+    let here =
+        build_local_cache_key("Cookfile", "check", &outputs, &inputs, 0xbeef, 0, &seal);
+    let moved =
+        build_local_cache_key("sub/Cookfile", "verify", &outputs, &inputs, 0xbeef, 0, &seal);
     assert_eq!(here, moved);
 }
 

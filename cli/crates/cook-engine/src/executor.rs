@@ -351,10 +351,10 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
 ///
 /// A test unit is cached like every other unit (CS-0186): its verdict comes
 /// from the step index, checked through the same `ResultOnly` arm and written
-/// by the same publish path. Its input set is resolved at ready time via
-/// [`crate::run::consumed_inputs_at_ready_time`] — the point where its consumed
-/// dependency outputs are materialised on disk (§17.4) — and a source-less test
-/// yields `None` there, has no key, and always runs.
+/// by the same publish path. Its inputs are DECLARED, like every other unit's,
+/// and any pattern among them is expanded when the unit is ready — the point
+/// where a consumed dependency's outputs are materialised on disk (§17.1.1.2).
+/// A unit left with nothing to key on has no key and always runs (§17.4).
 ///
 /// `probe_units_by_node` — maps dag node id → `ProbeUnit` metadata (declared
 /// inputs for fingerprinting). Only nodes whose `WorkPayload` is
@@ -694,23 +694,33 @@ pub fn execute_dag(
         // (§17.4 rule 1). The same call serves a producing unit; nothing here
         // asks what kind of step this came from.
         let current_inputs = cook_fingerprint::resolve_declared_inputs(
-            &meta.input_paths,
+            &meta.inputs,
             &meta.consumes,
             &work_node.working_dir,
         );
-        // No empty-set guard here. Whether a unit has anything to key on is
-        // settled once, at registration (§17.4 rule 1): a unit with no output,
-        // no declared input and no materialised member never gets a CacheMeta,
-        // so it never reaches this arm. Re-deciding it here on the RESOLVED set
-        // would refuse the units that rule deliberately admits — a fan-out unit
-        // over `ingredients <probe>` declares no file at all and is keyed on its
-        // member, which reaches the key through `command_hash`.
+        // §17.4 rule 1, asked here for the second time — and this is the asking
+        // that binds. Registration asked it of the DECLARED list; this asks it
+        // of the RESOLVED one, and the two disagree in exactly one direction:
+        // a declaration that is non-empty and resolves to nothing. A
+        // `cook "dist/**"` whose command creates only a subdirectory leaves the
+        // test after it holding one declared input, no resolved input, and
+        // therefore a key over nothing at all — its first verdict replayed for
+        // the life of the store.
         //
-        // A declared pattern that resolves to nothing is not a hazard either: it
-        // means the producer wrote nothing, the unit read nothing, and the empty
-        // set is recorded as such. When the producer later writes something the
-        // resolved set differs from the recorded one and `check_inputs` reports
-        // the change, so this self-corrects rather than hitting forever.
+        // Not a rule about resolution failing: an empty expansion is a fact
+        // about the tree, and the unit read nothing. What is refused is SERVING
+        // a hit for a unit with nothing whose movement could invalidate it.
+        //
+        // The member arm is why the predicate takes all three terms. A fan-out
+        // unit over `ingredients <probe>` may declare no file by design and is
+        // keyed on its member, which reaches the key through `command_hash`.
+        if !cook_contracts::cache::record::has_something_to_key_on(
+            meta.output_paths.len(),
+            current_inputs.len(),
+            meta.member_keyed,
+        ) {
+            return CacheDecision::Miss(None);
+        }
         let input_refs: Vec<&str> = current_inputs.iter().map(String::as_str).collect();
         let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
         // The env-moved probe wants the identity without its env suffix, the
@@ -836,7 +846,7 @@ pub fn execute_dag(
         // called anyway because "how a unit's inputs are computed" must have
         // exactly one answer (CS-0186).
         let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
-            &meta.input_paths,
+            &meta.inputs,
             &meta.consumes,
             &work_node.working_dir,
         );
@@ -999,8 +1009,11 @@ pub fn execute_dag(
                     file_record(p)
                 }
             };
-            let inputs: Option<Vec<_>> = meta
-                .input_paths
+            // The RESOLVED declaration (§17.1.1.2) — the same list this
+            // unit was judged against a few lines above, and the one a fresh
+            // execution would have recorded. A pattern entry names no file, so
+            // recording the declared strings here would fail the whole record.
+            let inputs: Option<Vec<_>> = resolved_inputs
                 .iter()
                 .map(|p| file_record(p))
                 .chain(outcome.discovered_paths.iter().map(|p| file_record(p)))
@@ -1048,7 +1061,7 @@ pub fn execute_dag(
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
         failures: &mut Vec<(usize, String, String)>,
-            cached_test_results: &mut Vec<crate::TestResult>,
+        cached_test_results: &mut Vec<crate::TestResult>,
         rerun_patterns: &[String],
         blocked_results: &mut Vec<crate::TestResult>,
         // G4 (CS-0074): probe cache lookup state.
@@ -2321,9 +2334,6 @@ pub fn execute_dag(
                                 publish_completion(
                                     cm,
                                     meta,
-                                    // An interactive unit is never a test and
-                                    // never observing; its inputs are declared.
-                                    None,
                                     &working_dir,
                                     &pool.probe_value_store(),
                                     &cache_ctx,
@@ -2519,23 +2529,9 @@ pub fn execute_dag(
             if let Some(meta) = &dag.node(result.id).payload().cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
                     let working_dir = dag.node(result.id).payload().working_dir.clone();
-                    // CS-0186: a unit records the input set it was JUDGED
-                    // against. Resolved again here rather than carried from the
-                    // check, because the check may not have run at all — a
-                    // `--rerun` skips it — and the two must agree or the next
-                    // run reads an input-set change that is not there.
-                    //
-                    // One call for every unit. For a producing unit whose
-                    // inputs are all literal paths this returns them unchanged.
-                    let observed_inputs = cook_fingerprint::resolve_declared_inputs(
-                        &meta.input_paths,
-                        &meta.consumes,
-                        &working_dir,
-                    );
                     publish_completion(
                         cm,
                         meta,
-                        Some(&observed_inputs),
                         &working_dir,
                         &pool.probe_value_store(),
                         &cache_ctx,
@@ -2882,11 +2878,6 @@ fn publish_completion(
     cm: &ThreadSafeCacheManager,
     meta: &cook_contracts::CacheMeta,
     // CS-0186: the input set actually judged, when it is not the declared one.
-    // An observing unit's inputs are resolved from the graph at ready time
-    // (§17.4 rule 1), and the record must hold what the check compared against
-    // or the two disagree on the next run: the check would see a set the
-    // record does not have and report an input-set change forever.
-    observed_inputs: Option<&[String]>,
     working_dir: &std::path::Path,
     probe_store: &cook_luaotp::ProbeValueStore,
     cache_ctx: &CacheContext,
@@ -2901,11 +2892,20 @@ fn publish_completion(
     // describes exactly what this invocation produced — no post-execute sweep is
     // needed here. Cache-hit reconciliation lives on the `RebuildResult::Skip`
     // path, which never reaches this publish function.
+    // §17.1.1.2: the record holds the input set the unit was JUDGED against, so
+    // this side resolves the declaration by the same call the check side used.
+    // Resolved here rather than carried from the check because the check may
+    // not have run at all — `--rerun` skips it — and because two resolutions of
+    // one declaration that could disagree would report an input-set change on
+    // every subsequent run.
+    let judged_inputs =
+        cook_fingerprint::resolve_declared_inputs(&meta.inputs, &meta.consumes, working_dir);
     let mut meta_for_record = meta.clone();
     meta_for_record.output_paths = resolved_output_paths.clone();
-    if let Some(inputs) = observed_inputs {
-        meta_for_record.input_paths = inputs.to_vec();
-    }
+    meta_for_record.inputs = judged_inputs
+        .iter()
+        .map(cook_contracts::cache::DeclaredInput::path)
+        .collect();
     // COOK-161: fold the effective seal set's probe values into the persisted
     // key (the sealed probes have run by now — the unit depends on them).
     let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
@@ -2933,7 +2933,7 @@ fn publish_completion(
     let mut step_entry = step_entry;
     if let Some(di) = &meta.discovered_inputs {
         let abs_depfile = working_dir.join(&di.from);
-        let source_for_skip = meta.input_paths.first().map(String::as_str).unwrap_or("");
+        let source_for_skip = judged_inputs.first().map(String::as_str).unwrap_or("");
         match cook_cache::parse_make_depfile(&abs_depfile, source_for_skip, working_dir) {
             Ok(discovered_paths) => {
                 match cook_cache::collect_records_public(&discovered_paths, working_dir) {
@@ -3129,7 +3129,7 @@ fn publish_completion(
         // recorded in step_entry.outputs — it is fetched out-of-band on the cold path.
         if publish_to_backend {
             let declared_refs: Vec<&str> =
-                meta.input_paths.iter().map(|s| s.as_str()).collect();
+                judged_inputs.iter().map(|s| s.as_str()).collect();
             if let Some(declared_hashes) =
                 cook_fingerprint::hash_input_paths(&declared_refs, working_dir)
             {
@@ -3143,7 +3143,7 @@ fn publish_completion(
                 });
                 // Parse the discovered relative paths the SAME way the warm path does.
                 let source_for_skip =
-                    meta.input_paths.first().map(String::as_str).unwrap_or("");
+                    judged_inputs.first().map(String::as_str).unwrap_or("");
                 let discovered_paths: Vec<String> = cook_cache::parse_make_depfile(
                     &working_dir.join(&di.from),
                     source_for_skip,

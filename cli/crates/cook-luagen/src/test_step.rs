@@ -247,6 +247,18 @@ pub(crate) fn generate_test_step(
     Ok(())
 }
 
+/// The per-member iteration source, emitted inside the member loop (CS-0186).
+///
+/// A member unit reads the artifact its own member's producer wrote, so that is
+/// what it declares. Both the alternatives are defects the branch fixed
+/// elsewhere and would have reintroduced here: declaring the whole fan-out's
+/// outputs costs per-member reuse (§17.1 observable 5), and declaring nothing —
+/// which is what this path did — leaves a unit the member rule has just made
+/// cacheable keyed on nothing its producer wrote, so it replays a pass over an
+/// artifact that has since gone bad.
+const MEMBER_SOURCE_LINE: &str =
+    "        local _test_src = cook.prior_outputs(cook.member_to_string(item))\n";
+
 /// COOK-63 §8.3: lower a `test` step inside a `for_each` recipe to one test
 /// unit per data member, with the member bound as `item`. The recipe body has
 /// already emitted `local _items = <source>`.
@@ -289,8 +301,9 @@ pub(crate) fn generate_for_each_test_step(
                 out.push_str(&file_refs.hoist_lines("    "));
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(MEMBER_SOURCE_LINE);
             out.push_str(&format!(
-                "        cook.add_unit({{step_kind = \"test\", command = {}, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
+                "        cook.add_unit({{step_kind = \"test\", command = {}, inputs = _test_src, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr, seal_field, line, consulted.to_lua_table()
             ));
             out.push_str("    end\n");
@@ -302,8 +315,9 @@ pub(crate) fn generate_for_each_test_step(
                 out.push_str(&file_refs.hoist_lines("    "));
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(MEMBER_SOURCE_LINE);
             out.push_str(&format!(
-                "        cook.add_unit({{step_kind = \"test\", lua_code = {}, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
+                "        cook.add_unit({{step_kind = \"test\", lua_code = {}, inputs = _test_src, {}line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
                 lua_chunk_literal(code), seal_field, line
             ));
             out.push_str("    end\n");

@@ -1,0 +1,31 @@
+# 1. Cold: both members pass.
+[[run]]
+args = ["test"]
+[run.assert]
+contains = { "build/a.txt" = "GOOD" }
+
+# 2. Warm: both replay.
+[[run]]
+args = ["test"]
+[run.assert]
+output_contains = ["2 cached"]
+
+# 3. Member a's producer starts writing a FAILING artifact. a's test must run
+#    and fail. Before the fix both replayed "ok (cached)", the run exited 0,
+#    and build/a.txt held BAD — a false green in the exact feature the member
+#    rule was added to enable.
+[[run]]
+args = ["test"]
+write = { "cases.json" = "[{\"id\":\"a\",\"body\":\"BAD\"},{\"id\":\"b\",\"body\":\"GOOD\"}]\n" }
+exit = 1
+[run.assert]
+contains = { "build/a.txt" = "BAD" }
+output_contains = ["1 failed"]
+
+# 4. Member b was untouched throughout and keeps its cached pass: the unit
+#    declares its own member's producer output, not the whole fan-out's.
+[[run]]
+args = ["test"]
+exit = 1
+[run.assert]
+output_contains = ["1 cached"]

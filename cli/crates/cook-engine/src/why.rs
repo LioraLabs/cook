@@ -361,7 +361,7 @@ fn resolve_unit_determinants(
     // what the cache would compute at this moment too. A literal input a unit
     // in this closure produces is answered by `predictions` below, unchanged.
     let declared =
-        cook_fingerprint::resolve_declared_inputs(&meta.input_paths, &meta.consumes, &node.working_dir);
+        cook_fingerprint::resolve_declared_inputs(&meta.inputs, &meta.consumes, &node.working_dir);
     for p in &declared {
         let abs = node.working_dir.join(p);
         // CS-0173: an input that some unit in this closure produces is answered
@@ -526,8 +526,13 @@ fn first_missing_input(
     working_dir: &Path,
     predictions: &Predictions,
 ) -> Option<String> {
-    meta.input_paths
+    // The declared entries, patterns included: a pattern that expands to
+    // nothing IS a missing input for this report's purposes, and it is reported
+    // as the author wrote it rather than as an empty expansion nobody can act
+    // on.
+    meta.inputs
         .iter()
+        .map(|e| &e.path)
         .find(|p| {
             let abs = working_dir.join(p);
             // CS-0173: an input a producer in this closure will restore is not
@@ -687,7 +692,14 @@ fn local_step_hit(
     let Some(entry) = cache.steps.get(&meta.cache_key) else {
         return (false, None);
     };
-    let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+    // Resolved by the same call `check_node_cache` makes, so the query judges
+    // the unit against the set the build would (§17.1.1.2).
+    let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
+        &meta.inputs,
+        &meta.consumes,
+        &node.working_dir,
+    );
+    let input_refs: Vec<&str> = resolved_inputs.iter().map(|s| s.as_str()).collect();
     // I2: for glob outputs the raw pattern strings don't exist on disk; passing
     // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror
     // check_node_cache (executor.rs:654-664) by substituting the StepEntry's

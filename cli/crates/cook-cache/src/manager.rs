@@ -249,8 +249,13 @@ impl ThreadSafeCacheManager {
         working_dir: &Path,
         seal_contribution: u64,
     ) -> Result<StepEntry, RecordError> {
-        let new_inputs = collect_records(&meta.input_paths, working_dir)
-            .map_err(|p| RecordError::MissingFile(p))?;
+        // The caller hands us a `CacheMeta` whose inputs are the RESOLVED set
+        // the unit was judged against (§17.1.1.2), so every entry here names a
+        // file to hash. Recording a pattern would record a path that does not
+        // exist and fail the whole record on it.
+        let judged_paths: Vec<String> = meta.inputs.iter().map(|i| i.path.clone()).collect();
+        let new_inputs =
+            collect_records(&judged_paths, working_dir).map_err(|p| RecordError::MissingFile(p))?;
         let new_outputs = collect_records(&meta.output_paths, working_dir)
             .map_err(|p| RecordError::UnreadableFile(p))?;
 

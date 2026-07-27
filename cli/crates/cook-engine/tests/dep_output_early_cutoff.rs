@@ -153,3 +153,87 @@ fn byte_identical_dep_output_keeps_consuming_test_cached() {
          (early cutoff), matching the sibling cook step. output:\n{test3_text}"
     );
 }
+
+/// Two levels, which is where "only the immediate predecessor is declared"
+/// stops being a phrasing choice and becomes the mechanism (§17.4's note,
+/// CS-0186).
+///
+/// `lib` → `app` → `tcheck`. Editing `src.txt` moves lib's output, so `app`
+/// re-runs — and writes byte-identical bytes. The test declares `app`'s output
+/// and nothing behind it, so it stays cached. A key folding the transitive
+/// closure would re-run it here, which is exactly the over-invalidation the
+/// early cutoff exists to remove; a key folding nothing would leave it cached
+/// in the next assertion too, which is why that one follows.
+///
+/// This is the successor to the unit-level `test_fp_two_level_chain_early_cutoff`,
+/// which tested the ready-time fingerprint function CS-0186 deleted. Stated
+/// end-to-end because there is no longer a fingerprint function to call: the
+/// property is now a consequence of what the unit declares.
+#[test]
+fn a_transitive_deps_output_change_leaves_the_test_cached() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache_tmp = tempfile::tempdir().expect("cache tempdir");
+    let wd = tmp.path();
+    write_isolated_cache_config(wd, cache_tmp.path());
+
+    let write_chain = |app_body: &str| {
+        fs::write(
+            wd.join("Cookfile"),
+            format!(
+                r#"recipe lib
+    ingredients "src.txt"
+    cook "build/lib.txt" {{
+        mkdir -p build
+        cp src.txt build/lib.txt
+    }}
+
+recipe app: lib
+    cook "build/app.txt" {{
+        : $<lib>
+        {app_body}
+    }}
+
+recipe tcheck: app
+    test {{ grep -q settled $<app> }}
+"#
+            ),
+        )
+        .unwrap();
+    };
+    write_chain("printf 'settled\\n' > $<out>");
+    fs::write(wd.join("src.txt"), "one\n").unwrap();
+
+    // Built through `app` rather than `tcheck` throughout: `tcheck` owns the
+    // test unit, so running it would re-run and re-record the very unit whose
+    // replay is under test.
+    assert!(run(wd, &["app"]).status.success());
+    let cold = run(wd, &["test"]);
+    assert!(cold.status.success(), "cold test:\n{}", combined(&cold));
+
+    let warm = combined(&run(wd, &["test"]));
+    assert!(warm.contains("1 passed (1 cached)"), "warm test:\n{warm}");
+
+    // The transitive dependency's output changes; the immediate one's does not.
+    fs::write(wd.join("src.txt"), "two\n").unwrap();
+    let rebuilt = combined(&run(wd, &["app"]));
+    assert!(
+        fs::read_to_string(wd.join("build/lib.txt")).unwrap() == "two\n",
+        "lib's output must actually have moved, or this proves nothing:\n{rebuilt}"
+    );
+    let after = combined(&run(wd, &["test"]));
+    assert!(
+        after.contains("1 passed (1 cached)"),
+        "a transitive dep's output change must not re-key a test whose \
+         immediate predecessor's output is byte-identical:\n{after}"
+    );
+
+    // And the immediate predecessor's output change DOES re-key it — without
+    // this the assertion above would hold for a test keyed on nothing at all.
+    write_chain("printf 'settled differently\\n' > $<out>");
+    assert!(run(wd, &["app"]).status.success());
+    let moved = combined(&run(wd, &["test"]));
+    assert!(
+        !moved.contains("(1 cached)"),
+        "the immediate predecessor's output change must re-run the test:\n{moved}"
+    );
+}

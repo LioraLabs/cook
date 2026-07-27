@@ -1,0 +1,16 @@
+# CS-0186 §22.6. A data-member fan-out `test` emits one unit per member, and
+# each reads the artifact ITS OWN member's producer wrote. Declaring nothing —
+# which is what the lowering did once the member rule made these units cacheable
+# — leaves a unit keyed on its member alone, so a producer that starts writing a
+# failing artifact is replayed as a pass. Declaring the whole fan-out's outputs
+# instead would cost the fan-out its per-member reuse (§17.1 observable 5), so
+# this fixture asserts both halves.
+
+probe cases
+    ingredients "cases.json"
+    json { cat cases.json }
+
+recipe fan
+    ingredients cases
+    cook "build/$<in.id>.txt" { mkdir -p build && printf '%s\n' "$<in.body>" > $<out> }
+    test { grep -q GOOD build/$<in.id>.txt }

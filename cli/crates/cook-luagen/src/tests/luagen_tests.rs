@@ -3987,3 +3987,39 @@ fn test_bad_file_ref_path_in_test_body_is_checked_codegen_error() {
         "error must not leak the internal sentinel marker, got: {msg}"
     );
 }
+
+/// CS-0186 §22.6: a data-member fan-out `test` declares the outputs of ITS OWN
+/// member's producer. This emission site declared no inputs at all, which — once
+/// the member rule made these units cacheable — keyed each unit on its member
+/// alone: a producer that began writing a failing artifact was replayed as a
+/// pass, in the exact feature the member rule was added to enable.
+#[test]
+fn a_member_fanout_test_declares_its_own_members_source() {
+    let src = "probe cases\n    ingredients \"cases.json\"\n    json { cat cases.json }\n\
+               \nrecipe fan\n    ingredients cases\n    cook \"build/$<in.id>.txt\" {\n        touch $<out>\n    }\n    test {\n        grep -q ok build/$<in.id>.txt\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        lua.contains("local _test_src = cook.prior_outputs(cook.member_to_string(item))"),
+        "the member's own producer outputs are asked for per member:\n{lua}"
+    );
+    assert!(
+        lua.contains("inputs = _test_src"),
+        "and are what the unit declares:\n{lua}"
+    );
+}
+
+/// The narrowing is per member, not per fan-out: the source is asked for INSIDE
+/// the member loop. Hoisting it out would hand every unit the whole fan-out's
+/// outputs, so editing one member's artifact would re-run every sibling —
+/// §17.1 observable 5's guarantee, lost.
+#[test]
+fn the_member_source_is_asked_for_inside_the_member_loop() {
+    let src = "probe cases\n    ingredients \"cases.json\"\n    json { cat cases.json }\n\
+               \nrecipe fan\n    ingredients cases\n    cook \"build/$<in.id>.txt\" {\n        touch $<out>\n    }\n    test {\n        grep -q ok build/$<in.id>.txt\n    }\n";
+    let lua = generate_lua_for_test(src);
+    let loop_at = lua
+        .rfind("for _, item in ipairs(_items) do")
+        .expect("member loop");
+    let src_at = lua.find("cook.prior_outputs(cook.member_to_string(item))").expect("per-member source");
+    assert!(src_at > loop_at, "the source is read per member:\n{lua}");
+}
