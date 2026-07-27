@@ -45,6 +45,8 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
+  ['cs0187-retired-file-prefix',
+   'CS-0187: the retired `file:` prefix — codegen-phase rejection; the token is syntactically an ordinary placeholder ident'],
   // CS-0022 Phase G: codegen-only rejections — Cookfile parses cleanly,
   // rejection is enforced by cook-luagen::generate_with_names_checked.
   ['017-bare-stem-rejected',

@@ -1,0 +1,5 @@
+recipe html
+    ingredients "tokens.css"
+    cook "out.html" {
+        render --tokens $<file:tokens.css> -o $<out>
+    }

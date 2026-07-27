@@ -3064,7 +3064,9 @@ recipe tts
 
 A conforming implementation MUST therefore reject a placeholder whose `IDENT` begins with `file:` with a diagnostic naming this entry and the `files`-probe replacement, positioned where the removed dispatch was — before the probe discriminator. This is what CS-0172 did for the retired `env.` prefix, for the same reason: a removed surface that fails as something else teaches the wrong lesson twice.
 
-**Conformance.** The CS-0101 corpus fixtures are withdrawn: two negatives (file reference in an output pattern; file reference to a missing file) and the positive file-reference placeholder. Nothing replaces them — there is no surface left to pin. The tree-sitter harness's skip list loses its CS-0101 entry for the same reason.
+**Conformance.** The CS-0101 corpus fixtures are withdrawn: two negatives (file reference in an output pattern; file reference to a missing file), two positives (the cook-body and fan-out placeholder forms), and the tree-sitter grammar corpus case. Nothing replaces the positives — there is no surface left to pin.
+
+One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic rather than the removal: a retired `$<file:tokens.css>` must be refused by name. It is a codegen-phase rejection over a Cookfile that parses cleanly, so the tree-sitter harness carries it on the skip list with the phase that enforces it — trading its two CS-0101 entries for one. The strict-bail shape (`$<file:templates/*.html>`, where `/` leaves no ident production to claim it) is deliberately not pinned as a negative: it parses, it is literal text, and that is §{phl.token} working as specified.
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
