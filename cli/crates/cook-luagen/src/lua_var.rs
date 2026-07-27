@@ -1,11 +1,17 @@
 //! Static scanner for `var.<NAME>` reads inside `using >{ ... }` Lua
 //! bodies (Standard §17.1).
 //!
-//! Mirrors the shell-side `$<KEY>` sigil scanner in [`crate::sigil`], applied
-//! to the Lua source of a cook-step using-block. The scanned keys are folded
-//! into the unit's `consulted_env_keys` at codegen time so that a value
-//! change in any of those keys invalidates the unit's cache entry, exactly
-//! like a shell-body sigil read would.
+//! A `var.NAME` read in a Lua body is the same cache determinant that a
+//! `$<NAME>` sigil is in a shell body, so the scanned keys are folded into the
+//! unit's `consulted_env_keys` at codegen time and a value change invalidates
+//! the unit exactly as a shell-body read would.
+//!
+//! The module header used to say this "mirrors the shell-side `$<KEY>` sigil
+//! scanner in `crate::sigil`", which implied a sync obligation that does not
+//! exist: the two read different languages for different shapes and share
+//! nothing but a purpose. What they DID share was the walk that skips strings
+//! and comments, copied three ways; that now lives in [`crate::lua_scan`]
+//! (COOK-357).
 //!
 //! # Matching rules
 //!
@@ -51,6 +57,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::lua_scan;
+
 /// Scan `source` for static reads of `var.<NAME>` and return the set of
 /// keys found (sorted, deduplicated).
 ///
@@ -63,59 +71,14 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
     while i < bytes.len() {
         let b = bytes[i];
 
-        // ── Skip line comments: `-- … <newline>`.
-        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            // Long comment `--[[ … ]]` / `--[==[ … ]==]`.
-            if i + 2 < bytes.len() && bytes[i + 2] == b'[' {
-                let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 3..]);
-                if let Some(after_open_pos) = after_open {
-                    let close_marker = format!("]{}]", "=".repeat(eq_count));
-                    let from = i + 3 + after_open_pos;
-                    if let Some(rel) = source[from..].find(&close_marker) {
-                        i = from + rel + close_marker.len();
-                        continue;
-                    } else {
-                        return keys; // unterminated long comment — bail
-                    }
-                }
+        // Strings and comments are not code (see `crate::lua_scan`).
+        match lua_scan::skip_non_code(source, bytes, i) {
+            lua_scan::Skip::Ended(next) => {
+                i = next;
+                continue;
             }
-            // Line comment.
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // ── Skip short strings.
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            if i < bytes.len() {
-                i += 1; // closing quote
-            }
-            continue;
-        }
-
-        // ── Skip long strings `[[ … ]]` / `[==[ … ]==]`.
-        if b == b'[' {
-            let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 1..]);
-            if let Some(after_open_pos) = after_open {
-                let close_marker = format!("]{}]", "=".repeat(eq_count));
-                let from = i + 1 + after_open_pos;
-                if let Some(rel) = source[from..].find(&close_marker) {
-                    i = from + rel + close_marker.len();
-                    continue;
-                } else {
-                    return keys; // unterminated long string — bail
-                }
-            }
+            lua_scan::Skip::Unterminated => return keys,
+            lua_scan::Skip::Code => {}
         }
 
         // ── Try to match `var` here.
@@ -128,7 +91,7 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
             // Dot access: `var.IDENT`
             if after < bytes.len() && bytes[after] == b'.' {
                 let id_start = after + 1;
-                let id_end = scan_lua_ident_end(bytes, id_start);
+                let id_end = lua_scan::ident_end(bytes, id_start);
                 if id_end > id_start {
                     let key = &source[id_start..id_end];
                     // CS-0172: any Lua identifier counts. The pre-CS-0172
@@ -197,8 +160,8 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
 
         // ── Skip any identifier we encounter so we don't re-test for the
         // `var` prefix inside an identifier (e.g. `variadic`).
-        if is_lua_ident_start(b) {
-            i = scan_lua_ident_end(bytes, i);
+        if lua_scan::is_ident_start(b) {
+            i = lua_scan::ident_end(bytes, i);
             continue;
         }
 
@@ -206,43 +169,6 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
     }
 
     keys
-}
-
-/// At byte position `bytes[0]` we're past the leading `[`. If the next chars
-/// are `=*[`, we have a long-bracket open. Returns `(eq_count,
-/// Some(offset_just_past_second_[))`, or `(0, None)`.
-fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
-    let mut eq = 0;
-    while eq < bytes.len() && bytes[eq] == b'=' {
-        eq += 1;
-    }
-    if eq < bytes.len() && bytes[eq] == b'[' {
-        (eq, Some(eq + 1))
-    } else {
-        (0, None)
-    }
-}
-
-fn is_lua_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_'
-}
-
-fn is_lua_ident_cont(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
-}
-
-/// Starting at position `start` (which MUST be a Lua-ident-start byte OR
-/// the search returns `start`), advance while continuation bytes match.
-fn scan_lua_ident_end(bytes: &[u8], start: usize) -> usize {
-    let mut k = start;
-    if k >= bytes.len() || !is_lua_ident_start(bytes[k]) {
-        return k;
-    }
-    k += 1;
-    while k < bytes.len() && is_lua_ident_cont(bytes[k]) {
-        k += 1;
-    }
-    k
 }
 
 /// True if `bytes[i..]` starts with `needle`.
@@ -256,11 +182,11 @@ fn bytes_starts_with(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
 /// embedded in a larger identifier (e.g. `variadic` is not the `var` prefix
 /// we're after; nor is `myvar`).
 fn is_part_of_larger_identifier(bytes: &[u8], i: usize, prefix_len: usize) -> bool {
-    if i > 0 && is_lua_ident_cont(bytes[i - 1]) {
+    if i > 0 && lua_scan::is_ident_cont(bytes[i - 1]) {
         return true;
     }
     let after = i + prefix_len;
-    after < bytes.len() && is_lua_ident_cont(bytes[after]) && bytes[after] != b'.'
+    after < bytes.len() && lua_scan::is_ident_cont(bytes[after]) && bytes[after] != b'.'
 }
 
 /// True if the byte position `pos` is immediately followed by an assignment
@@ -381,59 +307,14 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
     while i < bytes.len() {
         let b = bytes[i];
 
-        // ── Skip line comments: `-- … <newline>`.
-        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            // Long comment `--[[ … ]]` / `--[==[ … ]==]`.
-            if i + 2 < bytes.len() && bytes[i + 2] == b'[' {
-                let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 3..]);
-                if let Some(after_open_pos) = after_open {
-                    let close_marker = format!("]{}]", "=".repeat(eq_count));
-                    let from = i + 3 + after_open_pos;
-                    if let Some(rel) = source[from..].find(&close_marker) {
-                        i = from + rel + close_marker.len();
-                        continue;
-                    } else {
-                        return keys; // unterminated long comment — bail
-                    }
-                }
+        // Strings and comments are not code (see `crate::lua_scan`).
+        match lua_scan::skip_non_code(source, bytes, i) {
+            lua_scan::Skip::Ended(next) => {
+                i = next;
+                continue;
             }
-            // Line comment.
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // ── Skip short strings.
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            if i < bytes.len() {
-                i += 1; // closing quote
-            }
-            continue;
-        }
-
-        // ── Skip long strings `[[ … ]]` / `[==[ … ]==]`.
-        if b == b'[' {
-            let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 1..]);
-            if let Some(after_open_pos) = after_open {
-                let close_marker = format!("]{}]", "=".repeat(eq_count));
-                let from = i + 1 + after_open_pos;
-                if let Some(rel) = source[from..].find(&close_marker) {
-                    i = from + rel + close_marker.len();
-                    continue;
-                } else {
-                    return keys; // unterminated long string — bail
-                }
-            }
+            lua_scan::Skip::Unterminated => return keys,
+            lua_scan::Skip::Code => {}
         }
 
         // ── Try to match `cook.probes.get` here.
@@ -509,8 +390,8 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
 
         // ── Skip any identifier we encounter so we don't re-test for the
         // `cook.probes.get` prefix inside an identifier.
-        if is_lua_ident_start(b) {
-            i = scan_lua_ident_end(bytes, i);
+        if lua_scan::is_ident_start(b) {
+            i = lua_scan::ident_end(bytes, i);
             continue;
         }
 

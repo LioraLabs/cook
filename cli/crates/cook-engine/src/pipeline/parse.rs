@@ -46,14 +46,11 @@ pub fn read_and_parse(path: &Path) -> Result<ParsedCookfile, PipelineError> {
     // Pre-scan: extract recipe names for codegen disambiguation
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
 
-    // § 5.4 — accessor placement validation rejects `{lib.ACCESSOR}` in
-    // contexts that lack a matching driver in an output pattern.
-    let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
+    // § 5.4 accessor-placement validation and the § 5.5 empty-output-reference
+    // warnings come out of one lowering pass (COOK-357); this used to run
+    // codegen twice and discard the second Lua source.
+    let (lua_source, warnings) = cook_luagen::generate_checked(&cookfile, &recipe_names)
         .map_err(|e| PipelineError::Codegen(e.to_string()))?;
-
-    // § 5.5 — register-time warnings for references whose referent has an
-    // empty output list.
-    let (_, warnings) = cook_luagen::generate_with_names_and_warnings(&cookfile, &recipe_names);
 
     Ok(ParsedCookfile {
         cookfile,

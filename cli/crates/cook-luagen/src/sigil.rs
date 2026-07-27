@@ -32,6 +32,8 @@
 
 use std::ops::Range;
 
+use crate::lua_string::escape_lua_string;
+
 /// One placeholder occurrence in a shell text string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaceholderSpan {
@@ -110,6 +112,130 @@ fn try_match_placeholder(text: &str, start: usize) -> Option<PlaceholderSpan> {
     Some(PlaceholderSpan {
         range: start..i + 1,
         ident,
+    })
+}
+
+// ─── CS-0074: the probe-value reference grammar ─────────────────────────────
+//
+// Lives beside the scanner rather than in `resolver`, and not in
+// cook-contracts, because the ident->`cook.probes.get(...)` mapping is the
+// placeholder's own desugaring: CS-0074 and §22.5.7 define the two together,
+// and both consumers (this crate's resolver, cook-register's `cook.add_unit`
+// capture) emit Lua. Splitting the parse from the render would cost an extra
+// module hop for one 40-line concept without buying a boundary anyone needs.
+
+/// One path segment of a probe-value reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seg {
+    /// `.field`
+    Field(String),
+    /// `[i]` — the index text verbatim. §22.5.7 defines `[i]` as a one-based
+    /// array element; anything else lowers as written and fails at execute
+    /// time against the real value, which is where the type is known.
+    Index(String),
+}
+
+/// A parsed probe-value reference: the `key` a `$<key:field[i]>` sigil names,
+/// plus the access path applied to that key's value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeRef {
+    key: String,
+    path: Vec<Seg>,
+}
+
+impl ProbeRef {
+    /// The probe key: everything up to the first `.` or `[` that follows the
+    /// `:` discriminator. A dot BEFORE the colon belongs to the key
+    /// (`demo:cc-version.ver` keys on `demo:cc-version`).
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The access path applied to the key's value, in source order.
+    pub fn path(&self) -> &[Seg] {
+        &self.path
+    }
+
+    /// The ready-to-emit Lua read: `cook.probes.get("key").field[1]`.
+    pub fn lua_access(&self) -> String {
+        let mut access = format!("cook.probes.get(\"{}\")", escape_lua_string(&self.key));
+        for seg in &self.path {
+            match seg {
+                Seg::Field(name) => {
+                    access.push('.');
+                    access.push_str(name);
+                }
+                Seg::Index(idx) => {
+                    access.push('[');
+                    access.push_str(idx);
+                    access.push(']');
+                }
+            }
+        }
+        access
+    }
+}
+
+/// Parse a probe-shaped IDENT, or `None` when `ident` is not one.
+///
+/// Probe-shaped means: contains a `:`, and does not begin with the reserved
+/// `file:` prefix (CS-0101, dispatched ahead of the colon discriminator). The
+/// `file:` exclusion lives here so the rule has one home; every caller used to
+/// pre-filter it and they did not agree on how.
+pub fn probe_ref(ident: &str) -> Option<ProbeRef> {
+    if ident.starts_with("file:") {
+        return None;
+    }
+    let colon = ident.find(':')?;
+
+    // The key ends at the first `.` or `[` that appears AFTER the colon.
+    let after_colon = &ident[colon + 1..];
+    let path_start = after_colon
+        .find(|c: char| c == '.' || c == '[')
+        .map(|p| colon + 1 + p)
+        .unwrap_or(ident.len());
+
+    let mut path = Vec::new();
+    let mut chars = ident[path_start..].chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '.' => {
+                chars.next();
+                let mut name = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc.is_alphanumeric() || nc == '_' {
+                        name.push(nc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if !name.is_empty() {
+                    path.push(Seg::Field(name));
+                }
+            }
+            '[' => {
+                chars.next();
+                let mut idx = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc == ']' {
+                        chars.next();
+                        break;
+                    }
+                    idx.push(nc);
+                    chars.next();
+                }
+                path.push(Seg::Index(idx));
+            }
+            _ => {
+                chars.next();
+            }
+        }
+    }
+
+    Some(ProbeRef {
+        key: ident[..path_start].to_string(),
+        path,
     })
 }
 

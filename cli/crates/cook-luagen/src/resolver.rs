@@ -122,68 +122,6 @@ enum BuiltinMatch {
     No,
 }
 
-/// Parse the ident of a probe-shaped sigil into `(key, lua_access_expr)`.
-///
-/// `ident` must contain `:`. Everything before the first `.` or `[` that
-/// follows the `:` is the key; the rest is the path. Returns the Lua expression
-/// that reads `cook.probes.get(key)` with the path appended.
-fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, String) {
-    // Find the boundary between key and path. The key ends at the first `.` or `[`
-    // that appears after the `:` discriminator.
-    let colon_pos = ident.find(':').expect("probe ident must contain ':'");
-    let after_colon = &ident[colon_pos + 1..];
-    let path_start = after_colon
-        .find(|c: char| c == '.' || c == '[')
-        .map(|p| colon_pos + 1 + p)
-        .unwrap_or(ident.len());
-
-    let key = &ident[..path_start];
-    let path_str = &ident[path_start..];
-
-    let mut access = format!("cook.probes.get(\"{}\")", escape(key));
-
-    // Walk the path string, building `.field` or `[N]` accesses.
-    let mut chars = path_str.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        match c {
-            '.' => {
-                chars.next();
-                let mut name = String::new();
-                while let Some(&nc) = chars.peek() {
-                    if nc.is_alphanumeric() || nc == '_' {
-                        name.push(nc);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if !name.is_empty() {
-                    access.push('.');
-                    access.push_str(&name);
-                }
-            }
-            '[' => {
-                chars.next();
-                let mut idx = String::new();
-                while let Some(&nc) = chars.peek() {
-                    if nc == ']' {
-                        chars.next();
-                        break;
-                    }
-                    idx.push(nc);
-                    chars.next();
-                }
-                access.push('[');
-                access.push_str(&idx);
-                access.push(']');
-            }
-            _ => { chars.next(); }
-        }
-    }
-
-    (key.to_string(), access)
-}
-
 /// COOK-89 §8.3: recognise the data-member binding sigils `$<in>` and
 /// `$<in.FIELD>`. Returns the matching [`BuiltinKind`], or `None` for any
 /// other ident.
@@ -220,6 +158,52 @@ pub fn match_file_ref(ident: &str) -> Option<Resolved> {
     })
 }
 
+/// True when `ident` references the step's own iteration source.
+///
+/// The one predicate for "does this sigil make the step iterate", used by
+/// output-pattern classification and plate/test mode detection. Three call
+/// sites used to spell it inline as `ident == "in" || ident.starts_with("in.")`
+/// (COOK-357).
+///
+/// It deliberately spans BOTH readings of `$<in.X>`, because a pattern is
+/// classified before the recipe shape is known:
+///
+///  - in a glob recipe, `X` is a path accessor ([`match_builtin`]);
+///  - in an `ingredients <probe>` fan-out recipe, `X` is a member field with
+///    an author-chosen name ([`match_member_sigil`]) — `$<in.id>` over
+///    `[{"id":"intro"}]` is ordinary, and narrowing this to the accessor set
+///    made every such recipe look like a literal-output gather step and be
+///    rejected.
+///
+/// Answering `true` for a nonsense `$<in.bogus>` in a glob recipe is correct
+/// here: this decides the iteration mode the author asked for, and the
+/// expander then reports the ident itself.
+pub fn is_own_input_ref(ident: &str) -> bool {
+    matches!(
+        match_builtin(ident),
+        BuiltinMatch::Yes(BuiltinKind::In | BuiltinKind::InAccessor(_))
+    ) || match_member_sigil(ident).is_some()
+}
+
+/// True when `ident` names a declared output: `$<out>`, `$<out.ACC>`,
+/// `$<out_N>`, `$<out_N.ACC>`.
+///
+/// Companion to [`is_own_input_ref`], for surfaces that reject outputs
+/// outright (a plate or test step declares none) rather than checking a count.
+/// A malformed `out_N` counts: `$<out_0>` is an output reference that happens
+/// to be invalid, and reporting it as a variable name helps nobody.
+pub fn is_output_ref(ident: &str) -> bool {
+    matches!(
+        match_builtin(ident),
+        BuiltinMatch::Yes(
+            BuiltinKind::Out
+                | BuiltinKind::OutAccessor(_)
+                | BuiltinKind::OutIndexed(_)
+                | BuiltinKind::OutIndexedAccessor(..)
+        ) | BuiltinMatch::Malformed(ResolveError::MalformedOutIndex { .. })
+    )
+}
+
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // CS-0101: `file:` namespace — dispatched before the probe-ref colon
     // discriminator so `$<file:x.css>` never parses as probe key `file:x`.
@@ -229,13 +213,14 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
 
     // CS-0074: probe-value reference — IDENT contains `:`.
     // Dispatched before builtin/recipe/env so the colon discriminator is
-    // unambiguous (no builtin or recipe name can contain `:`).
-    if ident.contains(':') {
-        let (key, access) = parse_probe_ref(ident, |s| {
-            // Escape for Lua double-quoted string (minimal — just `\` and `"`).
-            s.replace('\\', "\\\\").replace('"', "\\\"")
-        });
-        return Resolved::ProbeRef { key, access };
+    // unambiguous (no builtin or recipe name can contain `:`). The grammar
+    // lives in `sigil` so cook-register's `cook.add_unit` capture reads the
+    // same walker (COOK-357).
+    if let Some(r) = crate::sigil::probe_ref(ident) {
+        return Resolved::ProbeRef {
+            key: r.key().to_string(),
+            access: r.lua_access(),
+        };
     }
 
     // COOK-221 / CS-0137: `$<recipe[in]>` — per-member cross-recipe output.

@@ -3,7 +3,7 @@
 //! Walks `standard/conformance/negative/` and processes every fixture that
 //! carries a `codegen_error.txt` (instead of, or in addition to, `error.txt`).
 //! The fixture MUST parse cleanly but MUST be rejected by
-//! `cook_luagen::generate_with_names_checked`, with a diagnostic containing
+//! `cook_luagen::generate_checked`, with a diagnostic containing
 //! the expected substring.
 //!
 //! Fixtures shaped this way exist because the rejection lives at codegen
@@ -11,7 +11,7 @@
 //! for the first such fixture.
 //!
 //! Also walks `standard/conformance/positive/` and asserts that every fixture
-//! parses cleanly AND passes `generate_with_names_checked` without error. This
+//! parses cleanly AND passes `generate_checked` without error. This
 //! catches semantic regressions that the parser-only harness misses (e.g. `{in}`
 //! in many-to-one mode, which parses fine but fails at codegen time).
 
@@ -77,7 +77,7 @@ fn codegen_negative_conformance_corpus() {
         };
 
         let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-        match cook_luagen::generate_with_names_checked(&cookfile, &recipe_names) {
+        match cook_luagen::generate_checked(&cookfile, &recipe_names) {
             Ok(_) => {
                 failures.push(format!(
                     "case {}: expected codegen error containing {:?}, got Ok\n",
@@ -104,7 +104,7 @@ fn codegen_negative_conformance_corpus() {
     );
 }
 
-/// Sweep every positive fixture through `generate_with_names_checked` and
+/// Sweep every positive fixture through `generate_checked` and
 /// assert `Ok`. This catches semantic regressions that the parser-only harness
 /// misses — for example, `{in}` appearing in a many-to-one (literal-output)
 /// step parses cleanly but is rejected at codegen time.
@@ -136,7 +136,7 @@ fn codegen_positive_conformance_corpus() {
         };
 
         let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-        if let Err(e) = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names) {
+        if let Err(e) = cook_luagen::generate_checked(&cookfile, &recipe_names) {
             failures.push(format!(
                 "fixture {}: codegen rejected a positive fixture — this is a semantic regression:\n  {}\n",
                 name, e

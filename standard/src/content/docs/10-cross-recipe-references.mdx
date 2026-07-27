@@ -35,6 +35,13 @@ A conforming implementation MUST resolve a placeholder `$<TOKEN>` (defined in §
 
 This is a closed function: every well-lexed placeholder either resolves to a known thing or fails loudly. There is no silent fallthrough — `$<UNKNOWN>` against an undeclared env var MUST NOT produce an empty-string substitution.
 
+### 10.2.4. Position independence [#xref.position-independence]
+Resolution is a function of the token and the enclosing step's scope, iteration mode, and declared output count — not of which shell-text position the token occupies. A conforming implementation MUST resolve the same `TOKEN`, under the same scope and step context, to the same step of §{xref.resolution} whether it appears in a `cook` output pattern, a `cook` body, a `test` body, or a `chore` body, and MUST report the same diagnostic where resolution fails. (CS-0184.)
+
+Positions differ in which resolutions they **admit**, never in what a token **means**. A `cook` output pattern admits no `$<file:PATH>` (§{xref.file-namespace}); a `test` body admits no `$<out…>` form (§{phl.plate-test}); those are refusals of an otherwise-resolved token, stated where the position is specified, and each MUST name the position as the reason. A position MUST NOT decline to substitute a token it does not recognise: an output pattern carrying no iteration driver is not thereby literal text, and emitting it unsubstituted places an unresolved `$<…>` in a declared output path, where the shell reads it as syntax and the value it named never enters the unit's key.
+
+A position that cannot honour a resolution MUST refuse it. It MUST NOT substitute a value the phase cannot yet have: a probe-value reference (§{cat.probes.templates}) reaching a position whose lowering is evaluated at register time MUST NOT be read from the probe cache there, because a probe that the register phase has not materialised answers with no value rather than an error.
+
 A name reference appearing in a dep-list is resolved against the recipe names in scope with no accessor split: the whole string is the recipe name. Qualified cross-Cookfile dep-list references (`alias.recipe`) follow the resolution rule of §{comp}.
 
 ### 10.2.1. Dotted name references [#xref.dotted-names]

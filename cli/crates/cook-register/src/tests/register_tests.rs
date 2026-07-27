@@ -1906,7 +1906,7 @@ fn register_surface(
     // respelled COOK-221/CS-0137) and `{NAME.ACCESSOR}` resolve as recipe refs
     // rather than env vars.
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
-    let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
+    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
     register_cookfile(make_registry(dir), &lua_src, None)
 }
@@ -2208,7 +2208,9 @@ recipe b
     }
 "#;
     let parsed = cook_lang::parse(cookfile).expect("parse");
-    let lua_src = cook_luagen::generate(&parsed);
+    let lua_src = cook_luagen::generate_checked(&parsed, &Default::default())
+        .expect("codegen")
+        .0;
     let rt = RegisterSessionBuilder::new(dir.path().to_path_buf(), HashMap::new())
         .with_target_argv("a".to_string(), vec![]);
     let registered =
@@ -2904,7 +2906,7 @@ fn register_surface_target(
 ) -> Result<RegisteredCookfile, RegisterError> {
     let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
-    let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
+    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
     let rt = make_registry(dir).with_target_argv(target.to_string(), vec![]);
     register_cookfile(rt, &lua_src, None)
