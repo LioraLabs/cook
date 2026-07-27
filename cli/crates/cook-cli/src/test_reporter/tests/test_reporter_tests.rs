@@ -9,7 +9,6 @@ fn mk(id: &str, outcome: TestOutcome) -> TestResult {
         namespace: String::new(),
         recipe: id.split(':').next().unwrap_or("").to_string(),
         name: id.split(':').nth(1).unwrap_or("").to_string(),
-        suite: String::new(),
         iteration_item: None,
         outcome,
         duration: Duration::from_millis(100),

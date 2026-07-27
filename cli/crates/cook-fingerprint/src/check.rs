@@ -1,10 +1,22 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
+
 use crate::{
     hash_str,
     record::{FileRecord, StepEntry, CACHE_VERSION},
 };
+
+/// COOK-360: the judge half of observe / judge / repair reports which
+/// determinant moved; this crate's callers speak in rebuild reasons.
+fn drift_reason(drift: DeterminantDrift) -> RebuildReason {
+    match drift {
+        DeterminantDrift::CommandHash => RebuildReason::CommandHashChanged,
+        DeterminantDrift::Env => RebuildReason::EnvChanged,
+        DeterminantDrift::Seal => RebuildReason::SealChanged,
+    }
+}
 
 /// Hash of an empty file. Empty files are treated as signals (marker files)
 /// where mtime changes always trigger rebuilds, even if content is unchanged.
@@ -241,16 +253,22 @@ pub fn needs_rebuild_cook(
         None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
         Some(e) => e,
     };
-    if entry.command_hash != command_hash {
-        return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.env_contribution != env_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
-    }
-    if entry.seal_contribution != seal_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
+
+    // ---- JUDGE (COOK-360) -------------------------------------------------
+    // A pure comparison of recorded determinants against current ones. No
+    // filesystem access, no backend, no repair — and therefore shared with
+    // every other store rather than hand-rolled per store. Everything below
+    // this point OBSERVES the world (stat, hash) and then REPAIRS it
+    // (restore), which is why those halves stay in this crate and this rule
+    // does not.
+    if let Some(drift) = determinant_drift(
+        &Determinants::new(entry.command_hash, entry.env_contribution, entry.seal_contribution),
+        &Determinants::new(command_hash, env_contribution, seal_contribution),
+    ) {
+        return (RebuildResult::Rebuild(drift_reason(drift)), None);
     }
 
+    // ---- OBSERVE ----------------------------------------------------------
     // Discovered inputs: absorb-and-forget (COOK-313).
     //
     // A unit with `discovered_inputs` records a FAT entry — declared inputs
@@ -358,6 +376,10 @@ pub fn needs_rebuild_cook(
         }
     }
 
+    // ---- REPAIR -----------------------------------------------------------
+    // Observation found outputs missing or drifted. This half does not decide
+    // anything: it tries to make the world match the record, and reports
+    // failure as a rebuild.
     if !needs_restore.is_empty() {
         let restored = match restore_ctx {
             Some(ctx) => try_restore(
@@ -843,42 +865,16 @@ pub fn hash_input_paths(input_paths: &[&str], working_dir: &std::path::Path) -> 
     Some(hashes)
 }
 
-/// Check if a plate layer (no output) needs to re-run.
-pub fn needs_rebuild_plate(
-    entry: Option<&StepEntry>,
-    current_inputs: &[&str],
-    command_hash: u64,
-    env_contribution: u64,
-    seal_contribution: u64,
-    working_dir: &Path,
-) -> (RebuildResult, Option<StepEntry>) {
-    let entry = match entry {
-        None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
-        Some(e) => e,
-    };
-    if entry.command_hash != command_hash {
-        return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.env_contribution != env_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
-    }
-    if entry.seal_contribution != seal_contribution {
-        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
-    }
-    match check_inputs(&entry.inputs, current_inputs, working_dir) {
-        Err(reason) => (RebuildResult::Rebuild(reason), None),
-        Ok(updated_inputs) => {
-            let updated = StepEntry {
-                inputs: updated_inputs,
-                outputs: vec![],
-                command_hash: entry.command_hash,
-                env_contribution: entry.env_contribution,
-                seal_contribution: entry.seal_contribution,
-            };
-            (RebuildResult::Skip, Some(updated))
-        }
-    }
-}
+// COOK-360: `needs_rebuild_plate` lived here — the output-less rebuild check.
+// It was `needs_rebuild_cook` with the output half deleted: the same three
+// early-return predicates in the same order, the same `check_inputs` call,
+// then a `StepEntry` with `outputs: vec![]`. It had no production caller;
+// test units are cached through `TestCache` (a separate store keyed by
+// `compute_ready_test_fingerprint`), never through the step index. Passing
+// an empty output slice to `needs_rebuild_cook` takes exactly the path the
+// copy hard-coded — the discovered-inputs block is skipped, output
+// augmentation is skipped, the output-count check passes `0 == 0`, and the
+// output walk is empty — so the copy is deleted rather than rewired.
 
 #[cfg(test)]
 #[path = "tests/check_tests.rs"]

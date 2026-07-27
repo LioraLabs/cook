@@ -1,0 +1,7 @@
+register
+    cook.recipe("r", {requires = {}}, function()
+        cook.add_test({command = "true"})
+    end)
+
+recipe noop
+    test >{ cook.sh("true") }

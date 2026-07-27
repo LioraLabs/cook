@@ -146,7 +146,6 @@ fn work_payload_test_construction() {
         line: 10,
         timeout: 30,
         should_fail: false,
-        suite_name: "unit".into(),
         test_name: "test_foo".into(),
         iteration_item: None,
         lua_code: None,
@@ -321,8 +320,6 @@ fn dep_kind_variants() {
     let seq = DepKind::Sequential;
     assert!(matches!(seq, DepKind::Sequential));
 
-    let ts = DepKind::TestSibling(1);
-    assert!(matches!(ts, DepKind::TestSibling(1)));
 }
 
 #[test]

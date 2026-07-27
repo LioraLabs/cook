@@ -297,7 +297,6 @@ fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode
             line: 1,
             timeout: 5,
             should_fail: false,
-            suite_name: "s".into(),
             test_name: "t".into(),
             iteration_item: None,
             lua_code: None,

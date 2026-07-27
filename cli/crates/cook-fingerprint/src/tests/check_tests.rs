@@ -398,19 +398,31 @@ fn record_unit_with_missing_output_still_rebuilds_without_restore() {
     assert!(updated.is_none());
 }
 
+// -------------------------------------------------------------------------
+// COOK-360: a unit with no declared outputs is not a separate kind of unit.
+//
+// These two cases were written against `needs_rebuild_plate`, a copy of
+// `needs_rebuild_cook` with the output half deleted. The copy is gone; the
+// cases now run against `needs_rebuild_cook` with an empty output slice,
+// which is what an output-less unit always was. They are the agreement
+// tests for that claim: the general check, given nothing to produce,
+// answers exactly what the output-less copy used to.
+// -------------------------------------------------------------------------
+
 #[test]
-fn test_plate_no_cache_entry_runs() {
+fn no_outputs_no_cache_entry_runs() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let (result, updated) = needs_rebuild_plate(None, &["in.c"], 0xdead, 0, 0, dir.path());
+    let (result, updated) =
+        needs_rebuild_cook(None, &["in.c"], &[], 0xdead, 0, 0, dir.path(), None, None, false);
     assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
     assert!(updated.is_none());
 }
 
 #[test]
-fn test_plate_nothing_changed_skips() {
+fn no_outputs_nothing_changed_skips() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
 
     let in_record = make_file_record("in.c", wd);
 
@@ -422,7 +434,8 @@ fn test_plate_nothing_changed_skips() {
         seal_contribution: 0,
     };
 
-    let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, 0, wd);
+    let (result, updated) =
+        needs_rebuild_cook(Some(&entry), &["in.c"], &[], 0xbeef, 0, 0, wd, None, None, false);
     assert_eq!(result, RebuildResult::Skip);
     let updated = updated.expect("should have updated entry");
     assert!(updated.outputs.is_empty());

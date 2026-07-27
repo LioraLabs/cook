@@ -1365,3 +1365,104 @@ fn add_unit_accepts_directory_output_trailing_slash() {
         "unit must be recorded"
     );
 }
+
+// -------------------------------------------------------------------------
+// CS-0185: one registration function
+// -------------------------------------------------------------------------
+
+/// CS-0185: `cook.add_test` is removed, and calling it raises rather than
+/// resolving to nil — the diagnostic has to name the replacement, which
+/// `attempt to call a nil value` cannot.
+///
+/// This replaces the equivalence test that stood here through commits 1 and 2,
+/// which asserted that both functions recorded the same unit. That was the
+/// claim that made switching codegen safe; it cannot be restated now that
+/// there is only one function, and the switch it guarded has landed.
+#[test]
+fn add_test_is_removed_and_names_its_replacement() {
+    let (lua, slot) = make_lua_with_unit_api("checks");
+    crate::test_api::register_test_api(&lua, slot.clone()).unwrap();
+
+    let err = lua
+        .load(r#"cook.add_test({ command = "./run" })"#)
+        .exec()
+        .expect_err("cook.add_test must raise");
+    let msg = err.to_string();
+    assert!(msg.contains("was removed"), "got: {msg}");
+    assert!(msg.contains("step_kind = \"test\""), "must name the replacement: {msg}");
+    assert!(msg.contains("CS-0185"), "must cite the entry: {msg}");
+    // Nothing was recorded on the way out.
+    assert_eq!(body_ref(&slot).units.len(), 0);
+}
+
+/// §22.4: outputs and test-ness are independent facts, so an output on a test
+/// unit is an author error rather than a silent reclassification.
+#[test]
+fn a_test_unit_may_not_declare_outputs() {
+    let (lua, _slot) = make_lua_with_unit_api("checks");
+    let err = lua
+        .load(r#"cook.add_unit({ step_kind = "test", command = "./run", output = "out.o" })"#)
+        .exec()
+        .expect_err("outputs on a test unit must be refused");
+    assert!(err.to_string().contains("declares no outputs"), "got: {err}");
+}
+
+/// `suite` is removed, and passing it is an error rather than a silent no-op:
+/// a caller who writes it means something by it.
+#[test]
+fn a_test_unit_may_not_declare_a_suite() {
+    let (lua, _slot) = make_lua_with_unit_api("checks");
+    let err = lua
+        .load(r#"cook.add_unit({ step_kind = "test", command = "./run", suite = "x" })"#)
+        .exec()
+        .expect_err("suite must be refused");
+    assert!(err.to_string().contains("`suite` was removed"), "got: {err}");
+}
+
+/// COOK-360: a test unit INSIDE a step group. The equivalence work compared
+/// units recorded outside one, where every dep kind collapses to `Sequential`,
+/// so this is the case none of it exercised — and it is the case that matters,
+/// because it is where `DepKind::TestSibling` used to differ and where CS-0030's
+/// dep-edge wiring is load-bearing.
+///
+/// `TestSibling` is gone. It claimed to be "like StepGroup but failures don't
+/// cancel siblings", and enforced nothing: group members all depend on the same
+/// barrier and never on each other, so a sibling is never a dependent and the
+/// cancellation walk cannot reach one. CS-0177's sibling exemption is a
+/// property of the graph's shape.
+#[test]
+fn a_test_unit_in_a_step_group_is_grouped_like_any_other_unit() {
+    let (lua, slot) = make_lua_with_unit_api("checks");
+    lua.load(
+        r#"
+        cook.step_group(function()
+            cook.add_unit({ step_kind = "test", command = "./a", line = 3 })
+            cook.add_unit({ step_kind = "test", command = "./b", line = 4 })
+        end)
+        "#,
+    )
+    .exec()
+    .unwrap();
+
+    let state = body_ref(&slot);
+    assert_eq!(state.units.len(), 2);
+    for u in &state.units {
+        assert!(
+            matches!(u.dep_kind, DepKind::StepGroup(_)),
+            "a grouped test unit is grouped like any other unit"
+        );
+    }
+    // Both members belong to the same group, which is what makes them siblings
+    // rather than a chain.
+    match (&state.units[0].dep_kind, &state.units[1].dep_kind) {
+        (DepKind::StepGroup(a), DepKind::StepGroup(b)) => assert_eq!(a, b),
+        _ => panic!("expected both units in one step group"),
+    }
+}
+
+// CS-0030's dep-edge wiring for a grouped test unit is already covered by
+// `test_api::tests::test_add_test_propagates_step_group_dep_refs_to_dep_edges`,
+// which was written against the removed function and now drives this one. It
+// uses the register-phase `cook.dep_output` surface, which this harness does
+// not bind; duplicating it here with a hand-set body field would test the
+// harness rather than the wiring.

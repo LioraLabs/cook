@@ -28,7 +28,7 @@ pub use cook_fingerprint::check;
 pub use cook_fingerprint::context;
 pub use cook_fingerprint::envkey;
 pub use cook_fingerprint::{
-    hash_env, hash_file, hash_str, needs_rebuild_cook, needs_rebuild_plate, resolve_glob,
+    hash_env, hash_file, hash_str, needs_rebuild_cook, resolve_glob,
     stat_mtime, CacheBackend, RebuildReason, RebuildResult, RestoreCtx,
 };
 

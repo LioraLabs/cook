@@ -266,7 +266,6 @@ pub fn write_json_sidecar(
             "namespace": r.namespace,
             "recipe": r.recipe,
             "name": r.name,
-            "suite": r.suite,
             "iteration_item": r.iteration_item,
             "outcome": outcome_str(r.outcome),
             "duration_secs": r.duration.as_secs_f64(),

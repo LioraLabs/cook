@@ -669,7 +669,6 @@ pub fn execute_dag(
                 namespace,
                 recipe,
                 name: test_name.clone(),
-                suite: work_node.recipe_name.clone(),
                 iteration_item: iteration_item.clone(),
                 outcome: crate::TestOutcome::Blocked,
                 duration: std::time::Duration::ZERO,
@@ -733,13 +732,30 @@ pub fn execute_dag(
         cache_ctx: &CacheContext,
         probe_store: &cook_luaotp::ProbeValueStore,
     ) -> CacheDecision {
+        // COOK-360: these were one answer given for two different reasons.
+        // Both still return `Miss(None)`, so behaviour is unchanged — but the
+        // reasons are now named and separated, because only one of them is
+        // permanent.
+        use cook_contracts::cache::record::{cacheability, Cacheability};
+        match cacheability(work_node.cache_meta.as_ref()) {
+            // Permanent. A chore body or interactive unit is never cached
+            // (§7.4); there is no key to look up and never will be.
+            Cacheability::Uncacheable => return CacheDecision::Miss(None),
+            // NOT permanent. A unit declaring no outputs is cacheable — its
+            // hit replays a recorded outcome rather than restoring bytes —
+            // but this path only knows how to look up artifacts, so it
+            // reports a miss. Test units get their hits from the separate
+            // result store instead, which is the duplication COOK-360 exists
+            // to remove; folding that store in happens HERE, at this arm, and
+            // nowhere else.
+            Cacheability::ResultOnly => return CacheDecision::Miss(None),
+            Cacheability::Artifacts => {}
+        }
         let meta = match &work_node.cache_meta {
             Some(m) => m,
+            // Unreachable: `Artifacts` implies a declaration.
             None => return CacheDecision::Miss(None),
         };
-        if meta.output_paths.is_empty() {
-            return CacheDecision::Miss(None);
-        }
         let cm = match cache_managers.get(&work_node.recipe_name) {
             Some(cm) => cm,
             None => return CacheDecision::Miss(None),
@@ -1144,7 +1160,6 @@ pub fn execute_dag(
                                 namespace,
                                 recipe,
                                 name: test_name.clone(),
-                                suite: work_node.recipe_name.clone(),
                                 iteration_item: iteration_item.clone(),
                                 outcome: crate::TestOutcome::Passed,
                                 duration,
@@ -2559,7 +2574,6 @@ pub fn execute_dag(
                     namespace,
                     recipe,
                     name: to.test_name.clone(),
-                    suite: to.suite_name.clone(),
                     iteration_item: iteration_item_opt,
                     outcome: crate::TestOutcome::Passed,
                     duration,
@@ -2577,7 +2591,8 @@ pub fn execute_dag(
                 // Write passing test result to the content-addressed cache.
                 if let (Some(tc), Some(fp)) = (test_cache, fp_opt) {
                     let entry = TestCacheEntry {
-                        schema_version: 1,
+                        // COOK-360: one shared version, not this store's private 1.
+                        schema_version: cook_fingerprint::CACHE_VERSION,
                         fingerprint: fp.clone(),
                         outcome: TestCacheOutcome::Passed,
                         stdout: to.stdout.clone(),
@@ -2682,7 +2697,6 @@ pub fn execute_dag(
                     namespace,
                     recipe,
                     name: to.test_name.clone(),
-                    suite: to.suite_name.clone(),
                     iteration_item: iteration_item_opt,
                     outcome,
                     duration,

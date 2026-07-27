@@ -244,13 +244,11 @@ fn test_add_test_captures_test_unit() {
     let lua_src = r#"
 cook.recipe("tests", {}, function()
     cook.step_group(function()
-        cook.add_test({
+        cook.add_unit({step_kind = "test", 
             command = "./run_test_a",
-            suite = "unit",
         })
-        cook.add_test({
+        cook.add_unit({step_kind = "test", 
             command = "./run_test_b",
-            suite = "unit",
         })
     end)
 end)
@@ -258,15 +256,14 @@ end)
     let result = register_one(rt, lua_src, "tests");
     assert_eq!(result.units.len(), 2);
     match &result.units[0].payload {
-        WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
+        WorkPayload::Test { cmd, timeout, should_fail, test_name, .. } => {
             assert_eq!(cmd, "./run_test_a");
             // CS-0135: cook.add_test no longer accepts timeout/should_fail/
             // name; WorkPayload::Test still carries these fields for the
             // engine executor. test_name derives as `<recipe>_test<N>`.
             assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
-            assert_eq!(suite_name, "unit");
-            assert_eq!(test_name, "tests_test1");
+            assert_eq!(test_name, "tests_test0"); // CS-0185: <recipe>_test<line>; no line passed
         }
         _ => panic!("expected Test payload"),
     }
@@ -287,7 +284,7 @@ fn test_add_test_defaults_suite_to_recipe_name_via_engine() {
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.recipe("my_tests", {}, function()
-    cook.add_test({
+    cook.add_unit({step_kind = "test", 
         command = "./run",
         name = "t",
     })
@@ -296,9 +293,10 @@ end)
     let result = register_one(rt, lua_src, "my_tests");
     assert_eq!(result.units.len(), 1);
     match &result.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => {
-            assert_eq!(suite_name, "my_tests",
-                "suite should default to recipe name when omitted");
+        WorkPayload::Test { test_name, .. } => {
+            // CS-0185: the enclosing recipe reaches the unit through its name.
+            assert_eq!(test_name, "my_tests_test0",
+                "a test unit is named for the recipe that registers it");
         }
         _ => panic!("expected Test payload"),
     }
@@ -315,7 +313,7 @@ fn test_add_test_defaults_suite_includes_qualified_prefix() {
     let shared: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     let lua_src = r#"
 cook.recipe("tests", {}, function()
-    cook.add_test({
+    cook.add_unit({step_kind = "test", 
         command = "./run",
         name = "t",
     })
@@ -326,9 +324,9 @@ end)
         .with_qualified_prefix("mylib".to_string());
     let result = register_one(rt, lua_src, "tests");
     match &result.units[0].payload {
-        WorkPayload::Test { suite_name, .. } => {
-            assert_eq!(suite_name, "mylib.tests",
-                "suite default must include the qualified prefix");
+        WorkPayload::Test { test_name, .. } => {
+            assert_eq!(test_name, "mylib.tests_test0",
+                "the qualified prefix must reach the unit's name");
         }
         _ => panic!("expected Test payload"),
     }
@@ -341,7 +339,7 @@ fn test_add_test_rejects_empty_command_via_engine() {
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.recipe("r", {}, function()
-    cook.add_test({ command = "" })
+    cook.add_unit({step_kind = "test",  command = "" })
 end)
 "#;
     let result = register_cookfile(rt, lua_src, None, None);
@@ -462,17 +460,33 @@ fn test_add_unit_rejects_non_string_step_kind() {
     assert!(err.contains("step_kind"), "got: {err}");
 }
 
-// CS-0153 §22.1: `step_kind = "test"` is no longer an accepted value on
-// `cook.add_unit` — a test work unit is registrable only through
-// `cook.add_test` (§22.4). Silently accepting `step_kind = "test"` here
-// would build a unit invisible to `cook test` (WorkPayload::Test carries no
-// StepKind; only `cook.add_test` constructs that payload), letting a test
-// gate go green over a failing check.
+// CS-0185 §22.1 supersedes CS-0153: `step_kind = "test"` is accepted, and
+// records a test work unit. CS-0153 had refused it on the ground that such a
+// unit would be "invisible to `cook test`" — true only while the registration
+// bookkeeping lived in a second function, which is the circularity CS-0185
+// removes. With one function the bookkeeping happens at the point that sets
+// the kind, so the hazard the refusal guarded cannot arise.
 #[test]
-fn test_add_unit_rejects_step_kind_test() {
-    let err = add_unit_reject(r#"command = "true", step_kind = "test""#);
-    assert!(err.contains("step_kind"), "got: {err}");
-    assert!(err.contains("cook.add_test"), "got: {err}");
+fn test_add_unit_accepts_step_kind_test() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("r", {}, function()
+    cook.add_unit({ command = "true", step_kind = "test", line = 4 })
+end)
+"#;
+    let units = register_cookfile(rt, lua_src, None, None)
+        .expect("step_kind = \"test\" must register");
+    let r = units.units_by_recipe.get("r").expect("recipe r missing");
+    assert_eq!(r.units.len(), 1);
+    match &r.units[0].payload {
+        WorkPayload::Test { cmd, test_name, .. } => {
+            assert_eq!(cmd, "true");
+            // CS-0185 names from the line, not an ordinal.
+            assert_eq!(test_name, "r_test4");
+        }
+        other => panic!("expected a Test payload, got {other:?}"),
+    }
 }
 
 // CS-0153 §22.1: the surviving accepted values — `"cook"` and `"chore"` —

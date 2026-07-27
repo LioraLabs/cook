@@ -52,7 +52,6 @@ pub enum WorkPayload {
         line: usize,
         timeout: u64,
         should_fail: bool,
-        suite_name: String,
         test_name: String,
         iteration_item: Option<String>,
         /// CS-0127 §22.4: exactly one of `cmd` / `lua_code` is populated —
@@ -174,10 +173,17 @@ pub struct CapturedUnit {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DepKind {
-    /// Part of a cook step group (can run parallel with siblings in the group).
+    /// Part of a step group (can run parallel with siblings in the group).
+    ///
+    /// COOK-360: there was a second variant, `TestSibling(usize)`, described as
+    /// "like StepGroup but failures don't cancel siblings". It encoded a
+    /// conjunction of two independent facts — the grouping, and that the
+    /// members were tests — and enforced nothing. Group members all depend on
+    /// the same barrier and never on each other, so a sibling is never a
+    /// dependent and the cancellation walk cannot reach one; the exemption
+    /// CS-0177 states is a property of the graph's shape, not of this enum.
+    /// Grouping is this variant; test-ness is [`crate::StepKind::Test`].
     StepGroup(usize),
     /// Sequential barrier (depends on all prior units in recipe).
     Sequential,
-    /// Part of a test step group — like StepGroup but failures don't cancel siblings.
-    TestSibling(usize),
 }

@@ -6,7 +6,6 @@ fn test_result_carries_line() {
         namespace: String::new(),
         recipe: "r".into(),
             name: "t".into(),
-        suite: String::new(),
         iteration_item: None,
         outcome: TestOutcome::Passed,
         duration: std::time::Duration::ZERO,

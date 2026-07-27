@@ -1,5 +1,7 @@
 //! Cache metadata and sharing disposition.
 
+pub mod record;
+
 /// Declarative description of post-execution input discovery for a unit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoveredInputs {
