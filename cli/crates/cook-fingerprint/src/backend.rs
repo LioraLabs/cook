@@ -230,6 +230,10 @@ pub struct DeterminantManifest {
     /// Effective-seal-set probe key → canonical-JSON value bytes (UTF-8).
     /// Resolved form of `seal_contribution`.
     pub sealed_probes: BTreeMap<String, String>,
+    /// Scalar half of the last successful execution, paired with the
+    /// observation artifact under this manifest's key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<cook_contracts::cache::observation::Observation>,
 }
 
 /// `hex_u64` (see [`crate::record::hex_u64`]) for the *values* of a
@@ -429,6 +433,10 @@ pub const DISCOVERED_INPUTS_MANIFEST_PATH: &str = "__cook_discovered_inputs__";
 pub const DISCOVERED_INPUT_SETS_INDEX: u32 = u32::MAX - 1;
 /// Reserved output path for the discovered-input sets manifest artifact.
 pub const DISCOVERED_INPUT_SETS_PATH: &str = "__cook_discovered_input_sets__";
+
+/// Reserved artifact carrying a unit's captured output log.
+pub const OBSERVATION_INDEX: u32 = u32::MAX - 2;
+pub const OBSERVATION_PATH: &str = "__cook_observation__";
 
 /// Cap on retained discovered-path sets per declared key. Oldest sets fall
 /// off; a fallen-off set degrades to a safe re-execute, never a wrong hit.

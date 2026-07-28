@@ -57,6 +57,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     // Compose cloud_key from the fat input set.

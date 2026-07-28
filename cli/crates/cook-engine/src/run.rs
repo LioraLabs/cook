@@ -152,13 +152,14 @@ pub fn run<F>(
     rerun_patterns: &[String],
     no_prune: bool,
     no_publish: bool,
+    replay_logs: bool,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
     let started = std::time::Instant::now();
-    let cache_ctx = match build_cache_ctx(project_root, no_publish) {
+    let mut cache_ctx = match build_cache_ctx(project_root, no_publish) {
         Ok(c) => c,
         Err(e) => {
             on_event(EngineEvent::Finished {
@@ -168,6 +169,7 @@ where
             return Err(e);
         }
     };
+    Arc::make_mut(&mut cache_ctx).replay_logs = replay_logs;
     let result = run_inner(
         registered_workspace,
         edges,
@@ -810,6 +812,7 @@ pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<A
         project_root: project_root.to_path_buf(),
         project_id,
         publish_enabled,
+        replay_logs: false,
     }))
 }
 

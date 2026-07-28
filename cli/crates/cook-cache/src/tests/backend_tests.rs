@@ -654,6 +654,7 @@ fn sample_manifest() -> DeterminantManifest {
         empty_dir_outputs: Vec::new(),
         consulted_env: env,
         sealed_probes: probes,
+        observation: None,
     }
 }
 

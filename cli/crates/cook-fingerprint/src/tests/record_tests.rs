@@ -12,6 +12,7 @@ fn hash_fields_serialize_as_lowercase_hex_strings() {
         command_hash: 0x0102030405060708,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
     let s = toml::to_string(&entry).expect("toml serialize");
     assert!(s.contains(r#"command_hash = "0102030405060708""#), "got: {s}");
@@ -85,6 +86,7 @@ fn seal_contribution_round_trips_as_hex() {
         command_hash: 0x0102030405060708,
         env_contribution: 0,
         seal_contribution: 0xAABBCCDDEEFF0011,
+    observed: None,
     };
     let s = toml::to_string(&entry).expect("toml serialize");
     assert!(s.contains(r#"seal_contribution = "aabbccddeeff0011""#), "got: {s}");

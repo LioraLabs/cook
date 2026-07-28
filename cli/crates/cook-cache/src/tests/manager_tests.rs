@@ -16,6 +16,7 @@ fn make_step_entry(command_hash: u64) -> StepEntry {
         command_hash,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     }
 }
 

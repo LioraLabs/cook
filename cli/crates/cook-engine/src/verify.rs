@@ -216,6 +216,7 @@ pub fn verify_cache(
         &[],
         /*no_prune*/ false,
         /*no_publish*/ true,
+        /*replay_logs*/ false,
         |_e| {},
     )
     .map_err(|e| format!("populate run failed: {e}"))?;

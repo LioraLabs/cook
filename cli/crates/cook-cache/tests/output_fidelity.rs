@@ -146,6 +146,7 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
         command_hash,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let ctx = RestoreCtx {
@@ -269,6 +270,7 @@ fn security_poisoned_symlink_targets_are_rejected() {
         command_hash,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let ctx = RestoreCtx {

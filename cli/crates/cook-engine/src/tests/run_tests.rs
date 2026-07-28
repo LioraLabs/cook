@@ -58,6 +58,7 @@ fn dummy_project_root() -> std::path::PathBuf {
             &[],
             false,
             false,
+        false,
             |_| {},
         );
         assert!(result.is_ok());
@@ -80,6 +81,7 @@ fn dummy_project_root() -> std::path::PathBuf {
         &reachable,
         1,
         &[],
+        false,
         false,
         false,
         |_| {},
@@ -105,6 +107,7 @@ fn test_run_emits_finished_success_on_empty_reachable() {
         &reachable,
         1,
         &[],
+        false,
         false,
         false,
         |event| events.lock().unwrap().push(event),
@@ -138,6 +141,7 @@ fn test_run_emits_finished_failure_on_unknown_recipe() {
         &reachable,
         1,
         &[],
+        false,
         false,
         false,
         |event| events.lock().unwrap().push(event),

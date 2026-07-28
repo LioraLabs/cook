@@ -25,25 +25,25 @@ use std::path::Path;
 use cook_contracts::cache::DeclaredInput;
 
 pub use backend::{
-    artifact_key, cloud_key, recipe_namespace, ArtifactMeta, BackendError, BackendResult,
-    CacheBackend, CloudKey, CloudKeyInputs, DISCOVERED_INPUTS_MANIFEST_INDEX,
-    DISCOVERED_INPUTS_MANIFEST_PATH, DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX,
-    DISCOVERED_INPUT_SETS_PATH,
+    ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey, CloudKeyInputs,
+    DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
+    DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, OBSERVATION_INDEX,
+    OBSERVATION_PATH, artifact_key, cloud_key, recipe_namespace,
 };
 pub use check::{
-    fetch_by_key, hash_env, hash_file, hash_input_paths, hash_reader, needs_rebuild_cook,
-    read_discovered_input_sets, stat_mtime, FetchOutcome,
-    RebuildReason, RebuildResult, RestoreCtx,
+    FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation,
+    hash_env, hash_file, hash_input_paths, hash_reader, needs_rebuild_cook,
+    read_discovered_input_sets, stat_mtime,
 };
 pub use consumes::ConsumesFilter;
-pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
+pub use context::{ProbeFingerprintInputs, compute_probe_fingerprint};
+pub use envkey::{EnvDenylist, env_contribution};
 pub use evict::{
-    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
-    SIZE_SWEEP_EXEMPT_KINDS,
+    DEFAULT_LOW_WATER, EvictPlan, EvictPolicy, SIZE_SWEEP_EXEMPT_KINDS, is_size_sweep_exempt,
+    plan_eviction,
 };
 pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
-pub use envkey::{env_contribution, EnvDenylist};
-pub use record::{FileRecord, StepEntry, CACHE_VERSION};
+pub use record::{CACHE_VERSION, FileRecord, StepEntry};
 pub use statmemo::stat_mtime_memo;
 
 /// Hash a string (for command templates, env vars, etc.)

@@ -21,4 +21,5 @@ pub struct CacheContext {
     /// drift-restore, and `pinned` cold-fetch are unaffected. Resolved from
     /// `[cloud] publish` (default true) AND `--no-publish` / `COOK_NO_PUBLISH`.
     pub publish_enabled: bool,
+    pub replay_logs: bool,
 }

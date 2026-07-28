@@ -49,6 +49,29 @@ fn discovered_inputs_manifest_key_is_distinct() {
     assert_ne!(manifest, out0);
 }
 
+#[test]
+fn observation_key_is_outside_the_output_and_manifest_ranges() {
+    let base = [3u8; 32];
+    let observation = artifact_key(&base, OBSERVATION_INDEX, OBSERVATION_PATH);
+    assert_ne!(observation, artifact_key(&base, 0, "out"));
+    assert_ne!(
+        observation,
+        artifact_key(
+            &base,
+            DISCOVERED_INPUTS_MANIFEST_INDEX,
+            DISCOVERED_INPUTS_MANIFEST_PATH,
+        )
+    );
+    assert_ne!(
+        observation,
+        artifact_key(
+            &base,
+            DISCOVERED_INPUT_SETS_INDEX,
+            DISCOVERED_INPUT_SETS_PATH
+        )
+    );
+}
+
 // ─── cloud_key composition tests ────────────────────────────────────────
 
 fn make_key_inputs() -> CloudKeyInputs<'static> {
@@ -277,6 +300,7 @@ fn determinant_manifest_serializes_deterministically() {
         empty_dir_outputs: Vec::new(),
         consulted_env: env,
         sealed_probes: probes,
+        observation: None,
     };
     let a = serde_json::to_vec(&m).unwrap();
     let b = serde_json::to_vec(&m.clone()).unwrap();

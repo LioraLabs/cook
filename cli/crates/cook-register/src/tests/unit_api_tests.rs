@@ -47,6 +47,7 @@ fn fake_cache_ctx() -> std::sync::Arc<cook_cache::cache_ctx::CacheContext> {
             project_root: dir_path,
             project_id: "test-project".to_string(),
         publish_enabled: true,
+        replay_logs: false,
     })
 }
 

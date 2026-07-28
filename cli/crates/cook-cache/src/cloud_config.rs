@@ -91,6 +91,10 @@ pub struct CacheSection {
     /// it's just a no-op (no budget, no check, no sweep).
     #[serde(default)]
     pub auto_gc: bool,
+    /// Maximum retained stdout/stderr bytes per unit observation.
+    /// Defaults to 1 MiB.
+    #[serde(default)]
+    pub observation_max_bytes: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -347,6 +351,10 @@ impl CloudConfig {
     /// budget configured means no check ever runs, not an error.
     pub fn auto_gc(&self) -> bool {
         self.cache.auto_gc
+    }
+
+    pub fn observation_max_bytes(&self) -> u64 {
+        self.cache.observation_max_bytes.unwrap_or(1024 * 1024)
     }
 
     /// Whether this client publishes produced artifacts to the shared store.

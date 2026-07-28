@@ -74,6 +74,18 @@ fn size_sweep_stops_at_the_target_not_past_it() {
 }
 
 #[test]
+fn size_sweep_drops_observations_before_file_artifacts() {
+    let old_file = candidate(0x01, 10, 1, None);
+    let new_observation = candidate(0x02, 10, 100, Some("observation"));
+    let plan = plan_eviction(
+        &[old_file.clone(), new_observation.clone()],
+        &EvictPolicy::manual(Some(15), None),
+        1_000,
+    );
+    assert_eq!(plan.victims, vec![new_observation]);
+}
+
+#[test]
 fn exempt_bytes_over_budget_evict_everything_eligible_and_stop() {
     let exempt = candidate(0x01, 1_000, 1, Some("probe_value"));
     let f1 = candidate(0x02, 10, 5, None);

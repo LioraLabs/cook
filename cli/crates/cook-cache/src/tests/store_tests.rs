@@ -31,6 +31,7 @@ fn make_populated_cache() -> RecipeCache {
         command_hash: 0x0102030405060708,
         env_contribution: 0x2222222222222222,
         seal_contribution: 0,
+        observed: None,
     };
     cache.steps.insert("compile_main".to_string(), step);
 
@@ -60,6 +61,7 @@ fn no_output_step_entry_round_trips() {
             command_hash: 0xdeadbeefcafe,
             env_contribution: 0xe0e0e0e0,
             seal_contribution: 0,
+            observed: None,
         },
     );
     let restored = crate::index_bin::decode(&crate::index_bin::encode(&cache)).expect("decode");

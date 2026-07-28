@@ -67,6 +67,7 @@ fn warmup_collapses_to_two_runs() {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     // ---- Run 2: pre-check augments current_inputs, equality check skips ----

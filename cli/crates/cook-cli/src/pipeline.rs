@@ -707,6 +707,7 @@ fn run_with_progress(
         &[],
         no_prune,
         no_publish,
+        globals.replay_logs,
         move |event| {
             let _ = engine_tx.send(event);
         },
@@ -1244,6 +1245,7 @@ pub fn cmd_test(
             &rerun_patterns,
             no_prune_enabled(globals),
             no_publish_enabled(globals),
+            globals.replay_logs,
             on_event,
         ) {
             Ok(r) => {
@@ -1911,7 +1913,7 @@ fn resolve_reachable_closure(
 /// Structure and determinants arrive from two places and are joined here:
 /// `cook_graph` supplies the graph and collapses it to `args.level`,
 /// `cook_engine::why` supplies each unit's key, tier verdict, and determinant
-/// values, and `cook_engine::timings` supplies what any of it was last
+/// values, and `cook_engine::observations` supplies what any of it was last
 /// observed to cost. The join key throughout is `(recipe, cache_key)`.
 ///
 /// The two halves used to be two commands. `cook dag` printed the structure
@@ -1965,7 +1967,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     )
     .map_err(engine_error_to_cook_error)?;
 
-    let timings = cook_engine::timings::Timings::load(&project_root);
+    let timings = cook_engine::observations::Observations::load(&project_root);
 
     // A `--unit` selector is a determinant query, not a graph query: the caller
     // has already found the unit and wants everything known about it. Answer it
@@ -2080,7 +2082,7 @@ fn parse_format(s: &str) -> Result<cook_graph::emit::Format, CookError> {
     }
 }
 
-/// Fold the determinant report and the retained timings into the fact map the
+/// Fold the determinant report and recorded observations into the fact map the
 /// graph aggregates over.
 ///
 /// "Served" is the union of both tiers, deliberately: a locally-warm unit does
@@ -2088,7 +2090,7 @@ fn parse_format(s: &str) -> Result<cook_graph::emit::Format, CookError> {
 /// COOK-276 exists because conflating the two read as "this will rebuild".
 fn annotations_from(
     report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::timings::Timings,
+    timings: &cook_engine::observations::Observations,
 ) -> cook_graph::Annotations {
     let mut a = cook_graph::Annotations::new();
     for u in &report.units {
@@ -2100,10 +2102,7 @@ fn annotations_from(
                 observed_ms: timings
                     .get(&u.recipe_name, &u.cache_key)
                     .map(|o| o.elapsed_ms),
-                observed_builds_ago: timings
-                    .get(&u.recipe_name, &u.cache_key)
-                    .map(|o| o.builds_ago)
-                    .unwrap_or(0),
+                observed_builds_ago: 0,
             },
         );
     }
@@ -2116,7 +2115,7 @@ fn render_selected_units(
     report: &cook_engine::why::WhyReport,
     pattern: &str,
     format: cook_graph::emit::Format,
-    timings: &cook_engine::timings::Timings,
+    timings: &cook_engine::observations::Observations,
 ) -> Result<(), CookError> {
     let matched: Vec<_> = report
         .units
@@ -2153,7 +2152,7 @@ fn render_selected_units(
 
 fn render_why_plain(
     report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::timings::Timings,
+    timings: &cook_engine::observations::Observations,
 ) -> String {
     use cook_engine::why::CacheStatus;
     let mut s = String::new();
@@ -2238,13 +2237,12 @@ fn render_why_plain(
         // overnight when I changed nothing".
         if let Some(obs) = timings.get(&u.recipe_name, &u.cache_key) {
             if let Some(cause) = &obs.cause {
-                let ago = match obs.builds_ago {
-                    0 => "last build".to_string(),
-                    1 => "1 build ago".to_string(),
-                    n => format!("{n} builds ago"),
-                };
-                s.push_str(&format!("  last ran because: {cause} ({ago})\n"));
+                s.push_str(&format!(
+                    "  last ran because: {cause} (recorded at Unix {})\n",
+                    obs.recorded_at
+                ));
             }
+            s.push_str(&format!("  recorded output: {} bytes\n", obs.log_bytes));
         }
         match &u.manifest_diff {
             Some(diffs) if diffs.is_empty() => {
@@ -2334,7 +2332,7 @@ fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
 // engine; this note covers the per-unit object keys assembled here.
 fn render_why_json(
     report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::timings::Timings,
+    timings: &cook_engine::observations::Observations,
 ) -> String {
     let units: Vec<serde_json::Value> =
         report.units.iter().map(|u| why_unit_json(u, timings)).collect();
@@ -2348,7 +2346,7 @@ fn render_why_json(
 
 fn why_unit_json(
     u: &cook_engine::why::WhyUnit,
-    timings: &cook_engine::timings::Timings,
+    timings: &cook_engine::observations::Observations,
 ) -> serde_json::Value {
     use cook_engine::why::CacheStatus;
 
@@ -2392,12 +2390,7 @@ fn why_unit_json(
         .determinants
         .inputs
         .iter()
-        .map(|(p, h)| {
-            (
-                p.clone(),
-                serde_json::Value::String(format!("{h:016x}")),
-            )
-        })
+        .map(|(p, h)| (p.clone(), serde_json::Value::String(format!("{h:016x}"))))
         .collect();
 
     let consulted_env: serde_json::Map<String, serde_json::Value> = u
@@ -2436,9 +2429,7 @@ fn why_unit_json(
 
     let manifest_diff = match &u.manifest_diff {
         None => serde_json::Value::Null,
-        Some(diffs) => {
-            serde_json::Value::Array(diffs.iter().map(determinant_diff_json).collect())
-        }
+        Some(diffs) => serde_json::Value::Array(diffs.iter().map(determinant_diff_json).collect()),
     };
 
     let mut obj = serde_json::Map::new();
@@ -2493,11 +2484,16 @@ fn why_unit_json(
         },
     );
     obj.insert(
-        "last_cause_builds_ago".to_string(),
+        "last_cause_recorded_at".to_string(),
         match last.filter(|o| o.cause.is_some()) {
-            Some(o) => serde_json::json!(o.builds_ago),
+            Some(o) => serde_json::json!(o.recorded_at),
             None => serde_json::Value::Null,
         },
+    );
+    obj.insert(
+        "recorded_log_bytes".to_string(),
+        last.map(|o| serde_json::json!(o.log_bytes))
+            .unwrap_or(serde_json::Value::Null),
     );
     serde_json::Value::Object(obj)
 }

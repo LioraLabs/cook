@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::RecipeCache;
+use cook_contracts::cache::observation::Observation;
 use cook_fingerprint::record::{FileRecord, StepEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,6 +15,7 @@ fn step(inputs: Vec<FileRecord>, outputs: Vec<FileRecord>) -> StepEntry {
         command_hash: 0x0102030405060708,
         env_contribution: 0x2222222222222222,
         seal_contribution: 0x3333333333333333,
+        observed: None,
     }
 }
 
@@ -72,6 +74,16 @@ fn step_with_no_outputs_round_trips() {
         "probe_only".to_string(),
         step(vec![rec("src/main.c", 1, 2)], vec![]),
     );
+    assert_eq!(cache, decode(&encode(&cache)).expect("decode"));
+}
+
+#[test]
+fn step_observation_round_trips() {
+    let mut cache = RecipeCache::new();
+    let mut observed = step(vec![rec("src/main.c", 1, 2)], vec![]);
+    observed.observed =
+        Some(Observation::new(1_500, 1_753_600_000, Some("input changed: src/main.c".into()), 42));
+    cache.steps.insert("observed".to_string(), observed);
     assert_eq!(cache, decode(&encode(&cache)).expect("decode"));
 }
 

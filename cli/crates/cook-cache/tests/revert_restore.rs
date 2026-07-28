@@ -15,15 +15,15 @@
 //! only the v1 single-set manifest; recovery must still work through it.
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, DeterminantManifest,
-    LocalBackend,
+    ArtifactMeta, CloudKeyInputs, DeterminantManifest, LocalBackend, artifact_key, cloud_key,
+    put_bytes,
 };
 use cook_cache::store::CACHE_VERSION;
 use cook_contracts::DiscoveredInputs;
 use cook_fingerprint::{
-    fetch_by_key, read_discovered_input_sets, CacheBackend, RestoreCtx,
-    DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH,
-    DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
+    CacheBackend, DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
+    DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, RestoreCtx, fetch_by_key,
+    read_discovered_input_sets,
 };
 
 const RECIPE_NS: &str = "proj/Cookfile::build";
@@ -110,6 +110,7 @@ fn put_determinant_manifest(
         empty_dir_outputs: Vec::new(),
         consulted_env: Default::default(),
         sealed_probes: Default::default(),
+        observation: None,
     };
     backend.put_manifest(key, &manifest).expect("seed determinant manifest");
 }

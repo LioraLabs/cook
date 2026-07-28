@@ -25,6 +25,7 @@ fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry 
         command_hash: 0x1111,
         env_contribution: 0x3333,
         seal_contribution: 0,
+        observed: None,
     }
 }
 
@@ -118,6 +119,7 @@ fn header_change_after_pull_invalidates_correctly() {
         command_hash: entry_thin.command_hash,
         env_contribution: entry_thin.env_contribution,
         seal_contribution: 0,
+        observed: None,
     };
 
     let mut h_thin: Vec<u64> = entry_thin.inputs.iter().map(|fr| fr.hash).collect();

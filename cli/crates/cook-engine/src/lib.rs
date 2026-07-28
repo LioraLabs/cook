@@ -8,13 +8,13 @@ pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
 pub mod id;
+pub mod observations;
 pub mod pipeline;
 pub mod recipe_dag;
 pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
 mod seal;
-pub mod timings;
 pub mod verify;
 pub mod why;
 
@@ -269,7 +269,7 @@ pub enum EngineEvent {
         /// can pick the right verb without remembering per-node state.
         kind: NodeKind,
         /// CS-0171: the unit's recipe-local cache key, the stable identity
-        /// `cook why` joins retained timings against. `unit` is a per-run DAG
+        /// `cook why` joins recorded observations against. `unit` is a per-run DAG
         /// index and `node_name` collides across distinct units (CS-0167 was
         /// a whole defect class built on basename collisions), so neither
         /// survives as a cross-run join key. `None` for a non-cacheable node.
@@ -279,7 +279,7 @@ pub enum EngineEvent {
         /// unit take last time", which must survive its inputs changing.
         ///
         /// It rides on this event because this is the record carrying
-        /// `elapsed`; a reader recovering timings should not have to correlate
+        /// `elapsed`; a reader recovering observations should not have to correlate
         /// two events to learn which unit was timed. CS-0174 stamps it on
         /// `NodeStarted` as well, on the same principle applied to `cause`.
         cache_key: Option<String>,

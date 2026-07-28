@@ -345,6 +345,13 @@ pub fn write_junit_sidecar(
                 r.duration.as_secs_f64(),
             ));
             match r.outcome {
+                TestOutcome::Passed if r.from_cache => {
+                    out.push_str(">\n");
+                    out.push_str("      <properties>\n");
+                    out.push_str("        <property name=\"cook.cached\" value=\"true\"/>\n");
+                    out.push_str("      </properties>\n");
+                    out.push_str("    </testcase>\n");
+                }
                 TestOutcome::Passed => {
                     out.push_str("/>\n");
                 }
