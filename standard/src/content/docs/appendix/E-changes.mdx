@@ -3090,7 +3090,9 @@ What existed instead was §{phl.cook-step}'s worked example showing a `command` 
 
 **Backward compatibility.** None needed: no behaviour changes. This states what was already true and removes the second implementation of it.
 
-**Conformance.** No fixture. Every existing multi-line-body fixture in the corpus already exercises the rule; what was missing was the statement, not the coverage.
+**Conformance.** One fixture, `cli/e2e-fixtures/surface/30-shell-block-one-invocation`, pinning each of the three consequences separately through the real pipeline: a Cookfile, codegen and a real spawn, rather than by composing the shell text by hand and asserting on it. The corpus does exercise multi-line bodies throughout, but only incidentally — nothing in it would have failed had the rule silently become one invocation per line.
+
+The abort case asserts by **file absence** rather than by output matching, because a failure diagnostic echoes the whole composed command: any marker string on the unreached line appears in the output whether or not that line ran. A file exists only if something created it.
 
 ## CS-0188 — a unit's output has one owner [#changes.cs-0188]
 

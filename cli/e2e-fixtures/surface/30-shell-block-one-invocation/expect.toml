@@ -1,0 +1,33 @@
+# CS-0190 (COOK-377): §8.3.1's three observable consequences, through the real
+# pipeline — a Cookfile, codegen, and a real spawn — rather than by composing
+# the shell text by hand.
+
+# 1. A failing line stops the block. `set -e` is in the composed text, so line 3
+#    never runs and the block's exit status is line 2's.
+[[run]]
+args = ["aborts"]
+exit = 1
+[run.assert]
+# Asserted by FILE ABSENCE, not by output matching: cook's failure diagnostic
+# echoes the whole composed command, so any marker string on line 3 appears in
+# the output whether or not the line ran. A file only exists if something
+# created it.
+absent = ["out/aborts.txt", "out/line-three-ran.txt"]
+output_contains = ["BLOCK-LINE-ONE"]
+
+# 2. The block shares one shell. If each line were its own `sh -c`, `MARKER`
+#    would be unset and the `cd` would not have moved anything.
+[[run]]
+args = ["shares_one_shell"]
+[run.assert]
+exists = ["out/state.txt"]
+equals = { "out/state.txt" = "carried-across-lines in-sub\n" }
+
+# 3. One invocation is one spawn, so the block's stdout arrives as one unit of
+#    captured output in source order, with stderr its own chunk rather than
+#    interleaved — which is exactly what §24.1 says a single call may promise.
+[[run]]
+args = ["one_spawn"]
+[run.assert]
+exists = ["out/spawn.txt"]
+output_order = ["FIRST", "THIRD", "(stderr) SECOND"]
