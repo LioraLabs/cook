@@ -137,25 +137,82 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
     ));
 }
 
+/// CS-0191: a test unit takes the same payload as any other unit. This
+/// replaces `work_payload_test_construction`, which asserted that a dedicated
+/// `WorkPayload::Test` carried a `timeout` of 30 — a value the surface could
+/// not produce, since CS-0135 removed the modifier that set it and every real
+/// construction hardcoded `u64::MAX`. The test passed because it built the
+/// value by hand.
 #[test]
-fn work_payload_test_construction() {
-    let p = WorkPayload::Test {
-        cmd: "./run_tests".into(),
-        line: 10,
-        timeout: 30,
-        should_fail: false,
-        test_name: "test_foo".into(),
-        iteration_item: None,
-        lua_code: None,
+fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
+    let command_test = CapturedUnit {
+        payload: WorkPayload::Shell { cmd: "./run_tests".into(), line: 10 },
+        cache_meta: None,
+        dep_kind: DepKind::Sequential,
+        probes: vec![],
+        unit_env_vars: Default::default(),
+        member: None,
+        output_paths: vec![],
+        test_name: Some("build_test10".into()),
     };
-    assert!(matches!(
-        p,
-        WorkPayload::Test {
-            timeout: 30,
-            should_fail: false,
-            ..
+    // Test-ness is the name's presence, and nothing about the payload.
+    assert!(command_test.test_name.is_some());
+    assert!(matches!(command_test.payload, WorkPayload::Shell { .. }));
+    assert_eq!(command_test.payload.line(), 10);
+    // An observing unit is one declaring no outputs (§17.1.1.1); that is the
+    // whole of what makes a test special to the cache.
+    assert!(command_test.output_paths.is_empty());
+
+    // A Lua-bodied test is a LuaChunk, by the same rule.
+    let lua_test = CapturedUnit {
+        payload: WorkPayload::LuaChunk {
+            code: "assert(true)".into(),
+            inputs: vec![],
+            outputs: vec![],
+            ingredient_groups: vec![],
+            step_kind: StepKind::Test,
+            is_chore: false,
+            line: 12,
+        },
+        cache_meta: None,
+        dep_kind: DepKind::Sequential,
+        probes: vec![],
+        unit_env_vars: Default::default(),
+        member: None,
+        output_paths: vec![],
+        test_name: Some("build_test12".into()),
+    };
+    assert!(matches!(lua_test.payload, WorkPayload::LuaChunk { .. }));
+    assert_eq!(lua_test.payload.line(), 12);
+}
+
+/// Every payload carries a source line, and `line()` is the one way to ask.
+/// Four call sites used to match on the payload kind to reach it, and one of
+/// them knew only three variants and reported 0 for the rest.
+#[test]
+fn every_payload_reports_its_line() {
+    assert_eq!(WorkPayload::Shell { cmd: "x".into(), line: 1 }.line(), 1);
+    assert_eq!(
+        WorkPayload::Interactive { cmd: "x".into(), line: 2, is_chore: false }.line(),
+        2
+    );
+    assert_eq!(
+        WorkPayload::Probe { key: "k".into(), produce: "return 1".into(), line: 3 }.line(),
+        3
+    );
+    assert_eq!(
+        WorkPayload::LuaChunk {
+            code: "x".into(),
+            inputs: vec![],
+            outputs: vec![],
+            ingredient_groups: vec![],
+            step_kind: StepKind::Cook,
+            is_chore: false,
+            line: 4,
         }
-    ));
+        .line(),
+        4
+    );
 }
 
 #[test]
@@ -316,6 +373,7 @@ fn captured_unit_construction() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     assert!(unit.cache_meta.is_none());
     assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -352,6 +410,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: WorkPayload::Shell {
@@ -364,6 +423,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -470,6 +530,7 @@ fn captured_unit_probes_defaults_to_empty() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     assert!(cu.probes.is_empty());
 }
@@ -525,6 +586,7 @@ fn captured_unit_with_cache() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     assert!(unit.cache_meta.is_some());
     assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

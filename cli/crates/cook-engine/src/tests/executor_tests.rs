@@ -65,6 +65,35 @@ fn default_env() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
 
+/// CS-0191: a test node is an ordinary node carrying a reporting name. These
+/// tests used to build a `WorkPayload::Test` with `timeout: 30` — a value the
+/// register surface could not produce, since CS-0135 removed the modifier and
+/// every real construction hardcoded `u64::MAX`. Building test fixtures by hand
+/// is exactly how a payload keeps fields nothing can set.
+fn test_node(cmd: &str, name: &str, recipe: &str, wd: PathBuf) -> WorkNode {
+    test_node_at(cmd, name, 1, None, recipe, wd)
+}
+
+/// As [`test_node`], with the source line and the fan-out member spelled out.
+/// `member` is what the payload used to carry as `iteration_item`.
+fn test_node_at(
+    cmd: &str,
+    name: &str,
+    line: usize,
+    member: Option<&str>,
+    recipe: &str,
+    wd: PathBuf,
+) -> WorkNode {
+    let mut node = work_node(
+        WorkPayload::Shell { cmd: cmd.to_string(), line },
+        recipe,
+        wd,
+    );
+    node.test_name = Some(name.to_string());
+    node.member = member.map(|m| m.to_string());
+    node
+}
+
 fn work_node(payload: WorkPayload, recipe: &str, wd: PathBuf) -> WorkNode {
     WorkNode {
         process_env_vars: std::collections::BTreeMap::new(),
@@ -73,6 +102,8 @@ fn work_node(payload: WorkPayload, recipe: &str, wd: PathBuf) -> WorkNode {
         cache_meta: None,
         working_dir: wd,
         env_vars: default_env(),
+        test_name: None,
+        member: None,
     }
 }
 
@@ -84,6 +115,8 @@ fn presatisfied_node(recipe: &str, wd: PathBuf) -> WorkNode {
         cache_meta: None,
         working_dir: wd,
         env_vars: default_env(),
+        test_name: None,
+        member: None,
     }
 }
 
@@ -413,6 +446,8 @@ fn cook_node(payload: WorkPayload, recipe: &str, wd: PathBuf, outputs: Vec<&str>
         cache_meta: Some(cook_meta(outputs)),
         working_dir: wd,
         env_vars: default_env(),
+        test_name: None,
+        member: None,
     }
 }
 
@@ -437,6 +472,8 @@ fn cook_node_disposition(
         cache_meta: Some(meta),
         working_dir: wd,
         env_vars: default_env(),
+        test_name: None,
+        member: None,
     }
 }
 
@@ -948,19 +985,7 @@ fn cook_failure_produces_blocked_test_result() {
     ).unwrap();
     // Test node downstream of the failing cook node.
     dag.add_node(
-        work_node(
-            WorkPayload::Test {
-                cmd: "true".to_string(),
-                line: 1,
-                timeout: 30,
-                should_fail: false,
-                test_name: "my_test".to_string(),
-                iteration_item: None,
-                lua_code: None,
-            },
-            "blocked_by_build",
-            wd.clone(),
-        ),
+        test_node("true", "my_test", "blocked_by_build", wd.clone()),
         &[cook],
     ).unwrap();
 
@@ -994,8 +1019,9 @@ fn cook_failure_produces_blocked_test_result() {
     }
 }
 
-// SHI-line: WorkPayload::Test { line } must propagate into TestStarted and
-// TestResult.line rather than remaining 0.
+// SHI-line, amended CS-0191: the unit's source line must propagate into
+// TestStarted and TestResult.line rather than remaining 0. The line now comes
+// from the payload every unit has rather than from a test-only variant.
 #[test]
 fn test_line_number_propagates_from_payload_to_events() {
     use std::sync::mpsc;
@@ -1004,19 +1030,7 @@ fn test_line_number_propagates_from_payload_to_events() {
 
     let mut dag = Dag::new();
     dag.add_node(
-        work_node(
-            WorkPayload::Test {
-                cmd: "true".to_string(),
-                line: 17,
-                timeout: 30,
-                should_fail: false,
-                test_name: "my_test".to_string(),
-                iteration_item: None,
-                lua_code: None,
-            },
-            "my_recipe",
-            wd,
-        ),
+        test_node_at("true", "my_test", 17, None, "my_recipe", wd),
         &[],
     ).unwrap();
 
@@ -1028,7 +1042,7 @@ fn test_line_number_propagates_from_payload_to_events() {
     assert_eq!(test_results.len(), 1, "expected exactly one TestResult");
     assert_eq!(
         test_results[0].line, 17,
-        "TestResult.line should be 17 (from WorkPayload::Test {{ line: 17 }})"
+        "TestResult.line should be 17 (from the payload's line)"
     );
 
     // The TestStarted event must also carry line 17.
@@ -1061,19 +1075,9 @@ fn test_iteration_item_propagates() {
 
     let mut dag = Dag::new();
     dag.add_node(
-        work_node(
-            WorkPayload::Test {
-                cmd: "true".to_string(),
-                line: 17,
-                timeout: 30,
-                should_fail: false,
-                test_name: "my_test".to_string(),
-                iteration_item: Some("a.cpp".into()),
-                lua_code: None,
-            },
-            "my_recipe",
-            wd,
-        ),
+        // CS-0191: the fan-out member, which the payload used to carry a
+        // second copy of as `iteration_item`.
+        test_node_at("true", "my_test", 17, Some("a.cpp"), "my_recipe", wd),
         &[],
     ).unwrap();
 
@@ -1182,6 +1186,8 @@ fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
         cache_meta: None,
         working_dir: wd,
         env_vars: BTreeMap::new(),
+        test_name: None,
+        member: None,
     }
 }
 
@@ -1205,6 +1211,8 @@ fn probe_work_node_with_env(
         cache_meta: None,
         working_dir: wd,
         env_vars,
+        test_name: None,
+        member: None,
     }
 }
 

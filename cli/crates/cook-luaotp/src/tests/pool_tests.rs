@@ -552,19 +552,28 @@ fn test_pool_drop_cleans_up_workers() {
     );
 }
 
+/// CS-0191: a run's exit code is a property of the run, so it rides on
+/// `WorkResult` like its duration and its output. This replaces
+/// `test_output_carries_exit_code`, which asserted the same thing about a
+/// `TestOutput` that existed only for the two test-shaped executors — and did
+/// it by hand-building the struct rather than running anything.
 #[test]
-fn test_output_carries_exit_code() {
-    let to = TestOutput {
-        test_name: "t".into(),
-        stdout: String::new(),
-        stderr: String::new(),
-        duration: 0.0,
-        timed_out: false,
-        should_fail: false,
-        exit_success: false,
-        exit_code: Some(7),
-    };
-    assert_eq!(to.exit_code, Some(7));
+fn a_failing_command_reports_its_exit_code_on_the_result() {
+    let dir = TempDir::new().unwrap();
+    let (pool, rx) = WorkerPool::spawn(1);
+    pool.submit(WorkItem {
+        process_env_vars: HashMap::new(),
+        id: 0,
+        payload: WorkPayload::Shell { cmd: "exit 7".to_string(), line: 1 },
+        recipe_name: "r".to_string(),
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
+    let result = rx.recv().expect("result");
+    drop(pool);
+    assert!(!result.success);
+    assert_eq!(result.exit_code, Some(7));
 }
 
 // -----------------------------------------------------------------

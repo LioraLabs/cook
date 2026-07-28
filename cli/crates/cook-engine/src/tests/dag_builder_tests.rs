@@ -43,6 +43,7 @@ fn dag_builder_adds_probe_to_consumer_edge() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             // Consumer unit with probes = ["cc:zlib"]
             CapturedUnit {
@@ -53,6 +54,7 @@ fn dag_builder_adds_probe_to_consumer_edge() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -89,6 +91,7 @@ fn test_build_single_recipe_sequential() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("echo b"),
@@ -98,6 +101,7 @@ fn test_build_single_recipe_sequential() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -129,6 +133,7 @@ fn test_build_step_group() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -c b.c"),
@@ -138,6 +143,7 @@ fn test_build_step_group() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("ar rcs lib.a"),
@@ -147,6 +153,7 @@ fn test_build_step_group() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -178,6 +185,7 @@ fn test_build_cross_recipe_deps() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -197,6 +205,7 @@ fn test_build_cross_recipe_deps() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -232,6 +241,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -c mul.c"),
@@ -241,6 +251,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("ar rcs libmath.a"),
@@ -250,6 +261,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -273,6 +285,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -o app main.o libmath.a"),
@@ -282,6 +295,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0]],
@@ -329,6 +343,7 @@ fn test_fine_grained_no_dep_edges_unchanged() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -348,6 +363,7 @@ fn test_fine_grained_no_dep_edges_unchanged() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -385,6 +401,7 @@ fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -446,6 +463,7 @@ fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -488,6 +506,7 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -518,6 +537,7 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -558,6 +578,7 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -599,6 +620,7 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -636,6 +658,7 @@ fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -677,6 +700,7 @@ fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -725,6 +749,7 @@ fn zero_unit_recipe_with_no_deps_forwards_empty_leaf_set() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -767,6 +792,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -792,6 +818,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -811,6 +838,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -848,6 +876,7 @@ fn test_build_presatisfied_units() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("echo real work"),
@@ -857,6 +886,7 @@ fn test_build_presatisfied_units() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -909,6 +939,7 @@ fn test_output_collision_unrelated_recipes_rejected() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -928,6 +959,7 @@ fn test_output_collision_unrelated_recipes_rejected() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -962,6 +994,7 @@ fn test_output_collision_dep_related_recipes_allowed() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -981,6 +1014,7 @@ fn test_output_collision_dep_related_recipes_allowed() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1021,6 +1055,7 @@ fn unreached_probe_is_pruned_from_dag() {
                     unit_env_vars: Default::default(),
                     member: None,
                     output_paths: Vec::new(),
+                                    test_name: None,
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell {
@@ -1033,6 +1068,7 @@ fn unreached_probe_is_pruned_from_dag() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -1088,6 +1124,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe_b_payload,
@@ -1097,6 +1134,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 3 },
@@ -1106,6 +1144,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
 
     let make_ru = |units: Vec<CapturedUnit>| RecipeUnits {
@@ -1165,6 +1204,7 @@ fn top_level_probe_materialises_when_consumer_references_it() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1217,6 +1257,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1265,6 +1306,7 @@ fn top_level_probe_chain_synthesised_transitively() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1323,6 +1365,7 @@ fn body_scope_probe_chain_not_pruned() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     // Body-scope consumer probe (e.g. `cc:find:SDL3`) requiring the
     // upstream body-scope probe.
@@ -1338,6 +1381,7 @@ fn body_scope_probe_chain_not_pruned() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     // Non-probe consumer (the link unit) listing only the downstream
     // probe in its `probes`. The upstream must still survive the
@@ -1351,6 +1395,7 @@ fn body_scope_probe_chain_not_pruned() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
 
     let ru = RecipeUnits {
@@ -1402,6 +1447,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe("cc:b"),
@@ -1411,6 +1457,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let probe_c = CapturedUnit {
         payload: probe("cc:c"),
@@ -1420,6 +1467,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: shell("link"),
@@ -1429,6 +1477,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -1473,6 +1522,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe("cc:b"),
@@ -1482,6 +1532,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let probe_c = CapturedUnit {
         payload: probe("cc:c"),
@@ -1491,6 +1542,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: shell("link"),
@@ -1500,6 +1552,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -1546,6 +1599,7 @@ fn non_probe_units_around_probes_keep_barrier() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let p = CapturedUnit {
         payload: probe("cc:x"),
@@ -1555,6 +1609,7 @@ fn non_probe_units_around_probes_keep_barrier() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let post_shell = CapturedUnit {
         payload: shell("post"),
@@ -1564,6 +1619,7 @@ fn non_probe_units_around_probes_keep_barrier() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "r".into(),
@@ -1616,6 +1672,7 @@ fn multi_recipe_wave_prunes_independently() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }];
         units.push(CapturedUnit {
             payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 2 },
@@ -1625,6 +1682,7 @@ fn multi_recipe_wave_prunes_independently() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         });
         RecipeUnits {
             recipe_name: name.to_string(),
@@ -1664,6 +1722,7 @@ fn test_output_collision_distinct_outputs_allowed() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1683,6 +1742,7 @@ fn test_output_collision_distinct_outputs_allowed() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),

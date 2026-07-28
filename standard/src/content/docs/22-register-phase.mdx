@@ -184,9 +184,13 @@ A test unit is an ordinary work unit. It is recorded by `cook.add_unit` (§{lua.
 
 The constraint: a `step_kind = "test"` unit MUST declare no outputs. A conforming implementation MUST reject `output` or `outputs` on such a call with a register-phase error naming the field. An empty output list is what makes a unit's cache hit replay a recorded outcome rather than restore artifacts (§{exec.cache.test-unit}); it is not what makes it a test. `step_kind` is what makes it a test, and the two MUST NOT be inferred from one another — an implementation deriving "is a test" from an empty output list, or admitting outputs on a test, does not conform.
 
-| Field | Type | Required | Default | Constraint |
-|---|---|---|---|---|
-| `iteration_item` | string or nil | no | `nil` | For one-to-one test steps, the current iteration input. When non-nil and non-empty, a conforming implementation MUST include it as a discriminator in the test identity (e.g. `recipe:name[item]`) and in the displayed label (e.g. `recipe@line [item]`). For many-to-one and one-shot test steps the code generator MUST pass `nil`. This is the test-reporting spelling of `member`; an implementation MAY carry one field for both. |
+A test unit adds **no fields of its own** to §{lua.add-unit}.
+
+> **Amended (CS-0191): `iteration_item` is removed.** This table carried one row, `iteration_item`, described as "the test-reporting spelling of `member`", with the note that an implementation MAY carry one field for both. The MAY is now a MUST: there is one field, `member` (§{lua.add-unit}), and a conforming implementation MUST NOT accept a separate `iteration_item`.
+>
+> Its meaning is unchanged and moves to `member` intact: when a test unit's `member` is non-nil and non-empty, a conforming implementation MUST include it as a discriminator in the test identity (e.g. `recipe:name[item]`) and in the displayed label (e.g. `recipe@line [item]`). For many-to-one and one-shot test steps the code generator MUST pass no member.
+>
+> Permitting two spellings of one fact meant a fan-out `cook` unit and the `test` beside it answered "which member am I" through different fields, and the reference implementation duly emitted both from the same expression — `iteration_item = cook.member_to_string(item), member = cook.member_to_string(item)` — in the one arm where a test unit had a data member at all. CS-0185 recorded the duplication when it removed `cook.add_test`; this closes it.
 
 `consumes` was listed here as a test-unit addition when CS-0175 introduced it. It is a field of §{lua.add-unit} (CS-0186): what it narrows is an input pattern's expansion, and nothing about that asks which step kind the unit came from. A module declaring a producing unit that reads a dependency's `dist/**` narrows it by the same field, under the same safeguards, with the same register-phase validation.
 
@@ -194,7 +198,7 @@ The constraint: a `step_kind = "test"` unit MUST declare no outputs. A conformin
 
 `inputs`, `seal`, `command`, `lua_code` and `line` are §{lua.add-unit}'s fields and carry §{lua.add-unit}'s meanings; they are not restated here, and an implementation MUST NOT give them a second meaning on a test unit. Exactly one of `command` / `lua_code` MUST be supplied non-empty, by §{lua.add-unit}'s rule.
 
-**Test unit naming (CS-0185, superseding CS-0160).** A test unit accepts no `name` field (CS-0135). A conforming implementation MUST derive its name as `<recipe>_test<LINE>`, where `<recipe>` is the enclosing recipe's fully-qualified name and `<LINE>` is the `line` field — the Cookfile line of the originating `test_step`. The derived name is the unit's label in progress and log output, and it composes with `iteration_item` in the test identity (e.g. `checks:checks_test9[src/a.c]`).
+**Test unit naming (CS-0185, superseding CS-0160).** A test unit accepts no `name` field (CS-0135). A conforming implementation MUST derive its name as `<recipe>_test<LINE>`, where `<recipe>` is the enclosing recipe's fully-qualified name and `<LINE>` is the `line` field — the Cookfile line of the originating `test_step`. The derived name is the unit's label in progress and log output, and it composes with `member` in the test identity (e.g. `checks:checks_test9[src/a.c]`) (CS-0191).
 
 CS-0160 derived `<N>` as the 1-based ordinal of the unit among the test units recorded so far in the enclosing recipe body. Both discriminators are unique within a recipe — two `test_step`s cannot share a line — but an ordinal must be counted, which requires the registration API to inspect the units already recorded before it can name the one it is recording. The line is already a field of the call. The rule therefore states the cheaper of two equally correct discriminators, and a name is a label rather than a key: it enters no fingerprint (§{exec.cache.test-unit}).
 

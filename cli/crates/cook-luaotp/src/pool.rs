@@ -44,17 +44,6 @@ pub struct WorkItem {
     pub project_root: PathBuf,
 }
 
-#[derive(Clone, Debug)]
-pub struct TestOutput {
-    pub test_name: String,
-    pub stdout: String,
-    pub stderr: String,
-    pub duration: f64,
-    pub timed_out: bool,
-    pub should_fail: bool,
-    pub exit_success: bool,
-    pub exit_code: Option<i32>,
-}
 
 /// Payload returned by a completed probe unit (§22.5). `bytes` contains the
 /// canonical-JSON-serialised return value of the `produce` Lua function
@@ -70,7 +59,10 @@ pub struct WorkResult {
     pub id: usize,
     pub success: bool,
     pub error: Option<String>,
-    pub test_output: Option<TestOutput>,
+    /// The command's exit status, or `None` when it was killed by a signal or
+    /// never ran. On the payload kinds that evaluate Lua rather than spawn,
+    /// `None`: there is no process to have one.
+    pub exit_code: Option<i32>,
     pub node_name: String,
     /// Captured child output, in the order the spawns that produced it ran.
     ///
@@ -91,8 +83,8 @@ pub struct WorkResult {
     pub probe_output: Option<ProbeOutput>,
     /// Wall-clock span of the actual work-item execution, measured by the
     /// worker around the `execute_work_item` dispatch (queue wait
-    /// excluded). Mirrors the existing `TestOutput.duration` measurement
-    /// approach, generalised to every payload kind so a plain (non-test)
+    /// excluded). Measured for every payload kind so a unit's completion
+    /// line reports real elapsed time rather than a
     /// unit's completion line can report real elapsed time instead of a
     /// hardcoded zero. Individual `execute_*` helpers set this to
     /// `Duration::ZERO` in their returned literals; `worker_loop`
@@ -419,7 +411,6 @@ fn worker_loop(
                 // package-path refresh) is worker bookkeeping, not queued
                 // idle time, so starting the clock here — immediately
                 // around the dispatch — is the honest per-unit number
-                // (same intent as `TestOutput.duration`'s `start.elapsed()`).
                 let exec_start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     // R1: shell/test steps spawn with the process-env subset,
@@ -437,7 +428,7 @@ fn worker_loop(
                             error: Some(format!(
                                 "[{recipe_name}] worker panic: {msg}"
                             )),
-                            test_output: None,
+                            exit_code: None,
                             node_name,
                             output_lines: Vec::new(),
                             probe_output: None,
@@ -1441,25 +1432,11 @@ fn execute_work_item(
                 id: work.id,
                 success: false,
                 error: Some("BUG: interactive step dispatched to worker pool".to_string()),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
                 duration: Duration::ZERO,
-            }
-        }
-        WorkPayload::Test { cmd, line, timeout, should_fail, test_name, lua_code, .. } => {
-            match lua_code {
-                Some(code) => execute_lua_test(
-                    lua,
-                    work.id,
-                    code,
-                    *timeout,
-                    *should_fail,
-                    test_name,
-                    node_name,
-                ),
-                None => execute_test(work.id, cmd, *line, *should_fail, test_name, working_dir, env_vars, node_name),
             }
         }
         WorkPayload::Probe { key, produce, line } => {
@@ -1473,7 +1450,7 @@ fn execute_work_item(
             id: work.id,
             success: false,
             error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
@@ -1505,7 +1482,7 @@ fn execute_shell(
                     &e.to_string(),
                     std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
                 )),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1533,7 +1510,7 @@ fn execute_shell(
                 id,
                 success: false,
                 error: Some(e.message().to_string()),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1549,11 +1526,12 @@ fn execute_shell(
     // the same sequence, and putting a command's errors *after* the output they
     // followed reads less like a lie than putting them first.
     let error = outcome.failure(line, cmd).map(|f| f.to_wire());
+    let exit_code = outcome.exit_code();
     WorkResult {
         id,
         success: error.is_none(),
         error,
-        test_output: None,
+        exit_code,
         node_name,
         output_lines: outcome.into_chunks(),
         probe_output: None,
@@ -1592,7 +1570,7 @@ fn execute_probe(
                         std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
                     )
                 )),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1608,7 +1586,7 @@ fn execute_probe(
                 id,
                 success: false,
                 error: Some(format!("probe '{}': {}", key, e)),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1623,7 +1601,7 @@ fn execute_probe(
         id,
         success: true,
         error: None,
-        test_output: None,
+        exit_code: None,
         node_name,
         output_lines: Vec::new(),
         probe_output: Some(ProbeOutput {
@@ -1715,7 +1693,7 @@ fn execute_lua_chunk(
             id,
             success: true,
             error: None,
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
@@ -1731,188 +1709,12 @@ fn execute_lua_chunk(
                     std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
                 )
             )),
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
             duration: Duration::ZERO,
         },
-    }
-}
-
-/// Execute a `WorkPayload::Test` unit whose body is a Lua chunk (`lua_code`,
-/// CS-0127 §22.4) on the worker Lua VM — the sibling of `execute_test` for
-/// the shell-command path. Pass/fail is whether the chunk completes without
-/// raising a Lua error; `should_fail` inverts the result exactly as it does
-/// for shell tests (mirrors `execute_test`'s `success` computation).
-///
-/// Timeout is enforced best-effort via an instruction-count VM hook: every
-/// 100_000 executed instructions, the hook checks wall-clock elapsed time
-/// against `timeout_secs` and raises a Lua runtime error once exceeded. This
-/// only interrupts *Lua bytecode* execution — a blocking `cook.sh` (or other
-/// long-running foreign call) invoked from the test body runs to completion
-/// unobserved by the hook, since the hook fires between VM instructions and
-/// cannot preempt a call already in flight. A test body that shells out to
-/// something that hangs can therefore exceed `timeout_secs` before this
-/// function returns.
-fn execute_lua_test(
-    lua: &mlua::Lua,
-    id: usize,
-    code: &str,
-    timeout_secs: u64,
-    should_fail: bool,
-    test_name: &str,
-    node_name: String,
-) -> WorkResult {
-    let start = std::time::Instant::now();
-    let timeout_dur = std::time::Duration::from_secs(timeout_secs);
-    let timed_out_flag = Arc::new(AtomicBool::new(false));
-
-    let hook_timed_out = Arc::clone(&timed_out_flag);
-    let hook_test_name = test_name.to_string();
-    lua.set_hook(
-        mlua::HookTriggers::new().every_nth_instruction(100_000),
-        move |_lua, _debug| {
-            if start.elapsed() > timeout_dur {
-                hook_timed_out.store(true, Ordering::Relaxed);
-                return Err(mlua::Error::runtime(format!(
-                    "test '{hook_test_name}' exceeded timeout of {timeout_secs}s"
-                )));
-            }
-            Ok(mlua::VmState::Continue)
-        },
-    );
-
-    let chunk_name = format!("@test:{test_name}");
-    let exec_result = lua.load(code).set_name(&chunk_name).exec();
-
-    // Always remove the hook before returning — it captures `start` and
-    // `timed_out_flag` by move and must not outlive this call; leaving it
-    // installed would fire on whatever the next work item's Lua does.
-    lua.remove_hook();
-
-    let duration = start.elapsed().as_secs_f64();
-    let chunk_ok = exec_result.is_ok();
-    let timed_out = timed_out_flag.load(Ordering::Relaxed);
-    let stderr = match &exec_result {
-        Ok(()) => String::new(),
-        Err(e) => e.to_string(),
-    };
-
-    let success = if should_fail { !chunk_ok } else { chunk_ok };
-
-    // Mirror execute_test's stream-tagged output so a failing lua test's error
-    // text reaches the runner's live output the same way a failing shell test's
-    // stderr does — otherwise only the terse "test failed: <name>" summary
-    // would ever reach the terminal. One chunk, not one per line (CS-0188):
-    // the error is a single write, and splitting it would claim an ordering
-    // between its lines and some other stream that never existed.
-    //
-    // Note this is the chunk the body's own `cook.sh` calls do NOT go through:
-    // those reach the worker's sink directly and are folded in by `worker_loop`
-    // ahead of this one, in call order.
-    let output_lines: Vec<cook_contracts::OutputChunk> =
-        cook_contracts::OutputChunk::new(cook_contracts::OutputStream::Stderr, stderr.as_bytes())
-            .into_iter()
-            .collect();
-
-    WorkResult {
-        id,
-        success,
-        error: if success { None } else { Some(format!("test failed: {test_name}")) },
-        test_output: Some(TestOutput {
-            test_name: test_name.to_string(),
-            stdout: String::new(),
-            stderr,
-            duration,
-            timed_out,
-            should_fail,
-            exit_success: chunk_ok,
-            exit_code: None,
-        }),
-        node_name,
-        output_lines,
-        probe_output: None,
-        duration: Duration::ZERO,
-    }
-}
-
-/// A command-bodied `test` unit.
-///
-/// CS-0188: this used to spawn by hand with two drain threads and a
-/// `try_wait` kill loop, which existed solely to enforce a timeout. CS-0135 had
-/// already removed the modifier that set one, so the field arrived hardcoded at
-/// `u64::MAX` and the loop was unreachable. With it gone, a test spawn is the
-/// same spawn as any other and goes through the same primitive; `timed_out` is
-/// reported as the constant it has always been.
-fn execute_test(
-    id: usize,
-    cmd: &str,
-    _line: usize,
-    should_fail: bool,
-    test_name: &str,
-    working_dir: &PathBuf,
-    env_vars: &HashMap<String, String>,
-    node_name: String,
-) -> WorkResult {
-    // COOK-306: an executed command may write anywhere in the tree.
-    cook_fingerprint::statmemo::disarm();
-    let outcome = match cook_shell::run(
-        &cook_shell::Spawn {
-            command: cmd,
-            working_dir,
-            stdio: cook_shell::Stdio::Captured,
-        },
-        env_vars,
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            return WorkResult {
-                id,
-                success: false,
-                error: Some(format!("failed to spawn test: {}", e.message())),
-                test_output: Some(TestOutput {
-                    test_name: test_name.to_string(),
-                    stdout: String::new(),
-                    stderr: format!("failed to spawn: {}", e.message()),
-                    duration: 0.0,
-                    timed_out: false,
-                    should_fail,
-                    exit_success: false,
-                    exit_code: None,
-                }),
-                node_name,
-                output_lines: Vec::new(),
-                probe_output: None,
-                duration: Duration::ZERO,
-            };
-        }
-    };
-
-    let exit_success = outcome.success();
-    let success = if should_fail { !exit_success } else { exit_success };
-    let stdout = outcome.stdout_lossy();
-    let stderr = outcome.stderr_lossy();
-    let duration = outcome.duration().as_secs_f64();
-
-    WorkResult {
-        id,
-        success,
-        error: if success { None } else { Some(format!("test failed: {test_name}")) },
-        test_output: Some(TestOutput {
-            test_name: test_name.to_string(),
-            stdout,
-            stderr,
-            duration,
-            timed_out: false,
-            should_fail,
-            exit_success,
-            exit_code: outcome.exit_code(),
-        }),
-        node_name,
-        output_lines: outcome.into_chunks(),
-        probe_output: None,
-        duration: Duration::ZERO,
     }
 }
 

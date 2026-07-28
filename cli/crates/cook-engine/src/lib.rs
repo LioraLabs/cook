@@ -115,6 +115,40 @@ pub struct WorkNode {
     /// COOK-36 §7.1.2). Config `var.*` values are deliberately excluded, so a
     /// step reading a config key as a shell variable sees it unset (R1).
     pub process_env_vars: BTreeMap<String, String>,
+    /// CS-0191: this unit's test-reporting name, and the fact that it IS a
+    /// test. `Some(name)` means the test reporter names and counts it; `None`
+    /// is every other unit.
+    ///
+    /// The single remaining thing that distinguishes a test at execute time.
+    /// It is presentation, which is why it sits beside the payload rather than
+    /// inside it: what a test RUNS is a command or a Lua body, exactly as a
+    /// `cook` unit's is.
+    pub test_name: Option<String>,
+    /// COOK-96 / CS-0191: the canonical member string for a fan-out unit, or
+    /// `None` for a non-fan-out one.
+    ///
+    /// A test unit carried its own copy of this as the payload's
+    /// `iteration_item`, which CS-0185 had already recorded as a duplicate.
+    /// One field, so a fan-out `cook` unit and the `test` beside it answer
+    /// "which member am I" the same way.
+    pub member: Option<String>,
+}
+
+impl WorkNode {
+    /// Whether this unit is reported as a test.
+    pub fn is_test(&self) -> bool {
+        self.test_name.is_some()
+    }
+
+    /// The label progress and reporting use for this unit: its test name when
+    /// it has one, otherwise whatever its payload calls itself.
+    pub fn display_name(&self) -> String {
+        match (&self.test_name, &self.payload) {
+            (Some(name), _) => name.clone(),
+            (None, Some(p)) => p.display_name(),
+            (None, None) => String::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

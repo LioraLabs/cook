@@ -47,30 +47,6 @@ pub enum WorkPayload {
         /// `command_hash`), never by serialising the whole `WorkPayload`.
         line: usize,
     },
-    Test {
-        cmd: String,
-        line: usize,
-        /// Inert since CS-0135 removed the `timeout` modifier: the register
-        /// surface has no way to set it, so it arrives as `u64::MAX` and the
-        /// worker's kill loop never fires. Still READ, by
-        /// `cook_luaotp::pool`'s execute path, which is why it stays where the
-        /// three fields CS-0186 deleted did not.
-        timeout: u64,
-        /// Inert on the same terms — CS-0135 writes inversion into the body
-        /// (`! grep -q …`) — and read by the reporter, which carries it into
-        /// `TestResult`.
-        should_fail: bool,
-        test_name: String,
-        iteration_item: Option<String>,
-        /// CS-0127 §22.4: exactly one of `cmd` / `lua_code` is populated —
-        /// `cmd` is a shell command run via `/bin/sh`, `lua_code` is a Lua
-        /// chunk executed on an execute-phase worker VM under the `test`
-        /// step-kind sandbox policy (identical to `Cook`, see [`StepKind`]).
-        /// When `lua_code` is `Some`, `cmd` MUST be empty; pass/fail is the
-        /// chunk completing without error / raising a Lua error, mirroring
-        /// `should_fail`'s existing exit-code inversion semantics.
-        lua_code: Option<String>,
-    },
     // What this payload no longer carries (CS-0186): `input_paths`, `seal_keys`
     // and `consumes`. All three were here because a test unit's cache lived
     // outside `CacheMeta` and a separate ready-time fingerprint read them off
@@ -109,8 +85,22 @@ impl WorkPayload {
             }
             Self::LuaChunk { .. } => "lua".to_string(),
             Self::Interactive { line, .. } => format!("@{line}"),
-            Self::Test { test_name, .. } => test_name.clone(),
             Self::Probe { key, .. } => format!("probe:{key}"),
+        }
+    }
+
+    /// The 1-indexed Cookfile line this unit came from; `0` when unknown.
+    ///
+    /// Every variant carries one, and four call sites used to match on the
+    /// payload kind purely to reach it — one of which knew only about `Test`
+    /// and reported 0 for everything else.
+    pub fn line(&self) -> usize {
+        match self {
+            Self::Shell { line, .. }
+            | Self::Interactive { line, .. }
+            | Self::LuaChunk { line, .. }
+            | Self::Probe { line, .. } => *line,
+            _ => 0,
         }
     }
 }
@@ -135,6 +125,18 @@ pub struct CapturedUnit {
     /// COOK-96: this unit's declared output paths, retained so the engine can
     /// key them by `member` for the per-member map.
     pub output_paths: Vec<String>,
+    /// CS-0191: a test unit's reporting name, and the fact that it IS one.
+    ///
+    /// `Some(name)` marks a unit the test reporter names, counts and renders as
+    /// a test; `None` is every other unit. It is deliberately the only thing
+    /// left distinguishing a test, and it is presentation: CS-0185 made a test
+    /// an ordinary unit at registration, CS-0186 made it an ordinary unit at
+    /// the cache, and CS-0191 finishes the sentence at the runner. What remains
+    /// is a name to report it under, which is not a payload's business —
+    /// `WorkPayload::Test` carried it alongside a `timeout` that never fired,
+    /// a `should_fail` that was never set, and an `iteration_item` that
+    /// duplicated [`Self::member`].
+    pub test_name: Option<String>,
 }
 
 /// How a captured unit relates to others in the recipe.

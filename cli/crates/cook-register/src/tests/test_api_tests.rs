@@ -61,19 +61,20 @@ fn test_add_test_basic() {
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
-        WorkPayload::Test { cmd, timeout, should_fail, test_name, .. } => {
-            assert_eq!(cmd, "./run_tests");
-            // CS-0135: cook.add_test no longer accepts timeout/should_fail/
-            // name; WorkPayload::Test still carries these fields for the
-            // engine executor, populated with their prior absent-defaults.
-            assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
-            assert!(!should_fail);
-            // No current_recipe in this harness — the derived
-            // `<recipe>_test<N>` label degrades to a bare ordinal.
-            assert_eq!(test_name, "unit_test0"); // CS-0185: <recipe>_test<line>
-        }
-        _ => panic!("expected Test payload"),
+        // CS-0191: a command test is a Shell unit. `timeout` and `should_fail`
+        // are no longer asserted because they no longer exist: both were
+        // hardcoded at the one construction site since CS-0135 removed the
+        // modifiers that set them, so the only thing those assertions pinned
+        // was that a constant was still a constant.
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "./run_tests"),
+        other => panic!("expected a Shell payload, got {other:?}"),
     }
+    // No current_recipe in this harness — the derived `<recipe>_test<N>` label
+    // degrades to a bare ordinal.
+    assert_eq!(
+        state.units[0].test_name.as_deref(),
+        Some("unit_test0"), // CS-0185: <recipe>_test<line>
+    );
     assert!(matches!(state.units[0].dep_kind, DepKind::Sequential));
 }
 
@@ -118,13 +119,10 @@ fn test_add_test_defaults() {
 
     let state = body_ref(&capture_state);
     match &state.units[0].payload {
-        WorkPayload::Test { timeout, should_fail, test_name, .. } => {
-            assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
-            assert!(!should_fail);
-            assert_eq!(test_name, "unit_test0"); // CS-0185: <recipe>_test<line>
-        }
-        _ => panic!("expected Test payload"),
+        WorkPayload::Shell { .. } => {}
+        other => panic!("expected a Shell payload, got {other:?}"),
     }
+    assert_eq!(state.units[0].test_name.as_deref(), Some("unit_test0"));
 }
 
 // -----------------------------------------------------------------
@@ -146,13 +144,13 @@ fn add_test_defaults_suite_to_recipe_name() {
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
-    let payload = match &state.units[0].payload {
-        // CS-0185: `suite` is gone; the enclosing recipe — qualified prefix and
-        // all — now reaches the unit through its derived NAME instead.
-        WorkPayload::Test { test_name, .. } => test_name,
-        _ => panic!("expected Test payload"),
-    };
-    assert_eq!(payload, "frontend.unit_test0");
+    // CS-0185: `suite` is gone; the enclosing recipe — qualified prefix and
+    // all — reaches the unit through its derived NAME instead. CS-0191 moves
+    // that name off the payload and onto the unit.
+    assert_eq!(
+        state.units[0].test_name.as_deref(),
+        Some("frontend.unit_test0")
+    );
 }
 
 #[test]
@@ -173,10 +171,7 @@ fn test_unit_name_derives_from_recipe_and_line() {
     let names: Vec<&str> = state
         .units
         .iter()
-        .map(|u| match &u.payload {
-            WorkPayload::Test { test_name, .. } => test_name.as_str(),
-            _ => panic!("expected Test payload"),
-        })
+        .map(|u| u.test_name.as_deref().expect("a test unit carries its name"))
         .collect();
     // CS-0185: the discriminator is the LINE, not an ordinal. Both are unique
     // within a recipe — two test steps cannot share a line — but a line needs
@@ -298,11 +293,16 @@ fn add_test_accepts_lua_code_without_command() {
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
-        WorkPayload::Test { cmd, lua_code, .. } => {
-            assert_eq!(lua_code.as_deref(), Some("assert(true)"));
-            assert_eq!(cmd, "");
+        // CS-0191: a Lua-bodied test is a LuaChunk, exactly as a Lua-bodied
+        // `cook` step is. The old assertion — `lua_code` set and `cmd` empty —
+        // described one payload carrying both possibilities; now the payload
+        // itself is the answer.
+        WorkPayload::LuaChunk { code, outputs, .. } => {
+            assert_eq!(code, "assert(true)");
+            // A test declares no outputs; that is what makes it observing.
+            assert!(outputs.is_empty());
         }
-        _ => panic!("expected Test payload"),
+        other => panic!("expected a LuaChunk payload, got {other:?}"),
     }
 }
 
@@ -323,11 +323,10 @@ fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
 
     let state = body_ref(&capture_state);
     match &state.units[0].payload {
-        WorkPayload::Test { cmd, lua_code, .. } => {
-            assert_eq!(cmd, "true");
-            assert_eq!(lua_code.as_deref(), None);
-        }
-        _ => panic!("expected Test payload"),
+        // An empty `lua_code` reads as absent, so this is a command test and
+        // therefore a Shell payload.
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "true"),
+        other => panic!("expected a Shell payload, got {other:?}"),
     }
 }
 

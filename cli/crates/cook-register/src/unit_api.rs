@@ -899,15 +899,6 @@ pub fn register_unit_api(
                     .to_string(),
             ));
         }
-        let iteration_item: Option<String> = match tbl.get::<LuaValue>("iteration_item") {
-            Ok(LuaValue::Nil) | Err(_) => None,
-            Ok(LuaValue::String(v)) => {
-                let sv = v.to_string_lossy().to_string();
-                if sv.is_empty() { None } else { Some(sv) }
-            }
-            Ok(other) => return Err(type_err("iteration_item", "a string", other.type_name())),
-        };
-
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
         let is_chore = {
@@ -956,33 +947,39 @@ pub fn register_unit_api(
                 )));
             }
         }
+        // CS-0191: a test unit takes the same payloads as any other unit,
+        // because that is what it is. CS-0185 made it register through the one
+        // function; CS-0186 made it cache through the one record; this is the
+        // same sentence reaching the runner. A command becomes `Shell`, a body
+        // becomes `LuaChunk`, and what is left over — the name the reporter
+        // knows it by — rides on the unit as `test_name`.
+        //
+        // Gone with the variant: `timeout`, hardcoded `u64::MAX` since CS-0135
+        // removed the modifier that set it, so the kill loop reading it was
+        // unreachable; `should_fail`, hardcoded `false` on the same terms, with
+        // inversion written into the body instead; and `iteration_item`, which
+        // CS-0185 already recorded as a duplicate of `member` and which is now
+        // simply `member`.
+        let test_name: Option<String> =
+            is_test.then(|| format!("{}_test{}", current_recipe, line));
         let payload = if is_test {
-            // CS-0185: a test unit is recorded here, by the one registration
-            // function, from the same fields every other unit uses. Named from
-            // its LINE rather than an ordinal, so naming needs nothing from the
-            // recipe body and this branch sits with the others instead of
-            // after the body borrow.
-            WorkPayload::Test {
-                // An empty `lua_code` reads as ABSENT, matching the removed
-                // function: `{ command = "true", lua_code = "" }` is a command
-                // test, not a body-less one.
-                cmd: if lua_code.as_deref().is_some_and(|c| !c.is_empty()) {
-                    String::new()
-                } else {
-                    command
+            // An empty `lua_code` reads as ABSENT, matching the removed
+            // `cook.add_test`: `{ command = "true", lua_code = "" }` is a
+            // command test, not a body-less one.
+            match lua_code.filter(|c| !c.is_empty()) {
+                Some(code) => WorkPayload::LuaChunk {
+                    code,
+                    inputs: inputs.clone(),
+                    // A test declares no outputs. That is the whole of what
+                    // makes it an observing unit (§17.1.1.1); nothing else
+                    // about it is special.
+                    outputs: Vec::new(),
+                    ingredient_groups: vec![],
+                    step_kind,
+                    is_chore: false,
+                    line,
                 },
-                line,
-                // CS-0135 removed the `timeout` modifier and there is no
-                // per-test time bound in v1.0, so the executor's kill loop
-                // never fires. Retained on the payload for a planned 1.x
-                // re-add.
-                timeout: u64::MAX,
-                // CS-0135 removed the `should_fail` modifier; inversion is
-                // written into the body instead (`! grep -q ...`).
-                should_fail: false,
-                test_name: format!("{}_test{}", current_recipe, line),
-                iteration_item,
-                lua_code: lua_code.filter(|c| !c.is_empty()),
+                None => WorkPayload::Shell { cmd: command, line },
             }
         } else if let Some(code) = lua_code {
             let (final_code, chunk_line) = if !chore_param_prelude.is_empty() && is_chore {
@@ -1137,6 +1134,7 @@ pub fn register_unit_api(
             probes,
             unit_env_vars,
             member: member.clone(),
+            test_name,
             output_paths: output_paths.clone(),
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
