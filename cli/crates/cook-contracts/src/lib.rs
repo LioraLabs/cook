@@ -13,6 +13,7 @@ pub mod member;
 pub mod output;
 pub mod probe;
 pub mod recipe;
+pub mod sigil;
 pub mod registration;
 pub mod step;
 pub mod unit;

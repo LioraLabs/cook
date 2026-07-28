@@ -487,6 +487,94 @@ fn worker_loop(
     }
 }
 
+/// Substitute `$<key:field[i]>` probe references in a command with their
+/// resolved values, immediately before the command is spawned (CS-0188).
+///
+/// Before CS-0188 this happened by rewriting the command, at register phase,
+/// into a Lua chunk that read each value and called `cook.sh` with the result.
+/// The rewrite is gone; the substitution is not, because §22.5.7 still requires
+/// it and a probe's value is execute-phase, so here is the only phase it can
+/// happen in.
+///
+/// **Lua renders the values, deliberately.** The walk reads through
+/// `cook.probes.get` and finishes with Lua's own `tostring`, rather than
+/// decoding the stored JSON and formatting it in Rust. Formatting is observable
+/// — it lands in the command a build runs — and Lua's is not what Rust's would
+/// be: `%.14g` renders `0.1 + 0.2` as `0.3`, and an integer-valued float comes
+/// back as `3.0` rather than `3`. Reproducing that here would mean
+/// reimplementing `%.14g`, and reproducing it WRONG would change command text
+/// silently. What the rendering should actually be, including a table's
+/// current heap-address rendering, is COOK-380; until it answers, this keeps
+/// the observable behaviour exactly as it was.
+///
+/// A command with no probe reference is returned untouched, and a non-probe
+/// `$<...>` span is left literal, both matching what the rewrite did.
+fn resolve_probe_sigils(lua: &mlua::Lua, cmd: &str) -> mlua::Result<String> {
+    use cook_contracts::sigil::Seg;
+
+    let spans = cook_contracts::sigil::scan(cmd);
+    if spans.is_empty() {
+        return Ok(cmd.to_string());
+    }
+    let refs: Vec<_> = spans
+        .iter()
+        .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident).map(|r| (s, r)))
+        .collect();
+    if refs.is_empty() {
+        return Ok(cmd.to_string());
+    }
+
+    let globals = lua.globals();
+    let cook: mlua::Table = globals.get("cook")?;
+    let probes: mlua::Table = cook.get("probes")?;
+    let get: mlua::Function = probes.get("get")?;
+    let tostring: mlua::Function = globals.get("tostring")?;
+
+    let mut out = String::with_capacity(cmd.len());
+    let mut cursor = 0usize;
+    for (span, r) in refs {
+        out.push_str(&cmd[cursor..span.range.start]);
+
+        // An unmaterialised key raises here, from `cook.probes.get` itself, with
+        // the diagnostic CS-0152 specifies. That is the same error the rewritten
+        // chunk produced, from the same function.
+        let mut value: mlua::Value = get.call(r.key())?;
+        for seg in r.path() {
+            let table = match value {
+                mlua::Value::Table(t) => t,
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "$<{}>: cannot index a {} value",
+                        span.ident,
+                        other.type_name()
+                    )))
+                }
+            };
+            value = match seg {
+                Seg::Field(name) => table.get(name.as_str())?,
+                Seg::Index(idx) => match idx.parse::<i64>() {
+                    Ok(i) => table.get(i)?,
+                    // §22.5.7 defines `[i]` as a one-based array element. A
+                    // non-numeric index used to lower verbatim into Lua source,
+                    // where it read as a global and indexed by nil; naming it is
+                    // strictly better than that.
+                    Err(_) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "$<{}>: `[{idx}]` is not a numeric index",
+                            span.ident
+                        )))
+                    }
+                },
+            };
+        }
+        let rendered: mlua::String = tostring.call(value)?;
+        out.push_str(&rendered.to_str()?);
+        cursor = span.range.end;
+    }
+    out.push_str(&cmd[cursor..]);
+    Ok(out)
+}
+
 /// Replace `print` and `io.write` on a worker VM so what a Lua body prints
 /// reaches the active unit's sink instead of the process's fd 1 (CS-0188).
 ///
@@ -1325,7 +1413,7 @@ fn execute_work_item(
 
     match &work.payload {
         WorkPayload::Shell { cmd, line } => {
-            execute_shell(work.id, cmd, *line, working_dir, env_vars, node_name)
+            execute_shell(lua, work.id, cmd, *line, working_dir, env_vars, node_name)
         }
         WorkPayload::LuaChunk {
             code,
@@ -1395,6 +1483,7 @@ fn execute_work_item(
 }
 
 fn execute_shell(
+    lua: &mlua::Lua,
     id: usize,
     cmd: &str,
     line: usize,
@@ -1402,6 +1491,30 @@ fn execute_shell(
     env_vars: &HashMap<String, String>,
     node_name: String,
 ) -> WorkResult {
+    // CS-0188: resolve any `$<key:field>` probe references against the values
+    // this unit's probes materialised. Register phase used to do this by
+    // rewriting the command into Lua; it does not, so it happens here, where
+    // the values exist.
+    let cmd = match resolve_probe_sigils(lua, cmd) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(cook_contracts::lua_error::sanitize(
+                    &e.to_string(),
+                    std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
+                )),
+                test_output: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                duration: Duration::ZERO,
+            }
+        }
+    };
+    let cmd = cmd.as_str();
+
     // COOK-306: an executed command may write anywhere in the tree.
     cook_fingerprint::statmemo::disarm();
     let outcome = match cook_shell::run(

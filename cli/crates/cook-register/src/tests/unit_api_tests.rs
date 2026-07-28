@@ -1153,11 +1153,18 @@ fn add_unit_legacy_requires_field_as_string_is_rejected() {
     );
 }
 
-/// CS-0074: cook.add_unit with a command containing `$<key:field>` probe-value
-/// sigils MUST be rewritten into a LuaChunk that resolves the probe value at
-/// execute time via cook.probes.get.
+/// CS-0074, amended by CS-0188: a `cook.add_unit` command containing
+/// `$<key:field>` probe-value sigils keeps its probe keys, and keeps its
+/// command.
+///
+/// This test used to assert the opposite — that the command was REWRITTEN into
+/// a LuaChunk calling `cook.probes.get` — which is what §22.5.7 required until
+/// CS-0188 withdrew it. That mechanism is what made such a step silent: the
+/// rewritten chunk reported no captured output, so a `cook` step printed
+/// nothing when, and only when, its command mentioned a probe. The substitution
+/// now happens in the execute-phase worker, which holds the values.
 #[test]
-fn add_unit_command_with_probe_template_is_rewritten() {
+fn add_unit_command_with_probe_template_keeps_its_command_and_gains_its_key() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
     lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1176,24 +1183,61 @@ fn add_unit_command_with_probe_template_is_rewritten() {
     let state = body_ref(&capture_state);
     let unit = state.units.first().expect("one unit");
 
-    let has_cache_get = match &unit.payload {
-        WorkPayload::LuaChunk { code, .. } => code.contains("cook.probes.get"),
-        WorkPayload::Shell { cmd, .. } => cmd.contains("cook.probes.get"),
-        _ => false,
-    };
-    assert!(
-        has_cache_get,
-        "expected template to be expanded; got payload: {:?}",
-        unit.payload
-    );
+    // A command is a command. The sigil survives verbatim into the payload and
+    // is resolved at dispatch; nothing is generated here.
+    match &unit.payload {
+        WorkPayload::Shell { cmd, .. } => {
+            assert_eq!(
+                cmd, "echo $<demo:k.v> > out.txt",
+                "the command must reach the worker unrewritten"
+            );
+            assert!(
+                !cmd.contains("cook.probes.get"),
+                "no Lua may be generated for a probe reference (CS-0188)"
+            );
+        }
+        other => panic!("expected a Shell payload, got: {other:?}"),
+    }
 
-    // The probe key (everything before the first `.` after the `:`) must be
-    // auto-added to probes.
+    // The probe key (everything before the first `.` after the `:`) must still
+    // be auto-added to probes: that is what gives the unit its DAG edge, its
+    // fingerprint fold and demand-driven scheduling, and it is unaffected by
+    // how the value later reaches the command.
     assert!(
         unit.probes.contains(&"demo:k".to_string()),
         "detected probe key must be auto-added to probes; got: {:?}",
         unit.probes
     );
+}
+
+/// CS-0188: a command with no probe reference and a command with one must
+/// produce the SAME payload kind. The divergence this milestone exists to
+/// remove was born exactly here — one concept, two representations, selected by
+/// whether the command text happened to contain a colon inside a sigil.
+#[test]
+fn probe_reference_does_not_change_the_payload_kind() {
+    let (lua, capture_state) = make_lua_with_unit_api("recipe");
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+    lua.load(r#"
+            cook.add_unit({ name = "plain", inputs = {}, outputs = {"a.txt"},
+                            cache = false, command = "echo plain > a.txt" })
+            cook.add_unit({ name = "sigil", inputs = {}, outputs = {"b.txt"},
+                            cache = false, command = "echo $<demo:k> > b.txt" })
+        "#)
+    .exec()
+    .unwrap();
+
+    let state = body_ref(&capture_state);
+    assert_eq!(state.units.len(), 2, "expected both units");
+    for unit in &state.units {
+        assert!(
+            matches!(unit.payload, WorkPayload::Shell { .. }),
+            "both units must be Shell payloads; got: {:?}",
+            unit.payload
+        );
+    }
 }
 
 /// CS-0101: `$<file:PATH>` in a raw cook.add_unit command string is the
