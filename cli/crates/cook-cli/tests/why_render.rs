@@ -495,7 +495,7 @@ fn plain_output_names_the_local_miss_cause() {
 /// ran. That is the "why did this rebuild overnight when I changed nothing"
 /// question, and it must be labelled as history rather than as a verdict.
 #[test]
-fn a_hit_reports_why_it_last_ran_from_the_retained_log() {
+fn a_hit_reports_why_it_last_ran_from_the_recorded_observation() {
     let tmp = TempDir::new().unwrap();
     chain_workspace(tmp.path());
     assert_ok(&cook(tmp.path(), &["build"]));
@@ -512,7 +512,11 @@ fn a_hit_reports_why_it_last_ran_from_the_retained_log() {
     assert!(unit["local_cause"].is_null(), "{v}");
     // But history knows why it ran.
     assert_eq!(unit["last_cause"], "input changed: src.txt", "{v}");
-    assert_eq!(unit["last_cause_builds_ago"], 0, "{v}");
+    assert!(
+        unit["last_cause_recorded_at"].as_u64().unwrap_or(0) > 0,
+        "{v}"
+    );
+    assert_eq!(unit["recorded_log_bytes"], 0, "{v}");
 }
 
 /// The two causes answer different questions and must never be conflated: one

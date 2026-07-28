@@ -127,6 +127,22 @@ fn junit_xml_is_well_formed() {
 }
 
 #[test]
+fn junit_marks_a_replayed_duration_as_cached() {
+    let tmp = tempdir().unwrap();
+    let path = tmp.path().join("junit.xml");
+    let mut result = mk("r:cached", TestOutcome::Passed);
+    result.from_cache = true;
+    result.duration = std::time::Duration::from_millis(125);
+    write_junit_sidecar(&path, &[result]).unwrap();
+    let xml = std::fs::read_to_string(&path).unwrap();
+    assert!(xml.contains("time=\"0.125\""), "{xml}");
+    assert!(
+        xml.contains("<property name=\"cook.cached\" value=\"true\"/>"),
+        "{xml}"
+    );
+}
+
+#[test]
 fn junit_cdata_safe_handles_close_marker() {
     // A test stdout containing "]]>" must not break the CDATA section.
     let tmp = tempdir().unwrap();

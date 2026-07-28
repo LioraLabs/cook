@@ -134,6 +134,7 @@ fn make_cache_ctx(tmp: &TempDir) -> Arc<CacheContext> {
         project_root: tmp.path().to_path_buf(),
         project_id: "test".to_string(),
         publish_enabled: true,
+        replay_logs: false,
     })
 }
 
@@ -1836,7 +1837,7 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
 }
 
 // ---------------------------------------------------------------------------
-// CS-0186: an observing unit records locally and publishes nothing
+// CS-0189: every cacheable unit publishes an observation
 // ---------------------------------------------------------------------------
 
 fn publish_ctx(wd: &std::path::Path) -> cook_cache::cache_ctx::CacheContext {
@@ -1848,6 +1849,7 @@ fn publish_ctx(wd: &std::path::Path) -> cook_cache::cache_ctx::CacheContext {
         project_root: wd.to_path_buf(),
         project_id: "p".to_string(),
         publish_enabled: true,
+        replay_logs: false,
     }
 }
 
@@ -1871,14 +1873,10 @@ fn meta_for(cache_key: &str, inputs: &[&str], outputs: &[&str]) -> cook_contract
     }
 }
 
-/// The shared store is for artifacts, and an observing unit has none. A
-/// determinant manifest filed under its cloud key could never be served
-/// against — `fetch_by_key` refuses an empty output list — so writing one is a
-/// store write per test unit per run for no reader, and it would trip the
-/// `published` counter that lets a settled build skip the end-of-run store
-/// walk. §17.4 rule 4 is withdrawn, and this is the code saying so.
+/// An observing unit has no file outputs, but its verdict, duration, cause,
+/// and output stream are still a shareable observation.
 #[test]
-fn an_observing_unit_publishes_nothing_to_the_shared_store() {
+fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
     let dir = TempDir::new().unwrap();
     let wd = dir.path();
     std::fs::write(wd.join("in.txt"), "x").unwrap();
@@ -1892,6 +1890,8 @@ fn an_observing_unit_publishes_nothing_to_the_shared_store() {
         &cm,
         &meta,
         wd,
+        Duration::from_millis(12),
+        &[],
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,
         &published,
@@ -1899,12 +1899,12 @@ fn an_observing_unit_publishes_nothing_to_the_shared_store() {
 
     assert_eq!(
         published.load(std::sync::atomic::Ordering::Relaxed),
-        0,
-        "an observing unit must not count as a publish"
+        1,
+        "an observing unit's observation counts as a publish"
     );
     assert!(
-        !wd.join("cloud").exists() || std::fs::read_dir(wd.join("cloud")).unwrap().next().is_none(),
-        "nothing may reach the shared store"
+        std::fs::read_dir(wd.join("cloud")).unwrap().next().is_some(),
+        "the observation must reach the shared store"
     );
     // It DOES record locally — that is the whole point of the fold.
     let idx = cm.get_or_load("r");
@@ -1914,9 +1914,7 @@ fn an_observing_unit_publishes_nothing_to_the_shared_store() {
     );
 }
 
-/// The control: the same call for a producing unit does publish, so the
-/// assertion above is testing the effect-kind gate rather than a broken
-/// fixture.
+/// The control: producing units continue to publish their file artifacts too.
 #[test]
 fn a_producing_unit_still_publishes() {
     let dir = TempDir::new().unwrap();
@@ -1933,6 +1931,8 @@ fn a_producing_unit_still_publishes() {
         &cm,
         &meta,
         wd,
+        Duration::from_millis(12),
+        &[],
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,
         &published,

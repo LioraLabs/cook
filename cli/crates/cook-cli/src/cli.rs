@@ -49,6 +49,10 @@ pub struct Globals {
     #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
 
+    /// Replay captured stdout/stderr for cache hits, marked as replayed.
+    #[arg(long = "replay-logs", global = true)]
+    pub replay_logs: bool,
+
     /// Number of parallel jobs (default: number of CPU cores)
     #[arg(short = 'j', long = "jobs", global = true)]
     pub jobs: Option<usize>,

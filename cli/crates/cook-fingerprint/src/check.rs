@@ -673,6 +673,9 @@ pub struct FetchOutcome {
     /// The discovered-input path set whose content hashes composed the winning
     /// full key. Empty for units without `discovered_inputs`.
     pub discovered_paths: Vec<String>,
+    /// Scalar observation metadata carried by the determinant manifest.
+    /// Older cache entries do not have it.
+    pub observation: Option<cook_contracts::cache::observation::Observation>,
 }
 
 /// Read the candidate discovered-input path sets recorded under a unit's
@@ -709,6 +712,28 @@ pub fn read_discovered_input_sets(
         return vec![set];
     }
     Vec::new()
+}
+
+/// Fetch and verify the stream half of a recorded observation.
+///
+/// This is deliberately separate from [`fetch_by_key`]: an observing unit has
+/// no output paths to restore, and its hit is a replay rather than a restore.
+pub fn fetch_observation(
+    backend: &dyn crate::backend::CacheBackend,
+    key: &crate::backend::CloudKey,
+) -> Option<cook_contracts::cache::observation::OutputLog> {
+    let artifact_k = crate::backend::artifact_key(
+        key,
+        crate::backend::OBSERVATION_INDEX,
+        crate::backend::OBSERVATION_PATH,
+    );
+    let (mut reader, meta) = backend.get_with_meta(&artifact_k).ok().flatten()?;
+    if meta.kind.as_deref() != Some("observation") {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut bytes).ok()?;
+    cook_contracts::cache::observation::OutputLog::decode(&bytes).ok()
 }
 
 /// Fetch-by-key (COOK-162 §3 sharing): serve a unit's outputs straight from
@@ -801,21 +826,26 @@ pub fn fetch_by_key(
         // COOK-278: prefer the candidate key's own recorded output list over
         // the caller's (possibly stale) one. Index order mirrors publish:
         // files, implicit depfile, empty dirs.
-        let restore_list: Vec<String> = match ctx.backend.get_manifest(&cloud_k) {
+        let (restore_list, observation): (Vec<String>, Option<_>) =
+            match ctx.backend.get_manifest(&cloud_k) {
             Ok(Some(m)) => {
                 let mut list = m.output_paths;
                 if let Some(di) = discovered_inputs {
                     list.push(di.from.clone());
                 }
                 list.extend(m.empty_dir_outputs);
-                list
+                    (list, m.observation)
             }
-            _ => output_paths.iter().map(|s| (*s).to_string()).collect(),
+                _ => (
+                    output_paths.iter().map(|s| (*s).to_string()).collect(),
+                    None,
+                ),
         };
         if restore_all(ctx, &cloud_k, &restore_list, working_dir) {
             return Some(FetchOutcome {
                 restored_outputs: restore_list,
                 discovered_paths: set,
+                observation,
             });
         }
     }

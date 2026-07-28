@@ -19,6 +19,7 @@
 //! `cook-cache`'s business.
 
 use crate::output::{OutputChunk, OutputStream};
+use serde::{Deserialize, Serialize};
 
 /// The scalar half of a unit's observation.
 ///
@@ -32,7 +33,7 @@ use crate::output::{OutputChunk, OutputStream};
 /// * **No position in a local build history.** `recorded_at` is a timestamp,
 ///   not "three builds ago", because an observation may be served to a machine
 ///   that has no history of its own — which is the whole of §17.4 rule 4.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Observation {
     duration_ms: u64,
     recorded_at: u64,
@@ -45,7 +46,12 @@ impl Observation {
     /// `log_bytes` is the encoded size of the corresponding [`OutputLog`], or
     /// `0` when the unit printed nothing.
     pub fn new(duration_ms: u64, recorded_at: u64, cause: Option<String>, log_bytes: u64) -> Self {
-        Self { duration_ms, recorded_at, cause, log_bytes }
+        Self {
+            duration_ms,
+            recorded_at,
+            cause,
+            log_bytes,
+        }
     }
 
     pub fn duration_ms(&self) -> u64 {
@@ -98,7 +104,10 @@ const VERSION: u32 = 1;
 
 impl OutputLog {
     pub fn new(chunks: Vec<OutputChunk>, truncated_bytes: u64) -> Self {
-        Self { chunks, truncated_bytes }
+        Self {
+            chunks,
+            truncated_bytes,
+        }
     }
 
     pub fn chunks(&self) -> &[OutputChunk] {

@@ -169,6 +169,15 @@ fn eviction_order(c: &EvictCandidate) -> (u64, CloudKey) {
     (c.last_access, c.key)
 }
 
+fn size_eviction_order(c: &EvictCandidate) -> (u8, u64, CloudKey) {
+    let priority = if c.kind.as_deref() == Some("observation") {
+        0
+    } else {
+        1
+    };
+    (priority, c.last_access, c.key)
+}
+
 /// Pure: no I/O, no filesystem, no clock. `now` is Unix seconds, supplied by
 /// the caller so the policy is testable and reusable server-side (milestone
 /// D2). See the module doc for the two-pass algorithm.
@@ -209,7 +218,7 @@ pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u
             .iter()
             .filter(|c| !evicted.contains(&c.key) && !is_size_sweep_exempt(c.kind.as_deref()))
             .collect();
-        eligible.sort_by_key(|c| eviction_order(c));
+        eligible.sort_by_key(|c| size_eviction_order(c));
         for c in eligible {
             if running_total <= target {
                 break;

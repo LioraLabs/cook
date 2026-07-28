@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use cook_engine::timings::render_ms;
+use cook_engine::observations::render_ms;
 
 use crate::annotate::Annotations;
 use crate::dag_data::{DagData, EdgeKind};

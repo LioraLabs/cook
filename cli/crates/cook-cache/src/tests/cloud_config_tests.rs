@@ -294,6 +294,23 @@ publish = false
 // ─── COOK-232: [cache] max_size byte-budget parsing ──────────────────────
 
 #[test]
+fn observation_max_bytes_defaults_to_one_mib_and_can_be_overridden() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.observation_max_bytes(), 1024 * 1024);
+
+    write_toml(
+        dir.path(),
+        r#"
+[cache]
+observation_max_bytes = 4096
+"#,
+    );
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert_eq!(cfg.observation_max_bytes(), 4096);
+}
+
+#[test]
 fn max_size_absent_yields_none() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");

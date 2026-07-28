@@ -13,6 +13,7 @@ fn manifest(cmd: u64) -> DeterminantManifest {
         empty_dir_outputs: Vec::new(),
         consulted_env: BTreeMap::from([("CC".into(), "gcc".into())]),
         sealed_probes: BTreeMap::from([("host".into(), "\"x86_64\"".into())]),
+        observation: None,
     }
 }
 

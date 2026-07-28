@@ -101,7 +101,7 @@ fn node_kind_for_node(node: &WorkNode) -> NodeKind {
 
 /// CS-0171: the recipe-local cache key to stamp on this node's progress
 /// records, or `None` for a node with no cache metadata (a bare shell step, a
-/// chore body). This is the identity `cook why` joins retained timings on;
+/// chore body). This is the identity `cook why` joins recorded observations on;
 /// see `EngineEvent::NodeStarted::cache_key` for why neither the per-run unit
 /// index nor the display name can serve.
 fn node_cache_key(node: &WorkNode) -> Option<String> {
@@ -363,11 +363,9 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
     if patterns.is_empty() {
         return false;
     }
-    patterns.iter().any(|pat| {
-        match globset::Glob::new(pat) {
+    patterns.iter().any(|pat| match globset::Glob::new(pat) {
             Ok(g) => g.compile_matcher().is_match(test_id),
             Err(_) => false,
-        }
     })
 }
 
@@ -639,7 +637,9 @@ pub fn execute_dag(
             let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
             let iteration_item = &work_node.member;
             let id_str = match iteration_item {
-                Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                Some(item) if !item.is_empty() => {
+                    format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
+                }
                 _ => format!("{}:{}", work_node.recipe_name, test_name),
             };
             let test_id = crate::id::parse_test_id(&id_str);
@@ -717,6 +717,7 @@ pub fn execute_dag(
     fn check_observing_node(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+        cache_ctx: &CacheContext,
         probe_store: &cook_luaotp::ProbeValueStore,
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
@@ -796,11 +797,68 @@ pub fn execute_dag(
                 .or_else(|| lookup.env_moved_key.then(|| "env changed".to_string())),
             RebuildResult::Skip => None,
         };
-        // `pinned` is not consulted: it means "fetch, never rebuild", and
-        // there is no store to fetch a verdict from. A pinned observing unit
-        // therefore behaves as an unannotated one rather than failing a build
-        // over an absence that is structural. Revisit with the payload.
+        if meta.sharing.is_local() {
+            return CacheDecision::Miss(cause);
+        }
+        let mut input_hashes =
+            match cook_fingerprint::hash_input_paths(&input_refs, &work_node.working_dir) {
+                Some(hashes) => hashes,
+                None => return CacheDecision::Miss(cause),
+            };
+        input_hashes.sort();
+        let namespace = recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
+        let key = cloud_key(&CloudKeyInputs {
+            schema_version: CACHE_VERSION,
+            recipe_namespace: &namespace,
+            command_hash: meta.command_hash,
+            env_contribution: meta.env_contribution,
+            seal_contribution: seal_contrib,
+            sorted_input_content_hashes: &input_hashes,
+        });
+        let manifest = cache_ctx.backend.get_manifest(&key).ok().flatten();
+        if let Some(manifest) = manifest {
+            if manifest.output_paths.is_empty() {
+                if let Some(observation) = manifest.observation {
+                    if cook_fingerprint::fetch_observation(cache_ctx.backend.as_ref(), &key)
+                        .is_some()
+                    {
+                        let inputs: Option<Vec<_>> = current_inputs
+                            .iter()
+                            .map(|path| {
+                                let abs = work_node.working_dir.join(path);
+                                cook_fingerprint::hash_file(&abs).map(|hash| {
+                                    cook_fingerprint::FileRecord {
+                                        path: path.as_str().into(),
+                                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                                        hash,
+                                    }
+                                })
+                            })
+                            .collect();
+                        if let Some(inputs) = inputs {
+                            cm.update_step(
+                                &meta.recipe_name,
+                                &meta.cache_key,
+                                cook_fingerprint::StepEntry {
+                                    inputs,
+                                    outputs: Vec::new(),
+                                    command_hash: meta.command_hash,
+                                    env_contribution: meta.env_contribution,
+                                    seal_contribution: seal_contrib,
+                                    observed: Some(observation),
+                                },
+                            );
+                            return CacheDecision::Hit;
+                        }
+                    }
+                }
+            }
+        }
+        if meta.sharing.is_pinned() {
+            CacheDecision::PinnedColdMiss
+        } else {
         CacheDecision::Miss(cause)
+    }
     }
 
     // ----- helper: check cache for a work node -----
@@ -834,7 +892,7 @@ pub fn execute_dag(
             // verdict rather than restoring bytes (§17.1.1.1). CS-0186 folded
             // the separate result store in here, at this arm and nowhere else.
             Cacheability::ResultOnly => {
-                return check_observing_node(work_node, cache_managers, probe_store);
+                return check_observing_node(work_node, cache_managers, cache_ctx, probe_store);
             }
             Cacheability::Artifacts => {}
         }
@@ -1072,7 +1130,7 @@ pub fn execute_dag(
                         command_hash: meta.command_hash,
                         env_contribution: meta.env_contribution,
                         seal_contribution: seal_contrib,
-                        observed: entry.and_then(|e| e.observed.clone()),
+                        observed: outcome.observation,
                     },
                 );
             }
@@ -1207,7 +1265,9 @@ pub fn execute_dag(
                 // report it was explicitly asked to re-run.
                 let test_miss_cause = {
                     let test_id_str = match iteration_item {
-                        Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                        Some(item) if !item.is_empty() => {
+                            format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
+                        }
                         _ => format!("{}:{}", work_node.recipe_name, test_name),
                     };
                     // Force-rerun skips the lookup only. The record is still
@@ -1228,16 +1288,99 @@ pub fn execute_dag(
                     };
                     {
                         if served {
+                            let restored_observation =
+                                work_node.cache_meta.as_ref().and_then(|meta| {
+                                    cache_managers
+                                        .get(&work_node.recipe_name)
+                                        .and_then(|cm| {
+                                            cm.lookup_step(
+                                                &meta.recipe_name,
+                                                &meta.cache_key,
+                                                meta.cache_key
+                                                    .split('@')
+                                                    .next()
+                                                    .unwrap_or(&meta.cache_key),
+                                            )
+                                            .entry
+                                        })
+                                        .and_then(|entry| {
+                                            let observation = entry.observed?;
+                                            // §{exec.cache.observation}: replay
+                                            // is opt-in and MUST NOT be the
+                                            // default for a hit. The duration is
+                                            // a scalar this index lookup already
+                                            // has in hand; the STREAMS cost a
+                                            // content-addressed fetch per hit,
+                                            // which is exactly the cost the
+                                            // opt-in rule exists to keep off a
+                                            // warm build. So the scalar is free
+                                            // and the log is asked for.
+                                            let log = if cache_ctx.replay_logs {
+                                                let mut hashes: Vec<u64> =
+                                                    entry.inputs.iter().map(|r| r.hash).collect();
+                                                hashes.sort();
+                                                let namespace = recipe_namespace(
+                                                    &meta.project_id,
+                                                    &meta.cookfile_path,
+                                                    &meta.recipe_name,
+                                                );
+                                                let key = cloud_key(&CloudKeyInputs {
+                                                    schema_version: CACHE_VERSION,
+                                                    recipe_namespace: &namespace,
+                                                    command_hash: meta.command_hash,
+                                                    env_contribution: meta.env_contribution,
+                                                    seal_contribution:
+                                                        crate::seal::seal_contribution(
+                                                            &meta.seal_keys,
+                                                            &pool.probe_value_store(),
+                                                        ),
+                                                    sorted_input_content_hashes: &hashes,
+                                                });
+                                                cook_fingerprint::fetch_observation(
+                                                    cache_ctx.backend.as_ref(),
+                                                    &key,
+                                                )
+                                                .unwrap_or_default()
+                                            } else {
+                                                cook_contracts::cache::observation::OutputLog::default()
+                                            };
+                                            Some((observation, log))
+                                        })
+                                });
+                            let duration = restored_observation
+                                .as_ref()
+                                .map(|(o, _)| Duration::from_millis(o.duration_ms()))
+                                .unwrap_or_default();
+                            let mut stdout = Vec::new();
+                            let mut stderr = Vec::new();
+                            if let Some((_, log)) = &restored_observation {
+                                for chunk in log.chunks() {
+                                    match chunk.stream() {
+                                        cook_contracts::OutputStream::Stdout => {
+                                            stdout.extend_from_slice(chunk.bytes())
+                                        }
+                                        cook_contracts::OutputStream::Stderr => {
+                                            stderr.extend_from_slice(chunk.bytes())
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            let stdout = String::from_utf8_lossy(&stdout).into_owned();
+                            let stderr = String::from_utf8_lossy(&stderr).into_owned();
                             // Cache hit — synthesize events and skip execution.
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             let test_id = crate::id::parse_test_id(&test_id_str);
-                            // CS-0186 withdrew the replayed duration along with
-                            // the rest of the observation: a producing unit's
-                            // hit reports no elapsed time either, and reporting
-                            // a stored one as though it were measured is what
-                            // §17.1.1.1 forbids.
-                            let duration = std::time::Duration::ZERO;
-                            emit(event_tx, EngineEvent::TestStarted {
+                            // CS-0189 restores the replayed duration CS-0186
+                            // withdrew, under §{exec.cache.effect-kind}'s
+                            // constraint: it MUST NOT be reported as though it
+                            // were measured. What carries that here is
+                            // `from_cache` on the result below, which every
+                            // renderer of the duration pairs it with (the JSON
+                            // sidecar's `from_cache`, JUnit's `cook.cached`).
+                            emit(
+                                event_tx,
+                                EngineEvent::TestStarted {
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
                                 name: test_name.clone(),
@@ -1249,8 +1392,8 @@ pub fn execute_dag(
                                 duration,
                                 cached: true,
                                 should_fail: false,
-                                stdout: String::new(),
-                                stderr: String::new(),
+                                    stdout: stdout.clone(),
+                                    stderr: stderr.clone(),
                                 line: line as u32,
                             });
                             // Register the node under its derived name (CS-0160)
@@ -1293,16 +1436,17 @@ pub fn execute_dag(
                                 outcome: crate::TestOutcome::Passed,
                                 duration,
                                 from_cache: true,
-                                // CS-0186: withdrawn with the observation. A
-                                // replayed pass reports no captured output,
-                                // as a producing unit's hit does. Nothing
-                                // human-facing read these for a PASS in any
-                                // case — the JUnit writer and the failure
-                                // detail block both render streams only for a
-                                // failed outcome, and §17.4 rule 2 forbids
-                                // caching one.
-                                stdout: String::new(),
-                                stderr: String::new(),
+                                // CS-0189: the recorded streams, and empty
+                                // unless `--replay-logs` asked for them —
+                                // §{exec.cache.observation} makes replay
+                                // opt-in, so the fetch above is gated and this
+                                // is what a default warm hit carries. Little
+                                // reads them for a PASS in any case: the JUnit
+                                // writer and the failure detail block render
+                                // streams only for a failed outcome, and §17.4
+                                // rule 2 forbids caching one.
+                                stdout,
+                                stderr,
                                 fingerprint: Some(node_cache_key(work_node).unwrap_or_default()),
                                 blocked_by: None,
                                 should_fail: false,
@@ -1367,7 +1511,9 @@ pub fn execute_dag(
                 );
                 // Emit TestStarted for this test-step node.
                 let test_id_str = match iteration_item {
-                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                    Some(item) if !item.is_empty() => {
+                        format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
+                    }
                     _ => format!("{}:{}", work_node.recipe_name, test_name),
                 };
                 emit(
@@ -1680,14 +1826,75 @@ pub fn execute_dag(
                 let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     CacheDecision::Hit => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                        if cache_ctx.replay_logs {
+                            if let (Some(meta), Some(cm)) = (
+                                work_node.cache_meta.as_ref(),
+                                cache_managers.get(&work_node.recipe_name),
+                            ) {
+                                if let Some(entry) = cm
+                                    .lookup_step(
+                                        &meta.recipe_name,
+                                        &meta.cache_key,
+                                        meta.output_paths
+                                            .first()
+                                            .map(String::as_str)
+                                            .unwrap_or_else(|| {
+                                                meta.cache_key
+                                                    .split('@')
+                                                    .next()
+                                                    .unwrap_or(&meta.cache_key)
+                                            }),
+                                    )
+                                    .entry
+                                {
+                                    let mut hashes: Vec<u64> =
+                                        entry.inputs.iter().map(|r| r.hash).collect();
+                                    hashes.sort();
+                                    let namespace = recipe_namespace(
+                                        &meta.project_id,
+                                        &meta.cookfile_path,
+                                        &meta.recipe_name,
+                                    );
+                                    let key = cloud_key(&CloudKeyInputs {
+                                        schema_version: CACHE_VERSION,
+                                        recipe_namespace: &namespace,
+                                        command_hash: meta.command_hash,
+                                        env_contribution: meta.env_contribution,
+                                        seal_contribution: crate::seal::seal_contribution(
+                                            &meta.seal_keys,
+                                            &pool.probe_value_store(),
+                                        ),
+                                        sorted_input_content_hashes: &hashes,
+                                    });
+                                    if let Some(log) = cook_fingerprint::fetch_observation(
+                                        cache_ctx.backend.as_ref(),
+                                        &key,
+                                    ) {
+                                        for (stream, line) in output_event_lines(log.chunks()) {
+                                            emit(
+                                                event_tx,
+                                                EngineEvent::OutputLine {
+                                                    recipe: work_node.recipe_name.clone(),
+                                                    unit: id,
+                                                    node_name: work_node.display_name(),
+                                                    line: format!("[replayed] {line}"),
+                                                    stream: stream.into(),
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         emit(
                             event_tx,
                             EngineEvent::NodeCacheHit {
                                 recipe: work_node.recipe_name.clone(),
                                 unit: id,
                                 node_name: work_node.display_name(),
-                                artifact: work_node.cache_meta.as_ref()
-                                    .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                                artifact: work_node.cache_meta.as_ref().and_then(|m| {
+                                    m.output_paths.first().map(std::path::PathBuf::from)
+                                }),
                                 kind: node_kind_for_node(work_node),
                             },
                         );
@@ -1776,7 +1983,9 @@ pub fn execute_dag(
                     let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
                     let iteration_item = &work_node.member;
                     let test_id_str = match iteration_item {
-                        Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                        Some(item) if !item.is_empty() => {
+                            format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
+                        }
                         _ => format!("{}:{}", work_node.recipe_name, test_name),
                     };
                     let test_id = crate::id::parse_test_id(&test_id_str);
@@ -2119,9 +2328,9 @@ pub fn execute_dag(
                                                 ))
                                             }
                                         }
-                                        Err(e) => Err(format!(
-                                            "chore-body lua: pool channel closed: {e}"
-                                        )),
+                                        Err(e) => {
+                                            Err(format!("chore-body lua: pool channel closed: {e}"))
+                                        }
                                     }
                                 }
                                 Err(e) => Err(e),
@@ -2193,9 +2402,10 @@ pub fn execute_dag(
                 let is_terminal = interactive_queue.is_empty()
                     && pending == 0
                     && window.iter().all(|&id| {
-                        dag.node(id).dependents().iter().all(|&d| {
-                            cancelled[d] || window_set.contains(&d)
-                        })
+                        dag.node(id)
+                            .dependents()
+                            .iter()
+                            .all(|&d| cancelled[d] || window_set.contains(&d))
                     });
 
                 // InteractiveEnd MUST precede the recipe-tracker ticks so
@@ -2389,6 +2599,8 @@ pub fn execute_dag(
                                     cm,
                                     meta,
                                     &working_dir,
+                                    interactive_elapsed,
+                                    &[],
                                     &pool.probe_value_store(),
                                     &cache_ctx,
                                     published,
@@ -2583,6 +2795,8 @@ pub fn execute_dag(
                         cm,
                         meta,
                         &working_dir,
+                        result.duration,
+                        &result.output_lines,
                         &pool.probe_value_store(),
                         &cache_ctx,
                         published,
@@ -2608,7 +2822,9 @@ pub fn execute_dag(
                 // Build the TestId in `<recipe>:<test_name>[<item>]` format so the
                 // reporter can extract the recipe portion.
                 let id_str = match &iteration_item_opt {
-                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, test_name, item),
+                    Some(item) if !item.is_empty() => {
+                        format!("{}:{}[{}]", recipe_name, test_name, item)
+                    }
                     _ => format!("{}:{}", recipe_name, test_name),
                 };
                 let id = crate::id::parse_test_id(&id_str);
@@ -2711,7 +2927,9 @@ pub fn execute_dag(
                 let stderr =
                     chunk_stream_text(&result.output_lines, cook_contracts::OutputStream::Stderr);
                 let id_str = match &iteration_item_opt {
-                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, test_name, item),
+                    Some(item) if !item.is_empty() => {
+                        format!("{}:{}[{}]", recipe_name, test_name, item)
+                    }
                     _ => format!("{}:{}", recipe_name, test_name),
                 };
                 let id = crate::id::parse_test_id(&id_str);
@@ -2928,6 +3146,8 @@ fn publish_completion(
     meta: &cook_contracts::CacheMeta,
     // CS-0186: the input set actually judged, when it is not the declared one.
     working_dir: &std::path::Path,
+    duration: Duration,
+    output_chunks: &[cook_contracts::OutputChunk],
     probe_store: &cook_luaotp::ProbeValueStore,
     cache_ctx: &CacheContext,
     published: &AtomicU64,
@@ -2958,7 +3178,32 @@ fn publish_completion(
     // COOK-161: fold the effective seal set's probe values into the persisted
     // key (the sealed probes have run by now — the unit depends on them).
     let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
-    let step_entry = match cm.record_completion(
+    let identity = resolved_output_paths
+        .first()
+        .map(String::as_str)
+        .unwrap_or_else(|| meta.cache_key.split('@').next().unwrap_or(&meta.cache_key));
+    let prior = cm.lookup_step(&meta.recipe_name, &meta.cache_key, identity);
+    let judged_refs: Vec<&str> = judged_inputs.iter().map(String::as_str).collect();
+    let output_refs: Vec<&str> = resolved_output_paths.iter().map(String::as_str).collect();
+    let (prior_result, _) = needs_rebuild_cook(
+        prior.entry.as_ref(),
+        &judged_refs,
+        &output_refs,
+        meta.command_hash,
+        meta.env_contribution,
+        seal_contrib,
+        working_dir,
+        None,
+        meta.discovered_inputs.as_ref(),
+        meta.record,
+    );
+    let observation_cause = match prior_result {
+        RebuildResult::Rebuild(reason) => reason
+            .cause_summary()
+            .or_else(|| prior.env_moved_key.then(|| "env changed".to_string())),
+        RebuildResult::Skip => None,
+    };
+    let mut step_entry = match cm.record_completion(
         &meta.recipe_name,
         &meta.cache_key,
         &meta_for_record,
@@ -2976,10 +3221,27 @@ fn publish_completion(
         }
     };
 
+    let output_log = cook_contracts::cache::observation::OutputLog::new(output_chunks.to_vec(), 0)
+        .truncate_to(cache_ctx.cloud_config.observation_max_bytes());
+    let observation_bytes = output_log.encode();
+    step_entry.observed = Some(cook_contracts::cache::observation::Observation::new(
+        duration.as_millis().min(u128::from(u64::MAX)) as u64,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        observation_cause,
+        if output_chunks.is_empty() {
+            0
+        } else {
+            observation_bytes.len() as u64
+        },
+    ));
+    cm.update_step(&meta.recipe_name, &meta.cache_key, step_entry.clone());
+
     // Post-execution augmentation: parse the just-written depfile and append
     // discovered FileRecords to step_entry.inputs, then persist the augmented
     // entry.
-    let mut step_entry = step_entry;
     if let Some(di) = &meta.discovered_inputs {
         let abs_depfile = working_dir.join(&di.from);
         let source_for_skip = judged_inputs.first().map(String::as_str).unwrap_or("");
@@ -3028,30 +3290,43 @@ fn publish_completion(
     // COOK-168: publish-off / read-only client mode suppresses ALL uploads
     // globally; fetch-by-key is unaffected.
     //
-    // CS-0186: nor does an OBSERVING unit. It has no artifact to upload, and
-    // the manifest alone would be unreachable — `fetch_by_key` refuses an
-    // empty output list at its own door, so nothing could ever be served
-    // against the key it was filed under. Writing it would be a store write
-    // per test unit per run for no reader, and each one would trip the
-    // `published` counter, whose whole purpose is to let a settled build skip
-    // the end-of-run store walk entirely.
-    //
-    // This is also what keeps the code honest about §17.4 rule 4. CS-0186
-    // withdrew cross-machine replay as never delivered; publishing half of the
-    // apparatus for it would leave the implementation reaching for a path the
-    // Standard says is not there. When the payload question is answered, a
-    // shared observation is what makes this arm meaningful again, and this is
-    // the line that changes.
-    let observing = matches!(
-        cook_contracts::cache::record::effect_kind(meta),
-        cook_contracts::cache::record::EffectKind::Observed
-    );
-    let publish_to_backend =
-        !observing && !meta.sharing.is_local() && cache_ctx.publish_enabled;
+    let publish_to_backend = !meta.sharing.is_local() && cache_ctx.publish_enabled;
     // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
     // unit is about to write at least a determinant manifest to the store.
     if publish_to_backend {
         published.fetch_add(1, Ordering::Relaxed);
+    }
+
+    if publish_to_backend {
+        let observation_k = artifact_key(
+            &cloud_k,
+            cook_fingerprint::OBSERVATION_INDEX,
+            cook_fingerprint::OBSERVATION_PATH,
+        );
+        let mut observation_meta = ArtifactMeta {
+            recipe_namespace: recipe_namespace.clone(),
+            command_hash: meta.command_hash,
+            env_contribution: meta.env_contribution,
+            seal_contribution: seal_contrib,
+            schema_version: CACHE_VERSION,
+            size_bytes: observation_bytes.len() as u64,
+            tags: std::collections::BTreeSet::new(),
+            consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+            output_index: cook_fingerprint::OBSERVATION_INDEX,
+            output_path: cook_fingerprint::OBSERVATION_PATH.to_string(),
+            content_hash: ArtifactMeta::zero_content_hash(),
+            kind: Some("observation".to_string()),
+            mode: ArtifactMeta::default_mode(),
+            target: None,
+        };
+        if let Err(e) = cook_cache::backend::put_bytes(
+            cache_ctx.backend.as_ref(),
+            &observation_k,
+            &observation_bytes,
+            &mut observation_meta,
+        ) {
+            tracing::warn!("cache backend put failed for observation: {e}");
+        }
     }
 
     // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
@@ -3372,7 +3647,7 @@ fn publish_completion(
     // artifacts, keyed by the unit's cloud_key K. `local` units skip this
     // (publish_to_backend is false).
     if publish_to_backend {
-        let manifest = build_determinant_manifest(
+        let mut manifest = build_determinant_manifest(
             CACHE_VERSION,
             &recipe_namespace,
             &cloud_k,
@@ -3386,6 +3661,7 @@ fn publish_completion(
             &meta.seal_keys,
             probe_store,
         );
+        manifest.observation = step_entry.observed.clone();
         if let Err(e) = cache_ctx.backend.as_ref().put_manifest(&cloud_k, &manifest) {
             tracing::warn!("cache manifest put failed for {recipe_namespace}: {e}");
         }
@@ -3430,6 +3706,7 @@ fn build_determinant_manifest(
         empty_dir_outputs: empty_dir_outputs.to_vec(),
         consulted_env: consulted_env.clone(),
         sealed_probes,
+        observation: None,
     }
 }
 

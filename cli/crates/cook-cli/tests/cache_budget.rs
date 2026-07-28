@@ -27,7 +27,8 @@
 //! The shared fixture is a single fan-out recipe over `src/*.txt`, one
 //! ~100 kB output per source. `Fixture::touch_sources(round)` rewrites every
 //! source, so a round invalidates every unit and republishes the whole set —
-//! `SOURCE_COUNT` fresh CAS objects of `OUTPUT_BYTES` each, ~800 kB per
+//! `SOURCE_COUNT` fresh output artifacts of `OUTPUT_BYTES` each, plus one
+//! small observation object per unit, ~800 kB per
 //! round against a `max_size` an order of magnitude larger. That granularity
 //! is deliberate and load-bearing for `auto_gc_true_self_caps_near_the_low_water_mark`:
 //! `plan_eviction`'s size pass stops at the first candidate that brings the
@@ -85,6 +86,7 @@ fn cook_bin() -> PathBuf {
 /// Sources in the fan-out fixture, and therefore CAS objects published per
 /// round.
 const SOURCE_COUNT: usize = 8;
+const OBJECTS_PER_UNIT: usize = 2; // output artifact + observation
 
 /// Filler bytes each unit writes, before the round marker is appended. Must
 /// stay in sync with the `head -c 100000` literal in [`COOKFILE`] — it is
@@ -445,7 +447,7 @@ fn warn_only_is_the_default_and_never_shrinks_the_store() {
         }
         assert_eq!(
             observed[3].1.objects,
-            4 * SOURCE_COUNT,
+            4 * SOURCE_COUNT * OBJECTS_PER_UNIT,
             "{label}: four rounds must leave four rounds' worth of objects"
         );
     }
@@ -608,7 +610,7 @@ fn no_auto_gc_disables_the_sweep_but_keeps_the_warning() {
         let after = fx.store();
         assert_eq!(
             after.objects,
-            before.objects + SOURCE_COUNT,
+            before.objects + SOURCE_COUNT * OBJECTS_PER_UNIT,
             "{label}: nothing may be evicted; {before:?} -> {after:?}"
         );
         assert!(
