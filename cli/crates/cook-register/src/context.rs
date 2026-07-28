@@ -102,7 +102,7 @@ pub fn register_recipe_name_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<
         let slot = body_slot.borrow();
         // Only the body loop opens the slot, so `None` covers every
         // outside-a-body caller at once — top level, `config`/`register`
-        // blocks, and a `for_each`-feeding probe's `produce` (the prepass
+        // blocks, and a member-source probe's `produce` (the prepass
         // runs before the body loop). No probe-specific guard needed.
         slot.as_ref()
             .and_then(|body| body.current_recipe.clone())
@@ -161,7 +161,7 @@ pub type SharedRecipeForcer = Rc<RefCell<Option<RecipeForcer>>>;
 /// registration pattern, same "only inside a recipe body" error voice,
 /// reading the same `body_slot`/`current_recipe` `None` signal — one check
 /// covers every outside-a-body caller (top level, a `register` block, and
-/// a `for_each`-feeding probe's `produce` on the register VM).
+/// a member-source probe's `produce` on the register VM).
 pub fn register_require_recipe_api(
     lua: &Lua,
     body_slot: SharedBodySlot,

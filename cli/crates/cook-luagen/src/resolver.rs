@@ -47,9 +47,9 @@ pub enum BuiltinKind {
     OutAccessor(String),   // {out.stem} etc
     OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
-    /// COOK-63 §8.3: `$<in>` — the whole current `for_each` data member.
+    /// COOK-63 §9.3: `$<in>` — the whole current data member.
     Item,
-    /// COOK-63 §8.3: `$<in.FIELD>` — record field `FIELD` of the member.
+    /// COOK-63 §9.3: `$<in.FIELD>` — record field `FIELD` of the member.
     ItemField(String),
 }
 
@@ -126,13 +126,13 @@ enum BuiltinMatch {
     No,
 }
 
-/// COOK-89 §8.3: recognise the data-member binding sigils `$<in>` and
+/// COOK-89 §9.3: recognise the data-member binding sigils `$<in>` and
 /// `$<in.FIELD>`. Returns the matching [`BuiltinKind`], or `None` for any
 /// other ident.
 ///
 /// Deliberately *not* wired into [`resolve`]: `in` is the member binding only
-/// inside a data-driven (for_each / `ingredients <probe>`) recipe body, so only
-/// the for_each codegen path (`template::expand_for_each_template`) consults it.
+/// inside a data-driven (`ingredients <probe>`) recipe body, so only
+/// the member-fanout codegen path (`template::expand_member_fanout_template`) consults it.
 /// In a glob recipe, `$<in>` keeps its file-path meaning via `match_builtin`.
 pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
     if ident == "in" {
@@ -388,7 +388,7 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
             }
         }
         // `$<in>` / `$<in.FIELD>` never arrive here: they are matched by
-        // [`match_member_sigil`] in the for_each codegen path, not by `resolve` /
+        // [`match_member_sigil`] in the member-fanout codegen path, not by `resolve` /
         // `match_builtin`. The arm exists only for exhaustiveness.
         Item | ItemField(_) => {}
     }

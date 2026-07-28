@@ -399,7 +399,7 @@ The resolved file set persisted in `StepEntry.outputs` is indistinguishable from
 
 §17.1 establishes that the cache changes only *how much* work happens, never *what it produces*. That guarantee extends from cache *values* to the **output tree itself**: when a recipe's declared output set *shrinks* between runs, the outputs it no longer declares MUST NOT be left behind on disk. A build whose output directory accumulates artifacts that nothing declares misrepresents its own graph — a downstream glob (§17.6), `tar`, or deploy step would pick up the stale file.
 
-The canonical case is `ingredients <probe>` (§{cat.probes.for-each}, §{steps.ingredients}), whose output set is *computed from data*: removing a data member means the next run correctly produces the remaining members but would otherwise orphan the dropped member's artifact.
+The canonical case is `ingredients <probe>` (§{cat.probes.member-source}, §{steps.ingredients}), whose output set is *computed from data*: removing a data member means the next run correctly produces the remaining members but would otherwise orphan the dropped member's artifact.
 
 ### The rule
 

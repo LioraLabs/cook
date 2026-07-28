@@ -183,24 +183,24 @@ pub enum RegisterError {
         origin: Option<String>,
     },
 
-    /// COOK-64 §22.5.9: an `ingredients <probe>` source names a probe `KEY` that was
+    /// COOK-64 §22.5.10: an `ingredients <probe>` source names a probe `KEY` that was
     /// never declared via `cook.probe(...)`. Surfaced by the register pre-pass.
     #[error("recipe '{recipe}': ingredients <probe> source names probe '{key}' but no such probe was declared")]
-    ForEachProbeUndeclared { recipe: String, key: String },
+    MemberSourceProbeUndeclared { recipe: String, key: String },
 
-    /// COOK-64 §22.5.9: an `ingredients <probe>`-feeding probe's `produce` raised an error
+    /// COOK-64 §22.5.10: an `ingredients <probe>`-feeding probe's `produce` raised an error
     /// when evaluated by the pre-pass (before any recipe body ran).
     #[error("probe '{key}' feeds an ingredients <probe> source but its produce raised: {message}")]
-    ForEachProbeProduceFailed { key: String, message: String },
+    MemberSourceProbeProduceFailed { key: String, message: String },
 
-    /// COOK-64 §22.5.9: an `ingredients <probe>` source resolved to a non-array value.
+    /// COOK-64 §22.5.10: an `ingredients <probe>` source resolved to a non-array value.
     /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
     /// is the JSON value-kind that was found instead of a sequence.
     #[error(
         "ingredients <probe> source '{selector}' must resolve to an array; got {shape} \
-         (an ingredients <probe> driver iterates the array's members; §22.5.9)"
+         (an ingredients <probe> driver iterates the array's members; §22.5.10)"
     )]
-    ForEachNotArray { selector: String, shape: String },
+    MemberSourceNotArray { selector: String, shape: String },
 
     /// COOK-353: an `ingredients <probe>` source named a `files { … }` probe.
     /// A `files` producer's value is a MAP of path → content hash (§22.5.2), so
@@ -211,12 +211,12 @@ pub enum RegisterError {
     #[error(
         "ingredients <probe> source '{key}' names a `files {{ … }}` probe, whose value is a \
          map of path to content hash — not the array an ingredients <probe> driver iterates \
-         (§22.5.2, §22.5.9). A `files` probe is a sealable DETERMINANT, not a driver: attach \
+         (§22.5.2, §22.5.10). A `files` probe is a sealable DETERMINANT, not a driver: attach \
          it with `seal {key}` and give the recipe its own `ingredients \"glob\"` to iterate."
     )]
-    ForEachFilesProbe { key: String },
+    MemberSourceFilesProbe { key: String },
 
-    /// COOK-64 §22.5.9: an `ingredients <probe>`-feeding probe declares a file input that
+    /// COOK-64 §22.5.10: an `ingredients <probe>`-feeding probe declares a file input that
     /// is produced by a recipe in this Cookfile — i.e. a build artifact. An
     /// `ingredients <probe>` source MUST be statically evaluable (it is resolved before
     /// any recipe runs), so an artifact dependency is rejected.
@@ -224,7 +224,7 @@ pub enum RegisterError {
         "probe '{key}' feeds an ingredients <probe> source but depends on build artifact '{path}'; \
          sources must be statically evaluable"
     )]
-    ForEachProbeArtifactDep { key: String, path: String },
+    MemberSourceProbeArtifactDep { key: String, path: String },
 }
 
 /// Render the declaration site of a chore parameter for a diagnostic.

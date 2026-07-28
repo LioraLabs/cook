@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        ForEach source=ProbeKey("cards")
+        MemberSource source=ProbeKey("cards")
         Cook outputs=["o/$<in.id>.svg", "o/$<in.id>-dark.svg"] body=ShellBlock(["gen $<in.id>"])
   chores:
   register_blocks: []

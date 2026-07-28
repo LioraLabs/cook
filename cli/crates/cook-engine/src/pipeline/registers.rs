@@ -57,7 +57,7 @@ pub enum RegisterMode<'a> {
     /// (COOK-349).
     Dispatch { name: &'a str, argv: &'a [String] },
     /// Register with a target that matches nothing: the register pass behaves
-    /// as targeted (the `for_each` probe pre-pass and parametric chore bodies
+    /// as targeted (the member-source pre-pass and parametric chore bodies
     /// are pruned to the — empty — target-reachable set) but no body receives
     /// argv. Used by read-only introspection such as `cook affected`.
     Introspect,

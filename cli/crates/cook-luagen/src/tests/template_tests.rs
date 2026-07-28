@@ -213,7 +213,7 @@ fn in_stem_expands_to_path_stem() {
     assert_eq!(result, "\"build/\" .. path.stem(_cook_in) .. \".o\"");
 }
 
-// COOK-63 §8.3: data-member builtins lower to `item` accesses.
+// COOK-63 §9.3: data-member builtins lower to `item` accesses.
 #[test]
 fn item_builtins_lower_to_member_access() {
     assert_eq!(builtin_to_lua(BuiltinKind::Item), "cook.member_to_string(item)");
@@ -234,7 +234,7 @@ fn recipe_member_lowers_to_dep_output_member() {
     recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let (lua, _) = expand_for_each_template(
+        let (lua, _) = expand_member_fanout_template(
             "bin/mux --video $<render[in]>",
         &ctx,
         &mut env,
@@ -269,7 +269,7 @@ fn recipe_member_empty_index_errors_in_fanout_body() {
     recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_for_each_template(
+        let res = expand_member_fanout_template(
             "bin/mux --video $<render[]>",
         &ctx,
         &mut env,
@@ -289,7 +289,7 @@ fn recipe_member_bad_index_errors_in_fanout_body() {
     recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_for_each_template(
+        let res = expand_member_fanout_template(
             "bin/mux --video $<render[key]>",
         &ctx,
         &mut env,

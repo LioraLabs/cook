@@ -13,7 +13,7 @@ fn converts_nil() {
     assert_eq!(convert("return nil").unwrap(), JsonValue::Null);
 }
 
-// COOK-64 §8.3: the exact composition `cook.member_to_string` binds —
+// COOK-64 §9.3: the exact composition `cook.member_to_string` binds —
 // a real Lua value through `lua_to_json` then `member::member_to_string`.
 #[test]
 fn member_to_string_renders_record_and_scalar() {

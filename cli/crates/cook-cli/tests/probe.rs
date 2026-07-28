@@ -223,10 +223,10 @@ recipe build
     );
 }
 
-/// A native shell-block `probe` (`as lines`) feeding a `for_each`: the lowering
-/// executes via the §22.5.9 register pre-pass and fans out one unit per line.
+/// A native shell-block `probe` (`as lines`) feeding a member fan-out: the lowering
+/// executes via the §22.5.10 register pre-pass and fans out one unit per line.
 #[test]
-fn native_probe_for_each_as_lines_end_to_end() {
+fn native_probe_member_fanout_as_lines_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 probe names
@@ -242,10 +242,10 @@ recipe render
     assert!(tmp.path().join("out/beta.txt").exists(), "beta.txt missing");
 }
 
-/// A native lua-block `probe` returning records, feeding a `for_each` with
+/// A native lua-block `probe` returning records, feeding a member fan-out with
 /// `$<in.field>` access.
 #[test]
-fn native_probe_for_each_lua_records_end_to_end() {
+fn native_probe_member_fanout_lua_records_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 probe cards
@@ -261,11 +261,11 @@ recipe render
     assert!(tmp.path().join("out/b.txt").exists(), "b.txt missing");
 }
 
-/// A native shell-block `probe` (`as json`) whose JSON array feeds a `for_each`
+/// A native shell-block `probe` (`as json`) whose JSON array feeds a member fan-out
 /// (evaluated in the pre-pass VM, where cook.json_decode is available). Also
 /// exercises `ingredients` lowering to inputs.files.
 #[test]
-fn native_probe_for_each_as_json_end_to_end() {
+fn native_probe_member_fanout_as_json_end_to_end() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"x"},{"id":"y"}]"#).unwrap();
     let cookfile = r#"
@@ -284,7 +284,7 @@ recipe render
 }
 
 /// Editing a probe's `ingredients` input re-fingerprints the probe; the
-/// for_each fan-out reflects the new data on the next run.
+/// member fan-out reflects the new data on the next run.
 #[test]
 fn native_probe_ingredient_edit_reinvalidates() {
     let tmp = TempDir::new().unwrap();

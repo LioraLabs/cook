@@ -82,17 +82,17 @@ pub(crate) enum ProbeLowering {
     LiteralSigil,
     /// Lower to `tostring(cook.probes.get(...))` evaluated where the
     /// expression is evaluated (register time). Pre-existing behavior for
-    /// non-command positions (for_each output patterns, test as-names).
+    /// non-command positions (member-fanout output patterns, test as-names).
     CacheGet,
 }
 
-/// Expand a `for_each` body template (§8.3): a cook output pattern, a cook
+/// Expand a member-fanout body template (§9.3): a cook output pattern, a cook
 /// shell command, or a plate/test body. The member sigils `$<in>` and
 /// `$<in.FIELD>` bind the current data member (`item`); every other sigil
 /// resolves through the normal closed-set [`resolve`] against `ctx` — so
 /// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
 /// ingredient-driven body. `$<in>` is rejected when `ctx.mode` is `OneShot`
-/// (a `for_each` body has no path-input source).
+/// (a member-fanout body has no path-input source).
 ///
 /// `probe_lowering` selects how a probe-value reference lowers: `LiteralSigil`
 /// for anything that feeds a `command =` field (COOK-187/CS-0122 — the string
@@ -104,7 +104,7 @@ pub(crate) enum ProbeLowering {
 /// to wrap a command in a deferred `function() return … end` when probe refs
 /// are present, for the positions where that pre-existing behavior is kept)
 /// together with the set of probe keys it referenced.
-pub(crate) fn expand_for_each_template(
+pub(crate) fn expand_member_fanout_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
@@ -122,7 +122,7 @@ pub(crate) fn expand_for_each_template(
                 escape_lua_string(&template[last_end..span.range.start])
             ));
         }
-        // §8.3 member binding takes precedence; everything else is the normal
+        // §9.3 member binding takes precedence; everything else is the normal
         // closed-set resolution.
         let lua = if let Some(b) = crate::resolver::match_member_sigil(&span.ident) {
             builtin_to_lua(b)
@@ -353,7 +353,7 @@ fn resolved_to_lua(
         // The access expression is pre-built by the resolver.
         Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
         Resolved::Error(e) => Err(e),
-        // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_for_each_template).
+        // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_member_fanout_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
             ident: format!("{}[in]", name),
@@ -370,7 +370,7 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         BuiltinKind::OutAccessor(acc) => format!("path.{}(_cook_out)", acc),
         BuiltinKind::OutIndexed(n) => format!("_cook_outs[{}]", n),
         BuiltinKind::OutIndexedAccessor(n, acc) => format!("path.{}(_cook_outs[{}])", acc, n),
-        // COOK-63 §8.3: data-member bindings. `$<in>` renders the whole
+        // COOK-63 §9.3: data-member bindings. `$<in>` renders the whole
         // member — canonical key-sorted JSON for a record, the scalar's string
         // form otherwise — via the `cook.member_to_string` runtime helper
         // (provided by the COOK-64 runtime slice). `$<in.FIELD>` reads a

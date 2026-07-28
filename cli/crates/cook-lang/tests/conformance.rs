@@ -228,10 +228,10 @@ fn format_step(step: &Step) -> String {
             s
         }
         // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).
-        Step::ForEach { step, .. } => format!(
-            "ForEach source={}",
+        Step::MemberSource { step, .. } => format!(
+            "MemberSource source={}",
             match &step.source {
-                ForEachSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
+                MemberSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
             },
         ),
         // CS-0159: render the effective seal set only when non-empty, so

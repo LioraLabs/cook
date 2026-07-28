@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use cook_contracts::{ACCESSORS, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 use cook_lang::ast::*;
 
-use crate::cook_step::{generate_cook_step, generate_for_each_cook_step};
+use crate::cook_step::{generate_cook_step, generate_member_fanout_cook_step};
 use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
 use crate::resolver::{IterMode, OutputShape, ResolveCtx};
@@ -375,7 +375,7 @@ fn step_line(step: &Step) -> usize {
         | Step::InlineLua { line, .. }
         | Step::Cook { line, .. }
         | Step::Test { line, .. }
-        | Step::ForEach { line, .. } => *line,
+        | Step::MemberSource { line, .. } => *line,
         _ => 0,
     }
 }
@@ -875,16 +875,16 @@ pub fn generate_with_names(
                     ));
                 }
 
-                // COOK-63 §8.3: a `for_each` recipe drives its per-member
+                // COOK-63 §8.2: a member-fanout recipe drives its per-member
                 // steps from a data source. Emit the member set once, then
                 // route this recipe's cook/plate/test steps through the
                 // data-member fan-out path (each producing one unit per member,
                 // member bound as `item`) instead of the ingredient-driven one.
-                let for_each = recipe.steps.iter().find_map(|s| match s {
-                    Step::ForEach { step, line } => Some((step, *line)),
+                let member_source = recipe.steps.iter().find_map(|s| match s {
+                    Step::MemberSource { step, line } => Some((step, *line)),
                     _ => None,
                 });
-                let is_for_each = for_each.is_some();
+                let is_member_fanout = member_source.is_some();
 
                 // CS-0155: in a probe-driven recipe, a cook step whose
                 // outputs are all literal is not member-iterated — it is the
@@ -906,7 +906,7 @@ pub fn generate_with_names(
                             )
                     })
                 };
-                let first_step_literal_gather = is_for_each
+                let first_step_literal_gather = is_member_fanout
                     && recipe
                         .steps
                         .iter()
@@ -922,9 +922,9 @@ pub fn generate_with_names(
                         escape_lua_string(&recipe.name)
                     ));
                 }
-                if let Some((fe, _fe_line)) = for_each {
+                if let Some((fe, _fe_line)) = member_source {
                     if !first_step_literal_gather {
-                        emit_for_each_items(&mut out, fe);
+                        emit_member_items(&mut out, fe);
                     }
                 }
 
@@ -952,13 +952,13 @@ pub fn generate_with_names(
                             // route through the ordinary chained gather arm
                             // below. The literal-FIRST-step rejection was
                             // emitted at the top of the recipe body.
-                            let for_each_gather =
-                                is_for_each && outputs_all_literal(cook_step);
-                            if for_each_gather && prev_cook_index.is_none() {
+                            let member_gather =
+                                is_member_fanout && outputs_all_literal(cook_step);
+                            if member_gather && prev_cook_index.is_none() {
                                 // Unreachable at run time: the body-top
                                 // error() raises before any step group runs.
-                            } else if is_for_each && !for_each_gather {
-                                generate_for_each_cook_step(
+                            } else if is_member_fanout && !member_gather {
+                                generate_member_fanout_cook_step(
                                     &mut out,
                                     cook_step,
                                     cook_index,
@@ -994,8 +994,8 @@ pub fn generate_with_names(
                             line,
                         } => {
                             out.push_str("    cook.step_group(function()\n");
-                            if is_for_each {
-                                test_step::generate_for_each_test_step(
+                            if is_member_fanout {
+                                test_step::generate_member_fanout_test_step(
                                     &mut out,
                                     test_step_val,
                                     *line,
@@ -1054,10 +1054,10 @@ pub fn generate_with_names(
                                 &recipe.name,
                             )?;
                         }
-                        // COOK-63 §8.3: the `for_each` driver was already
+                        // COOK-63 §8.2: the member source was already
                         // consumed above into `local _items`; it emits no step
                         // of its own here.
-                        Step::ForEach { .. } => {
+                        Step::MemberSource { .. } => {
                             i += 1;
                         }
                         // `Step` is `#[non_exhaustive]`. Future step kinds added by
@@ -1092,8 +1092,8 @@ pub fn generate_with_names(
     Ok(out)
 }
 
-/// COOK-63 §8.3: emit the `local _items = <source>` member-set setup for a
-/// `for_each` recipe. The data members are then iterated by the recipe's
+/// COOK-63 §8.2: emit the `local _items = <source>` member-set setup for a
+/// member-fanout recipe. The data members are then iterated by the recipe's
 /// per-member cook/plate/test steps.
 ///
 /// Member-materialisation is structurally correct here; the demand-driven
@@ -1108,9 +1108,9 @@ pub fn generate_with_names(
 /// register pre-pass (§22.5.10) resolves the ref (exact key match wins, else
 /// the trailing segment is a field selector) and stores the member array
 /// under the verbatim ref, where this lookup finds it.
-fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
+fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
     match &fe.source {
-        ForEachSource::ProbeKey(k) => {
+        MemberSource::ProbeKey(k) => {
             out.push_str(&format!(
                 "    local _items = cook.probes.get(\"{}\")\n",
                 escape_lua_string(k)
@@ -1485,34 +1485,34 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
 /// `ingredients` / `excludes`.
 fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> String {
     let mut fields = recipe_metadata_fields(recipe, recipe_names);
-    // COOK-64 §8.3/§22.5.9: expose a `for_each` recipe's data source on the
+    // COOK-64 §8.2/§22.5.10: expose a member-fanout recipe's data source on the
     // surface meta so the register pre-pass can resolve a feeding probe before
     // running the body (which itself reads the resolved value via
     // `cook.probes.get`). Recipe-level, so reachability is known pre-fan-out.
-    if let Some(meta) = for_each_meta_field(recipe) {
+    if let Some(meta) = member_source_meta_field(recipe) {
         fields.push(meta);
     }
     fields.push(format!("__line = {}", recipe.line));
     format!("{{{}}}", fields.join(", "))
 }
 
-/// Render the `__for_each = {…}` surface-meta field for a `for_each` recipe, or
-/// `None` if the recipe has no `for_each` driver. The descriptor names the
+/// Render the `__member_source = {…}` surface-meta field for a member-fanout recipe, or
+/// `None` if the recipe has no member source. The descriptor names the
 /// source kind so the register pre-pass knows whether (and which probe) to
 /// evaluate ahead of fan-out registration.
-fn for_each_meta_field(recipe: &Recipe) -> Option<String> {
+fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
     let step = recipe.steps.iter().find_map(|s| match s {
-        Step::ForEach { step, .. } => Some(step),
+        Step::MemberSource { step, .. } => Some(step),
         _ => None,
     })?;
     let body = match &step.source {
         // COOK-190: verbatim ref; key-vs-field resolution happens in the
         // register pre-pass against the probe registry.
-        ForEachSource::ProbeKey(k) => {
+        MemberSource::ProbeKey(k) => {
             format!("kind = \"probe\", ref = \"{}\"", escape_lua_string(k))
         }
     };
-    Some(format!("__for_each = {{{}}}", body))
+    Some(format!("__member_source = {{{}}}", body))
 }
 
 /// Field-builder for `generate_metadata_with_line`. Emits one

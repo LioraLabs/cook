@@ -254,25 +254,25 @@ pub struct TestStep {
     pub seal: BTreeSet<String>,
 }
 
-/// The source of a `for_each` step's data members. Only a probe-key source
+/// The source of a member-source step's data members. Only a probe-key source
 /// remains after COOK-97: the `$(cmd)` shell-capture and `(LUA_EXPR)` reserved
 /// forms have been removed. CS-0091 / COOK-62 introduced the node; COOK-97
 /// drops the non-probe variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForEachSource {
+pub enum MemberSource {
     /// A probe key, optionally selecting a nested array field (`cards`,
     /// `cards:items`). The probe's value MUST be an array (§22.5.10).
     ProbeKey(String),
 }
 
-/// A `for_each` step — the internal `ingredients <probe>` desugar node (§8.x).
+/// A member-source step — the internal `ingredients <probe>` desugar node (§8.2).
 /// At most one per recipe; mutually exclusive with `ingredients`. The current
 /// member binds as `$<in>` / `$<in.field>`. Source is always a `ProbeKey`
 /// (the `$(cmd)` shell-capture and `(LUA_EXPR)` anonymous-source forms were
-/// removed in COOK-97; see §8.x and CS-NNNN).
+/// removed in COOK-97; see §8.2 and CS-0097).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ForEachStep {
-    pub source: ForEachSource,
+pub struct MemberSourceStep {
+    pub source: MemberSource,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -290,8 +290,8 @@ pub enum Step {
     InlineLua { code: String, line: usize },
     Cook { step: CookStep, line: usize },
     Test { step: TestStep, line: usize },
-    /// Register-phase data-member iteration driver (§8.3). Declarative.
-    ForEach { step: ForEachStep, line: usize },
+    /// Register-phase data-member iteration driver (§8.2). Declarative.
+    MemberSource { step: MemberSourceStep, line: usize },
 }
 
 #[cfg(test)]

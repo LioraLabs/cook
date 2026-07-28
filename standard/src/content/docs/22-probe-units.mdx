@@ -149,7 +149,7 @@ value is determined by the producer form:
   as a sealable determinant when they are not the consuming recipe's
   iteration driver. It is **seal-only** for that reason: the value is a JSON
   object keyed by path, so a `files` probe can never resolve to the array an
-  `ingredients <probe>` driver iterates (§{cat.probes.for-each}), and naming
+  `ingredients <probe>` driver iterates (§{cat.probes.member-source}), and naming
   one in driver position MUST be rejected. A conforming implementation SHOULD
   say so in terms of the producer kind rather than reporting only the JSON
   shape, since the fix is to attach the probe with `seal` and give the recipe
@@ -386,7 +386,7 @@ fingerprint MUST NOT be computed.
 
 **On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced for cache storage. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
 
-In addition, on every probe completion — cache hit or miss, demand-driven or pre-pass (§{cat.probes.for-each}) — the implementation MUST materialise the canonical bytes at `.cook/probes/<file>` under the project root, where `<file>` is the probe key with the characters `_`, `/`, and `\` escaped for injectivity (the reference implementation rewrites `_` → `_5f`, `/` → `_2f`, `\` → `_5c`, so no two distinct keys share a file name), suffixed `.json`. This file is the canonical local copy of the probe value; the per-run probe-value store is a read-through cache of it.
+In addition, on every probe completion — cache hit or miss, demand-driven or pre-pass (§{cat.probes.member-source}) — the implementation MUST materialise the canonical bytes at `.cook/probes/<file>` under the project root, where `<file>` is the probe key with the characters `_`, `/`, and `\` escaped for injectivity (the reference implementation rewrites `_` → `_5f`, `/` → `_2f`, `\` → `_5c`, so no two distinct keys share a file name), suffixed `.json`. This file is the canonical local copy of the probe value; the per-run probe-value store is a read-through cache of it.
 
 ## 22.5.9. Cycle detection [#cat.probes.cycles]
 
@@ -398,7 +398,7 @@ probe cycle detected: cc:a -> cc:b -> cc:a
 
 The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
 
-## 22.5.10. Probe values as `ingredients <probe>` sources [#cat.probes.for-each]
+## 22.5.10. Probe values as `ingredients <probe>` sources [#cat.probes.member-source]
 
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of an `ingredients <probe>` declaration (§{steps.ingredients}): `ingredients <key>` registers one work unit per array element, and `ingredients <key>:<field>` iterates the array at the named field. A fan-out `cook` step MAY declare multiple output templates; each member's unit registers **every** declared output (§{steps.cook-multi} applies per member — CS-0150 pins this after the reference implementation registered only the first template, leaving the rest undeclared side effects that stale-output reconciliation later swept). This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
@@ -424,7 +424,7 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 
 **Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's accessor-bearing (fan-out) steps (§{steps.ingredients}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed. A literal-output `cook_step` in the same recipe is not member-iterated: it gathers the preceding step's collected outputs per §{steps.iteration-mode} (CS-0155).
 
-> **Note (informative).** An implementation must learn a recipe's `ingredients <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body. Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
+> **Note (informative).** An implementation must learn a recipe's `ingredients <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__member_source` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body. Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
 ## 22.5.11. Implementation status (CS-0074) (informative) [#cat.probes.impl-status]
 

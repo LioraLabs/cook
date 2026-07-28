@@ -11,6 +11,13 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // null means: retired with no replacement (already removed from the
   // language by a prior CS entry).
 
+  // COOK-372: the `for_each` keyword was removed by the v1.0 language cut
+  // (CS-0131) and §22.5.10's heading was retitled to `ingredients <probe>`
+  // then, but the slug kept the retired keyword's name. It is the stable
+  // cross-reference target for data-member fan-out, so every clause citing
+  // the section inherited a name the language no longer has.
+  'cat.probes.for-each':             'cat.probes.member-source',
+
   'exec':                            'exec.phases',
   'grammar':                         'toplevel.overview',
   'grammar.overview':                'toplevel.overview',

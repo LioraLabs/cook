@@ -243,17 +243,17 @@ pub(crate) fn generate_test_step(
 const MEMBER_SOURCE_LINE: &str =
     "        local _test_src = cook.prior_outputs(cook.member_to_string(item))\n";
 
-/// COOK-63 §8.3: lower a `test` step inside a `for_each` recipe to one test
+/// COOK-63 §8.2: lower a `test` step inside a member-fanout recipe to one test
 /// unit per data member, with the member bound as `item`. The recipe body has
 /// already emitted `local _items = <source>`.
-pub(crate) fn generate_for_each_test_step(
+pub(crate) fn generate_member_fanout_test_step(
     out: &mut String,
     test_step: &TestStep,
     line: usize,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
-    use crate::template::{cook_step_ctx, expand_for_each_template};
+    use crate::template::{cook_step_ctx, expand_member_fanout_template};
 
     let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
     // CS-0159: the effective seal set travels with the fan-out units too —
@@ -270,7 +270,7 @@ pub(crate) fn generate_for_each_test_step(
         Body::ShellBlock(lines) => {
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let (cmd_concat, probe_keys) = expand_for_each_template(
+            let (cmd_concat, probe_keys) = expand_member_fanout_template(
                 &combined,
                 &ctx,
                 &mut consulted,
@@ -288,7 +288,7 @@ pub(crate) fn generate_for_each_test_step(
             out.push_str("    end\n");
         }
         Body::LuaBlock(code) => {
-            // §8.3: the Lua body sees the member as `item`; execute-phase
+            // §8.2: the Lua body sees the member as `item`; execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(MEMBER_SOURCE_LINE);

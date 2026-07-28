@@ -326,7 +326,7 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 // cook.probes.* API
 // ---------------------------------------------------------------------------
 
-/// COOK-64 §22.5.9: register-phase store of resolved `for_each`-feeding probe
+/// COOK-64 §22.5.10: register-phase store of resolved member-source probe
 /// values, keyed by probe key. COOK-190 / §22.5.10: for an `ingredients
 /// <probe>` source ref resolved as a `key:field` selector, the pre-pass also
 /// stashes the selected array under the verbatim ref (e.g. `"cards:list"`)
@@ -334,9 +334,9 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 /// that names a probe exactly needs no such extra entry. The pre-pass
 /// (`engine.rs`) populates it after top-level load but before any recipe body
 /// runs; `cook.probes.get` consults it *before* the module-cache path so a
-/// `for_each` recipe body's `local _items = cook.probes.get("<ref>")` sees the
+/// member-fanout recipe body's `local _items = cook.probes.get("<ref>")` sees the
 /// resolved array instead of erroring "outside of a module context". Empty
-/// for non-`for_each` sessions, so the module-cache behaviour is unchanged.
+/// for non-member-source sessions, so the module-cache behaviour is unchanged.
 /// Values are decoded `serde_json::Value`s — JSON-native since CS-0102.
 pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 
@@ -352,10 +352,10 @@ pub fn register_cache_api(
     let s = state.clone();
     let prepass_get = prepass.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
-        // COOK-64: a `for_each`-feeding probe value resolved by the pre-pass
+        // COOK-64: a member-source probe value resolved by the pre-pass
         // takes precedence. These keys are probe keys, which do not collide
         // with module-cache keys, so the module-context path below is reached
-        // unchanged for every non-`for_each` lookup.
+        // unchanged for every non-member-source lookup.
         if let Some(val) = prepass_get.borrow().get(&key) {
             return crate::probe_value::json_to_lua(lua, val);
         }

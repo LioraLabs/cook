@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        ForEach source=ProbeKey("cards:list")
+        MemberSource source=ProbeKey("cards:list")
         Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo \"member: $<in>\" > $<out>"])
   chores:
   register_blocks: []

@@ -3212,10 +3212,10 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
     assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");
 }
 
-// ── COOK-63 §8.3: ingredients <probe> data-member fan-out codegen ──────
+// ── COOK-63 §8.2: ingredients <probe> data-member fan-out codegen ──────
 
 #[test]
-fn for_each_probe_cook_fans_out_per_member() {
+fn member_fanout_cook_fans_out_per_member() {
     let src = "recipe art\n    ingredients cards\n    cook \"build/art/$<in.id>.png\" { gen \"$<in.name>\" $<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
@@ -3236,7 +3236,7 @@ fn for_each_probe_cook_fans_out_per_member() {
 }
 
 #[test]
-fn for_each_probe_cook_multi_output_declares_all_outputs() {
+fn member_fanout_cook_multi_output_declares_all_outputs() {
     // A fan-out cook step with TWO accessor targets must declare BOTH on
     // each member's unit (outputs = {…}, matching the glob-driven OneToMany
     // arm). Previously outputs[1..] were silently dropped: the unit
@@ -3256,7 +3256,7 @@ fn for_each_probe_cook_multi_output_declares_all_outputs() {
 }
 
 #[test]
-fn for_each_probe_cook_out_indexed_placeholders_resolve() {
+fn member_fanout_cook_out_indexed_placeholders_resolve() {
     // COOK-270: `$<out_1>` / `$<out_2>` in a multi-output fan-out body must
     // resolve to the member's declared outputs. The resolve ctx was
     // hardcoded `OutputShape::Single`, so an indexed placeholder tripped the
@@ -3271,7 +3271,7 @@ fn for_each_probe_cook_out_indexed_placeholders_resolve() {
 }
 
 #[test]
-fn for_each_probe_cook_bare_out_rejected_on_multi_output() {
+fn member_fanout_cook_bare_out_rejected_on_multi_output() {
     // §{steps.cook-multi} uniformly: bare `$<out>` is ambiguous when a step
     // declares more than one output — fan-out steps included.
     let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" { gen $<out> }\n";
@@ -3292,7 +3292,7 @@ fn for_each_probe_cook_bare_out_rejected_on_multi_output() {
 }
 
 #[test]
-fn for_each_probe_literal_step_gathers_previous_outputs() {
+fn member_fanout_literal_step_gathers_previous_outputs() {
     // CS-0155 / COOK-271: a literal-output step after a fan-out step is the
     // ordinary chained many-to-one gather — one unit whose inputs are the
     // preceding step's collected outputs, NOT one member-iterated unit per
@@ -3310,7 +3310,7 @@ fn for_each_probe_literal_step_gathers_previous_outputs() {
 }
 
 #[test]
-fn for_each_probe_literal_first_step_rejected() {
+fn member_fanout_literal_first_step_rejected() {
     // CS-0155: a literal-output FIRST step in a probe-driven recipe has
     // nothing path-shaped to gather — members are records, not files.
     let src = "recipe render\n    ingredients services\n    cook \"build/manifest.txt\" { cat $<in> > $<out> }\n";
@@ -3320,7 +3320,7 @@ fn for_each_probe_literal_first_step_rejected() {
 }
 
 #[test]
-fn for_each_probe_ref_passes_through_verbatim() {
+fn member_fanout_probe_ref_passes_through_verbatim() {
     // COOK-190: no codegen-side `:` split — the register pre-pass resolves
     // key-vs-field against the probe registry and stores the member array
     // under the verbatim ref.
@@ -3331,7 +3331,7 @@ fn for_each_probe_ref_passes_through_verbatim() {
 }
 
 #[test]
-fn for_each_test_fans_out_per_member() {
+fn member_fanout_test_fans_out_per_member() {
     let src = "recipe eval\n    ingredients cases\n    test { assert-eval \"$<in.input>\" \"$<in.expect>\" }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
@@ -3340,24 +3340,24 @@ fn for_each_test_fans_out_per_member() {
 }
 
 #[test]
-fn for_each_surface_carries_source_metadata() {
+fn member_fanout_surface_carries_source_metadata() {
     // COOK-64: the register pre-pass learns a recipe's ingredients-probe-feeding
-    // probe from `__for_each` on the surface meta — without running the body.
+    // probe from `__member_source` on the surface meta — without running the body.
     let probe = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(probe.contains(r#"__for_each = {kind = "probe", ref = "cards"}"#),
+    assert!(probe.contains(r#"__member_source = {kind = "probe", ref = "cards"}"#),
         "probe source metadata missing, got:\n{probe}");
 
     let field = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(field.contains(r#"__for_each = {kind = "probe", ref = "cards:items"}"#),
+    assert!(field.contains(r#"__member_source = {kind = "probe", ref = "cards:items"}"#),
         "verbatim ref metadata missing, got:\n{field}");
 }
 
 #[test]
-fn for_each_unit_folds_member_into_fingerprint() {
+fn member_fanout_unit_folds_member_into_fingerprint() {
     // COOK-64 §17.1 observable #5: each fan-out unit carries its member so the
     // register fold distinguishes per-member fingerprints.
     let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>\" { build $<out> }\n";
@@ -3367,7 +3367,7 @@ fn for_each_unit_folds_member_into_fingerprint() {
 }
 
 #[test]
-fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
+fn member_fanout_test_probe_ref_in_shell_command_is_codegen_error() {
     // CS-0127: unlike `cook` command bodies, `WorkPayload::Test` runs
     // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
     // old codegen wrapped a probe-bearing test command in a deferred
@@ -3378,7 +3378,7 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
     let src = "recipe eval\n    ingredients cards\n    test {\n        $<foo:bar>\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let err = generate_with_names(&cookfile, &std::collections::BTreeSet::new())
-        .expect_err("expected a codegen error for a probe ref in a for_each test shell command");
+        .expect_err("expected a codegen error for a probe ref in a member-fanout test shell command");
     let msg = err.to_string();
     assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
     assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
@@ -3412,7 +3412,7 @@ fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
 
 #[test]
 fn checked_codegen_covers_every_current_step_kind() {
-    // CS-0134/CS-0135: a recipe body is purely declarative — ForEach (via a
+    // CS-0134/CS-0135: a recipe body is purely declarative — MemberSource (via a
     // bare `ingredients <probe>` member source), InlineLua (auto-classified
     // bare module calls), Cook, and Test steps live here. Shell/Lua/
     // LuaBlock steps no longer occur at recipe-step level at all — they only
@@ -3665,15 +3665,6 @@ fn a_sourceless_test_declares_an_empty_source() {
     assert!(lua.contains("inputs = _test_src"), "lua:\n{lua}");
     assert!(!lua.contains("= ingredients end"),
         "no ingredients to fall back to:\n{lua}");
-}
-
-// ─── CS-0101: $<file:PATH> lowering (hoisted cook.file_ref locals + file_refs field) ─
-
-/// Parse + checked-generate helper for the CS-0101 tests below.
-fn checked_lua(src: &str) -> String {
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    generate_with_names_checked(&cookfile, &names).expect("codegen")
 }
 
 #[test]

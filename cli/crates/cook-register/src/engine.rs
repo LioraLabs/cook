@@ -319,7 +319,7 @@ pub fn register_cookfile(
     //     the module-loader handle so we can `flush_all()` it after all
     //     body invocations complete.
     // COOK-64: the register pre-pass populates this with resolved
-    // `for_each`-feeding probe values before any recipe body runs; the
+    // member-source probe values before any recipe body runs; the
     // `cook.probes.get` binding (installed below) reads it first.
     let prepass_store: crate::module_loader::SharedPrepassStore =
         Rc::new(RefCell::new(BTreeMap::new()));
@@ -415,17 +415,17 @@ pub fn register_cookfile(
         .map(|t| local_reachable_set(t, &names_to_requires))
         .unwrap_or_default();
 
-    // 11c. (COOK-64 §22.5.9) The `for_each` register pre-pass. Every recipe
+    // 11c. (COOK-64 §22.5.10) The member-source register pre-pass. Every recipe
     //      body runs during register to discover its units, and a
-    //      probe-sourced `for_each` body opens with
+    //      probe-sourced member-fanout body opens with
     //      `local _items = cook.probes.get("<key>")`. That call resolves nil
     //      (or errors "outside a module context") unless the feeding probe
     //      has already been evaluated — so we evaluate every probe that feeds
-    //      a `for_each` driver (and its transitive probe `requires`) here,
+    //      a member source (and its transitive probe `requires`) here,
     //      before the body loop, stashing each value in `prepass_store` keyed
     //      by probe key. `$(cmd)` and the reserved `(lua)` sources need no
     //      pre-pass (the former materialises through `cook.sh` at body time).
-    run_for_each_prepass(
+    run_member_source_prepass(
         &lua,
         &recipes.borrow(),
         &probe_registry.borrow(),
@@ -506,14 +506,14 @@ pub fn register_cookfile(
         local_topological_sort(&merged)?;
     }
 
-    // 12b. (COOK-64 §22.5.9) Static-input rule for `for_each` sources. Now
+    // 12b. (COOK-64 §22.5.10) Static-input rule for member sources. Now
     //      that every body has run and `units_by_recipe` holds the full set of
-    //      recipe outputs, reject any `for_each`-feeding probe that declares a
+    //      recipe outputs, reject any member-source probe that declares a
     //      file input which is produced by a recipe in this Cookfile — a
     //      build artifact is not statically evaluable (the pre-pass resolved
     //      the probe before any recipe ran, so it could only have seen a
     //      stale or absent file).
-    check_for_each_static_inputs(
+    check_member_source_static_inputs(
         &recipes.borrow(),
         &probe_registry.borrow(),
         &units_by_recipe,
@@ -527,7 +527,7 @@ pub fn register_cookfile(
     //      * AFTER 12a/12b: those two checks are what "the recipe and unit
     //        set is closed" MEANS in this pass. A callback that ran before
     //        either could observe a units_by_recipe / probe_registry that
-    //        the merged-cycle or for_each static-input check would still
+    //        the merged-cycle or member-source static-input check would still
     //        reject, or race a `cook.recipe`/`cook.probe` call against a
     //        validation pass not yet run over the very state it just
     //        mutated — so callbacks must see a pass that has ALREADY been
@@ -670,7 +670,7 @@ enum VisitState {
     ///
     /// `Skipped` carries no such flag because it cannot need one: a skip arm
     /// only declines when `!forced` (the parametric-chore arms stand down when
-    /// forced; the `for_each` arm raises), so `Skipped` always implies
+    /// forced; the member-fanout arm raises), so `Skipped` always implies
     /// un-forced, and a forced visit to it re-invokes unconditionally.
     Visited { forced: bool },
     /// Its body was deliberately NOT run: a skip arm in `invoke_body` decided
@@ -817,7 +817,7 @@ impl BodyDriver {
             // finds it `None` and propagates via the normal body path. Without
             // this arm the dep registers zero units while the edge still builds
             // it — expressly non-conforming per §22.8 — and, worse, the
-            // `for_each` arm's DESIGNED hard error is silently swallowed.
+            // member-fanout arm's DESIGNED hard error is silently swallowed.
             //
             // The body is NOT re-run: §22.8 says at most once per pass, and it
             // already ran to completion. Only `forced` is pushed down.
@@ -859,7 +859,7 @@ impl BodyDriver {
             // A completed body is a no-op for a repeat visit; a SKIPPED one is
             // not. Fall through to re-invoke — `forced` is now true, so the
             // arm that skipped it either stands down (the parametric-chore
-            // arms) or raises its designed error (the `for_each` arm). Only
+            // arms) or raises its designed error (the member-fanout arm). Only
             // the seed loop can reach a skipped name with `forced = false`,
             // and it visits each name once, so the re-invoke is bounded.
             Some(VisitState::Skipped) if !forced => return Ok(()),
@@ -1040,7 +1040,7 @@ impl BodyDriver {
             qualified_name,
             params_meta,
             source_line,
-            skip_for_each_body,
+            skip_member_fanout_body,
             origin,
         ): (
             LuaRegistryKey,
@@ -1060,16 +1060,16 @@ impl BodyDriver {
                 .find(|r| r.name == name)
                 .ok_or_else(|| RegisterError::RecipeNotFound(name.to_string()))?;
 
-            // COOK-64 §22.5.9 demand-driven rule: a probe-sourced `for_each`
+            // COOK-64 §22.5.10 demand-driven rule: a probe-sourced member-fanout
             // recipe that is NOT reachable from the build target had its probe
             // skipped by the pre-pass, so its body's `cook.probes.get` would
             // error. Skip the body — the recipe is not being built — registering
             // it with no units, mirroring the parametric-sibling skip below.
-            skip_for_each_body = builder.target_recipe.is_some()
+            skip_member_fanout_body = builder.target_recipe.is_some()
                 && !self.reachable_from_target.contains(name)
                 && matches!(
-                    recipe.for_each,
-                    Some(crate::capture::ForEachDescriptor::Probe { .. })
+                    recipe.member_source,
+                    Some(crate::capture::MemberSourceDescriptor::Probe { .. })
                 );
 
             // Run recipe context setup (ingredient resolution).
@@ -1097,14 +1097,14 @@ impl BodyDriver {
             };
         }
 
-        // Skip arm 3 — a probe-sourced `for_each` recipe not statically
+        // Skip arm 3 — a probe-sourced member-fanout recipe not statically
         // reachable from the target.
-        if skip_for_each_body {
+        if skip_member_fanout_body {
             if forced {
                 // Unlike the parametric-chore arms, forcing cannot rescue this
                 // one: the body needs a probe value the pre-pass never
                 // computed. Evaluating the probe lazily here IS feasible —
-                // `run_for_each_prepass` is a free function, and calling it
+                // `run_member_source_prepass` is a free function, and calling it
                 // with `reachable_from_target = {name}` and `has_target = true`
                 // would resolve exactly this driver's probe. It is declined on
                 // re-entrancy risk: that path holds `recipes` and
@@ -1117,7 +1117,7 @@ impl BodyDriver {
                 // pre-pass evaluates its probe and the force then succeeds.
                 lua.remove_registry_value(func_key_clone)?;
                 return Err(RegisterError::Lua(mlua::Error::runtime(format!(
-                    "cook.require_recipe: recipe \"{name}\" is a probe-sourced `for_each` recipe \
+                    "cook.require_recipe: recipe \"{name}\" fans out over a probe member source \
                      that is not reachable from the build target, so its feeding probe was not \
                      evaluated by the register pre-pass and its body cannot run. Add a static \
                      `: {name}` dep to the requiring recipe's header so the pre-pass sees it \
@@ -1812,14 +1812,14 @@ fn local_reachable_set(
     reachable
 }
 
-/// COOK-64 §22.5.9: the `for_each` register pre-pass.
+/// COOK-64 §22.5.10: the member-source register pre-pass.
 ///
-/// Every probe-sourced `for_each` driver opens its body with
+/// Every probe-sourced member source opens its body with
 /// `local _items = cook.probes.get("<ref>")`, `<ref>` being the verbatim
 /// `ingredients <ref>` source ref carried by codegen. That value does not
 /// exist until the feeding probe runs, and probes normally run as DAG nodes
 /// in the execute phase — far too late for register-time fan-out. So we
-/// evaluate every `for_each`-feeding probe (and its transitive probe
+/// evaluate every member-source probe (and its transitive probe
 /// `requires`) here, synchronously on the register VM, before any recipe
 /// body runs.
 ///
@@ -1837,7 +1837,7 @@ fn local_reachable_set(
 /// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
 /// were removed in COOK-97.
 #[allow(clippy::too_many_arguments)]
-fn run_for_each_prepass(
+fn run_member_source_prepass(
     lua: &Lua,
     recipes: &[crate::capture::RegisteredRecipe],
     probe_registry: &ProbeRegistry,
@@ -1847,22 +1847,22 @@ fn run_for_each_prepass(
     reachable_from_target: &std::collections::BTreeSet<String>,
     has_target: bool,
 ) -> Result<(), RegisterError> {
-    use crate::capture::ForEachDescriptor;
+    use crate::capture::MemberSourceDescriptor;
 
     // (recipe, verbatim source ref) per probe-sourced driver.
     //
-    // §22.5.9 demand-driven rule: when a build target is set, only evaluate
+    // §22.5.10 demand-driven rule: when a build target is set, only evaluate
     // probes for recipes reachable from it. When no target is set every recipe
     // is being built, so every probe-sourced driver is in scope. The body loop
-    // applies the mirror rule (`should_skip_for_each_body`) so a non-reachable
+    // applies the mirror rule (`should_skip_member_fanout_body`) so a non-reachable
     // driver's body — which would call `cook.probes.get` on an unevaluated probe
     // — is skipped rather than erroring.
     let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
     let drivers: Vec<(&str, &str)> = recipes
         .iter()
         .filter(|r| driver_reachable(&r.name))
-        .filter_map(|r| match &r.for_each {
-            Some(ForEachDescriptor::Probe { source_ref }) => {
+        .filter_map(|r| match &r.member_source {
+            Some(MemberSourceDescriptor::Probe { source_ref }) => {
                 Some((r.name.as_str(), source_ref.as_str()))
             }
             _ => None,
@@ -1880,7 +1880,7 @@ fn run_for_each_prepass(
         match resolve_probe_ref(source_ref, probe_registry) {
             Some((key, field)) => resolved.push((source_ref, key, field)),
             None => {
-                return Err(RegisterError::ForEachProbeUndeclared {
+                return Err(RegisterError::MemberSourceProbeUndeclared {
                     recipe: (*recipe).to_string(),
                     key: (*source_ref).to_string(),
                 })
@@ -1917,7 +1917,7 @@ fn run_for_each_prepass(
         )?;
     }
 
-    // §22.5.9 non-array diagnostic: a driver's resolved source must be a
+    // §22.5.10 non-array diagnostic: a driver's resolved source must be a
     // sequence. With a `:field` selector, the named field must be the array.
     for (source_ref, key, field) in &resolved {
         let store = prepass_store.borrow();
@@ -1926,7 +1926,7 @@ fn run_for_each_prepass(
             Some(f) => match json_map_get(value, f) {
                 Some(v) => (v, (*source_ref).to_string()),
                 None => {
-                    return Err(RegisterError::ForEachNotArray {
+                    return Err(RegisterError::MemberSourceNotArray {
                         selector: (*source_ref).to_string(),
                         shape: "nil (no such field)".to_string(),
                     })
@@ -1945,11 +1945,11 @@ fn run_for_each_prepass(
                         == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
                 })
             {
-                return Err(RegisterError::ForEachFilesProbe {
+                return Err(RegisterError::MemberSourceFilesProbe {
                     key: (*key).to_string(),
                 });
             }
-            return Err(RegisterError::ForEachNotArray {
+            return Err(RegisterError::MemberSourceNotArray {
                 selector,
                 shape: json_shape(resolved_value).to_string(),
             });
@@ -2021,7 +2021,7 @@ fn evaluate_prepass_probe(
         return Ok(());
     }
     let Some(reg) = probe_registry.probes.get(key) else {
-        return Err(RegisterError::ForEachProbeProduceFailed {
+        return Err(RegisterError::MemberSourceProbeProduceFailed {
             key: key.to_string(),
             message: format!("requires upstream probe '{key}' which was not declared"),
         });
@@ -2072,7 +2072,7 @@ fn evaluate_prepass_probe(
         upstream_fps,
         keyless,
     )
-    .map_err(|e| RegisterError::ForEachProbeProduceFailed {
+    .map_err(|e| RegisterError::MemberSourceProbeProduceFailed {
         key: key.to_string(),
         message: e.message().to_string(),
     })?;
@@ -2091,7 +2091,7 @@ fn evaluate_prepass_probe(
     // gets populated.
 
     let jv = cook_contracts::probe_value::decode_json(&evaluated.bytes).map_err(|e| {
-        RegisterError::ForEachProbeProduceFailed {
+        RegisterError::MemberSourceProbeProduceFailed {
             key: key.to_string(),
             message: format!("decode cached value: {e}"),
         }
@@ -2139,19 +2139,19 @@ fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_j
     v.as_object().and_then(|m| m.get(field))
 }
 
-/// COOK-64 §22.5.9 static-input rule: reject a `for_each`-feeding probe whose
+/// COOK-64 §22.5.10 static-input rule: reject a member-source probe whose
 /// declared file inputs include a build artifact (an output produced by a
-/// recipe in this Cookfile). `for_each` sources are resolved by the pre-pass
+/// recipe in this Cookfile). member sources are resolved by the pre-pass
 /// before any recipe runs, so depending on a not-yet-built file is incoherent.
 ///
 /// Runs after the body loop, when `units_by_recipe` carries every recipe's
 /// output paths. Paths are compared in normalised relative form.
-fn check_for_each_static_inputs(
+fn check_member_source_static_inputs(
     recipes: &[crate::capture::RegisteredRecipe],
     probe_registry: &ProbeRegistry,
     units_by_recipe: &BTreeMap<String, RecipeUnits>,
 ) -> Result<(), RegisterError> {
-    use crate::capture::ForEachDescriptor;
+    use crate::capture::MemberSourceDescriptor;
 
     // Union of every recipe output path (normalised).
     let outputs: std::collections::BTreeSet<String> = units_by_recipe
@@ -2166,7 +2166,7 @@ fn check_for_each_static_inputs(
     }
 
     for recipe in recipes {
-        let Some(ForEachDescriptor::Probe { source_ref }) = &recipe.for_each else {
+        let Some(MemberSourceDescriptor::Probe { source_ref }) = &recipe.member_source else {
             continue;
         };
         let Some((key, _)) = resolve_probe_ref(source_ref, probe_registry) else {
@@ -2178,7 +2178,7 @@ fn check_for_each_static_inputs(
         };
         for file in &reg.probe.inputs.files {
             if outputs.contains(&normalise_rel(file)) {
-                return Err(RegisterError::ForEachProbeArtifactDep {
+                return Err(RegisterError::MemberSourceProbeArtifactDep {
                     key: key.to_string(),
                     path: file.clone(),
                 });
@@ -2189,13 +2189,13 @@ fn check_for_each_static_inputs(
 }
 
 /// Normalise a relative path for comparison: drop a leading `./`. Both
-/// `for_each` probe file inputs and recipe output paths are relative to the
+/// member-source probe file inputs and recipe output paths are relative to the
 /// project working directory, so a textual normalise suffices.
 fn normalise_rel(p: &str) -> String {
     p.strip_prefix("./").unwrap_or(p).to_string()
 }
 
-/// Human-readable JSON value-kind, for the §22.5.9 non-array diagnostic.
+/// Human-readable JSON value-kind, for the §22.5.10 non-array diagnostic.
 fn json_shape(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Null => "nil",
