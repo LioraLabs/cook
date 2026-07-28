@@ -131,6 +131,11 @@ impl Outcome {
         self.stream_lossy(OutputStream::Stdout)
     }
 
+    /// The captured stderr as text. Lossy, for the same reason.
+    pub fn stderr_lossy(&self) -> String {
+        self.stream_lossy(OutputStream::Stderr)
+    }
+
     fn stream_lossy(&self, want: OutputStream) -> String {
         let mut out = String::new();
         for c in self.chunks.iter().filter(|c| c.stream() == want) {

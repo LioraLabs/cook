@@ -1,0 +1,30 @@
+# CS-0188 (COOK-377): output parity across the probe-reference boundary.
+#
+# The two recipes differ by one thing: `sigil`'s command names a probe. That
+# difference decided, before CS-0188, whether the step's output existed at all.
+# The pin is the parity, not the exact rendering: both steps must report both
+# of their streams, each attributed to its own unit.
+
+[[run]]
+args = ["plain"]
+[run.assert]
+exists = ["out/plain.txt"]
+output_contains = [
+    "plain/out/plain.txt] PLAIN-STDOUT",
+    "plain/out/plain.txt] (stderr) PLAIN-STDERR",
+]
+
+[[run]]
+args = ["sigil"]
+[run.assert]
+exists = ["out/sigil.txt"]
+# The whole ticket, in two lines: a command that mentions a probe reports what
+# it printed, on both streams, exactly as its probe-free twin above does.
+output_contains = [
+    "sigil/out/sigil.txt] SIGIL-STDOUT",
+    "sigil/out/sigil.txt] (stderr) SIGIL-STDERR",
+]
+# A probe's shell producer lowers to `cook.sh`, and that call's stdout IS the
+# probe's value (§22.5.2). It must not also be echoed into the build log, or
+# every finder would print its answer on each cold run.
+output_not_contains = ["/bin/echo"]

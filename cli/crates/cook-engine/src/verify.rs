@@ -148,19 +148,38 @@ pub fn rerun_outputs_in_sandbox(
     copy_dir_shallow_filtered(working_dir, sandbox.path())
         .map_err(|e| format!("sandbox copy: {e}"))?;
 
-    let mut child_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
-    let status = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(sandbox.path())
-        .envs(&child_env)
-        .status()
-        .map_err(|e| format!("spawn: {e}"))?;
-    if !status.success() {
-        return Err(format!("re-run exited {}", status.code().unwrap_or(-1)));
+    // CS-0188: this used `.status()` and captured nothing, so a shadow re-run
+    // that failed could only ever be reported as a bare exit code. `cook cache
+    // verify` exists to tell an author why two runs of one unit disagreed, and
+    // answering "it exited 1" is the least useful form that answer can take.
+    // Capturing costs nothing here — the re-run is already a full build of the
+    // unit in a temporary tree — and the command's own diagnostics are usually
+    // the whole explanation.
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir: sandbox.path(),
+            stdio: cook_shell::Stdio::Captured,
+        },
+        env_vars,
+    )
+    .map_err(|e| format!("spawn: {}", e.message()))?;
+    if !outcome.success() {
+        let code = outcome
+            .exit_code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let detail = {
+            let err = outcome.stderr_lossy();
+            let text = if err.trim().is_empty() { outcome.stdout_lossy() } else { err };
+            let text = text.trim();
+            if text.is_empty() {
+                String::new()
+            } else {
+                format!(": {text}")
+            }
+        };
+        return Err(format!("re-run exited {code}{detail}"));
     }
 
     let mut out = BTreeMap::new();

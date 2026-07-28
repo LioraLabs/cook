@@ -3105,7 +3105,9 @@ CS-0127's clause that the rewritten chunk must run under the originating step ki
 
 No `CACHE_VERSION` bump: `command_hash` composition is unmoved, and an implementation MUST keep it tied to one side of the substitution, resolved or unresolved, consistently. A unit's key must not depend on which mechanism resolved its placeholders.
 
-**Conformance.** One positive is added, pinning the defect above: two `cook` steps whose commands differ only in whether one mentions a probe MUST report the same output. It is an execute-phase behavioural fixture, so the tree-sitter harness carries it on the skip list.
+**Conformance.** One fixture is added, pinning the defect above: two `cook` steps whose commands differ only in whether one mentions a probe MUST report the same output, on both streams, each attributed to its own unit. It asserts what a run PRINTS rather than what a Cookfile parses to, so it lands in the surface end-to-end harness (`cli/e2e-fixtures/surface/28-probe-sigil-output-parity`) rather than in `standard/conformance/`, whose corpus is parse, codegen and register-phase. Nothing is added to the tree-sitter skip list, because nothing here is a parse-level claim.
+
+The same fixture pins the one thing CS-0188 deliberately does not make uniform: a probe's shell producer lowers to a `cook.sh` call whose stdout **is** the probe's value (§{cat.probes.decl}), so that stdout is not also logged. Its stderr is, and had nowhere to go before. The rule is not about probes as a step kind — it is that a stream consumed as a value is not log output — and an implementation observes it wherever that is true.
 
 ## CS-0186 — one record for every unit; the test-result store is removed [#changes.cs-0186]
 

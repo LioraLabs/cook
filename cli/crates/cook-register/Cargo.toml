@@ -6,6 +6,7 @@ description = "Capture-mode Lua VM for discovering work units from Cookfiles"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
+cook-shell = { path = "../cook-shell" }
 cook-probe = { path = "../cook-probe" }
 cook-cache = { path = "../cook-cache" }
 cook-fingerprint = { path = "../cook-fingerprint" }

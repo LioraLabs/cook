@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
-use cook_contracts::{CapturedStream, CommandFailure, WorkPayload};
+use cook_contracts::{CommandFailure, WorkPayload};
 use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
     artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
@@ -98,6 +98,27 @@ fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
 /// index nor the display name can serve.
 fn node_cache_key(node: &WorkNode) -> Option<String> {
     node.cache_meta.as_ref().map(|m| m.cache_key.clone())
+}
+
+/// Expand a unit's captured output into the per-line events the progress stream
+/// carries.
+///
+/// CS-0188 records output as byte chunks, one per stream per spawn, because
+/// that is what the mechanism can honestly supply: two pipes buffered
+/// separately do not interleave. The event stream is line-oriented, so the
+/// split happens here — and so does the lossy UTF-8 decode, which belongs at
+/// the render, where the loss is local and visible, rather than at the capture,
+/// where it would be permanent.
+fn output_event_lines(
+    chunks: &[cook_contracts::OutputChunk],
+) -> impl Iterator<Item = (cook_contracts::OutputStream, String)> + '_ {
+    chunks.iter().flat_map(|c| {
+        let stream = c.stream();
+        c.lossy()
+            .lines()
+            .map(|l| (stream, l.to_string()))
+            .collect::<Vec<_>>()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -274,34 +295,26 @@ fn run_interactive_on_main(
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
 ) -> Result<(), String> {
-    let mut child_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
-
     // COOK-306: an executed command may write anywhere in the tree.
     cook_fingerprint::statmemo::disarm();
-    let status = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(working_dir)
-        .envs(&child_env)
-        .status()
-        .map_err(|e| format!("failed to execute: {e}"))?;
+    // `Inherited`, and only here: an interactive command owns the controlling
+    // terminal, so its output must reach the user's tty as it happens rather
+    // than arriving as a buffer afterwards. Nothing is captured, which is why
+    // the failure this builds carries two empty streams — the bytes went to the
+    // terminal and were never ours to hold. That was true before CS-0188 too;
+    // what changes is that it now falls out of the stdio mode instead of being
+    // hand-written as a pair of `from_bytes(&[])` calls that read like an
+    // oversight.
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn { command: cmd, working_dir, stdio: cook_shell::Stdio::Inherited },
+        env_vars,
+    )
+    .map_err(|e| e.message().to_string())?;
 
-    if !status.success() {
-        let code = status.code().unwrap_or(1);
-        return Err(CommandFailure::new(
-            line,
-            code,
-            cmd,
-            CapturedStream::from_bytes(&[]),
-            CapturedStream::from_bytes(&[]),
-        )
-        .to_wire());
+    match outcome.failure(line, cmd) {
+        Some(failure) => Err(failure.to_wire()),
+        None => Ok(()),
     }
-
-    Ok(())
 }
 
 fn progress_error(error: &str) -> String {
@@ -2033,13 +2046,16 @@ pub fn execute_dag(
                                     match rx.recv() {
                                         Ok(work_result) => {
                                             // Forward any captured output.
-                                            // Lua chunks normally inherit
-                                            // stdout/stderr so this list is
-                                            // empty, but forwarding any
-                                            // captured lines preserves the
-                                            // CS-0035 fd-of-origin contract
-                                            // for downstream observers.
-                                            for (stream, line) in &work_result.output_lines {
+                                            // CS-0188: a Lua chunk's output is
+                                            // no longer empty here. Its
+                                            // `cook.sh` calls now push both
+                                            // streams into the unit's sink, in
+                                            // call order, so this forwards what
+                                            // the body actually printed rather
+                                            // than the nothing it used to.
+                                            for (stream, line) in
+                                                output_event_lines(&work_result.output_lines)
+                                            {
                                                 emit(
                                                     &event_tx,
                                                     EngineEvent::OutputLine {
@@ -2052,8 +2068,8 @@ pub fn execute_dag(
                                                             .as_ref()
                                                             .map(|p| p.display_name())
                                                             .unwrap_or_default(),
-                                                        line: line.clone(),
-                                                        stream: *stream,
+                                                        line,
+                                                        stream,
                                                     },
                                                 );
                                             }
@@ -2492,15 +2508,15 @@ pub fn execute_dag(
             // Emit output lines.  Each captured line carries its fd-of-origin
             // (CS-0035) so the OutputLine event reflects stdout vs stderr
             // honestly instead of hardcoding stdout.
-            for (stream, line) in &result.output_lines {
+            for (stream, line) in output_event_lines(&result.output_lines) {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        line: line.clone(),
-                        stream: *stream,
+                        line,
+                        stream,
                     },
                 );
             }
@@ -2626,15 +2642,15 @@ pub fn execute_dag(
             }
         } else {
             // Emit output lines even on failure (CS-0035 — stream tagged).
-            for (stream, line) in &result.output_lines {
+            for (stream, line) in output_event_lines(&result.output_lines) {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        line: line.clone(),
-                        stream: *stream,
+                        line,
+                        stream,
                     },
                 );
             }
