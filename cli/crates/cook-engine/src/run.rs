@@ -19,13 +19,13 @@ use std::sync::Arc;
 
 use cook_cache::{
     backend::LocalBackend, cache_ctx::CacheContext, cloud_backend::CloudBackend,
-    cloud_config::CloudConfig, TestCache, ThreadSafeCacheManager,
+    cloud_config::CloudConfig, ThreadSafeCacheManager,
 };
 use cook_contracts::{RecipeUnits, WorkPayload};
-use cook_fingerprint::{CacheBackend, EnvDenylist, FingerprintInputs};
+use cook_fingerprint::{CacheBackend, EnvDenylist};
 
 use crate::{
-    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace, WorkNode,
+    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,246 +104,6 @@ pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
     } else {
         (String::new(), name.to_string())
     }
-}
-
-// ---------------------------------------------------------------------------
-// Test-fingerprint file inputs — COOK-84 transitive-closure hashing
-// ---------------------------------------------------------------------------
-
-/// Lexically normalize a path: drop `.` components and resolve `..` by
-/// popping the previous component. No filesystem access — purely textual,
-/// so declared paths compare equal regardless of how `working_dir.join`
-/// composed them.
-fn lexical_normalize(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in p.components() {
-        match comp {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// Project-root-relative, forward-slashed pair key (§17.4.4). Falls back to
-/// the absolute path string when `abs` is outside the project root.
-fn root_rel_key(project_root: &Path, abs: &Path) -> String {
-    let rel = abs.strip_prefix(project_root).unwrap_or(abs);
-    rel.to_string_lossy().replace('\\', "/")
-}
-
-/// Content-hash `abs`, memoized across all test nodes in a run. Missing
-/// (or unreadable) files hash to the literal `"missing"` so an absent file
-/// still contributes deterministically to the fingerprint.
-fn memo_hash(memo: &mut BTreeMap<PathBuf, String>, abs: &Path) -> String {
-    if let Some(h) = memo.get(abs) {
-        return h.clone();
-    }
-    let h = cook_fingerprint::hash_file(abs)
-        .map(|h| format!("{h:x}"))
-        .unwrap_or_else(|| "missing".to_string());
-    memo.insert(abs.to_path_buf(), h.clone());
-    h
-}
-
-/// Compute a test node's cache fingerprint at **ready time** — the point in
-/// execution where all of the test's DAG predecessors have completed and
-/// their declared outputs are materialised on disk (§18). Returns `None`
-/// for a source-less test (no ingredients, no consumed predecessor output),
-/// which per §8.6.1/§17.4 has no cache key and MUST always run.
-///
-/// COOK-211 / §17.4 rule 1: the key folds the OUTPUT CONTENT of the units
-/// the test consumes — not their execution identity. Concretely it hashes:
-///
-/// * **Predecessor outputs** — the declared outputs of the test's IMMEDIATE
-///   predecessors (`dag.deps`), content-hashed. These are exactly the
-///   `$<NAME>` cross-recipe outputs the test references and the preceding
-///   `cook` step's outputs that form its iteration source (§8.6.1). Hashing
-///   only the immediate predecessors — not the transitive closure — is what
-///   delivers early cutoff: a *transitive* dependency whose output stays
-///   byte-identical does not re-invalidate the test, because its effect is
-///   already captured in the immediate predecessor's (unchanged) output.
-/// * **Own inputs** — the Test payload's `input_paths` that are NOT a
-///   predecessor output (the test's own `ingredients`), content-hashed.
-///
-/// Because every folded path is content-hashed *after* its producer ran, a
-/// dependency that re-executes but yields byte-identical output leaves the
-/// test's fingerprint unchanged — the same early-cutoff a consuming `cook`
-/// step gets (contrast the pre-COOK-211 fold, which mixed in the dep's
-/// command hash and source inputs and so over-invalidated).
-///
-/// Pair keys are project-root-relative and forward-slashed (§17.4.4);
-/// missing files hash to `"missing"`.
-pub(crate) fn compute_ready_test_fingerprint(
-    dag: &cook_dag::Dag<WorkNode>,
-    test_idx: usize,
-    cache_ctx: &CacheContext,
-    probe_store: &cook_luaotp::ProbeValueStore,
-) -> Option<String> {
-    let project_root = cache_ctx.project_root.as_path();
-    let test_node = dag.node(test_idx).payload();
-    let WorkPayload::Test { input_paths, seal_keys, consumes, .. } = test_node.payload.as_ref()?
-    else {
-        return None;
-    };
-
-    // §8.6.1 / §17.4 rule 1 (COOK-342): whether a test is cached at all is
-    // derived from the recipe's DECLARED source, and must be decided before
-    // any fold — not inferred afterwards from whatever happened to land in
-    // `pairs`. §8.6.1 defines the source as the preceding cook step's outputs,
-    // falling back to the recipe's resolved ingredients; §17.4 rule 1 admits
-    // only outputs the test CONSUMES (source-list flattening) or REFERENCES
-    // (`$<NAME>` / `cook.dep_output`, both of which land in `input_paths`).
-    //
-    // A dep-list entry (`recipe check: build`) is none of those. It is a
-    // whole-recipe ordering barrier, and it was minting a key for tests the
-    // Standard says have none: `test { cargo test }` — §8.6.1's Example 8.6.2
-    // verbatim — became cacheable, and its correctness became hostage to a
-    // file it never reads. It re-ran only when the unrelated dependency
-    // changed, which is the false green §8.6 names outright.
-    //
-    // The guard is deliberately on the declared source rather than on the
-    // predecessor fold, so a test that DOES declare a source keeps folding
-    // every predecessor's outputs exactly as before — CS-0175's `consumes`
-    // narrowing operates on that fold and is untouched.
-    let has_declared_source = !input_paths.is_empty()
-        || dag.deps(test_idx).iter().any(|&pred| {
-            let node = dag.node(pred).payload();
-            node.recipe_name == test_node.recipe_name
-                && node
-                    .cache_meta
-                    .as_ref()
-                    .is_some_and(|m| !m.output_paths.is_empty())
-        });
-    if !has_declared_source {
-        return None;
-    }
-
-    let mut memo: BTreeMap<PathBuf, String> = BTreeMap::new();
-    let mut pairs: BTreeMap<String, String> = BTreeMap::new();
-
-    // (1) Immediate-predecessor outputs, content-hashed. Terminal (glob /
-    //     directory) outputs are resolved against the now-materialised tree;
-    //     literal outputs map directly. The normalized absolute set doubles
-    //     as the "produced upstream" filter for step (2).
-    let mut predecessor_outputs: BTreeSet<PathBuf> = BTreeSet::new();
-    for &pred in dag.deps(test_idx) {
-        let node = dag.node(pred).payload();
-        let Some(meta) = &node.cache_meta else {
-            continue;
-        };
-        for out in &meta.output_paths {
-            if cook_fingerprint::is_terminal_output(out) {
-                // CS-0085 normalisation, the same the executor applies when
-                // the producing unit captures these outputs
-                // (executor.rs `normalize_glob_pattern`). Without it a
-                // trailing bare `**` resolves to NOTHING here — the glob
-                // crate treats it as directories-only and `resolve_glob`
-                // then drops directories — so a predecessor declaring the
-                // canonical `dist/**` contributed no content to this key at
-                // all. That is under-keying: a real dependency change left
-                // the check's fingerprint untouched and replayed a stale
-                // pass. Directory outputs (`dist/`) were broken the same
-                // way, via the old `{out}**`.
-                let pat = cook_fingerprint::normalize_glob_pattern(out);
-                for rel in cook_fingerprint::resolve_glob(&node.working_dir, &pat) {
-                    predecessor_outputs.insert(lexical_normalize(&node.working_dir.join(rel)));
-                }
-            } else {
-                predecessor_outputs.insert(lexical_normalize(&node.working_dir.join(out)));
-            }
-        }
-    }
-    // `consumes` narrows WHICH of those outputs fold, without touching the
-    // set itself: `predecessor_outputs` stays whole so step (2) still treats
-    // an excluded artifact as produced-upstream and does not re-admit it
-    // through the test's own glob inputs. A dependency's `dist/**` ingested
-    // wholesale re-keys this check on artifacts it never opens — sourcemaps
-    // above all, which esbuild-family tools rewrite on any comment edit.
-    // Empty filter, or a filter that matches nothing, folds everything
-    // (cook_fingerprint::consumes: over-folding is the safe failure).
-    let all: Vec<PathBuf> = predecessor_outputs.iter().cloned().collect();
-    let folded: Vec<&PathBuf> = match cook_fingerprint::ConsumesFilter::compile(consumes) {
-        Ok(f) => f.select(&all, |p| root_rel_key(project_root, p)),
-        // Patterns are validated at register time; a bad one reaching here
-        // folds everything rather than silently narrowing the key.
-        Err(_) => all.iter().collect(),
-    };
-    for abs in folded {
-        let hash = memo_hash(&mut memo, abs);
-        pairs.insert(root_rel_key(project_root, abs), hash);
-    }
-
-    // (2) The test's own inputs (its `ingredients`) — every `input_paths`
-    //     entry that is not itself a predecessor output.
-    for input in input_paths {
-        let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
-            cook_fingerprint::resolve_glob(&test_node.working_dir, input)
-                .into_iter()
-                .map(|rel| test_node.working_dir.join(rel))
-                .collect()
-        } else {
-            vec![test_node.working_dir.join(input)]
-        };
-        for abs in resolved {
-            let abs = lexical_normalize(&abs);
-            if predecessor_outputs.contains(&abs) {
-                continue;
-            }
-            let hash = memo_hash(&mut memo, &abs);
-            pairs.insert(root_rel_key(project_root, &abs), hash);
-        }
-    }
-
-    // §8.6.1/§17.4: a source-less test — no ingredients, no consumed
-    // predecessor output — has no cache key and MUST always run. Skipping
-    // the fingerprint makes the executor bypass both the test-cache lookup
-    // and the post-run write, so the test reports every invocation with no
-    // `(cached)`. A stable command-text-only key would be a false green:
-    // the true inputs of a `test { cargo test }` are opaque to Cook.
-    //
-    // CS-0159: a `seal` does NOT rescue a source-less test into being
-    // cacheable. A seal ref is an *invalidate-only* determinant (§8.4.3), not
-    // an input source — sealing `test { cargo test }` on a toolchain probe
-    // would still leave the test's real inputs (the whole source tree)
-    // unmodelled, so a key built from the seal alone would be exactly the
-    // false green this guard exists to prevent. Seal narrows reuse of a key
-    // that already exists; it never mints one.
-    if pairs.is_empty() {
-        return None;
-    }
-
-    let env_keys: Vec<(String, String)> = test_node
-        .env_vars
-        .iter()
-        .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    // CS-0159 (§17.4 rule 1): fold the effective seal set's probe values. The
-    // register surface unioned these keys into the unit's probe-dependency
-    // set, so every sealed probe has run and its value is in the store by the
-    // time this ready-time fingerprint is computed — the same guarantee a
-    // sealing cook unit relies on. `resolve_sealed_probes` is shared with the
-    // cook path so both agree on the absent-key-folds-to-empty-string rule.
-    let sealed_probes: Vec<(String, String)> =
-        crate::seal::resolve_sealed_probes(seal_keys, probe_store)
-            .into_iter()
-            .collect();
-
-    let inputs = FingerprintInputs {
-        cook_outputs: pairs.into_iter().collect(),
-        dep_outputs: vec![],
-        env_keys,
-        sealed_probes,
-    };
-    Some(cook_fingerprint::compute_test_fingerprint(
-        test_node.payload.as_ref().expect("checked above"),
-        &inputs,
-    ))
 }
 
 /// Unified engine entry point.
@@ -633,12 +393,11 @@ where
     // managers, so the in-memory caches it updates are visible here afterwards.
     let recon_managers = cache_managers.clone();
 
-    // 6. Build the probe_units_by_node lookup from the unified DAG. Test
-    //    fingerprints are no longer precomputed here: COOK-211 moved them to
-    //    ready time (`compute_ready_test_fingerprint`), where a consumed
-    //    dependency's output is materialised on disk and can be content-hashed
-    //    for early cutoff — impossible upfront, before any dep has run.
-    let test_cache = TestCache::new(cache_ctx.project_root.join(".cook"));
+    // 6. Build the probe_units_by_node lookup from the unified DAG. No test
+    //    unit bookkeeping rides along: a test unit's inputs are on its
+    //    `CacheMeta` like every other unit's (CS-0186), and the engine expands
+    //    any pattern among them when the unit is ready — impossible upfront,
+    //    before the dependency that writes them has run.
     let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
         .probes
         .iter()
@@ -708,7 +467,6 @@ where
             cache_managers,
             Some(event_tx),
             cache_ctx.clone(),
-            Some(&test_cache),
             rerun_patterns,
             &probe_units_by_node,
             dep_outputs,

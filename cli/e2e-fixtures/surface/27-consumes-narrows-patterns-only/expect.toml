@@ -1,0 +1,39 @@
+# 1. Cold.
+[[run]]
+args = ["test"]
+[run.assert]
+exists = ["dist/index.mjs", "dist/index.mjs.map"]
+
+# 2. Warm: the check replays.
+[[run]]
+args = ["test"]
+[run.assert]
+output_contains = ["1 cached"]
+
+# 3. The sourcemap changes and the bundle does not. This is what `consumes`
+#    exists for: the check keeps its cached pass over an artifact it never
+#    opens.
+[[run]]
+args = ["test"]
+write = { "src/map.txt" = "map v2\n" }
+[run.assert]
+output_contains = ["1 cached"]
+changed = ["dist/index.mjs.map"]
+unchanged = ["dist/index.mjs"]
+
+# 4. The unit's OWN declared path changes. It must re-run: `consumes` narrows a
+#    pattern's expansion, never a path the unit named. Before the fix the
+#    filter was applied to the whole resolved set, `src/own.txt` fell out of
+#    the key, and this replayed a cached pass.
+[[run]]
+args = ["test"]
+write = { "src/own.txt" = "OK own v2\n" }
+[run.assert]
+output_not_contains = ["(cached)"]
+
+# 5. And the bundle it DOES consume still re-keys it.
+[[run]]
+args = ["test"]
+write = { "src/bundle.mjs" = "BUNDLE v2\n" }
+[run.assert]
+output_not_contains = ["(cached)"]

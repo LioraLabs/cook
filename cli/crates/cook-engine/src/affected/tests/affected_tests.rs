@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Build a workspace where the recipe has a single `Shell` unit and its
-/// declared inputs live on `cache_meta.input_paths` (the post-register-phase
+/// declared inputs live on `cache_meta.inputs` (the post-register-phase
 /// landing site for recipe-level `inputs = {...}` propagated to shell steps).
 fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
     let cache_meta = CacheMeta {
@@ -13,7 +13,9 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         project_id: String::new(),
         cookfile_path: String::new(),
         cache_key: String::new(),
-        input_paths: inputs.iter().map(|s| s.to_string()).collect(),
+        inputs: inputs.iter().map(|s| (*s).into()).collect(),
+        consumes: Vec::new(),
+        member_keyed: false,
         output_paths: vec![],
         command_hash: 0,
         env_contribution: 0,
@@ -270,7 +272,7 @@ fn long_chain_transitive_downstream() {
 #[test]
 fn shell_payload_with_cache_meta_inputs_is_a_direct_hit() {
     // A recipe whose only unit is a `Shell` payload with the recipe-level
-    // inputs propagated onto `cache_meta.input_paths` (the post-register
+    // inputs propagated onto `cache_meta.inputs` (the post-register
     // landing site for `inputs = {...}` on non-Lua-chunk units). Must hit.
     let ws = workspace_with_shell("build", &["src/main.rs"]);
     let edges = edges_from(&[("build", &[])]);

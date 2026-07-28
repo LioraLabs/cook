@@ -1,0 +1,29 @@
+# 1. Cold.
+[[run]]
+args = ["bundle"]
+[run.assert]
+contains = { "out/bundle.txt" = "route-v1" }
+
+# 2. Warm, untouched: a hit is correct here.
+[[run]]
+args = ["bundle"]
+[run.assert]
+output_contains = ["cached"]
+
+# 3. Edit the metacharacter-bearing file. Before the fix: "1 cached", and
+#    out/bundle.txt still held route-v1.
+[[run]]
+args = ["bundle"]
+write = { "pages/[id].tsx" = "route-v2\n" }
+[run.assert]
+output_not_contains = ["(cached)"]
+contains = { "out/bundle.txt" = "route-v2" }
+
+# 4. Editing the ordinary sibling still works — the fix did not trade one
+#    dropout for another.
+[[run]]
+args = ["bundle"]
+write = { "pages/plain.tsx" = "plain-v2\n" }
+[run.assert]
+output_not_contains = ["(cached)"]
+contains = { "out/bundle.txt" = "plain-v2" }

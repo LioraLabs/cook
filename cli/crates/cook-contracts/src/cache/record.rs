@@ -1,80 +1,48 @@
-//! Unit cache records: what one run left behind, and the pure rules that
-//! decide whether a record may be replayed.
+//! The pure rules a cache record is judged by: what a unit's declaration
+//! admits, and which of its determinants moved.
 //!
-//! COOK-360 prototype. Nothing wires to this yet — `cook-fingerprint`'s
-//! `StepEntry` and `cook-cache`'s `TestCacheEntry` are still the live types.
-//! It exists so the shape can be read before any call site moves.
+//! Everything here is a total function of its arguments. No filesystem, no
+//! clock, no backend. That is the whole reason these rules live in this crate
+//! rather than beside the code that stats and hashes: the judgment is shared
+//! by every store, while observing the world and repairing it are not.
 //!
-//! The thesis it encodes: a unit that declares outputs and a unit that
-//! declares none are the same kind of thing, cached by the same rules. They
-//! differ in what a replay GIVES BACK — bytes for one, a verdict for the
-//! other — and that difference is derived from the declaration, never stored.
+//! Deliberately absent: the record itself. `cook_fingerprint::StepEntry` is
+//! the recorded shape and `cook_cache` encodes it, because a record is only
+//! meaningful next to the I/O that writes and reads it. This module held a
+//! prototype `UnitRecord` and a wire format for it (COOK-360); CS-0186
+//! withdrew the observation that was to be their reason for existing, at which
+//! point the prototype was `StepEntry` with a key field, and it is deleted
+//! rather than left as a second answer to a question already answered.
 //!
-//! Fields are private throughout. That is not ceremony: [`UnitRecord::effect_kind`]
-//! reads the record's own output list, and it may only be trusted because
-//! [`UnitRecord::record`] is the sole constructor and checks that list against
-//! the declaration. With public fields the accessor would be a guess.
-
-use std::sync::Arc;
+//! The one invariant that prototype enforced — an observing unit must not have
+//! recorded outputs — is not lost with it. It is enforced where a record is
+//! read back, by the output-count comparison in
+//! `cook_fingerprint::needs_rebuild_cook`: a declaration with no outputs meets
+//! a record carrying some, the counts differ, and the unit rebuilds instead of
+//! replaying. A named function asserting the same thing would have no caller.
 
 use super::CacheMeta;
-
-/// One file as the cache observed it.
-///
-/// `path` is an `Arc<str>` for the same reason `cook_fingerprint`'s record is:
-/// on a large C++ graph one header appears in hundreds of input sets, so the
-/// decoder allocates once per distinct path and every record naming it clones
-/// a pointer. Cloning a `FileRecord` is a refcount bump and two `u64` copies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileRecord {
-    path: Arc<str>,
-    mtime: u64,
-    hash: u64,
-}
-
-impl FileRecord {
-    /// Build a record for `path`. Returns `None` for an empty path: a record
-    /// is identified by its path, so a nameless one cannot be looked up,
-    /// compared, or restored.
-    pub fn new(path: impl Into<Arc<str>>, mtime: u64, hash: u64) -> Option<Self> {
-        let path = path.into();
-        if path.is_empty() {
-            return None;
-        }
-        Some(Self { path, mtime, hash })
-    }
-
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    pub fn mtime(&self) -> u64 {
-        self.mtime
-    }
-
-    pub fn hash(&self) -> u64 {
-        self.hash
-    }
-}
 
 /// Whether a unit's cache hit restores bytes or replays a verdict.
 ///
 /// Derived from the declaration (see [`effect_kind`]), never stored on a
-/// record. Storing it would let the evidence contradict the declaration.
+/// record. Storing it would let the evidence contradict the declaration, and
+/// there would then be no ground on which to prefer either (§17.1.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectKind {
     /// The unit declares output paths; a hit restores their bytes.
     Produced,
-    /// The unit declares no output paths; a hit replays its observation.
+    /// The unit declares no output paths; a hit replays its verdict.
     Observed,
 }
 
 /// The declaration decides the effect kind. Pure, total, no I/O.
 ///
-/// This is not a test-vs-cook distinction. A cacheable unit with no declared
-/// outputs already exists outside tests — `build_local_cache_key` has carried
-/// an empty-output branch since long before this prototype — so the rule
-/// generalises an existing case rather than special-casing a step kind.
+/// This is not a test-vs-cook distinction (CS-0186). A cacheable unit with no
+/// declared outputs already exists outside tests — `build_local_cache_key` has
+/// carried an empty-output branch since long before this rule was written down
+/// — so the rule generalises an existing case rather than special-casing a
+/// step kind.
 pub fn effect_kind(meta: &CacheMeta) -> EffectKind {
     if meta.output_paths.is_empty() {
         EffectKind::Observed
@@ -89,17 +57,17 @@ pub fn effect_kind(meta: &CacheMeta) -> EffectKind {
 /// letting a missing [`CacheMeta`] stand for both "not cacheable" and "has no
 /// outputs". Those are different claims: a chore body may never be cached at
 /// all (§7.4), while a unit that declares no outputs is perfectly cacheable —
-/// its hit simply replays a recorded outcome instead of restoring bytes.
+/// its hit simply replays a recorded verdict instead of restoring bytes.
 ///
 /// Keeping them apart is also what lets a step kind be added later whose units
 /// are output-less WITHOUT being tests: it is [`crate::StepKind`], not the
-/// output list, that says how a unit is reported.
+/// output list, that says how a unit is reported (§8.6, CS-0186).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cacheability {
     /// Never cached. Chore bodies and interactive units.
     Uncacheable,
     /// Cached, with nothing in the artifact store: a hit replays the recorded
-    /// outcome. Every unit declaring no outputs.
+    /// verdict. Every unit declaring no outputs.
     ResultOnly,
     /// Cached, with artifacts to publish and restore.
     Artifacts,
@@ -119,203 +87,43 @@ pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
     }
 }
 
-/// How a unit's run ended.
+/// Whether a unit has anything whose movement could invalidate a record of it
+/// (§17.4 rule 1, CS-0138 generalised by CS-0186).
 ///
-/// Derives serde directly rather than getting a parallel wire enum: it is a
-/// fieldless enum with no invariant and no private state, so there is no
-/// constructor for a deserializer to bypass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnitOutcome {
-    Passed,
-    Failed,
-}
-
-/// What running a unit was observed to do, beyond the bytes it wrote.
+/// **Asked twice, over the same three terms.** Once at registration, over the
+/// DECLARED input list, where it decides whether the unit gets a key at all;
+/// and again when the unit is ready, over the RESOLVED one, where it decides
+/// whether a key may be served. The two can disagree, and only in one
+/// direction: a declaration is non-empty and resolves to nothing, which is what
+/// a pattern covering a directory its producer left empty does. Asking only at
+/// registration admits such a unit and then keys it on nothing at all — its
+/// first verdict replayed for the life of the store, which is the false green
+/// the rule exists to refuse, reached through a declaration rather than through
+/// the absence of one.
 ///
-/// Recorded for every unit, not only output-less ones: `duration_secs` and
-/// `outcome` are meaningful for a producing unit too, and holding them here
-/// gives `cook why`'s observed history a first-class home instead of
-/// best-effort recovery from retained build logs.
-///
-/// `recorded_at` is passed in rather than read: this crate owns no clock.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Observation {
-    outcome: UnitOutcome,
-    stdout: String,
-    stderr: String,
-    duration_secs: f64,
-    recorded_at: String,
-}
-
-impl Observation {
-    pub fn new(
-        outcome: UnitOutcome,
-        stdout: String,
-        stderr: String,
-        duration_secs: f64,
-        recorded_at: String,
-    ) -> Self {
-        Self { outcome, stdout, stderr, duration_secs, recorded_at }
-    }
-
-    pub fn outcome(&self) -> UnitOutcome {
-        self.outcome
-    }
-
-    pub fn stdout(&self) -> &str {
-        &self.stdout
-    }
-
-    pub fn stderr(&self) -> &str {
-        &self.stderr
-    }
-
-    pub fn duration_secs(&self) -> f64 {
-        self.duration_secs
-    }
-
-    pub fn recorded_at(&self) -> &str {
-        &self.recorded_at
-    }
-}
-
-/// Why a record could not be built for a declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordMismatch {
-    /// The declaration names no output paths — an observing unit — but the
-    /// record carries output records. The evidence contradicts the
-    /// declaration, and the declaration is the truth.
-    ObservingUnitHasOutputs { found: usize },
-    /// A supplied file record had an empty path.
-    EmptyPath,
-}
-
-/// A unit's cache record: evidence of one run.
-///
-/// Deliberately absent: any tag saying what KIND of unit this is. Ask
-/// [`Self::effect_kind`], or [`effect_kind`] of the declaration.
-///
-/// Deliberately present: `outputs`, which is empty for an observing unit.
-/// Emptiness is the whole difference.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UnitRecord {
-    key: String,
-    inputs: Vec<FileRecord>,
-    outputs: Vec<FileRecord>,
-    command_hash: u64,
-    env_contribution: u64,
-    seal_contribution: u64,
-    observation: Observation,
-}
-
-impl UnitRecord {
-    /// The sole constructor, and therefore the sole place the record/declaration
-    /// agreement is established.
-    ///
-    /// The checked invariant is one-directional: a declaration with no outputs
-    /// MUST record none. The converse is deliberately NOT checked, because a
-    /// declared terminal output (`dist/**`) may legitimately resolve to zero
-    /// files, so "declares outputs but recorded none" is a legal state rather
-    /// than a contradiction.
-    pub fn record(
-        meta: &CacheMeta,
-        inputs: Vec<FileRecord>,
-        outputs: Vec<FileRecord>,
-        seal_contribution: u64,
-        observation: Observation,
-    ) -> Result<Self, RecordMismatch> {
-        let record = Self {
-            key: meta.cache_key.clone(),
-            inputs,
-            outputs,
-            command_hash: meta.command_hash,
-            env_contribution: meta.env_contribution,
-            seal_contribution,
-            observation,
-        };
-        // The invariant is stated once, in `agrees_with`, and asked here at
-        // birth and again whenever a record comes back from storage.
-        record.agrees_with(meta)?;
-        Ok(record)
-    }
-
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    pub fn inputs(&self) -> &[FileRecord] {
-        &self.inputs
-    }
-
-    pub fn outputs(&self) -> &[FileRecord] {
-        &self.outputs
-    }
-
-    pub fn command_hash(&self) -> u64 {
-        self.command_hash
-    }
-
-    pub fn env_contribution(&self) -> u64 {
-        self.env_contribution
-    }
-
-    pub fn seal_contribution(&self) -> u64 {
-        self.seal_contribution
-    }
-
-    pub fn observation(&self) -> &Observation {
-        &self.observation
-    }
-
-    /// The values whose movement invalidates this record.
-    pub fn determinants(&self) -> Determinants {
-        Determinants::new(self.command_hash, self.env_contribution, self.seal_contribution)
-    }
-
-    /// Did the store hand back the record that was asked for?
-    ///
-    /// Store integrity, not invalidation — see [`Determinants`]. A
-    /// content-addressed store MUST ask this rather than trust placement,
-    /// which is what the test-result store validates by hand today.
-    pub fn is_addressed_by(&self, key: &str) -> bool {
-        self.key == key
-    }
-
-    /// Trustworthy because [`Self::record`] is the only way in.
-    pub fn effect_kind(&self) -> EffectKind {
-        if self.outputs.is_empty() {
-            EffectKind::Observed
-        } else {
-            EffectKind::Produced
-        }
-    }
-
-    /// The one state transition: same determinants, same outputs, same
-    /// observation, freshly observed input records.
-    ///
-    /// Takes `self` by value so every carried-over field moves — including
-    /// `observation`, whose captured streams are unbounded. Takes an owned
-    /// `Vec` because the caller that gathers these already holds one; a slice
-    /// would add an allocation per refresh.
-    ///
-    /// Infallible by construction: the checked invariant constrains `outputs`,
-    /// which this does not touch.
-    pub fn with_refreshed_inputs(self, inputs: Vec<FileRecord>) -> Self {
-        Self { inputs, ..self }
-    }
+/// Stated over all three terms rather than over inputs alone because a unit
+/// fanned out over `ingredients <probe>` may declare no file by design: its
+/// member is an observable input (§17.1 observable 5) and is what it is keyed
+/// on. A `seal` is deliberately NOT a term — it narrows reuse of a key that
+/// exists and never mints one (CS-0159).
+pub fn has_something_to_key_on(
+    output_count: usize,
+    input_count: usize,
+    member_keyed: bool,
+) -> bool {
+    output_count > 0 || input_count > 0 || member_keyed
 }
 
 /// The three values whose movement invalidates a record, independent of any
 /// file on disk.
 ///
 /// Deliberately does NOT carry the cache key. Whether a store handed back the
-/// record that was asked for is a question about the STORE — see
-/// [`UnitRecord::is_addressed_by`] — and it is a different question with a
-/// different meaning when it fails. Conflating them was tempting because both
-/// are cheap comparisons, but Cook's local index keys on unit IDENTITY (an
-/// output path) rather than on content, so a key match there implies nothing
-/// about determinants and a determinant match implies nothing about the key.
+/// record that was asked for is a question about the STORE, and it is a
+/// different question with a different meaning when it fails. Conflating them
+/// was tempting because both are cheap comparisons, but Cook's local index
+/// keys on unit IDENTITY (§17.1.1.1) rather than on content, so a key match
+/// there implies nothing about determinants and a determinant match implies
+/// nothing about the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Determinants {
     command_hash: u64,
@@ -349,7 +157,7 @@ pub enum DeterminantDrift {
     Seal,
 }
 
-/// The judgment both cache stores share, as a pure function.
+/// The judgment every store shares, as a pure function.
 ///
 /// Returns the first determinant that moved, or `None` when nothing did. Says
 /// nothing whatever about files on disk: that is an OBSERVATION, and
@@ -357,7 +165,8 @@ pub enum DeterminantDrift {
 /// observe / judge / repair.
 ///
 /// Order is command, env, seal — the live implementation's order — so the
-/// reported cause stays stable as this replaces the hand-rolled chains.
+/// reported cause stays stable now that this has replaced the hand-rolled
+/// chains.
 pub fn determinant_drift(
     stored: &Determinants,
     current: &Determinants,
@@ -374,181 +183,29 @@ pub fn determinant_drift(
     None
 }
 
-// -------------------------------------------------------------------------
-// Wire format
-//
-// The LOGICAL on-disk shape lives here: field set, meaning, version, and the
-// validity rules for reading one back. The CONTAINER layout does not — the
-// binary index writes a string table and a flat record pool that entries index
-// into by `(start, len)`, which is a statement about many records sharing one
-// file, not about what a record is. That stays in `cook-cache`, and encodes to
-// and from these types so both codecs agree on the shape by construction.
-// -------------------------------------------------------------------------
-
 /// Bumped whenever the recorded shape or its meaning changes.
 ///
-/// Continues `cook_fingerprint::record::CACHE_VERSION` (7 at the time of
-/// writing) rather than starting a fresh counter, so the existing
-/// invalidate-on-bump path keeps working and a new number cannot collide with
-/// an index already on disk. Superseded records are DELETED, not migrated
-/// (CS-0166); nothing here reads an older shape.
+/// It continues the count `cook_fingerprint::record` used to own rather than
+/// starting a fresh one, so the existing invalidate-on-bump path keeps working
+/// and a new number cannot collide with an index already on disk. That name is
+/// now a re-export of this constant, so 8 follows CS-0166's 7 and there is one
+/// counter rather than a second one starting over. Superseded records are
+/// DELETED, not migrated (CS-0166); nothing reads an older shape.
+///
+/// CS-0186 does NOT bump it, and the reason is worth keeping next to the
+/// number. Folding observing units into this index changes which units write
+/// records and under what identity, and it changes producing units' recorded
+/// input sets (patterns expand, duplicates drop, `consumes` can narrow) — but
+/// it changes no recorded SHAPE, which is what a version exists to reject. An
+/// old binary and a new one sharing a `.cook` each judge the other's record
+/// stale and rebuild: correct, and slower, which is what a cache is allowed to
+/// be. The bump comes with whatever answers §17.1.1.1's payload question.
+///
+/// There were two of these. This counter versioned the step index while the
+/// removed test-result store carried its own, so two stores holding the same
+/// kind of thing were free to disagree about what shape it had, and a change
+/// to one could not invalidate the other. One store now, and one version.
 pub const RECORD_SCHEMA_VERSION: u32 = 8;
-
-/// Transport shape for [`FileRecord`].
-///
-/// `path` is `Arc<str>`, not `String`, so the binary decoder can build one
-/// allocation per distinct path and clone pointers into every record naming
-/// it. A `String` here would silently undo that interning on every load.
-///
-/// Note serde does not itself preserve sharing: a JSON round trip allocates
-/// per occurrence. The `Arc` is here so the binary codec's interning has
-/// somewhere to land, not because serde performs it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FileRecordWire {
-    pub path: Arc<str>,
-    pub mtime: u64,
-    pub hash: u64,
-}
-
-/// Transport shape for [`Observation`].
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ObservationWire {
-    pub outcome: UnitOutcome,
-    pub stdout: String,
-    pub stderr: String,
-    pub duration_secs: f64,
-    pub recorded_at: String,
-}
-
-/// Transport shape for [`UnitRecord`].
-///
-/// Public fields, because it has no invariant of its own — it is bytes given a
-/// shape. Every invariant is established on the way out of it, by
-/// [`UnitRecord::from_wire`].
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct UnitRecordWire {
-    pub schema_version: u32,
-    pub key: String,
-    pub inputs: Vec<FileRecordWire>,
-    pub outputs: Vec<FileRecordWire>,
-    pub command_hash: u64,
-    pub env_contribution: u64,
-    pub seal_contribution: u64,
-    pub observation: ObservationWire,
-}
-
-/// Why stored bytes could not become a record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WireError {
-    /// The stored shape is not the one this build reads. Stores discard rather
-    /// than migrate (CS-0166).
-    SchemaVersion { found: u32, expected: u32 },
-    /// A stored file record named no path.
-    EmptyPath,
-}
-
-impl FileRecord {
-    pub fn into_wire(self) -> FileRecordWire {
-        FileRecordWire { path: self.path, mtime: self.mtime, hash: self.hash }
-    }
-
-    pub fn from_wire(wire: FileRecordWire) -> Result<Self, WireError> {
-        Self::new(wire.path, wire.mtime, wire.hash).ok_or(WireError::EmptyPath)
-    }
-}
-
-impl Observation {
-    pub fn into_wire(self) -> ObservationWire {
-        ObservationWire {
-            outcome: self.outcome,
-            stdout: self.stdout,
-            stderr: self.stderr,
-            duration_secs: self.duration_secs,
-            recorded_at: self.recorded_at,
-        }
-    }
-
-    pub fn from_wire(wire: ObservationWire) -> Self {
-        Self {
-            outcome: wire.outcome,
-            stdout: wire.stdout,
-            stderr: wire.stderr,
-            duration_secs: wire.duration_secs,
-            recorded_at: wire.recorded_at,
-        }
-    }
-}
-
-impl UnitRecord {
-    /// Consumes the record so every field moves. `&self` would clone the
-    /// captured streams, which are unbounded.
-    pub fn into_wire(self) -> UnitRecordWire {
-        UnitRecordWire {
-            schema_version: RECORD_SCHEMA_VERSION,
-            key: self.key,
-            inputs: self.inputs.into_iter().map(FileRecord::into_wire).collect(),
-            outputs: self.outputs.into_iter().map(FileRecord::into_wire).collect(),
-            command_hash: self.command_hash,
-            env_contribution: self.env_contribution,
-            seal_contribution: self.seal_contribution,
-            observation: self.observation.into_wire(),
-        }
-    }
-
-    /// Read a record back.
-    ///
-    /// Deliberately takes NO declaration. An earlier design had it rebuild the
-    /// determinants from a `CacheMeta`, which would have made
-    /// [`determinant_drift`] structurally unable to fire: the record would
-    /// always have agreed with whatever it was just rebuilt from. A stored
-    /// record must keep the determinants it was STORED with; that is the
-    /// entire basis on which drift is detectable.
-    ///
-    /// Relating a decoded record to a declaration is a separate question, and
-    /// a separate pure rule: [`Self::agrees_with`].
-    pub fn from_wire(wire: UnitRecordWire) -> Result<Self, WireError> {
-        if wire.schema_version != RECORD_SCHEMA_VERSION {
-            return Err(WireError::SchemaVersion {
-                found: wire.schema_version,
-                expected: RECORD_SCHEMA_VERSION,
-            });
-        }
-        // `into_iter().map().collect()` over identically-laid-out element
-        // types reuses the source buffer, so decoding costs the allocations
-        // the codec already made and no more.
-        let inputs = wire
-            .inputs
-            .into_iter()
-            .map(FileRecord::from_wire)
-            .collect::<Result<Vec<_>, _>>()?;
-        let outputs = wire
-            .outputs
-            .into_iter()
-            .map(FileRecord::from_wire)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            key: wire.key,
-            inputs,
-            outputs,
-            command_hash: wire.command_hash,
-            env_contribution: wire.env_contribution,
-            seal_contribution: wire.seal_contribution,
-            observation: Observation::from_wire(wire.observation),
-        })
-    }
-
-    /// Does this record still describe a run of the unit `meta` declares?
-    ///
-    /// The same one-directional invariant [`Self::record`] establishes at
-    /// birth, asked of a record that has come back from storage — where the
-    /// declaration may since have changed underneath it.
-    pub fn agrees_with(&self, meta: &CacheMeta) -> Result<(), RecordMismatch> {
-        if effect_kind(meta) == EffectKind::Observed && !self.outputs.is_empty() {
-            return Err(RecordMismatch::ObservingUnitHasOutputs { found: self.outputs.len() });
-        }
-        Ok(())
-    }
-}
 
 #[cfg(test)]
 #[path = "tests/record_tests.rs"]

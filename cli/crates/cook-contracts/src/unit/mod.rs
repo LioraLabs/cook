@@ -50,7 +50,15 @@ pub enum WorkPayload {
     Test {
         cmd: String,
         line: usize,
+        /// Inert since CS-0135 removed the `timeout` modifier: the register
+        /// surface has no way to set it, so it arrives as `u64::MAX` and the
+        /// worker's kill loop never fires. Still READ, by
+        /// `cook_luaotp::pool`'s execute path, which is why it stays where the
+        /// three fields CS-0186 deleted did not.
         timeout: u64,
+        /// Inert on the same terms — CS-0135 writes inversion into the body
+        /// (`! grep -q …`) — and read by the reporter, which carries it into
+        /// `TestResult`.
         should_fail: bool,
         test_name: String,
         iteration_item: Option<String>,
@@ -62,54 +70,14 @@ pub enum WorkPayload {
         /// chunk completing without error / raising a Lua error, mirroring
         /// `should_fail`'s existing exit-code inversion semantics.
         lua_code: Option<String>,
-        /// COOK-84: working-dir-relative paths of the files this test
-        /// consumes — the recipe's resolved ingredients ∪ the step group's
-        /// dep-output paths (mirrors `cache_input_paths` in
-        /// cook-register/src/unit_api.rs). Carried on the payload, NOT via
-        /// `cache_meta`: the executor relies on Test nodes having
-        /// `cache_meta == None` (cook-engine/src/executor.rs:126/936/1213).
-        /// Folded into the upfront test fingerprint by
-        /// cook-engine/src/run.rs.
-        input_paths: Vec<String>,
-        /// CS-0159: the test unit's effective seal set — bare probe keys whose
-        /// canonical VALUES fold into the test fingerprint (§17.4 rule 1), on
-        /// the same footing as a cook unit's `CacheMeta::seal_keys`. Carried
-        /// on the payload rather than via `cache_meta` for the same reason
-        /// `input_paths` is: the executor relies on Test nodes having
-        /// `cache_meta == None`. The register surface unions these keys into
-        /// the unit's probe-dependency set, so every sealed value is
-        /// materialised by the time the ready-time fingerprint is computed.
-        seal_keys: std::collections::BTreeSet<String>,
-        /// Glob allowlist narrowing which *predecessor outputs* fold into
-        /// the ready-time fingerprint (§17.4 step 1). Empty — the default —
-        /// folds every immediate-predecessor output, the historical
-        /// behaviour.
-        ///
-        /// Exists because that fold is otherwise unnarrowable from the
-        /// register surface, and over-folding is not merely slow: a
-        /// dependency's `dist/` routinely carries artifacts no consumer
-        /// reads, and one of them changing re-keys the check. Sourcemaps
-        /// are the flagship case — tsup/esbuild inline `sourcesContent`,
-        /// so a comment-only edit upstream rewrites `index.mjs.map` while
-        /// `index.mjs` stays byte-identical, and every downstream check
-        /// loses its cached pass for a file it never opened. Cook units
-        /// have always had the equivalent control (they declare their own
-        /// inputs, and `discovered_inputs` records what was actually
-        /// read); this is the test unit's counterpart.
-        ///
-        /// Matching follows gitignore convention: a pattern containing no
-        /// `/` matches a path's BASENAME at any depth (`*.d.ts`), one
-        /// containing `/` matches the project-root-relative path
-        /// (`packages/core/dist/**/*.mjs`).
-        ///
-        /// Narrowing a fingerprint is always a correctness risk in the
-        /// under-keying direction, so this never silently folds nothing:
-        /// when predecessor outputs exist and no pattern matches any of
-        /// them, the engine keeps the unnarrowed set (§17.4 — a
-        /// declaration that cannot be honoured must not quietly weaken a
-        /// key).
-        consumes: Vec<String>,
     },
+    // What this payload no longer carries (CS-0186): `input_paths`, `seal_keys`
+    // and `consumes`. All three were here because a test unit's cache lived
+    // outside `CacheMeta` and a separate ready-time fingerprint read them off
+    // the payload. A test unit now carries a `CacheMeta` like every other unit,
+    // which is where those three facts belong and where they are read from, so
+    // keeping payload copies would be two answers to one question — and the
+    // copies were the ones nothing consulted.
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
     /// VM and stashes the canonical-JSON-serialised return value under `key`.
     Probe {

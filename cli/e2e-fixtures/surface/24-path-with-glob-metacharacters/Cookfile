@@ -1,0 +1,10 @@
+# CS-0186 §17.1.1.2. `pages/[id].tsx` is a FILE — the framework routing
+# convention — and the register phase resolves `pages/*.tsx` to it. An
+# implementation that re-reads that name as a pattern at match time expands it,
+# matches nothing, and drops it from the unit's input set: on the check side and
+# the record side alike, so the two agree and the unit hits over a file that has
+# changed. The metachar-free sibling keeps the unit looking alive.
+
+recipe bundle
+    ingredients "pages/*.tsx"
+    cook "out/bundle.txt" { mkdir -p out && cat $<in> > $<out> }

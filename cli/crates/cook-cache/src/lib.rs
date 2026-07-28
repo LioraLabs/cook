@@ -18,7 +18,6 @@ pub mod depfile;
 pub mod index_bin;
 pub mod manager;
 pub mod store;
-pub mod test_cache;
 
 pub use depfile::{parse_make_depfile, DepfileError};
 
@@ -38,4 +37,3 @@ pub use cloud_backend::CloudBackend;
 pub use cloud_config::{parse_size, CloudConfig, CloudConfigError, SIZE_LITERAL_HELP};
 pub use manager::{collect_records_public, CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
-pub use test_cache::{TestCache, TestCacheEntry, TestCacheOutcome};

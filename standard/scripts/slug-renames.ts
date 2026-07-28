@@ -70,6 +70,10 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.termination':             'toplevel.termination',
 
   'exec.cache.tool-binary':          'exec.cache.single-key',
+  // A slug is parsed as a JS expression before the xref plugin turns it back
+  // into text, so `-var-` put the reserved word in expression position and
+  // broke the MDX parse of every file referencing it.
+  'exec.cache.lua-var-reads':        'exec.cache.lua-variable-reads',
   'exec.phase-classification':       'exec.phases.classification',
 
   'lua.shell-placeholders':            'phl.cook-step',

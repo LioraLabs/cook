@@ -28,8 +28,6 @@ fn mk_cook(outputs: &[&str]) -> CapturedUnit {
 fn mk_test() -> CapturedUnit {
     CapturedUnit {
         payload: WorkPayload::Test {
-            seal_keys: Default::default(),
-            consumes: Vec::new(),
             cmd: "true".into(),
             line: 1,
             timeout: 30,
@@ -37,7 +35,6 @@ fn mk_test() -> CapturedUnit {
                 test_name: "t".into(),
             iteration_item: None,
             lua_code: None,
-            input_paths: vec![],
         },
         cache_meta: None,
         dep_kind: DepKind::Sequential,

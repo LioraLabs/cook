@@ -1,0 +1,10 @@
+# CS-0186 §17.4 rule 1, the ready-time half. The test's only source is the
+# preceding step's `dist/**`, and that command creates a subdirectory and no
+# file — so the declaration is non-empty and RESOLVES to nothing. Deciding
+# "has this unit anything to key on?" at registration alone admits it and then
+# keys it on nothing at all: its first verdict replayed for the life of the
+# store, over a `probe.txt` it does read and nothing tracks.
+
+recipe check
+    cook "dist/**" { mkdir -p dist/sub }
+    test { grep -q ok probe.txt }

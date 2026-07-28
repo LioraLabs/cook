@@ -44,7 +44,7 @@ Module lifecycle — the top-level chunk's once-per-VM execution, the `init()` c
 - **Writes are refused.** An assignment through `var` outside a `config_body` MUST raise. A declared value is a determinant of every unit keyed against it (§{exec.cache.abstract}); mutating it mid-pass would invalidate a key already computed.
 - **Values carry their declared type** on the register-phase VM: `string`, `number`, or `boolean` per §{decl.config}.
 
-On the **execute-phase** VM, values are visible in their **string form** (§{decl.config}). A conforming implementation MUST reject, at register phase, a Lua-body unit (§{steps.lua}) whose statically-recorded reads (§{exec.cache.lua-var-reads}) name a variable whose declared value is not a string — naming the variable and the phase. Silently handing the body a truthy `"false"` is the failure this rule exists to prevent; the author either interpolates `$<NAME>` or branches in a `register` block.
+On the **execute-phase** VM, values are visible in their **string form** (§{decl.config}). A conforming implementation MUST reject, at register phase, a Lua-body unit (§{steps.lua}) whose statically-recorded reads (§{exec.cache.lua-variable-reads}) name a variable whose declared value is not a string — naming the variable and the phase. Silently handing the body a truthy `"false"` is the failure this rule exists to prevent; the author either interpolates `$<NAME>` or branches in a `register` block.
 
 Within a `config_body` (§{decl.config}), `var` is the writable output sink instead — see §{lua.var-sink}.
 

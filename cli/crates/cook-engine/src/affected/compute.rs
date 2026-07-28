@@ -103,7 +103,7 @@ pub fn compute_affected(
                 }
             }
             if let Some(cm) = &unit.cache_meta {
-                if cm.input_paths.iter().any(|i| input_matches(i, rel_dir.as_ref())) {
+                if cm.inputs.iter().any(|i| input_matches(&i.path, rel_dir.as_ref())) {
                     direct_hits.insert(name.clone());
                     break 'recipe;
                 }

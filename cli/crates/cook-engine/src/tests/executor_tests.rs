@@ -112,7 +112,7 @@ fn test_executor_runs_single_node() {
     let mut dag = Dag::new();
     dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -132,7 +132,7 @@ fn test_executor_respects_dependencies() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -154,7 +154,7 @@ fn test_executor_failure_cancels_downstream() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::TaskFailures { failures, .. } => {
@@ -180,7 +180,7 @@ fn test_executor_parallel_independent_nodes() {
     }
 
     let start = std::time::Instant::now();
-    let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let elapsed = start.elapsed();
 
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -198,7 +198,7 @@ fn test_executor_empty_dag() {
     let (_wd, _tmp) = tmp_dir();
     let cache_ctx = make_cache_ctx(&_tmp);
     let dag: Dag<WorkNode> = Dag::new();
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok());
 }
 
@@ -213,7 +213,7 @@ fn test_executor_presatisfied_chain() {
     let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
     dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -229,7 +229,7 @@ fn test_executor_failure_does_not_cancel_independent() {
     // B is independent, should succeed
     dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::TaskFailures { failures, .. } => {
@@ -269,7 +269,6 @@ fn command_failure_event_summarizes_without_transport_payload() {
         BTreeMap::new(),
         Some(tx),
         cache_ctx,
-        None,
         &[],
         &BTreeMap::new(),
         Arc::new(BTreeMap::new()),
@@ -311,7 +310,7 @@ fn test_executor_interactive_node() {
         &[a],
     ).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
 
@@ -357,7 +356,7 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
     .unwrap();
 
     let (tx, rx) = mpsc::channel::<EngineEvent>();
-    let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
     let mut got_stdout = false;
@@ -392,7 +391,9 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
         project_id: "test".into(),
         cookfile_path: "Cookfile".into(),
         cache_key: "k".into(),
-        input_paths: vec![],
+        inputs: vec![],
+        consumes: Vec::new(),
+        member_keyed: false,
         output_paths: output_paths.into_iter().map(String::from).collect(),
         command_hash: 0,
         env_contribution: 0,
@@ -473,7 +474,7 @@ fn test_executor_cook162_local_cold_miss_rebuilds() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, managers, None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "local cold-miss should rebuild, got: {result:?}");
     assert!(wd.join("out.txt").exists(), "local unit should have run");
 }
@@ -502,7 +503,7 @@ fn test_executor_cook162_pinned_cold_miss_is_fatal() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, managers, None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let err = result.expect_err("pinned cold-miss must be fatal");
     match err {
         EngineError::TaskFailures { failures, .. } => {
@@ -544,7 +545,7 @@ fn test_executor_cs_0050_creates_missing_output_parent() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
     let out = wd.join("build/out/foo.txt");
@@ -578,7 +579,7 @@ fn test_executor_cs_0050_parent_is_file_diagnostic() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let err = result.expect_err("expected failure when parent is a regular file");
     match err {
         EngineError::TaskFailures { failures, .. } => {
@@ -631,7 +632,7 @@ fn test_executor_cs_0050_idempotent_when_parent_exists() {
     )
     .unwrap();
 
-    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
     assert!(wd.join("build/foo.txt").exists());
 }
@@ -677,7 +678,7 @@ fn chore_window_groups_consecutive_chore_steps_into_one_pair() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -730,7 +731,7 @@ fn chore_window_failure_mid_run_emits_one_node_failed_with_step_index() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
 
     let events: Vec<_> = rx.try_iter().collect();
     let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
@@ -770,7 +771,7 @@ fn non_chore_interactive_still_emits_per_node_pair() {
         &[]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
 
     let events: Vec<_> = rx.try_iter().collect();
     let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
@@ -824,7 +825,7 @@ fn chore_window_groups_shell_and_lua_into_one_pair() {
         &[b]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -881,7 +882,7 @@ fn pure_lua_chore_body_produces_one_drain_window() {
         &[a]).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -922,7 +923,7 @@ fn non_chore_lua_chunk_still_dispatches_to_worker_pool() {
             "regular_lua", wd),
         &[]).unwrap();
 
-    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     assert!(result.is_ok(), "got: {result:?}");
 }
 
@@ -949,8 +950,6 @@ fn cook_failure_produces_blocked_test_result() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 1,
                 timeout: 30,
@@ -958,7 +957,6 @@ fn cook_failure_produces_blocked_test_result() {
                 test_name: "my_test".to_string(),
                 iteration_item: None,
                 lua_code: None,
-                input_paths: vec![],
             },
             "blocked_by_build",
             wd.clone(),
@@ -967,7 +965,7 @@ fn cook_failure_produces_blocked_test_result() {
     ).unwrap();
 
     let result = execute_dag(
-        dag, 2, BTreeMap::new(), None, cache_ctx, None, &[], &BTreeMap::new(),
+        dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
     );
@@ -1008,8 +1006,6 @@ fn test_line_number_propagates_from_payload_to_events() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,
@@ -1017,7 +1013,6 @@ fn test_line_number_propagates_from_payload_to_events() {
                 test_name: "my_test".to_string(),
                 iteration_item: None,
                 lua_code: None,
-                input_paths: vec![],
             },
             "my_recipe",
             wd,
@@ -1026,7 +1021,7 @@ fn test_line_number_propagates_from_payload_to_events() {
     ).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let test_results = result.expect("test node should pass");
 
     // TestResult.line must carry 17.
@@ -1068,8 +1063,6 @@ fn test_iteration_item_propagates() {
     dag.add_node(
         work_node(
             WorkPayload::Test {
-                seal_keys: Default::default(),
-                consumes: Vec::new(),
                 cmd: "true".to_string(),
                 line: 17,
                 timeout: 30,
@@ -1077,7 +1070,6 @@ fn test_iteration_item_propagates() {
                 test_name: "my_test".to_string(),
                 iteration_item: Some("a.cpp".into()),
                 lua_code: None,
-                input_paths: vec![],
             },
             "my_recipe",
             wd,
@@ -1086,7 +1078,7 @@ fn test_iteration_item_propagates() {
     ).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
+    let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, &[], &BTreeMap::new(), std::sync::Arc::new(BTreeMap::new()), &std::sync::atomic::AtomicU64::new(0));
     let test_results = result.expect("test node should pass");
 
     // TestResult.iteration_item must carry "a.cpp".
@@ -1291,7 +1283,6 @@ fn probe_cache_hit_skips_produce_execution() {
         BTreeMap::new(),
         Some(tx),
         cache_ctx.clone(),
-        None,
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
@@ -1367,7 +1358,6 @@ fn probe_cache_miss_persists_output() {
         BTreeMap::new(),
         None,
         cache_ctx.clone(),
-        None,
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
@@ -1450,7 +1440,6 @@ fn probe_cache_hit_with_non_json_bytes_falls_through_to_miss() {
         BTreeMap::new(),
         Some(tx),
         cache_ctx.clone(),
-        None,
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
@@ -1542,7 +1531,6 @@ fn probe_fingerprint_changes_invalidate_cache() {
             BTreeMap::new(),
             None,
             cache_ctx.clone(),
-            None,
             &[],
             &by_node,
             std::sync::Arc::new(BTreeMap::new()),
@@ -1588,7 +1576,6 @@ fn probe_fingerprint_changes_invalidate_cache() {
             BTreeMap::new(),
             Some(tx),
             cache_ctx.clone(),
-            None,
             &[],
             &by_node,
             std::sync::Arc::new(BTreeMap::new()),
@@ -1785,7 +1772,6 @@ fn keyless_probe_ignores_a_seeded_cache_entry_and_re_executes() {
         BTreeMap::new(),
         Some(tx),
         cache_ctx.clone(),
-        None,
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
@@ -1829,7 +1815,6 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
         BTreeMap::new(),
         Some(tx),
         cache_ctx.clone(),
-        None,
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
@@ -1839,5 +1824,115 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
     assert!(
         result.is_ok(),
         "a probe with a declared input keeps its key and its cache hit: {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CS-0186: an observing unit records locally and publishes nothing
+// ---------------------------------------------------------------------------
+
+fn publish_ctx(wd: &std::path::Path) -> cook_cache::cache_ctx::CacheContext {
+    use cook_cache::{backend::LocalBackend, cloud_config::CloudConfig};
+    cook_cache::cache_ctx::CacheContext {
+        denylist: std::sync::Arc::new(cook_fingerprint::EnvDenylist::baseline()),
+        backend: std::sync::Arc::new(LocalBackend::new(wd.join("cloud"))),
+        cloud_config: std::sync::Arc::new(CloudConfig::default()),
+        project_root: wd.to_path_buf(),
+        project_id: "p".to_string(),
+        publish_enabled: true,
+    }
+}
+
+fn meta_for(cache_key: &str, inputs: &[&str], outputs: &[&str]) -> cook_contracts::CacheMeta {
+    cook_contracts::CacheMeta {
+        recipe_name: "r".into(),
+        project_id: "p".into(),
+        cookfile_path: "Cookfile".into(),
+        cache_key: cache_key.into(),
+        inputs: inputs.iter().map(|s| (*s).into()).collect(),
+        consumes: Vec::new(),
+        member_keyed: false,
+        output_paths: outputs.iter().map(|s| s.to_string()).collect(),
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        consulted_env: Default::default(),
+        discovered_inputs: None,
+        seal_keys: Default::default(),
+        sharing: Default::default(),
+        record: false,
+    }
+}
+
+/// The shared store is for artifacts, and an observing unit has none. A
+/// determinant manifest filed under its cloud key could never be served
+/// against — `fetch_by_key` refuses an empty output list — so writing one is a
+/// store write per test unit per run for no reader, and it would trip the
+/// `published` counter that lets a settled build skip the end-of-run store
+/// walk. §17.4 rule 4 is withdrawn, and this is the code saying so.
+#[test]
+fn an_observing_unit_publishes_nothing_to_the_shared_store() {
+    let dir = TempDir::new().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+
+    let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
+    let ctx = publish_ctx(wd);
+    let published = std::sync::atomic::AtomicU64::new(0);
+    let meta = meta_for(":0123456789abcdef", &["in.txt"], &[]);
+
+    publish_completion(
+        &cm,
+        &meta,
+        wd,
+        &cook_luaotp::ProbeValueStore::new(),
+        &ctx,
+        &published,
+    );
+
+    assert_eq!(
+        published.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "an observing unit must not count as a publish"
+    );
+    assert!(
+        !wd.join("cloud").exists() || std::fs::read_dir(wd.join("cloud")).unwrap().next().is_none(),
+        "nothing may reach the shared store"
+    );
+    // It DOES record locally — that is the whole point of the fold.
+    let idx = cm.get_or_load("r");
+    assert!(
+        idx.steps.contains_key(":0123456789abcdef"),
+        "the local record is what serves the verdict"
+    );
+}
+
+/// The control: the same call for a producing unit does publish, so the
+/// assertion above is testing the effect-kind gate rather than a broken
+/// fixture.
+#[test]
+fn a_producing_unit_still_publishes() {
+    let dir = TempDir::new().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+    std::fs::write(wd.join("out.txt"), "y").unwrap();
+
+    let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
+    let ctx = publish_ctx(wd);
+    let published = std::sync::atomic::AtomicU64::new(0);
+    let meta = meta_for("out.txt", &["in.txt"], &["out.txt"]);
+
+    publish_completion(
+        &cm,
+        &meta,
+        wd,
+        &cook_luaotp::ProbeValueStore::new(),
+        &ctx,
+        &published,
+    );
+
+    assert_eq!(published.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(
+        std::fs::read_dir(wd.join("cloud")).unwrap().next().is_some(),
+        "a producing unit's artifact and manifest reach the store"
     );
 }

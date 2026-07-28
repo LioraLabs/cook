@@ -1,0 +1,18 @@
+# 1. Cold: passes.
+[[run]]
+args = ["test"]
+
+# 2. Warm, nothing touched. The unit has nothing to key on, so it MUST run
+#    again rather than replay. Before the fix: "ok (cached)".
+[[run]]
+args = ["test"]
+[run.assert]
+output_not_contains = ["(cached)"]
+
+# 3. The property it checks stops holding. It must notice.
+[[run]]
+args = ["test"]
+write = { "probe.txt" = "bad\n" }
+exit = 1
+[run.assert]
+output_not_contains = ["(cached)"]

@@ -5,7 +5,10 @@ edition = "2021"
 description = "Shared kernel types for the Cook build system"
 
 [dependencies]
-serde = { version = "1", features = ["derive", "rc"] }
+# `rc` (serde on `Arc<str>`) went with the prototype wire format in CS-0186.
+# The interned path type it served lives in cook-fingerprint, which enables the
+# feature for itself.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]

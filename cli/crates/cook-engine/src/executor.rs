@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cook_cache::{CacheContext, TestCache, TestCacheEntry, TestCacheOutcome, ThreadSafeCacheManager};
+use cook_cache::{CacheContext, ThreadSafeCacheManager};
 use cook_contracts::{CapturedStream, CommandFailure, WorkPayload};
 use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
@@ -318,10 +318,6 @@ fn progress_error(error: &str) -> String {
     )
 }
 
-// ---------------------------------------------------------------------------
-// iso8601_now — minimal RFC-3339 timestamp without chrono / time deps
-// ---------------------------------------------------------------------------
-
 /// Match a test identity string (`<recipe>:<name>`) against a list of
 /// `--rerun PATTERN` globs. Returns `true` if any pattern matches; `false`
 /// otherwise (including the empty-list case — no rerun patterns means no
@@ -336,48 +332,6 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
             Err(_) => false,
         }
     })
-}
-
-fn iso8601_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Convert unix timestamp to YYYY-MM-DDTHH:MM:SSZ.
-    // Best-effort formatter — accuracy to ±1 second is sufficient
-    // for the `recorded_at` diagnostic field in TestCacheEntry.
-    let secs_in_day: u64 = 86400;
-    let secs_in_hour: u64 = 3600;
-    let secs_in_min: u64 = 60;
-    let h = (secs % secs_in_day) / secs_in_hour;
-    let m = (secs % secs_in_hour) / secs_in_min;
-    let sec = secs % secs_in_min;
-
-    // Simplified date computation from days since 1970-01-01.
-    let days = secs / secs_in_day;
-    let mut y = 1970u64;
-    let mut d = days;
-    loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366u64 } else { 365u64 };
-        if d < days_in_year { break; }
-        d -= days_in_year;
-        y += 1;
-    }
-    let year = y;
-    let day_of_year = d;
-
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut rem = day_of_year;
-    let mut month = 1u64;
-    for &md in &month_days {
-        if rem < md { break; }
-        rem -= md;
-        month += 1;
-    }
-    let day = rem + 1;
-    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{sec:02}Z")
 }
 
 // ---------------------------------------------------------------------------
@@ -395,15 +349,12 @@ fn iso8601_now() -> String {
 /// completed successfully (or was pre-satisfied), or `Err(EngineError)` listing
 /// each failed node.
 ///
-/// `test_cache` — when `Some`, test nodes check the content-addressed cache
-/// before dispatch. Hits emit synthesized `TestPassed { cached: true }` events
-/// and do not submit to the worker pool. Passing executions write cache entries.
-///
-/// Test fingerprints are computed lazily at ready time via
-/// [`crate::run::compute_ready_test_fingerprint`] — the point where a test's
-/// consumed dependency outputs are materialised on disk and can be
-/// content-hashed for early cutoff (COOK-211, §17.4). A source-less test
-/// yields `None` there and always runs.
+/// A test unit is cached like every other unit (CS-0186): its verdict comes
+/// from the step index, checked through the same `ResultOnly` arm and written
+/// by the same publish path. Its inputs are DECLARED, like every other unit's,
+/// and any pattern among them is expanded when the unit is ready — the point
+/// where a consumed dependency's outputs are materialised on disk (§17.1.1.2).
+/// A unit left with nothing to key on has no key and always runs (§17.4).
 ///
 /// `probe_units_by_node` — maps dag node id → `ProbeUnit` metadata (declared
 /// inputs for fingerprinting). Only nodes whose `WorkPayload` is
@@ -434,7 +385,6 @@ pub fn execute_dag(
     cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     event_tx: Option<mpsc::Sender<EngineEvent>>,
     cache_ctx: Arc<CacheContext>,
-    test_cache: Option<&TestCache>,
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
     dep_outputs: cook_luaotp::WorkerDepOutputs,
@@ -710,6 +660,110 @@ pub fn execute_dag(
         PinnedColdMiss,
     }
 
+    // ----- helper: check cache for a unit that declares no outputs -----
+    //
+    // The whole of CS-0186's serving path. It runs the same judge a producing
+    // unit runs — `needs_rebuild_cook`, unmodified — with an empty output
+    // list, which is what makes this a fold rather than a second
+    // implementation: the output-count check is `0 == 0`, the output walk is
+    // empty, and no restore is attempted, so what remains is exactly the
+    // determinant comparison and the input walk. Those two are the question
+    // for an observing unit and they were always the question for a producing
+    // one.
+    //
+    // No backend is consulted. There is nothing in the artifact store to fetch
+    // for a unit with no artifacts — `fetch_by_key` refuses an empty output
+    // list at its own door — and §17.4 rule 4's cross-machine replay is
+    // withdrawn as never-delivered, not quietly reimplemented here.
+    fn check_observing_node(
+        work_node: &WorkNode,
+        cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+        probe_store: &cook_luaotp::ProbeValueStore,
+    ) -> CacheDecision {
+        let meta = match &work_node.cache_meta {
+            Some(m) => m,
+            // Unreachable: `ResultOnly` implies a declaration.
+            None => return CacheDecision::Miss(None),
+        };
+        let cm = match cache_managers.get(&work_node.recipe_name) {
+            Some(cm) => cm,
+            None => return CacheDecision::Miss(None),
+        };
+        // Ready time: every predecessor has completed, so a declared input
+        // naming a consumed output resolves to the files that output now holds
+        // (§17.4 rule 1). The same call serves a producing unit; nothing here
+        // asks what kind of step this came from.
+        let current_inputs = cook_fingerprint::resolve_declared_inputs(
+            &meta.inputs,
+            &meta.consumes,
+            &work_node.working_dir,
+        );
+        // §17.4 rule 1, asked here for the second time — and this is the asking
+        // that binds. Registration asked it of the DECLARED list; this asks it
+        // of the RESOLVED one, and the two disagree in exactly one direction:
+        // a declaration that is non-empty and resolves to nothing. A
+        // `cook "dist/**"` whose command creates only a subdirectory leaves the
+        // test after it holding one declared input, no resolved input, and
+        // therefore a key over nothing at all — its first verdict replayed for
+        // the life of the store.
+        //
+        // Not a rule about resolution failing: an empty expansion is a fact
+        // about the tree, and the unit read nothing. What is refused is SERVING
+        // a hit for a unit with nothing whose movement could invalidate it.
+        //
+        // The member arm is why the predicate takes all three terms. A fan-out
+        // unit over `ingredients <probe>` may declare no file by design and is
+        // keyed on its member, which reaches the key through `command_hash`.
+        if !cook_contracts::cache::record::has_something_to_key_on(
+            meta.output_paths.len(),
+            current_inputs.len(),
+            meta.member_keyed,
+        ) {
+            return CacheDecision::Miss(None);
+        }
+        let input_refs: Vec<&str> = current_inputs.iter().map(String::as_str).collect();
+        let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
+        // The env-moved probe wants the identity without its env suffix, the
+        // same way a producing unit passes its first output path rather than
+        // its whole key. Without it the dominant warm re-run — an env value
+        // flipped — presents as a cold build with no attribution.
+        let identity = meta.cache_key.split('@').next().unwrap_or(&meta.cache_key);
+        let lookup = cm.lookup_step(&meta.recipe_name, &meta.cache_key, identity);
+        let (result, updated) = needs_rebuild_cook(
+            lookup.entry.as_ref(),
+            &input_refs,
+            &[],
+            meta.command_hash,
+            meta.env_contribution,
+            seal_contrib,
+            &work_node.working_dir,
+            // No RestoreCtx: nothing to restore, and passing one would send a
+            // unit with no artifacts to the backend on every check.
+            None,
+            meta.discovered_inputs.as_ref(),
+            meta.record,
+        );
+        if matches!(result, RebuildResult::Skip) {
+            // Refreshed mtimes for inputs whose content was re-verified, the
+            // same bookkeeping a producing hit does.
+            if let Some(updated_entry) = updated {
+                cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
+            }
+            return CacheDecision::Hit;
+        }
+        let cause = match &result {
+            RebuildResult::Rebuild(reason) => reason
+                .cause_summary()
+                .or_else(|| lookup.env_moved_key.then(|| "env changed".to_string())),
+            RebuildResult::Skip => None,
+        };
+        // `pinned` is not consulted: it means "fetch, never rebuild", and
+        // there is no store to fetch a verdict from. A pinned observing unit
+        // therefore behaves as an unannotated one rather than failing a build
+        // over an absence that is structural. Revisit with the payload.
+        CacheDecision::Miss(cause)
+    }
+
     // ----- helper: check cache for a work node -----
     // Returns true if the node can be skipped (cache hit). When `cache_ctx`
     // exposes a backend, a hit-but-drifted entry is restored from the
@@ -732,23 +786,17 @@ pub fn execute_dag(
         cache_ctx: &CacheContext,
         probe_store: &cook_luaotp::ProbeValueStore,
     ) -> CacheDecision {
-        // COOK-360: these were one answer given for two different reasons.
-        // Both still return `Miss(None)`, so behaviour is unchanged — but the
-        // reasons are now named and separated, because only one of them is
-        // permanent.
         use cook_contracts::cache::record::{cacheability, Cacheability};
         match cacheability(work_node.cache_meta.as_ref()) {
-            // Permanent. A chore body or interactive unit is never cached
-            // (§7.4); there is no key to look up and never will be.
+            // A chore body or interactive unit is never cached (§7.4); there
+            // is no key to look up and never will be.
             Cacheability::Uncacheable => return CacheDecision::Miss(None),
-            // NOT permanent. A unit declaring no outputs is cacheable — its
-            // hit replays a recorded outcome rather than restoring bytes —
-            // but this path only knows how to look up artifacts, so it
-            // reports a miss. Test units get their hits from the separate
-            // result store instead, which is the duplication COOK-360 exists
-            // to remove; folding that store in happens HERE, at this arm, and
-            // nowhere else.
-            Cacheability::ResultOnly => return CacheDecision::Miss(None),
+            // A unit declaring no outputs is cacheable: its hit replays a
+            // verdict rather than restoring bytes (§17.1.1.1). CS-0186 folded
+            // the separate result store in here, at this arm and nowhere else.
+            Cacheability::ResultOnly => {
+                return check_observing_node(work_node, cache_managers, probe_store);
+            }
             Cacheability::Artifacts => {}
         }
         let meta = match &work_node.cache_meta {
@@ -793,7 +841,16 @@ pub fn execute_dag(
         } else {
             meta.output_paths.clone()
         };
-        let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+        // The same resolution an observing unit gets. A producing unit's
+        // inputs are literal paths today, so this returns them unchanged; it is
+        // called anyway because "how a unit's inputs are computed" must have
+        // exactly one answer (CS-0186).
+        let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
+            &meta.inputs,
+            &meta.consumes,
+            &work_node.working_dir,
+        );
+        let input_refs: Vec<&str> = resolved_inputs.iter().map(|s| s.as_str()).collect();
         let current_outputs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
         let recipe_namespace =
             recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
@@ -952,8 +1009,11 @@ pub fn execute_dag(
                     file_record(p)
                 }
             };
-            let inputs: Option<Vec<_>> = meta
-                .input_paths
+            // The RESOLVED declaration (§17.1.1.2) — the same list this
+            // unit was judged against a few lines above, and the one a fresh
+            // execution would have recorded. A pattern entry names no file, so
+            // recording the declared strings here would fail the whole record.
+            let inputs: Option<Vec<_>> = resolved_inputs
                 .iter()
                 .map(|p| file_record(p))
                 .chain(outcome.discovered_paths.iter().map(|p| file_record(p)))
@@ -1001,7 +1061,6 @@ pub fn execute_dag(
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
         failures: &mut Vec<(usize, String, String)>,
-        test_cache: Option<&TestCache>,
         cached_test_results: &mut Vec<crate::TestResult>,
         rerun_patterns: &[String],
         blocked_results: &mut Vec<crate::TestResult>,
@@ -1054,7 +1113,6 @@ pub fn execute_dag(
                         cache_managers,
                         cache_ctx,
                         failures,
-                        test_cache,
                         cached_test_results,
                         rerun_patterns,
                         blocked_results,
@@ -1083,31 +1141,52 @@ pub fn execute_dag(
                 0
             }
             Some(WorkPayload::Test { test_name, should_fail, line, iteration_item, .. }) => {
-                // Phase 5: test-result cache lookup.
-                // Check the content-addressed test cache before submitting to
-                // the pool. On a hit, synthesize TestStarted + TestPassed
-                // (cached=true) events and mark the node done without dispatch.
-                if let Some(tc) = test_cache {
-                    // COOK-211: compute the fingerprint here at ready time — all
-                    // predecessors are complete, so their consumed outputs are
-                    // materialised and can be content-hashed for early cutoff.
-                    if let Some(fp) = crate::run::compute_ready_test_fingerprint(dag, id, cache_ctx, &pool.probe_value_store()) {
-                        let fp = &fp;
-                        // Force-rerun: if the test id matches any --rerun pattern,
-                        // skip cache lookup. Cache write still occurs after the
-                        // test runs (executor's success-path write site below),
-                        // so a forced re-run refreshes the cached entry.
-                        let test_id_str = match iteration_item {
-                            Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
-                            _ => format!("{}:{}", work_node.recipe_name, test_name),
-                        };
-                        let force_rerun = rerun_matches(&test_id_str, rerun_patterns);
-                        let cached_entry = if force_rerun { None } else { tc.lookup(fp) };
-                        if let Some(entry) = cached_entry {
+                // CS-0186: a test unit's verdict comes from the step index, by
+                // the same check every other unit gets. A hit IS a pass —
+                // §17.4 rule 2 admits only a passed outcome to the cache, so
+                // the existence of a record is the verdict and nothing need be
+                // stored to replay it.
+                //
+                // The decision is taken ONCE, here, and its miss cause is
+                // carried down to the dispatch below. The generic path further
+                // on must not re-ask: it would repeat the ready-time input
+                // resolution and the index lookup, and on a `--rerun` it would
+                // answer Hit to a question this arm has already answered No —
+                // completing the node through the artifact path, which emits
+                // no test events at all and would drop the test from the
+                // report it was explicitly asked to re-run.
+                let test_miss_cause = {
+                    let test_id_str = match iteration_item {
+                        Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                        _ => format!("{}:{}", work_node.recipe_name, test_name),
+                    };
+                    // Force-rerun skips the lookup only. The record is still
+                    // written after the test runs, so a forced re-run
+                    // refreshes it rather than orphaning it.
+                    let force_rerun = rerun_matches(&test_id_str, rerun_patterns);
+                    let decision = if force_rerun {
+                        CacheDecision::Miss(Some("forced by --rerun".to_string()))
+                    } else {
+                        check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store())
+                    };
+                    let (served, cause) = match decision {
+                        CacheDecision::Hit => (true, None),
+                        // An observing unit is never served from the shared
+                        // store, so `check_observing_node` never returns this.
+                        CacheDecision::PinnedColdMiss => (false, None),
+                        CacheDecision::Miss(cause) => (false, cause),
+                    };
+                    {
+                        if served {
                             // Cache hit — synthesize events and skip execution.
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             let test_id = crate::id::parse_test_id(&test_id_str);
-                            let duration = std::time::Duration::from_secs_f64(entry.duration_secs);
+                            // CS-0186 withdrew the replayed duration along with
+                            // the rest of the observation: a producing unit's
+                            // hit reports no elapsed time either, and reporting
+                            // a stored one as though it were measured is what
+                            // §17.1.1.1 forbids.
+                            let duration = std::time::Duration::ZERO;
                             emit(event_tx, EngineEvent::TestStarted {
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
@@ -1119,9 +1198,9 @@ pub fn execute_dag(
                                 id: test_id.clone(),
                                 duration,
                                 cached: true,
-                                should_fail: entry.should_fail_observed,
-                                stdout: entry.stdout.clone(),
-                                stderr: entry.stderr.clone(),
+                                should_fail: *should_fail,
+                                stdout: String::new(),
+                                stderr: String::new(),
                                 line: *line as u32,
                             });
                             // Register the node under its derived name (CS-0160)
@@ -1164,11 +1243,19 @@ pub fn execute_dag(
                                 outcome: crate::TestOutcome::Passed,
                                 duration,
                                 from_cache: true,
-                                stdout: entry.stdout,
-                                stderr: entry.stderr,
-                                fingerprint: Some(fp.clone()),
+                                // CS-0186: withdrawn with the observation. A
+                                // replayed pass reports no captured output,
+                                // as a producing unit's hit does. Nothing
+                                // human-facing read these for a PASS in any
+                                // case — the JUnit writer and the failure
+                                // detail block both render streams only for a
+                                // failed outcome, and §17.4 rule 2 forbids
+                                // caching one.
+                                stdout: String::new(),
+                                stderr: String::new(),
+                                fingerprint: Some(node_cache_key(work_node).unwrap_or_default()),
                                 blocked_by: None,
-                                should_fail: entry.should_fail_observed,
+                                should_fail: *should_fail,
                                 timed_out: false,
                                 line: *line as u32,
                                 exit_code: None,
@@ -1190,7 +1277,6 @@ pub fn execute_dag(
                                     cache_managers,
                                     cache_ctx,
                                     failures,
-                                    test_cache,
                                     cached_test_results,
                                     rerun_patterns,
                                     blocked_results,
@@ -1204,88 +1290,15 @@ pub fn execute_dag(
                             return submitted;
                         }
                     }
-                }
-                // Cache miss (or caching disabled) — fall through to normal dispatch.
-                // Reuse the generic Some(payload) path below.
+                    cause
+                };
+                // Cache miss (or no key at all) — dispatch normally, carrying
+                // the cause this arm already established.
                 let payload = match &work_node.payload {
                     Some(p) => p,
                     None => unreachable!(),
                 };
-                // Check artifact cache before executing (no-op for Test nodes since they
-                // have no cache_meta, but kept for structural symmetry).
-                // COOK-162: `pinned` cold-miss aborts the node like a failed step.
-                let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
-                    CacheDecision::Hit => {
-                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                        emit(
-                            event_tx,
-                            EngineEvent::NodeCacheHit {
-                                recipe: work_node.recipe_name.clone(),
-                                unit: id,
-                                node_name: payload.display_name(),
-                                artifact: work_node.cache_meta.as_ref()
-                                    .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                                kind: node_kind_for_payload(payload),
-                            },
-                        );
-                        finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
-
-                        *finished += 1;
-                        let newly_ready = dag.complete(id);
-                        let mut submitted = 0;
-                        for nid in newly_ready {
-                            submitted += process_ready(
-                                dag,
-                                nid,
-                                pool,
-                                cancelled,
-                                finished,
-                                interactive_queue,
-                                event_tx,
-                                trackers,
-                                cache_managers,
-                                cache_ctx,
-                                failures,
-                                test_cache,
-                                cached_test_results,
-                                rerun_patterns,
-                                blocked_results,
-                                probe_units_by_node,
-                                upstream_probe_fingerprints,
-                                probe_fingerprint_by_node,
-                                keyless_probes,
-                                published,
-                            );
-                        }
-                        return submitted;
-                    }
-                    CacheDecision::PinnedColdMiss => {
-                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                        let msg = format!(
-                            "pinned unit '{}' has no cached artifact for its key; pinned units are fetch-only and are never rebuilt",
-                            payload.display_name()
-                        );
-                        emit(
-                            event_tx,
-                            EngineEvent::NodeFailed {
-                                recipe: work_node.recipe_name.clone(),
-                                unit: id,
-                                node_name: payload.display_name(),
-                                elapsed: std::time::Duration::ZERO,
-                                error: msg.clone(),
-                            },
-                        );
-                        failures.push((id, work_node.recipe_name.clone(), msg));
-                        finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
-                        *finished += 1;
-                        let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
-                        for dep_id in dependents {
-                            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
-                        }
-                        return 0;
-                    }
-                    CacheDecision::Miss(cause) => cause,
-                };
+                let miss_cause = test_miss_cause;
 
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                 emit(
@@ -1531,7 +1544,6 @@ pub fn execute_dag(
                                         cache_managers,
                                         cache_ctx,
                                         failures,
-                                        test_cache,
                                         cached_test_results,
                                         rerun_patterns,
                                         blocked_results,
@@ -1648,7 +1660,6 @@ pub fn execute_dag(
                                 cache_managers,
                                 cache_ctx,
                                 failures,
-                                test_cache,
                                 cached_test_results,
                                 rerun_patterns,
                                 blocked_results,
@@ -1831,7 +1842,6 @@ pub fn execute_dag(
             &cache_managers,
             &cache_ctx,
             &mut failures,
-            test_cache,
             &mut cached_test_results,
             rerun_patterns,
             &mut blocked_results,
@@ -2104,7 +2114,6 @@ pub fn execute_dag(
                             &cache_managers,
                             &cache_ctx,
                             &mut failures,
-                            test_cache,
                             &mut cached_test_results,
                             rerun_patterns,
                             &mut blocked_results,
@@ -2355,7 +2364,6 @@ pub fn execute_dag(
                                 &cache_managers,
                                 &cache_ctx,
                                 &mut failures,
-                                test_cache,
                                 &mut cached_test_results,
                                 rerun_patterns,
                                 &mut blocked_results,
@@ -2540,11 +2548,9 @@ pub fn execute_dag(
                 // reporter can extract the recipe portion. `result.node_name`
                 // is the raw display_name (= test_name alone); `recipe_name`
                 // carries the fully-qualified recipe name.
-                // COOK-211: recompute the same ready-time content fingerprint
-                // used for the lookup, so the cache entry is written under the
-                // key a future run will recompute. Predecessor outputs are still
-                // materialised (the test's execution does not touch them).
-                let fp_opt = crate::run::compute_ready_test_fingerprint(&dag, result.id, &cache_ctx, &pool.probe_value_store());
+                // CS-0186: the record is written by `publish_completion` above,
+                // on the one publish path every unit shares. There is no
+                // second write site and no second key to recompute here.
                 let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
                     Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
                     _ => (0, None),
@@ -2580,7 +2586,11 @@ pub fn execute_dag(
                     from_cache: false,
                     stdout: to.stdout.clone(),
                     stderr: to.stderr.clone(),
-                    fingerprint: fp_opt.clone(),
+                    // The unit's identity in the step index (§17.1.1.1). It was
+                    // the ready-time content digest of a store that no longer
+                    // exists; a reader asking "which record is this" now gets
+                    // the same answer `cook why` prints.
+                    fingerprint: node_cache_key(dag.node(result.id).payload()),
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: false,
@@ -2588,23 +2598,6 @@ pub fn execute_dag(
                     exit_code: to.exit_code,
                 });
 
-                // Write passing test result to the content-addressed cache.
-                if let (Some(tc), Some(fp)) = (test_cache, fp_opt) {
-                    let entry = TestCacheEntry {
-                        // COOK-360: one shared version, not this store's private 1.
-                        schema_version: cook_fingerprint::CACHE_VERSION,
-                        fingerprint: fp.clone(),
-                        outcome: TestCacheOutcome::Passed,
-                        stdout: to.stdout.clone(),
-                        stderr: to.stderr.clone(),
-                        duration_secs: to.duration,
-                        should_fail_observed: to.should_fail,
-                        recorded_at: iso8601_now(),
-                    };
-                    if let Err(e) = tc.store(&fp, &entry) {
-                        tracing::warn!("test cache write failed for {fp}: {e}");
-                    }
-                }
             }
 
             let newly_ready = dag.complete(result.id);
@@ -2621,7 +2614,6 @@ pub fn execute_dag(
                     &cache_managers,
                     &cache_ctx,
                     &mut failures,
-                    test_cache,
                     &mut cached_test_results,
                     rerun_patterns,
                     &mut blocked_results,
@@ -2789,7 +2781,6 @@ pub fn execute_dag(
                         &cache_managers,
                         &cache_ctx,
                         &mut failures,
-                        test_cache,
                         &mut cached_test_results,
                         rerun_patterns,
                         &mut blocked_results,
@@ -2886,6 +2877,7 @@ pub fn execute_dag(
 fn publish_completion(
     cm: &ThreadSafeCacheManager,
     meta: &cook_contracts::CacheMeta,
+    // CS-0186: the input set actually judged, when it is not the declared one.
     working_dir: &std::path::Path,
     probe_store: &cook_luaotp::ProbeValueStore,
     cache_ctx: &CacheContext,
@@ -2900,8 +2892,20 @@ fn publish_completion(
     // describes exactly what this invocation produced — no post-execute sweep is
     // needed here. Cache-hit reconciliation lives on the `RebuildResult::Skip`
     // path, which never reaches this publish function.
+    // §17.1.1.2: the record holds the input set the unit was JUDGED against, so
+    // this side resolves the declaration by the same call the check side used.
+    // Resolved here rather than carried from the check because the check may
+    // not have run at all — `--rerun` skips it — and because two resolutions of
+    // one declaration that could disagree would report an input-set change on
+    // every subsequent run.
+    let judged_inputs =
+        cook_fingerprint::resolve_declared_inputs(&meta.inputs, &meta.consumes, working_dir);
     let mut meta_for_record = meta.clone();
     meta_for_record.output_paths = resolved_output_paths.clone();
+    meta_for_record.inputs = judged_inputs
+        .iter()
+        .map(cook_contracts::cache::DeclaredInput::path)
+        .collect();
     // COOK-161: fold the effective seal set's probe values into the persisted
     // key (the sealed probes have run by now — the unit depends on them).
     let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
@@ -2929,7 +2933,7 @@ fn publish_completion(
     let mut step_entry = step_entry;
     if let Some(di) = &meta.discovered_inputs {
         let abs_depfile = working_dir.join(&di.from);
-        let source_for_skip = meta.input_paths.first().map(String::as_str).unwrap_or("");
+        let source_for_skip = judged_inputs.first().map(String::as_str).unwrap_or("");
         match cook_cache::parse_make_depfile(&abs_depfile, source_for_skip, working_dir) {
             Ok(discovered_paths) => {
                 match cook_cache::collect_records_public(&discovered_paths, working_dir) {
@@ -2974,7 +2978,27 @@ fn publish_completion(
     // COOK-162 §3: `local` units never publish to the shared store.
     // COOK-168: publish-off / read-only client mode suppresses ALL uploads
     // globally; fetch-by-key is unaffected.
-    let publish_to_backend = !meta.sharing.is_local() && cache_ctx.publish_enabled;
+    //
+    // CS-0186: nor does an OBSERVING unit. It has no artifact to upload, and
+    // the manifest alone would be unreachable — `fetch_by_key` refuses an
+    // empty output list at its own door, so nothing could ever be served
+    // against the key it was filed under. Writing it would be a store write
+    // per test unit per run for no reader, and each one would trip the
+    // `published` counter, whose whole purpose is to let a settled build skip
+    // the end-of-run store walk entirely.
+    //
+    // This is also what keeps the code honest about §17.4 rule 4. CS-0186
+    // withdrew cross-machine replay as never delivered; publishing half of the
+    // apparatus for it would leave the implementation reaching for a path the
+    // Standard says is not there. When the payload question is answered, a
+    // shared observation is what makes this arm meaningful again, and this is
+    // the line that changes.
+    let observing = matches!(
+        cook_contracts::cache::record::effect_kind(meta),
+        cook_contracts::cache::record::EffectKind::Observed
+    );
+    let publish_to_backend =
+        !observing && !meta.sharing.is_local() && cache_ctx.publish_enabled;
     // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
     // unit is about to write at least a determinant manifest to the store.
     if publish_to_backend {
@@ -3105,7 +3129,7 @@ fn publish_completion(
         // recorded in step_entry.outputs — it is fetched out-of-band on the cold path.
         if publish_to_backend {
             let declared_refs: Vec<&str> =
-                meta.input_paths.iter().map(|s| s.as_str()).collect();
+                judged_inputs.iter().map(|s| s.as_str()).collect();
             if let Some(declared_hashes) =
                 cook_fingerprint::hash_input_paths(&declared_refs, working_dir)
             {
@@ -3119,7 +3143,7 @@ fn publish_completion(
                 });
                 // Parse the discovered relative paths the SAME way the warm path does.
                 let source_for_skip =
-                    meta.input_paths.first().map(String::as_str).unwrap_or("");
+                    judged_inputs.first().map(String::as_str).unwrap_or("");
                 let discovered_paths: Vec<String> = cook_cache::parse_make_depfile(
                     &working_dir.join(&di.from),
                     source_for_skip,

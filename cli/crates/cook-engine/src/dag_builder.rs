@@ -735,15 +735,18 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
     for r in recipes {
         for unit in &r.units {
             if let Some(meta) = &unit.cache_meta {
-                for input_path in &meta.input_paths {
-                    // Skip patterns that are themselves globs — §22.1.2 only
+                for entry in &meta.inputs {
+                    // Skip entries that are themselves patterns — §22.1.2 only
                     // prohibits literal downstream inputs matching upstream
-                    // glob patterns. A downstream glob input is a different
+                    // glob patterns. A downstream pattern input is a different
                     // semantic (expansion at execute time) and is not checked
-                    // here.
-                    if cook_fingerprint::has_glob_meta(input_path) {
+                    // here. Read off the declaration (§17.1.1.2) rather than
+                    // re-scanned for metacharacters, so a real file whose name
+                    // contains one is checked as the literal it is.
+                    if entry.is_pattern() {
                         continue;
                     }
+                    let input_path = &entry.path;
                     for (upstream_name, patterns) in &matchers {
                         // A recipe cannot violate its own terminal-output rule.
                         if *upstream_name == r.recipe_name.as_str() {
@@ -893,12 +896,13 @@ pub(crate) fn check_literal_read_after_write(
             let Some(meta) = &unit.cache_meta else {
                 continue;
             };
-            for input in &meta.input_paths {
-                // A glob/dir input expands at execute time — not a literal
+            for entry in &meta.inputs {
+                // A pattern input expands at execute time — not a literal
                 // path match, and not this rule's business.
-                if cook_fingerprint::is_terminal_output(input) {
+                if entry.is_pattern() {
                     continue;
                 }
+                let input = &entry.path;
                 let canonical = ru.working_dir.join(input);
                 let Some(producers) = producers_by_path.get(&canonical) else {
                     continue;

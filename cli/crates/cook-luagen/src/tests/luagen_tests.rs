@@ -714,7 +714,7 @@ fn test_test_step_codegen() {
         "expected a test unit via cook.add_unit in:\n{output}"
     );
     assert!(
-        output.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        output.contains("for _, _test_in in ipairs(_test_src"),
         "expected _test_in iteration in:\n{output}"
     );
     // CS-0135: `timeout`/`should_fail`/`name` are no longer modifiers on
@@ -2208,7 +2208,7 @@ fn test_test_step_shell_one_to_one() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     assert!(
-        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
@@ -2224,7 +2224,7 @@ fn test_test_step_shell_batched_form_is_gone() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     assert!(
-        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
@@ -2267,7 +2267,7 @@ fn test_test_step_lua_one_to_one() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     assert!(
-        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(
@@ -2336,7 +2336,7 @@ fn test_test_shell_in_and_all_named_env_coexist() {
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let lua = generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
-        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(
@@ -2596,8 +2596,13 @@ fn test_step_iterates_union_of_all_include_globs_fallback() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("for _, _test_in in ipairs(ingredients) do"),
-        "test must iterate the merged `ingredients` local, got:\n{output}"
+        output.contains("for _, _test_in in ipairs(_test_src"),
+        "test must iterate its register-phase source local, got:\n{output}"
+    );
+    assert!(
+        output.contains("= ingredients end"),
+        "with no preceding producing step the source falls back to the merged \
+         `ingredients` local (§8.6.1), got:\n{output}"
     );
     assert!(
         !output.contains("ipairs(recipe.ingredients[1])"),
@@ -2626,9 +2631,9 @@ fn test_step_emits_passthrough_after_iteration() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.passthrough(ingredients)"),
-        "test must emit cook.passthrough(ingredients) so its input list \
-         flows out as the recipe's terminal outputs, got:\n{output}"
+        output.contains("cook.passthrough(_test_src"),
+        "test must passthrough its source so its input list flows out as the \
+         recipe's terminal outputs, got:\n{output}"
     );
 }
 
@@ -2653,7 +2658,7 @@ fn test_step_oneshot_with_ingredients_still_passthroughs() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.passthrough(ingredients)"),
+        output.contains("cook.passthrough(_test_src"),
         "OneShot test with ingredients must still passthrough, got:\n{output}"
     );
 }
@@ -2711,8 +2716,17 @@ fn test_step_after_cook_passthroughs_cook_outputs() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.passthrough(_cook_outputs_1)"),
-        "test after cook step 1 must passthrough _cook_outputs_1, got:\n{output}"
+        output.contains("cook.passthrough(_test_src"),
+        "test after a cook step passes through its source, got:\n{output}"
+    );
+    // CS-0186: WHICH outputs that is became a register-phase answer.
+    // `cook.prior_outputs()` returns the preceding producing step's outputs,
+    // whether the parser lowered it from a `cook` step or a module declared it
+    // through `cook.add_unit` — the latter was invisible to the old
+    // `_cook_outputs_N` local, and the engine covered for it by walking the DAG.
+    assert!(
+        output.contains("cook.prior_outputs()"),
+        "the source is resolved at register phase, got:\n{output}"
     );
 }
 
@@ -2733,8 +2747,8 @@ fn test_step_emits_passthrough() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.passthrough(ingredients)"),
-        "test step must emit cook.passthrough(ingredients), got:\n{output}"
+        output.contains("cook.passthrough(_test_src"),
+        "test step must passthrough its source, got:\n{output}"
     );
 }
 
@@ -2755,8 +2769,8 @@ fn test_step_iterates_union_of_all_include_globs() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("ipairs(ingredients)"),
-        "test step must iterate the merged `ingredients` local, got:\n{output}"
+        output.contains("= ingredients end"),
+        "test step must fall back to the merged `ingredients` local, got:\n{output}"
     );
     assert!(
         !output.contains("ipairs(recipe.ingredients[1])"),
@@ -3568,16 +3582,89 @@ fn probe_no_ingredients_no_deps_omits_those_fields() {
 fn test_step_with_ingredients_emits_inputs_field() {
     let src = "recipe unit\n    ingredients \"src/*.rs\"\n    test {\n        cargo test\n    }\n";
     let lua = generate_lua_for_test(src);
-    assert!(lua.contains("inputs = ingredients,"),
-        "a test unit must carry the resolved ingredient list:\n{lua}");
+    assert!(lua.contains("inputs = _test_src"),
+        "a test unit declares its source (§8.6.1 resolved at register phase):\n{lua}");
+    assert!(lua.contains("= ingredients end"),
+        "with no preceding producing step that source is the ingredients:\n{lua}");
 }
 
 #[test]
-fn test_step_without_ingredients_emits_no_inputs_field() {
+fn test_step_without_ingredients_emits_no_ingredients_reference() {
     let src = "recipe build\n    cook \"build/out.txt\" {\n        echo hi > build/out.txt\n    }\n    test {\n        test -s $<in>\n    }\n";
     let lua = generate_lua_for_test(src);
     assert!(!lua.contains("inputs = ingredients"),
         "cook-step-sourced tests must not reference the absent ingredients local:\n{lua}");
+}
+
+// ─── CS-0186: the lowering resolves the iteration source into declared inputs ──
+//
+// §17.4 rule 1 moved this decision here. The engine used to reconstruct a test
+// unit's inputs by walking its DAG predecessors, which it could only do for
+// units it knew to be tests. What a unit reads is now settled where the source
+// is known, and the engine reads `input_paths` for every unit alike.
+
+/// The defect this fixes, in the shape §8.6 uses to teach the feature
+/// (Example 8.6.1). A one-to-one test declares ITS OWN item — the binary it
+/// runs — whatever the source is. It used to declare `ingredients` and lean on
+/// the predecessor walk for the rest, so every unit in the fan-out folded every
+/// source and every binary: editing one file re-ran all of them.
+#[test]
+fn one_to_one_over_a_cook_step_declares_its_own_item() {
+    let src = "recipe check\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" {\n        cc $<in> -o $<out>\n    }\n    test {\n        ./$<in>\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("inputs = {_test_in},"),
+        "a one-to-one test unit declares its own item:\n{lua}");
+    assert!(!lua.contains("inputs = ingredients"),
+        "declaring the ingredient behind the item re-runs the whole fan-out on \
+         any source edit, and defeats early cutoff:\n{lua}");
+}
+
+/// CS-0182's original case keeps working: the narrowing was never about which
+/// source it was, only about the mode.
+#[test]
+fn one_to_one_over_ingredients_declares_its_own_item() {
+    let src = "recipe check\n    ingredients \"src/*.c\"\n    test {\n        wc -l $<in>\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("inputs = {_test_in},"), "lua:\n{lua}");
+}
+
+/// A body referencing no item reads the whole source, so the whole source is
+/// what it declares. With a preceding cook step that is the step's outputs —
+/// not the ingredients behind them, which would over-invalidate.
+#[test]
+fn a_single_unit_test_declares_the_whole_source() {
+    let src = "recipe check\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" {\n        cc $<in> -o $<out>\n    }\n    test {\n        ls build\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("inputs = _test_src"),
+        "a single-unit test declares its whole source:\n{lua}");
+    assert!(lua.contains("cook.prior_outputs()"),
+        "which is the preceding producing step's outputs, asked for at \
+         register phase so module-registered units count too:\n{lua}");
+}
+
+/// No cook step: the source falls back to the resolved ingredients (§8.6.1).
+#[test]
+fn a_single_unit_test_falls_back_to_ingredients() {
+    let src = "recipe check\n    ingredients \"src/*.c\"\n    test {\n        make check\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("inputs = _test_src"), "lua:\n{lua}");
+    assert!(lua.contains("= ingredients end"), "lua:\n{lua}");
+}
+
+/// No source at all declares nothing, which is what leaves §17.4's "nothing to
+/// key on" rule to give the unit no key. `test { cargo test }` must keep
+/// running every invocation: its real inputs are the whole source tree.
+#[test]
+fn a_sourceless_test_declares_an_empty_source() {
+    let src = "recipe check\n    test {\n        cargo test\n    }\n";
+    let lua = generate_lua_for_test(src);
+    // The declaration is emitted; what it resolves to is the register-phase
+    // answer, and with no preceding step and no ingredients that is an empty
+    // list. §17.4's "nothing to key on" rule then gives the unit no key, so
+    // `test { cargo test }` runs every invocation.
+    assert!(lua.contains("inputs = _test_src"), "lua:\n{lua}");
+    assert!(!lua.contains("= ingredients end"),
+        "no ingredients to fall back to:\n{lua}");
 }
 
 // ─── CS-0101: $<file:PATH> lowering (hoisted cook.file_ref locals + file_refs field) ─
@@ -3899,4 +3986,40 @@ fn test_bad_file_ref_path_in_test_body_is_checked_codegen_error() {
         !msg.contains("SIGIL_ERROR"),
         "error must not leak the internal sentinel marker, got: {msg}"
     );
+}
+
+/// CS-0186 §22.6: a data-member fan-out `test` declares the outputs of ITS OWN
+/// member's producer. This emission site declared no inputs at all, which — once
+/// the member rule made these units cacheable — keyed each unit on its member
+/// alone: a producer that began writing a failing artifact was replayed as a
+/// pass, in the exact feature the member rule was added to enable.
+#[test]
+fn a_member_fanout_test_declares_its_own_members_source() {
+    let src = "probe cases\n    ingredients \"cases.json\"\n    json { cat cases.json }\n\
+               \nrecipe fan\n    ingredients cases\n    cook \"build/$<in.id>.txt\" {\n        touch $<out>\n    }\n    test {\n        grep -q ok build/$<in.id>.txt\n    }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        lua.contains("local _test_src = cook.prior_outputs(cook.member_to_string(item))"),
+        "the member's own producer outputs are asked for per member:\n{lua}"
+    );
+    assert!(
+        lua.contains("inputs = _test_src"),
+        "and are what the unit declares:\n{lua}"
+    );
+}
+
+/// The narrowing is per member, not per fan-out: the source is asked for INSIDE
+/// the member loop. Hoisting it out would hand every unit the whole fan-out's
+/// outputs, so editing one member's artifact would re-run every sibling —
+/// §17.1 observable 5's guarantee, lost.
+#[test]
+fn the_member_source_is_asked_for_inside_the_member_loop() {
+    let src = "probe cases\n    ingredients \"cases.json\"\n    json { cat cases.json }\n\
+               \nrecipe fan\n    ingredients cases\n    cook \"build/$<in.id>.txt\" {\n        touch $<out>\n    }\n    test {\n        grep -q ok build/$<in.id>.txt\n    }\n";
+    let lua = generate_lua_for_test(src);
+    let loop_at = lua
+        .rfind("for _, item in ipairs(_items) do")
+        .expect("member loop");
+    let src_at = lua.find("cook.prior_outputs(cook.member_to_string(item))").expect("per-member source");
+    assert!(src_at > loop_at, "the source is read per member:\n{lua}");
 }

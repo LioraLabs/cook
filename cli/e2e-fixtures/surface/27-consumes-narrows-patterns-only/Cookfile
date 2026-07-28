@@ -1,0 +1,28 @@
+# CS-0175 as amended by CS-0186 (§17.1.1.2). `consumes` narrows what a declared
+# PATTERN admits and never removes a path the unit declared outright.
+#
+# The check unit reads its own `src/own.txt` and, of the bundler's `dist/**`,
+# only the `.mjs` bundle: a sourcemap rewritten by a comment-only upstream edit
+# must not cost it its cached pass. Applying the filter to the whole resolved
+# set instead — which is what the first cut of CS-0186 did — dropped
+# `src/own.txt` from the key, so editing a file the author named outright moved
+# nothing.
+#
+# `consumes` has no Cookfile spelling: `cook.add_unit` is how a module declares
+# it, and the only way it is reachable at all.
+
+recipe bundle
+    cook.add_unit({
+        outputs = { "dist/**" },
+        inputs  = { "src/bundle.mjs", "src/map.txt" },
+        command = "mkdir -p dist && cp src/bundle.mjs dist/index.mjs && cp src/map.txt dist/index.mjs.map",
+    })
+
+recipe check: bundle
+    cook.add_unit({
+        step_kind = "test",
+        command   = "grep -q OK src/own.txt && grep -q BUNDLE dist/index.mjs",
+        inputs    = { "src/own.txt", "dist/**" },
+        consumes  = { "*.mjs" },
+        line      = 1,
+    })

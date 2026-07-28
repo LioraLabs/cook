@@ -4,6 +4,18 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use crate::BodyCaptureState;
 
+/// The declared input paths of a captured unit, kinds dropped: these cases are
+/// about WHICH paths a declaration carries, not how each is read.
+fn declared_inputs(unit: &cook_contracts::CapturedUnit) -> Vec<String> {
+    unit.cache_meta
+        .as_ref()
+        .expect("a test unit carries cache metadata (CS-0186)")
+        .inputs
+        .iter()
+        .map(|e| e.path.clone())
+        .collect()
+}
+
 fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> {
     std::cell::Ref::map(body_slot.borrow(), |slot| {
         slot.as_ref().expect("body slot populated for test")
@@ -226,12 +238,10 @@ fn add_test_captures_inputs_into_payload() {
             })
         "#).exec().unwrap();
     let state = body_ref(&capture_state);
-    match &state.units[0].payload {
-        WorkPayload::Test { input_paths, .. } => {
-            assert_eq!(input_paths, &["src/lib.rs".to_string(), "src/main.rs".to_string()]);
-        }
-        _ => panic!("expected Test payload"),
-    }
+    // CS-0186: a test unit's declared inputs live on its `CacheMeta`, where
+    // every other unit's do, and are read from there by the one cache path.
+    let inputs = declared_inputs(&state.units[0]);
+    assert_eq!(inputs, vec!["src/lib.rs", "src/main.rs"]);
 }
 
 #[test]
@@ -248,13 +258,11 @@ fn add_test_unions_step_group_dep_input_paths() {
             })
         "#).exec().unwrap();
     let state = body_ref(&capture_state);
-    match &state.units[0].payload {
-        WorkPayload::Test { input_paths, .. } => {
-            // union, deduped, declared inputs first
-            assert_eq!(input_paths, &["src/lib.rs".to_string(), "../core/build/core.so".to_string()]);
-        }
-        _ => panic!("expected Test payload"),
-    }
+    // union, deduped, declared inputs first
+    assert_eq!(
+        declared_inputs(&state.units[0]),
+        vec!["src/lib.rs", "../core/build/core.so"]
+    );
 }
 
 #[test]
@@ -267,12 +275,7 @@ fn add_test_without_inputs_still_carries_dep_paths() {
             cook.add_unit({step_kind = "test",  command = "true", name = "t" })
         "#).exec().unwrap();
     let state = body_ref(&capture_state);
-    match &state.units[0].payload {
-        WorkPayload::Test { input_paths, .. } => {
-            assert_eq!(input_paths, &["build/lib.txt".to_string()]);
-        }
-        _ => panic!("expected Test payload"),
-    }
+    assert_eq!(declared_inputs(&state.units[0]), vec!["build/lib.txt"]);
 }
 
 // -----------------------------------------------------------------

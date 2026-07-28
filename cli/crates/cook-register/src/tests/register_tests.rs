@@ -857,7 +857,12 @@ cook.recipe("chore_then_recipe", {}, function()
     cook.add_unit({command = "echo in chore", cache = false})
     cook._exit_chore()
     -- After exiting chore context, cache = true is permitted.
-    cook.add_unit({command = "echo normal", cache = true})
+    -- Declares an output because CS-0186's "nothing to key on" rule refuses a
+    -- unit with no output, no input and no member: its only determinants would
+    -- be the command and the env, so it would hit forever after one run. The
+    -- subject here is that `cache = true` is ACCEPTED outside a chore, which an
+    -- uncacheable-for-another-reason unit cannot demonstrate.
+    cook.add_unit({command = "echo normal", cache = true, outputs = {"out.txt"}})
 end)
 "#;
     let result = register_cookfile(rt, lua_src, None, None);
@@ -2401,31 +2406,40 @@ fn mux_per_member_fingerprint_isolation() {
     let s1 = mux_unit_for_member(mux, "s1");
     let s2 = mux_unit_for_member(mux, "s2");
 
-    let s1_meta = s1.cache_meta.as_ref().expect("s1 mux unit has cache_meta");
-    let s2_meta = s2.cache_meta.as_ref().expect("s2 mux unit has cache_meta");
+    let declared = |u: &cook_contracts::CapturedUnit| -> Vec<String> {
+        u.cache_meta
+            .as_ref()
+            .expect("mux unit has cache_meta")
+            .inputs
+            .iter()
+            .map(|e| e.path.clone())
+            .collect()
+    };
+    let s1_meta = declared(s1);
+    let s2_meta = declared(s2);
 
     assert!(
-        s1_meta.input_paths.contains(&"build/s1.silent.mp4".to_string())
-            && s1_meta.input_paths.contains(&"build/s1.wav".to_string()),
+        s1_meta.contains(&"build/s1.silent.mp4".to_string())
+            && s1_meta.contains(&"build/s1.wav".to_string()),
         "s1 mux unit input_paths must contain s1's render+tts outputs; got: {:?}",
-        s1_meta.input_paths
+        s1_meta
     );
     assert!(
-        !s1_meta.input_paths.iter().any(|p| p.contains("s2")),
+        !s1_meta.iter().any(|p| p.contains("s2")),
         "ISOLATION VIOLATION: s1 mux unit input_paths leaked an s2 path; got: {:?}",
-        s1_meta.input_paths
+        s1_meta
     );
 
     assert!(
-        s2_meta.input_paths.contains(&"build/s2.silent.mp4".to_string())
-            && s2_meta.input_paths.contains(&"build/s2.wav".to_string()),
+        s2_meta.contains(&"build/s2.silent.mp4".to_string())
+            && s2_meta.contains(&"build/s2.wav".to_string()),
         "s2 mux unit input_paths must contain s2's render+tts outputs; got: {:?}",
-        s2_meta.input_paths
+        s2_meta
     );
     assert!(
-        !s2_meta.input_paths.iter().any(|p| p.contains("s1")),
+        !s2_meta.iter().any(|p| p.contains("s1")),
         "ISOLATION VIOLATION: s2 mux unit input_paths leaked an s1 path; got: {:?}",
-        s2_meta.input_paths
+        s2_meta
     );
 }
 
@@ -2548,9 +2562,9 @@ fn add_unit_file_refs_fold_into_cache_input_paths() {
         .as_ref()
         .expect("cached unit has cache_meta");
     assert_eq!(
-        meta.input_paths,
+        meta.inputs.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
         vec!["in.md".to_string(), "tokens.css".to_string()],
-        "file_refs matches must fold into cache_meta.input_paths after inputs"
+        "file_refs matches must fold into cache_meta.inputs after inputs"
     );
 }
 
@@ -4461,5 +4475,103 @@ recipe grade
     assert!(
         rendered.contains("seal sites"),
         "diagnostic must name the fix, got: {rendered}"
+    );
+}
+
+// -----------------------------------------------------------------------
+// COOK-342 / §17.4 rule 1 — a source-less test has no key, whatever sits
+// upstream of it
+//
+// These pins were fingerprint-level while a test unit's key was computed by a
+// ready-time walk of its DAG predecessors. CS-0186 moved the decision to the
+// declaration, so they move with it: whether a unit is cacheable at all is now
+// visible as `cache_meta` on the registered unit, decided by the same rule for
+// every unit kind.
+// -----------------------------------------------------------------------
+
+/// The unit a recipe registered under `name`, or None.
+fn test_unit_of<'a>(
+    registered: &'a RegisteredCookfile,
+    recipe: &str,
+) -> &'a cook_contracts::CapturedUnit {
+    registered
+        .units_by_recipe
+        .get(recipe)
+        .unwrap_or_else(|| panic!("recipe '{recipe}' registered"))
+        .units
+        .iter()
+        .find(|u| matches!(u.payload, cook_contracts::WorkPayload::Test { .. }))
+        .expect("recipe has a test unit")
+}
+
+/// §8.6.1 Example 8.6.2 verbatim. A dep list is a whole-recipe ordering
+/// barrier, not a source: `gen`'s outputs are not something `check` reads, and
+/// keying the test on them would tie its verdict to a file it never opens — it
+/// would replay a pass over a tree that had since gone bad and re-run only when
+/// the unrelated dependency moved. `test { cargo test }` has no key, and its
+/// true inputs (the whole source tree) are why.
+#[test]
+fn a_sourceless_test_behind_a_bare_dep_has_no_key() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
+    let registered = register_surface(
+        dir.path(),
+        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+         \nrecipe check: gen\n    test { cargo test }\n",
+    )
+    .unwrap();
+    assert!(
+        test_unit_of(&registered, "check").cache_meta.is_none(),
+        "a test with no output, no declared input and no member has nothing \
+         whose movement could invalidate it, so it MUST NOT be given a key"
+    );
+}
+
+/// The same shape with the dependency's outputs actually declared: the
+/// barrier's outputs never reach the test's declaration, so what the upstream
+/// recipe produces cannot mint a key for a unit that reads none of it.
+#[test]
+fn a_sourceless_tests_declaration_does_not_absorb_an_unrelated_dep() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
+    let registered = register_surface(
+        dir.path(),
+        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+         \nrecipe check: gen\n    test { cargo test }\n",
+    )
+    .unwrap();
+    // Stated over the declaration rather than over a key, because with no key
+    // there is nothing else to inspect — and the declaration is now where the
+    // answer lives.
+    let unit = test_unit_of(&registered, "check");
+    assert!(
+        unit.cache_meta.is_none(),
+        "no key, and therefore nothing of `gen`'s in it"
+    );
+}
+
+/// The control, and the boundary: a test that declares a source of its own IS
+/// keyed, dep list or no dep list. Without this the rule above could be
+/// satisfied by never keying a test at all.
+#[test]
+fn a_test_with_its_own_ingredients_behind_a_dep_still_keys() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("t")).unwrap();
+    std::fs::write(dir.path().join("t/case.txt"), "c\n").unwrap();
+    let registered = register_surface(
+        dir.path(),
+        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+         \nrecipe check: gen\n    ingredients \"t/*.txt\"\n    test { wc -l t/case.txt }\n",
+    )
+    .unwrap();
+    let meta = test_unit_of(&registered, "check")
+        .cache_meta
+        .as_ref()
+        .expect("a test declaring a source is cacheable");
+    assert_eq!(
+        meta.inputs.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+        vec!["t/case.txt"],
+        "keyed on what it declares, and on nothing the barrier produced"
     );
 }
