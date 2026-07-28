@@ -260,6 +260,13 @@ fn worker_loop(
     // else's work.
     let current_output: Arc<Mutex<Vec<cook_contracts::OutputChunk>>> =
         Arc::new(Mutex::new(Vec::new()));
+    // Whether this item's `print` / `io.write` is captured or passed straight
+    // through to the real stdout. A CHORE is not captured: it owns the
+    // controlling terminal under the single-drain model (§{chores}) and its
+    // output is the product the user asked for, not a build log to attribute.
+    // This is the same distinction the interactive path draws by spawning with
+    // `Stdio::Inherited`.
+    let current_capture: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 
     // CS-0045 sandbox slot. Updated per work item before the body
     // runs: Cook/Test/Chore → Confined { project_root }. There is no
@@ -300,6 +307,17 @@ fn worker_loop(
         cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
     )
     .expect("failed to install shell escape guards");
+
+    // CS-0188: route `print` and `io.write` into the active unit's sink.
+    //
+    // They went to the worker process's own fd 1 — one descriptor shared by
+    // every worker in the pool — so two units printing concurrently interleaved
+    // their bytes with nothing marking whose were whose, and the engine could
+    // not attribute a line to the unit that wrote it. That is why the flush
+    // below had to exist at all: output was escaping through libc rather than
+    // through Cook.
+    install_output_capture(&lua, &current_output, &current_capture)
+        .expect("failed to install output capture");
 
     loop {
         let item = {
@@ -346,6 +364,10 @@ fn worker_loop(
                     let mut out = current_output.lock().expect("output sink lock");
                     out.clear();
                 }
+                current_capture.store(
+                    !matches!(&work.payload, WorkPayload::LuaChunk { is_chore: true, .. }),
+                    Ordering::Relaxed,
+                );
                 // CS-0045: pick the per-item sandbox policy. Cook, Test,
                 // Chore, and any non-LuaChunk payload all run confined to
                 // `project_root` — there is no unsandboxed step kind
@@ -463,6 +485,73 @@ fn worker_loop(
             }
         }
     }
+}
+
+/// Replace `print` and `io.write` on a worker VM so what a Lua body prints
+/// reaches the active unit's sink instead of the process's fd 1 (CS-0188).
+///
+/// The wrappers are written in Lua rather than Rust so that argument handling
+/// stays exactly Lua's: `print` renders each argument with `tostring`, joins
+/// with tabs and appends a newline; `io.write` renders without separators, adds
+/// nothing, and returns the file handle so `io.write(a):write(b)` still chains.
+/// Reimplementing either in Rust would mean reimplementing `tostring`, including
+/// `__tostring` metamethods, and getting it subtly wrong somewhere.
+fn install_output_capture(
+    lua: &mlua::Lua,
+    sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    capture: &Arc<AtomicBool>,
+) -> mlua::Result<()> {
+    let sink = Arc::clone(sink);
+    let capture = Arc::clone(capture);
+    let emit = lua.create_function(move |_, text: mlua::String| {
+        // A chore's body owns the terminal, so its output is the product and
+        // goes straight out, unframed and on stdout, exactly as it did before
+        // CS-0188. Capturing it would move it to the progress stream (stderr)
+        // and wrap it in a unit label, which is the opposite of what someone
+        // running `cook greet` asked for.
+        if !capture.load(Ordering::Relaxed) {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&text.as_bytes());
+            let _ = out.flush();
+            return Ok(());
+        }
+        if let Some(chunk) = cook_contracts::OutputChunk::new(
+            cook_contracts::OutputStream::Stdout,
+            text.as_bytes().to_vec(),
+        ) {
+            sink.lock().expect("output sink lock").push(chunk);
+        }
+        Ok(())
+    })?;
+    lua.globals().set("__cook_emit_output", emit)?;
+
+    lua.load(
+        r#"
+        local _emit = __cook_emit_output
+        function print(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts, '\t') .. '\n')
+        end
+        io.write = function(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts))
+            return io.stdout
+        end
+        "#,
+    )
+    .set_name("@cook:output-capture")
+    .exec()?;
+
+    // The trampoline is an implementation detail of the two wrappers above and
+    // is not part of the execute-phase Lua surface; leaving it reachable would
+    // let a recipe body write arbitrary bytes into another unit's attribution.
+    lua.globals().set("__cook_emit_output", mlua::Value::Nil)?;
+    Ok(())
 }
 
 /// Best-effort extraction of a panic payload's message. Panics raised via

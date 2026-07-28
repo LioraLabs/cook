@@ -73,6 +73,15 @@ struct AssertSpec {
     output_contains: Vec<String>,
     #[serde(default)]
     output_not_contains: Vec<String>,
+    /// Needles that must appear in the combined output **in this order**.
+    ///
+    /// `output_contains` cannot express an ordering claim, and CS-0188 makes
+    /// one normative: a unit whose body calls `cook.sh` more than once reports
+    /// those calls in call order. Nothing else in this harness could pin that.
+    /// Each needle must be present; each must start at or after the end of the
+    /// previous match.
+    #[serde(default)]
+    output_order: Vec<String>,
 }
 
 fn corpus_root() -> PathBuf {
@@ -217,6 +226,31 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
                 return Err(format!(
                     "{label}: output must not contain {needle:?}\n--- output ---\n{combined}"
                 ));
+            }
+        }
+        {
+            let mut cursor = 0usize;
+            let mut previous: Option<&str> = None;
+            for needle in &a.output_order {
+                match combined[cursor..].find(needle.as_str()) {
+                    Some(at) => cursor += at + needle.len(),
+                    None => {
+                        // Distinguish absent from out-of-order: they have
+                        // different causes and different fixes.
+                        let reason = if combined.contains(needle.as_str()) {
+                            match previous {
+                                Some(p) => format!("appears before {p:?}, not after it"),
+                                None => "matched earlier than expected".to_string(),
+                            }
+                        } else {
+                            "is absent entirely".to_string()
+                        };
+                        return Err(format!(
+                            "{label}: output_order: {needle:?} {reason}\n--- output ---\n{combined}"
+                        ));
+                    }
+                }
+                previous = Some(needle.as_str());
             }
         }
         for p in &a.unchanged {

@@ -1,0 +1,36 @@
+# CS-0188 (COOK-377): a Lua body's output belongs to its unit, in call order.
+
+[[run]]
+args = ["luaprint"]
+[run.assert]
+exists = ["out/a.txt"]
+# Every channel a Lua body can print through reaches the same place, attributed
+# to the same unit: `print` (tostring'd, tab-joined, newline-terminated),
+# `io.write` (verbatim), and both of `cook.sh`'s streams.
+output_contains = [
+    "luaprint/out/a.txt] ONE-PRINT\t42",
+    "luaprint/out/a.txt] TWO-IOWRITE",
+    "luaprint/out/a.txt] THREE-SH-OUT",
+    "luaprint/out/a.txt] (stderr) FOUR-SH-ERR",
+    "luaprint/out/a.txt] FIVE-GOT:THREE-SH-OUT",
+]
+# The ordering guarantee itself: across calls, the order is the call order.
+# FIVE follows THREE because the `print` ran after the `cook.sh`, and ONE
+# precedes TWO because it was printed first. Within a single spawn the two
+# streams are separately buffered and do not interleave, which is why THREE and
+# FOUR are not claimed to be in any particular order relative to each other.
+output_order = [
+    "ONE-PRINT",
+    "TWO-IOWRITE",
+    "THREE-SH-OUT",
+    "FIVE-GOT:",
+]
+
+[[run]]
+args = ["greet"]
+[run.assert]
+# A chore owns the terminal: its output is the product, so it is NOT captured,
+# NOT attributed, and NOT framed with a unit label. Same reason the interactive
+# path spawns with inherited stdio.
+output_contains = ["CHORE-PRODUCT"]
+output_not_contains = ["greet/$lua] CHORE-PRODUCT"]

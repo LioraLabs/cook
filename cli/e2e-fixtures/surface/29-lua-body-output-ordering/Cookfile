@@ -1,0 +1,26 @@
+# CS-0188: a Lua body's output is the unit's, and its order is the order the
+# calls ran in.
+#
+# Before CS-0188 this recipe printed NOTHING through the progress stream.
+# `print` and `io.write` went to the worker process's own fd 1 — one descriptor
+# shared by every worker, so concurrent units interleaved with nothing marking
+# whose bytes were whose — and `cook.sh` returned stdout to Lua while discarding
+# stderr outright.
+#
+# The chore below is the deliberate exception: it owns the terminal under the
+# single-drain model, so its output is the product the user asked for and goes
+# straight to stdout, unframed.
+
+recipe luaprint
+    cook "out/a.txt" >{
+        print("ONE-PRINT", 42)
+        io.write("TWO-IOWRITE\n")
+        local v = cook.sh("echo THREE-SH-OUT; echo FOUR-SH-ERR >&2")
+        print("FIVE-GOT:" .. v:gsub("%s+$", ""))
+        local f = assert(io.open(output, "w"))
+        f:write("x")
+        f:close()
+    }
+
+chore greet
+    >{ print("CHORE-PRODUCT") }
