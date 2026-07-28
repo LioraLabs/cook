@@ -6,6 +6,7 @@ description = "Build pipeline orchestrator for the Cook build system"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
+cook-shell = { path = "../cook-shell" }
 cook-probe = { path = "../cook-probe" }
 cook-lang = { path = "../cook-lang" }
 cook-luagen = { path = "../cook-luagen" }

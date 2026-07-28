@@ -148,44 +148,38 @@ fn collect_string_list(t: &LuaTable, field: &str) -> Result<Vec<String>, LuaErro
     Ok(out)
 }
 
-/// Escape a string for embedding in a Lua double-quoted string literal.
-fn lua_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\0' => out.push_str("\\0"),
-            c => out.push(c),
-        }
-    }
-    out
-}
+/// CS-0074: collect the probe keys a `command` references through
+/// `$<key:...>` sigils, so `cook.add_unit` can merge them into the unit's
+/// `probes` list automatically.
+///
+/// **This no longer rewrites the command (CS-0188).** It used to return a Lua
+/// chunk that read each value with `cook.probes.get` and called `cook.sh` with
+/// the resolved text, because §22.5.7 required exactly that. The requirement is
+/// withdrawn: it was a mechanism mandate in a section about substitution, and
+/// the mechanism it mandated is what silenced the unit. A rewritten command
+/// became an execute-phase Lua chunk, whose captured output travelled a
+/// different path from a shell command's, so a step printed nothing when — and
+/// only when — its command happened to mention a probe.
+///
+/// The command now stays a command. Substitution happens where the values live,
+/// in the execute-phase worker, which holds both the resolved probe store and a
+/// live VM and so needs no generated source at all.
+///
+/// Detection uses `cook_contracts::sigil` — `scan` for the placeholder grammar,
+/// `probe_ref` for the key/path split — the same parse codegen uses, so this
+/// path and codegen cannot disagree about what a probe sigil means (COOK-357;
+/// before that the walker was copied here and the two escaped the key
+/// differently).
+///
+/// Returns the distinct keys in order of first appearance; empty for a command
+/// with no probe reference.
+fn scan_probe_keys(command: &str) -> Result<Vec<String>, String> {
+    let spans = cook_contracts::sigil::scan(command);
 
-/// CS-0074: If `command` contains `$<key:...>` probe-value sigils, rewrite it
-/// into a Lua chunk string that performs the substitution using `cook.probes.get`
-/// at execute time and invokes `cook.sh` with the fully-resolved command.
-///
-/// Detection AND lowering use `cook_luagen::sigil` — `scan` for the placeholder
-/// grammar, `probe_ref` for the key/path split and the `cook.probes.get(...)`
-/// access expression — so this path and codegen cannot disagree about what a
-/// probe sigil means (COOK-357; before that the walker was copied here and the
-/// two escaped the key differently).
-///
-/// Returns `Some(lua_code_string, keys)` when probe sigils are detected, `None`
-/// when the command is plain (no rewriting needed).
-///
-/// Also returns the distinct set of probe keys so callers can merge them into
-/// `unit.probes` automatically.
-fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<String>)>, String> {
-    let spans = cook_luagen::sigil::scan(command);
-
-    // CS-0101: `file:` is a reserved placeholder namespace, not a probe key.
-    // Raw register-block add_unit command strings do not support file refs
-    // in v1 — fail loudly rather than misparse `file:x` as a probe key or
-    // silently pass the bytes through.
+    // CS-0101/CS-0187: `file:` is a reserved placeholder namespace, not a probe
+    // key. Raw register-block add_unit command strings do not support file refs
+    // — fail loudly rather than misparse `file:x` as a probe key or silently
+    // pass the bytes through.
     if let Some(span) = spans.iter().find(|s| s.ident.starts_with("file:")) {
         return Err(format!(
             "$<{}>: $<file:PATH> is not supported in raw cook.add_unit command strings; \
@@ -194,56 +188,18 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
         ));
     }
 
-    // Parse every probe-shaped sigil once, keeping the span alongside its
-    // parsed reference. `probe_ref` owns the colon discriminator AND the
-    // `file:` exclusion, so there is no second filter to keep in step.
-    let refs: Vec<(&cook_luagen::sigil::PlaceholderSpan, Option<cook_luagen::sigil::ProbeRef>)> =
-        spans.iter().map(|s| (s, cook_luagen::sigil::probe_ref(&s.ident))).collect();
-    if refs.iter().all(|(_, r)| r.is_none()) {
-        return Ok(None);
-    }
-
-    // Collect distinct probe keys in order of first appearance.
-    let mut seen_keys = std::collections::BTreeSet::new();
+    // `probe_ref` owns the colon discriminator AND the `file:` exclusion, so
+    // there is no second filter to keep in step.
+    let mut seen = std::collections::BTreeSet::new();
     let mut keys: Vec<String> = vec![];
-    for (_, r) in refs.iter().filter(|(_, r)| r.is_some()) {
-        let key = r.as_ref().unwrap().key();
-        if seen_keys.insert(key.to_string()) {
-            keys.push(key.to_string());
+    for span in &spans {
+        if let Some(r) = cook_contracts::sigil::probe_ref(&span.ident) {
+            if seen.insert(r.key().to_string()) {
+                keys.push(r.key().to_string());
+            }
         }
     }
-
-    // Build the command as a Lua concatenation expression over all spans.
-    let mut parts: Vec<String> = vec![];
-    let mut cursor = 0usize;
-
-    for (span, probe) in &refs {
-        if span.range.start > cursor {
-            parts.push(format!("\"{}\"", lua_escape(&command[cursor..span.range.start])));
-        }
-        if let Some(r) = probe {
-            // Probe-value sigil → cache read.
-            parts.push(format!("tostring({})", r.lua_access()));
-        } else {
-            // Non-probe sigil in a register-block add_unit command — treat as
-            // literal (the sigil text, including $<...>). These are unusual but
-            // must not corrupt the Lua chunk.
-            parts.push(format!("\"{}\"", lua_escape(&command[span.range.clone()])));
-        }
-        cursor = span.range.end;
-    }
-    if cursor < command.len() {
-        parts.push(format!("\"{}\"", lua_escape(&command[cursor..])));
-    }
-
-    let concat_expr = if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    };
-    let lua = format!("cook.sh({} )", concat_expr);
-
-    Ok(Some((lua, keys)))
+    Ok(keys)
 }
 
 /// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
@@ -943,15 +899,6 @@ pub fn register_unit_api(
                     .to_string(),
             ));
         }
-        let iteration_item: Option<String> = match tbl.get::<LuaValue>("iteration_item") {
-            Ok(LuaValue::Nil) | Err(_) => None,
-            Ok(LuaValue::String(v)) => {
-                let sv = v.to_string_lossy().to_string();
-                if sv.is_empty() { None } else { Some(sv) }
-            }
-            Ok(other) => return Err(type_err("iteration_item", "a string", other.type_name())),
-        };
-
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
         let is_chore = {
@@ -1000,33 +947,39 @@ pub fn register_unit_api(
                 )));
             }
         }
+        // CS-0191: a test unit takes the same payloads as any other unit,
+        // because that is what it is. CS-0185 made it register through the one
+        // function; CS-0186 made it cache through the one record; this is the
+        // same sentence reaching the runner. A command becomes `Shell`, a body
+        // becomes `LuaChunk`, and what is left over — the name the reporter
+        // knows it by — rides on the unit as `test_name`.
+        //
+        // Gone with the variant: `timeout`, hardcoded `u64::MAX` since CS-0135
+        // removed the modifier that set it, so the kill loop reading it was
+        // unreachable; `should_fail`, hardcoded `false` on the same terms, with
+        // inversion written into the body instead; and `iteration_item`, which
+        // CS-0185 already recorded as a duplicate of `member` and which is now
+        // simply `member`.
+        let test_name: Option<String> =
+            is_test.then(|| format!("{}_test{}", current_recipe, line));
         let payload = if is_test {
-            // CS-0185: a test unit is recorded here, by the one registration
-            // function, from the same fields every other unit uses. Named from
-            // its LINE rather than an ordinal, so naming needs nothing from the
-            // recipe body and this branch sits with the others instead of
-            // after the body borrow.
-            WorkPayload::Test {
-                // An empty `lua_code` reads as ABSENT, matching the removed
-                // function: `{ command = "true", lua_code = "" }` is a command
-                // test, not a body-less one.
-                cmd: if lua_code.as_deref().is_some_and(|c| !c.is_empty()) {
-                    String::new()
-                } else {
-                    command
+            // An empty `lua_code` reads as ABSENT, matching the removed
+            // `cook.add_test`: `{ command = "true", lua_code = "" }` is a
+            // command test, not a body-less one.
+            match lua_code.filter(|c| !c.is_empty()) {
+                Some(code) => WorkPayload::LuaChunk {
+                    code,
+                    inputs: inputs.clone(),
+                    // A test declares no outputs. That is the whole of what
+                    // makes it an observing unit (§17.1.1.1); nothing else
+                    // about it is special.
+                    outputs: Vec::new(),
+                    ingredient_groups: vec![],
+                    step_kind,
+                    is_chore: false,
+                    line,
                 },
-                line,
-                // CS-0135 removed the `timeout` modifier and there is no
-                // per-test time bound in v1.0, so the executor's kill loop
-                // never fires. Retained on the payload for a planned 1.x
-                // re-add.
-                timeout: u64::MAX,
-                // CS-0135 removed the `should_fail` modifier; inversion is
-                // written into the body instead (`! grep -q ...`).
-                should_fail: false,
-                test_name: format!("{}_test{}", current_recipe, line),
-                iteration_item,
-                lua_code: lua_code.filter(|c| !c.is_empty()),
+                None => WorkPayload::Shell { cmd: command, line },
             }
         } else if let Some(code) = lua_code {
             let (final_code, chunk_line) = if !chore_param_prelude.is_empty() && is_chore {
@@ -1070,47 +1023,39 @@ pub fn register_unit_api(
         } else if interactive {
             WorkPayload::Interactive { cmd: command, line, is_chore }
         } else {
-            // CS-0074: scan command for `$<key:field>` probe-value sigils.
-            // If found, rewrite as a LuaChunk that resolves the values at
-            // execute time via cook.probes.get and calls cook.sh. Also
-            // auto-add the detected probe keys to probes.
+            // CS-0074: scan the command for `$<key:field>` probe-value
+            // sigils and auto-add the keys it references to `probes`, so the
+            // unit gets its DAG edge, its fingerprint fold and demand-driven
+            // scheduling without the author restating what the command already
+            // says.
             //
-            // CS-0127 / CS-0153: the rewritten LuaChunk carries the
-            // ALREADY-PARSED `step_kind` local (see above) rather than a
-            // hardcoded `StepKind::Cook`. In current codegen this arm is
-            // reached only by non-interactive `cook`-step commands (chore
-            // shell steps lower with `interactive = true`, see
-            // cook-luagen/src/recipe.rs, and become
-            // `WorkPayload::Interactive` before this match), so the local
-            // always holds the `Cook` default here — but a hand-authored
-            // module call may pass `step_kind = "chore"` directly, and the
-            // field remains load-bearing for diagnostics and any future
-            // step kind (CS-0135: every step kind is sandboxed identically
-            // today). Test bodies never reach this arm at all: since the
-            // v1.0 language cut, codegen lowers test bodies exclusively
-            // through `cook.add_test` (cli/crates/cook-luagen/src/test_step.rs),
-            // which builds `WorkPayload::Test` directly — a payload variant
-            // that carries no `StepKind` — and `step_kind = "test"` is now a
-            // hard register-phase rejection on this API (CS-0153, see
-            // above), so `StepKind::Test` is never constructed here.
-            match try_expand_probe_templates(&command) {
-                Ok(Some((lua_code, detected_keys))) => {
+            // CS-0188: the command is NOT rewritten. It used to become a
+            // LuaChunk calling `cook.probes.get` and `cook.sh`, which is what
+            // made a probe-referencing step silent — that path reported no
+            // captured output. §22.5.7's requirement to rewrite is withdrawn,
+            // so a `command` is a Shell unit whether or not it mentions a
+            // probe, and the two report identically. Substitution moved to the
+            // worker, which has the values and a VM and needs no generated
+            // source.
+            //
+            // This also retires the CS-0127/CS-0153 concern that used to live
+            // here: the rewritten chunk had to carry the originating
+            // `step_kind` so it ran under the right sandbox policy. There is
+            // no chunk, and a shell command was never confined by the Lua
+            // sandbox in the first place, so there is nothing left to carry.
+            match scan_probe_keys(&command) {
+                Ok(detected_keys) => {
                     for k in detected_keys {
                         if !probes.contains(&k) {
                             probes.push(k);
                         }
                     }
-                    WorkPayload::LuaChunk {
-                        code: lua_code,
-                        inputs: inputs.clone(),
-                        outputs: output_paths.clone(),
-                        ingredient_groups: vec![],
-                        step_kind,
-                        is_chore,
-                        line,
-                    }
+                    // `line`, where the no-probe arm used to hardcode 0. Two
+                    // units differing only by a probe reference reported
+                    // different lines in their failures, which is the same
+                    // divergence in miniature.
+                    WorkPayload::Shell { cmd: command, line }
                 }
-                Ok(None) => WorkPayload::Shell { cmd: command, line: 0 },
                 Err(e) => {
                     return Err(LuaError::runtime(format!(
                         "cook.add_unit: malformed probe placeholder in command: {e}"
@@ -1189,6 +1134,7 @@ pub fn register_unit_api(
             probes,
             unit_env_vars,
             member: member.clone(),
+            test_name,
             output_paths: output_paths.clone(),
         });
         if let DepKind::StepGroup(gi) = &dep_kind {

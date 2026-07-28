@@ -41,6 +41,7 @@ pub type SharedProbeRegistry = Rc<RefCell<ProbeRegistry>>;
 /// * `registry`    — receives each successful `cook.probe` call.
 /// * `body_slot`   — the active body capture state. When a body is active
 ///                   (body-scoped `cook.probe`), each probe is also pushed
+///                   as a `CapturedUnit { payload: WorkPayload::Probe { … } ///                   as a `CapturedUnit { payload: WorkPayload::Probe { … }     test_name: None,
 ///                   as a `CapturedUnit { payload: WorkPayload::Probe { … } }`
 ///                   onto the body's units vector so the DAG builder schedules
 ///                   probe work as a consumer of the recipe (CS-0074 Bug 1).
@@ -163,6 +164,7 @@ pub fn install_cook_probe(
                 probes: inputs.requires,
                 unit_env_vars: Default::default(),
                 member: None,
+                test_name: None,
                 output_paths: Vec::new(),
             });
         }

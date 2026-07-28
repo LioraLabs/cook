@@ -1,0 +1,11 @@
+[package]
+name = "cook-shell"
+version.workspace = true
+edition = "2021"
+description = "Runs a shell command and reports what it did, for the Cook build system"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+
+[dev-dependencies]
+tempfile = "3"

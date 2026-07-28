@@ -119,16 +119,6 @@ pub(crate) fn cook_step_mode_with_names(
     }
 }
 
-/// Join a shell-block's lines with `\n`, prepended with `set -e`.
-/// The result is a single shell text suitable for `/bin/sh -c`.
-fn build_shell_block_command(lines: &[String], _recipe_names: &BTreeSet<String>) -> String {
-    let mut out = String::from("set -e");
-    for line in lines {
-        out.push('\n');
-        out.push_str(line);
-    }
-    out
-}
 
 /// Convert a `CookMode` to the resolver `IterMode`.
 pub(crate) fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
@@ -248,7 +238,7 @@ pub(crate) fn generate_cook_step(
             let mut consulted = ConsultedEnv::new();
             let add_unit_line = match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
-                    let combined = build_shell_block_command(lines, recipe_names);
+                    let combined = cook_contracts::shell_block::compose(lines);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted,
@@ -321,7 +311,7 @@ pub(crate) fn generate_cook_step(
 
             let add_unit_line = match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
-                    let combined = build_shell_block_command(lines, recipe_names);
+                    let combined = cook_contracts::shell_block::compose(lines);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted,
@@ -378,7 +368,7 @@ pub(crate) fn generate_cook_step(
 
             match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
-                    let combined = build_shell_block_command(lines, recipe_names);
+                    let combined = cook_contracts::shell_block::compose(lines);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = expand_command_template(
                         &combined, &ctx, &mut consulted,
@@ -427,7 +417,7 @@ pub(crate) fn generate_cook_step(
 
             let add_unit_line = match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
-                    let combined = build_shell_block_command(lines, recipe_names);
+                    let combined = cook_contracts::shell_block::compose(lines);
                     // OneToMany: multi-output, one-to-one iteration
                     let oto_many_ctx = crate::template::cook_step_ctx(
                         IterMode::OneToOne,
@@ -489,7 +479,7 @@ pub(crate) fn generate_cook_step(
 
             match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
-                    let combined = build_shell_block_command(lines, recipe_names);
+                    let combined = cook_contracts::shell_block::compose(lines);
                     let mut consulted = ConsultedEnv::new();
                     // BlockStep: many-to-one with multi outputs
                     let block_ctx = crate::template::cook_step_ctx(
@@ -585,7 +575,7 @@ pub(crate) fn generate_member_fanout_cook_step(
 
     let add_unit_line = match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
-            let combined = build_shell_block_command(lines, recipe_names);
+            let combined = cook_contracts::shell_block::compose(lines);
             let (cmd_concat, probe_keys) = crate::template::expand_member_fanout_template(
                 &combined,
                 &ctx,

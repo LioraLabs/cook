@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
-use cook_contracts::{CapturedStream, CommandFailure, WorkPayload};
+use cook_contracts::{CommandFailure, WorkPayload};
 use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
     artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
@@ -79,9 +79,17 @@ fn emit(tx: &Option<mpsc::Sender<EngineEvent>>, event: EngineEvent) {
 // Compile/Link/Generate/etc. for individual sub-units, at which point the
 // classifier may need access to richer metadata than `WorkPayload` carries.
 
-fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
+/// CS-0191: takes the NODE, not the payload. Test-ness is no longer something
+/// a payload can say — a test runs a command or a Lua body like anything else —
+/// so the classifier asks the unit whether it is reported as one.
+fn node_kind_for_node(node: &WorkNode) -> NodeKind {
+    if node.is_test() {
+        return NodeKind::Test;
+    }
+    let Some(payload) = &node.payload else {
+        return NodeKind::Cooked;
+    };
     match payload {
-        WorkPayload::Test { .. } => NodeKind::Test,
         WorkPayload::Shell { .. }
         | WorkPayload::Interactive { .. }
         | WorkPayload::LuaChunk { .. } => NodeKind::Cooked,
@@ -98,6 +106,43 @@ fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
 /// index nor the display name can serve.
 fn node_cache_key(node: &WorkNode) -> Option<String> {
     node.cache_meta.as_ref().map(|m| m.cache_key.clone())
+}
+
+/// Expand a unit's captured output into the per-line events the progress stream
+/// carries.
+///
+/// CS-0188 records output as byte chunks, one per stream per spawn, because
+/// that is what the mechanism can honestly supply: two pipes buffered
+/// separately do not interleave. The event stream is line-oriented, so the
+/// split happens here — and so does the lossy UTF-8 decode, which belongs at
+/// the render, where the loss is local and visible, rather than at the capture,
+/// where it would be permanent.
+/// A unit's captured output on one stream, as text.
+///
+/// CS-0191: the test reporter wants `stdout` and `stderr` separately, which
+/// `TestOutput` used to carry as two pre-decoded strings alongside the same
+/// bytes in `output_lines`. One representation now, decoded here at the render.
+fn chunk_stream_text(
+    chunks: &[cook_contracts::OutputChunk],
+    want: cook_contracts::OutputStream,
+) -> String {
+    let mut out = String::new();
+    for c in chunks.iter().filter(|c| c.stream() == want) {
+        out.push_str(&c.lossy());
+    }
+    out
+}
+
+fn output_event_lines(
+    chunks: &[cook_contracts::OutputChunk],
+) -> impl Iterator<Item = (cook_contracts::OutputStream, String)> + '_ {
+    chunks.iter().flat_map(|c| {
+        let stream = c.stream();
+        c.lossy()
+            .lines()
+            .map(|l| (stream, l.to_string()))
+            .collect::<Vec<_>>()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -274,34 +319,26 @@ fn run_interactive_on_main(
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
 ) -> Result<(), String> {
-    let mut child_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
-
     // COOK-306: an executed command may write anywhere in the tree.
     cook_fingerprint::statmemo::disarm();
-    let status = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(working_dir)
-        .envs(&child_env)
-        .status()
-        .map_err(|e| format!("failed to execute: {e}"))?;
+    // `Inherited`, and only here: an interactive command owns the controlling
+    // terminal, so its output must reach the user's tty as it happens rather
+    // than arriving as a buffer afterwards. Nothing is captured, which is why
+    // the failure this builds carries two empty streams — the bytes went to the
+    // terminal and were never ours to hold. That was true before CS-0188 too;
+    // what changes is that it now falls out of the stdio mode instead of being
+    // hand-written as a pair of `from_bytes(&[])` calls that read like an
+    // oversight.
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn { command: cmd, working_dir, stdio: cook_shell::Stdio::Inherited },
+        env_vars,
+    )
+    .map_err(|e| e.message().to_string())?;
 
-    if !status.success() {
-        let code = status.code().unwrap_or(1);
-        return Err(CommandFailure::new(
-            line,
-            code,
-            cmd,
-            CapturedStream::from_bytes(&[]),
-            CapturedStream::from_bytes(&[]),
-        )
-        .to_wire());
+    match outcome.failure(line, cmd) {
+        Some(failure) => Err(failure.to_wire()),
+        None => Ok(()),
     }
-
-    Ok(())
 }
 
 fn progress_error(error: &str) -> String {
@@ -598,7 +635,9 @@ pub fn execute_dag(
             },
         );
         // Emit TestBlocked and synthesize a Blocked TestResult for test-step nodes.
-        if let Some(WorkPayload::Test { test_name, should_fail, line, iteration_item, .. }) = &work_node.payload {
+        if let Some(test_name) = &work_node.test_name {
+            let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
+            let iteration_item = &work_node.member;
             let id_str = match iteration_item {
                 Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
                 _ => format!("{}:{}", work_node.recipe_name, test_name),
@@ -609,7 +648,7 @@ pub fn execute_dag(
                 EngineEvent::TestBlocked {
                     id: test_id.clone(),
                     upstream: upstream_name.to_string(),
-                    line: *line as u32,
+                    line: line as u32,
                 },
             );
             let namespace = crate::id::id_namespace(&test_id);
@@ -627,9 +666,9 @@ pub fn execute_dag(
                 stderr: String::new(),
                 fingerprint: None,
                 blocked_by: Some(upstream_name.to_string()),
-                should_fail: *should_fail,
+                should_fail: false,
                 timed_out: false,
-                line: *line as u32,
+                line: line as u32,
                 exit_code: None,
             });
         }
@@ -1140,7 +1179,17 @@ pub fn execute_dag(
                 interactive_queue.push(id);
                 0
             }
-            Some(WorkPayload::Test { test_name, should_fail, line, iteration_item, .. }) => {
+            // CS-0191: a guard on the NODE, not a payload arm. A test runs a
+            // command or a Lua body like any other unit, so there is no
+            // payload shape left to match on — what makes this arm apply is
+            // that the unit is reported as a test. Placed after the
+            // interactive and chore arms, which a test is never either of, and
+            // before the generic dispatch it falls through to on a miss.
+            _ if work_node.is_test() => {
+                let test_name = work_node.test_name.clone().unwrap_or_default();
+                let test_name = &test_name;
+                let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
+                let iteration_item = &work_node.member;
                 // CS-0186: a test unit's verdict comes from the step index, by
                 // the same check every other unit gets. A hit IS a pass —
                 // §17.4 rule 2 admits only a passed outcome to the cache, so
@@ -1191,17 +1240,17 @@ pub fn execute_dag(
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
                                 name: test_name.clone(),
-                                line: *line as u32,
+                                line: line as u32,
                                 iteration_item: iteration_item.clone(),
                             });
                             emit(event_tx, EngineEvent::TestPassed {
                                 id: test_id.clone(),
                                 duration,
                                 cached: true,
-                                should_fail: *should_fail,
+                                should_fail: false,
                                 stdout: String::new(),
                                 stderr: String::new(),
-                                line: *line as u32,
+                                line: line as u32,
                             });
                             // Register the node under its derived name (CS-0160)
                             // before completing it. `NodeCompleted` only updates a
@@ -1255,9 +1304,9 @@ pub fn execute_dag(
                                 stderr: String::new(),
                                 fingerprint: Some(node_cache_key(work_node).unwrap_or_default()),
                                 blocked_by: None,
-                                should_fail: *should_fail,
+                                should_fail: false,
                                 timed_out: false,
-                                line: *line as u32,
+                                line: line as u32,
                                 exit_code: None,
                             });
 
@@ -1306,11 +1355,11 @@ pub fn execute_dag(
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
                         unit: id,
-                        node_name: payload.display_name(),
+                        node_name: work_node.display_name(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        fallback_label: payload.display_name(),
-                        kind: node_kind_for_payload(payload),
+                        fallback_label: work_node.display_name(),
+                        kind: node_kind_for_node(work_node),
                         cause: miss_cause,
                         cache_key: node_cache_key(work_node),
                     },
@@ -1326,7 +1375,7 @@ pub fn execute_dag(
                         id: crate::id::parse_test_id(&test_id_str),
                         recipe: work_node.recipe_name.clone(),
                         name: test_name.clone(),
-                        line: *line as u32,
+                        line: line as u32,
                         iteration_item: iteration_item.clone(),
                     },
                 );
@@ -1339,7 +1388,7 @@ pub fn execute_dag(
                         EngineEvent::NodeFailed {
                             recipe: work_node.recipe_name.clone(),
                             unit: id,
-                            node_name: payload.display_name(),
+                            node_name: work_node.display_name(),
                             elapsed: std::time::Duration::ZERO,
                             error: err_msg.clone(),
                         },
@@ -1356,7 +1405,6 @@ pub fn execute_dag(
 
                 let env_vars_hashmap: std::collections::HashMap<String, String> =
                     work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                let _ = should_fail; // used in the TestPassed path via TestOutput
                 pool.submit(WorkItem {
                     id,
                     payload: payload.clone(),
@@ -1636,10 +1684,10 @@ pub fn execute_dag(
                             EngineEvent::NodeCacheHit {
                                 recipe: work_node.recipe_name.clone(),
                                 unit: id,
-                                node_name: payload.display_name(),
+                                node_name: work_node.display_name(),
                                 artifact: work_node.cache_meta.as_ref()
                                     .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                                kind: node_kind_for_payload(payload),
+                                kind: node_kind_for_node(work_node),
                             },
                         );
                         finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -1683,7 +1731,7 @@ pub fn execute_dag(
                             EngineEvent::NodeFailed {
                                 recipe: work_node.recipe_name.clone(),
                                 unit: id,
-                                node_name: payload.display_name(),
+                                node_name: work_node.display_name(),
                                 elapsed: Duration::ZERO,
                                 error: msg.clone(),
                             },
@@ -1712,18 +1760,20 @@ pub fn execute_dag(
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
                         unit: id,
-                        node_name: payload.display_name(),
+                        node_name: work_node.display_name(),
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        fallback_label: payload.display_name(),
-                        kind: node_kind_for_payload(payload),
+                        fallback_label: work_node.display_name(),
+                        kind: node_kind_for_node(work_node),
                         cause: miss_cause,
                         cache_key: node_cache_key(work_node),
                     },
                 );
                 // Emit TestStarted for test-step nodes so Phase 4 reporters can
                 // track in-flight tests.
-                if let WorkPayload::Test { test_name, line, iteration_item, .. } = payload {
+                if let Some(test_name) = &work_node.test_name {
+                    let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
+                    let iteration_item = &work_node.member;
                     let test_id_str = match iteration_item {
                         Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
                         _ => format!("{}:{}", work_node.recipe_name, test_name),
@@ -1735,7 +1785,7 @@ pub fn execute_dag(
                             id: test_id,
                             recipe: work_node.recipe_name.clone(),
                             name: test_name.clone(),
-                            line: *line as u32,
+                            line: line as u32,
                             iteration_item: iteration_item.clone(),
                         },
                     );
@@ -1753,7 +1803,7 @@ pub fn execute_dag(
                         EngineEvent::NodeFailed {
                             recipe: work_node.recipe_name.clone(),
                             unit: id,
-                            node_name: payload.display_name(),
+                            node_name: work_node.display_name(),
                             elapsed: Duration::ZERO,
                             error: err_msg.clone(),
                         },
@@ -2033,13 +2083,16 @@ pub fn execute_dag(
                                     match rx.recv() {
                                         Ok(work_result) => {
                                             // Forward any captured output.
-                                            // Lua chunks normally inherit
-                                            // stdout/stderr so this list is
-                                            // empty, but forwarding any
-                                            // captured lines preserves the
-                                            // CS-0035 fd-of-origin contract
-                                            // for downstream observers.
-                                            for (stream, line) in &work_result.output_lines {
+                                            // CS-0188: a Lua chunk's output is
+                                            // no longer empty here. Its
+                                            // `cook.sh` calls now push both
+                                            // streams into the unit's sink, in
+                                            // call order, so this forwards what
+                                            // the body actually printed rather
+                                            // than the nothing it used to.
+                                            for (stream, line) in
+                                                output_event_lines(&work_result.output_lines)
+                                            {
                                                 emit(
                                                     &event_tx,
                                                     EngineEvent::OutputLine {
@@ -2052,8 +2105,8 @@ pub fn execute_dag(
                                                             .as_ref()
                                                             .map(|p| p.display_name())
                                                             .unwrap_or_default(),
-                                                        line: line.clone(),
-                                                        stream: *stream,
+                                                        line,
+                                                        stream,
                                                     },
                                                 );
                                             }
@@ -2492,15 +2545,15 @@ pub fn execute_dag(
             // Emit output lines.  Each captured line carries its fd-of-origin
             // (CS-0035) so the OutputLine event reflects stdout vs stderr
             // honestly instead of hardcoding stdout.
-            for (stream, line) in &result.output_lines {
+            for (stream, line) in output_event_lines(&result.output_lines) {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        line: line.clone(),
-                        stream: *stream,
+                        line,
+                        stream,
                     },
                 );
             }
@@ -2515,11 +2568,7 @@ pub fn execute_dag(
                     // execution (queue wait excluded) — see
                     // `WorkResult::duration` in cook-luaotp/src/pool.rs.
                     elapsed: result.duration,
-                    kind: work_node
-                        .payload
-                        .as_ref()
-                        .map(node_kind_for_payload)
-                        .unwrap_or(NodeKind::Cooked),
+                    kind: node_kind_for_node(work_node),
                     cache_key: node_cache_key(work_node),
                 },
             );
@@ -2542,36 +2591,40 @@ pub fn execute_dag(
 
             finish_recipe_node(&mut recipe_trackers, &recipe_name, false, false, &event_tx);
 
-            // Translate test output to a TestResult and emit TestPassed event.
-            if let Some(to) = result.test_output {
+            // CS-0191: a passing test's result is derived from the same
+            // `WorkResult` every unit produces, plus the node's own reporting
+            // identity. `TestOutput` used to carry a second copy of the run —
+            // its streams, its duration, its exit status — built by executors
+            // that existed only for tests.
+            if let Some(test_name) = dag.node(result.id).payload().test_name.clone() {
+                let node = dag.node(result.id).payload();
+                let line_no = node.payload.as_ref().map(|p| p.line()).unwrap_or(0) as u32;
+                let iteration_item_opt = node.member.clone();
+                let stdout =
+                    chunk_stream_text(&result.output_lines, cook_contracts::OutputStream::Stdout);
+                let stderr =
+                    chunk_stream_text(&result.output_lines, cook_contracts::OutputStream::Stderr);
                 // Build the TestId in `<recipe>:<test_name>[<item>]` format so the
-                // reporter can extract the recipe portion. `result.node_name`
-                // is the raw display_name (= test_name alone); `recipe_name`
-                // carries the fully-qualified recipe name.
-                // CS-0186: the record is written by `publish_completion` above,
-                // on the one publish path every unit shares. There is no
-                // second write site and no second key to recompute here.
-                let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
-                    Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
-                    _ => (0, None),
-                };
+                // reporter can extract the recipe portion.
                 let id_str = match &iteration_item_opt {
-                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, to.test_name, item),
-                    _ => format!("{}:{}", recipe_name, to.test_name),
+                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, test_name, item),
+                    _ => format!("{}:{}", recipe_name, test_name),
                 };
                 let id = crate::id::parse_test_id(&id_str);
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
-                let duration = Duration::from_secs_f64(to.duration);
+                let duration = result.duration;
                 emit(
                     &event_tx,
                     EngineEvent::TestPassed {
                         id: id.clone(),
                         duration,
                         cached: false,
-                        should_fail: to.should_fail,
-                        stdout: to.stdout.clone(),
-                        stderr: to.stderr.clone(),
+                        // CS-0135 removed the modifier that set this; inversion
+                        // is written into the body instead.
+                        should_fail: false,
+                        stdout: stdout.clone(),
+                        stderr: stderr.clone(),
                         line: line_no,
                     },
                 );
@@ -2579,23 +2632,23 @@ pub fn execute_dag(
                     id,
                     namespace,
                     recipe,
-                    name: to.test_name.clone(),
+                    name: test_name,
                     iteration_item: iteration_item_opt,
                     outcome: crate::TestOutcome::Passed,
                     duration,
                     from_cache: false,
-                    stdout: to.stdout.clone(),
-                    stderr: to.stderr.clone(),
+                    stdout,
+                    stderr,
                     // The unit's identity in the step index (§17.1.1.1). It was
                     // the ready-time content digest of a store that no longer
                     // exists; a reader asking "which record is this" now gets
                     // the same answer `cook why` prints.
                     fingerprint: node_cache_key(dag.node(result.id).payload()),
                     blocked_by: None,
-                    should_fail: to.should_fail,
+                    should_fail: false,
                     timed_out: false,
                     line: line_no,
-                    exit_code: to.exit_code,
+                    exit_code: result.exit_code,
                 });
 
             }
@@ -2626,81 +2679,76 @@ pub fn execute_dag(
             }
         } else {
             // Emit output lines even on failure (CS-0035 — stream tagged).
-            for (stream, line) in &result.output_lines {
+            for (stream, line) in output_event_lines(&result.output_lines) {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         unit: result.id,
                         node_name: result.node_name.clone(),
-                        line: line.clone(),
-                        stream: *stream,
+                        line,
+                        stream,
                     },
                 );
             }
 
-            // Translate test output to a TestResult and emit TestFailed/TestTimedOut event.
-            if let Some(ref to) = result.test_output {
-                // Build the TestId in `<recipe>:<test_name>[<item>]` format (same as TestStarted).
-                let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
-                    Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
-                    _ => (0, None),
-                };
+            // CS-0191: same derivation as the passing path, from the one
+            // `WorkResult` and the node's reporting identity.
+            //
+            // `timed_out` no longer has a branch: CS-0135 removed the `timeout`
+            // modifier, so the field arrived hardcoded at `u64::MAX` and the
+            // kill loop that set this could not fire. `TestOutcome::TimedOut`
+            // and `EngineEvent::TestTimedOut` survive as unreachable-by-
+            // construction rather than being deleted here, because reinstating
+            // a time bound is a language decision and not this ticket's.
+            if let Some(test_name) = dag.node(result.id).payload().test_name.clone() {
+                let node = dag.node(result.id).payload();
+                let line_no = node.payload.as_ref().map(|p| p.line()).unwrap_or(0) as u32;
+                let iteration_item_opt = node.member.clone();
+                let stdout =
+                    chunk_stream_text(&result.output_lines, cook_contracts::OutputStream::Stdout);
+                let stderr =
+                    chunk_stream_text(&result.output_lines, cook_contracts::OutputStream::Stderr);
                 let id_str = match &iteration_item_opt {
-                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, to.test_name, item),
-                    _ => format!("{}:{}", recipe_name, to.test_name),
+                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, test_name, item),
+                    _ => format!("{}:{}", recipe_name, test_name),
                 };
                 let id = crate::id::parse_test_id(&id_str);
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
-                let duration = Duration::from_secs_f64(to.duration);
-                let outcome = if to.timed_out {
-                    emit(
-                        &event_tx,
-                        EngineEvent::TestTimedOut {
-                            id: id.clone(),
-                            timeout: duration,
-                            stdout: to.stdout.clone(),
-                            stderr: to.stderr.clone(),
-                            line: line_no,
+                let duration = result.duration;
+                emit(
+                    &event_tx,
+                    EngineEvent::TestFailed {
+                        id: id.clone(),
+                        duration,
+                        stdout: stdout.clone(),
+                        stderr: stderr.clone(),
+                        reason: crate::TestFailureReason::ExitStatusMismatch {
+                            expected_success: true,
+                            observed_success: false,
+                            exit_code: result.exit_code,
                         },
-                    );
-                    crate::TestOutcome::TimedOut
-                } else {
-                    emit(
-                        &event_tx,
-                        EngineEvent::TestFailed {
-                            id: id.clone(),
-                            duration,
-                            stdout: to.stdout.clone(),
-                            stderr: to.stderr.clone(),
-                            reason: crate::TestFailureReason::ExitStatusMismatch {
-                                expected_success: !to.should_fail,
-                                observed_success: to.exit_success,
-                                exit_code: to.exit_code,
-                            },
-                            line: line_no,
-                        },
-                    );
-                    crate::TestOutcome::Failed
-                };
+                        line: line_no,
+                    },
+                );
                 test_results.push(crate::TestResult {
                     id,
                     namespace,
                     recipe,
-                    name: to.test_name.clone(),
+                    name: test_name,
                     iteration_item: iteration_item_opt,
-                    outcome,
+                    outcome: crate::TestOutcome::Failed,
                     duration,
                     from_cache: false,
-                    stdout: to.stdout.clone(),
-                    stderr: to.stderr.clone(),
+                    stdout,
+                    stderr,
                     fingerprint: None,
                     blocked_by: None,
-                    should_fail: to.should_fail,
-                    timed_out: to.timed_out,
+                    should_fail: false,
+                    timed_out: false,
                     line: line_no,
-                    exit_code: to.exit_code,
+                    exit_code: result.exit_code,
                 });
             }
 
@@ -2733,7 +2781,7 @@ pub fn execute_dag(
             //
             // Hard failures (test_output is None for a Test payload, or any non-Test
             // payload failure) go into `failures` as before and cancel dependents.
-            let is_test_semantic_failure = result.test_output.is_some();
+            let is_test_semantic_failure = dag.node(result.id).payload().is_test();
             if is_test_semantic_failure {
                 // Soft failure: emit NodeFailed for observability but don't escalate.
                 emit(

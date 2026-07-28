@@ -1,12 +1,11 @@
 use mlua::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::rc::Rc;
 use std::cell::RefCell;
 
 use cook_contracts::{
-    CapturedStream, CapturedUnit, CommandFailure, DepKind, WorkPayload,
+    CapturedUnit, DepKind, WorkPayload,
     REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
 };
 
@@ -592,6 +591,7 @@ pub fn install_cook_api(
                 probes: vec![],
                 unit_env_vars: Default::default(),
                 member: None,
+                test_name: None,
                 output_paths: Vec::new(),
             };
             body.units.push(unit);
@@ -618,6 +618,7 @@ pub fn install_cook_api(
             probes: vec![],
             unit_env_vars: Default::default(),
             member: None,
+            test_name: None,
             output_paths: Vec::new(),
         };
         body.units.push(unit);
@@ -814,6 +815,20 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
     None
 }
 
+/// `cook.sh` at register phase (§{lua.cook-sh}).
+///
+/// The twin of `cook_luaotp::pool`'s worker-phase implementation, and this
+/// milestone opened by naming them: "Command-failure formatting was fixed in
+/// one producer while its twin remained broken." They are no longer twins.
+/// Both call the one primitive, which builds the `CommandFailure` for both, so
+/// a change to how a failure reads can no longer reach one and miss the other.
+///
+/// The register phase deliberately does NOT disarm `cook-fingerprint`'s stat
+/// memo. Registration is capture mode (§{exec.capture}): a register-phase
+/// `cook.sh` must not modify files under the working directory in a way that
+/// affects declared outputs, so there is nothing for the memo to have gone
+/// stale against. That asymmetry is exactly why disarming belongs to the
+/// callers rather than to `cook-shell`.
 fn run_shell_command(
     cmd: &str,
     wd: &std::path::Path,
@@ -821,33 +836,16 @@ fn run_shell_command(
     line: usize,
     _recipe_name: &str,
 ) -> mlua::Result<String> {
-    let mut child_env: HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env {
-        child_env.insert(k.clone(), v.clone());
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
+        env,
+    )
+    .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
+
+    if let Some(failure) = outcome.failure(line, cmd) {
+        return Err(mlua::Error::runtime(failure.to_wire()));
     }
-
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(wd)
-        .envs(&child_env)
-        .output()
-        .map_err(|e| mlua::Error::runtime(format!("failed to execute: {e}")))?;
-
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(1);
-        return Err(mlua::Error::runtime(CommandFailure::new(
-            line,
-            code,
-            cmd,
-            CapturedStream::from_bytes(&output.stdout),
-            CapturedStream::from_bytes(&output.stderr),
-        )
-        .to_wire()));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    Ok(stdout)
+    Ok(outcome.stdout_lossy())
 }
 
 #[cfg(test)]

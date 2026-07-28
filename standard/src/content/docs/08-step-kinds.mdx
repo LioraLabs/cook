@@ -122,6 +122,20 @@ The `>{` / `>` prefix forms are not subject to this cascade at all: outside body
 
 The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` matches none of rules 1–6 above — it is not `cook` followed by a separator, and it has no `IDENT.IDENT(` module-call shape — so it is REJECTED under rule 7, not silently accepted as a malformed `cook_step`. See parser test `test_strip_keyword`.
 
+### 8.3.1. `shell_block` bodies: one invocation, `set -e` [#steps.shell-block-invocation]
+
+> **Normative (CS-0190).** A `shell_block` body — the `{ … }` form admitted by every step kind that takes one, `cook` (§{steps.cook-single}, §{steps.cook-multi}) and `test` (§{steps.test}) alike — denotes **one** shell invocation, not one per line. A conforming implementation MUST compose the block's lines into a single shell text by joining them with LF in source order, MUST prefix that text with `set -e`, and MUST pass the result to one `/bin/sh -c`.
+>
+> Three observable consequences follow, and they are the reason this is stated rather than left to the reader of an example:
+>
+> 1. **A failing line stops the block.** `set -e` is part of the composed text, so a non-zero exit anywhere aborts the remaining lines and becomes the unit's exit status. An author writing `mkdir -p build` above `cc -o build/x x.c` is entitled to know the second line does not run when the first fails.
+> 2. **The block shares one shell.** A `cd`, a shell variable, an exported name, or a `trap` set on one line is in effect on the next, because there is no second process to lose it. Splitting a block into one invocation per line would silently break every body that relies on this, and the difference is invisible in a body that happens not to.
+> 3. **The block is one unit of captured output.** §{lua.cook-sh}'s ordering guarantee is stated over *calls*, and a block is one call however many lines it has. An implementation MUST NOT report a block's lines as separately-ordered spawns.
+>
+> The `set -e` prefix occupies no source line of its own: line *k* of the block is line *k* of the author's body, and a diagnostic that cites a line number MUST cite the author's.
+>
+> This was observable long before it was stated. §{phl.cook-step}'s worked example shows a registered unit whose `command` field is `set -e\ngcc -c main.c -o build/main.o`, and §{exec.body-bundling}'s historical note describes adjacent shell lines being "joined into a single `set -e`-prefixed `cook.sh` call". A rule that decides whether a build stops at its first error should not have to be inferred from an example.
+
 ## 8.4. `cook` — single-output form [#steps.cook-single]
 A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly). The body is mandatory (CS-0133):
 

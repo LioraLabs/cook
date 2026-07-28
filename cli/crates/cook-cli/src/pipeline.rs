@@ -1103,9 +1103,9 @@ pub fn cmd_test(
         .units_by_recipe
         .iter()
         .filter(|(_, ru)| {
-            ru.units.iter().any(|u| {
-                matches!(u.payload, cook_engine::cook_contracts::WorkPayload::Test { .. })
-            })
+            // CS-0191: a test is a unit that carries a reporting name, not a
+            // payload shape.
+            ru.units.iter().any(|u| u.test_name.is_some())
         })
         .map(|(name, _)| name.clone())
         .collect();

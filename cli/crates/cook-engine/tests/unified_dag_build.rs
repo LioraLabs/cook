@@ -31,6 +31,7 @@ fn recipe(name: &str, cmd: &str) -> RecipeUnits {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: PathBuf::from("."),

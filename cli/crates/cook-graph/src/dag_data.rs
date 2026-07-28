@@ -365,13 +365,20 @@ fn build_nodes(
             let is_probe = matches!(unit.payload, WorkPayload::Probe { .. });
 
             // --- Command label ---
+            // CS-0191: test-ness is the unit's, not the payload's. Prefixing
+            // here keeps the viewer's label unchanged for a test whose body is
+            // a command, and finally labels one whose body is Lua — that used
+            // to render as an anonymous `lua: …` because the arm below matched
+            // only the command form.
             let command = match &unit.payload {
+                _ if unit.test_name.is_some() => {
+                    format!("test: {}", unit.payload.display_name())
+                }
                 WorkPayload::Shell { cmd, .. } => cmd.clone(),
                 WorkPayload::Interactive { cmd, .. } => format!("@{cmd}"),
                 WorkPayload::LuaChunk { code, .. } => {
                     format!("lua: {}", &code[..code.len().min(60)])
                 }
-                WorkPayload::Test { cmd, .. } => format!("test: {cmd}"),
                 // `WorkPayload` is `#[non_exhaustive]`; viewer falls back to the
                 // payload's `display_name` for unknown future kinds.
                 _ => unit.payload.display_name(),

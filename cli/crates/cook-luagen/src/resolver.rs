@@ -208,7 +208,7 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     if let Some(r) = crate::sigil::probe_ref(ident) {
         return Resolved::ProbeRef {
             key: r.key().to_string(),
-            access: r.lua_access(),
+            access: crate::sigil::lua_access(&r),
         };
     }
 

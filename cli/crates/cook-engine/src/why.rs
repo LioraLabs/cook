@@ -158,7 +158,6 @@ use std::sync::Arc;
 
 use cook_cache::cache_ctx::CacheContext;
 use cook_cache::ThreadSafeCacheManager;
-use cook_contracts::WorkPayload;
 
 use crate::{dag_builder, RegisteredWorkspace, WorkNode};
 
@@ -338,12 +337,10 @@ pub fn explain(
 }
 
 fn node_line(node: &WorkNode) -> u32 {
-    match &node.payload {
-        Some(WorkPayload::Shell { line, .. }) => *line as u32,
-        Some(WorkPayload::Test { line, .. }) => *line as u32,
-        Some(WorkPayload::Probe { line, .. }) => *line as u32,
-        _ => 0,
-    }
+    // CS-0191: one accessor, every payload. This enumerated three variants and
+    // silently reported 0 for the other two, so `cook why` on a `>{ }` body or
+    // an interactive step cited no line at all.
+    node.payload.as_ref().map(|p| p.line()).unwrap_or(0) as u32
 }
 
 fn resolve_unit_determinants(

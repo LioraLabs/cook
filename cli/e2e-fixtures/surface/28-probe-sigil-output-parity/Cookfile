@@ -1,0 +1,25 @@
+# CS-0188: a unit's captured output must not depend on whether its command
+# happens to mention a probe.
+#
+# Before CS-0188, §22.5.7 required a probe-referencing command to be rewritten
+# into a Lua step. The rewrite sent it down a path that reported no captured
+# lines and whose `cook.sh` discarded stderr on success, so `sigil` below
+# printed NOTHING while `plain` printed both its lines. Both steps ran and both
+# wrote their output file; only one could be heard from.
+
+probe tool:path
+    { printf '/bin/echo' }
+
+recipe plain
+    cook "out/plain.txt" {
+        echo "PLAIN-STDOUT"
+        echo "PLAIN-STDERR" >&2
+        touch $<out>
+    }
+
+recipe sigil
+    cook "out/sigil.txt" {
+        $<tool:path> "SIGIL-STDOUT"
+        echo "SIGIL-STDERR" >&2
+        touch $<out>
+    }

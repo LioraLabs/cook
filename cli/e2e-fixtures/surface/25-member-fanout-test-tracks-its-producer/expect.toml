@@ -1,8 +1,17 @@
-# 1. Cold: both members pass.
+# 1. Cold: both members pass, and each is REPORTED under its own member.
 [[run]]
 args = ["test"]
 [run.assert]
 contains = { "build/a.txt" = "GOOD" }
+# CS-0191: the per-member discriminator in a test's identity and label. It was
+# carried by a `iteration_item` field on the test payload, duplicating `member`;
+# there is one field now, and this is what would break if the two ever stopped
+# agreeing. Nothing else in the corpus pinned the label — the counts below would
+# all still pass if every member reported under the same name.
+output_contains = [
+    'fan@16 [{"body":"GOOD","id":"a"}]',
+    'fan@16 [{"body":"GOOD","id":"b"}]',
+]
 
 # 2. Warm: both replay.
 [[run]]

@@ -255,24 +255,17 @@ end)
 "#;
     let result = register_one(rt, lua_src, "tests");
     assert_eq!(result.units.len(), 2);
+    // CS-0191: a command test is a Shell unit carrying a reporting name. The
+    // `timeout`/`should_fail` assertions are gone with the fields: both were
+    // hardcoded constants at the sole construction site, so asserting them
+    // pinned nothing a change could break.
     match &result.units[0].payload {
-        WorkPayload::Test { cmd, timeout, should_fail, test_name, .. } => {
-            assert_eq!(cmd, "./run_test_a");
-            // CS-0135: cook.add_test no longer accepts timeout/should_fail/
-            // name; WorkPayload::Test still carries these fields for the
-            // engine executor. test_name derives as `<recipe>_test<N>`.
-            assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
-            assert!(!should_fail);
-            assert_eq!(test_name, "tests_test0"); // CS-0185: <recipe>_test<line>; no line passed
-        }
-        _ => panic!("expected Test payload"),
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "./run_test_a"),
+        other => panic!("expected a Shell payload, got {other:?}"),
     }
-    match &result.units[1].payload {
-        WorkPayload::Test { should_fail, .. } => {
-            assert!(!should_fail);
-        }
-        _ => panic!("expected Test payload"),
-    }
+    assert_eq!(result.units[0].test_name.as_deref(), Some("tests_test0"));
+    assert!(matches!(result.units[1].payload, WorkPayload::Shell { .. }));
+    assert!(result.units[1].test_name.is_some());
 }
 
 /// CS-0061 §3.2: `suite` defaults to the enclosing recipe's qualified name
@@ -292,12 +285,14 @@ end)
 "#;
     let result = register_one(rt, lua_src, "my_tests");
     assert_eq!(result.units.len(), 1);
+    // CS-0185: the enclosing recipe reaches the unit through its name.
+    assert_eq!(
+        result.units[0].test_name.as_deref(),
+        Some("my_tests_test0"),
+        "a test unit is named for the recipe that registers it"
+    );
     match &result.units[0].payload {
-        WorkPayload::Test { test_name, .. } => {
-            // CS-0185: the enclosing recipe reaches the unit through its name.
-            assert_eq!(test_name, "my_tests_test0",
-                "a test unit is named for the recipe that registers it");
-        }
+        WorkPayload::Shell { .. } => {}
         _ => panic!("expected Test payload"),
     }
 }
@@ -323,13 +318,11 @@ end)
         .with_shared_terminal_outputs(shared)
         .with_qualified_prefix("mylib".to_string());
     let result = register_one(rt, lua_src, "tests");
-    match &result.units[0].payload {
-        WorkPayload::Test { test_name, .. } => {
-            assert_eq!(test_name, "mylib.tests_test0",
-                "the qualified prefix must reach the unit's name");
-        }
-        _ => panic!("expected Test payload"),
-    }
+    assert_eq!(
+        result.units[0].test_name.as_deref(),
+        Some("mylib.tests_test0"),
+        "the qualified prefix must reach the unit's name"
+    );
 }
 
 /// CS-0061 §3.2: empty command is rejected at register time.
@@ -480,13 +473,11 @@ end)
     let r = units.units_by_recipe.get("r").expect("recipe r missing");
     assert_eq!(r.units.len(), 1);
     match &r.units[0].payload {
-        WorkPayload::Test { cmd, test_name, .. } => {
-            assert_eq!(cmd, "true");
-            // CS-0185 names from the line, not an ordinal.
-            assert_eq!(test_name, "r_test4");
-        }
-        other => panic!("expected a Test payload, got {other:?}"),
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "true"),
+        other => panic!("expected a Shell payload, got {other:?}"),
     }
+    // CS-0185 names from the line, not an ordinal.
+    assert_eq!(r.units[0].test_name.as_deref(), Some("r_test4"));
 }
 
 // CS-0153 §22.1: the surviving accepted values — `"cook"` and `"chore"` —
@@ -4342,7 +4333,7 @@ fn test_unit_of<'a>(
         .unwrap_or_else(|| panic!("recipe '{recipe}' registered"))
         .units
         .iter()
-        .find(|u| matches!(u.payload, cook_contracts::WorkPayload::Test { .. }))
+        .find(|u| u.test_name.is_some())
         .expect("recipe has a test unit")
 }
 

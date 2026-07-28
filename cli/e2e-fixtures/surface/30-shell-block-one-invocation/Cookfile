@@ -1,0 +1,36 @@
+# CS-0190 §8.3.1: a `shell_block` body is ONE shell invocation, its lines
+# joined with LF under a `set -e` prefix.
+#
+# Each recipe below pins one of the three consequences the rule decides. All
+# three were true of the implementation long before the Standard said so, and
+# were only inferable from a worked example of something else.
+
+# 1. `set -e` is part of the composed text, so a failing line aborts the rest.
+recipe aborts
+    cook "out/aborts.txt" {
+        echo BLOCK-LINE-ONE
+        exit 3
+        touch out/line-three-ran.txt
+        touch $<out>
+    }
+
+# 2. One process means one shell state: a `cd`, a variable and an exported name
+#    set on one line are all still in effect on the next.
+recipe shares_one_shell
+    cook "out/state.txt" {
+        cd sub
+        MARKER=carried-across-lines
+        cd ..
+        printf '%s %s\n' "$MARKER" "$(cat sub/where.txt)" > $<out>
+    }
+
+# 3. One invocation is one spawn, so the whole block is a single unit of
+#    captured output rather than one per line (§24.1's CS-0188 ordering
+#    guarantee is stated over calls, and this is one call).
+recipe one_spawn
+    cook "out/spawn.txt" {
+        echo FIRST
+        echo SECOND >&2
+        echo THIRD
+        touch $<out>
+    }

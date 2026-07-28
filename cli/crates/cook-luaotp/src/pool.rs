@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use cook_contracts::{CapturedStream, CommandFailure, OutputStream, StepKind, WorkPayload};
+use cook_contracts::{StepKind, WorkPayload};
 use crate::store::ProbeValueStore;
 
 // ---------------------------------------------------------------------------
@@ -44,17 +44,6 @@ pub struct WorkItem {
     pub project_root: PathBuf,
 }
 
-#[derive(Clone, Debug)]
-pub struct TestOutput {
-    pub test_name: String,
-    pub stdout: String,
-    pub stderr: String,
-    pub duration: f64,
-    pub timed_out: bool,
-    pub should_fail: bool,
-    pub exit_success: bool,
-    pub exit_code: Option<i32>,
-}
 
 /// Payload returned by a completed probe unit (§22.5). `bytes` contains the
 /// canonical-JSON-serialised return value of the `produce` Lua function
@@ -70,20 +59,32 @@ pub struct WorkResult {
     pub id: usize,
     pub success: bool,
     pub error: Option<String>,
-    pub test_output: Option<TestOutput>,
+    /// The command's exit status, or `None` when it was killed by a signal or
+    /// never ran. On the payload kinds that evaluate Lua rather than spawn,
+    /// `None`: there is no process to have one.
+    pub exit_code: Option<i32>,
     pub node_name: String,
-    /// Captured child output, in emission order.  Each entry is paired with
-    /// the file descriptor it came from so downstream observers can preserve
-    /// stdout/stderr provenance (CS-0035).  Pre-CS-0035 this was `Vec<String>`
-    /// and the engine attributed every line to stdout in the JSON event stream.
-    pub output_lines: Vec<(OutputStream, String)>,
+    /// Captured child output, in the order the spawns that produced it ran.
+    ///
+    /// Each chunk carries the file descriptor it came from so downstream
+    /// observers preserve stdout/stderr provenance (CS-0035). Pre-CS-0035 this
+    /// was `Vec<String>` and the engine attributed every line to stdout;
+    /// CS-0188 made it chunks of bytes rather than decoded lines, because the
+    /// decode belongs at the render and because a line-level sequence would
+    /// imply an interleaving between the two streams that separate pipe
+    /// buffers cannot supply.
+    ///
+    /// A unit whose body calls `cook.sh` more than once contributes one chunk
+    /// per stream per call, in call order: that is the ordering guarantee
+    /// §{lua.cook-sh} states.
+    pub output_lines: Vec<cook_contracts::OutputChunk>,
     /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
     /// `None` for all non-probe units. Wired end-to-end by Task G.
     pub probe_output: Option<ProbeOutput>,
     /// Wall-clock span of the actual work-item execution, measured by the
     /// worker around the `execute_work_item` dispatch (queue wait
-    /// excluded). Mirrors the existing `TestOutput.duration` measurement
-    /// approach, generalised to every payload kind so a plain (non-test)
+    /// excluded). Measured for every payload kind so a unit's completion
+    /// line reports real elapsed time rather than a
     /// unit's completion line can report real elapsed time instead of a
     /// hardcoded zero. Individual `execute_*` helpers set this to
     /// `Duration::ZERO` in their returned literals; `worker_loop`
@@ -244,6 +245,20 @@ fn worker_loop(
     // config `var.*` value never reaches a spawned step's environment.
     let current_process_env_vars: Arc<Mutex<HashMap<String, String>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    // CS-0188: the active unit's output accumulator. A Lua body's `cook.sh`
+    // calls push into this, in call order, so what the body printed is
+    // attributable to the unit that printed it. Cleared per item below; a unit
+    // that inherited the previous unit's output would be reporting someone
+    // else's work.
+    let current_output: Arc<Mutex<Vec<cook_contracts::OutputChunk>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    // Whether this item's `print` / `io.write` is captured or passed straight
+    // through to the real stdout. A CHORE is not captured: it owns the
+    // controlling terminal under the single-drain model (§{chores}) and its
+    // output is the product the user asked for, not a build log to attribute.
+    // This is the same distinction the interactive path draws by spawning with
+    // `Stdio::Inherited`.
+    let current_capture: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 
     // CS-0045 sandbox slot. Updated per work item before the body
     // runs: Cook/Test/Chore → Confined { project_root }. There is no
@@ -256,7 +271,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &probe_store, &dep_outputs)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &probe_store, &dep_outputs)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -284,6 +299,17 @@ fn worker_loop(
         cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
     )
     .expect("failed to install shell escape guards");
+
+    // CS-0188: route `print` and `io.write` into the active unit's sink.
+    //
+    // They went to the worker process's own fd 1 — one descriptor shared by
+    // every worker in the pool — so two units printing concurrently interleaved
+    // their bytes with nothing marking whose were whose, and the engine could
+    // not attribute a line to the unit that wrote it. That is why the flush
+    // below had to exist at all: output was escaping through libc rather than
+    // through Cook.
+    install_output_capture(&lua, &current_output, &current_capture)
+        .expect("failed to install output capture");
 
     loop {
         let item = {
@@ -323,6 +349,17 @@ fn worker_loop(
                         current_process_env_vars.lock().expect("process_env_vars lock");
                     *penv = work.process_env_vars.clone();
                 }
+                // CS-0188: start this unit's output empty. The worker VM is
+                // reused across items, so a sink left holding the previous
+                // unit's chunks would attribute them to this one.
+                {
+                    let mut out = current_output.lock().expect("output sink lock");
+                    out.clear();
+                }
+                current_capture.store(
+                    !matches!(&work.payload, WorkPayload::LuaChunk { is_chore: true, .. }),
+                    Ordering::Relaxed,
+                );
                 // CS-0045: pick the per-item sandbox policy. Cook, Test,
                 // Chore, and any non-LuaChunk payload all run confined to
                 // `project_root` — there is no unsandboxed step kind
@@ -374,7 +411,6 @@ fn worker_loop(
                 // package-path refresh) is worker bookkeeping, not queued
                 // idle time, so starting the clock here — immediately
                 // around the dispatch — is the honest per-unit number
-                // (same intent as `TestOutput.duration`'s `start.elapsed()`).
                 let exec_start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     // R1: shell/test steps spawn with the process-env subset,
@@ -392,7 +428,7 @@ fn worker_loop(
                             error: Some(format!(
                                 "[{recipe_name}] worker panic: {msg}"
                             )),
-                            test_output: None,
+                            exit_code: None,
                             node_name,
                             output_lines: Vec::new(),
                             probe_output: None,
@@ -401,10 +437,200 @@ fn worker_loop(
                     }
                 };
                 result.duration = exec_start.elapsed();
+                // CS-0188: fold in whatever the body's `cook.sh` calls
+                // captured. A Lua-bodied unit produces all of its output this
+                // way and none directly; a Shell or Test unit is the reverse,
+                // because its one spawn is the whole unit and never routes
+                // through `cook.sh`. The two are therefore never both
+                // non-empty, and sink-first is a concatenation rather than a
+                // choice about precedence.
+                {
+                    let mut sunk = current_output.lock().expect("output sink lock");
+                    if !sunk.is_empty() {
+                        let mut chunks = std::mem::take(&mut *sunk);
+                        // A unit that turned its stdout into a VALUE does not
+                        // also log it. A probe's shell producer lowers to
+                        // `cook.sh("…")` whose stdout *is* the probe's value
+                        // (§22.5.2), so echoing it would print every finder's
+                        // answer into the build log on each cold run, and print
+                        // it twice for anything that also reports the value.
+                        // Stderr is not the value and has never had anywhere to
+                        // go, which is the half worth keeping: a `pkg-config`
+                        // warning during discovery is exactly the diagnostic an
+                        // author needs.
+                        //
+                        // Keyed on the result rather than on the payload kind:
+                        // a probe that FAILED produced no value, so nothing
+                        // consumed its stdout and all of it is diagnostic.
+                        if result.probe_output.is_some() {
+                            chunks.retain(|c| {
+                                c.stream() == cook_contracts::OutputStream::Stderr
+                            });
+                        }
+                        let direct = std::mem::take(&mut result.output_lines);
+                        result.output_lines = chunks;
+                        result.output_lines.extend(direct);
+                    }
+                }
                 let _ = tx.send(result);
             }
         }
     }
+}
+
+/// Substitute `$<key:field[i]>` probe references in a command with their
+/// resolved values, immediately before the command is spawned (CS-0188).
+///
+/// Before CS-0188 this happened by rewriting the command, at register phase,
+/// into a Lua chunk that read each value and called `cook.sh` with the result.
+/// The rewrite is gone; the substitution is not, because §22.5.7 still requires
+/// it and a probe's value is execute-phase, so here is the only phase it can
+/// happen in.
+///
+/// **Lua renders the values, deliberately.** The walk reads through
+/// `cook.probes.get` and finishes with Lua's own `tostring`, rather than
+/// decoding the stored JSON and formatting it in Rust. Formatting is observable
+/// — it lands in the command a build runs — and Lua's is not what Rust's would
+/// be: `%.14g` renders `0.1 + 0.2` as `0.3`, and an integer-valued float comes
+/// back as `3.0` rather than `3`. Reproducing that here would mean
+/// reimplementing `%.14g`, and reproducing it WRONG would change command text
+/// silently. What the rendering should actually be, including a table's
+/// current heap-address rendering, is COOK-380; until it answers, this keeps
+/// the observable behaviour exactly as it was.
+///
+/// A command with no probe reference is returned untouched, and a non-probe
+/// `$<...>` span is left literal, both matching what the rewrite did.
+fn resolve_probe_sigils(lua: &mlua::Lua, cmd: &str) -> mlua::Result<String> {
+    use cook_contracts::sigil::Seg;
+
+    let spans = cook_contracts::sigil::scan(cmd);
+    if spans.is_empty() {
+        return Ok(cmd.to_string());
+    }
+    let refs: Vec<_> = spans
+        .iter()
+        .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident).map(|r| (s, r)))
+        .collect();
+    if refs.is_empty() {
+        return Ok(cmd.to_string());
+    }
+
+    let globals = lua.globals();
+    let cook: mlua::Table = globals.get("cook")?;
+    let probes: mlua::Table = cook.get("probes")?;
+    let get: mlua::Function = probes.get("get")?;
+    let tostring: mlua::Function = globals.get("tostring")?;
+
+    let mut out = String::with_capacity(cmd.len());
+    let mut cursor = 0usize;
+    for (span, r) in refs {
+        out.push_str(&cmd[cursor..span.range.start]);
+
+        // An unmaterialised key raises here, from `cook.probes.get` itself, with
+        // the diagnostic CS-0152 specifies. That is the same error the rewritten
+        // chunk produced, from the same function.
+        let mut value: mlua::Value = get.call(r.key())?;
+        for seg in r.path() {
+            let table = match value {
+                mlua::Value::Table(t) => t,
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "$<{}>: cannot index a {} value",
+                        span.ident,
+                        other.type_name()
+                    )))
+                }
+            };
+            value = match seg {
+                Seg::Field(name) => table.get(name.as_str())?,
+                Seg::Index(idx) => match idx.parse::<i64>() {
+                    Ok(i) => table.get(i)?,
+                    // §22.5.7 defines `[i]` as a one-based array element. A
+                    // non-numeric index used to lower verbatim into Lua source,
+                    // where it read as a global and indexed by nil; naming it is
+                    // strictly better than that.
+                    Err(_) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "$<{}>: `[{idx}]` is not a numeric index",
+                            span.ident
+                        )))
+                    }
+                },
+            };
+        }
+        let rendered: mlua::String = tostring.call(value)?;
+        out.push_str(&rendered.to_str()?);
+        cursor = span.range.end;
+    }
+    out.push_str(&cmd[cursor..]);
+    Ok(out)
+}
+
+/// Replace `print` and `io.write` on a worker VM so what a Lua body prints
+/// reaches the active unit's sink instead of the process's fd 1 (CS-0188).
+///
+/// The wrappers are written in Lua rather than Rust so that argument handling
+/// stays exactly Lua's: `print` renders each argument with `tostring`, joins
+/// with tabs and appends a newline; `io.write` renders without separators, adds
+/// nothing, and returns the file handle so `io.write(a):write(b)` still chains.
+/// Reimplementing either in Rust would mean reimplementing `tostring`, including
+/// `__tostring` metamethods, and getting it subtly wrong somewhere.
+fn install_output_capture(
+    lua: &mlua::Lua,
+    sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    capture: &Arc<AtomicBool>,
+) -> mlua::Result<()> {
+    let sink = Arc::clone(sink);
+    let capture = Arc::clone(capture);
+    let emit = lua.create_function(move |_, text: mlua::String| {
+        // A chore's body owns the terminal, so its output is the product and
+        // goes straight out, unframed and on stdout, exactly as it did before
+        // CS-0188. Capturing it would move it to the progress stream (stderr)
+        // and wrap it in a unit label, which is the opposite of what someone
+        // running `cook greet` asked for.
+        if !capture.load(Ordering::Relaxed) {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&text.as_bytes());
+            let _ = out.flush();
+            return Ok(());
+        }
+        if let Some(chunk) = cook_contracts::OutputChunk::new(
+            cook_contracts::OutputStream::Stdout,
+            text.as_bytes().to_vec(),
+        ) {
+            sink.lock().expect("output sink lock").push(chunk);
+        }
+        Ok(())
+    })?;
+    lua.globals().set("__cook_emit_output", emit)?;
+
+    lua.load(
+        r#"
+        local _emit = __cook_emit_output
+        function print(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts, '\t') .. '\n')
+        end
+        io.write = function(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts))
+            return io.stdout
+        end
+        "#,
+    )
+    .set_name("@cook:output-capture")
+    .exec()?;
+
+    // The trampoline is an implementation detail of the two wrappers above and
+    // is not part of the execute-phase Lua surface; leaving it reachable would
+    // let a recipe body write arbitrary bytes into another unit's attribution.
+    lua.globals().set("__cook_emit_output", mlua::Value::Nil)?;
+    Ok(())
 }
 
 /// Best-effort extraction of a panic payload's message. Panics raised via
@@ -430,6 +656,7 @@ fn register_worker_cook_table(
     current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_process_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
+    current_output: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
     probe_store: &ProbeValueStore,
     dep_outputs: &WorkerDepOutputs,
 ) -> mlua::Result<()> {
@@ -440,12 +667,11 @@ fn register_worker_cook_table(
     // lookup map, so a config `var.*` value is never in its environment.
     let wd = Arc::clone(current_working_dir);
     let penv = Arc::clone(current_process_env_vars);
-    let recipe = Arc::clone(current_recipe);
+    let sink = Arc::clone(current_output);
     let sh_fn = lua.create_function(move |_, cmd: String| {
-        let recipe_name = recipe.lock().expect("recipe name lock").clone();
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &recipe_name, 0)
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, 0)
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -1115,41 +1341,42 @@ fn refresh_package_search_paths(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<
 // Shell execution (worker variant with prefixed output)
 // ---------------------------------------------------------------------------
 
+/// `cook.sh` on the worker VM (§{lua.cook-sh}).
+///
+/// `sink` is the calling unit's output accumulator. Both streams go into it, in
+/// call order, which is what makes a Lua body's output attributable to the unit
+/// that produced it. Before CS-0188 this function returned stdout and discarded
+/// stderr outright, so a command that succeeded with warnings reported none of
+/// them, and §{lua.cook-sh}'s promise that stderr reached the worker's stderr
+/// was not kept by anything.
 fn run_shell_in_worker(
     cmd: &str,
     wd: &std::path::Path,
     env_vars: &HashMap<String, String>,
-    _recipe_name: &str,
+    sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
     line: usize,
 ) -> mlua::Result<String> {
-    let mut child_env: HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
-
-    // COOK-306: an executed command may write anywhere in the tree.
+    // COOK-306: an executed command may write anywhere in the tree. The memo is
+    // the execute phase's, so disarming it stays here rather than moving into
+    // `cook-shell` (the register-phase caller deliberately does not disarm).
     cook_fingerprint::statmemo::disarm();
-    let output = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(wd)
-        .envs(&child_env)
-        .output()
-        .map_err(|e| mlua::Error::runtime(format!("failed to execute: {e}")))?;
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
+        env_vars,
+    )
+    .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
 
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(1);
-        return Err(mlua::Error::runtime(CommandFailure::new(
-            line,
-            code,
-            cmd,
-            CapturedStream::from_bytes(&output.stdout),
-            CapturedStream::from_bytes(&output.stderr),
-        )
-        .to_wire()));
+    let stdout = outcome.stdout_lossy();
+    // Recorded before the failure check: a command that failed still printed
+    // what it printed, and dropping it because the exit code was non-zero is
+    // the same mistake in a different direction.
+    sink.lock()
+        .expect("output sink lock")
+        .extend(outcome.chunks().iter().cloned());
+
+    if let Some(failure) = outcome.failure(line, cmd) {
+        return Err(mlua::Error::runtime(failure.to_wire()));
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(stdout)
 }
 
@@ -1177,7 +1404,7 @@ fn execute_work_item(
 
     match &work.payload {
         WorkPayload::Shell { cmd, line } => {
-            execute_shell(work.id, cmd, *line, working_dir, env_vars, node_name)
+            execute_shell(lua, work.id, cmd, *line, working_dir, env_vars, node_name)
         }
         WorkPayload::LuaChunk {
             code,
@@ -1205,25 +1432,11 @@ fn execute_work_item(
                 id: work.id,
                 success: false,
                 error: Some("BUG: interactive step dispatched to worker pool".to_string()),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
                 duration: Duration::ZERO,
-            }
-        }
-        WorkPayload::Test { cmd, line, timeout, should_fail, test_name, lua_code, .. } => {
-            match lua_code {
-                Some(code) => execute_lua_test(
-                    lua,
-                    work.id,
-                    code,
-                    *timeout,
-                    *should_fail,
-                    test_name,
-                    node_name,
-                ),
-                None => execute_test(work.id, cmd, *line, *timeout, *should_fail, test_name, working_dir, env_vars, node_name),
             }
         }
         WorkPayload::Probe { key, produce, line } => {
@@ -1237,7 +1450,7 @@ fn execute_work_item(
             id: work.id,
             success: false,
             error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
@@ -1247,6 +1460,7 @@ fn execute_work_item(
 }
 
 fn execute_shell(
+    lua: &mlua::Lua,
     id: usize,
     cmd: &str,
     line: usize,
@@ -1254,83 +1468,74 @@ fn execute_shell(
     env_vars: &HashMap<String, String>,
     node_name: String,
 ) -> WorkResult {
-    let mut child_env: HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
+    // CS-0188: resolve any `$<key:field>` probe references against the values
+    // this unit's probes materialised. Register phase used to do this by
+    // rewriting the command into Lua; it does not, so it happens here, where
+    // the values exist.
+    let cmd = match resolve_probe_sigils(lua, cmd) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(cook_contracts::lua_error::sanitize(
+                    &e.to_string(),
+                    std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
+                )),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                duration: Duration::ZERO,
+            }
+        }
+    };
+    let cmd = cmd.as_str();
 
     // COOK-306: an executed command may write anywhere in the tree.
     cook_fingerprint::statmemo::disarm();
-    let result = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(working_dir)
-        .envs(&child_env)
-        .output();
-
-    match result {
-        Err(e) => WorkResult {
-            id,
-            success: false,
-            error: Some(format!("failed to execute: {e}")),
-            test_output: None,
-            node_name,
-            output_lines: Vec::new(),
-            probe_output: None,
-            duration: Duration::ZERO,
+    let outcome = match cook_shell::run(
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir,
+            stdio: cook_shell::Stdio::Captured,
         },
-        Ok(output) => {
-            let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
-
-            // Accumulate stderr lines (tagged so downstream renderers can
-            // preserve fd-of-origin — CS-0035).
-            if !output.stderr.is_empty() {
-                let stderr_str = String::from_utf8_lossy(&output.stderr);
-                for l in stderr_str.lines() {
-                    output_lines.push((OutputStream::Stderr, l.to_string()));
-                }
-            }
-
-            // Accumulate stdout lines.
-            if !output.stdout.is_empty() {
-                let stdout_str = String::from_utf8_lossy(&output.stdout);
-                for l in stdout_str.lines() {
-                    output_lines.push((OutputStream::Stdout, l.to_string()));
-                }
-            }
-
-            if output.status.success() {
-                WorkResult {
-                    id,
-                    success: true,
-                    error: None,
-                    test_output: None,
-                    node_name,
-                    output_lines,
-                    probe_output: None,
-                    duration: Duration::ZERO,
-                }
-            } else {
-                let code = output.status.code().unwrap_or(1);
-                WorkResult {
-                    id,
-                    success: false,
-                    error: Some(CommandFailure::new(
-                        line,
-                        code,
-                        cmd,
-                        CapturedStream::from_bytes(&output.stdout),
-                        CapturedStream::from_bytes(&output.stderr),
-                    )
-                    .to_wire()),
-                    test_output: None,
-                    node_name,
-                    output_lines,
-                    probe_output: None,
-                    duration: Duration::ZERO,
-                }
+        env_vars,
+    ) {
+        Ok(o) => o,
+        // Never started, which is not the same as ran and failed: there is no
+        // exit status to report and no output to attribute.
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(e.message().to_string()),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                duration: Duration::ZERO,
             }
         }
+    };
+
+    // CS-0188: stdout precedes stderr, where this used to emit every stderr
+    // line ahead of every stdout line. Both orders are arbitrary — one spawn's
+    // two pipes are buffered separately, so neither reproduces what a terminal
+    // would have shown — but a fixed order means two runs of one command report
+    // the same sequence, and putting a command's errors *after* the output they
+    // followed reads less like a lie than putting them first.
+    let error = outcome.failure(line, cmd).map(|f| f.to_wire());
+    let exit_code = outcome.exit_code();
+    WorkResult {
+        id,
+        success: error.is_none(),
+        error,
+        exit_code,
+        node_name,
+        output_lines: outcome.into_chunks(),
+        probe_output: None,
+        duration: Duration::ZERO,
     }
 }
 
@@ -1365,7 +1570,7 @@ fn execute_probe(
                         std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
                     )
                 )),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1381,7 +1586,7 @@ fn execute_probe(
                 id,
                 success: false,
                 error: Some(format!("probe '{}': {}", key, e)),
-                test_output: None,
+                exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
@@ -1396,7 +1601,7 @@ fn execute_probe(
         id,
         success: true,
         error: None,
-        test_output: None,
+        exit_code: None,
         node_name,
         output_lines: Vec::new(),
         probe_output: Some(ProbeOutput {
@@ -1488,7 +1693,7 @@ fn execute_lua_chunk(
             id,
             success: true,
             error: None,
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
@@ -1504,247 +1709,12 @@ fn execute_lua_chunk(
                     std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
                 )
             )),
-            test_output: None,
+            exit_code: None,
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
             duration: Duration::ZERO,
         },
-    }
-}
-
-/// Execute a `WorkPayload::Test` unit whose body is a Lua chunk (`lua_code`,
-/// CS-0127 §22.4) on the worker Lua VM — the sibling of `execute_test` for
-/// the shell-command path. Pass/fail is whether the chunk completes without
-/// raising a Lua error; `should_fail` inverts the result exactly as it does
-/// for shell tests (mirrors `execute_test`'s `success` computation).
-///
-/// Timeout is enforced best-effort via an instruction-count VM hook: every
-/// 100_000 executed instructions, the hook checks wall-clock elapsed time
-/// against `timeout_secs` and raises a Lua runtime error once exceeded. This
-/// only interrupts *Lua bytecode* execution — a blocking `cook.sh` (or other
-/// long-running foreign call) invoked from the test body runs to completion
-/// unobserved by the hook, since the hook fires between VM instructions and
-/// cannot preempt a call already in flight. A test body that shells out to
-/// something that hangs can therefore exceed `timeout_secs` before this
-/// function returns.
-fn execute_lua_test(
-    lua: &mlua::Lua,
-    id: usize,
-    code: &str,
-    timeout_secs: u64,
-    should_fail: bool,
-    test_name: &str,
-    node_name: String,
-) -> WorkResult {
-    let start = std::time::Instant::now();
-    let timeout_dur = std::time::Duration::from_secs(timeout_secs);
-    let timed_out_flag = Arc::new(AtomicBool::new(false));
-
-    let hook_timed_out = Arc::clone(&timed_out_flag);
-    let hook_test_name = test_name.to_string();
-    lua.set_hook(
-        mlua::HookTriggers::new().every_nth_instruction(100_000),
-        move |_lua, _debug| {
-            if start.elapsed() > timeout_dur {
-                hook_timed_out.store(true, Ordering::Relaxed);
-                return Err(mlua::Error::runtime(format!(
-                    "test '{hook_test_name}' exceeded timeout of {timeout_secs}s"
-                )));
-            }
-            Ok(mlua::VmState::Continue)
-        },
-    );
-
-    let chunk_name = format!("@test:{test_name}");
-    let exec_result = lua.load(code).set_name(&chunk_name).exec();
-
-    // Always remove the hook before returning — it captures `start` and
-    // `timed_out_flag` by move and must not outlive this call; leaving it
-    // installed would fire on whatever the next work item's Lua does.
-    lua.remove_hook();
-
-    let duration = start.elapsed().as_secs_f64();
-    let chunk_ok = exec_result.is_ok();
-    let timed_out = timed_out_flag.load(Ordering::Relaxed);
-    let stderr = match &exec_result {
-        Ok(()) => String::new(),
-        Err(e) => e.to_string(),
-    };
-
-    let success = if should_fail { !chunk_ok } else { chunk_ok };
-
-    // Mirror execute_test's CS-0035 stream-tagged output_lines so a failing
-    // lua test's error text reaches the runner's live output the same way a
-    // failing shell test's stderr does — otherwise only the terse
-    // "test failed: <name>" summary would ever reach the terminal.
-    let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
-    for line in stderr.lines() {
-        output_lines.push((OutputStream::Stderr, line.to_string()));
-    }
-
-    WorkResult {
-        id,
-        success,
-        error: if success { None } else { Some(format!("test failed: {test_name}")) },
-        test_output: Some(TestOutput {
-            test_name: test_name.to_string(),
-            stdout: String::new(),
-            stderr,
-            duration,
-            timed_out,
-            should_fail,
-            exit_success: chunk_ok,
-            exit_code: None,
-        }),
-        node_name,
-        output_lines,
-        probe_output: None,
-        duration: Duration::ZERO,
-    }
-}
-
-fn execute_test(
-    id: usize,
-    cmd: &str,
-    _line: usize,
-    timeout_secs: u64,
-    should_fail: bool,
-    test_name: &str,
-    working_dir: &PathBuf,
-    env_vars: &HashMap<String, String>,
-    node_name: String,
-) -> WorkResult {
-    use std::io::Read;
-
-    let start = std::time::Instant::now();
-
-    let mut child_env: HashMap<String, String> = std::env::vars().collect();
-    for (k, v) in env_vars {
-        child_env.insert(k.clone(), v.clone());
-    }
-
-    // COOK-306: an executed command may write anywhere in the tree.
-    cook_fingerprint::statmemo::disarm();
-    let child = std::process::Command::new("/bin/sh")
-        .args(["-c", cmd])
-        .current_dir(working_dir)
-        .envs(&child_env)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
-
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => {
-            return WorkResult {
-                id,
-                success: false,
-                error: Some(format!("failed to spawn test: {e}")),
-                test_output: Some(TestOutput {
-                    test_name: test_name.to_string(),
-                    stdout: String::new(),
-                    stderr: format!("failed to spawn: {e}"),
-                    duration: 0.0,
-                    timed_out: false,
-                    should_fail,
-                    exit_success: false,
-                    exit_code: None,
-                }),
-                node_name,
-                output_lines: Vec::new(),
-                probe_output: None,
-                duration: Duration::ZERO,
-            };
-        }
-    };
-
-    // Drain stdout/stderr in separate threads to prevent pipe-buffer deadlocks
-    let stdout_handle = child.stdout.take().map(|s| {
-        std::thread::spawn(move || {
-            let mut buf = String::new();
-            let mut reader = std::io::BufReader::new(s);
-            reader.read_to_string(&mut buf).ok();
-            buf
-        })
-    });
-    let stderr_handle = child.stderr.take().map(|s| {
-        std::thread::spawn(move || {
-            let mut buf = String::new();
-            let mut reader = std::io::BufReader::new(s);
-            reader.read_to_string(&mut buf).ok();
-            buf
-        })
-    });
-
-    // Wait with timeout
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let timed_out;
-    let exit_success;
-    let exit_code: Option<i32>;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                timed_out = false;
-                exit_success = status.success();
-                exit_code = status.code();
-                break;
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    timed_out = true;
-                    exit_success = false;
-                    exit_code = None;
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(_) => {
-                timed_out = false;
-                exit_success = false;
-                exit_code = None;
-                break;
-            }
-        }
-    }
-
-    let stdout = stdout_handle.and_then(|h| h.join().ok()).unwrap_or_default();
-    let stderr = stderr_handle.and_then(|h| h.join().ok()).unwrap_or_default();
-    let duration = start.elapsed().as_secs_f64();
-
-    let success = if should_fail { !exit_success } else { exit_success };
-
-    // Populate output_lines from captured test output, tagging by fd
-    // origin so the engine event stream can carry true stdout/stderr
-    // provenance (CS-0035).
-    let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
-    for line in stdout.lines() {
-        output_lines.push((OutputStream::Stdout, line.to_string()));
-    }
-    for line in stderr.lines() {
-        output_lines.push((OutputStream::Stderr, line.to_string()));
-    }
-
-    WorkResult {
-        id,
-        success,
-        error: if success { None } else { Some(format!("test failed: {test_name}")) },
-        test_output: Some(TestOutput {
-            test_name: test_name.to_string(),
-            stdout,
-            stderr,
-            duration,
-            timed_out,
-            should_fail,
-            exit_success,
-            exit_code,
-        }),
-        node_name,
-        output_lines,
-        probe_output: None,
-        duration: Duration::ZERO,
     }
 }
 

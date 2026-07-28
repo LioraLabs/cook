@@ -377,6 +377,8 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 }),
                 recipe_name: ru.recipe_name.clone(),
                 cache_meta: None,
+                test_name: None,
+                member: None,
                 working_dir: ru.working_dir.clone(),
                 env_vars: ru.env_vars.clone(),
                 // A probe runs a Lua `produce` body (reads `cook.env` via the
@@ -550,6 +552,8 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                     working_dir: ru.working_dir.clone(),
                     env_vars: merged_env_vars,
                     process_env_vars,
+                    test_name: unit.test_name.clone(),
+                    member: unit.member.clone(),
                 }
             } else {
                 WorkNode {
@@ -559,6 +563,8 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                     working_dir: ru.working_dir.clone(),
                     env_vars: merged_env_vars,
                     process_env_vars,
+                    test_name: unit.test_name.clone(),
+                    member: unit.member.clone(),
                 }
             };
 
@@ -637,13 +643,11 @@ fn is_presatisfied(unit: &CapturedUnit) -> bool {
         == cook_contracts::cache::record::Cacheability::Uncacheable;
     match &unit.payload {
         WorkPayload::Shell { cmd, .. } => cmd.is_empty() && uncacheable,
-        // CS-0127 §22.4: a lua-body test (`lua_code` populated) always has an
-        // empty `cmd` by construction — that must NOT be mistaken for the
-        // legacy empty-shell-command no-op. Only a genuinely empty test (no
-        // `cmd` AND no `lua_code`) is presatisfied.
-        WorkPayload::Test { cmd, lua_code, .. } => {
-            cmd.is_empty() && lua_code.is_none() && uncacheable
-        }
+        // CS-0191: this needed a `Test` arm, to keep a Lua-body test — which
+        // had an empty `cmd` by construction — from reading as the legacy
+        // empty-shell no-op. The payload now says it: a Lua body is a
+        // `LuaChunk` and falls through to `false`, and a command test is a
+        // `Shell` the arm above judges on its own terms.
         _ => false,
     }
 }
@@ -1046,76 +1050,7 @@ fn connected(graph: &BTreeMap<String, BTreeSet<String>>, a: &str, b: &str) -> bo
     false
 }
 
-/// Compute the minimal set of unit indices required to execute every test
-/// unit in `units`. Test units themselves are always included; non-test units
-/// (cook/shell/lua) are included only if at least one test (transitively)
-/// depends on them via `dep_edges`.
-///
-/// `dep_edges` is a slice of `(unit_index, output_path)` tuples meaning:
-/// "unit at `unit_index` depends on the output at `output_path`". A
-/// non-test unit that produces `output_path` is pulled into the slice.
-pub fn build_test_slice(
-    units: &[cook_contracts::CapturedUnit],
-    dep_edges: &[(usize, String)],
-) -> Vec<usize> {
-    use std::collections::{BTreeMap, BTreeSet, VecDeque};
-    use cook_contracts::WorkPayload;
-
-    // Build output_path -> producing unit index from LuaChunk outputs and
-    // CacheMeta output_paths (both can declare outputs).
-    let mut producer_by_output: BTreeMap<String, usize> = BTreeMap::new();
-    for (i, u) in units.iter().enumerate() {
-        match &u.payload {
-            WorkPayload::LuaChunk { outputs, .. } => {
-                for out in outputs {
-                    producer_by_output.insert(out.clone(), i);
-                }
-            }
-            _ => {}
-        }
-        // Also index CacheMeta output_paths (covers shell/cook steps with cache info).
-        if let Some(meta) = &u.cache_meta {
-            for out in &meta.output_paths {
-                producer_by_output.insert(out.clone(), i);
-            }
-        }
-    }
-
-    // BFS backward from every test unit, following dep_edges.
-    let mut visited: BTreeSet<usize> = BTreeSet::new();
-    let mut queue: VecDeque<usize> = units
-        .iter()
-        .enumerate()
-        .filter(|(_, u)| matches!(u.payload, WorkPayload::Test { .. }))
-        .map(|(i, _)| i)
-        .collect();
-
-    while let Some(id) = queue.pop_front() {
-        if !visited.insert(id) {
-            continue;
-        }
-        // Find all dep_edges for this unit and enqueue their producers.
-        for (uid, dep_output) in dep_edges {
-            if *uid != id {
-                continue;
-            }
-            if let Some(&producer) = producer_by_output.get(dep_output) {
-                if !visited.contains(&producer) {
-                    queue.push_back(producer);
-                }
-            }
-        }
-    }
-
-    let mut slice: Vec<usize> = visited.into_iter().collect();
-    slice.sort();
-    slice
-}
-
 #[cfg(test)]
 #[path = "tests/dag_builder_tests.rs"]
 mod tests;
 
-#[cfg(test)]
-#[path = "tests/test_slice_tests.rs"]
-mod test_slice_tests;

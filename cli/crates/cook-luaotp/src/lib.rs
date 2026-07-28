@@ -9,5 +9,5 @@ mod pool;
 pub(crate) mod probe_value;
 mod store;
 
-pub use pool::{WorkerPool, WorkItem, WorkResult, TestOutput, ProbeOutput, WorkerDepOutputs};
+pub use pool::{WorkerPool, WorkItem, WorkResult, ProbeOutput, WorkerDepOutputs};
 pub use store::ProbeValueStore;
