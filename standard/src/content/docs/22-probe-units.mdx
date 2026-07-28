@@ -301,13 +301,19 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 ## 22.5.7. Command-template desugaring [#cat.probes.templates]
 
-Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.probes.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
+Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and MUST substitute each one with the referenced probe's resolved value before the command runs. A probe's value is execute-phase (§{exec.cache.single-key}), so the substitution is too; the unit's command text carries its placeholders unsubstituted until then.
+
+> **Amended (CS-0188): how the substitution happens is no longer specified.** This section previously required an implementation to *rewrite the command into a Lua step* that called `cook.probes.get(key)` and interpolated the result before invoking the shell. That was a mechanism mandate in a section whose subject is an observable result, and the mandated mechanism carried an observable cost this Standard never intended. A rewritten command became an execute-phase Lua chunk, and a Lua chunk's captured output travelled a different path from a shell command's, so a step's output became invisible when, and only when, its command happened to mention a probe. One character of difference in the command text decided whether the step was heard from.
+>
+> A conforming implementation MUST make a unit's captured output independent of whether its command contains a probe reference. Whether it substitutes into the command text, rewrites the command into some other executable form, or does something else again, is its own affair, and no part of it is observable to a Cookfile author beyond the substituted values themselves.
 
 The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
 These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including bodies of `ingredients <probe>` fan-out recipes) and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; this closes a prior defect where the reference implementation emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
 
-The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `ingredients <probe>` fan-out recipes (§{steps.ingredients}). The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy (§{lua.fs-sandbox}), not a default one. (CS-0127.)
+The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `ingredients <probe>` fan-out recipes (§{steps.ingredients}).
+
+> **Withdrawn (CS-0188).** CS-0127 added here that the rewrite "turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy (§{lua.fs-sandbox}), not a default one." The clause was about the chunk, and it goes with the chunk. It narrows nothing on the way out: the Lua sandbox confines what Lua may do, never what a command spawned through `/bin/sh` may do, so a probe-referencing command was no more confined than the plain command beside it. CS-0135's rule that every step kind is sandboxed identically is unaffected, and where an implementation still produces a chunk for its own reasons, §{lua.fs-sandbox} governs it as it governs any other.
 
 Substitution rules:
 
@@ -331,7 +337,7 @@ cook.add_unit({
 })
 ```
 
-The implementation rewrites this command at codegen time into a Lua step that reads `cook.probes.get("cc:compiler")` and `cook.probes.get("cc:zlib")` and interpolates the results before executing the shell command.
+Before the command runs, `$<cc:compiler.path>` and `$<cc:zlib.cflags>` are replaced by the resolved values of the two probes. `$<in>` and `$<out>` are register-time sigils and are already substituted by that point (§{phl.token}). The unit's captured output is the same as it would be for the equivalent command with no probe reference in it (CS-0188).
 
 ## 22.5.8. Execution semantics [#cat.probes.exec]
 
