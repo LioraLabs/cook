@@ -1,5 +1,6 @@
 //! Cache metadata and sharing disposition.
 
+pub mod observation;
 pub mod record;
 
 /// How one declared input entry is read (§17.1.1.2, CS-0186).
