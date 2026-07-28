@@ -531,7 +531,7 @@ pub(crate) fn generate_cook_step(
     Ok(())
 }
 
-/// COOK-63 §8.3: lower a `cook` step inside a `for_each` recipe to one
+/// COOK-63 §8.2: lower a `cook` step inside a member-fanout recipe to one
 /// `cook.add_unit` per data member, with the member bound as `item`.
 ///
 /// The recipe body has already emitted `local _items = <source>` (see
@@ -540,9 +540,9 @@ pub(crate) fn generate_cook_step(
 /// `$<in>` / `$<in.FIELD>` resolve against the loop's `item` member; `$<out>`
 /// resolves to the member's declared output. The filesystem path-input
 /// builtin (`$<in>`'s glob-path sense) is not applicable in a
-/// `for_each` body — it has no path-input source. The probe-deferral and Lua
+/// member-fanout body — it has no path-input source. The probe-deferral and Lua
 /// long-string conventions mirror the ingredient-driven `LuaExprOneToOne` arm.
-pub(crate) fn generate_for_each_cook_step(
+pub(crate) fn generate_member_fanout_cook_step(
     out: &mut String,
     cook_step: &CookStep,
     index: usize,
@@ -572,7 +572,7 @@ pub(crate) fn generate_for_each_cook_step(
     let mut consulted = ConsultedEnv::new();
     let mut out_exprs: Vec<String> = Vec::with_capacity(cook_step.outputs.len());
     for pat in &cook_step.outputs {
-        let (expr, _) = crate::template::expand_for_each_template(
+        let (expr, _) = crate::template::expand_member_fanout_template(
             pat.as_str(),
             &ctx,
             &mut consulted,
@@ -586,7 +586,7 @@ pub(crate) fn generate_for_each_cook_step(
     let add_unit_line = match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
             let combined = build_shell_block_command(lines, recipe_names);
-            let (cmd_concat, probe_keys) = crate::template::expand_for_each_template(
+            let (cmd_concat, probe_keys) = crate::template::expand_member_fanout_template(
                 &combined,
                 &ctx,
                 &mut consulted,
@@ -602,7 +602,7 @@ pub(crate) fn generate_for_each_cook_step(
             )
         }
         Some(Body::LuaBlock(code)) => {
-            // §8.3: a Lua block body sees the member as `item`. Execute-phase
+            // §8.2: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);

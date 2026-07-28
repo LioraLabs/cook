@@ -1,11 +1,11 @@
-//! `for_each` data-member fan-out integration tests (COOK-64, §22.5.9).
+//! Member fan-out data-member integration tests (COOK-64, §22.5.10).
 //!
 //! End-to-end at the binary level: write a Cookfile + data file in a tempdir,
 //! invoke `cook <recipe>`, and inspect filesystem outputs and the per-member
 //! cache behaviour.
 //!
-//! The headline test (`for_each_per_member_invalidation`) proves the two-layer
-//! cache of §22.5.9 / §17.1 observable #5: editing ONE data member re-runs
+//! The headline test (`member_fanout_per_member_invalidation`) proves the two-layer
+//! cache of §22.5.10 / §17.1 observable #5: editing ONE data member re-runs
 //! only that member's unit, while the others stay cache hits — even though the
 //! feeding probe re-evaluates the whole set.
 
@@ -53,10 +53,10 @@ fn ran_lines(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// §22.5.9 per-member invalidation. A probe feeds a `for_each` over three
+/// §22.5.10 per-member invalidation. A probe feeds a member fan-out over three
 /// records; editing ONE record's field re-runs only that member's unit.
 #[test]
-fn for_each_per_member_invalidation() {
+fn member_fanout_per_member_invalidation() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
@@ -82,7 +82,7 @@ fn for_each_per_member_invalidation() {
     );
     fs::write(dir.join("data.json"), &data).unwrap();
 
-    // The probe resolves the array; the `for_each` recipe fans out one cook
+    // The probe resolves the array; the member-fanout recipe fans out one cook
     // unit per record. Each unit writes its tag to a declared output AND
     // appends its id to `ran.log` (a side effect, not a declared output, so it
     // is NOT restored on a cache hit — exactly what makes it a run-counter).
@@ -159,7 +159,7 @@ recipe gen
 /// position — the issue's exact repro shape, native `probe` DSL. Must fan
 /// out one unit per member and stay per-member cached on a second run.
 #[test]
-fn for_each_two_segment_probe_key_end_to_end() {
+fn member_fanout_two_segment_probe_key_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 

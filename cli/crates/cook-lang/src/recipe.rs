@@ -354,7 +354,7 @@ pub(crate) fn parse_recipe(
     // §{steps.ingredients}: glob-pattern `ingredients` and `ingredients <probe>`
     // (probe member source) are mutually exclusive within a recipe, and at most
     // one probe source is allowed per recipe.
-    let mut for_each_seen = false;
+    let mut member_source_seen = false;
 
     // COOK-171: recipe-level `seal` baseline (the determinant set applied to
     // every cook in the recipe) and each cook's per-unit trailing `unseal`
@@ -469,7 +469,7 @@ pub(crate) fn parse_recipe(
                     });
                 }
                 if let Some(rest) = strip_keyword(text, "ingredients") {
-                    if for_each_seen {
+                    if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message:
@@ -493,7 +493,7 @@ pub(crate) fn parse_recipe(
                         pos = new_pos;
                         continue;
                     } else {
-                        // COOK-88: bare identifier => probe member source. Desugar to ForEach.
+                        // COOK-88: bare identifier => probe member source. Desugar to MemberSource.
                         if !ingredients.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
@@ -503,8 +503,8 @@ pub(crate) fn parse_recipe(
                         }
                         let (fe, new_pos) =
                             crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos)?;
-                        for_each_seen = true;
-                        steps.push(Step::ForEach { step: fe, line: tok.line });
+                        member_source_seen = true;
+                        steps.push(Step::MemberSource { step: fe, line: tok.line });
                         pos = new_pos;
                         continue;
                     }

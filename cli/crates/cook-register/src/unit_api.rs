@@ -603,14 +603,14 @@ pub fn register_unit_api(
             }
         }
 
-        // COOK-64 §8.3/§17.1: a `for_each` fan-out unit carries its data member
+        // COOK-64 §8.2/§17.1: a member fan-out unit carries its data member
         // (canonical-rendered by `cook.member_to_string`). Fold it into the
         // command hash so each member's unit gets a distinct fingerprint —
         // editing one member re-runs only its unit (observable #5). NUL
         // delimiters keep the member byte-range disjoint from the command.
         // Shell bodies already bake the member into the command text; this
         // additionally covers Lua-block bodies whose `item` reads are opaque to
-        // the command string. `None` (non-`for_each` units) hashes as before.
+        // the command string. `None` (non-member-fanout units) hashes as before.
         // CS-0127: `member` must be a string — never coerced.
         let member: Option<String> = match tbl.get::<LuaValue>("member") {
             Ok(LuaValue::Nil) | Err(_) => None,
@@ -1365,8 +1365,8 @@ pub fn register_unit_api(
     // since gone bad. Last-wins per member, matching how `member_outputs` is
     // built for the cross-recipe `$<recipe[in]>` join.
     //
-    // The fallback is not a convenience: a `for_each` recipe may follow a step
-    // that GATHERED rather than fanned out (§{cat.probes.for-each}), and that
+    // The fallback is not a convenience: a member-fanout recipe may follow a step
+    // that GATHERED rather than fanned out (§{cat.probes.member-source}), and that
     // step's one unit carries no member. Its outputs are what every member unit
     // then reads.
     let body_slot_prior = body_slot.clone();

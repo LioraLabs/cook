@@ -623,7 +623,7 @@ fn register_worker_cook_table(
     // modules that use the scoped sub-table pattern.
     install_execute_phase_cook_probes(lua, &cook, probe_store)?;
 
-    // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
+    // COOK-64 §9.3: cook.member_to_string(value) renders a data
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Used by the `$<in>` placeholder.
     let member_fn = lua.create_function(|_, value: mlua::Value| {

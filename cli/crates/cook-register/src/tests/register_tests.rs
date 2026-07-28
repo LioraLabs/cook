@@ -1903,11 +1903,11 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
 }
 
 // -----------------------------------------------------------------------
-// COOK-64 §22.5.9 — ingredients <probe> register pre-pass
+// COOK-64 §22.5.10 — ingredients <probe> register pre-pass
 // -----------------------------------------------------------------------
 
 /// Drive the full surface pipeline (parse → codegen → register) so the
-/// codegen-emitted `__for_each` surface metadata and the fan-out body are
+/// codegen-emitted `__member_source` surface metadata and the fan-out body are
 /// exercised exactly as a real Cookfile would produce them.
 fn register_surface(
     dir: &std::path::Path,
@@ -1954,7 +1954,7 @@ end)
 }
 
 #[test]
-fn for_each_probe_prepass_fans_out_units() {
+fn member_fanout_probe_prepass_fans_out_units() {
     let dir = TempDir::new().unwrap();
     // A self-contained probe (no file inputs) returns a 3-element array; the
     // pre-pass must resolve it so the `ingredients <probe>` body fans out one
@@ -2001,7 +2001,7 @@ recipe deal
 }
 
 #[test]
-fn for_each_probe_field_selector_indexes_named_array() {
+fn member_fanout_probe_field_selector_indexes_named_array() {
     let dir = TempDir::new().unwrap();
     // `ingredients catalog:items` iterates the array at the probe value's `items`
     // field — the pre-pass stores the whole record; the body indexes `[items]`.
@@ -2025,7 +2025,7 @@ recipe build_catalog
 }
 
 #[test]
-fn for_each_two_segment_probe_key_fans_out() {
+fn member_fanout_two_segment_probe_key_fans_out() {
     let dir = TempDir::new().unwrap();
     // COOK-190: `ns:name` is the canonical probe naming; a two-segment key
     // in ingredients position must resolve to the declared probe, not
@@ -2050,7 +2050,7 @@ recipe stamps
 }
 
 #[test]
-fn for_each_two_segment_key_with_field_selector_fans_out() {
+fn member_fanout_two_segment_key_with_field_selector_fans_out() {
     let dir = TempDir::new().unwrap();
     // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
     // trailing `:items` field selector. The pre-pass resolves via the final
@@ -2076,7 +2076,7 @@ recipe build_cards
 }
 
 #[test]
-fn for_each_exact_probe_key_wins_over_field_selector_split() {
+fn member_fanout_exact_probe_key_wins_over_field_selector_split() {
     let dir = TempDir::new().unwrap();
     // Both `cards` (an object with a `list` field) and `cards:list` (an
     // array) are declared. §22.5.10 resolution: the exact key match wins.
@@ -2104,7 +2104,7 @@ recipe stamps
 }
 
 #[test]
-fn for_each_undeclared_two_segment_ref_error_names_full_ref() {
+fn member_fanout_undeclared_two_segment_ref_error_names_full_ref() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 recipe stamps
@@ -2115,13 +2115,13 @@ recipe stamps
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
     assert!(
-        matches!(err, RegisterError::ForEachProbeUndeclared { ref key, .. } if key == "nope:list"),
+        matches!(err, RegisterError::MemberSourceProbeUndeclared { ref key, .. } if key == "nope:list"),
         "error must name the full source ref, got {err:?}"
     );
 }
 
 #[test]
-fn for_each_undeclared_probe_rejected() {
+fn member_fanout_undeclared_probe_rejected() {
     let dir = TempDir::new().unwrap();
     // `ingredients nope` names a probe that was never declared.
     let cookfile = r#"
@@ -2133,15 +2133,15 @@ recipe deal
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
     assert!(
-        matches!(err, RegisterError::ForEachProbeUndeclared { ref key, .. } if key == "nope"),
-        "expected ForEachProbeUndeclared, got {err:?}"
+        matches!(err, RegisterError::MemberSourceProbeUndeclared { ref key, .. } if key == "nope"),
+        "expected MemberSourceProbeUndeclared, got {err:?}"
     );
 }
 
 #[test]
-fn for_each_non_array_probe_rejected() {
+fn member_fanout_non_array_probe_rejected() {
     let dir = TempDir::new().unwrap();
-    // The probe resolves to a record, not an array — §22.5.9 requires a
+    // The probe resolves to a record, not an array — §22.5.10 requires a
     // sequence to iterate.
     let cookfile = r#"
 register
@@ -2158,13 +2158,13 @@ recipe deal
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
     assert!(
-        matches!(err, RegisterError::ForEachNotArray { ref selector, .. } if selector == "cards"),
-        "expected ForEachNotArray for 'cards', got {err:?}"
+        matches!(err, RegisterError::MemberSourceNotArray { ref selector, .. } if selector == "cards"),
+        "expected MemberSourceNotArray for 'cards', got {err:?}"
     );
 }
 
 #[test]
-fn for_each_probe_depending_on_build_artifact_rejected() {
+fn member_fanout_probe_depending_on_build_artifact_rejected() {
     let dir = TempDir::new().unwrap();
     // `gen.json` exists (so the pre-pass produce succeeds) but is also the
     // declared output of recipe `gen` — i.e. a build artifact. An
@@ -2192,15 +2192,15 @@ recipe consume
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
     assert!(
-        matches!(err, RegisterError::ForEachProbeArtifactDep { ref key, ref path } if key == "data" && path == "gen.json"),
-        "expected ForEachProbeArtifactDep for probe 'data' on 'gen.json', got {err:?}"
+        matches!(err, RegisterError::MemberSourceProbeArtifactDep { ref key, ref path } if key == "data" && path == "gen.json"),
+        "expected MemberSourceProbeArtifactDep for probe 'data' on 'gen.json', got {err:?}"
     );
 }
 
 #[test]
-fn for_each_unreachable_broken_probe_does_not_block_target() {
+fn member_fanout_unreachable_broken_probe_does_not_block_target() {
     let dir = TempDir::new().unwrap();
-    // §22.5.9 demand-driven: building target `a` must NOT evaluate the probe of
+    // §22.5.10 demand-driven: building target `a` must NOT evaluate the probe of
     // the unrelated `ingredients <probe>` recipe `b` — even though `b`'s probe
     // resolves to a non-array (which would otherwise be a register error). `b`
     // registers with no units; `a` builds normally.
@@ -2235,7 +2235,7 @@ recipe b
     );
     assert!(
         registered.units_by_recipe.get("b").unwrap().units.is_empty(),
-        "unreachable for_each recipe 'b' registers with no units"
+        "unreachable member-fanout recipe 'b' registers with no units"
     );
 }
 
@@ -2437,25 +2437,6 @@ fn mux_per_member_fingerprint_isolation() {
     );
 }
 
-fn make_unit_api_lua(working_dir: &std::path::Path) -> (mlua::Lua, SharedBodySlot) {
-    use std::sync::{Arc, Mutex};
-    let lua = mlua::Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
-    let body_slot: SharedBodySlot =
-        std::rc::Rc::new(std::cell::RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: crate::dep_output_api::SharedTerminalOutputs =
-        Arc::new(Mutex::new(std::collections::BTreeMap::new()));
-    crate::unit_api::register_unit_api(
-        &lua,
-        body_slot.clone(),
-        "recipe",
-        terminal_outputs,
-        working_dir.to_path_buf(),
-    )
-    .unwrap();
-    (lua, body_slot)
-}
-
 // -----------------------------------------------------------------------
 // cook.recipe_name() tests (Standard §22.7, CS-0141)
 // -----------------------------------------------------------------------
@@ -2551,16 +2532,16 @@ cook.recipe_name()
     assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
 }
 
-/// A reachable, `for_each`-feeding probe's `produce` body runs on the
-/// register VM before the body loop opens the body slot (`run_for_each_prepass`
+/// A reachable, member-source probe's `produce` body runs on the
+/// register VM before the body loop opens the body slot (`run_member_source_prepass`
 /// runs before recipe bodies are invoked), so `cook.recipe_name()` inside it
-/// must also hard error. Must be `for_each`-feeding (an ordinary probe's
+/// must also hard error. Must be member-source (an ordinary probe's
 /// `produce` never runs on the register VM at all — it runs in the execute
 /// VM worker pool, where `cook.recipe_name` isn't registered — so a plain
 /// probe would pass vacuously here) and reachable (no `target_recipe` is set,
 /// so every driver is in scope).
 #[test]
-fn recipe_name_errors_inside_for_each_feeding_probe_produce() {
+fn recipe_name_errors_inside_member_source_probe_produce() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 register
@@ -2579,7 +2560,7 @@ recipe deal
     let result = register_surface(dir.path(), cookfile);
     assert!(
         result.is_err(),
-        "cook.recipe_name() in a for_each-feeding probe's produce must error"
+        "cook.recipe_name() in a member-source probe's produce must error"
     );
     let err = result.err().unwrap().to_string();
     assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
@@ -3122,13 +3103,13 @@ cook.__register_surface_chore("{chore_name}",
     )
 }
 
-/// Skip arm 3 — a probe-sourced `for_each` recipe that isn't statically
+/// Skip arm 3 — a probe-sourced member-fanout recipe that isn't statically
 /// reachable from the target had its feeding probe skipped by the pre-pass,
 /// so its body's `cook.probes.get` cannot resolve. Forcing it is a hard error
 /// with a fix hint, NOT a silent registration of zero units (which would let
 /// register and engine disagree about what got built).
 #[test]
-fn require_recipe_on_unreachable_probe_for_each_errors_with_fix_hint() {
+fn require_recipe_on_unreachable_member_source_errors_with_fix_hint() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 register
@@ -3145,12 +3126,12 @@ recipe fan
     }
 "#;
     let err = register_surface_target(dir.path(), cookfile, "app")
-        .expect_err("forcing an unreachable probe-sourced for_each recipe must be a hard error")
+        .expect_err("forcing an unreachable probe-sourced member-fanout recipe must be a hard error")
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(err.contains("fan"), "error must name the recipe; got: {err}");
     assert!(
-        err.contains("for_each") && err.contains("probe"),
+        err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
     );
     assert!(
@@ -3162,12 +3143,12 @@ recipe fan
 
 /// Skip arm 3, SEEDED FIRST. The same lexicographic accident that hides the
 /// parametric-chore holes also defeats this arm's DESIGNED hard error: name
-/// the `for_each` recipe `afan` and the seed loop reaches it before `app`,
+/// the member-fanout recipe `afan` and the seed loop reaches it before `app`,
 /// marks the skip as a completed visit, and the later force short-circuits to
 /// `Ok(())` — the diagnostic never fires and `app` links against a recipe that
 /// registered nothing.
 #[test]
-fn require_recipe_on_probe_for_each_seeded_first_still_errors() {
+fn require_recipe_on_member_source_seeded_first_still_errors() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 register
@@ -3192,7 +3173,7 @@ recipe afan
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(err.contains("afan"), "error must name the recipe; got: {err}");
     assert!(
-        err.contains("for_each") && err.contains("probe"),
+        err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
     );
 }
@@ -3577,7 +3558,7 @@ cook.__register_surface_chore("achore",
 
 /// Skip arm 3 reached THROUGH an already-`Visited` recipe. This is the
 /// silent-swallow case, and the sharpest evidence the hole is real: arm 3's
-/// error is DESIGNED — forcing an unreachable probe-sourced `for_each` cannot
+/// error is DESIGNED — forcing an unreachable probe-sourced member source cannot
 /// be rescued, so it must be a hard failure. The existing arm-3 tests both
 /// force `afan` directly. Route the force through `bbb` (which the seed loop
 /// has already evaluated un-forced, because `zzz` sorts after it) and the
@@ -3588,7 +3569,7 @@ cook.__register_surface_chore("achore",
 /// forces it); `zzz` is named to sort last (so `bbb` is `Visited`, not `None`,
 /// at force time). Rename `zzz` to `app` and the bug cannot fire.
 #[test]
-fn require_recipe_probe_for_each_reached_via_visited_recipe_still_errors() {
+fn require_recipe_member_source_reached_via_visited_recipe_still_errors() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 register
@@ -3615,7 +3596,7 @@ recipe afan
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(err.contains("afan"), "error must name the recipe; got: {err}");
     assert!(
-        err.contains("for_each") && err.contains("probe"),
+        err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
     );
     assert!(
@@ -4311,10 +4292,10 @@ fn cook_chore_body_gets_chore_unit_semantics() {
 /// With the sentinel intercepted, the real answer surfaces: a `files` probe's
 /// value is a MAP of path → content hash, so it can never be the array a
 /// driver iterates. That is a legitimate rejection, but the generic
-/// `ForEachNotArray` reports a shape mismatch when the actionable fact is that
+/// `MemberSourceNotArray` reports a shape mismatch when the actionable fact is that
 /// this producer kind is seal-only.
 #[test]
-fn files_probe_as_for_each_source_names_the_seal_only_kind() {
+fn files_probe_as_member_source_names_the_seal_only_kind() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(dir.path().join("src/a.txt"), "a\n").unwrap();
@@ -4329,8 +4310,8 @@ recipe grade
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
     assert!(
-        matches!(err, RegisterError::ForEachFilesProbe { ref key } if key == "sites"),
-        "expected ForEachFilesProbe for 'sites', got {err:?}"
+        matches!(err, RegisterError::MemberSourceFilesProbe { ref key } if key == "sites"),
+        "expected MemberSourceFilesProbe for 'sites', got {err:?}"
     );
     let rendered = err.to_string();
     assert!(

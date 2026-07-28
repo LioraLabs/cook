@@ -672,17 +672,17 @@ impl From<cook_register::RegisterError> for EngineError {
                     message: e.to_string(),
                 }
             }
-            // COOK-64 §22.5.9 — `for_each` pre-pass diagnostics.
-            ref e @ cook_register::RegisterError::ForEachProbeUndeclared {
+            // COOK-64 §22.5.10 — member-source pre-pass diagnostics.
+            ref e @ cook_register::RegisterError::MemberSourceProbeUndeclared {
                 ref recipe, ..
             } => EngineError::RegistrationFailed {
                 recipe: recipe.clone(),
                 message: e.to_string(),
             },
-            ref e @ (cook_register::RegisterError::ForEachProbeProduceFailed { .. }
-            | cook_register::RegisterError::ForEachNotArray { .. }
-            | cook_register::RegisterError::ForEachFilesProbe { .. }
-            | cook_register::RegisterError::ForEachProbeArtifactDep { .. }) => {
+            ref e @ (cook_register::RegisterError::MemberSourceProbeProduceFailed { .. }
+            | cook_register::RegisterError::MemberSourceNotArray { .. }
+            | cook_register::RegisterError::MemberSourceFilesProbe { .. }
+            | cook_register::RegisterError::MemberSourceProbeArtifactDep { .. }) => {
                 EngineError::RegistrationFailed {
                     recipe: String::new(),
                     message: e.to_string(),

@@ -43,18 +43,18 @@ pub struct RegisteredRecipe {
     /// (surface `chore NAME` blocks). All other registration paths
     /// (`cook.recipe`, `cook.__register_surface`) set `Recipe`.
     pub kind: RecipeKind,
-    /// COOK-64 §22.5.9: the `for_each` data source of a surface `for_each`
-    /// recipe, captured from the `__for_each` field codegen emits on the
-    /// register surface meta. `None` for recipes with no `for_each` driver
+    /// COOK-64 §22.5.10: the member source of a surface member-fanout
+    /// recipe, captured from the `__member_source` field codegen emits on the
+    /// register surface meta. `None` for recipes with no member source
     /// and for every non-surface registration path (`cook.recipe`, chores).
     /// The register pre-pass reads this to evaluate a feeding probe ahead of
     /// the body invocation that materialises the member set.
-    pub for_each: Option<ForEachDescriptor>,
+    pub member_source: Option<MemberSourceDescriptor>,
 }
 
-/// The data source of a `for_each` recipe, as carried on the register
-/// surface meta (`__for_each = {kind=…}`) by `cook-luagen`. Mirrors the
-/// surface-AST `ForEachSource` but lives in the register crate so the
+/// The data source of a member-fanout recipe, as carried on the register
+/// surface meta (`__member_source = {kind=…}`) by `cook-luagen`. Mirrors the
+/// surface-AST `MemberSource` but lives in the register crate so the
 /// pre-pass can dispatch without a parser dependency.
 ///
 /// - `Probe { source_ref }` — `ingredients <ref>`, the ref verbatim (`key`
@@ -66,22 +66,22 @@ pub struct RegisteredRecipe {
 /// The `Shell { cmd, as_lines }` and `Lua` variants have been removed in
 /// COOK-97 — only `Probe` remains.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForEachDescriptor {
+pub enum MemberSourceDescriptor {
     Probe { source_ref: String },
 }
 
-/// Parse the `__for_each` descriptor off a register surface meta table.
-/// Returns `None` when the field is absent (a non-`for_each` recipe).
-fn parse_for_each_meta(meta: &LuaTable) -> LuaResult<Option<ForEachDescriptor>> {
-    let Some(t) = meta.get::<Option<LuaTable>>("__for_each")? else {
+/// Parse the `__member_source` descriptor off a register surface meta table.
+/// Returns `None` when the field is absent (a non-member-fanout recipe).
+fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDescriptor>> {
+    let Some(t) = meta.get::<Option<LuaTable>>("__member_source")? else {
         return Ok(None);
     };
     let kind: String = t.get("kind")?;
     Ok(Some(match kind.as_str() {
-        "probe" => ForEachDescriptor::Probe { source_ref: t.get("ref")? },
+        "probe" => MemberSourceDescriptor::Probe { source_ref: t.get("ref")? },
         other => {
             return Err(mlua::Error::runtime(format!(
-                "cook.__register_surface: unknown __for_each kind '{other}'"
+                "cook.__register_surface: unknown __member_source kind '{other}'"
             )))
         }
     }))
@@ -433,8 +433,8 @@ pub fn install_cook_api(
                 source: RegistrationSource::Dynamic { line },
                 kind: RecipeKind::Recipe,
                 // Dynamic `cook.recipe` registrations carry no surface
-                // `for_each` driver — that lowering is surface-only.
-                for_each: None,
+                // member source — that lowering is surface-only.
+                member_source: None,
             });
             Ok(())
         })?;
@@ -486,8 +486,8 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Dynamic { line },
                 kind: RecipeKind::Chore,
-                // Chores cannot declare a `for_each` driver (§8.3 is recipe-only).
-                for_each: None,
+                // Chores cannot declare a member source (§8.2 is recipe-only).
+                member_source: None,
             });
             Ok(())
         })?;
@@ -515,7 +515,7 @@ pub fn install_cook_api(
             // matching the legacy `cook.recipe` "no line info" sentinel.
             let line: usize = meta.get("__line").unwrap_or(0);
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
-            let for_each = parse_for_each_meta(&meta)?;
+            let member_source = parse_member_source_meta(&meta)?;
             recipes_surface.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
@@ -530,7 +530,7 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Recipe,
-                for_each,
+                member_source,
             });
             Ok(())
         },
@@ -564,8 +564,8 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Chore,
-                // Chores cannot declare a `for_each` driver (§8.3 is recipe-only).
-                for_each: None,
+                // Chores cannot declare a member source (§8.2 is recipe-only).
+                member_source: None,
             });
             Ok(())
         },
@@ -675,7 +675,7 @@ pub fn install_cook_api(
     // `cook.require_var`, where the declared keyset is in scope.
     lua.set_named_registry_value(crate::VAR_STORE_REGISTRY_KEY, var_store)?;
 
-    // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
+    // COOK-64 §9.3: cook.member_to_string(value) renders a member fan-out
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Bound on the register VM so the fan-out
     // codegen's `member = cook.member_to_string(item)` and `$<in>` resolve.

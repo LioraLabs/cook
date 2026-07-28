@@ -1560,18 +1560,18 @@ fn test_parse_register_inside_chore_body_rejected() {
         "expected diagnostic, got: {}", msg);
 }
 
-// ── COOK-63: for_each data-member iteration source (§8.3) ──────────
+// ── COOK-63: member-source data-member iteration (§8.2) ──────────
 
-/// Helper: pull the first `Step::ForEach` out of recipe 0, or panic.
-fn first_for_each(c: &Cookfile) -> &ForEachStep {
+/// Helper: pull the first `Step::MemberSource` out of recipe 0, or panic.
+fn first_member_source(c: &Cookfile) -> &MemberSourceStep {
     c.recipes[0]
         .steps
         .iter()
         .find_map(|s| match s {
-            Step::ForEach { step, .. } => Some(step),
+            Step::MemberSource { step, .. } => Some(step),
             _ => None,
         })
-        .expect("recipe should contain a for_each step")
+        .expect("recipe should contain a member-source step")
 }
 
 #[test]
@@ -1839,11 +1839,11 @@ fn probe_json_on_lua_block_rejected() {
 // ── COOK-88: ingredients <probe> member source ──────────────────────
 
 #[test]
-fn ingredients_probe_desugars_to_for_each() {
+fn ingredients_probe_desugars_to_member_source() {
     let source = "recipe render\n    ingredients cardprobe\n    cook \"build/$<in.name>.png\" { gen \"$<in.name>\" $<out> }\n";
     let c = parse(source).unwrap();
-    let fe = first_for_each(&c);
-    assert_eq!(fe.source, ForEachSource::ProbeKey("cardprobe".to_string()));
+    let fe = first_member_source(&c);
+    assert_eq!(fe.source, MemberSource::ProbeKey("cardprobe".to_string()));
     assert!(c.recipes[0].ingredients.is_empty());
 }
 
@@ -1852,8 +1852,8 @@ fn ingredients_probe_field_selector_parses() {
     let source = "recipe r\n    ingredients catalog:items\n    cook \"$<in.id>\" { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(
-        first_for_each(&c).source,
-        ForEachSource::ProbeKey("catalog:items".to_string())
+        first_member_source(&c).source,
+        MemberSource::ProbeKey("catalog:items".to_string())
     );
 }
 
@@ -1864,8 +1864,8 @@ fn ingredients_two_segment_probe_key_parses_whole_ref() {
     let source = "recipe stamps\n    ingredients cards:list\n    cook \"out/$<in>.stamp\" { echo \"$<in>\" > $<out> }\n";
     let c = parse(source).unwrap();
     assert_eq!(
-        first_for_each(&c).source,
-        ForEachSource::ProbeKey("cards:list".to_string())
+        first_member_source(&c).source,
+        MemberSource::ProbeKey("cards:list".to_string())
     );
 }
 
@@ -1875,8 +1875,8 @@ fn ingredients_three_segment_ref_parses_whole_ref() {
     let source = "recipe r\n    ingredients ns:name:items\n    cook \"$<in.id>\" { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(
-        first_for_each(&c).source,
-        ForEachSource::ProbeKey("ns:name:items".to_string())
+        first_member_source(&c).source,
+        MemberSource::ProbeKey("ns:name:items".to_string())
     );
 }
 
