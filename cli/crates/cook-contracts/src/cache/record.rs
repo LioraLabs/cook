@@ -205,7 +205,7 @@ pub fn determinant_drift(
 /// removed test-result store carried its own, so two stores holding the same
 /// kind of thing were free to disagree about what shape it had, and a change
 /// to one could not invalidate the other. One store now, and one version.
-pub const RECORD_SCHEMA_VERSION: u32 = 8;
+pub const RECORD_SCHEMA_VERSION: u32 = 9;
 
 #[cfg(test)]
 #[path = "tests/record_tests.rs"]

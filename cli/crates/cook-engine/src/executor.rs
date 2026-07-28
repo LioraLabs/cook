@@ -1072,6 +1072,7 @@ pub fn execute_dag(
                         command_hash: meta.command_hash,
                         env_contribution: meta.env_contribution,
                         seal_contribution: seal_contrib,
+                        observed: entry.and_then(|e| e.observed.clone()),
                     },
                 );
             }

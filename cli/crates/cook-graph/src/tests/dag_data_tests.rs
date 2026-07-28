@@ -575,6 +575,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
             command_hash: 0,
             env_contribution: 0,
             seal_contribution: 0,
+        observed: None,
         },
     );
 

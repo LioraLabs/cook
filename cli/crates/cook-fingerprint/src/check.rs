@@ -408,6 +408,7 @@ pub fn needs_rebuild_cook(
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
         seal_contribution: entry.seal_contribution,
+        observed: entry.observed.clone(),
     };
     (RebuildResult::Skip, Some(updated))
 }

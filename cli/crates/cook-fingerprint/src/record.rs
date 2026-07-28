@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use cook_contracts::cache::observation::Observation;
 
 /// Serde adapter: u64 <-> zero-padded lowercase hex string.
 ///
@@ -68,6 +69,10 @@ pub struct StepEntry {
     /// case), keeping non-sealed entries byte-stable apart from the version bump.
     #[serde(default, with = "hex_u64")]
     pub seal_contribution: u64,
+    /// What the last successful execution did. Scalars stay in the index;
+    /// stream bytes live in the CAS under the reserved observation artifact.
+    #[serde(skip)]
+    pub observed: Option<Observation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

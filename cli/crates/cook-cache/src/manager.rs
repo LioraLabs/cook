@@ -283,6 +283,7 @@ impl ThreadSafeCacheManager {
             // computed by the engine from the materialised probe values and
             // passed in (the CacheMeta carries only the seal *key set*).
             seal_contribution,
+            observed: None,
         };
         self.update_step(recipe_name, cache_key, entry.clone());
         Ok(entry)

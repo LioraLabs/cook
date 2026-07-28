@@ -26,7 +26,10 @@
 //!             [{ inputs_start u32, inputs_len u32,
 //!                outputs_start u32, outputs_len u32,
 //!                command_hash u64, env_contribution u64,
-//!                seal_contribution u64 }; count]
+//!                seal_contribution u64,
+//!                observed u8,
+//!                [duration_ms u64, recorded_at u64, log_bytes u64,
+//!                 cause_len u32, cause bytes] }; count]
 //!   globs     count u32, keyblob_len u32, [u32; count+1] key offsets, key blob,
 //!             member_count u32, [u32; count+1] member offsets,
 //!             [u32; member_count] member path ids
@@ -67,6 +70,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
+use cook_contracts::cache::observation::Observation;
 
 use crate::store::RecipeCache;
 
@@ -124,6 +128,9 @@ impl Writer {
     }
     fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u8(&mut self, v: u8) {
+        self.buf.push(v);
     }
     fn u64(&mut self, v: u64) {
         self.buf.extend_from_slice(&v.to_le_bytes());
@@ -210,6 +217,18 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
         w.u64(step.command_hash);
         w.u64(step.env_contribution);
         w.u64(step.seal_contribution);
+        match &step.observed {
+            None => w.u8(0),
+            Some(observed) => {
+                w.u8(1);
+                w.u64(observed.duration_ms());
+                w.u64(observed.recorded_at());
+                w.u64(observed.log_bytes());
+                let cause = observed.cause().unwrap_or("").as_bytes();
+                w.u32(cause.len() as u32);
+                w.bytes(cause);
+            }
+        }
     }
 
     // Globs: key table, then a flat member pool with per-key offsets.
@@ -262,6 +281,10 @@ impl<'a> Reader<'a> {
 
     fn u32(&mut self) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn u8(&mut self) -> Result<u8, DecodeError> {
+        Ok(self.take(1)?[0])
     }
 
     fn u64(&mut self) -> Result<u64, DecodeError> {
@@ -369,6 +392,24 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         let command_hash = r.u64()?;
         let env_contribution = r.u64()?;
         let seal_contribution = r.u64()?;
+        let observed = match r.u8()? {
+            0 => None,
+            1 => {
+                let duration_ms = r.u64()?;
+                let recorded_at = r.u64()?;
+                let log_bytes = r.u64()?;
+                let cause_len = r.u32()? as usize;
+                let cause = std::str::from_utf8(r.take(cause_len)?)
+                    .map_err(|_| DecodeError::Utf8)?;
+                Some(Observation::new(
+                    duration_ms,
+                    recorded_at,
+                    (!cause.is_empty()).then(|| cause.to_owned()),
+                    log_bytes,
+                ))
+            }
+            _ => return Err(DecodeError::BadReference),
+        };
         steps.insert(
             key,
             StepEntry {
@@ -377,6 +418,7 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
                 command_hash,
                 env_contribution,
                 seal_contribution,
+                observed,
             },
         );
     }

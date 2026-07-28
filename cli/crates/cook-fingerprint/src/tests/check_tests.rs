@@ -193,6 +193,7 @@ fn test_command_hash_changed_rebuilds() {
         command_hash: 0x1111,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let (result, updated) =
@@ -219,6 +220,7 @@ fn test_output_missing_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let (result, updated) =
@@ -243,6 +245,7 @@ fn test_nothing_changed_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let (result, updated) =
@@ -280,6 +283,7 @@ fn test_input_content_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let (result, updated) =
@@ -322,6 +326,7 @@ fn record_unit_with_drifted_present_output_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+    observed: None,
     };
 
     // Control: a non-record unit with a drifted present output and no
@@ -378,6 +383,7 @@ fn record_unit_with_missing_output_still_rebuilds_without_restore() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+    observed: None,
     };
 
     // record cannot conjure bytes without a backend: a genuinely missing
@@ -432,6 +438,7 @@ fn no_outputs_nothing_changed_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+    observed: None,
     };
 
     let (result, updated) =
@@ -500,6 +507,7 @@ fn env_contribution_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0x1111,
         seal_contribution: 0,
+    observed: None,
     };
 
     let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None, false);
@@ -523,6 +531,7 @@ fn seal_contribution_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0x1111,
+    observed: None,
     };
 
     // Same command/env/inputs/outputs, different seal value -> SealChanged.
@@ -567,6 +576,7 @@ fn augments_current_inputs_from_depfile_and_skips() {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     };
 
     let di = DiscoveredInputs {
@@ -781,6 +791,7 @@ fn fat_entry(wd: &std::path::Path) -> StepEntry {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        observed: None,
     }
 }
 
