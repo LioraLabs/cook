@@ -1,5 +1,0 @@
-recipe "bad"
-    ingredients "src/*.md"
-    cook "build/$<file:tokens.css>.html" {
-        render -o $<out>
-    }

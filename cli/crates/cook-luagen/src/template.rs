@@ -32,7 +32,6 @@ pub(crate) fn expand_command_template(
     cmd: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(cmd);
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
@@ -54,7 +53,7 @@ pub(crate) fn expand_command_template(
             probe_keys.insert(key.clone());
             parts.push(format!("\"{}\"", escape_lua_string(&cmd[span.range.clone()])));
         } else {
-            let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
+            let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env)?;
             parts.push(lua_expr);
         }
         cursor = span.range.end;
@@ -109,7 +108,6 @@ pub(crate) fn expand_for_each_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
     probe_lowering: ProbeLowering,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(template);
@@ -143,7 +141,7 @@ pub(crate) fn expand_for_each_template(
                     // capture — see expand_command_template's doc comment.
                     format!("\"{}\"", escape_lua_string(&template[span.range.clone()]))
                 } else {
-                    resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+                    resolved_to_lua(resolved, &span.ident, consulted_env)?
                 }
             } else if let Resolved::RecipeMember { ref name } = resolved {
                 format!(
@@ -151,7 +149,7 @@ pub(crate) fn expand_for_each_template(
                     escape_lua_string(name)
                 )
             } else {
-                resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+                resolved_to_lua(resolved, &span.ident, consulted_env)?
             }
         };
         parts.push(lua);
@@ -205,68 +203,6 @@ impl ConsultedEnv {
     }
 }
 
-/// CS-0101 accumulator for `$<file:PATTERN>` references seen during template
-/// expansion. Patterns are kept in first-appearance order (deduped); each is
-/// lowered to a register-time hoisted local `_cook_fr_<tag>_<n>` so the
-/// substitution value is computed at register time even when the surrounding
-/// command is wrapped in a probe-deferred `function() return ... end` (still
-/// true for `test`/`plate` bodies; a native `cook`-step command never wraps —
-/// see COOK-187/CS-0122 in `expand_command_template`'s doc comment).
-#[derive(Debug, Clone)]
-pub(crate) struct FileRefs {
-    tag: String,
-    pub patterns: Vec<String>,
-}
-
-impl FileRefs {
-    pub fn new(tag: impl Into<String>) -> Self {
-        Self { tag: tag.into(), patterns: Vec::new() }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.patterns.is_empty()
-    }
-
-    /// Record `pattern` (idempotent) and return the Lua local that will hold
-    /// its space-joined resolution.
-    pub fn local_for(&mut self, pattern: &str) -> String {
-        let idx = match self.patterns.iter().position(|p| p == pattern) {
-            Some(i) => i,
-            None => {
-                self.patterns.push(pattern.to_string());
-                self.patterns.len() - 1
-            }
-        };
-        format!("_cook_fr_{}_{}", self.tag, idx + 1)
-    }
-
-    /// `local _cook_fr_T_1 = cook.file_ref("p1")` … one line per pattern.
-    pub fn hoist_lines(&self, indent: &str) -> String {
-        self.patterns
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                format!(
-                    "{}local _cook_fr_{}_{} = cook.file_ref(\"{}\")\n",
-                    indent,
-                    self.tag,
-                    i + 1,
-                    escape_lua_string(p)
-                )
-            })
-            .collect()
-    }
-
-    /// `{"p1", "p2"}` — the `file_refs` field for cook.add_unit.
-    pub fn to_lua_table(&self) -> String {
-        let items: Vec<String> = self
-            .patterns
-            .iter()
-            .map(|p| format!("\"{}\"", escape_lua_string(p)))
-            .collect();
-        format!("{{{}}}", items.join(", "))
-    }
-}
 
 // ─── New sigil-based substitution engine ────────────────────────────────────
 
@@ -283,9 +219,8 @@ pub(crate) fn expand_sigil_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
-    expand_sigil_template_with_chore_params(template, ctx, consulted_env, file_refs, None)
+    expand_sigil_template_with_chore_params(template, ctx, consulted_env, None)
 }
 
 /// CS-0128: the shell quoting context a sigil span sits in.
@@ -329,7 +264,6 @@ pub(crate) fn expand_sigil_template_with_chore_params(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
     chore_params: Option<&BTreeSet<String>>,
 ) -> Result<String, ResolveError> {
     let spans = sigil::scan(template);
@@ -369,7 +303,7 @@ pub(crate) fn expand_sigil_template_with_chore_params(
             )
         } else {
             let resolved = crate::resolver::resolve(&span.ident, ctx);
-            resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+            resolved_to_lua(resolved, &span.ident, consulted_env)?
         };
         parts.push(lua_expr);
 
@@ -400,7 +334,6 @@ fn resolved_to_lua(
     resolved: Resolved,
     _ident: &str,
     consulted_env: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
     match resolved {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
@@ -419,9 +352,6 @@ fn resolved_to_lua(
         // CS-0074: probe-value reference — emit a tostring-wrapped cache read.
         // The access expression is pre-built by the resolver.
         Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
-        // CS-0101: `$<file:PATH>` — lower to the hoisted register-time local
-        // holding the space-joined match list (see [`FileRefs`]).
-        Resolved::FileRef { pattern } => Ok(file_refs.local_for(&pattern)),
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_for_each_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
@@ -605,18 +535,13 @@ fn output_pattern_ident_to_lua(
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
         Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
-        // CS-0101: a file reference is an input, not an iteration driver — it is
-        // invalid in a cook output pattern.
-        Resolved::FileRef { pattern } => Err(ResolveError::FileRefInOutputPattern {
-            ident: format!("file:{}", pattern),
-        }),
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
         // have no fan-out body context and `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
             ident: format!("{}[in]", name),
         }),
         // COOK-357: every resolver error is now a codegen error here. It used to
-        // fork — file-ref and bracket-index errors became `[[SIGIL_ERROR: …]]`
+        // fork — bracket-index errors became `[[SIGIL_ERROR: …]]`
         // string literals, everything else silently fell through to
         // `cook.require_var(ident)` "for backward compat". That fallback turned
         // e.g. `$<out_2>` in a single-output pattern into a lookup for a
@@ -838,7 +763,6 @@ pub(crate) fn expand_plate_test_body(
     recipe_names: &BTreeSet<String>,
     iter_var: &str,
     out: &mut ConsultedEnv,
-    file_refs: &mut FileRefs,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
@@ -878,7 +802,7 @@ pub(crate) fn expand_plate_test_body(
                 probe_keys.insert(key.clone());
                 format!("tostring({})", access)
             }
-            other => resolved_to_lua(other, &span.ident, out, file_refs)?,
+            other => resolved_to_lua(other, &span.ident, out)?,
         };
         parts.push(lua);
 

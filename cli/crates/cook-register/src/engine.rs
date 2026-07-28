@@ -2528,9 +2528,6 @@ fn install_remaining_apis(
         builder.alias_qualified_prefixes.clone(),
     )?;
     crate::context::register_resolve_ingredients(lua, &builder.working_dir, &builder.workspace_root)?;
-    // CS-0101: cook.file_ref — register-phase resolution of `$<file:PATH>`
-    // placeholders (hoisted locals emitted by cook-luagen).
-    crate::file_ref::register_file_ref(lua, &builder.working_dir)?;
     // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
     // the shared implementation lives in cook-lua-stdlib so the worker VMs
     // in cook-luaotp install byte-identical behaviour.

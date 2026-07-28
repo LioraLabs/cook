@@ -597,7 +597,7 @@ module.exports = grammar({
       seq(
         "$<",
         alias(
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -607,7 +607,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -661,7 +661,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),

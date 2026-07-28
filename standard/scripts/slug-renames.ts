@@ -16,6 +16,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'grammar.overview':                'toplevel.overview',
   'grammar.top-level-ordering':      'toplevel.ordering',
   'grammar.var-declarations':        null,
+  'xref.file-namespace':             null,  // CS-0187: $<file:PATH> removed
   'grammar.use-declarations':        'decl.use',
   'grammar.import-declarations':     'decl.import',
   'grammar.config-blocks':           'decl.config',
