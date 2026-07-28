@@ -3099,7 +3099,9 @@ Their tests asserted `timeout == 30` against a value built by hand, which no reg
 
 **Backward compatibility.** Breaking only for a caller passing `iteration_item` to `cook.add_unit` directly, which no published module does — codegen was the only producer. Nothing about a Cookfile changes: `test` steps, their fan-out, their identities and their labels are all as they were.
 
-**Conformance.** No fixture. The corpus's existing test coverage — fan-out identity, per-member labels, cached replay, failing-test reporting — exercises every path this touches, and all of it passes unchanged, which is the claim being made.
+**Conformance.** `25-member-fanout-test-tracks-its-producer` gains an assertion on the per-member **label**, which is the one observable this entry moves between fields.
+
+The rest of the corpus does exercise the paths this touches — fan-out caching, cached replay, failing-test reporting, blocked dependents — and all of it passes unchanged. But it asserted counts (`2 cached`, `1 failed`), and counts would still pass if every member of a fan-out reported under the same name. The discriminator itself was pinned nowhere, which is precisely the field being collapsed.
 
 ## CS-0190 — a `shell_block` is one invocation, and says so [#changes.cs-0190]
 
