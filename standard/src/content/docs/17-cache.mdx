@@ -68,7 +68,14 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 >
 > A conforming implementation MUST NOT let an observing unit's identity collide with a producing unit's declared output path within one index. The means of keeping them apart is implementation-defined.
 >
-> **What a hit replays.** An observing unit's hit reproduces its verdict, and that verdict is a pass: §{exec.cache.test-unit} rule 2 admits only a passed outcome to the cache, so the existence of a record is the verdict. An implementation MUST NOT report a replayed duration as though it were measured, and MUST NOT present a replayed unit's captured output as though the unit had produced it in this run. Whether a hit SHOULD reproduce what a run printed is open for every unit kind alike (CS-0186); a producing unit's hit replays no build log, and nothing in this Standard yet requires either kind to.
+> **What a hit replays.** An observing unit's hit reproduces its verdict, and that verdict is a pass: §{exec.cache.test-unit} rule 2 admits only a passed outcome to the cache, so the existence of a record is the verdict.
+>
+> **The observation (CS-0189).** CS-0186 left open, for every unit kind alike, whether a hit should also reproduce what the run printed. It should, and §{exec.cache.observation} says how. A conforming implementation records an **observation** for every unit it records at all, producing and observing alike, and a hit MAY reproduce it. Two constraints hold whether or not an implementation offers replay:
+>
+> - it MUST NOT report a replayed duration as though it were measured;
+> - it MUST NOT present a replayed unit's captured output as though the unit had produced it in this run.
+>
+> These are the same two constraints CS-0186 stated, and they are not withdrawn by an observation existing. What changes is that they now bound a thing implementations have, rather than standing in for one they do not.
 
 #### 17.1.1.2. Declared inputs: paths and patterns [#exec.cache.declared-inputs]
 
@@ -175,6 +182,26 @@ The manifest exists for diagnosis and verification: it lets a `cook why` query a
 The manifest is NOT an attestation of *which* producer made the artifact; cryptographic producer-identity attestation is out of scope at this revision. A `local` unit (§{steps.cook-disposition}) publishes no shared artifact and therefore no manifest. A missing or malformed manifest MUST NOT be treated as a cache error — it is best-effort diagnostic data, and an implementation that cannot read it falls back to its key-only behaviour.
 
 > **Note (informative).** The reference implementation persists the manifest as a JSON sidecar adjacent to the artifact bytes, keyed by the unit's cloud key (one manifest per unit, shared across the unit's N output artifacts since they share K). Maps serialise as sorted-key JSON objects and `u64` digests as zero-padded lowercase hex strings, so the same key yields byte-identical content. It is exposed through the cache backend as `put_manifest` / `get_manifest` and is the data source for the `cook why` key explanation (§{exec.cache.why}) and the divergence verifier. (CS-0110.) Since CS-0156 the manifest additionally records empty-directory implicit outputs (a defaulted field — older manifests parse as recording none), which candidate-key recovery (§{exec.cache.discovered-candidates}) reads to restore the full recorded output set.
+
+### 17.1.5.1. The observation [#exec.cache.observation]
+
+> **Normative (CS-0189).** An **observation** is what running a unit was seen to do, beyond the bytes it wrote: what it printed, how long it took, and when. A conforming implementation that records a unit's completion at all MUST record an observation alongside it, for **every** unit kind. A producing unit's observation sits beside its artifacts; an observing unit's is the only thing it has.
+>
+> An observation is recorded only for a run that **succeeded**, because those are the only runs a conforming implementation records (§{exec.cache.test-unit} rule 2 for an observing unit; a failed producing unit publishes nothing). It therefore cannot answer "why did this fail last time", and an implementation MUST NOT present it as though it could. That question belongs to whatever build-log retention the implementation offers, which is outside this Standard.
+>
+> **What it holds.**
+>
+> 1. **The output**, as an ordered sequence of chunks, each tagged with the stream it came from. The ordering guarantee is §{lua.cook-sh}'s and no stronger: preserved across the calls a unit made, not within a single spawn, whose two streams are separately buffered. An implementation MUST NOT record output in a shape that implies an interleaving it did not observe.
+> 2. **The duration**, the wall time the unit took on the run that was recorded.
+> 3. **When it was recorded.** A timestamp, not a position in a local history: an observation may be served to a machine that has no history of its own (rule 4 below), where "three builds ago" names nothing.
+>
+> **What it does not hold.** No outcome field. The record exists only for a success, so an outcome recorded on it would have one legal value, and a field with one legal value is a constant that can drift from the thing it duplicates. Ask §{exec.cache.effect-kind}: the existence of the record is the verdict.
+>
+> **Where it lives.** The streams MUST NOT be stored in whatever index an implementation reads wholesale to decide a unit's freshness: a chatty unit would then be re-read on every invocation of every build, to answer a question no freshness check asks. Scalars MAY sit in that index. The reference implementation puts the duration, the timestamp and the recorded size in the step index and the streams in the content-addressed store, retrievable by the unit's key.
+>
+> **Size.** A unit may print without bound. A conforming implementation MUST bound what it retains, MUST record that it truncated when it does, and MUST NOT present a truncated observation as complete. Where retention is bounded by eviction, an observation SHOULD be evicted before the artifacts of the same unit: losing an observation loses a log, while losing an artifact loses a build, and for an observing unit a lost observation degrades to a re-run.
+>
+> **Replay is opt-in.** An implementation offering replay MUST NOT make it the default for a cache hit. A warm build's value is that it is quiet and immediate; a hit that re-emits ten thousand lines of compiler output has spent the time it saved. §{exec.cache.effect-kind}'s two constraints bind whenever replay does happen: a replayed duration MUST NOT be reported as measured, and replayed output MUST NOT be presented as produced in this run.
 
 ### 17.1.6. Key explanation (`cook why`) [#exec.cache.why]
 
@@ -348,11 +375,13 @@ One thing is specific, and everything else in this section follows from it: a te
 
    This rule is what makes an observing unit's replay meaningful at all: because only a pass is recordable, the existence of a record **is** the verdict, and §{exec.cache.effect-kind} needs nothing stored to replay it.
 
-> **Withdrawn (CS-0186).** This section carried two further rules, and neither survives.
+> **Withdrawn (CS-0186), reinstated elsewhere (CS-0189).** This section carried two further rules. Both are gone from here permanently, and both now hold for every unit kind rather than for tests.
 >
-> **Rule 3, "replayed payload"**, required a hit to reproduce the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. `success` is implied by rule 2 above and needs no separate statement. The recorded streams and duration are withdrawn: they were a divergence from every other unit kind rather than a decision, since a `cook` unit's hit replays no build log and reports no elapsed time. Whether a hit should reproduce what a run printed is a live question about **every** unit kind at once, and §{exec.cache.effect-kind} states the constraint that holds until it is answered — an implementation MUST NOT report a replayed duration as though it were measured.
+> **Rule 3, "replayed payload"**, required a test's hit to reproduce the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. `success` was implied by rule 2 and needed no statement. The rest is §{exec.cache.observation}, which records what a run printed and how long it took for **every** unit, and bounds how a hit may reproduce it. CS-0186 withdrew the rule rather than keeping it because a rule about what a hit replays is not a rule about tests: a `cook` unit's hit replayed no build log either, and preserving the payload for one step kind would have re-created the divergence this milestone exists to remove.
 >
-> **Rule 4, "cross-machine portability"**, required a result recorded on machine A to be a hit on machine B for identical inputs. It was never delivered: the store it described was project-local, and nothing published to or fetched from a shared one. It is withdrawn rather than left standing unimplemented, and its reinstatement is bound to the payload question above, a shared observation being the same object as a replayed one. This withdrawal does not narrow the cross-machine guarantee for producing units, which is §{exec.cache.single-key} and is unchanged.
+> **Rule 4, "cross-machine portability"**, required a result recorded on machine A to be a hit on machine B for identical inputs. It was never delivered: the store it described was project-local, and nothing published to or fetched from a shared one. A conforming implementation now MUST admit an observing unit to §{exec.cache.sharing} on the same terms as any other unit — its observation is publishable and fetchable by the unit's single key (§{exec.cache.single-key}), and its disposition governs that publication exactly as a producing unit's governs its artifacts.
+>
+> Reinstating it has a consequence worth stating plainly, because it is the point rather than a side effect: **a test can pass because someone else's run of it passed.** That is what a content-addressed cache means — identical declared inputs, identical command, identical sealed probe values, therefore identical outcome — and it is the same trade a producing unit already makes when it restores a teammate's artifact instead of rebuilding. Where that inference is unsound because the unit depends on something its declaration does not name, the remedy is the one that already exists: name it, with a `seal` (§{steps.cook-disposition.seal}), or withhold the unit from sharing with `local`.
 
 > **Note (informative).** Rule 1's fold of a consumed output is an **output-content** fold, not a dependency-execution fold — the distinction is what gives a test the same early cutoff a consuming `cook` step gets (§{steps.cook-single}). A dependency that re-executes but produces byte-identical output leaves the consuming unit's key unchanged, so its cached result stands; a fold over the dependency's command hash or its own source inputs would instead re-run the test on any upstream re-execution, over-invalidating relative to a cook-step sibling consuming the same dependency.
 
