@@ -21,7 +21,7 @@ pub use accessor::ACCESSORS;
 pub use cache::{CacheMeta, DiscoveredInputs, Sharing};
 pub use captured_stream::CapturedStream;
 pub use command_failure::CommandFailure;
-pub use output::OutputStream;
+pub use output::{OutputChunk, OutputStream};
 pub use probe::value as probe_value;
 pub use probe::{ProbeInputs, ProbeUnit};
 pub use recipe::RecipeUnits;
