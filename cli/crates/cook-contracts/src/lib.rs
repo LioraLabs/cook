@@ -13,6 +13,7 @@ pub mod member;
 pub mod output;
 pub mod probe;
 pub mod recipe;
+pub mod shell_block;
 pub mod sigil;
 pub mod registration;
 pub mod step;

@@ -45,9 +45,10 @@ fn one_spawn_yields_at_most_one_chunk_per_stream() {
 
 #[test]
 fn a_multi_line_block_is_one_spawn() {
-    // `build_shell_block_command` joins a block's lines under `set -e` into one
-    // command string, so a body with N lines is one process, not N. If that
-    // ever changes, the chunk count here changes with it.
+    // `cook_contracts::shell_block::compose` joins a block's lines under
+    // `set -e` into one command string, so a body with N lines is one process,
+    // not N (§{steps.shell-block-invocation}). If that ever changes, the chunk
+    // count here changes with it.
     let dir = tempfile::tempdir().unwrap();
     let o = captured("set -e\necho one\necho two\necho three", dir.path());
     assert_eq!(o.chunks().len(), 1);

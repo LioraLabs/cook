@@ -161,7 +161,7 @@ pub(crate) fn generate_test_step(
     match &test_step.body {
         Body::ShellBlock(lines) => match mode {
             PlateTestMode::OneToOne => {
-                let cmd_text = build_shell_block_command(lines);
+                let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) = expand_plate_test_body(
                     &cmd_text, recipe_names, "_test_in", &mut consulted,
@@ -179,7 +179,7 @@ pub(crate) fn generate_test_step(
             // Lua-block-only), and this arm is otherwise byte-for-byte what
             // the old OneShot arm did.
             PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
-                let cmd_text = build_shell_block_command(lines);
+                let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) = expand_plate_test_body(
                     &cmd_text, recipe_names, "\"\"", &mut consulted,
@@ -268,7 +268,7 @@ pub(crate) fn generate_member_fanout_test_step(
 
     match &test_step.body {
         Body::ShellBlock(lines) => {
-            let combined = build_shell_block_command(lines);
+            let combined = cook_contracts::shell_block::compose(lines);
             let mut consulted = ConsultedEnv::new();
             let (cmd_concat, probe_keys) = expand_member_fanout_template(
                 &combined,
@@ -318,11 +318,3 @@ fn reject_probe_refs_in_command(
     })
 }
 
-fn build_shell_block_command(lines: &[String]) -> String {
-    let mut s = String::from("set -e");
-    for line in lines {
-        s.push('\n');
-        s.push_str(line);
-    }
-    s
-}
