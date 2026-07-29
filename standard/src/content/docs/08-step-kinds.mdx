@@ -134,7 +134,7 @@ The "separator" after a step keyword is space, tab, or end of token. A Content l
 >
 > The `set -e` prefix occupies no source line of its own: line *k* of the block is line *k* of the author's body, and a diagnostic that cites a line number MUST cite the author's.
 >
-> This was observable long before it was stated. §{phl.cook-step}'s worked example shows a registered unit whose `command` field is `set -e\ngcc -c main.c -o build/main.o`, and §{exec.body-bundling}'s historical note describes adjacent shell lines being "joined into a single `set -e`-prefixed `cook.sh` call". A rule that decides whether a build stops at its first error should not have to be inferred from an example.
+> This was observable long before it was stated. §{phl.cook-step}'s worked example shows a registered unit whose `command` field is `set -e\ngcc -c main.c -o build/main.o`, and §{exec.body-bundling}'s historical note describes adjacent shell lines being "joined into a single `set -e`-prefixed `cook.sh` call". A rule that decides whether a build stops at its first error belongs in normative text, not in an inference drawn from an example.
 
 ## 8.4. `cook` — single-output form [#steps.cook-single]
 A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly). The body is mandatory (CS-0133):

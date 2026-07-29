@@ -6,6 +6,34 @@ chore build
 recipe lint
     checks.lint_keywords()
 
+# The renderer's own suite: the remark/rehype plugins that turn clause markers
+# into anchors, resolve `§{...}` xrefs, and lint bare refs, plus the slug
+# registries they consult.
+#
+# It ran only under `pnpm test`, which nothing invoked, so a failure could sit
+# in the tree indefinitely — and one did. `slug-renames-consistency` had been
+# red against five renames whose replacements were real and anchored all along;
+# it was checking them against the v0.10 positional table rather than against
+# the anchors the chapters define. A suite outside the fan-out grades nothing.
+#
+# The chapters are inputs, not just the plugin sources: the consistency check
+# harvests `[#slug]` anchors from the .mdx files themselves, so retitling a
+# section re-runs this.
+#
+# Declared as ingredients rather than sealed on a `files` probe, which is the
+# shape `ts.test` uses and `ts.rust` does not. The body names no $<in>, so this
+# stays a single unit either way; the difference is that a seal-only test unit
+# re-runs every build, and this one has 58 tests and a node start-up to amortise.
+probe vitest:tools
+    tools { node pnpm }
+
+recipe vitest
+    ingredients "src/plugins/**/*.ts" "scripts/*.ts"
+        "src/content/docs/**/*.mdx"
+        "package.json" "pnpm-lock.yaml" "vitest.config.ts"
+    seal vitest:tools
+    test { pnpm vitest run }
+
 chore host
     pnpm host
 

@@ -47,9 +47,23 @@ jobs:
       # ubuntu-latest ships a Rust stable toolchain; there is no install step
       # here on purpose -- if a runner image ever loses it, this must fail
       # loudly rather than silently reaching for a fallback.
+      # The version is READ from package.json rather than written here. It was
+      # written here, and a second copy of a pin is a pin that can drift: CI
+      # would have gone on installing 0.26.11 after the repo moved, generating
+      # tracked src/ with a CLI the repo no longer claims. `ts.ts-cli-pinned`
+      # checks this in the run regardless, so a drift is caught either way --
+      # deriving it means the check has nothing to catch.
       - name: Install tree-sitter CLI
         shell: bash
-        run: npm install -g tree-sitter-cli@0.26.11
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*"tree-sitter-cli": *"\([^"]*\)".*/\1/p' \
+            tree-sitter-cook/package.json)
+          if [ -z "$version" ]; then
+            echo "no tree-sitter-cli pin in tree-sitter-cook/package.json" >&2
+            exit 1
+          fi
+          npm install -g "tree-sitter-cli@$version"
 
       - name: Toolchain sanity
         shell: bash
