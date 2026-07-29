@@ -11,13 +11,31 @@ config
 probe generate:tool
     tools { tree-sitter }
 
+# The determinant above says WHICH CLI ran; it cannot say which one SHOULD.
+# That gap is the whole bug: with a different CLI on PATH the key moved
+# correctly, `generate` re-ran correctly, and the correct behaviour was to
+# overwrite tracked src/ with the wrong CLI's bytes. `check-generated` then
+# reported drift it had not caused, and the dirty tree outlived the run to
+# surface later as an unexplained `cook release` failure (COOK-356 closed that
+# hole in check-generated.sh and left it open in the recipe whose job is to
+# write). An observation cannot be a constraint; this is the constraint.
+#
+# Sourceless on purpose, for the same reason `check-generated` is: it asserts a
+# property of the developer's environment rather than of the tracked tree, and
+# a cache hit would replay a pass recorded under a CLI that is no longer the
+# one on PATH — hiding exactly what it exists to catch. Every recipe that
+# invokes the CLI depends on it, so a mismatch BLOCKS them (§8.6, CS-0177)
+# instead of advising against them, and nothing is written.
+recipe ts-cli-pinned
+    test { scripts/check-ts-cli.sh }
+
 # One run produces all six. The three headers were undeclared for as long as the
 # CLI was: they track the CLI rather than grammar.js, so declaring them under a
 # key that could not see the CLI would have made a cache hit restore three files
 # the CLI had just written differently. With `generate:tool` sealed the key does
 # see it, so they are declared — and a restore now covers everything
 # `tree-sitter generate` writes, which is what `check-generated` diffs.
-recipe generate
+recipe generate: ts-cli-pinned
     ingredients "grammar.js"
     seal generate:tool
     cook "src/parser.c" "src/node-types.json" "src/grammar.json"
@@ -25,7 +43,7 @@ recipe generate
         tree-sitter generate
     }
 
-recipe test
+recipe test: ts-cli-pinned
     ingredients "test/corpus/*.txt"
     seal generate:tool
     test { : $<generate> && tree-sitter test }
@@ -58,7 +76,7 @@ chore conformance-all: parser-lib
     node scripts/conformance.mjs
 
 # The rendered Standard bundles the wasm parser for in-browser highlighting.
-recipe wasm: generate
+recipe wasm: generate ts-cli-pinned
     ingredients "grammar.js" "src/scanner.c"
     seal generate:tool
     cook "../standard/public/tree-sitter-cook.wasm" {
@@ -71,7 +89,7 @@ recipe wasm: generate
 # the nvim install chore below, and every `conformance` fan-out unit, which
 # grades its fixture against this artifact instead of building a parser of its
 # own. Declaring it once as a dependency is what keeps the fan-out affordable.
-recipe parser-lib: generate
+recipe parser-lib: generate ts-cli-pinned
     ingredients "src/scanner.c"
     seal generate:tool
     cook "build/parser/cook.so" {
@@ -102,7 +120,7 @@ recipe rust: generate
 # bytes and then correctly reporting the drift it had just caused. The dirty
 # tree outlived the run and surfaced later as an unexplained `cook release`
 # failure, twice (COOK-356).
-recipe check-generated
+recipe check-generated: ts-cli-pinned
     test { scripts/check-generated.sh }
 
 chore nvim-install: parser-lib
