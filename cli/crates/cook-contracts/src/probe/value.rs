@@ -137,6 +137,38 @@ pub fn probe_file_name(key: &str) -> String {
     out
 }
 
+/// Merge a probe's per-run tool-path metadata into its value, producing the
+/// READ VIEW (CS-0157): the view `cook.probes.get` returns and the view
+/// `$<KEY.NAME.path>` substitution addresses (§22.5.7, CS-0192). Both MUST
+/// see the same view, so both MUST build it through this one function.
+///
+/// The canonical value of a `tools { }` producer carries identity only
+/// (`{ NAME = { hash } }`); the resolved path is location, recorded fresh
+/// each run, so a consumer always reads where the tool resolves NOW and a
+/// cached value can never replay a stale location.
+///
+/// The merge is shape-scoped: only an object entry under the tool's own name
+/// that has a string `hash` member and no author-provided `path` member is
+/// annotated, so custom-body probes that happen to declare `inputs.tools`
+/// keep their values untouched.
+pub fn merge_tool_paths(
+    value: &mut JsonValue,
+    tool_paths: &std::collections::BTreeMap<String, String>,
+) {
+    let JsonValue::Object(map) = value else {
+        return;
+    };
+    for (tool, path) in tool_paths {
+        if let Some(JsonValue::Object(entry)) = map.get_mut(tool) {
+            let has_hash = matches!(entry.get("hash"), Some(JsonValue::String(_)));
+            let path_absent = !entry.contains_key("path");
+            if has_hash && path_absent {
+                entry.insert("path".to_string(), JsonValue::String(path.clone()));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/value_tests.rs"]
 mod tests;

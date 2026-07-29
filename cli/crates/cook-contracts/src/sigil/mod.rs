@@ -201,6 +201,8 @@ fn is_ident_continue(b: u8) -> bool {
 }
 
 
+pub mod subst;
+
 #[cfg(test)]
 #[path = "tests/sigil_tests.rs"]
 mod tests;
