@@ -1,5 +1,11 @@
 use checks
 
+# `remark-cook-highlight` loads the wasm parser to highlight Cook fences, and
+# the vitest suite exercises it. `ts.wasm` is what produces that artifact, into
+# this member's public/ — where it is gitignored, so a fresh clone and a CI
+# runner both start without it.
+import ts //tree-sitter-cook
+
 chore build
     pnpm build
 
@@ -27,7 +33,7 @@ recipe lint
 probe vitest:tools
     tools { node pnpm }
 
-recipe vitest
+recipe vitest: ts.wasm
     ingredients "src/plugins/**/*.ts" "scripts/*.ts"
         "src/content/docs/**/*.mdx"
         "package.json" "pnpm-lock.yaml" "vitest.config.ts"
