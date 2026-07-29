@@ -12,16 +12,21 @@ name: ci
 #   - ts.conformance   tree-sitter-cook checked against the Cook Standard's
 #                      conformance corpus
 #   - standard.lint    engine-internal Lua keyword lint over standard/
+#   - standard.vitest  the renderer's own suite: the remark/rehype plugins and
+#                      the slug registries they consult
 #
 # CI starts with no cook binary, so this workflow bootstraps one with a plain
 # `cargo build` before it can run `cook test` at all (same reason release.yml
 # has its own "Bootstrap cook" step).
 #
-# pnpm is deliberately absent: standard.build (the Astro docs site) is a build
-# chore, not a test unit, so it is out of scope for a test gate; standard.lint
-# runs pure Lua inside the engine and needs no external toolchain; ts.test and
-# ts.conformance need only the tree-sitter CLI (installed below) plus the node
-# binary ubuntu-latest already ships -- no node_modules install required.
+# pnpm used to be deliberately absent, on the reasoning that standard.build is a
+# build chore rather than a test unit and nothing else under standard/ needed a
+# toolchain. standard.vitest retired that: the suite had been reachable only
+# through `pnpm test`, which no recipe invoked, so it graded nothing and two
+# real failures sat in it. Gating it means the gate needs pnpm and standard/'s
+# node_modules, which is the cost of the suite counting at all.
+#
+# standard.build stays out of scope -- still a build chore, not a test unit.
 
 
 on:
@@ -47,6 +52,7 @@ jobs:
       # ubuntu-latest ships a Rust stable toolchain; there is no install step
       # here on purpose -- if a runner image ever loses it, this must fail
       # loudly rather than silently reaching for a fallback.
+
       # The version is READ from package.json rather than written here. It was
       # written here, and a second copy of a pin is a pin that can drift: CI
       # would have gone on installing 0.26.11 after the repo moved, generating
@@ -65,12 +71,37 @@ jobs:
           fi
           npm install -g "tree-sitter-cli@$version"
 
+      # `standard.vitest` shells out to pnpm, so the gate needs it. The version
+      # is read from standard/package.json's `packageManager` field rather than
+      # written here, for the same reason the tree-sitter pin is: a second copy
+      # of a pin is a pin that can drift.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: standard/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: standard/pnpm-lock.yaml
+
+      # --frozen-lockfile so a lockfile that has drifted from package.json fails
+      # here rather than being silently resolved into something the tree does
+      # not describe. It is the default in CI; naming it makes that legible.
+      - name: Install standard/ dependencies
+        shell: bash
+        working-directory: standard
+        run: pnpm install --frozen-lockfile
+
       - name: Toolchain sanity
         shell: bash
         run: |
           set -euo pipefail
           rustc -vV
           tree-sitter --version
+          node --version
+          pnpm --version
 
       # `cook test` is itself a cook chore, so it needs a cook binary first.
       - name: Build cook
