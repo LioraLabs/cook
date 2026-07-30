@@ -1,0 +1,41 @@
+# Diagnostics are asserted on renderer-specific phrasing, never on the
+# placeholder text: a failure echo reproduces the whole composed command, so
+# any `$<...>` needle would match whether or not the renderer said anything
+# (the CS-0190 lesson). Failed substitutions additionally assert by file
+# absence: a file exists only if something created it.
+
+[[run]]
+args = ["render"]
+[run.assert]
+equals = { "out/rendered.txt" = "hello world|42|3.0|0.30000000000000004|true|zlib|-Wall\n" }
+output_not_contains = ["table: 0x"]
+
+[[run]]
+args = ["badarray"]
+exit = 1
+[run.assert]
+absent = ["out/badarray.txt"]
+output_contains = ["the addressed value is an array", "$<v:tbl.cflags[1]>"]
+output_not_contains = ["table: 0x"]
+
+[[run]]
+args = ["badobject"]
+exit = 1
+[run.assert]
+absent = ["out/badobject.txt"]
+output_contains = ["the addressed value is an object", "$<v:tbl.FIELD>"]
+output_not_contains = ["table: 0x"]
+
+[[run]]
+args = ["badnull"]
+exit = 1
+[run.assert]
+absent = ["out/badnull.txt"]
+output_contains = ["null and cannot be substituted"]
+
+[[run]]
+args = ["badmember"]
+exit = 1
+[run.assert]
+absent = ["out/badmember.txt"]
+output_contains = ["has no member 'version'"]

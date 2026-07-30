@@ -1,0 +1,43 @@
+# CS-0192 (COOK-380): probe-value substitution renders the value's JSON type.
+# A string is verbatim, a number is its canonical JSON token (0.1 + 0.2 is
+# 0.30000000000000004, not %.14g's "0.3"; 3.0 keeps its point), a boolean is
+# its literal. null, composites and absent members are diagnostics — a table
+# used to interpolate its heap address, different bytes every run.
+
+probe v:str
+    >{ return "hello world" }
+
+probe v:int
+    >{ return 42 }
+
+probe v:float
+    >{ return 3.0 }
+
+probe v:sum
+    >{ return 0.1 + 0.2 }
+
+probe v:bool
+    >{ return true }
+
+probe v:none
+    >{ return nil }
+
+probe v:tbl
+    >{ return { name = "zlib", cflags = { "-O2", "-Wall" } } }
+
+recipe render
+    cook "out/rendered.txt" {
+        printf '%s|%s|%s|%s|%s|%s|%s\n' "$<v:str>" "$<v:int>" "$<v:float>" "$<v:sum>" "$<v:bool>" "$<v:tbl.name>" "$<v:tbl.cflags[2]>" > $<out>
+    }
+
+recipe badarray
+    cook "out/badarray.txt" { echo "$<v:tbl.cflags>" > $<out> }
+
+recipe badobject
+    cook "out/badobject.txt" { echo "$<v:tbl>" > $<out> }
+
+recipe badnull
+    cook "out/badnull.txt" { echo "$<v:none>" > $<out> }
+
+recipe badmember
+    cook "out/badmember.txt" { echo "$<v:tbl.version>" > $<out> }
