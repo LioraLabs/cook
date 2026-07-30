@@ -416,7 +416,7 @@ fn worker_loop(
                     // R1: shell/test steps spawn with the process-env subset,
                     // NOT the full config lookup map. `cook.env` reads (Lua
                     // bodies) still see the full map via `current_env_vars`.
-                    execute_work_item(&lua, &work, &work.working_dir, &work.process_env_vars)
+                    execute_work_item(&lua, &probe_store, &work, &work.working_dir, &work.process_env_vars)
                 }));
                 let mut result = match result {
                     Ok(r) => r,
@@ -487,22 +487,19 @@ fn worker_loop(
 /// it and a probe's value is execute-phase, so here is the only phase it can
 /// happen in.
 ///
-/// **Lua renders the values, deliberately.** The walk reads through
-/// `cook.probes.get` and finishes with Lua's own `tostring`, rather than
-/// decoding the stored JSON and formatting it in Rust. Formatting is observable
-/// — it lands in the command a build runs — and Lua's is not what Rust's would
-/// be: `%.14g` renders `0.1 + 0.2` as `0.3`, and an integer-valued float comes
-/// back as `3.0` rather than `3`. Reproducing that here would mean
-/// reimplementing `%.14g`, and reproducing it WRONG would change command text
-/// silently. What the rendering should actually be, including a table's
-/// current heap-address rendering, is COOK-380; until it answers, this keeps
-/// the observable behaviour exactly as it was.
+/// **The rendering is the Standard's, computed in Rust (CS-0192).** Each
+/// reference addresses the value's read view — canonical JSON plus the
+/// CS-0157 tool-path annotation, built by the same function that builds it
+/// for `cook.probes.get` — and renders through `cook_contracts::sigil::subst`,
+/// the one place §22.5.7's rules live. No VM is in the loop. Before CS-0192
+/// the walk read through `cook.probes.get` and finished with Lua's
+/// `tostring`, under which a table interpolated its heap address (different
+/// bytes on the same command line every run) and an absent member the four
+/// bytes `nil`.
 ///
 /// A command with no probe reference is returned untouched, and a non-probe
 /// `$<...>` span is left literal, both matching what the rewrite did.
-fn resolve_probe_sigils(lua: &mlua::Lua, cmd: &str) -> mlua::Result<String> {
-    use cook_contracts::sigil::Seg;
-
+fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String, String> {
     let spans = cook_contracts::sigil::scan(cmd);
     if spans.is_empty() {
         return Ok(cmd.to_string());
@@ -515,51 +512,23 @@ fn resolve_probe_sigils(lua: &mlua::Lua, cmd: &str) -> mlua::Result<String> {
         return Ok(cmd.to_string());
     }
 
-    let globals = lua.globals();
-    let cook: mlua::Table = globals.get("cook")?;
-    let probes: mlua::Table = cook.get("probes")?;
-    let get: mlua::Function = probes.get("get")?;
-    let tostring: mlua::Function = globals.get("tostring")?;
-
     let mut out = String::with_capacity(cmd.len());
     let mut cursor = 0usize;
     for (span, r) in refs {
         out.push_str(&cmd[cursor..span.range.start]);
 
-        // An unmaterialised key raises here, from `cook.probes.get` itself, with
-        // the diagnostic CS-0152 specifies. That is the same error the rewritten
-        // chunk produced, from the same function.
-        let mut value: mlua::Value = get.call(r.key())?;
-        for seg in r.path() {
-            let table = match value {
-                mlua::Value::Table(t) => t,
-                other => {
-                    return Err(mlua::Error::runtime(format!(
-                        "$<{}>: cannot index a {} value",
-                        span.ident,
-                        other.type_name()
-                    )))
-                }
-            };
-            value = match seg {
-                Seg::Field(name) => table.get(name.as_str())?,
-                Seg::Index(idx) => match idx.parse::<i64>() {
-                    Ok(i) => table.get(i)?,
-                    // §22.5.7 defines `[i]` as a one-based array element. A
-                    // non-numeric index used to lower verbatim into Lua source,
-                    // where it read as a global and indexed by nil; naming it is
-                    // strictly better than that.
-                    Err(_) => {
-                        return Err(mlua::Error::runtime(format!(
-                            "$<{}>: `[{idx}]` is not a numeric index",
-                            span.ident
-                        )))
-                    }
-                },
-            };
-        }
-        let rendered: mlua::String = tostring.call(value)?;
-        out.push_str(&rendered.to_str()?);
+        // An unmaterialised key is the CS-0152 diagnostic, the same text
+        // `cook.probes.get` raises for the same miss.
+        let bytes = store
+            .get(r.key())
+            .ok_or_else(|| probe_not_materialised_message(r.key()))?;
+        let value = read_view(store, r.key(), &bytes)
+            .map_err(|e| format!("$<{}>: probe value decode failed: {e}", span.ident))?;
+        out.push_str(&cook_contracts::sigil::subst::substitute(
+            &value,
+            r.path(),
+            &span.ident,
+        )?);
         cursor = span.range.end;
     }
     out.push_str(&cmd[cursor..]);
@@ -981,13 +950,19 @@ fn register_worker_cook_table(
 /// unscoped and scoped `get` implementations so the two diagnostics stay
 /// in lockstep.
 fn probe_not_materialised_error(key: &str) -> mlua::Error {
-    mlua::Error::runtime(format!(
+    mlua::Error::runtime(probe_not_materialised_message(key))
+}
+
+/// The CS-0152 diagnostic text, shared with `$<key>` substitution
+/// (`resolve_probe_sigils`), which reads the same store outside any VM.
+fn probe_not_materialised_message(key: &str) -> String {
+    format!(
         "cook.probes.get(\"{key}\"): probe value not materialised — this step never \
          demanded probe '{key}'. Reference the probe in this step (a $<key> sigil in a \
          shell body, or probes = {{...}} on cook.add_unit), declare it in the probe's \
          `inputs.requires` (when reading from a probe produce body), or seal it \
          (seal {{ \"{key}\" }}) so it is scheduled before this step runs."
-    ))
+    )
 }
 
 /// Install `cook.probes.{get,set,scope}` on the execute-phase VM
@@ -1002,38 +977,18 @@ fn probe_not_materialised_error(key: &str) -> mlua::Error {
 /// `nil` with no error — that boundary is load-bearing for probe produce
 /// bodies (`cook.probes.get(KEY) or { ... }`).
 ///
-/// CS-0157: merge the per-run tool-path metadata into a probe value's READ
-/// VIEW. The canonical value of a `tools { }` producer carries identity only
-/// (`{ NAME = { hash } }`); the resolved path is location, recorded fresh
-/// each run by the engine (ProbeValueStore::set_tool_paths) so a Lua
-/// consumer invoking `$<probe.NAME.path>` always gets where the tool
-/// resolves NOW — never a stale path replayed from a cached value. The merge
-/// is shape-scoped: only a table entry under the tool's own name that has a
-/// `hash` field and no author-provided `path` is annotated, so custom-body
-/// probes that happen to declare `inputs.tools` keep their values untouched.
-fn merge_tool_paths(
-    value: &mlua::Value,
-    store: &ProbeValueStore,
-    key: &str,
-) -> mlua::Result<()> {
-    let Some(paths) = store.tool_paths(key) else {
-        return Ok(());
-    };
-    let mlua::Value::Table(t) = value else {
-        return Ok(());
-    };
-    for (tool, path) in paths {
-        if let Ok(mlua::Value::Table(entry)) = t.get::<mlua::Value>(tool.as_str()) {
-            let has_hash =
-                matches!(entry.get::<mlua::Value>("hash"), Ok(mlua::Value::String(_)));
-            let path_absent =
-                matches!(entry.get::<mlua::Value>("path"), Ok(mlua::Value::Nil));
-            if has_hash && path_absent {
-                entry.set("path", path)?;
-            }
-        }
+/// CS-0157: build a probe value's READ VIEW — the canonical value with the
+/// per-run tool-path metadata merged in — from the store's bytes. The merge
+/// itself is `cook_contracts::probe_value::merge_tool_paths`, the one
+/// function `$<key>` substitution also builds its view through (CS-0192), so
+/// the Lua view and the sigil view cannot drift. Applied on the JSON value
+/// BEFORE `json_to_lua`, not on the Lua table after it.
+fn read_view(store: &ProbeValueStore, key: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let mut value = cook_contracts::probe_value::decode_json(bytes)?;
+    if let Some(paths) = store.tool_paths(key) {
+        cook_contracts::probe_value::merge_tool_paths(&mut value, &paths);
     }
-    Ok(())
+    Ok(value)
 }
 
 /// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
@@ -1053,13 +1008,11 @@ fn install_execute_phase_cook_probes(
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
             Some(bytes) => {
-                let jv = cook_contracts::probe_value::decode_json(&bytes)
+                let jv = read_view(&store_for_get, &key, &bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.probes.get('{}'): decode failed: {}", key, e
                     )))?;
-                let v = crate::probe_value::json_to_lua(lua, &jv)?;
-                merge_tool_paths(&v, &store_for_get, &key)?;
-                Ok(v)
+                crate::probe_value::json_to_lua(lua, &jv)
             }
             None => Err(probe_not_materialised_error(&key)),
         }
@@ -1088,13 +1041,11 @@ fn install_execute_phase_cook_probes(
             let full = format!("{}{}", prefix_for_get, key);
             match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
-                    let jv = cook_contracts::probe_value::decode_json(&bytes)
+                    let jv = read_view(&store_for_scoped_get, &full, &bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.probes.get('{}'): decode failed: {}", full, e
                         )))?;
-                    let v = crate::probe_value::json_to_lua(lua, &jv)?;
-                    merge_tool_paths(&v, &store_for_scoped_get, &full)?;
-                    Ok(v)
+                    crate::probe_value::json_to_lua(lua, &jv)
                 }
                 None => Err(probe_not_materialised_error(&full)),
             }
@@ -1386,6 +1337,7 @@ fn run_shell_in_worker(
 
 fn execute_work_item(
     lua: &mlua::Lua,
+    probe_store: &ProbeValueStore,
     work: &WorkItem,
     working_dir: &PathBuf,
     env_vars: &HashMap<String, String>,
@@ -1404,7 +1356,7 @@ fn execute_work_item(
 
     match &work.payload {
         WorkPayload::Shell { cmd, line } => {
-            execute_shell(lua, work.id, cmd, *line, working_dir, env_vars, node_name)
+            execute_shell(probe_store, work.id, cmd, *line, working_dir, env_vars, node_name)
         }
         WorkPayload::LuaChunk {
             code,
@@ -1460,7 +1412,7 @@ fn execute_work_item(
 }
 
 fn execute_shell(
-    lua: &mlua::Lua,
+    probe_store: &ProbeValueStore,
     id: usize,
     cmd: &str,
     line: usize,
@@ -1471,17 +1423,15 @@ fn execute_shell(
     // CS-0188: resolve any `$<key:field>` probe references against the values
     // this unit's probes materialised. Register phase used to do this by
     // rewriting the command into Lua; it does not, so it happens here, where
-    // the values exist.
-    let cmd = match resolve_probe_sigils(lua, cmd) {
+    // the values exist. The rendering is CS-0192's, computed in Rust — no VM
+    // in the loop, so the error is already clean text, never a Lua traceback.
+    let cmd = match resolve_probe_sigils(probe_store, cmd) {
         Ok(resolved) => resolved,
         Err(e) => {
             return WorkResult {
                 id,
                 success: false,
-                error: Some(cook_contracts::lua_error::sanitize(
-                    &e.to_string(),
-                    std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
-                )),
+                error: Some(e),
                 exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
