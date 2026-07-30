@@ -124,3 +124,41 @@ fn probe_file_name_is_injective() {
     sorted.dedup();
     assert_eq!(sorted.len(), names.len(), "duplicate file names: {names:?}");
 }
+
+// CS-0157 / CS-0192: the read view — canonical value plus per-run tool paths
+// — is built by one function, so `cook.probes.get` and `$<KEY.NAME.path>`
+// substitution can never disagree about it.
+
+#[test]
+fn merge_tool_paths_annotates_hash_bearing_entries() {
+    let mut v = json!({"gcc": {"hash": "ab12"}, "ld": {"hash": "cd34"}});
+    let paths = std::collections::BTreeMap::from([
+        ("gcc".to_string(), "/usr/bin/gcc".to_string()),
+    ]);
+    super::merge_tool_paths(&mut v, &paths);
+    assert_eq!(v["gcc"]["path"], json!("/usr/bin/gcc"));
+    // No recorded path for ld: untouched.
+    assert!(v["ld"].get("path").is_none());
+}
+
+#[test]
+fn merge_tool_paths_is_shape_scoped() {
+    // An author-provided path is never overwritten.
+    let mut v = json!({"gcc": {"hash": "ab12", "path": "/custom/gcc"}});
+    let paths = std::collections::BTreeMap::from([
+        ("gcc".to_string(), "/usr/bin/gcc".to_string()),
+    ]);
+    super::merge_tool_paths(&mut v, &paths);
+    assert_eq!(v["gcc"]["path"], json!("/custom/gcc"));
+
+    // A hash-less entry is a custom-body value that happens to share a name:
+    // untouched.
+    let mut v = json!({"gcc": {"version": "13"}});
+    super::merge_tool_paths(&mut v, &paths);
+    assert!(v["gcc"].get("path").is_none());
+
+    // A non-object root is untouched (and does not panic).
+    let mut v = json!("scalar");
+    super::merge_tool_paths(&mut v, &paths);
+    assert_eq!(v, json!("scalar"));
+}

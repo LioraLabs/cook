@@ -473,7 +473,10 @@ recipe banner
 ```
 
 Upgrade node and the banner rebuilds; nothing else does. `$<key>` substitutes a
-string value; `$<key.field>` selects a field of a table value. (Execute-phase
+scalar value (a string verbatim, a number or boolean as its JSON literal);
+`$<key.field>` and `$<key.field[1]>` address into a table value, one-based. A
+placeholder that lands on a whole table, a null, or a missing field is an
+error naming the placeholder, not silently-interpolated text. (Execute-phase
 Lua bodies have no sigils; they read the same values with
 `cook.probes.get("key")`, which cook detects and wires identically.)
 
