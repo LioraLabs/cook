@@ -202,8 +202,9 @@ fn scan_probe_keys(command: &str) -> Result<Vec<String>, String> {
     Ok(keys)
 }
 
-/// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
-/// and `cook._exit_chore()` on the cook table.
+/// Register `cook.add_unit(table)` and `cook.step_group(fn)` on the cook
+/// table. (`cook._enter_chore`/`_exit_chore` were removed by COOK-386; the
+/// engine's ChoreActiveGuard owns the chore-active flag.)
 ///
 /// `working_dir` is the recipe's working directory; it's used to resolve
 /// relative input/output paths for the directory-rejection check.
@@ -216,29 +217,10 @@ pub fn register_unit_api(
 ) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
 
-    // cook._enter_chore() — called by chore-generated Lua before the body runs.
-    let body_slot_enter = body_slot.clone();
-    let enter_fn = lua.create_function(move |_, ()| {
-        let mut slot = body_slot_enter.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook._enter_chore called outside a recipe body")
-        })?;
-        body.current_chore_active = true;
-        Ok(())
-    })?;
-    cook.set("_enter_chore", enter_fn)?;
-
-    // cook._exit_chore() — called by chore-generated Lua after the body runs.
-    let body_slot_exit = body_slot.clone();
-    let exit_fn = lua.create_function(move |_, ()| {
-        let mut slot = body_slot_exit.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook._exit_chore called outside a recipe body")
-        })?;
-        body.current_chore_active = false;
-        Ok(())
-    })?;
-    cook.set("_exit_chore", exit_fn)?;
+    // COOK-386: `cook._enter_chore` / `cook._exit_chore` are gone. The
+    // engine's ChoreActiveGuard brackets every chore body invocation (surface
+    // and dynamic), so the codegen-emitted second mechanism for the same flag
+    // was pure redundancy.
 
     // cook.add_unit(table)
     let body_slot_add = body_slot.clone();

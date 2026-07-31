@@ -713,7 +713,8 @@ pub fn install_cook_api(
                     Ok(parts.join(" "))
                 }
                 mlua::Value::Nil => Err(mlua::Error::runtime(format!(
-                    "chore parameter '$<{name}>' is not bound (BUG: codegen emitted a param ref for an undeclared name)"
+                    "internal invariant violated: chore parameter '$<{name}>' has no binding — \
+                     the params table is missing a declared name; report this with the Cookfile"
                 ))),
                 other => Err(mlua::Error::runtime(format!(
                     "chore parameter '$<{name}>' has unexpected type {}",

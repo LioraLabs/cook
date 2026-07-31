@@ -783,12 +783,11 @@ fn test_chore_registers_as_recipe_with_interactive_and_no_cache() {
     let tmp = TempDir::new().unwrap();
     let rt = make_registry(tmp.path());
 
-    // Simulate what compile_chore emits.
+    // What compile_chore emits post-COOK-386: a surface-chore registration
+    // with no marker calls; the engine's ChoreActiveGuard brackets the body.
     let lua_src = r#"
-cook.recipe("clean", {}, function()
-    cook._enter_chore()
+cook.__register_surface_chore("clean", {requires = {}, __line = 1}, function()
     cook.add_unit({command = [[rm -rf build]], interactive = true, line = 2, cache = false})
-    cook._exit_chore()
 end)
 "#;
     let result = register_one(rt, lua_src, "clean");
@@ -812,10 +811,8 @@ fn test_chore_cache_true_rejected_while_chore_active() {
     let rt = make_registry(tmp.path());
 
     let lua_src = r#"
-cook.recipe("evil", {}, function()
-    cook._enter_chore()
+cook.__register_surface_chore("evil", {requires = {}, __line = 1}, function()
     cook.add_unit({command = "true", cache = true})
-    cook._exit_chore()
 end)
 "#;
     let result = register_cookfile(rt, lua_src, None, None);
@@ -836,12 +833,14 @@ fn test_chore_cache_true_allowed_outside_chore() {
     let tmp = TempDir::new().unwrap();
     let rt = make_registry(tmp.path());
 
+    // COOK-386: the guard restores the flag when the chore body returns, so an
+    // ordinary recipe registered beside the chore may cache. (Two declarations
+    // replace the old single body that toggled the flag mid-function.)
     let lua_src = r#"
-cook.recipe("chore_then_recipe", {}, function()
-    cook._enter_chore()
+cook.__register_surface_chore("cleanup", {requires = {}, __line = 1}, function()
     cook.add_unit({command = "echo in chore", cache = false})
-    cook._exit_chore()
-    -- After exiting chore context, cache = true is permitted.
+end)
+cook.recipe("chore_then_recipe", {}, function()
     -- Declares an output because CS-0186's "nothing to key on" rule refuses a
     -- unit with no output, no input and no member: its only determinants would
     -- be the command and the env, so it would hit forever after one run. The
@@ -857,13 +856,18 @@ end)
         result.err()
     );
     let registered = result.unwrap();
-    let units = registered
+    let chore_units = registered
+        .units_by_recipe
+        .get("cleanup")
+        .expect("cleanup missing");
+    assert_eq!(chore_units.units.len(), 1);
+    assert!(chore_units.units[0].cache_meta.is_none()); // chore unit: no cache
+    let recipe_units = registered
         .units_by_recipe
         .get("chore_then_recipe")
         .expect("chore_then_recipe missing");
-    assert_eq!(units.units.len(), 2);
-    assert!(units.units[0].cache_meta.is_none());   // chore unit: no cache
-    assert!(units.units[1].cache_meta.is_some());   // normal unit: cached
+    assert_eq!(recipe_units.units.len(), 1);
+    assert!(recipe_units.units[0].cache_meta.is_some()); // normal unit: cached
 }
 
 #[test]
