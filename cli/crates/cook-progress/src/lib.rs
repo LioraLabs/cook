@@ -8,6 +8,7 @@ pub mod model;
 pub mod naming;
 pub mod render;
 pub mod style;
+pub mod wire;
 
 pub use driver::Driver;
 pub use event::{NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};

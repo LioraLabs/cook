@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::event::{NodeId, ProgressEvent, RecipeId, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::build::BuildState;
-use crate::render::json::event_to_value;
+use crate::render::json::event_to_wire;
+use crate::wire::WireLine;
 
 #[derive(Debug, Clone)]
 pub struct LogConfig {
@@ -72,22 +73,18 @@ impl LogStore {
 
     pub fn record(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
         if let Some(w) = self.events_writer.as_mut() {
-            // Keys are written in lex order, not insertion order — see
-            // `JsonWriter::handle` for the contract. `serde_json::Map` is
-            // `BTreeMap`-backed in this build (no `preserve_order` feature).
-            let mut payload = event_to_value(state, event);
-            let mut obj = serde_json::Map::new();
-            obj.insert("ts".into(), serde_json::Value::String(current_rfc3339()));
-            // CS-0048: `v` is the wire-format schema version, sourced from
-            // PROGRESS_SCHEMA_VERSION. See the matching emit-site comment on
-            // `JsonWriter::handle` for the read policy.
-            obj.insert("v".into(), serde_json::Value::from(PROGRESS_SCHEMA_VERSION));
-            if let serde_json::Value::Object(inner) = payload.take() {
-                for (k, v) in inner {
-                    obj.insert(k, v);
-                }
-            }
-            serde_json::to_writer(&mut *w, &serde_json::Value::Object(obj)).map_err(io::Error::other)?;
+            // COOK-394: the SAME WireLine the streaming JsonWriter emits —
+            // this was a third hand-merged envelope copy. Keys land in lex
+            // order via to_value (BTreeMap-backed Map; see
+            // `JsonWriter::handle` for the contract), and `v` is CS-0048's
+            // schema version.
+            let line = WireLine {
+                ts: current_rfc3339(),
+                v: PROGRESS_SCHEMA_VERSION,
+                event: event_to_wire(state, event),
+            };
+            let value = serde_json::to_value(&line).map_err(io::Error::other)?;
+            serde_json::to_writer(&mut *w, &value).map_err(io::Error::other)?;
             w.write_all(b"\n")?;
         }
 

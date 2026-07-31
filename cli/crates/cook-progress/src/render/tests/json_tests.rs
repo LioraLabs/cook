@@ -1,5 +1,5 @@
 use super::*;
-use crate::event::{NodeId, NodeKind, RecipeId, RecipeTopo};
+use crate::event::{NodeId, NodeKind, RecipeId, RecipeTopo, Stream};
 use std::time::Duration;
 
 fn make_state_with_one_recipe() -> BuildState {
