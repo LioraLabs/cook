@@ -1,0 +1,27 @@
+[[run]]
+args = ["goodprobe"]
+[run.assert]
+equals = { "out/probe.txt" = "cc=gcc-13\n" }
+
+# The composite diagnostic fires before the spawn; the step never runs.
+[[run]]
+args = ["badprobe"]
+exit = 1
+[run.assert]
+absent = ["out/bad.txt"]
+output_contains = ["the addressed value is an object"]
+output_not_contains = ["table: 0x"]
+
+# A failing step stops the body: step 1 ran, step 3 must not.
+[[run]]
+args = ["steps3"]
+exit = 1
+[run.assert]
+exists = ["out/step1.txt"]
+absent = ["out/step3.txt"]
+
+# A bare `cd` does not survive to the next step (CS-0193).
+[[run]]
+args = ["cdtest"]
+[run.assert]
+equals = { "out/cwd.txt" = "at-root\n" }

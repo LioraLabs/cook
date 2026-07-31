@@ -1,0 +1,29 @@
+# CS-0193 (COOK-384): a chore step is a unit. Probe refs follow §22.5.7
+# (edge + demand scheduling + CS-0192 substitution before the spawn), a
+# failing step stops the body and cancels the tail, and process state does
+# not persist between steps. All assertions by file content or absence:
+# an interactive step's output is terminal-owned and never captured.
+
+probe v:cc
+    >{ return "gcc-13" }
+
+probe v:tbl
+    >{ return { name = "zlib" } }
+
+chore goodprobe
+    mkdir -p out
+    printf 'cc=%s\n' "$<v:cc>" > out/probe.txt
+
+chore badprobe
+    mkdir -p out
+    printf '%s\n' "$<v:tbl>" > out/bad.txt
+
+chore steps3
+    mkdir -p out && touch out/step1.txt
+    false
+    touch out/step3.txt
+
+chore cdtest
+    mkdir -p out
+    cd sub
+    ls marker-sub.txt > /dev/null 2>&1 && echo in-sub > out/cwd.txt || echo at-root > out/cwd.txt
