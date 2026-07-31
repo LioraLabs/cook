@@ -1151,6 +1151,143 @@ pub fn execute_dag(
         }
     }
 
+    // ----- helper: the dispatch tail — NodeStarted, parent-dir guard, submit -----
+    // The shared tail of the test and generic dispatch arms (COOK-395): 61 of
+    // ~82 lines were byte-identical twins, so a change to dispatch bookkeeping
+    // was N=2. The two arms' genuine divergences dissolve here rather than
+    // being flagged: TestStarted is emitted exactly when the node carries a
+    // test name (a generic-arm node never does — the `_ if is_test()` guard
+    // claimed it), and the CS-0119 directory pre-clean is a no-op for a test
+    // node (no directory outputs in its cache_meta).
+    //
+    // Returns how many work items were submitted (1, or 0 on the parent-dir
+    // failure path, which does its own bookkeeping and subtree cancel).
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_to_pool(
+        dag: &Dag<WorkNode>,
+        id: usize,
+        work_node: &WorkNode,
+        payload: &WorkPayload,
+        miss_cause: Option<String>,
+        pool: &WorkerPool,
+        cancelled: &mut Vec<bool>,
+        finished: &mut usize,
+        event_tx: &Option<mpsc::Sender<EngineEvent>>,
+        trackers: &mut BTreeMap<String, RecipeTracker>,
+        cache_ctx: &CacheContext,
+        failures: &mut Vec<(usize, String, String)>,
+        blocked_results: &mut Vec<crate::TestResult>,
+    ) -> usize {
+        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+        emit(
+            event_tx,
+            EngineEvent::NodeStarted {
+                recipe: work_node.recipe_name.clone(),
+                unit: id,
+                node_name: work_node.display_name(),
+                artifact: work_node.cache_meta.as_ref()
+                    .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                fallback_label: work_node.display_name(),
+                kind: node_kind_for_node(work_node),
+                cause: miss_cause,
+                cache_key: node_cache_key(work_node),
+            },
+        );
+        // Emit TestStarted for a test-named node so reporters can track
+        // in-flight tests.
+        if let Some(test_name) = &work_node.test_name {
+            let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
+            let iteration_item = &work_node.member;
+            let test_id_str = match iteration_item {
+                Some(item) if !item.is_empty() => {
+                    format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
+                }
+                _ => format!("{}:{}", work_node.recipe_name, test_name),
+            };
+            emit(
+                event_tx,
+                EngineEvent::TestStarted {
+                    id: crate::id::parse_test_id(&test_id_str),
+                    recipe: work_node.recipe_name.clone(),
+                    name: test_name.clone(),
+                    line: line as u32,
+                    iteration_item: iteration_item.clone(),
+                },
+            );
+        }
+
+        // CS-0050: ensure parent directories of declared cook-step outputs
+        // exist before the shell text runs. No-op for non-cook units
+        // (cache_meta == None) and for outputs whose parent already exists.
+        // A non-directory at the parent path is reported as a node failure
+        // rather than a panic; the surrounding bookkeeping mirrors a
+        // worker-pool failure.
+        if let Err(err_msg) = ensure_output_parent_dirs(work_node) {
+            emit(
+                event_tx,
+                EngineEvent::NodeFailed {
+                    recipe: work_node.recipe_name.clone(),
+                    unit: id,
+                    node_name: work_node.display_name(),
+                    elapsed: Duration::ZERO,
+                    error: err_msg.clone(),
+                },
+            );
+            failures.push((id, work_node.recipe_name.clone(), err_msg));
+            finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
+            *finished += 1;
+            let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+            for dep_id in dependents {
+                cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
+            }
+            return 0;
+        }
+
+        // CS-0119: build-owned pre-clean — before the command runs, empty any
+        // declared directory outputs so the post-execution
+        // resolve_output_paths sees only what THIS invocation produced.
+        // Without this, files from a previous build that the new command no
+        // longer writes would survive as orphans.
+        if let Some(meta) = &work_node.cache_meta {
+            for entry in &meta.output_paths {
+                if let Some(root) = entry.strip_suffix('/') {
+                    let dir = work_node.working_dir.join(root);
+                    if dir.is_dir() {
+                        let empty: std::collections::BTreeSet<String> =
+                            std::collections::BTreeSet::new();
+                        cook_fingerprint::reconcile_dir_output(
+                            &work_node.working_dir,
+                            root,
+                            &empty,
+                        );
+                    }
+                }
+            }
+        }
+
+        let env_vars_hashmap: std::collections::HashMap<String, String> =
+            work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        pool.submit(WorkItem {
+            id,
+            payload: payload.clone(),
+            recipe_name: work_node.recipe_name.clone(),
+            working_dir: work_node.working_dir.clone(),
+            env_vars: env_vars_hashmap,
+            process_env_vars: work_node
+                .process_env_vars
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            // CS-0045: project_root drives the worker's sandbox policy.
+            // CacheContext is the canonical source — it survives the
+            // cross-Cookfile-import case where work_node.working_dir is an
+            // imported subdir but the project root stays at the workspace
+            // root.
+            project_root: cache_ctx.project_root.clone(),
+        });
+        1
+    }
+
     // ----- helper: process a newly-ready node -----
     // Returns how many work items were submitted to the pool.
     #[allow(clippy::too_many_arguments)]
@@ -1501,78 +1638,11 @@ pub fn execute_dag(
                 };
                 let miss_cause = test_miss_cause;
 
-                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                emit(
-                    event_tx,
-                    EngineEvent::NodeStarted {
-                        recipe: work_node.recipe_name.clone(),
-                        unit: id,
-                        node_name: work_node.display_name(),
-                        artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        fallback_label: work_node.display_name(),
-                        kind: node_kind_for_node(work_node),
-                        cause: miss_cause,
-                        cache_key: node_cache_key(work_node),
-                    },
-                );
-                // Emit TestStarted for this test-step node.
-                let test_id_str = match iteration_item {
-                    Some(item) if !item.is_empty() => {
-                        format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
-                    }
-                    _ => format!("{}:{}", work_node.recipe_name, test_name),
-                };
-                emit(
-                    event_tx,
-                    EngineEvent::TestStarted {
-                        id: crate::id::parse_test_id(&test_id_str),
-                        recipe: work_node.recipe_name.clone(),
-                        name: test_name.clone(),
-                        line: line as u32,
-                        iteration_item: iteration_item.clone(),
-                    },
-                );
-
-                // CS-0050: ensure parent dirs for cook-step outputs.
-                // Test nodes have no cache_meta, so this is a no-op.
-                if let Err(err_msg) = ensure_output_parent_dirs(work_node) {
-                    emit(
-                        event_tx,
-                        EngineEvent::NodeFailed {
-                            recipe: work_node.recipe_name.clone(),
-                            unit: id,
-                            node_name: work_node.display_name(),
-                            elapsed: std::time::Duration::ZERO,
-                            error: err_msg.clone(),
-                        },
-                    );
-                    failures.push((id, work_node.recipe_name.clone(), err_msg));
-                    finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
-                    *finished += 1;
-                    let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
-                    for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
-                    }
-                    return 0;
-                }
-
-                let env_vars_hashmap: std::collections::HashMap<String, String> =
-                    work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                pool.submit(WorkItem {
-                    id,
-                    payload: payload.clone(),
-                    recipe_name: work_node.recipe_name.clone(),
-                    working_dir: work_node.working_dir.clone(),
-                    env_vars: env_vars_hashmap,
-                    process_env_vars: work_node
-                        .process_env_vars
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                    project_root: cache_ctx.project_root.clone(),
-                });
-                1
+                dispatch_to_pool(
+                    dag, id, work_node, payload, miss_cause, pool, cancelled,
+                    finished, event_tx, trackers, cache_ctx, failures,
+                    blocked_results,
+                )
             }
             Some(WorkPayload::Probe { key, .. }) => {
                 // G4 (CS-0074): probe cache lookup before worker dispatch.
@@ -1969,100 +2039,11 @@ pub fn execute_dag(
                     CacheDecision::Miss(cause) => cause,
                 };
 
-                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                emit(
-                    event_tx,
-                    EngineEvent::NodeStarted {
-                        recipe: work_node.recipe_name.clone(),
-                        unit: id,
-                        node_name: work_node.display_name(),
-                        artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        fallback_label: work_node.display_name(),
-                        kind: node_kind_for_node(work_node),
-                        cause: miss_cause,
-                        cache_key: node_cache_key(work_node),
-                    },
-                );
-                // CS-0050: ensure parent directories of declared cook-step
-                // outputs exist before the shell text runs. No-op for
-                // non-cook units (cache_meta == None) and for outputs whose
-                // parent already exists. A non-directory at the parent path
-                // is reported as a node failure rather than a panic; the
-                // surrounding bookkeeping mirrors a worker-pool failure.
-                if let Err(err_msg) = ensure_output_parent_dirs(work_node) {
-                    emit(
-                        event_tx,
-                        EngineEvent::NodeFailed {
-                            recipe: work_node.recipe_name.clone(),
-                            unit: id,
-                            node_name: work_node.display_name(),
-                            elapsed: Duration::ZERO,
-                            error: err_msg.clone(),
-                        },
-                    );
-                    failures.push((id, work_node.recipe_name.clone(), err_msg));
-                    finish_recipe_node(
-                        trackers,
-                        &work_node.recipe_name,
-                        false,
-                        true,
-                        event_tx,
-                    );
-                    *finished += 1;
-                    let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
-                    for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
-                    }
-                    return 0;
-                }
-
-                // CS-0119: build-owned pre-clean — before the command runs,
-                // empty any declared directory outputs so the post-execution
-                // resolve_output_paths sees only what THIS invocation produced.
-                // Without this, files from a previous build that the new command
-                // no longer writes would survive as orphans.
-                if let Some(meta) = &work_node.cache_meta {
-                    for entry in &meta.output_paths {
-                        if let Some(root) = entry.strip_suffix('/') {
-                            let dir = work_node.working_dir.join(root);
-                            if dir.is_dir() {
-                                let empty: std::collections::BTreeSet<String> =
-                                    std::collections::BTreeSet::new();
-                                cook_fingerprint::reconcile_dir_output(
-                                    &work_node.working_dir,
-                                    root,
-                                    &empty,
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // Convert BTreeMap env_vars to HashMap for WorkItem
-                let env_vars_hashmap: std::collections::HashMap<String, String> =
-                    work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-                pool.submit(WorkItem {
-                    id,
-                    payload: payload.clone(),
-                    recipe_name: work_node.recipe_name.clone(),
-                    working_dir: work_node.working_dir.clone(),
-                    env_vars: env_vars_hashmap,
-                    process_env_vars: work_node
-                        .process_env_vars
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                    // CS-0045: project_root drives the worker's
-                    // sandbox policy. CacheContext is the canonical
-                    // source — it survives the cross-Cookfile-import
-                    // case where work_node.working_dir is an
-                    // imported subdir but the project root stays at
-                    // the workspace root.
-                    project_root: cache_ctx.project_root.clone(),
-                });
-                1
+                dispatch_to_pool(
+                    dag, id, work_node, payload, miss_cause, pool, cancelled,
+                    finished, event_tx, trackers, cache_ctx, failures,
+                    blocked_results,
+                )
             }
         }
     }
