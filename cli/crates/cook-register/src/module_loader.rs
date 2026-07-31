@@ -370,6 +370,33 @@ pub fn register_cache_api(
     })?;
     cache_tbl.set("get", get_fn)?;
 
+    // cook.__probe_subst(ident) — CS-0195: the register-time rendering of a
+    // `$<key:...>` reference in a position that must resolve before execute
+    // (a fan-out output pattern; the path must be known to register the
+    // unit). Parses the ident through the shared grammar and renders through
+    // the CS-0192 law over the pre-pass store's JSON value: a scalar renders
+    // as its canonical token, and a composite, null, or absent member is a
+    // register-phase diagnostic — the old lowering interpolated Lua's
+    // `tostring` of a table, a heap address, into a declared output path.
+    let prepass_subst = prepass.clone();
+    let subst_fn = lua.create_function(move |_, ident: String| {
+        let r = cook_contracts::sigil::probe_ref(&ident).ok_or_else(|| {
+            LuaError::runtime(format!("$<{ident}>: not a probe-value reference"))
+        })?;
+        let store = prepass_subst.borrow();
+        let value = store.get(r.key()).ok_or_else(|| {
+            LuaError::runtime(format!(
+                "$<{ident}>: probe '{}' is not materialised in the register \
+                 pre-pass; an output-pattern reference can only name a \
+                 member-source probe the pre-pass resolved",
+                r.key()
+            ))
+        })?;
+        cook_contracts::sigil::subst::substitute(value, r.path(), &ident)
+            .map_err(LuaError::runtime)
+    })?;
+    cook.set("__probe_subst", subst_fn)?;
+
     // cook.probes.set(key, value)
     let s2 = state.clone();
     let set_fn = lua.create_function(move |_, (key, value): (String, LuaValue)| {

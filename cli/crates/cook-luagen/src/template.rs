@@ -351,7 +351,7 @@ pub(crate) fn expand_sigil_template_with_chore_params(
 /// can track which probe keys the command depends on.
 fn resolved_to_lua(
     resolved: Resolved,
-    _ident: &str,
+    ident: &str,
     consulted_env: &mut ConsultedEnv,
 ) -> Result<String, ResolveError> {
     match resolved {
@@ -368,9 +368,13 @@ fn resolved_to_lua(
             consulted_env.record(&key);
             Ok(format!("cook.require_var(\"{}\")", escape_lua_string(&key)))
         }
-        // CS-0074: probe-value reference — emit a tostring-wrapped cache read.
-        // The access expression is pre-built by the resolver.
-        Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
+        // CS-0195: probe-value reference — one substitution helper, backed by
+        // the CS-0192 law over the pre-pass store. Scalars render as their
+        // canonical JSON token; composites/null/absent raise register-phase
+        // diagnostics instead of interpolating a Lua heap address.
+        Resolved::ProbeRef { .. } => {
+            Ok(format!("cook.__probe_subst(\"{}\")", escape_lua_string(ident)))
+        }
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_member_fanout_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
@@ -553,7 +557,10 @@ fn output_pattern_ident_to_lua(
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
-        Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
+        // CS-0195: same helper as resolved_to_lua — one renderer per ident.
+        Resolved::ProbeRef { .. } => {
+            Ok(format!("cook.__probe_subst(\"{}\")", escape_lua_string(ident)))
+        }
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
         // have no fan-out body context and `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
@@ -817,9 +824,11 @@ pub(crate) fn expand_plate_test_body(
             // Collected, not lowered on the caller's behalf: a test command has
             // no execute-phase probe substitution, so the caller rejects the
             // step. See `test_step::reject_probe_refs_in_command`.
-            Resolved::ProbeRef { ref key, ref access } => {
+            Resolved::ProbeRef { ref key } => {
                 probe_keys.insert(key.clone());
-                format!("tostring({})", access)
+                // CS-0195: same helper; the caller rejects test-position probe
+                // refs before this string is ever used.
+                format!("cook.__probe_subst(\"{}\")", escape_lua_string(&span.ident))
             }
             other => resolved_to_lua(other, &span.ident, out)?,
         };
