@@ -318,7 +318,14 @@ fn run_interactive_on_main(
     line: usize,
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
+    probe_store: &cook_luaotp::ProbeValueStore,
 ) -> Result<(), String> {
+    // CS-0193: substitute `$<key:field>` probe references before the spawn,
+    // through the same CS-0192 renderer the worker pool uses — a probe ref
+    // means the same thing in a chore step as in a cook body, including the
+    // composite-value diagnostics. The register-phase scan (unit_api) gave
+    // the unit its probe edges, so the values are materialised by now.
+    let cmd = &cook_luaotp::resolve_probe_sigils(probe_store, cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
     cook_fingerprint::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
@@ -2260,6 +2267,7 @@ pub fn execute_dag(
                                     *line,
                                     &work_node.working_dir,
                                     &work_node.process_env_vars,
+                                    &pool.probe_value_store(),
                                 ),
                                 Err(e) => Err(e),
                             }
@@ -2559,6 +2567,7 @@ pub fn execute_dag(
                             *line,
                             &work_node.working_dir,
                             &work_node.process_env_vars,
+                            &pool.probe_value_store(),
                         ),
                         Err(e) => Err(e),
                     };

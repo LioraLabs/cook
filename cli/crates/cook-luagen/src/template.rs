@@ -220,7 +220,13 @@ pub(crate) fn expand_sigil_template(
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
 ) -> Result<String, ResolveError> {
-    expand_sigil_template_with_chore_params(template, ctx, consulted_env, None)
+    expand_sigil_template_with_chore_params(
+        template,
+        ctx,
+        consulted_env,
+        None,
+        ProbeLowering::CacheGet,
+    )
 }
 
 /// CS-0128: the shell quoting context a sigil span sits in.
@@ -265,6 +271,7 @@ pub(crate) fn expand_sigil_template_with_chore_params(
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
     chore_params: Option<&BTreeSet<String>>,
+    probe_lowering: ProbeLowering,
 ) -> Result<String, ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
@@ -303,7 +310,19 @@ pub(crate) fn expand_sigil_template_with_chore_params(
             )
         } else {
             let resolved = crate::resolver::resolve(&span.ident, ctx);
-            resolved_to_lua(resolved, &span.ident, consulted_env)?
+            if matches!(resolved, Resolved::ProbeRef { .. })
+                && probe_lowering == ProbeLowering::LiteralSigil
+            {
+                // CS-0193: a chore step's probe ref stays literal `$<...>`
+                // text in the captured command — cook.add_unit's scan wires
+                // the edge and demand scheduling, and the drain-thread spawn
+                // substitutes through the CS-0192 renderer. The old lowering
+                // read `cook.probes.get` on the register VM, which raises
+                // outside module context and created no edge.
+                format!("\"{}\"", escape_lua_string(&template[span.range.clone()]))
+            } else {
+                resolved_to_lua(resolved, &span.ident, consulted_env)?
+            }
         };
         parts.push(lua_expr);
 

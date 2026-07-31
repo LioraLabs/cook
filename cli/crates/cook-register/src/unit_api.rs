@@ -1021,7 +1021,27 @@ pub fn register_unit_api(
                 line: chunk_line,
             }
         } else if interactive {
-            WorkPayload::Interactive { cmd: command, line, is_chore }
+            // CS-0193: an interactive command consumes probes exactly as a
+            // Shell command does — same scan, same DAG edge, same demand
+            // scheduling. Substitution happens on the drain thread before the
+            // inherited-stdio spawn, through the same CS-0192 renderer the
+            // worker uses, so a probe ref means the same thing in a chore
+            // step as in a cook body (§22.5.7).
+            match scan_probe_keys(&command) {
+                Ok(detected_keys) => {
+                    for k in detected_keys {
+                        if !probes.contains(&k) {
+                            probes.push(k);
+                        }
+                    }
+                    WorkPayload::Interactive { cmd: command, line, is_chore }
+                }
+                Err(e) => {
+                    return Err(LuaError::runtime(format!(
+                        "cook.add_unit: malformed probe placeholder in command: {e}"
+                    )));
+                }
+            }
         } else {
             // CS-0074: scan the command for `$<key:field>` probe-value
             // sigils and auto-add the keys it references to `probes`, so the
