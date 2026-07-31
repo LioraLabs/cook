@@ -62,6 +62,17 @@ struct RecipeTracker {
 // emit helper
 // ---------------------------------------------------------------------------
 
+/// COOK-395: `process_ready` threads two `&mut Vec<TestResult>` through ten
+/// call sites, and the two were the SAME TYPE — swapping them at any one
+/// site compiled clean and silently filed cache-hit rows as blocked (or
+/// vice versa). Distinct newtypes make the transposition uncompilable.
+///
+/// Rows synthesized for test cache hits (a hit IS a pass, §17.4 rule 2).
+struct CachedTestResults(Vec<crate::TestResult>);
+
+/// Rows for tests that never ran — cancelled downstream of a failure.
+struct BlockedTestResults(Vec<crate::TestResult>);
+
 fn emit(tx: &Option<mpsc::Sender<EngineEvent>>, event: EngineEvent) {
     if let Some(tx) = tx {
         let _ = tx.send(event);
@@ -483,12 +494,12 @@ pub fn execute_dag(
     let mut keyless_probes: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     // Collects TestResult entries synthesized from test-cache hits in process_ready.
-    let mut cached_test_results: Vec<crate::TestResult> = Vec::new();
+    let mut cached_test_results = CachedTestResults(Vec::new());
     // Collects Blocked TestResult rows synthesized by cancel_subtree when a
     // cook step fails and its downstream test nodes are cancelled. These are
     // included in TaskFailures.partial_test_results so run_for_test_inner can
     // return Ok with Blocked rows instead of propagating the error.
-    let mut blocked_results: Vec<crate::TestResult> = Vec::new();
+    let mut blocked_results = BlockedTestResults(Vec::new());
 
     // ----- Recipe tracking -----
     let mut recipe_trackers: BTreeMap<String, RecipeTracker> = BTreeMap::new();
@@ -619,7 +630,7 @@ pub fn execute_dag(
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
         upstream_name: &str,
-        blocked_results: &mut Vec<crate::TestResult>,
+        blocked_results: &mut BlockedTestResults,
     ) {
         if cancelled[node_id] {
             return;
@@ -660,7 +671,7 @@ pub fn execute_dag(
             );
             let namespace = crate::id::id_namespace(&test_id);
             let recipe = crate::id::id_recipe(&test_id);
-            blocked_results.push(crate::TestResult {
+            blocked_results.0.push(crate::TestResult {
                 id: test_id,
                 namespace,
                 recipe,
@@ -1176,7 +1187,7 @@ pub fn execute_dag(
         trackers: &mut BTreeMap<String, RecipeTracker>,
         cache_ctx: &CacheContext,
         failures: &mut Vec<(usize, String, String)>,
-        blocked_results: &mut Vec<crate::TestResult>,
+        blocked_results: &mut BlockedTestResults,
     ) -> usize {
         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
         emit(
@@ -1303,9 +1314,9 @@ pub fn execute_dag(
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
         failures: &mut Vec<(usize, String, String)>,
-        cached_test_results: &mut Vec<crate::TestResult>,
+        cached_test_results: &mut CachedTestResults,
         rerun_patterns: &[String],
-        blocked_results: &mut Vec<crate::TestResult>,
+        blocked_results: &mut BlockedTestResults,
         // G4 (CS-0074): probe cache lookup state.
         probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
         upstream_probe_fingerprints: &mut BTreeMap<String, [u8; 32]>,
@@ -1571,7 +1582,7 @@ pub fn execute_dag(
 
                             let namespace = crate::id::id_namespace(&test_id);
                             let recipe = crate::id::id_recipe(&test_id);
-                            cached_test_results.push(crate::TestResult {
+                            cached_test_results.0.push(crate::TestResult {
                                 id: test_id,
                                 namespace,
                                 recipe,
@@ -3062,7 +3073,7 @@ pub fn execute_dag(
     if failures.is_empty() {
         // Merge cached_test_results (from test cache hits synthesized during
         // process_ready) with test_results (from actual executions).
-        let mut all = cached_test_results;
+        let mut all = cached_test_results.0;
         all.extend(test_results);
         // COOK-341: Blocked rows now also arise on this path. A failed test
         // cancels its dependents without joining the hard `failures` list, so
@@ -3070,15 +3081,15 @@ pub fn execute_dag(
         // the suite would report a dependent as neither run nor blocked, just
         // absent. Before COOK-341 `cancel_subtree` fired only for hard
         // failures, which always take the Err arm, so this was vacuously empty.
-        all.extend(blocked_results);
+        all.extend(blocked_results.0);
         Ok(all)
     } else {
         // Build partial_test_results: everything accumulated so far (including
         // Blocked rows from cancel_subtree) so that run_for_test_inner can
         // return Ok with these rows instead of propagating the error.
-        let mut partial = cached_test_results;
+        let mut partial = cached_test_results.0;
         partial.extend(test_results);
-        partial.extend(blocked_results);
+        partial.extend(blocked_results.0);
         Err(EngineError::TaskFailures {
             count: failures.len(),
             failures,
