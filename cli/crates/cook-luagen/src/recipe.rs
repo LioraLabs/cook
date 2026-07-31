@@ -1176,6 +1176,8 @@ fn expand_chore_shell_command(
         &ctx,
         &mut consulted,
         Some(chore_params),
+        // CS-0193: chore probe refs stay literal for register-time capture.
+        crate::template::ProbeLowering::LiteralSigil,
     )
 }
 

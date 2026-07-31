@@ -499,7 +499,7 @@ fn worker_loop(
 ///
 /// A command with no probe reference is returned untouched, and a non-probe
 /// `$<...>` span is left literal, both matching what the rewrite did.
-fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String, String> {
+pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String, String> {
     let spans = cook_contracts::sigil::scan(cmd);
     if spans.is_empty() {
         return Ok(cmd.to_string());

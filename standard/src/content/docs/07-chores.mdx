@@ -149,6 +149,16 @@ A conforming implementation MUST reject a chore body that contains any of the th
 
 Every `shell_command` step inside a chore body is **interactive**: it runs with the controlling terminal inherited, so the spawned child sees a real TTY (§{steps.shell}). This is the chore default; there is no marker to write. CS-0134 removed the `@` interactive prefix from the language entirely (§{lexical.line-prefixes}) — it was a redundant no-op, since every chore shell command is already interactive by this rule. A chore therefore inherits the TTY-allocation and stdio-inheritance semantics that the drain rule (§{exec.interactive-drain}) specifies for an interactive unit.
 
+**One invocation per step (CS-0193).** Each `shell_command` step in a chore body denotes exactly one shell invocation: the step's text passed to a single `/bin/sh -c`. Steps are never composed — the block rule of §{steps.shell-block-invocation} is scoped to `{ … }` bodies and does not reach a chore body, whose steps are separate invocations by construction. Three consequences are normative:
+
+- A failing step fails the chore. Steps after it MUST NOT run, and the chore's dependents observe the failure under the general unit-failure semantics of §{exec.two-phase}.
+- Process state does not persist between steps. Each step spawns at the chore's working directory in a fresh shell, so a `cd`, a shell variable, or a `trap` on one line does not survive to the next. An author who needs persistence writes the sequence as one step (`cd build && rsync …`). Before CS-0193 the non-persistence was true but unstated, and Example 7.3.1 read as if it were otherwise.
+- Each step is one unit of progress. An implementation SHOULD report per-step progress (step *k* of *n*) for a chore body.
+
+**Probe-value references (CS-0193).** A `$<key:…>` probe-value reference in a chore `shell_command` step follows §{cat.probes.templates} exactly as in a `cook` body: the reference MUST reach register-time capture as literal `$<…>` text in the step's command string, MUST union its key into the step's `probes` — gaining the DAG edge and demand-driven scheduling of §{cat.probes.consumer} — and MUST be substituted per §{cat.probes.templates}'s rules, including the composite-value diagnostics, before the interactive command begins. (Prior to CS-0193 a chore probe reference lowered to a register-time `cook.probes.get` read, which raised outside module context and created no edge; the surface was unusable, so this is a definition, not a behaviour change.)
+
+**Interactive output belongs to the terminal (CS-0193).** An interactive step's stdin, stdout, and stderr are the controlling terminal's (§{exec.interactive-drain}); its output is therefore not captured, not attributed to the unit, and records no observation. This is a stated exemption from the output-ownership rule of CS-0188 and the observation recording of CS-0189, not an accident of implementation: what an interactive session prints belongs to the session, and capturing it would break the TTY property this section promises (a full-screen tool like `fzf` owns the terminal while it runs). Execute-Lua steps in a chore body are not interactive units; their output rules are outside this paragraph.
+
 The execute-Lua step phases (`>` / `>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the chore's drain thread (the controlling terminal), not on a worker VM — chore bodies share a single drain across all imperative-region steps including Lua bodies (CS-0051). The body-bundling rule (§{exec.body-bundling}) does NOT apply to chore bodies — as of CS-0134 it is vacuous even for recipes (§{exec.body-bundling}); chore-body execution is governed entirely by the single-drain rule of this section.
 
 A chore body MUST execute as a **single drain** (CS-0051): once the first imperative-region step of the body begins, no work unit of any other recipe MAY run until the body completes — successfully or with a failure. The body's shell steps and execute-phase Lua steps run in source order on the controlling terminal under one shared drain window. The interactive-drain rule of §{exec.interactive-drain} governs each individual interactive unit; the chore-body case additionally shares a single drain across all of a chore's imperative steps (its shell and execute-Lua steps), rather than draining them one at a time.
@@ -157,12 +167,11 @@ A chore body MUST execute as a **single drain** (CS-0051): once the first impera
 
 ```cook
 chore deploy
-    cd build
-    rsync -av out/ user@host:/srv/app/
+    cd build && rsync -av out/ user@host:/srv/app/
     > print("deploy complete")
 ```
 
-The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on the drain thread (controlling terminal), not on a worker VM (CS-0051). There is no body-bundling, and the two shell steps and the `>` Lua line execute under one shared drain — no work unit of any other recipe interleaves with them (CS-0051).
+The shell step is interactive: it runs with the user's TTY inherited. The `cd` and the `rsync` share one step deliberately — steps are separate invocations, so a `cd` on its own line would not survive to the next (CS-0193). The `>` line runs at execute phase on the drain thread (controlling terminal), not on a worker VM (CS-0051). There is no body-bundling, and the shell step and the `>` Lua line execute under one shared drain — no work unit of any other recipe interleaves with them (CS-0051).
 
 ## 7.4. No caching [#chores.no-caching]
 
@@ -172,7 +181,7 @@ This rule preserves the chore-vs-recipe semantic distinction: chores always run 
 
 ### Note 7.4.1
 
-The engine does not need a chore-specific code path. A chore compiles to a recipe-body Lua function whose registered units are all `cache = false` and whose shell steps default to `interactive = true`. The distinction is a parse-time / codegen-time layer over the existing engine.
+A chore is not a separate mechanism: it compiles to a recipe-body Lua function whose registered units are all `cache = false` and whose shell steps default to `interactive = true`, so registration, dependency edges, probe consumption (CS-0193), and failure propagation are the ordinary unit machinery. What IS chore-shaped in an implementation is scheduling policy: the drain rule of §{exec.interactive-drain} requires interactive units to wait out concurrent work and hold the terminal, which the reference implementation serves with a dedicated execute-phase window. (This note previously claimed the engine needs no chore-specific code path; the drain rule is exactly such a path, and pretending otherwise hid it — CS-0193.)
 
 ## 7.5. Cross-form dependencies [#chores.cross-form-deps]
 

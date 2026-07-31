@@ -352,8 +352,14 @@ fn test_executor_interactive_node() {
 fn interactive_command_failure_uses_shared_json_contract() {
     let (wd, _tmp) = tmp_dir();
     let command = "printf 'key:value\\n\"quoted\"'\nexit 7";
-    let wire = run_interactive_on_main(command, 23, &wd, &BTreeMap::new())
-        .expect_err("interactive command should fail");
+    let wire = run_interactive_on_main(
+        command,
+        23,
+        &wd,
+        &BTreeMap::new(),
+        &cook_luaotp::ProbeValueStore::new(),
+    )
+    .expect_err("interactive command should fail");
     let failure =
         cook_contracts::CommandFailure::from_wire(&wire).expect("canonical command failure JSON");
 
