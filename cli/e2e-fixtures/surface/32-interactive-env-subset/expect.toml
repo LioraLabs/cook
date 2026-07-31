@@ -1,0 +1,13 @@
+# Both interactive arms — the legacy non-chore path and the chore window —
+# must spawn with the process-env subset. `$SECRET` exists only in the config
+# lookup map, so a conforming spawn renders it empty.
+
+[[run]]
+args = ["legacyinteractive"]
+[run.assert]
+equals = { "out/legacy.txt" = "s=[]\n" }
+
+[[run]]
+args = ["choreleak"]
+[run.assert]
+equals = { "out/chore.txt" = "s=[]\n" }
