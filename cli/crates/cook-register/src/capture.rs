@@ -524,7 +524,8 @@ pub fn install_cook_api(
                     requires,
                     params: vec![],
                     // Surface `recipe NAME` blocks never carry an origin —
-                    // only the public `cook.recipe` closure parses it.
+                    // only the public `cook.recipe` / `cook.chore`
+                    // closures parse it (`parse_origin_meta`).
                     origin: None,
                 },
                 source: RegistrationSource::Static { line },
@@ -558,7 +559,8 @@ pub fn install_cook_api(
                     requires,
                     params,
                     // Surface `chore NAME` blocks never carry an origin —
-                    // only the public `cook.recipe` closure parses it.
+                    // only the public `cook.recipe` / `cook.chore`
+                    // closures parse it (`parse_origin_meta`).
                     origin: None,
                 },
                 source: RegistrationSource::Static { line },

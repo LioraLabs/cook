@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use cook_engine::cook_cache::backend::{EvictCandidate, LocalBackend};
+use cook_engine::cook_cache::backend::EvictCandidate;
 use cook_engine::cook_cache::CloudConfig;
 
 use crate::cli::Globals;
@@ -45,25 +45,12 @@ pub fn cmd_cache_du(globals: &Globals) -> Result<(), CookError> {
         .map_err(|e| CookError::Other(format!("invalid .cook/cloud.toml: {e}")))?;
 
     // COOK-232 cleanup: `du` is read-only — it must never create the store
-    // as a side effect of merely inspecting it. `LocalBackend::with_config`
-    // (which `LocalBackend::new` calls) unconditionally `create_dir_all`s
-    // the root, so a missing store is handled here, BEFORE constructing a
-    // backend at all: render the same zero-total report `enumerate`'s
-    // missing-root branch would have produced, without ever mkdir-ing
-    // anything.
-    if !store.exists() {
-        let report = summarize(Vec::new());
-        print!("{}", render(&report, &store, budget));
-        return Ok(());
-    }
-
-    let backend = LocalBackend::new(store.clone());
-    let candidates = backend.enumerate().map_err(|e| {
-        CookError::Other(format!(
-            "enumerating cache store {}: {e}",
-            store.display()
-        ))
-    })?;
+    // as a side effect of merely inspecting it. `enumerate_store` carries
+    // that guarantee (its `None` branch checks existence BEFORE
+    // constructing a backend); a missing store renders the same zero-total
+    // report an empty one would.
+    let candidates =
+        crate::cache_gc::enumerate_store(&store)?.unwrap_or_default();
 
     let report = summarize(candidates);
     print!("{}", render(&report, &store, budget));

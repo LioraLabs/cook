@@ -435,10 +435,10 @@ pub type SharedSessionCaptureState = Rc<RefCell<SessionCaptureState>>;
 /// a Lua error when the slot is `None`.
 pub type SharedBodySlot = Rc<RefCell<Option<BodyCaptureState>>>;
 
-/// Hash a string using xxh3 (for command templates, env vars, etc.)
-pub fn hash_str(s: &str) -> u64 {
-    xxhash_rust::xxh3::xxh3_64(s.as_bytes())
-}
+// Key-agreement law: register COMPUTES command_hash (unit_api.rs) with the
+// same function fingerprint COMPARES with (check.rs). One definition, in
+// cook-fingerprint; a local twin here drifted-by-construction (COOK-396).
+pub use cook_fingerprint::hash_str;
 
 // Re-exports for convenience.
 //

@@ -2959,7 +2959,11 @@ pub fn execute_dag(
                     from_cache: false,
                     stdout,
                     stderr,
-                    fingerprint: None,
+                    // Same identity a pass carries (see the field's rule on
+                    // `TestResult`): the unit RAN, so it has a step-index
+                    // key a JSON consumer can join to `cook why`. This was
+                    // `None` on failure alone, undocumented (COOK-396).
+                    fingerprint: node_cache_key(dag.node(result.id).payload()),
                     blocked_by: None,
                     should_fail: false,
                     timed_out: false,

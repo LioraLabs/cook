@@ -961,6 +961,7 @@ pub fn generate_with_names(
                                 generate_member_fanout_cook_step(
                                     &mut out,
                                     cook_step,
+                                    *line,
                                     cook_index,
                                     recipe_names,
                                     member_source
@@ -1384,8 +1385,11 @@ fn compile_chore_checked(
 
 /// Emit a body unit for a bundle of execute-phase Lua steps within a chore.
 ///
-/// Identical to `emit_body_unit` except the `cook.add_unit` call always
-/// passes `cache = false` (chores never cache — §{chores.no-caching}).
+/// The chore twin of `emit_body_unit_with_names`, differing in that the
+/// bundle is Lua-only by construction (COOK-386), the `cook.add_unit` call
+/// always passes `cache = false` (chores never cache —
+/// §{chores.no-caching}), and declared chore params are exported via `env`
+/// (CS-0194).
 fn emit_chore_body_unit(
     out: &mut String,
     bundle: &[Step],

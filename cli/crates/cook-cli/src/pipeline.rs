@@ -864,26 +864,14 @@ pub fn cmd_cache_verify(
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
     let num_jobs = resolve_num_jobs(globals);
-    let targets = vec![recipe_name.to_string()];
 
     let (_, registered) = build_registered_workspace(
         globals,
         config,
         RegisterMode::Dispatch { name: recipe_name, argv: &[] },
     )?;
-    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
-
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
-        .map_err(|e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
-                CookError::Other(format!("dependency cycle involving: {name}"))
-            }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
-                CookError::RecipeNotFound(name)
-            }
-            other => CookError::Other(other.to_string()),
-        })?;
-    let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
+    let (edges, reachable) =
+        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     let project_root = resolve_project_root(globals)?;
 
@@ -1839,9 +1827,7 @@ pub fn cmd_affected(
         return Ok(());
     }
 
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
-        .map_err(|e| CookError::Other(e.to_string()))?;
-    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+    let (edges, reachable) = resolve_reachable_closure(&registered, &targets)?;
 
     let changed = cook_engine::affected::git::changed_paths(&project_root, since)
         .map_err(|e| CookError::Other(format!("git diff failed: {e}")))?;
@@ -1881,18 +1867,18 @@ pub fn cmd_affected(
 
 
 /// Derive the `(edges, reachable)` pair that `cook run` would consume for
-/// `recipe_name`, using the EXACT derivation `run_with_progress` / `cmd_run`
+/// `targets`, using the EXACT derivation `run_with_progress` / `cmd_run`
 /// rely on: `build_recipe_infos_from_registered` → `dependency_edges_multi`
-/// over `targets = [recipe_name]` → `reachable = edges.keys()`. Reusing this
-/// derivation verbatim guarantees `cook why` and `cook run` agree on the
-/// closure.
+/// over `targets` → `reachable = edges.keys()`. Reusing this derivation
+/// verbatim guarantees `cook why`, `cook cache verify`, and `cook affected`
+/// agree with `cook run` on the closure — including the CycleDetected /
+/// UnknownRecipe error phrasing.
 fn resolve_reachable_closure(
     registered: &RegisteredWorkspace,
-    recipe_name: &str,
+    targets: &[String],
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeSet<String>), CookError> {
     let recipe_infos = pipeline::build_recipe_infos_from_registered(registered);
-    let targets = vec![recipe_name.to_string()];
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets).map_err(
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, targets).map_err(
         |e| match e {
             cook_engine::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
@@ -1941,7 +1927,8 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
         RegisterMode::Dispatch { name: recipe_name, argv: &[] },
     )?;
 
-    let (edges, reachable) = resolve_reachable_closure(&registered, recipe_name)?;
+    let (edges, reachable) =
+        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     // `cook why` MUST recompute the same cache key K as `cook run` would, so it
     // MUST anchor the cache context at the SAME project_root the executor uses.
