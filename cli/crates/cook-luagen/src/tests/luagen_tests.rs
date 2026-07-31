@@ -1976,9 +1976,11 @@ fn test_compile_chore_with_deps() {
 }
 
 #[test]
-fn test_compile_chore_wraps_with_enter_exit() {
-    // §{chores.no-caching}: codegen wraps body with _enter_chore/_exit_chore
-    // so the runtime can enforce the cache=true ban.
+fn test_compile_chore_emits_no_enter_exit_markers() {
+    // COOK-386: §{chores.no-caching} enforcement is the engine's
+    // ChoreActiveGuard, which brackets every chore body invocation. The
+    // codegen-emitted `cook._enter_chore()`/`cook._exit_chore()` second
+    // mechanism is gone; generated chore Lua carries no marker calls.
     let chore = make_chore(
         "clean",
         vec![],
@@ -1989,14 +1991,12 @@ fn test_compile_chore_wraps_with_enter_exit() {
         }],
     );
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
-    assert!(lua.contains("cook._enter_chore()"), "missing _enter_chore, got:\n{lua}");
-    assert!(lua.contains("cook._exit_chore()"), "missing _exit_chore, got:\n{lua}");
-    // _enter_chore must appear before the add_unit call.
-    let enter_pos = lua.find("cook._enter_chore()").unwrap();
-    let unit_pos = lua.find("cook.add_unit(").unwrap();
-    let exit_pos = lua.find("cook._exit_chore()").unwrap();
-    assert!(enter_pos < unit_pos, "_enter_chore must come before add_unit");
-    assert!(unit_pos < exit_pos, "add_unit must come before _exit_chore");
+    assert!(!lua.contains("_enter_chore"), "stale _enter_chore marker, got:\n{lua}");
+    assert!(!lua.contains("_exit_chore"), "stale _exit_chore marker, got:\n{lua}");
+    // The body still registers its unit uncached and interactive.
+    assert!(lua.contains("cook.add_unit("), "missing add_unit, got:\n{lua}");
+    assert!(lua.contains("cache = false"), "chore unit must be cache = false, got:\n{lua}");
+    assert!(lua.contains("interactive = true"), "chore unit must be interactive, got:\n{lua}");
 }
 
 #[test]

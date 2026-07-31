@@ -1230,8 +1230,11 @@ fn chore_param_env_table(params: &[cook_lang::ast::ChoreParam]) -> Option<String
 ///    existing `is_bundleable` predicate already breaks the bundle at each
 ///    shell step, so one-shell-per-unit comes for free.
 ///
-/// The generated Lua wraps the body with `cook._enter_chore()` / `cook._exit_chore()`
-/// so the runtime can enforce §{chores.no-caching} (see `unit_api.rs`).
+/// §{chores.no-caching} enforcement is the engine's `ChoreActiveGuard`
+/// (cook-register engine.rs), which brackets EVERY chore body invocation —
+/// surface and `cook.chore` alike. The generated Lua used to wrap the body in
+/// `cook._enter_chore()` / `cook._exit_chore()` as a second mechanism for the
+/// same flag; COOK-386 removed it (the guard already covered it).
 pub fn compile_chore(
     chore: &Chore,
     uses: &[UseStatement],
@@ -1297,9 +1300,6 @@ fn compile_chore_checked(
         meta,
     ));
 
-    // Mark chore-body start so cook.add_unit can enforce §{chores.no-caching}.
-    out.push_str("    cook._enter_chore()\n");
-
     // COOK-36 Task 3: bind each declared parameter as a Lua local in the body's scope.
     for p in &chore.params {
         let n = p.name();
@@ -1317,7 +1317,11 @@ fn compile_chore_checked(
     let mut i = 0;
     while i < chore.steps.len() {
         match &chore.steps[i] {
-            Step::Shell { command, line, interactive: true } => {
+            // COOK-386: one arm for every shell step. The parser makes every
+            // chore shell step interactive (§7.3), and the emission never
+            // consulted the flag anyway — the old `interactive: false` arm
+            // was a byte-identical copy labelled "defensive".
+            Step::Shell { command, line, .. } => {
                 // Apply sigil substitution — chore-aware path defers $<NAME>
                 // expansion to the runtime helper so param values are visible.
                 // CS-0101: chore units are cache = false — hoisted file-ref
@@ -1349,34 +1353,6 @@ fn compile_chore_checked(
                 ));
                 i += 1;
             }
-            Step::Shell { interactive: false, .. } => {
-                // Parser enforces all chore shells are interactive; this arm
-                // is unreachable in a well-formed AST, but emit defensively.
-                if let Step::Shell { command, line, .. } = &chore.steps[i] {
-                    // CS-0101: same hoist-only handling as the interactive arm.
-                    let cmd_expr = expand_chore_shell_command(
-                        command,
-                        recipe_names,
-                        &chore_param_names,
-                    )
-                    .map_err(|e| CodegenError::SigilResolve {
-                        recipe: chore.name.clone(),
-                        line: *line,
-                        source: e,
-                    })?;
-                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
-                    // units that are never cached. The cacheable cook-step path in
-                    // cook_step.rs is the only emission site that includes it.
-                    let env_field = chore_param_env_table(&chore.params)
-                        .map(|t| format!(", env = {}", t))
-                        .unwrap_or_default();
-                    out.push_str(&format!(
-                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false{}}})\n",
-                        cmd_expr, line, env_field
-                    ));
-                }
-                i += 1;
-            }
             Step::Lua { .. } | Step::LuaBlock { .. } => {
                 // Coalesce consecutive execute-phase Lua steps into one body
                 // unit (same rule as in recipes), but force cache = false.
@@ -1399,9 +1375,6 @@ fn compile_chore_checked(
         }
     }
 
-    // Mark chore-body end.
-    out.push_str("    cook._exit_chore()\n");
-
     out.push_str("end)\n\n");
     Ok(out)
 }
@@ -1416,8 +1389,11 @@ fn emit_chore_body_unit(
     uses: &[UseStatement],
     params: &[cook_lang::ast::ChoreParam],
 ) {
+    // COOK-386: the bundle is Lua-only by construction (the caller coalesces
+    // consecutive Lua steps and nothing else); the shell_run accumulator this
+    // carried was copied from the recipe path and nothing ever pushed into it,
+    // so its io.write(cook.sh(...)) flush was unreachable.
     let mut chunk = String::new();
-    let mut shell_run: Vec<String> = Vec::new();
 
     for use_stmt in uses {
         let lua_name = use_stmt.module_name.replace('-', "_");
@@ -1428,33 +1404,9 @@ fn emit_chore_body_unit(
         ));
     }
 
-    fn flush(chunk: &mut String, run: &mut Vec<String>) {
-        if run.is_empty() {
-            return;
-        }
-        let mut joined = String::from("set -e\n");
-        for (idx, line) in run.iter().enumerate() {
-            if idx > 0 {
-                joined.push('\n');
-            }
-            joined.push_str(line);
-        }
-        let wrapped = wrap_lua_string(&joined);
-        chunk.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
-        run.clear();
-    }
-
     for step in bundle {
         match step {
-            Step::Lua { code, .. } => {
-                flush(&mut chunk, &mut shell_run);
-                chunk.push_str(code);
-                if !code.ends_with('\n') {
-                    chunk.push('\n');
-                }
-            }
-            Step::LuaBlock { code, .. } => {
-                flush(&mut chunk, &mut shell_run);
+            Step::Lua { code, .. } | Step::LuaBlock { code, .. } => {
                 chunk.push_str(code);
                 if !code.ends_with('\n') {
                     chunk.push('\n');
@@ -1463,7 +1415,6 @@ fn emit_chore_body_unit(
             _ => unreachable!("emit_chore_body_unit called with non-Lua step"),
         }
     }
-    flush(&mut chunk, &mut shell_run);
 
     if chunk.is_empty() {
         return;

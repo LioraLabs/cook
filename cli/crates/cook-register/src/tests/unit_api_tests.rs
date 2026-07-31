@@ -530,15 +530,17 @@ fn add_unit_inside_chore_marks_payload_is_chore_true() {
     let (lua, capture_state) = make_lua_with_unit_api("my_chore");
     lua.set_app_data(fake_cache_ctx());
     lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    // COOK-386: the chore-active flag is host-side state set by the engine's
+    // ChoreActiveGuard around a chore body; mirror that bracketing here.
+    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = true;
     lua.load(r#"
-            cook._enter_chore()
             cook.add_unit({
                 command = "fzf --prompt='> '",
                 interactive = true,
                 cache = false,
             })
-            cook._exit_chore()
         "#).exec().unwrap();
+    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -555,15 +557,15 @@ fn add_unit_inside_chore_marks_lua_chunk_is_chore_true() {
     let (lua, capture_state) = make_lua_with_unit_api("my_chore");
     lua.set_app_data(fake_cache_ctx());
     lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = true;
     lua.load(r#"
-            cook._enter_chore()
             cook.add_unit({
                 lua_code = "print('hello from chore')",
                 interactive = true,
                 cache = false,
             })
-            cook._exit_chore()
         "#).exec().unwrap();
+    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
