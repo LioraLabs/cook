@@ -537,6 +537,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     cook_step: &CookStep,
     index: usize,
     recipe_names: &BTreeSet<String>,
+    extra_ingredients: &[String],
 ) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
@@ -573,6 +574,26 @@ pub(crate) fn generate_member_fanout_cook_step(
     let multi = out_exprs.len() > 1;
     let out_field = if multi { "outputs = _cook_outs" } else { "output = _cook_out" };
 
+    // CS-0197: trailing quoted globs on `ingredients <probe>` resolve ONCE at
+    // register time (outside the member loop — same files for every member,
+    // same resolution rule as ordinary recipe ingredients) and become each
+    // member unit's declared inputs. Without them the field stays the empty
+    // list it always was.
+    let inputs_field = if extra_ingredients.is_empty() {
+        "inputs = {}".to_string()
+    } else {
+        let pats = extra_ingredients
+            .iter()
+            .map(|p| format!("\"{}\"", crate::lua_string::escape_lua_string(p)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "    local _cook_member_inputs = cook.resolve_ingredients({{{}}}, {{}})\n",
+            pats
+        ));
+        "inputs = _cook_member_inputs".to_string()
+    };
+
     let add_unit_line = match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
             let combined = cook_contracts::shell_block::compose(lines);
@@ -587,8 +608,8 @@ pub(crate) fn generate_member_fanout_cook_step(
             // expand_command_template's doc comment for the rationale).
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
-                "        cook.add_unit({{inputs = {{}}, {}, command = {}, probes = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
-                out_field, cmd_concat, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{{}, {}, command = {}, probes = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
+                inputs_field, out_field, cmd_concat, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
             )
         }
         Some(Body::LuaBlock(code)) => {
@@ -597,15 +618,15 @@ pub(crate) fn generate_member_fanout_cook_step(
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
-                "        cook.add_unit({{inputs = {{}}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
-                out_field, code_literal, env_keys, disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
+                inputs_field, out_field, code_literal, env_keys, disposition_field(&cook_step.disposition)
             )
         }
         None => {
             // Declaration-only: one declared output per member, no command.
             format!(
-                "        cook.add_unit({{inputs = {{}}, {}, member = cook.member_to_string(item){}}})\n",
-                out_field, disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{{}, {}, member = cook.member_to_string(item){}}})\n",
+                inputs_field, out_field, disposition_field(&cook_step.disposition)
             )
         }
     };

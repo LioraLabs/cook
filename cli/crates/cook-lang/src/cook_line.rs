@@ -256,18 +256,43 @@ pub(crate) fn parse_ingredients_probe_source(
             ),
         });
     }
-    let leftover = rest[end..].trim();
-    if !leftover.is_empty() {
-        return Err(ParseError::Parse {
-            line,
-            message: format!("ingredients: unexpected trailing content '{leftover}' after probe key"),
-        });
+    // CS-0197: quoted file globs MAY trail the probe key. Each is an
+    // ordinary "PATTERN" (the two-category discriminator of §22.5.10 holds:
+    // bare = the probe source, quoted = literal filesystem globs); they fold
+    // into every member unit's declared inputs. Anything else trailing the
+    // key is still an error.
+    let mut extra_ingredients: Vec<String> = Vec::new();
+    let mut leftover = rest[end..].trim();
+    while !leftover.is_empty() {
+        let Some(stripped) = leftover.strip_prefix('"') else {
+            return Err(ParseError::Parse {
+                line,
+                message: format!(
+                    "ingredients: unexpected trailing content '{leftover}' after probe key                      (only quoted \"glob\" patterns may follow the source)"
+                ),
+            });
+        };
+        let Some(close) = stripped.find('"') else {
+            return Err(ParseError::Parse {
+                line,
+                message: "ingredients: unterminated \" in trailing glob pattern".to_string(),
+            });
+        };
+        let pat = &stripped[..close];
+        if pat.is_empty() {
+            return Err(ParseError::Parse {
+                line,
+                message: "ingredients: empty trailing glob pattern".to_string(),
+            });
+        }
+        extra_ingredients.push(pat.to_string());
+        leftover = stripped[close + 1..].trim();
     }
     let mut pos = current_pos + 1;
     while pos < tokens.len() && tokens[pos].line <= line {
         pos += 1;
     }
-    Ok((MemberSourceStep { source: MemberSource::ProbeKey(key) }, pos))
+    Ok((MemberSourceStep { source: MemberSource::ProbeKey(key), extra_ingredients }, pos))
 }
 
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the

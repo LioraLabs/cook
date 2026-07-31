@@ -273,6 +273,12 @@ pub enum MemberSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberSourceStep {
     pub source: MemberSource,
+    /// CS-0197: quoted file globs trailing the probe key
+    /// (`ingredients cases "src/*.txt"`). Resolved at register time like
+    /// ordinary recipe ingredients and folded into EVERY member unit's
+    /// declared inputs — the coarse-grained answer to "what does each
+    /// member's body read"; per-member precision is a future amendment.
+    pub extra_ingredients: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

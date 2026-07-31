@@ -1,0 +1,13 @@
+# CS-0197 (COOK-373): trailing quoted globs on `ingredients <probe>` declare
+# what each member's body reads. The glob set resolves at register time and
+# folds into EVERY member unit's inputs, so editing a source file re-keys the
+# member — the ticket's repro (edit src/a.txt, get a stale cached artifact)
+# dies here.
+
+probe cases
+    ingredients "cases.json"
+    json { cat cases.json }
+
+recipe fan
+    ingredients cases "src/*.txt"
+    cook "build/$<in.id>.txt" { mkdir -p build && cp src/$<in.id>.txt $<out> }

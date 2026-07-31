@@ -178,9 +178,11 @@ to reject `tools { cc --version }` — a flag is not a tool name.
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
-ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref ) NEWLINE
-                          /* probe_ref form is a probe member source (mutually exclusive
-                             with glob items); see §8 Note 8.2.1 */
+ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref STRING* ) NEWLINE
+                          /* probe_ref form is a probe member source; trailing STRING
+                             globs (CS-0197) declare per-member file inputs, resolved
+                             at register time and folded into every member unit's
+                             declared inputs; see §22.5.10 */
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 

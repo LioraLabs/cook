@@ -1575,6 +1575,38 @@ fn first_member_source(c: &Cookfile) -> &MemberSourceStep {
 }
 
 #[test]
+fn member_source_trailing_globs_parse_into_extra_ingredients() {
+    // CS-0197: quoted globs after the probe key declare per-member file
+    // inputs. Bare = probe source, quoted = literal globs (§22.5.10).
+    let source = "recipe r\n    ingredients cases \"src/*.txt\" \"extra/*.h\"\n    cook \"b/$<in.id>\" { y }\n";
+    let c = parse(source).expect("mixed source + globs parses");
+    let ms = first_member_source(&c);
+    assert_eq!(ms.source, MemberSource::ProbeKey("cases".to_string()));
+    assert_eq!(ms.extra_ingredients, vec!["src/*.txt".to_string(), "extra/*.h".to_string()]);
+}
+
+#[test]
+fn member_source_without_globs_has_empty_extra_ingredients() {
+    let source = "recipe r\n    ingredients cases\n    cook \"b/$<in.id>\" { y }\n";
+    let c = parse(source).expect("bare source parses");
+    assert!(first_member_source(&c).extra_ingredients.is_empty());
+}
+
+#[test]
+fn member_source_unquoted_trailing_content_still_errors() {
+    let source = "recipe r\n    ingredients cases src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
+    let err = parse(source).expect_err("unquoted trailing content");
+    assert!(err.to_string().contains("unexpected trailing content"), "{err}");
+}
+
+#[test]
+fn member_source_unterminated_trailing_glob_errors() {
+    let source = "recipe r\n    ingredients cases \"src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
+    let err = parse(source).expect_err("unterminated glob");
+    assert!(err.to_string().contains("unterminated"), "{err}");
+}
+
+#[test]
 fn for_each_keyword_no_longer_recognized() {
     // `for_each` is gone; the line is no longer a valid declarative driver.
     let source = "recipe r\n    for_each cards\n    cook \"o\" { y }\n";
