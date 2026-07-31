@@ -754,7 +754,7 @@ pub fn cache_managers_for_cli(
                 .get(&prefix)
                 .cloned()
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let cache_dir = wd.join(".cook").join("cache");
+            let cache_dir = cook_contracts::layout::cache_dir(&wd);
             (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
         })
         .collect()

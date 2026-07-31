@@ -28,7 +28,7 @@ Until CS-0188 this section said only that "stderr is streamed to the worker's st
 
 A conforming implementation MUST configure `package.path` and `package.cpath` for the calling Lua VM such that sub-requires within a multi-file module resolve against the project's `cook_modules/` search paths rather than the host system's Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during `cook.load_module` evaluation. [amended CS-0066]
 
-When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phase implementation MUST honour the same four-path resolution order used at register phase. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phase implementation MUST honour the same four-path resolution order used at register phase. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069] In the reference implementation both phases probe the ONE candidate list and compose `package.path`/`package.cpath` through the ONE composer in `cook_contracts::layout` (COOK-393), so the agreement is structural rather than manually mirrored (informative).
 
 A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path(s) that were searched.
 

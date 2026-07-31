@@ -111,7 +111,7 @@ impl EvalCtx<'_> {
             Some(c) => c.project_root,
             None => self.working_dir,
         };
-        root.join(".cook").join("probes")
+        cook_contracts::layout::probes_dir(root)
     }
 }
 

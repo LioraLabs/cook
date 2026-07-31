@@ -750,24 +750,19 @@ fn register_worker_cook_table(
             }
         }
 
-        // Resolve in §7's 4-path order [CS-0069]: hand-vendored wins over
-        // LuaRocks-installed. Mirrors cook-register/src/module_loader.rs.
-        let modules_dir = cwd.join("cook_modules");
-        let share_dir = modules_dir.join("share/lua/5.4");
-        let candidates = [
-            modules_dir.join(format!("{}.lua", name)),
-            modules_dir.join(&name).join("init.lua"),
-            share_dir.join(format!("{}.lua", name)),
-            share_dir.join(&name).join("init.lua"),
-        ];
+        // Resolve in §7's four-candidate order (CS-0069): hand-vendored wins
+        // over LuaRocks-installed. The order lives in cook_contracts::layout
+        // — the ONE list both phases probe (COOK-393).
+        let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
         let module_path = match candidates.iter().find(|p| p.exists()) {
             Some(p) => p.clone(),
             None => {
                 return Err(mlua::Error::runtime(format!(
-                    "cook.load_module: module '{}' not found in {}/cook_modules/ \
-                     (tried {}.lua, {}/init.lua, share/lua/5.4/{}.lua, \
-                     share/lua/5.4/{}/init.lua)",
-                    name, cwd.display(), name, name, name, name,
+                    "cook.load_module: module '{}' not found in {}/{}/ (tried {})",
+                    name,
+                    cwd.display(),
+                    cook_contracts::layout::COOK_MODULES_DIR,
+                    cook_contracts::layout::module_candidates_description(&name),
                 )));
             }
         };
@@ -1256,47 +1251,39 @@ fn install_register_only_guard(
 /// `.so` on macOS too) and `.dll` on Windows. The original suffixes are stashed
 /// once so per-unit refresh is idempotent across calls.
 fn refresh_package_search_paths(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
-    let cook_modules = cwd.join("cook_modules");
+    use cook_contracts::layout::{PACKAGE_CPATH_STASH_KEY, PACKAGE_PATH_STASH_KEY};
     let pkg: mlua::Table = match lua.globals().get::<mlua::Value>("package")? {
         mlua::Value::Table(t) => t,
         _ => return Ok(()),
     };
 
     // Stash originals on first call so subsequent calls don't grow the suffix.
-    let original_path: String = match pkg.get::<mlua::Value>("_cook_original_path")? {
+    let original_path: String = match pkg.get::<mlua::Value>(PACKAGE_PATH_STASH_KEY)? {
         mlua::Value::String(s) => s.to_str()?.to_string(),
         _ => {
             let cur: String = pkg.get::<String>("path").unwrap_or_default();
-            pkg.set("_cook_original_path", cur.clone())?;
+            pkg.set(PACKAGE_PATH_STASH_KEY, cur.clone())?;
             cur
         }
     };
-    let original_cpath: String = match pkg.get::<mlua::Value>("_cook_original_cpath")? {
+    let original_cpath: String = match pkg.get::<mlua::Value>(PACKAGE_CPATH_STASH_KEY)? {
         mlua::Value::String(s) => s.to_str()?.to_string(),
         _ => {
             let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
-            pkg.set("_cook_original_cpath", cur.clone())?;
+            pkg.set(PACKAGE_CPATH_STASH_KEY, cur.clone())?;
             cur
         }
     };
 
-    let cm = cook_modules.display().to_string();
-    let so_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
-
-    let new_path = format!(
-        "{cm}/?.lua;{cm}/?/init.lua;{cm}/share/lua/5.4/?.lua;{cm}/share/lua/5.4/?/init.lua;{orig}",
-        cm = cm,
-        orig = original_path,
+    // COOK-393: the composition is cook_contracts::layout — the SAME
+    // function the register phase calls.
+    let composed = cook_contracts::layout::compose_lua_search_paths(
+        cwd,
+        &original_path,
+        &original_cpath,
     );
-    let new_cpath = format!(
-        "{cm}/?.{ext};{cm}/lib/lua/5.4/?.{ext};{orig}",
-        cm = cm,
-        ext = so_ext,
-        orig = original_cpath,
-    );
-
-    pkg.set("path", new_path)?;
-    pkg.set("cpath", new_cpath)?;
+    pkg.set("path", composed.path)?;
+    pkg.set("cpath", composed.cpath)?;
     Ok(())
 }
 

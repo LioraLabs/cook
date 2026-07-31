@@ -57,7 +57,7 @@ impl RocksDriver {
     }
 
     pub fn tree_arg(&self) -> PathBuf {
-        self.project_dir.join("cook_modules")
+        self.project_dir.join(cook_contracts::layout::COOK_MODULES_DIR)
     }
 
     /// Build the base argv prefix used by every invocation.

@@ -6,6 +6,7 @@
 
 pub mod accessor;
 pub mod cache;
+pub mod layout;
 pub mod captured_stream;
 pub mod command_failure;
 pub mod lua_error;

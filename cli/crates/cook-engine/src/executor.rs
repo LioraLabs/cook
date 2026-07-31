@@ -456,7 +456,7 @@ pub fn execute_dag(
 
     // CS-0102: the per-run store reads through to the canonical probe files.
     pool.probe_value_store()
-        .attach_dir(cache_ctx.project_root.join(".cook").join("probes"));
+        .attach_dir(cook_contracts::layout::probes_dir(&cache_ctx.project_root));
 
     let mut cancelled = vec![false; total];
     let mut pending: usize = 0; // how many work results we're waiting for
