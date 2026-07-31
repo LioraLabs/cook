@@ -14,7 +14,12 @@ pub fn register_export_api(lua: &Lua, store: SharedExportStore) -> LuaResult<()>
 
     let s = store.clone();
     let export_fn = lua.create_function(move |_, (name, value): (String, LuaValue)| {
-        let json_val = crate::module_loader::lua_value_to_json(value);
+        // COOK-388: the validating walker. The weak one this called until
+        // then silently dropped mixed keys, compacted array holes, and
+        // lossy-substituted non-UTF-8 — an export that survives is now an
+        // export that round-trips.
+        let json_val = cook_lua_stdlib::json_codec::lua_to_json(&value)
+            .map_err(|e| LuaError::runtime(format!("cook.export('{name}'): {e}")))?;
         s.borrow_mut().insert(name, json_val);
         Ok(())
     })?;

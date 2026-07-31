@@ -13,4 +13,8 @@ serde_json = "1"
 serde_yml = "0.0.12"
 
 [dev-dependencies]
+# Test-only: the canonical-JSON encoder the probe store uses, so the codec
+# suite can pin store-byte round trips. NOT a production edge — the codec
+# itself is pure mlua+serde_json.
+cook-contracts = { path = "../cook-contracts" }
 tempfile = "3"

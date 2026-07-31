@@ -3070,6 +3070,20 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0198 — an export either round-trips or raises [#changes.cs-0198]
+
+**Date:** 2026-07-31
+**Version:** v0.18
+**Sections affected:** §{lua.cook-exports} (`info` gains the §{cat.probes.values} serialisability constraint), App. E (this entry). Reference implementation: `cli/crates/cook-lua-stdlib/src/json_codec.rs` (new single home), `cli/crates/cook-register/src/{export_api,module_loader,probe_value}.rs`, `cli/crates/cook-luaotp/src/probe_value.rs` (COOK-388).
+
+**Summary.** The §{cat.probes.values} Lua↔JSON conversion existed five times across three crates. The two copies serving the phases that must agree byte-for-byte — the register pre-pass and the execute-phase worker pool, which serialize probe values into the same store and the same `seal_contribution` — were manually-synchronized twins; they now share one implementation in `cook-lua-stdlib`, the mlua-bearing crate both consumers already depend on (the old copy headers rejected only cook-contracts, which stays mlua-free; they predate the CS-0123 stdlib edge and never considered it). A third, weaker walker on the module-export path (`cook.export`, module-context `cook.probes.set`) silently mutilated what the validating walker rejects: mixed string/integer keys dropped, array holes compacted, `NaN` to `null`, non-UTF-8 lossy-substituted, cycles a stack overflow. It is retired.
+
+**Behavioural change.** `cook.export` (and module-context `cook.probes.set`) now REJECTS an unserialisable `info` with a Lua error naming the offending path, where it previously published a silently different value. §{lua.cook-exports} previously said the Standard does not constrain `info`'s shape beyond "a Lua table"; it now requires §{cat.probes.values} serialisability, because the value crosses VM boundaries as JSON and a constraint the implementation enforces by mutilation is not an absence of constraint. Corpus swept before the change: the only production exporter (`cook_cc`'s `record_export`, all vendored copies) publishes a clean shape; no Cookfile or module relied on the lossy behaviour.
+
+**Also fixed.** The JSON→Lua direction had three impls, one drifted: `cook.json_decode`/`cook.yaml_decode`'s walker turned a number outside i64/f64 range into `0.0` where the probe-path twins raise. One walker now serves all callers.
+
+**Conformance.** The codec suite (union of the two former per-crate suites, plus the two-VM agreement pin) lives beside the single implementation. The repro: a module exporting `{ includes = {"inc"}, [1] = "positional" }` builds silently pre-change and raises `cook.export('lossy_target'): non-serialisable value at . (mixed string/integer keys not allowed)` post-change. Cache keys are unchanged (keysnap zero-diff): the validating walkers' bytes are what both phases already produced.
+
 ## CS-0197 — a fan-out member can finally declare what it reads [#changes.cs-0197]
 
 **Date:** 2026-07-31

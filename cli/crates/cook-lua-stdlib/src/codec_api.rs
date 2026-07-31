@@ -7,33 +7,13 @@ use mlua::prelude::*;
 /// Convert a serde_json::Value into a Lua value. JSON null maps to nil,
 /// arrays to 1-indexed tables. Shared by the codecs and by cook-register's
 /// module cache / export machinery.
+///
+/// Owned-value convenience over [`crate::json_codec::json_to_lua`] — the one
+/// JSON→Lua walker. This wrapper's own body used to be a third independent
+/// copy that had drifted: a number outside i64/f64 range silently became
+/// `0.0` where the probe-path twins raise (COOK-388).
 pub fn json_to_lua_value(lua: &Lua, val: serde_json::Value) -> LuaResult<LuaValue> {
-    match val {
-        serde_json::Value::Null => Ok(LuaValue::Nil),
-        serde_json::Value::Bool(b) => Ok(LuaValue::Boolean(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(LuaValue::Integer(i))
-            } else {
-                Ok(LuaValue::Number(n.as_f64().unwrap_or(0.0)))
-            }
-        }
-        serde_json::Value::String(s) => Ok(LuaValue::String(lua.create_string(&s)?)),
-        serde_json::Value::Array(arr) => {
-            let tbl = lua.create_table()?;
-            for (i, v) in arr.into_iter().enumerate() {
-                tbl.set(i + 1, json_to_lua_value(lua, v)?)?;
-            }
-            Ok(LuaValue::Table(tbl))
-        }
-        serde_json::Value::Object(map) => {
-            let tbl = lua.create_table()?;
-            for (k, v) in map {
-                tbl.set(k, json_to_lua_value(lua, v)?)?;
-            }
-            Ok(LuaValue::Table(tbl))
-        }
-    }
+    crate::json_codec::json_to_lua(lua, &val)
 }
 
 /// Register `cook.json_decode(str)` and `cook.yaml_decode(str)` on `cook`.
