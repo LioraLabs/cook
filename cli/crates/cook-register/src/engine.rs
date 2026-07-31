@@ -2551,7 +2551,7 @@ fn dispatch_config_blocks(
     builder: &RegisterSessionBuilder,
     host_reads: &crate::config_sandbox::SharedHostReads,
 ) -> Result<BTreeMap<String, String>, RegisterError> {
-    if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
+    if let Ok(dispatch) = lua.globals().get::<LuaFunction>(cook_contracts::registration::CONFIG_DISPATCH_NAME) {
         // CS-0172: the store the config bodies write, reachable only through
         // the registry — the `var` global outside a config block is a read-only
         // proxy onto it.
@@ -2666,7 +2666,7 @@ fn check_overrides_declared(builder: &RegisterSessionBuilder) -> Result<(), Regi
 /// A Cookfile with no config block emits no wrapper and has already run its
 /// top level during `exec`, so the absent global is the no-op case.
 fn run_main_program(lua: &Lua) -> Result<(), RegisterError> {
-    if let Ok(main) = lua.globals().get::<LuaFunction>("__cook_main") {
+    if let Ok(main) = lua.globals().get::<LuaFunction>(cook_contracts::registration::MAIN_PROGRAM_NAME) {
         main.call::<()>(())?;
     }
     Ok(())
