@@ -526,6 +526,7 @@ dependencies = [
 name = "cook-lua-stdlib"
 version = "0.10.2"
 dependencies = [
+ "cook-contracts",
  "cook-cookfile",
  "cook-fingerprint",
  "glob",

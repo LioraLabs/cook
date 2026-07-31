@@ -19,42 +19,12 @@ use crate::module_cache::ModuleCache;
 // keeps working.
 pub use cook_lua_stdlib::json_to_lua_value;
 
-pub fn lua_value_to_json(val: LuaValue) -> serde_json::Value {
-    match val {
-        LuaValue::Nil => serde_json::Value::Null,
-        LuaValue::Boolean(b) => serde_json::json!(b),
-        LuaValue::Integer(i) => serde_json::json!(i),
-        LuaValue::Number(n) => serde_json::json!(n),
-        LuaValue::String(s) => serde_json::json!(s.to_string_lossy()),
-        LuaValue::Table(t) => {
-            // Try as array first (check if sequential integer keys), fall back to object
-            let mut arr = Vec::new();
-            let mut is_array = true;
-            for pair in t.clone().pairs::<LuaValue, LuaValue>() {
-                if let Ok((k, v)) = pair {
-                    if let LuaValue::Integer(_) = k {
-                        arr.push(lua_value_to_json(v));
-                    } else {
-                        is_array = false;
-                        break;
-                    }
-                }
-            }
-            if is_array && !arr.is_empty() {
-                serde_json::Value::Array(arr)
-            } else {
-                let mut map = serde_json::Map::new();
-                for pair in t.pairs::<String, LuaValue>() {
-                    if let Ok((k, v)) = pair {
-                        map.insert(k, lua_value_to_json(v));
-                    }
-                }
-                serde_json::Value::Object(map)
-            }
-        }
-        _ => serde_json::Value::Null,
-    }
-}
+// A third, WEAKER Lua→JSON walker (`lua_value_to_json`) lived here until
+// COOK-388: mixed keys silently dropped, array holes compacted, cycles
+// overflowed the stack, non-UTF-8 lossy-substituted, NaN became null,
+// key iteration unsorted. The module-export path (`cook.export`) and the
+// module-context `cook.probes.set` now go through THE validating walker
+// in `cook_lua_stdlib::json_codec` — silent loss became a diagnostic.
 
 // ---------------------------------------------------------------------------
 // ModuleLoaderState
@@ -400,7 +370,8 @@ pub fn register_cache_api(
     // cook.probes.set(key, value)
     let s2 = state.clone();
     let set_fn = lua.create_function(move |_, (key, value): (String, LuaValue)| {
-        let json_val = lua_value_to_json(value);
+        let json_val = cook_lua_stdlib::json_codec::lua_to_json(&value)
+            .map_err(|e| LuaError::runtime(format!("cook.probes.set('{key}'): {e}")))?;
         let mut state = s2.borrow_mut();
         let module_name = state.active_module().ok_or_else(|| {
             LuaError::runtime("cook.probes.set called outside of a module context")
