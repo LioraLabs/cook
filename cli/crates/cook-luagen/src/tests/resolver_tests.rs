@@ -45,9 +45,8 @@ fn probe_ref_bare_key_resolves_to_cache_get() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
     match resolve("cc:zlib", &ctx) {
-        Resolved::ProbeRef { key, access } => {
+        Resolved::ProbeRef { key } => {
             assert_eq!(key, "cc:zlib");
-            assert_eq!(access, r#"cook.probes.get("cc:zlib")"#);
         }
         other => panic!("expected ProbeRef, got {other:?}"),
     }
@@ -58,9 +57,10 @@ fn probe_ref_key_dot_field_resolves_to_field_access() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
     match resolve("cc:zlib.cflags", &ctx) {
-        Resolved::ProbeRef { key, access } => {
+        Resolved::ProbeRef { key } => {
             assert_eq!(key, "cc:zlib");
-            assert_eq!(access, r#"cook.probes.get("cc:zlib").cflags"#);
+            // CS-0195: no pre-built access expression; the emission sites
+            // render through cook.__probe_subst keyed by the IDENT.
         }
         other => panic!("expected ProbeRef, got {other:?}"),
     }
@@ -71,9 +71,8 @@ fn probe_ref_key_field_index_resolves_to_indexed_access() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
     match resolve("cc:zlib.libs[2]", &ctx) {
-        Resolved::ProbeRef { key, access } => {
+        Resolved::ProbeRef { key } => {
             assert_eq!(key, "cc:zlib");
-            assert_eq!(access, r#"cook.probes.get("cc:zlib").libs[2]"#);
         }
         other => panic!("expected ProbeRef, got {other:?}"),
     }

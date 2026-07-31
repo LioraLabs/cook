@@ -65,8 +65,10 @@ pub enum Resolved {
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
     /// `key` is the probe key (everything before the first `.` or `[`).
-    /// `access` is the ready-to-emit Lua expression (e.g. `cook.probes.get("cc:zlib").cflags`).
-    ProbeRef { key: String, access: String },
+    /// CS-0195 removed the pre-built `access` Lua expression: every emission
+    /// site now renders through one substitution helper keyed by the IDENT,
+    /// so nothing needs a ready-made `cook.probes.get(...)` chain.
+    ProbeRef { key: String },
     Error(ResolveError),
 }
 
@@ -206,10 +208,7 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // lives in `sigil` so cook-register's `cook.add_unit` capture reads the
     // same walker (COOK-357).
     if let Some(r) = crate::sigil::probe_ref(ident) {
-        return Resolved::ProbeRef {
-            key: r.key().to_string(),
-            access: crate::sigil::lua_access(&r),
-        };
+        return Resolved::ProbeRef { key: r.key().to_string() };
     }
 
     // COOK-221 / CS-0137: `$<recipe[in]>` — per-member cross-recipe output.

@@ -1,0 +1,20 @@
+# CS-0195 (COOK-383): a probe ref in a fan-out output pattern renders by the
+# CS-0192 law at register time. Scalars render as canonical tokens; a
+# composite or absent member is a register-phase diagnostic, never a heap
+# address inside a declared output path.
+
+probe conf:build
+    ingredients "conf.json"
+    json { cat conf.json }
+
+recipe good
+    ingredients conf:build:items
+    cook "out/$<conf:build.prefix>-$<in.id>.txt" { printf 'made %s\n' "$<in.id>" > $<out> }
+
+recipe badcomposite
+    ingredients conf:build:items
+    cook "out/$<conf:build.items>-$<in.id>.txt" { printf 'x\n' > $<out> }
+
+recipe badmember
+    ingredients conf:build:items
+    cook "out/$<conf:build.nosuch>-$<in.id>.txt" { printf 'x\n' > $<out> }

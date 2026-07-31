@@ -1,0 +1,21 @@
+# Scalar renders into the path (canonical token, same as pre-CS-0195).
+[[run]]
+args = ["good"]
+[run.assert]
+exists = ["out/v2-a.txt", "out/v2-b.txt"]
+equals = { "out/v2-a.txt" = "made a\n" }
+
+# A composite in path position is a register-phase diagnostic: no unit
+# registers, no heap-address path is created.
+[[run]]
+args = ["badcomposite"]
+exit = 1
+[run.assert]
+output_contains = ["the addressed value is an array"]
+output_not_contains = ["table: 0x"]
+
+[[run]]
+args = ["badmember"]
+exit = 1
+[run.assert]
+output_contains = ["has no member 'nosuch'"]
