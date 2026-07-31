@@ -62,7 +62,9 @@ impl NodeState {
         }
         let stripped = self.fallback_label.trim_start_matches("$ ").trim_start();
         let first = stripped.split_whitespace().next().unwrap_or("?");
-        if first.starts_with('@') || first.starts_with("probe:") {
+        if first.starts_with('@')
+            || first.starts_with(cook_contracts::unit::PROBE_LABEL_PREFIX)
+        {
             first.to_string()
         } else {
             format!("${first}")

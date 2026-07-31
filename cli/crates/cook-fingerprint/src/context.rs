@@ -96,11 +96,8 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
 }
 
 pub(crate) fn probe_hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
+    // COOK-392: the one lowercase-hex encoder.
+    cook_contracts::render::lower_hex(bytes)
 }
 
 #[cfg(test)]

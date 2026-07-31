@@ -33,8 +33,7 @@ pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
         let v = if hash == &[0u8; 32] {
             JsonValue::String("<missing>".to_string())
         } else {
-            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-            JsonValue::String(hex)
+            JsonValue::String(crate::render::lower_hex(hash))
         };
         map.insert(path.clone(), v);
     }

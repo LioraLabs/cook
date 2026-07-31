@@ -57,7 +57,7 @@ fn write_logs_fallback<W: std::io::Write>(
         for node in recipe.nodes.values() {
             let elapsed = node
                 .elapsed_ms
-                .map(|ms| format!("{ms}ms"))
+                .map(cook_contracts::render::duration_ms)
                 .unwrap_or_else(|| "-".to_string());
             writeln!(out, "    {} [{:?}] {}", node.name, node.status, elapsed)?;
             for line in &node.lines {
@@ -76,7 +76,7 @@ pub fn run_with_backend<B: Backend>(
 ) -> Result<(), ViewerError> {
     let mut state = UiState::new(view, diag);
     let logs_root: Option<PathBuf> =
-        std::env::current_dir().ok().map(|d| d.join(".cook").join("logs"));
+        std::env::current_dir().ok().map(|d| cook_contracts::layout::logs_dir(&d));
 
     loop {
         if let Some(p) = state.picker.as_mut() {

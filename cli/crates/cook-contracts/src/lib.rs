@@ -15,6 +15,7 @@ pub mod output;
 pub mod probe;
 pub mod quoting;
 pub mod recipe;
+pub mod render;
 pub mod shell_block;
 pub mod sigil;
 pub mod registration;

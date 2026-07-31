@@ -61,11 +61,7 @@ impl Observations {
 }
 
 pub fn render_ms(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1000)
-    }
+    // COOK-392: THE duration rendering (this impl was the canon the law
+    // adopted; it gained the >= 1h band in the move).
+    cook_contracts::render::duration_ms(ms)
 }

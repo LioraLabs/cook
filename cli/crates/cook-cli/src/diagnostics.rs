@@ -3,7 +3,7 @@
 /// Whether `-v/--verbose` (or `COOK_BACKTRACE=1` set directly) requests that
 /// raw Lua stack tracebacks be preserved in error output.
 pub fn backtrace_enabled() -> bool {
-    std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false)
+    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false)
 }
 
 /// Cleans a Lua-originated error string for display: cuts the mlua

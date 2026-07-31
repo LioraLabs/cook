@@ -513,6 +513,7 @@ version = "0.10.2"
 dependencies = [
  "ansi-to-tui",
  "base64",
+ "cook-contracts",
  "cook-progress",
  "crossterm",
  "insta",
@@ -574,6 +575,7 @@ name = "cook-progress"
 version = "0.10.2"
 dependencies = [
  "arc-swap",
+ "cook-contracts",
  "insta",
  "serde",
  "serde_json",
