@@ -83,7 +83,10 @@ impl Default for RecipeCache {
 /// simply never cached). Only `%` (the escape itself) and `/` are encoded,
 /// so every name without them keeps its historical file name.
 fn cache_file_basename(recipe_name: &str) -> String {
-    recipe_name.replace('%', "%25").replace('/', "%2F")
+    // COOK-393: the encoder lives in cook_contracts::layout beside its
+    // inverse — cook-engine's observations reader decodes with the SAME
+    // pair instead of hand-writing it.
+    cook_contracts::layout::encode_index_basename(recipe_name)
 }
 
 impl RecipeCache {

@@ -132,7 +132,7 @@ fn install_locked_closure(
             &lockfile_path
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
-                .join("cook_modules"),
+                .join(cook_contracts::layout::COOK_MODULES_DIR),
             manifest,
         )?;
         lockfile::write(lockfile_path, &lock)?;
@@ -164,7 +164,7 @@ fn install_named(
         &cook_toml
             .parent()
             .unwrap_or(std::path::Path::new("."))
-            .join("cook_modules"),
+            .join(cook_contracts::layout::COOK_MODULES_DIR),
         &updated,
     )?;
     lockfile::write(lockfile_path, &lock)?;
@@ -188,7 +188,7 @@ fn remove_named(
         &cook_toml
             .parent()
             .unwrap_or(std::path::Path::new("."))
-            .join("cook_modules"),
+            .join(cook_contracts::layout::COOK_MODULES_DIR),
         &updated,
     )?;
     lockfile::write(lockfile_path, &lock)?;
@@ -213,7 +213,7 @@ fn update_one_or_all(
         &lockfile_path
             .parent()
             .unwrap_or(std::path::Path::new("."))
-            .join("cook_modules"),
+            .join(cook_contracts::layout::COOK_MODULES_DIR),
         manifest,
     )?;
     lockfile::write(lockfile_path, &lock)?;

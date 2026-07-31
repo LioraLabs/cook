@@ -57,7 +57,7 @@ pub type SharedModuleLoaderState = Rc<RefCell<ModuleLoaderState>>;
 
 impl ModuleLoaderState {
     pub fn new(working_dir: PathBuf) -> Self {
-        let cache_dir = working_dir.join(".cook").join("cache");
+        let cache_dir = cook_contracts::layout::cache_dir(&working_dir);
         Self {
             working_dir,
             cache_dir,
@@ -126,26 +126,21 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
             }
         }
 
-        // 1. Resolve path: hand-vendored wins over LuaRocks-installed.
-        //    Order mirrors cook-luaotp/src/pool.rs:616 (Standard §7).
+        // 1. Resolve path in §7's four-candidate order (CS-0069):
+        //    hand-vendored wins over LuaRocks-installed. The order lives in
+        //    cook_contracts::layout — the ONE list both phases probe
+        //    (COOK-393; drift here was "works in the Cookfile, missing-file
+        //    at execute").
         let working_dir = s.borrow().working_dir.clone();
-        let modules_dir = working_dir.join("cook_modules");
-        let share_dir = modules_dir.join("share/lua/5.4");
-
-        let candidates = [
-            modules_dir.join(format!("{}.lua", name)),
-            modules_dir.join(&name).join("init.lua"),
-            share_dir.join(format!("{}.lua", name)),
-            share_dir.join(&name).join("init.lua"),
-        ];
+        let candidates = cook_contracts::layout::module_candidates(&working_dir, &name);
 
         let module_path = match candidates.iter().find(|p| p.exists()) {
             Some(p) => p.clone(),
             None => {
                 return Err(LuaError::runtime(format!(
-                    "module not found: {} (tried {}.lua, {}/init.lua, \
-                     share/lua/5.4/{}.lua, share/lua/5.4/{}/init.lua)",
-                    name, name, name, name, name
+                    "module not found: {} (tried {})",
+                    name,
+                    cook_contracts::layout::module_candidates_description(&name)
                 )));
             }
         };
@@ -193,50 +188,39 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
         // 4b. Extend package.path / package.cpath so that sub-requires within
         // a multi-file rock (e.g. `require("cook_cc.toolchain")` inside
         // cook_cc/init.lua, or `require("lpeg")` for a C extension) resolve
-        // against cook_modules/. Mirrors the execute-phase logic in
-        // cook-luaotp/src/pool.rs:refresh_package_search_paths.  We prepend
-        // the cook_modules paths once per VM using the same stash-and-prepend
-        // idiom as the execute-phase so repeated load_module calls on the same
+        // against cook_modules/. The composition is
+        // cook_contracts::layout::compose_lua_search_paths — the SAME
+        // function the execute phase calls (COOK-393) — under the shared
+        // stash-and-prepend idiom so repeated load_module calls on the same
         // VM are idempotent.
         {
             if let Ok(LuaValue::Table(pkg)) = lua.globals().get::<LuaValue>("package") {
-                let cm = modules_dir.display().to_string();
-                let so_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
-
-                // -- package.path (pure-Lua modules) --
-                let original_path: String = match pkg.get::<LuaValue>("_cook_original_path") {
+                use cook_contracts::layout::{
+                    PACKAGE_CPATH_STASH_KEY, PACKAGE_PATH_STASH_KEY,
+                };
+                let original_path: String = match pkg.get::<LuaValue>(PACKAGE_PATH_STASH_KEY) {
                     Ok(LuaValue::String(s)) => s.to_string_lossy(),
                     _ => {
                         let cur: String = pkg.get::<String>("path").unwrap_or_default();
-                        let _ = pkg.set("_cook_original_path", cur.clone());
+                        let _ = pkg.set(PACKAGE_PATH_STASH_KEY, cur.clone());
                         cur
                     }
                 };
-                let new_path = format!(
-                    "{cm}/?.lua;{cm}/?/init.lua;\
-                     {cm}/share/lua/5.4/?.lua;{cm}/share/lua/5.4/?/init.lua;\
-                     {orig}",
-                    cm = cm,
-                    orig = original_path,
-                );
-                let _ = pkg.set("path", new_path);
-
-                // -- package.cpath (C extension modules) --
-                let original_cpath: String = match pkg.get::<LuaValue>("_cook_original_cpath") {
+                let original_cpath: String = match pkg.get::<LuaValue>(PACKAGE_CPATH_STASH_KEY) {
                     Ok(LuaValue::String(s)) => s.to_string_lossy(),
                     _ => {
                         let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
-                        let _ = pkg.set("_cook_original_cpath", cur.clone());
+                        let _ = pkg.set(PACKAGE_CPATH_STASH_KEY, cur.clone());
                         cur
                     }
                 };
-                let new_cpath = format!(
-                    "{cm}/?.{ext};{cm}/lib/lua/5.4/?.{ext};{orig}",
-                    cm = cm,
-                    ext = so_ext,
-                    orig = original_cpath,
+                let composed = cook_contracts::layout::compose_lua_search_paths(
+                    &working_dir,
+                    &original_path,
+                    &original_cpath,
                 );
-                let _ = pkg.set("cpath", new_cpath);
+                let _ = pkg.set("path", composed.path);
+                let _ = pkg.set("cpath", composed.cpath);
             }
         }
 

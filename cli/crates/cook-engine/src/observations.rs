@@ -18,7 +18,7 @@ pub struct Observations {
 
 impl Observations {
     pub fn load(project_root: &Path) -> Self {
-        let root = project_root.join(".cook").join("cache");
+        let root = cook_contracts::layout::cache_dir(project_root);
         let mut by_unit = BTreeMap::new();
         let Ok(entries) = std::fs::read_dir(&root) else {
             return Self { by_unit };
@@ -30,7 +30,7 @@ impl Observations {
             let Some(encoded) = name.strip_suffix(".idx") else {
                 continue;
             };
-            let recipe = encoded.replace("%2F", "/").replace("%25", "%");
+            let recipe = cook_contracts::layout::decode_index_basename(encoded);
             let Some(cache) = cook_cache::store::RecipeCache::load(&root, &recipe) else {
                 continue;
             };

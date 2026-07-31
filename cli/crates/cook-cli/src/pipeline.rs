@@ -1940,7 +1940,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
         .map_err(engine_error_to_cook_error)?;
     let cache_managers = cook_engine::cache_managers_for_cli(&registered, &reachable);
-    let probes_dir = project_root.join(".cook").join("probes");
+    let probes_dir = cook_contracts::layout::probes_dir(&project_root);
 
     let report = cook_engine::why::explain(
         recipe_name,
@@ -2005,7 +2005,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
                     .get(prefix)
                     .cloned()
                     .unwrap_or_else(|| std::path::PathBuf::from("."));
-                let cache_dir = wd.join(".cook").join("cache");
+                let cache_dir = cook_contracts::layout::cache_dir(&wd);
                 (
                     name.clone(),
                     Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(cache_dir)),
@@ -2547,7 +2547,7 @@ pub fn cmd_cache_dump(
 ) -> Result<(), CookError> {
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
     let project_root = resolve_project_root(globals)?;
-    let cache_dir = project_root.join(".cook").join("cache");
+    let cache_dir = cook_contracts::layout::cache_dir(&project_root);
 
     match cook_engine::cook_cache::RecipeCache::load(&cache_dir, recipe_name) {
         Some(cache) => {
