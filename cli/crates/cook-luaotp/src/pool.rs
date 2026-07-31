@@ -271,7 +271,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &probe_store, &dep_outputs)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &current_capture, &probe_store, &dep_outputs)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -626,6 +626,7 @@ fn register_worker_cook_table(
     current_process_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
     current_output: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    current_capture: &Arc<AtomicBool>,
     probe_store: &ProbeValueStore,
     dep_outputs: &WorkerDepOutputs,
 ) -> mlua::Result<()> {
@@ -634,13 +635,20 @@ fn register_worker_cook_table(
     // cook.sh(cmd) -> stdout string. R1 (CS-0164): a `cook.sh` child spawns
     // with the process-env subset (chore-param exports), not the full config
     // lookup map, so a config `var.*` value is never in its environment.
+    //
+    // CS-0194: when this worker is drain-designated (capture off — a chore
+    // body), the call's streams go to the controlling terminal in call order
+    // with the body's print/io.write, not into the sink. The return value
+    // stays §{lua.cook-sh}'s stdout either way.
     let wd = Arc::clone(current_working_dir);
     let penv = Arc::clone(current_process_env_vars);
     let sink = Arc::clone(current_output);
+    let capture = Arc::clone(current_capture);
     let sh_fn = lua.create_function(move |_, cmd: String| {
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, 0)
+        let to_terminal = !capture.load(Ordering::Relaxed);
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, 0, to_terminal)
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -1306,6 +1314,7 @@ fn run_shell_in_worker(
     env_vars: &HashMap<String, String>,
     sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
     line: usize,
+    to_terminal: bool,
 ) -> mlua::Result<String> {
     // COOK-306: an executed command may write anywhere in the tree. The memo is
     // the execute phase's, so disarming it stays here rather than moving into
@@ -1321,9 +1330,40 @@ fn run_shell_in_worker(
     // Recorded before the failure check: a command that failed still printed
     // what it printed, and dropping it because the exit code was non-zero is
     // the same mistake in a different direction.
-    sink.lock()
-        .expect("output sink lock")
-        .extend(outcome.chunks().iter().cloned());
+    //
+    // CS-0194: on a drain-designated worker (a chore body), the terminal owns
+    // the output. Both streams are written through at call completion, each to
+    // its own descriptor, in the order the command produced them — one
+    // destination for the whole body, ordered with print/io.write, instead of
+    // the sink-and-progress-channel detour that raced the tty. The spawn stays
+    // Captured so the §{lua.cook-sh} return contract (stdout as a string)
+    // holds; only the destination changes.
+    if to_terminal {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let mut err = std::io::stderr();
+        for chunk in outcome.chunks() {
+            match chunk.stream() {
+                cook_contracts::OutputStream::Stdout => {
+                    let _ = out.write_all(chunk.bytes());
+                }
+                cook_contracts::OutputStream::Stderr => {
+                    let _ = err.write_all(chunk.bytes());
+                }
+                // OutputStream is non_exhaustive; an unknown future stream
+                // degrades to stderr rather than being dropped.
+                _ => {
+                    let _ = err.write_all(chunk.bytes());
+                }
+            }
+        }
+        let _ = out.flush();
+        let _ = err.flush();
+    } else {
+        sink.lock()
+            .expect("output sink lock")
+            .extend(outcome.chunks().iter().cloned());
+    }
 
     if let Some(failure) = outcome.failure(line, cmd) {
         return Err(mlua::Error::runtime(failure.to_wire()));

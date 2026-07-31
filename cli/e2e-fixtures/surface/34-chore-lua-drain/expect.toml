@@ -1,0 +1,17 @@
+# The harness captures cook's combined output, which is exactly the
+# terminal's destination when cook's stdio is a pipe.
+
+[[run]]
+args = ["mix"]
+[run.assert]
+output_order = ["one", "two", "three"]
+
+[[run]]
+args = ["greet", "alex"]
+[run.assert]
+output_contains = ["hi alex"]
+
+[[run]]
+args = ["mixed"]
+[run.assert]
+output_order = ["alpha", "beta", "gamma"]

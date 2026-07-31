@@ -1386,7 +1386,7 @@ fn compile_chore_checked(
                 {
                     i += 1;
                 }
-                emit_chore_body_unit(&mut out, &chore.steps[bundle_start..i], uses);
+                emit_chore_body_unit(&mut out, &chore.steps[bundle_start..i], uses, &chore.params);
             }
             Step::InlineLua { code, .. } => {
                 out.push_str(&format!("    {}\n", code));
@@ -1410,7 +1410,12 @@ fn compile_chore_checked(
 ///
 /// Identical to `emit_body_unit` except the `cook.add_unit` call always
 /// passes `cache = false` (chores never cache — §{chores.no-caching}).
-fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
+fn emit_chore_body_unit(
+    out: &mut String,
+    bundle: &[Step],
+    uses: &[UseStatement],
+    params: &[cook_lang::ast::ChoreParam],
+) {
     let mut chunk = String::new();
     let mut shell_run: Vec<String> = Vec::new();
 
@@ -1470,9 +1475,16 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
     // the chore-param-binding prelude's line count for chore units, since
     // that prelude is prepended to `code` after this point.
     let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
+    // §7.1.2.1 (CS-0194 defect fix): a declared parameter is exported into
+    // EVERY shell child spawned by the chore body — including a `cook.sh`
+    // child of a Lua step. Only the shell-step emission carried `env` before,
+    // so a Lua step's children saw no params.
+    let env_field = chore_param_env_table(params)
+        .map(|t| format!(", env = {}", t))
+        .unwrap_or_default();
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}}})\n",
-        wrapped, line
+        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}{}}})\n",
+        wrapped, line, env_field
     ));
 }
 
