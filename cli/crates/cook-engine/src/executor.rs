@@ -2300,34 +2300,16 @@ pub fn execute_dag(
                                     });
                                     match rx.recv() {
                                         Ok(work_result) => {
-                                            // Forward any captured output.
-                                            // CS-0188: a Lua chunk's output is
-                                            // no longer empty here. Its
-                                            // `cook.sh` calls now push both
-                                            // streams into the unit's sink, in
-                                            // call order, so this forwards what
-                                            // the body actually printed rather
-                                            // than the nothing it used to.
-                                            for (stream, line) in
-                                                output_event_lines(&work_result.output_lines)
-                                            {
-                                                emit(
-                                                    &event_tx,
-                                                    EngineEvent::OutputLine {
-                                                        recipe: work_node
-                                                            .recipe_name
-                                                            .clone(),
-                                                        unit: id,
-                                                        node_name: work_node
-                                                            .payload
-                                                            .as_ref()
-                                                            .map(|p| p.display_name())
-                                                            .unwrap_or_default(),
-                                                        line,
-                                                        stream,
-                                                    },
-                                                );
-                                            }
+                                            // CS-0194: nothing to forward. The
+                                            // drain-designated worker writes
+                                            // the body's output — print,
+                                            // io.write, and cook.sh streams
+                                            // alike — straight to the
+                                            // controlling terminal in call
+                                            // order, so the sink arrives empty
+                                            // and no OutputLine detour through
+                                            // the progress channel races the
+                                            // tty.
                                             if work_result.success {
                                                 Ok(())
                                             } else {

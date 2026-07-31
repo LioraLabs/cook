@@ -1,0 +1,19 @@
+# CS-0194 (COOK-385): the terminal owns the whole chore body. A Lua step's
+# print and its cook.sh streams reach one destination in call order, and a
+# declared parameter is exported into a cook.sh child of a Lua step
+# (§7.1.2.1). Steps of both kinds interleave in source order.
+
+chore mix
+    >{
+        print("one")
+        cook.sh('printf "two\\n"')
+        print("three")
+    }
+
+chore greet who
+    >{ io.write(cook.sh('printf "hi %s\\n" "$who"')) }
+
+chore mixed
+    echo alpha
+    > print("beta")
+    echo gamma
