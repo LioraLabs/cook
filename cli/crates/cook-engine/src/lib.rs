@@ -452,6 +452,11 @@ pub struct TestResult {
     pub from_cache: bool,
     pub stdout: String,
     pub stderr: String,
+    /// The unit's identity in the step index (§17.1.1.1) — the same key
+    /// `cook why` prints, so a JSON consumer can join this row to it.
+    /// Rule (COOK-396): `Some` whenever the test unit was RESOLVED against
+    /// the index — executed (pass or fail) or answered from cache; `None`
+    /// only when it never ran (`Blocked`), where no key was computed.
     pub fingerprint: Option<String>,
     pub blocked_by: Option<String>,
     pub should_fail: bool,

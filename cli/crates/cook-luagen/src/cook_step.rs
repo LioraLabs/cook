@@ -172,6 +172,46 @@ fn record_field(record: bool) -> String {
     }
 }
 
+/// Render the `cook.add_unit(...)` line shared by the two one-to-one arms
+/// (`LuaExprOneToOne` and `OneToOne`). 25 of these 26 lines were
+/// byte-identical twins in the two match arms before COOK-396 folded them;
+/// only the `unreachable!` mode name differed.
+fn one_to_one_add_unit_line(
+    cook_step: &CookStep,
+    line: usize,
+    ingredients_len: usize,
+    recipe_names: &BTreeSet<String>,
+    iter_mode: IterMode,
+    output_shape: OutputShape,
+    consulted: &mut ConsultedEnv,
+    mode_name: &str,
+) -> Result<String, crate::resolver::ResolveError> {
+    Ok(match &cook_step.body {
+        Some(Body::ShellBlock(lines)) => {
+            let combined = cook_contracts::shell_block::compose(lines);
+            let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+            let (lua_expr, probe_keys) = expand_command_template(&combined, &ctx, consulted)?;
+            let probes_lua = probe_keys_to_lua_table(&probe_keys);
+            format!(
+                "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
+                lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
+            )
+        }
+        Some(Body::LuaBlock(code)) => {
+            let code_literal = crate::lua_string::wrap_lua_string(code);
+            let ing_groups = format_ingredient_groups(ingredients_len);
+            let env_keys = lua_body_consulted_env_keys(code);
+            format!(
+                "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
+            )
+        }
+        None => {
+            unreachable!("{} mode requires a using-clause", mode_name);
+        }
+    })
+}
+
 pub(crate) fn generate_cook_step(
     out: &mut String,
     cook_step: &CookStep,
@@ -236,32 +276,16 @@ pub(crate) fn generate_cook_step(
             // CS-0101 compute-then-emit: expand the body BEFORE pushing the
             // for-header so file-ref hoists can precede the loop.
             let mut consulted = ConsultedEnv::new();
-            let add_unit_line = match &cook_step.body {
-                Some(Body::ShellBlock(lines)) => {
-                    let combined = cook_contracts::shell_block::compose(lines);
-                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
-                    let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &ctx, &mut consulted,
-                    )?;
-                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
-                    format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
-                    )
-                }
-                Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(code);
-                    let ing_groups = format_ingredient_groups(ingredients.len());
-                    let env_keys = lua_body_consulted_env_keys(code);
-                    format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
-                    )
-                }
-                None => {
-                    unreachable!("LuaExprOneToOne mode requires a using-clause");
-                }
-            };
+            let add_unit_line = one_to_one_add_unit_line(
+                cook_step,
+                line,
+                ingredients.len(),
+                recipe_names,
+                iter_mode,
+                output_shape,
+                &mut consulted,
+                "LuaExprOneToOne",
+            )?;
 
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
@@ -309,32 +333,16 @@ pub(crate) fn generate_cook_step(
             let out_expr =
                 expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, &mut consulted)?;
 
-            let add_unit_line = match &cook_step.body {
-                Some(Body::ShellBlock(lines)) => {
-                    let combined = cook_contracts::shell_block::compose(lines);
-                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
-                    let (lua_expr, probe_keys) = expand_command_template(
-                        &combined, &ctx, &mut consulted,
-                    )?;
-                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
-                    format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), disposition_field(&cook_step.disposition)
-                    )
-                }
-                Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(code);
-                    let ing_groups = format_ingredient_groups(ingredients.len());
-                    let env_keys = lua_body_consulted_env_keys(code);
-                    format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
-                    )
-                }
-                None => {
-                    unreachable!("OneToOne mode requires a using-clause");
-                }
-            };
+            let add_unit_line = one_to_one_add_unit_line(
+                cook_step,
+                line,
+                ingredients.len(),
+                recipe_names,
+                iter_mode,
+                output_shape,
+                &mut consulted,
+                "OneToOne",
+            )?;
 
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
@@ -535,6 +543,7 @@ pub(crate) fn generate_cook_step(
 pub(crate) fn generate_member_fanout_cook_step(
     out: &mut String,
     cook_step: &CookStep,
+    line: usize,
     index: usize,
     recipe_names: &BTreeSet<String>,
     extra_ingredients: &[String],
@@ -618,8 +627,8 @@ pub(crate) fn generate_member_fanout_cook_step(
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
-                "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
-                inputs_field, out_field, code_literal, env_keys, disposition_field(&cook_step.disposition)
+                "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}, line = {}}})\n",
+                inputs_field, out_field, code_literal, env_keys, disposition_field(&cook_step.disposition), line
             )
         }
         None => {

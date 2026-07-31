@@ -973,6 +973,16 @@ fn probe_not_materialised_message(key: &str) -> String {
     )
 }
 
+/// The CS-0074 rejection `cook.probes.set` and scoped `set` both raise on
+/// the execute-phase VM. Shared so the two diagnostics stay in lockstep
+/// (they were spelled twice, COOK-396).
+fn probes_set_deprecated_error() -> mlua::Error {
+    mlua::Error::runtime(
+        "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
+         Use cook.probe to declare memoised probe values.",
+    )
+}
+
 /// Install `cook.probes.{get,set,scope}` on the execute-phase VM
 /// (Standard §6.3.4, CS-0070, CS-0074, CS-0152).
 ///
@@ -1029,10 +1039,7 @@ fn install_execute_phase_cook_probes(
 
     // cook.probes.set — deprecated and disabled on the execute-phase VM (CS-0074).
     let set_fn = lua.create_function(|_, (_key, _val): (String, mlua::Value)| -> mlua::Result<()> {
-        Err(mlua::Error::runtime(
-            "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
-             Use cook.probe to declare memoised probe values."
-        ))
+        Err(probes_set_deprecated_error())
     })?;
     cache_tbl.set("set", set_fn)?;
 
@@ -1061,10 +1068,7 @@ fn install_execute_phase_cook_probes(
         scoped.set("get", scoped_get)?;
 
         let scoped_set = lua.create_function(|_, (_k, _v): (String, mlua::Value)| -> mlua::Result<()> {
-            Err(mlua::Error::runtime(
-                "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
-                 Use cook.probe to declare memoised probe values."
-            ))
+            Err(probes_set_deprecated_error())
         })?;
         scoped.set("set", scoped_set)?;
 

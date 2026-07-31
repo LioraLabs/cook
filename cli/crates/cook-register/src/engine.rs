@@ -280,39 +280,12 @@ pub fn register_cookfile(
         ModuleLoaderState::new(builder.working_dir.clone()),
     ));
 
-    // 5. Install `cook.*` core API. `recipe_name` here is the legacy
-    //    closure-capture argument used by `cook.add_unit` for
-    //    `cache_meta.recipe_name`; in register_cookfile there is no single
-    //    recipe, so pass an empty string. Per-recipe attribution happens
-    //    through `body.current_recipe` instead.
-    let recipes = install_cook_api(
-        &lua,
-        builder.env_vars.clone(),
-        &builder.working_dir,
-        body_slot.clone(),
-        "",
-        module_state.clone(),
-    )?;
-    {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_var_api(&lua, &cook_tbl, builder.env_keyset.clone())?;
-    }
-    {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_cook_probe(
-            &lua,
-            &cook_tbl,
-            probe_registry.clone(),
-            body_slot.clone(),
-            cookfile_label.clone(),
-        )?;
-    }
-
-    // 5b. Install the remaining API surface (fs/path/platform sandboxing,
-    //     module loader, unit/export/test/dep_output/codec APIs). Shared
-    //     with `list_names` via the extracted helper. The helper returns
-    //     the module-loader handle so we can `flush_all()` it after all
-    //     body invocations complete.
+    // 5. Install the full register-phase API surface (`cook.*` core,
+    //    fs/path/platform sandboxing, module loader,
+    //    unit/export/test/dep_output/codec APIs). Shared with `list_names`
+    //    via the extracted helper so both passes see byte-identical
+    //    installation. Returns the per-pass `recipes` Rc that
+    //    `cook.recipe(...)` captures into.
     // COOK-64: the register pre-pass populates this with resolved
     // member-source probe values before any recipe body runs; the
     // `cook.probes.get` binding (installed below) reads it first.
@@ -327,12 +300,12 @@ pub fn register_cookfile(
     let recipe_forcer: crate::context::SharedRecipeForcer = Rc::new(RefCell::new(None));
     // Standard §22.9, CS-0149: the `cook.on_register_complete` finalizer
     // queue for this pass. Created here, alongside the forcer cell, for the
-    // same reason: `install_remaining_apis` needs it at install time (step
-    // 5b, below), but nothing drains it until step 12c, well after the
+    // same reason: `install_all_apis` needs it at install time (step
+    // 5, below), but nothing drains it until step 12c, well after the
     // top-level chunk and every recipe body have queued into it.
     let finalizer_queue: crate::on_register_api::SharedFinalizerQueue =
         Rc::new(RefCell::new(Vec::new()));
-    let module_state = install_remaining_apis(
+    let recipes = install_all_apis(
         &lua,
         &builder,
         body_slot.clone(),
@@ -340,7 +313,9 @@ pub fn register_cookfile(
         prepass_store.clone(),
         recipe_forcer.clone(),
         finalizer_queue.clone(),
-        module_state,
+        module_state.clone(),
+        probe_registry.clone(),
+        cookfile_label.clone(),
     )?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
@@ -2318,35 +2293,13 @@ pub fn list_names(
         ModuleLoaderState::new(builder.working_dir.clone()),
     ));
 
-    // Install cook.* core surface. `recipe_name` is "" — list_names never
-    // invokes a body, so cook.add_unit's recipe_name capture is moot here.
-    let recipes = install_cook_api(
-        &lua,
-        builder.env_vars.clone(),
-        &builder.working_dir,
-        body_slot.clone(),
-        "",
-        module_state.clone(),
-    )?;
-    {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_var_api(&lua, &cook_tbl, builder.env_keyset.clone())?;
-    }
-    {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        install_cook_probe(
-            &lua,
-            &cook_tbl,
-            probe_registry.clone(),
-            body_slot.clone(),
-            cookfile_label.clone(),
-        )?;
-    }
-    // list_names doesn't invoke any body, so the returned module-loader
-    // handle is dropped here — no flush needed (no module bodies ran).
-    // `list_names` never invokes recipe bodies, so the pre-pass store stays
-    // empty — `cook.probes.get` falls through to its module-context behaviour.
-    let _module_state = install_remaining_apis(
+    // Install the full API surface via the shared helper — byte-identical
+    // to `register_cookfile`'s installation, which is exactly why `cook
+    // menu` lists what a build would register. `list_names` never invokes
+    // recipe bodies: no flush of the module-loader handle is needed (no
+    // module bodies ran), and the pre-pass store stays empty —
+    // `cook.probes.get` falls through to its module-context behaviour.
+    let recipes = install_all_apis(
         &lua,
         &builder,
         body_slot.clone(),
@@ -2365,6 +2318,8 @@ pub fn list_names(
         // the API rather than leaving `cook.on_register_complete` undefined.
         Rc::new(RefCell::new(Vec::new())),
         module_state,
+        probe_registry.clone(),
+        cookfile_label.clone(),
     )?;
 
     // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
@@ -2412,22 +2367,24 @@ pub fn list_names(
     Ok(out)
 }
 
-/// Install the non-`cook.recipe` / non-`cook.probe` part of the
-/// register-phase API surface on the given Lua VM: fs/path/platform
-/// sandboxes, module loader, unit/export/test/dep_output/codec APIs.
+/// Install the ENTIRE register-phase API surface on the given Lua VM:
+/// `cook.*` core (recipe/chore/var/probe), fs/path/platform sandboxes,
+/// module loader, unit/export/test/dep_output/codec APIs.
 ///
 /// Extracted as a shared helper so `register_cookfile` and `list_names`
-/// see byte-identical API installation. `cook.recipe` and `cook.probe`
-/// (which need access to the per-pass `recipes` Rc and probe registry
-/// respectively) are still installed at the call site before this helper
-/// runs.
+/// see byte-identical API installation — drift here means `cook menu`
+/// sees a different Lua API than a build (COOK-396 folded the previously
+/// call-site-duplicated core install into this helper for that reason).
 ///
 /// `cache_ctx` is `Some` when the caller has a project root resolved
 /// (`register_cookfile` in production); `None` for tests, legacy call
 /// sites, and `list_names`. The sandbox falls back to the recipe's
 /// working_dir in the `None` case, which matches single-Cookfile project
 /// behavior (CS-0045).
-fn install_remaining_apis(
+///
+/// Returns the per-pass `recipes` Rc that `cook.recipe(...)` captures into.
+#[allow(clippy::too_many_arguments)]
+fn install_all_apis(
     lua: &Lua,
     builder: &RegisterSessionBuilder,
     body_slot: SharedBodySlot,
@@ -2440,7 +2397,35 @@ fn install_remaining_apis(
     // and therefore needs this handle at install time — earlier than the
     // module loader itself used to be built.
     module_state: SharedModuleLoaderState,
-) -> Result<SharedModuleLoaderState, RegisterError> {
+    probe_registry: Rc<RefCell<ProbeRegistry>>,
+    cookfile_label: String,
+) -> Result<Rc<RefCell<Vec<crate::capture::RegisteredRecipe>>>, RegisterError> {
+    // `cook.*` core. `recipe_name` is the legacy closure-capture argument
+    // used by `cook.add_unit` for `cache_meta.recipe_name`; neither caller
+    // has a single recipe at install time, so it is always "" here —
+    // per-recipe attribution happens through `body.current_recipe`.
+    let recipes = install_cook_api(
+        lua,
+        builder.env_vars.clone(),
+        &builder.working_dir,
+        body_slot.clone(),
+        "",
+        module_state.clone(),
+    )?;
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_var_api(lua, &cook_tbl, builder.env_keyset.clone())?;
+    }
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_cook_probe(
+            lua,
+            &cook_tbl,
+            probe_registry,
+            body_slot.clone(),
+            cookfile_label,
+        )?;
+    }
     // Sandbox + fs/path/platform API. Project root falls back to
     // working_dir when no CacheContext is present.
     let project_root: std::path::PathBuf = cache_ctx
@@ -2532,7 +2517,7 @@ fn install_remaining_apis(
     // produce body must behave identically on the register pre-pass and the
     // execute-phase demand path).
     cook_lua_stdlib::register_tools_api(lua, &cook_tbl)?;
-    Ok(module_state)
+    Ok(recipes)
 }
 
 /// Dispatch any `__cook_run_config_blocks` function emitted by codegen

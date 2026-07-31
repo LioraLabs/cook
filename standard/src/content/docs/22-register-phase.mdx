@@ -17,7 +17,7 @@ sidebar:
 | `command`           | string         | `""`    | Shell command string, run via `/bin/sh -c` in the execute phase. |
 | `lua_code`          | string         | absent  | Lua source executed in the execute phase. If present, `command` is ignored. |
 | `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§{exec.interactive-drain}). |
-| `line`              | integer        | `0`     | Source line number used in diagnostics. |
+| `line`              | integer        | `0`     | Source line number used in diagnostics. Codegen emits it for every Lua-code unit — a runtime error in a `>{ … }` body reports this line — including a member-fanout body's units, which reported the default `0` until COOK-396. |
 | `cache`             | boolean        | `true`  | If `false`, the unit is never cached and is re-run on every invocation. |
 | `inputs`            | array of string | `{}`   | What the unit reads, and what its cache key is therefore keyed on. Each entry is a **path** or a **pattern**, classified when the call is made and carried on the declaration thereafter (§{exec.cache.declared-inputs}); a pattern is expanded against the working tree when the unit becomes ready, so an entry MAY name a consumed output no file yet answers to. |
 | `output`            | string         | absent  | Single declared output path (§{steps.cook-single}). |
