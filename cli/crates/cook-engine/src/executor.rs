@@ -1984,30 +1984,6 @@ pub fn execute_dag(
                         cache_key: node_cache_key(work_node),
                     },
                 );
-                // Emit TestStarted for test-step nodes so Phase 4 reporters can
-                // track in-flight tests.
-                if let Some(test_name) = &work_node.test_name {
-                    let line = work_node.payload.as_ref().map(|p| p.line()).unwrap_or(0);
-                    let iteration_item = &work_node.member;
-                    let test_id_str = match iteration_item {
-                        Some(item) if !item.is_empty() => {
-                            format!("{}:{}[{}]", work_node.recipe_name, test_name, item)
-                        }
-                        _ => format!("{}:{}", work_node.recipe_name, test_name),
-                    };
-                    let test_id = crate::id::parse_test_id(&test_id_str);
-                    emit(
-                        event_tx,
-                        EngineEvent::TestStarted {
-                            id: test_id,
-                            recipe: work_node.recipe_name.clone(),
-                            name: test_name.clone(),
-                            line: line as u32,
-                            iteration_item: iteration_item.clone(),
-                        },
-                    );
-                }
-
                 // CS-0050: ensure parent directories of declared cook-step
                 // outputs exist before the shell text runs. No-op for
                 // non-cook units (cache_meta == None) and for outputs whose
