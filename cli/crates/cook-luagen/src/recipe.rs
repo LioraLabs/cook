@@ -453,13 +453,11 @@ fn emit_body_unit_with_names(
         if run.is_empty() {
             return;
         }
-        let mut joined = String::from("set -e\n");
-        for (idx, line) in run.iter().enumerate() {
-            if idx > 0 {
-                joined.push('\n');
-            }
-            joined.push_str(line);
-        }
+        // COOK-391: THE composer — this hand-rolled join was the copy that
+        // actually reached /bin/sh, so a change to contracts compose()
+        // would not have reached it. (Byte-identical output: "set -e\n" +
+        // join was exactly compose()'s shape.)
+        let joined = cook_contracts::shell_block::compose(run);
         let wrapped = wrap_lua_string(&joined);
         static_buf.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
         run.clear();
@@ -501,9 +499,14 @@ fn emit_body_unit_with_names(
                         line: *line,
                         source: e,
                     })?;
-                    // Prepend "set -e\n" so per-line halt-on-failure semantics
-                    // match raw-shell flushes.
-                    let with_set_e = format!("\"set -e\\n\" .. ({})", lua_expr);
+                    // Prepend the compose() prelude (spelled in Lua-escaped
+                    // form from the law's constant) so per-line
+                    // halt-on-failure semantics match raw-shell flushes.
+                    let with_set_e = format!(
+                        "\"{}\" .. ({})",
+                        cook_contracts::shell_block::SET_E_PREFIX.escape_default(),
+                        lua_expr
+                    );
                     flush_static(&mut pieces, &mut static_buf);
                     pieces.push(ChunkPiece::RegisterTimeShellCmd(with_set_e));
                 } else {

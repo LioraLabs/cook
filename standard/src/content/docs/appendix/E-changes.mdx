@@ -3285,6 +3285,8 @@ What existed instead was §{phl.cook-step}'s worked example showing a `command` 
 
 **Why it is in `cook-contracts`.** The rule was implemented twice in `cook-luagen`, byte-identically, once for `cook` bodies and once for `test` bodies, differing only by a parameter one copy ignored. It is a pure function of the block's lines with no side effects, and it is a decision every part of the system has to agree on, which is the test this crate exists to apply. Two copies of a rule this load-bearing are two chances for a build to stop meaning what its author wrote.
 
+COOK-391 completed the law: the chore-path composer in `cook-luagen/recipe.rs` (a third, hand-rolled copy — the one that actually reached `/bin/sh` for chore shell runs) now routes through `compose()`; the display-side prelude strippers in `cook-cli` and `cook-engine` collapsed into one `strip_set_e` beside `compose()` as its stated inverse (with the empty-block edge — `compose(&[])` has no trailing LF — given one answer and a round-trip test); and `WorkPayload::display_name`, which filtered any `set -e` LINE anywhere, now strips exactly the prelude.
+
 **Backward compatibility.** None needed: no behaviour changes. This states what was already true and removes the second implementation of it.
 
 **Conformance.** One fixture, `cli/e2e-fixtures/surface/30-shell-block-one-invocation`, pinning each of the three consequences separately through the real pipeline: a Cookfile, codegen and a real spawn, rather than by composing the shell text by hand and asserting on it. The corpus does exercise multi-line bodies throughout, but only incidentally — nothing in it would have failed had the rule silently become one invocation per line.
