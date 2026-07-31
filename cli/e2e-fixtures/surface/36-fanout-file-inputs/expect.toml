@@ -1,0 +1,19 @@
+[[run]]
+args = ["fan"]
+[run.assert]
+equals = { "build/a.txt" = "v1\n", "build/b.txt" = "b1\n" }
+
+# THE ticket repro: edit a source file the member reads. Before CS-0197 the
+# unit's key held only command text + member, so this run served stale v1.
+[[run]]
+args = ["fan"]
+write = { "src/a.txt" = "v2\n" }
+[run.assert]
+equals = { "build/a.txt" = "v2\n" }
+
+# Untouched inputs stay cached.
+[[run]]
+args = ["fan"]
+[run.assert]
+output_contains = ["cached"]
+unchanged = ["build/a.txt", "build/b.txt"]

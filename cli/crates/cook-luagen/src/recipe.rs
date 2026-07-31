@@ -963,6 +963,9 @@ pub fn generate_with_names(
                                     cook_step,
                                     cook_index,
                                     recipe_names,
+                                    member_source
+                                        .map(|(fe, _)| fe.extra_ingredients.as_slice())
+                                        .unwrap_or(&[]),
                                 )
                                 .map_err(|source| CodegenError::SigilResolve {
                                     recipe: recipe.name.clone(),
