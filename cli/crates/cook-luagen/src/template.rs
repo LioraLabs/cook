@@ -268,7 +268,9 @@ pub(crate) fn expand_sigil_template_with_chore_params(
             let ctx =
                 cook_contracts::quoting::quote_context(&template[..span.range.start]).tag();
             format!(
-                "cook.__quote_param(__cook_params[\"{}\"], \"{}\", \"{}\")",
+                "cook.{}({}[\"{}\"], \"{}\", \"{}\")",
+                cook_contracts::registration::QUOTE_PARAM_NAME,
+                crate::COOK_PARAMS_LOCAL,
                 escape_lua_string(&span.ident),
                 escape_lua_string(&span.ident),
                 ctx
@@ -338,7 +340,11 @@ fn resolved_to_lua(
         // canonical JSON token; composites/null/absent raise register-phase
         // diagnostics instead of interpolating a Lua heap address.
         Resolved::ProbeRef { .. } => {
-            Ok(format!("cook.__probe_subst(\"{}\")", escape_lua_string(ident)))
+            Ok(format!(
+                "cook.{}(\"{}\")",
+                cook_contracts::registration::PROBE_SUBST_NAME,
+                escape_lua_string(ident)
+            ))
         }
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_member_fanout_template).
@@ -524,7 +530,11 @@ fn output_pattern_ident_to_lua(
         // emit the access expression so they aren't silently swallowed.
         // CS-0195: same helper as resolved_to_lua — one renderer per ident.
         Resolved::ProbeRef { .. } => {
-            Ok(format!("cook.__probe_subst(\"{}\")", escape_lua_string(ident)))
+            Ok(format!(
+                "cook.{}(\"{}\")",
+                cook_contracts::registration::PROBE_SUBST_NAME,
+                escape_lua_string(ident)
+            ))
         }
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
         // have no fan-out body context and `item` is not in scope.
@@ -793,7 +803,11 @@ pub(crate) fn expand_plate_test_body(
                 probe_keys.insert(key.clone());
                 // CS-0195: same helper; the caller rejects test-position probe
                 // refs before this string is ever used.
-                format!("cook.__probe_subst(\"{}\")", escape_lua_string(&span.ident))
+                format!(
+                    "cook.{}(\"{}\")",
+                    cook_contracts::registration::PROBE_SUBST_NAME,
+                    escape_lua_string(&span.ident)
+                )
             }
             other => resolved_to_lua(other, &span.ident, out)?,
         };

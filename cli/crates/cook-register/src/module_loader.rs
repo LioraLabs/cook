@@ -365,7 +365,7 @@ pub fn register_cache_api(
         cook_contracts::sigil::subst::substitute(value, r.path(), &ident)
             .map_err(LuaError::runtime)
     })?;
-    cook.set("__probe_subst", subst_fn)?;
+    cook.set(cook_contracts::registration::PROBE_SUBST_NAME, subst_fn)?;
 
     // cook.probes.set(key, value)
     let s2 = state.clone();

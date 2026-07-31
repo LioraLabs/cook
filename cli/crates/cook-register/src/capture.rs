@@ -51,38 +51,29 @@ pub struct RegisteredRecipe {
     pub member_source: Option<MemberSourceDescriptor>,
 }
 
-/// The data source of a member-fanout recipe, as carried on the register
-/// surface meta (`__member_source = {kind=…}`) by `cook-luagen`. Mirrors the
-/// surface-AST `MemberSource` but lives in the register crate so the
-/// pre-pass can dispatch without a parser dependency.
-///
-/// - `Probe { source_ref }` — `ingredients <ref>`, the ref verbatim (`key`
-///   or `key:field`; a probe key may itself be two-segment `ns:name`).
-///   Resolution against the probe registry happens in the register
-///   pre-pass (COOK-190); the body reads the resolved member array via
-///   `cook.probes.get(<verbatim ref>)`.
-///
-/// The `Shell { cmd, as_lines }` and `Lua` variants have been removed in
-/// COOK-97 — only `Probe` remains.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MemberSourceDescriptor {
-    Probe { source_ref: String },
-}
+// The descriptor SHAPE lives in cook-contracts since COOK-390 — three
+// declarations (surface AST, this crate's mirror, the emission format
+// string) collapsed to the AST type plus one shared contract type that
+// emitter and consumer both import.
+pub use cook_contracts::registration::MemberSourceDescriptor;
 
 /// Parse the `__member_source` descriptor off a register surface meta table.
 /// Returns `None` when the field is absent (a non-member-fanout recipe).
 fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDescriptor>> {
-    let Some(t) = meta.get::<Option<LuaTable>>("__member_source")? else {
+    use cook_contracts::registration::{
+        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE,
+        MEMBER_SOURCE_REF_KEY,
+    };
+    let Some(t) = meta.get::<Option<LuaTable>>(MEMBER_SOURCE_FIELD)? else {
         return Ok(None);
     };
-    let kind: String = t.get("kind")?;
-    Ok(Some(match kind.as_str() {
-        "probe" => MemberSourceDescriptor::Probe { source_ref: t.get("ref")? },
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "cook.__register_surface: unknown __member_source kind '{other}'"
-            )))
-        }
+    let kind: String = t.get(MEMBER_SOURCE_KIND_KEY)?;
+    Ok(Some(if kind == MEMBER_SOURCE_KIND_PROBE {
+        MemberSourceDescriptor::Probe { source_ref: t.get(MEMBER_SOURCE_REF_KEY)? }
+    } else {
+        return Err(mlua::Error::runtime(format!(
+            "cook.__register_surface: unknown {MEMBER_SOURCE_FIELD} kind '{kind}'"
+        )));
     }))
 }
 
@@ -738,7 +729,7 @@ pub fn install_cook_api(
                 ))),
             }
         })?;
-    cook.set("__quote_param", quote_param_fn)?;
+    cook.set(cook_contracts::registration::QUOTE_PARAM_NAME, quote_param_fn)?;
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)
