@@ -696,7 +696,21 @@ pub fn install_cook_api(
     // span ("bare" | "dquote" | "squote"); it defaults to "bare".
     let quote_param_fn =
         lua.create_function(move |_, (value, name, ctx): (mlua::Value, String, Option<String>)| -> mlua::Result<String> {
-            let ctx = ctx.as_deref().unwrap_or("bare");
+            // CS-0128 via cook_contracts::quoting (COOK-389): the tag is
+            // typed end-to-end. An unrecognized tag is emitter/consumer
+            // drift and MUST be a diagnostic — the old `_ =>` arm silently
+            // meant bare, so a codegen-side rename emitted literal quote
+            // characters into the user's command at runtime.
+            let ctx = match ctx.as_deref() {
+                None => cook_contracts::quoting::QCtx::Bare,
+                Some(tag) => cook_contracts::quoting::QCtx::from_tag(tag).ok_or_else(|| {
+                    mlua::Error::runtime(format!(
+                        "cook.__quote_param('{name}'): unknown quoting-context tag '{tag}' \
+                         (emitter/consumer drift — the generated Lua and this cook binary \
+                         disagree on CS-0128 tags; expected one of bare/dquote/squote)"
+                    ))
+                })?,
+            };
             match value {
                 mlua::Value::String(s) => Ok(quote_for_ctx(&s.to_str()?, ctx)),
                 mlua::Value::Table(t) => {
@@ -730,54 +744,10 @@ pub fn install_cook_api(
     Ok(recipes)
 }
 
-/// CS-0128: quote `s` for the shell context `ctx` that a `$<param>` sigil
-/// occupies in the step text.
-///
-/// * `"bare"` (default) — single-quote the whole value for word-safety
-///   (the existing `shell_quote` behaviour).
-/// * `"dquote"` — the sigil sits inside an author-supplied double-quoted
-///   region, so emit the value with double-quote-context escaping
-///   (backslash-escape `\`, `"`, `$`, and backtick); the surrounding `"..."`
-///   already provides the quoting.
-/// * `"squote"` — the sigil sits inside an author-supplied single-quoted
-///   region, so emit the raw value verbatim; a value containing `'` is the
-///   author's responsibility (documented edge).
-fn quote_for_ctx(s: &str, ctx: &str) -> String {
-    match ctx {
-        "dquote" => {
-            let mut o = String::with_capacity(s.len());
-            for ch in s.chars() {
-                if matches!(ch, '\\' | '"' | '$' | '`') {
-                    o.push('\\');
-                }
-                o.push(ch);
-            }
-            o
-        }
-        "squote" => s.to_string(),
-        _ => shell_quote(s),
-    }
-}
-
-/// POSIX-safe single-quote escaping for shell arguments.
-///
-/// Wraps the whole string in single quotes; any literal `'` becomes `'\''`
-/// (close-quote, escaped-quote, re-open-quote). This is the canonical
-/// sh-portable form and handles every character including spaces, backslashes,
-/// and dollar signs.
-fn shell_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
+// CS-0128: quote_for_ctx and shell_quote (the workspace's only POSIX
+// single-quote escaper) moved to cook_contracts::quoting with the rest of
+// the quoting law (COOK-389).
+use cook_contracts::quoting::quote_for_ctx;
 
 /// Upper bound on the Lua call-stack walk in `caller_line_in_cookfile`.
 /// A safety cap — 40 frames comfortably exceeds any realistic Cookfile

@@ -229,42 +229,10 @@ pub(crate) fn expand_sigil_template(
     )
 }
 
-/// CS-0128: the shell quoting context a sigil span sits in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum QCtx {
-    /// Outside any quote — the value must be single-quoted for word-safety.
-    Bare,
-    /// Inside a double-quoted region — the value is escaped for that context.
-    Double,
-    /// Inside a single-quoted region — the value is emitted verbatim.
-    Single,
-}
-
-/// Classify the shell quoting context at the end of `prefix` by scanning the
-/// command text left-to-right, tracking single/double quote state and
-/// backslash escapes (POSIX: backslash is inert inside single quotes).
-fn quote_context(prefix: &str) -> QCtx {
-    let (mut sq, mut dq, mut esc) = (false, false, false);
-    for c in prefix.chars() {
-        if esc {
-            esc = false;
-            continue;
-        }
-        match c {
-            '\\' if !sq => esc = true,
-            '\'' if !dq => sq = !sq,
-            '"' if !sq => dq = !dq,
-            _ => {}
-        }
-    }
-    if sq {
-        QCtx::Single
-    } else if dq {
-        QCtx::Double
-    } else {
-        QCtx::Bare
-    }
-}
+// CS-0128: the quoting law — QCtx, quote_context, quote_for_ctx,
+// shell_quote — lives in cook_contracts::quoting (COOK-389). This crate
+// CLASSIFIES; cook-register QUOTES; the tag strings in generated Lua are
+// QCtx::tag/from_tag, one place, exhaustive on the consumer side.
 
 pub(crate) fn expand_sigil_template_with_chore_params(
     template: &str,
@@ -297,11 +265,8 @@ pub(crate) fn expand_sigil_template_with_chore_params(
             // CS-0128: the sigil expands per its shell quoting context. Scan the
             // command prefix up to this span to classify bare / double / single
             // and thread it into the runtime quoter.
-            let ctx = match quote_context(&template[..span.range.start]) {
-                QCtx::Bare => "bare",
-                QCtx::Double => "dquote",
-                QCtx::Single => "squote",
-            };
+            let ctx =
+                cook_contracts::quoting::quote_context(&template[..span.range.start]).tag();
             format!(
                 "cook.__quote_param(__cook_params[\"{}\"], \"{}\", \"{}\")",
                 escape_lua_string(&span.ident),
