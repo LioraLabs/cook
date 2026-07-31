@@ -279,16 +279,15 @@ impl CloudConfig {
             .filter(|v| !v.is_empty())
     }
 
-    /// Returns the configured project_id, or the project root directory name
-    /// as a fallback (only valid when cloud is disabled).
-    pub fn project_id_or_fallback(&self, project_root: &Path) -> String {
-        if let Some(p) = &self.cloud.project {
-            return p.clone();
-        }
-        project_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string())
+    /// CS-0196: the project identity that enters cache keys — exactly the
+    /// configured `[cloud] project` value, or empty when unconfigured. Never
+    /// derived from the checkout location: two clones of one repository under
+    /// different directory names MUST share cache entries, and a
+    /// directory-name segment in the key forecloses exactly that. (The old
+    /// `project_id_or_fallback` put the checkout dir's name here; it was only
+    /// ever safe because nothing wired it into registration.)
+    pub fn project_id_for_keys(&self) -> String {
+        self.cloud.project.clone().unwrap_or_default()
     }
 
     pub fn cache_ignore_env(&self) -> &[String] {

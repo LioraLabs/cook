@@ -36,7 +36,6 @@ fn register_workspace_preserves_ingredient_warning_order() {
         &[],
         RegisterMode::Enumerate,
         None,
-        None,
     )
     .unwrap();
     assert_eq!(
@@ -61,7 +60,7 @@ fn register_workspace_maps_collision_to_typed_variant() {
         "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let ws = workspace_of_one(tmpdir.path(), lua_src);
-    let result = register_workspace(&ws, None, &[], RegisterMode::Enumerate, None, None);
+    let result = register_workspace(&ws, None, &[], RegisterMode::Enumerate, None);
 
     match result {
         Ok(_) => panic!("expected PipelineError::RecipeCollision, got Ok"),
@@ -89,7 +88,7 @@ fn register_workspace_maps_non_collision_to_other() {
     let lua_src = "this_function_does_not_exist()\n";
     let tmpdir = tempfile::TempDir::new().unwrap();
     let ws = workspace_of_one(tmpdir.path(), lua_src);
-    let result = register_workspace(&ws, None, &[], RegisterMode::Enumerate, None, None);
+    let result = register_workspace(&ws, None, &[], RegisterMode::Enumerate, None);
 
     match result {
         Ok(_) => panic!("expected PipelineError::Other, got Ok"),
@@ -198,13 +197,13 @@ fn cache_meta_is_invocation_independent_across_entry_points() {
     // (i) Entry = the workspace root Cookfile; member registers as an
     //     import under prefix "rust".
     let ws_root = Workspace::load(&root.join("Cookfile"), &root, &[]).unwrap();
-    let reg_root = register_workspace(&ws_root, None, &[], RegisterMode::Enumerate, None, None).unwrap();
+    let reg_root = register_workspace(&ws_root, None, &[], RegisterMode::Enumerate, None).unwrap();
 
     // (ii) Entry = the member Cookfile itself (invoked inside apps/rust);
     //      it registers as the workspace-of-one root under prefix "".
     let ws_member =
         Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
-    let reg_member = register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None, None).unwrap();
+    let reg_member = register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None).unwrap();
 
     let meta_of = |reg: &RegisteredWorkspace, key: &str| {
         reg.units_by_recipe
@@ -324,7 +323,7 @@ fn register_workspace_qualifies_recipe_units_deps() {
     .expect("workspace loads");
 
     let registered =
-        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None, None)
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None)
             .expect("register");
 
     let use_units = registered

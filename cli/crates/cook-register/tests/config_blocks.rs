@@ -16,7 +16,7 @@ fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
         .with_selected_config(selected.map(|s| s.to_string()));
     // First recipe in the file is what we'll inspect.
     let name = cookfile.recipes[0].name.clone();
-    let registered = register_cookfile(registry, &lua_source, None, None).expect("register");
+    let registered = register_cookfile(registry, &lua_source, None).expect("register");
     registered
         .units_by_recipe
         .get(&name)

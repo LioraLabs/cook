@@ -23,7 +23,8 @@ fn missing_file_returns_default() {
     let dir = tempfile::tempdir().expect("tempdir");
         let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert!(!cfg.cloud.enabled);
-    assert_eq!(cfg.project_id_or_fallback(dir.path()), dir.path().file_name().unwrap().to_string_lossy());
+    // CS-0196: unconfigured key-side identity is empty, never the dir name.
+    assert_eq!(cfg.project_id_for_keys(), "");
     assert!(cfg.cache_ignore_env().is_empty());
 }
 
@@ -96,12 +97,23 @@ fn malformed_toml_errors() {
 }
 
 #[test]
-fn project_id_or_fallback_uses_dir_name_when_no_project() {
+fn project_id_for_keys_is_configured_or_empty_never_the_dir_name() {
+    // CS-0196: a checkout's directory name must never enter a cache key —
+    // two clones under different names share entries.
     let dir = tempfile::tempdir().expect("tempdir");
-        let project_dir = dir.path().join("my-cool-project");
+    let project_dir = dir.path().join("my-cool-project");
     std::fs::create_dir_all(&project_dir).expect("mkdir");
-        let cfg = CloudConfig::load_or_default(&project_dir).expect("load");
-    assert_eq!(cfg.project_id_or_fallback(&project_dir), "my-cool-project");
+    let cfg = CloudConfig::load_or_default(&project_dir).expect("load");
+    assert_eq!(cfg.project_id_for_keys(), "");
+
+    std::fs::create_dir_all(project_dir.join(".cook")).expect("mkdir");
+    std::fs::write(
+        project_dir.join(".cook/cloud.toml"),
+        "[cloud]\nproject = \"acme\"\n",
+    )
+    .expect("write");
+    let cfg = CloudConfig::load_or_default(&project_dir).expect("load");
+    assert_eq!(cfg.project_id_for_keys(), "acme");
 }
 
 // ─── CS-0057: BackendConfig threading ───────────────────────────────────

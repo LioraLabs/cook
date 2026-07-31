@@ -798,7 +798,9 @@ pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<A
     if let Err(e) = backend.health() {
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }
-    let project_id = cloud_config.project_id_or_fallback(project_root);
+    // CS-0196 (COOK-364): key-side identity is configured-or-empty. The
+    // directory-name fallback never enters a key.
+    let project_id = cloud_config.project_id_for_keys();
     // COOK-168: read-only / publish-off client mode. Config opt-out
     // (`[cloud] publish = false`) OR an invocation flag (`--no-publish` /
     // `COOK_NO_PUBLISH`, passed as `no_publish`) suppresses every upload.
