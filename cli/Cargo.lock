@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cache"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "cook-fingerprint",
@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cli"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "cook-contracts"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cookfile"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "thiserror 2.0.18",
  "tree-sitter",
@@ -437,11 +437,11 @@ dependencies = [
 
 [[package]]
 name = "cook-dag"
-version = "0.10.2"
+version = "0.11.0"
 
 [[package]]
 name = "cook-engine"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "cook-fingerprint"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "glob",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "cook-graph"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lang"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "glob",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "cook-logs"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "ansi-to-tui",
  "base64",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lua-stdlib"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "cook-cookfile",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "cook-luagen"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "cook-lang",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "cook-luaotp"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "cook-fingerprint",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "cook-probe"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "cook-progress"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "arc-swap",
  "cook-contracts",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "cook-register"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "cook-shell"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "cook-contracts",
  "tempfile",
