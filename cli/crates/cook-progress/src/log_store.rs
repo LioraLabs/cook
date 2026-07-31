@@ -41,7 +41,7 @@ pub struct LogStore {
 
 impl LogStore {
     pub fn open(project_root: &Path, config: LogConfig) -> io::Result<Self> {
-        let root = project_root.join(".cook").join("logs");
+        let root = cook_contracts::layout::logs_dir(project_root);
         fs::create_dir_all(&root)?;
         rotate(&root, config.keep_builds, config.max_total_bytes)?;
 

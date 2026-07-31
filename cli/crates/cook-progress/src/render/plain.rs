@@ -112,14 +112,8 @@ fn interactive_label(rname: &str, name: &str) -> String {
 }
 
 fn fmt_secs(d: Duration) -> String {
-    let secs = d.as_secs_f64();
-    if secs < 60.0 {
-        format!("{secs:.2}s")
-    } else {
-        let m = (secs as u64) / 60;
-        let s = (secs as u64) % 60;
-        format!("{m}m{s}s")
-    }
+    // COOK-392: THE duration law.
+    cook_contracts::render::duration_ms(d.as_millis() as u64)
 }
 
 impl<W: Write + Send> Renderer for PlainRenderer<W> {

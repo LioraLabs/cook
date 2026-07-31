@@ -20,7 +20,7 @@ pub fn cmd_logs(
     selector: BuildSelector,
     theme: Theme,
 ) -> Result<(), ViewerError> {
-    let logs_root = project_root.join(".cook").join("logs");
+    let logs_root = cook_contracts::layout::logs_dir(project_root);
 
     if !logs_root.exists() {
         println!("No builds found. Run `cook build` first.");

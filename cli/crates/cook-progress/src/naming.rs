@@ -32,7 +32,8 @@ pub fn display_recipe_name(name: &str) -> String {
 /// If `display` names a probe node (`probe:<module>:<key>`), return the
 /// module tag (`cc`); otherwise `None`.
 pub fn probe_module(display: &str) -> Option<&str> {
-    let key = display.strip_prefix("probe:")?;
+    // COOK-392: the parse half of contracts' probe_label pair.
+    let key = cook_contracts::unit::parse_probe_label(display)?;
     let module = key.split(':').next().unwrap_or("");
     if module.is_empty() { None } else { Some(module) }
 }

@@ -155,13 +155,8 @@ fn render_names(running: &[RunningEntry], budget: usize) -> String {
 }
 
 fn fmt_elapsed(d: Duration) -> String {
-    let secs = d.as_secs_f64();
-    if secs < 60.0 { format!("{secs:.1}s") }
-    else if secs < 3600.0 { format!("{}m{:02}s", (secs as u64) / 60, (secs as u64) % 60) }
-    else { format!("{}h{:02}m{:02}s",
-        (secs as u64) / 3600,
-        ((secs as u64) % 3600) / 60,
-        (secs as u64) % 60) }
+    // COOK-392: THE duration law.
+    cook_contracts::render::duration_ms(d.as_millis() as u64)
 }
 
 #[cfg(test)]

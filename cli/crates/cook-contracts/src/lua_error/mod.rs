@@ -1,3 +1,8 @@
+/// Environment variable requesting Lua tracebacks in diagnostics
+/// (`COOK_BACKTRACE=1`). Spelled once (COOK-392); the read stays at each
+/// call site (contracts holds no stateful std access).
+pub const BACKTRACE_ENV: &str = "COOK_BACKTRACE";
+
 /// Remove Lua runtime wrappers and optionally its traceback.
 pub fn sanitize(message: &str, keep_traceback: bool) -> String {
     let message = if keep_traceback {

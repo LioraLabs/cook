@@ -41,7 +41,7 @@ fn main() {
     let mut cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .expect("clap derive guarantees this conversion");
     if cli.globals.verbose {
-        std::env::set_var("COOK_BACKTRACE", "1");
+        std::env::set_var(cook_contracts::lua_error::BACKTRACE_ENV, "1");
     }
     let output_json = cli.globals.output == "json";
     let file_explicit = cookfile_flag_was_explicit(&matches);

@@ -50,7 +50,7 @@ fn recipe_completed_writes_done_line() {
     let s = String::from_utf8(buf).unwrap();
     assert!(s.contains("deps"), "got: {s}");
     assert!(s.contains("done"), "got: {s}");
-    assert!(s.contains("0.40s"), "got: {s}");
+    assert!(s.contains("400ms"), "got: {s}");
 }
 
 #[test]

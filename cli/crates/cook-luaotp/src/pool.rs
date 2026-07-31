@@ -1548,7 +1548,7 @@ fn execute_probe(
                     key,
                     cook_contracts::lua_error::sanitize(
                         &e.to_string(),
-                        std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
+                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
                     )
                 )),
                 exit_code: None,
@@ -1687,7 +1687,7 @@ fn execute_lua_chunk(
                 "[{recipe_name}] {}",
                 cook_contracts::lua_error::sanitize(
                     &e.to_string(),
-                    std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false),
+                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
                 )
             )),
             exit_code: None,

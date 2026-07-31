@@ -42,7 +42,7 @@ fn node_completed_compile_kind_emits_compiled_verb() {
     let opts = EventWriterOptions { colored: false, ..Default::default() };
     let out = render_one(&state, &ev, opts);
     // Full declared output path, not the artifact basename.
-    assert_eq!(out, "    Compiled lib/build/obj/liblua/lvm.o in 0.88s\n");
+    assert_eq!(out, "    Compiled lib/build/obj/liblua/lvm.o in 880ms\n");
 }
 
 /// Seed `state` + `w` with `n` cache hits (artifact-bearing) on recipe 0.
@@ -187,7 +187,7 @@ fn probes_group_into_single_resolved_line() {
     w.handle(&mut buf, &state, &ev).unwrap();
 
     let out = String::from_utf8(buf).unwrap();
-    assert!(out.contains("Resolved cc toolchain for deps (2 probes) in 0.02s"), "got: {out}");
+    assert!(out.contains("Resolved cc toolchain for deps (2 probes) in 20ms"), "got: {out}");
     assert!(!out.contains("probe:cc:compiler"), "raw probe keys must not leak: {out}");
 }
 
@@ -261,7 +261,7 @@ fn probes_only_work_still_collapses_recipe_summary() {
     w.handle(&mut buf, &state, &done).unwrap();
 
     let out = String::from_utf8(buf).unwrap();
-    assert!(out.contains("Resolved cc toolchain for deps (1 probe) in 0.02s"), "got: {out}");
+    assert!(out.contains("Resolved cc toolchain for deps (1 probe) in 20ms"), "got: {out}");
     assert!(out.contains("Cached deps (3 nodes)"), "got: {out}");
     assert!(!out.contains("a0.o"), "held cached lines must be dropped: {out}");
     assert!(!out.contains("Finished"), "got: {out}");
@@ -414,7 +414,7 @@ fn node_failed_dumps_indented_stderr() {
     };
     let opts = EventWriterOptions { colored: false, ..Default::default() };
     let out = render_one(&state, &ev, opts);
-    let expected = "      Failed lib/$clang in 1.82s\n               lvm.c:42:9: error: 'bar' was not declared\n                   int foo = bar(x);\n";
+    let expected = "      Failed lib/$clang in 1.8s\n               lvm.c:42:9: error: 'bar' was not declared\n                   int foo = bar(x);\n";
     assert_eq!(out, expected, "got: {out}");
 }
 

@@ -78,7 +78,6 @@ fn duration_str(started: &str, ended: Option<&str>) -> String {
         return "(unknown duration)".into();
     };
     let ms = (b - a).max(0);
-    if ms < 1000 { format!("{}ms", ms) }
-    else if ms < 60_000 { format!("{:.1}s", ms as f64 / 1000.0) }
-    else { format!("{}m{}s", ms / 60_000, (ms % 60_000) / 1000) }
+    // COOK-392: THE duration law.
+    cook_contracts::render::duration_ms(ms as u64)
 }

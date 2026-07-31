@@ -442,19 +442,8 @@ fn node_display(state: &BuildState, recipe: RecipeId, node: crate::event::NodeId
 }
 
 fn fmt_secs(d: Duration) -> String {
-    let secs = d.as_secs_f64();
-    if secs < 60.0 {
-        format!("{secs:.2}s")
-    } else if secs < 3600.0 {
-        let m = (secs as u64) / 60;
-        let s = (secs as u64) % 60;
-        format!("{m}m{s:02}s")
-    } else {
-        let h = (secs as u64) / 3600;
-        let m = ((secs as u64) % 3600) / 60;
-        let s = (secs as u64) % 60;
-        format!("{h}h{m:02}m{s:02}s")
-    }
+    // COOK-392: THE duration law.
+    cook_contracts::render::duration_ms(d.as_millis() as u64)
 }
 
 #[cfg(test)]

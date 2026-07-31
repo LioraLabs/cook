@@ -79,7 +79,9 @@ fn print_logs_fallback_renders_build_recipe_node_and_lines() {
     assert!(out.contains("vm"), "should show recipe name");
     assert!(out.contains("Failed"), "should show recipe/node status");
     assert!(out.contains("lvm.c"), "should show node name");
-    assert!(out.contains("1100ms"), "should show node elapsed time");
+    // COOK-392: elapsed renders under the one duration law (1100ms → 1.1s;
+    // the raw "{ms}ms" spelling was the sixth independent renderer).
+    assert!(out.contains("1.1s"), "should show node elapsed time");
     assert!(
         out.contains("error: undeclared 'foo'"),
         "should show log line text"

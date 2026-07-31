@@ -5,6 +5,12 @@ edition = "2024"
 description = "Terminal progress rendering with composable primitives"
 
 [dependencies]
+# The one deliberate cook-* edge (COOK-392/394): cook-contracts is the
+# dependency-free pure kernel — the probe-label parse pair, the duration
+# law, and the layout constants live there, and hand-mirroring them here
+# was three live drift families. Renderer isolation from the ENGINE stands;
+# isolation from the shared kernel was costing correctness.
+cook-contracts = { path = "../cook-contracts" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-width = "0.2"

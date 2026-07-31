@@ -89,7 +89,7 @@ impl WorkPayload {
             }
             Self::LuaChunk { .. } => "lua".to_string(),
             Self::Interactive { line, .. } => format!("@{line}"),
-            Self::Probe { key, .. } => format!("probe:{key}"),
+            Self::Probe { key, .. } => probe_label(key),
         }
     }
 
@@ -107,6 +107,23 @@ impl WorkPayload {
             _ => 0,
         }
     }
+}
+
+/// The display label of a probe unit (`probe:<key>`). Composed here and
+/// parsed by [`parse_probe_label`] — cook-progress detected and split this
+/// label by hand at two sites, which worked only because probe keys are
+/// canonically `ns:name`; the pair states the format once (COOK-392).
+pub const PROBE_LABEL_PREFIX: &str = "probe:";
+
+/// Compose a probe unit's display label.
+pub fn probe_label(key: &str) -> String {
+    format!("{PROBE_LABEL_PREFIX}{key}")
+}
+
+/// Parse a display label back to its probe key, or `None` if the label is
+/// not a probe unit's.
+pub fn parse_probe_label(label: &str) -> Option<&str> {
+    label.strip_prefix(PROBE_LABEL_PREFIX)
 }
 
 /// A single captured unit of work within a recipe.
