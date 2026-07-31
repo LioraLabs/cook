@@ -6,6 +6,7 @@ use std::io::{self, BufRead};
 use std::path::Path;
 
 use crate::event::{NodeId, NodeKind, RecipeId, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
+use crate::wire::{WireEvent, WireLine};
 use crate::model::{NodeStatus, Status};
 
 #[derive(Debug, Clone)]
@@ -181,8 +182,10 @@ fn summarize_build_dir(build_dir: &Path) -> io::Result<BuildSummary> {
     if let Ok(text) = std::fs::read_to_string(&events_path) {
         let cursor = std::io::Cursor::new(text);
         for line in cursor.lines().flatten() {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                if value.get("type").and_then(|v| v.as_str()) == Some("node-failed") {
+            // COOK-394: the same wire schema as the full replay — this was
+            // a second, independent hand parser.
+            if let Ok(wire) = serde_json::from_str::<WireLine>(&line) {
+                if matches!(wire.event, WireEvent::NodeFailed { .. }) {
                     summary.failed_count += 1;
                 }
             }
@@ -287,69 +290,70 @@ fn replay_events_jsonl(
             Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
         };
         if line.trim().is_empty() { continue; }
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
+        // COOK-394: the line parses as the one wire schema. Version-gate
+        // first via a loose envelope (a typed parse would accept any `v`);
+        // then a typed-parse failure under an ACCEPTED v with a `type`
+        // string is an unknown event from a newer additive writer —
+        // ignored, not corrupt. Everything else is a skipped line.
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            v: Option<u64>,
+            #[serde(rename = "type")]
+            ty: Option<String>,
+        }
+        let envelope: Envelope = match serde_json::from_str(&line) {
+            Ok(e) => e,
             Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
         };
-        let obj = match value.as_object() {
-            Some(o) => o,
-            None => { diag.skipped_jsonl_lines += 1; continue; }
-        };
-        let v_ok = obj.get("v")
-            .and_then(|v| v.as_u64())
+        let v_ok = envelope.v
             .map(|n| n as u32 <= PROGRESS_SCHEMA_VERSION)
             .unwrap_or(false);
         if !v_ok {
             diag.skipped_jsonl_lines += 1;
             continue;
         }
-        let ty = match obj.get("type").and_then(|v| v.as_str()) {
-            Some(t) => t,
-            None => { diag.skipped_jsonl_lines += 1; continue; }
-        };
-        let ts = obj.get("ts").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-        match ty {
-            "build-started" => { /* recipes appear on node-started/recipe-started */ }
-            "recipe-started" => {
-                if let Some(name) = obj.get("recipe").and_then(|v| v.as_str()) {
-                    let rid = *recipe_ids.entry(name.to_string()).or_insert_with(|| {
-                        let id = RecipeId::new(next_recipe); next_recipe += 1; id
-                    });
-                    view.recipes.entry(rid).or_insert_with(|| RecipeView {
-                        name: name.to_string(),
-                        status: Status::Running,
-                        nodes: BTreeMap::new(),
-                    });
+        let wire: WireLine = match serde_json::from_str(&line) {
+            Ok(w) => w,
+            Err(_) => {
+                if envelope.ty.is_none() {
+                    diag.skipped_jsonl_lines += 1;
                 }
+                continue;
             }
-            "recipe-completed" | "recipe-failed" => {
-                if let Some(name) = obj.get("recipe").and_then(|v| v.as_str()) {
-                    let status = if ty == "recipe-completed" { Status::Completed } else { Status::Failed };
-                    if let Some(rid) = recipe_ids.get(name).copied() {
-                        if let Some(r) = view.recipes.get_mut(&rid) {
-                            r.status = status;
-                        }
+        };
+        let ts = Some(wire.ts.clone());
+
+        match wire.event {
+            WireEvent::RecipeStarted { recipe: name } => {
+                let rid = *recipe_ids.entry(name.clone()).or_insert_with(|| {
+                    let id = RecipeId::new(next_recipe); next_recipe += 1; id
+                });
+                view.recipes.entry(rid).or_insert_with(|| RecipeView {
+                    name,
+                    status: Status::Running,
+                    nodes: BTreeMap::new(),
+                });
+            }
+            WireEvent::RecipeCompleted { recipe: name, .. } => {
+                if let Some(rid) = recipe_ids.get(&name).copied() {
+                    if let Some(r) = view.recipes.get_mut(&rid) {
+                        r.status = Status::Completed;
                     }
                 }
             }
-            "node-started" => {
-                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
-                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let kind = match obj.get("kind").and_then(|v| v.as_str()) {
-                    Some("compile") => NodeKind::Compile,
-                    Some("link") => NodeKind::Link,
-                    Some("resolve") => NodeKind::Resolve,
-                    Some("generate") => NodeKind::Generate,
-                    Some("write") => NodeKind::Write,
-                    Some("test") => NodeKind::Test,
-                    _ => NodeKind::Cooked,
-                };
-                let rid = *recipe_ids.entry(r_name.to_string()).or_insert_with(|| {
+            WireEvent::RecipeFailed { recipe: name, .. } => {
+                if let Some(rid) = recipe_ids.get(&name).copied() {
+                    if let Some(r) = view.recipes.get_mut(&rid) {
+                        r.status = Status::Failed;
+                    }
+                }
+            }
+            WireEvent::NodeStarted { recipe: r_name, node: n_name, kind, .. } => {
+                let rid = *recipe_ids.entry(r_name.clone()).or_insert_with(|| {
                     let id = RecipeId::new(next_recipe); next_recipe += 1; id
                 });
                 let recipe = view.recipes.entry(rid).or_insert_with(|| RecipeView {
-                    name: r_name.to_string(),
+                    name: r_name,
                     status: Status::Running,
                     nodes: BTreeMap::new(),
                 });
@@ -367,56 +371,57 @@ fn replay_events_jsonl(
                     lines: Vec::new(),
                 });
             }
-            "node-completed" | "node-failed" | "node-cache-hit" | "node-skipped" => {
-                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
-                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("");
-                let rid = match recipe_ids.get(r_name).copied() { Some(r) => r, None => continue };
-                let nid = match node_ids.get(&(rid, n_name.to_string())).copied() { Some(n) => n, None => continue };
+            WireEvent::NodeCompleted { recipe: r_name, node: n_name, elapsed_ms, .. } => {
+                let rid = match recipe_ids.get(&r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.clone())).copied() { Some(n) => n, None => continue };
                 let Some(recipe) = view.recipes.get_mut(&rid) else { continue };
                 let Some(node) = recipe.nodes.get_mut(&nid) else { continue };
                 node.ended_at = ts.clone();
-                node.elapsed_ms = obj.get("elapsed_ms").and_then(|v| v.as_u64());
-                node.status = match ty {
-                    "node-completed" => NodeStatus::Completed,
-                    "node-failed" => NodeStatus::Failed,
-                    "node-cache-hit" => NodeStatus::Completed,
-                    "node-skipped" => {
-                        node.skip_reason = obj.get("reason").and_then(|v| v.as_str())
-                            .and_then(parse_skip_reason);
-                        NodeStatus::Skipped
-                    }
-                    _ => node.status,
-                };
+                node.elapsed_ms = Some(elapsed_ms);
+                node.status = NodeStatus::Completed;
             }
-            "node-output" => {
-                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
-                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("");
-                let stream = match obj.get("stream").and_then(|v| v.as_str()) {
-                    Some("stderr") => Stream::Stderr,
-                    _ => Stream::Stdout,
-                };
-                let text = obj.get("line").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let rid = match recipe_ids.get(r_name).copied() { Some(r) => r, None => continue };
-                let nid = match node_ids.get(&(rid, n_name.to_string())).copied() { Some(n) => n, None => continue };
+            WireEvent::NodeFailed { recipe: r_name, node: n_name, elapsed_ms, .. } => {
+                let rid = match recipe_ids.get(&r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.clone())).copied() { Some(n) => n, None => continue };
+                let Some(recipe) = view.recipes.get_mut(&rid) else { continue };
+                let Some(node) = recipe.nodes.get_mut(&nid) else { continue };
+                node.ended_at = ts.clone();
+                node.elapsed_ms = Some(elapsed_ms);
+                node.status = NodeStatus::Failed;
+            }
+            WireEvent::NodeCacheHit { recipe: r_name, node: n_name, .. } => {
+                let rid = match recipe_ids.get(&r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.clone())).copied() { Some(n) => n, None => continue };
+                let Some(recipe) = view.recipes.get_mut(&rid) else { continue };
+                let Some(node) = recipe.nodes.get_mut(&nid) else { continue };
+                node.ended_at = ts.clone();
+                node.status = NodeStatus::Completed;
+            }
+            WireEvent::NodeSkipped { recipe: r_name, node: n_name, reason } => {
+                let rid = match recipe_ids.get(&r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.clone())).copied() { Some(n) => n, None => continue };
+                let Some(recipe) = view.recipes.get_mut(&rid) else { continue };
+                let Some(node) = recipe.nodes.get_mut(&nid) else { continue };
+                node.ended_at = ts.clone();
+                node.skip_reason = Some(reason);
+                node.status = NodeStatus::Skipped;
+            }
+            WireEvent::NodeOutput { recipe: r_name, node: n_name, stream, line: text } => {
+                let rid = match recipe_ids.get(&r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.clone())).copied() { Some(n) => n, None => continue };
                 if let Some(recipe) = view.recipes.get_mut(&rid) {
                     if let Some(node) = recipe.nodes.get_mut(&nid) {
                         node.lines.push(LogLine { stream, ts: ts.clone(), text });
                     }
                 }
             }
-            _ => { /* ignore interactive-*, finished — postmortem doesn't need them */ }
+            // build-started (recipes appear on recipe-/node-started),
+            // recipe-skipped, interactive-*, finished — postmortem doesn't
+            // need them.
+            _ => {}
         }
     }
     Ok(())
-}
-
-fn parse_skip_reason(s: &str) -> Option<SkipReason> {
-    match s {
-        "upstream-failed" => Some(SkipReason::UpstreamFailed),
-        "condition-false" => Some(SkipReason::ConditionFalse),
-        "disabled" => Some(SkipReason::Disabled),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
