@@ -823,12 +823,12 @@ fn build_registered_workspace(
     // identical probe consumed through a seal was served from cache.
     //
     // It goes in the probe slot ONLY. The `cache_ctx` argument below stays
-    // `None` on purpose: that one is installed as Lua app_data and puts
-    // `project_id` into `recipe_namespace`, which §5.3 feeds into the cloud
-    // key — so passing it would rekey every artifact in every store and make
-    // the key depend on what the checkout directory happens to be called.
-    // That is a cache-identity decision, not a probe fix; it is COOK-364.
-    let probe_cache_ctx = cook_engine::build_cache_ctx_for_cli(
+    // CS-0196 (COOK-364): ONE context, wired. Key-side project identity is
+    // configured-or-empty (never the checkout directory's name), so
+    // installing it as registration app_data no longer moves any
+    // unconfigured key; registered units finally carry the configured
+    // project segment and the [cache] ignore_env denylist.
+    let cache_ctx = cook_engine::build_cache_ctx_for_cli(
         &resolve_project_root(globals)?,
         globals.no_publish,
     )
@@ -838,8 +838,7 @@ fn build_registered_workspace(
         config,
         &globals.set,
         mode,
-        /*cache_ctx*/ None,
-        Some(probe_cache_ctx),
+        Some(cache_ctx),
     )
     .map_err(pipeline_error_to_cook_error)?;
     for warning in &registered.warnings { eprintln!("cook: warning: {warning}"); }

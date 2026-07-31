@@ -13,7 +13,7 @@ fn make_registry(dir: &std::path::Path) -> RegisterSessionBuilder {
 /// named recipe. Migrated from the deleted `register_recipe` convenience
 /// (SHI-222 Phase 6 Tasks 6.1+6.2). Panics if the named recipe is missing.
 fn register_one(rt: RegisterSessionBuilder, lua_src: &str, name: &str) -> RecipeUnits {
-    let registered = register_cookfile(rt, lua_src, None, None)
+    let registered = register_cookfile(rt, lua_src, None)
         .unwrap_or_else(|e| panic!("register_cookfile failed: {e:?}"));
     registered
         .units_by_recipe
@@ -196,7 +196,7 @@ end)
     // Single register_cookfile pass invokes both bodies in topo order
     // (lib before app, since app requires lib), so the cook.export from
     // lib's body is visible by the time app's body calls cook.import.
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     let lib_result = registered.units_by_recipe.get("lib").expect("lib missing");
     assert_eq!(lib_result.units.len(), 0);
 
@@ -335,7 +335,7 @@ cook.recipe("r", {}, function()
     cook.add_unit({step_kind = "test",  command = "" })
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "empty command must be rejected");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("command"), "error should mention 'command', got: {err}");
@@ -366,7 +366,7 @@ cook.recipe("r", {{}}, function()
 end)
 "#
     );
-    let result = register_cookfile(rt, &lua_src, None, None);
+    let result = register_cookfile(rt, &lua_src, None);
     assert!(
         result.is_err(),
         "expected register_cookfile to reject spec `{{ {spec_body} }}`, but it succeeded"
@@ -468,7 +468,7 @@ cook.recipe("r", {}, function()
     cook.add_unit({ command = "true", step_kind = "test", line = 4 })
 end)
 "#;
-    let units = register_cookfile(rt, lua_src, None, None)
+    let units = register_cookfile(rt, lua_src, None)
         .expect("step_kind = \"test\" must register");
     let r = units.units_by_recipe.get("r").expect("recipe r missing");
     assert_eq!(r.units.len(), 1);
@@ -707,7 +707,7 @@ end
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_cli_overrides(cli_overrides);
-    let err = register_cookfile(registry, lua_source, None, None)
+    let err = register_cookfile(registry, lua_source, None)
         .expect_err("--set on an undeclared name must be rejected");
     let msg = format!("{err}");
     assert!(msg.contains("ARBITRARY"), "diagnostic must name the key: {msg}");
@@ -764,7 +764,7 @@ cook.recipe("standalone", {}, function() end)
     // A single register_cookfile pass invokes every body and emits the
     // shadowing warning at the config-block dispatch step. We only assert
     // it does not error.
-    let registered = register_cookfile(registry, lua_source, None, None)
+    let registered = register_cookfile(registry, lua_source, None)
         .expect("register_cookfile must succeed despite shadowing");
     // All three recipes must have been registered.
     assert!(registered.units_by_recipe.contains_key("foo"));
@@ -815,7 +815,7 @@ cook.__register_surface_chore("evil", {requires = {}, __line = 1}, function()
     cook.add_unit({command = "true", cache = true})
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(
         result.is_err(),
         "cache = true inside a chore must raise an error, but succeeded"
@@ -849,7 +849,7 @@ cook.recipe("chore_then_recipe", {}, function()
     cook.add_unit({command = "echo normal", cache = true, outputs = {"out.txt"}})
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(
         result.is_ok(),
         "cache = true after _exit_chore should be allowed, got: {:?}",
@@ -892,7 +892,7 @@ fn test_compile_chore_and_register_integration() {
         compile_chore(&cookfile.chores[0], &[], &std::collections::BTreeSet::new())
     );
 
-    let result = register_cookfile(rt, &lua, None, None);
+    let result = register_cookfile(rt, &lua, None);
     assert!(
         result.is_ok(),
         "chore registration should succeed, got: {:?}",
@@ -943,7 +943,7 @@ end)
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix("lib".to_string());
 
-    register_cookfile(registry, lua_src, None, None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -978,7 +978,7 @@ end)
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix(String::new());
 
-    register_cookfile(registry, lua_src, None, None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -1021,7 +1021,7 @@ end)
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_shared_member_outputs(shared.clone());
 
-    register_cookfile(registry, lua_src, None, None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -1064,7 +1064,7 @@ end)
         .with_shared_member_outputs(shared.clone())
         .with_qualified_prefix("audio".to_string());
 
-    register_cookfile(registry, lua_src, None, None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -1156,7 +1156,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "duplicate probe key must fail register_cookfile");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -1230,7 +1230,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "unknown probes key must fail");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -1281,7 +1281,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "legacy `requires` field must be rejected");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -1314,7 +1314,7 @@ cook.probe("cc:b", {
 cook.recipe("build", {}, function() end)
 "#;
 
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "probe cycle must fail register_cookfile");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("probe cycle detected"), "got: {err}");
@@ -1334,7 +1334,7 @@ cook.probe("cc:b", { inputs = { requires = {"cc:a"} }, produce = "return 2" })
 cook.recipe("build", {}, function() end)
 "#;
 
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(registered.probes.len(), 2);
 }
 
@@ -1405,7 +1405,7 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     // Topo order: z -> m -> a (alphabetical would be a, m, z).
     assert_eq!(registered.names.len(), 3);
@@ -1469,7 +1469,7 @@ fn register_cookfile_rejects_duplicate_dynamic_registration() {
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let err = register_cookfile(builder, lua_src, None, None).unwrap_err();
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
 
     match err {
         RegisterError::RecipeCollision { name, sites } => {
@@ -1493,7 +1493,7 @@ fn register_cookfile_captures_all_sites_for_triple_collision() {
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let err = register_cookfile(builder, lua_src, None, None).unwrap_err();
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
 
     match err {
         RegisterError::RecipeCollision { name, sites } => {
@@ -1682,7 +1682,7 @@ fn register_cookfile_propagates_origin_through_full_pass() {
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
     assert_eq!(registered.names.len(), 1);
     assert_eq!(
         registered.names[0].origin,
@@ -1711,7 +1711,7 @@ fn register_cookfile_accepts_top_level_probe() {
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert!(
         registered.probes.contains_key("os.kernel"),
@@ -1761,7 +1761,7 @@ fn register_cookfile_surfaces_wrapper_registered_recipe() {
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert_eq!(registered.names.len(), 1);
     assert_eq!(registered.names[0].name, "game");
@@ -1807,7 +1807,7 @@ fn register_cookfile_records_static_surface_recipe_with_line() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder =
         RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert_eq!(registered.names.len(), 1);
     assert_eq!(registered.names[0].name, "build");
@@ -1835,7 +1835,7 @@ fn register_cookfile_records_static_surface_chore_with_kind_chore() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder =
         RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let registered = register_cookfile(builder, lua_src, None, None).unwrap();
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert_eq!(registered.names.len(), 1);
     assert_eq!(registered.names[0].name, "clean");
@@ -1879,7 +1879,7 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
-    let err = register_cookfile(builder, lua_src, None, None).unwrap_err();
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
     match err {
         RegisterError::RecipeCollision { name, sites } => {
             assert_eq!(name, "build");
@@ -1916,7 +1916,7 @@ fn register_surface(
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
     let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
-    register_cookfile(make_registry(dir), &lua_src, None, None)
+    register_cookfile(make_registry(dir), &lua_src, None)
 }
 
 #[test]
@@ -1942,7 +1942,7 @@ cook.recipe("manual", {ingredients = {"missing.*"}, excludes = {}}, function()
     cook.resolve_ingredients({"missing.*"}, {})
 end)
 "#;
-    let registered = register_cookfile(make_registry(dir.path()), lua, None, None).unwrap();
+    let registered = register_cookfile(make_registry(dir.path()), lua, None).unwrap();
     assert_eq!(registered.warnings, vec![
         "ingredient \"missing.*\" matched 0 files (recipe manual)",
     ]);
@@ -2222,7 +2222,7 @@ recipe b
     let rt = RegisterSessionBuilder::new(dir.path().to_path_buf(), HashMap::new())
         .with_target_argv("a".to_string(), vec![]);
     let registered =
-        register_cookfile(rt, &lua_src, None, None).expect("building 'a' must not touch b's probe");
+        register_cookfile(rt, &lua_src, None).expect("building 'a' must not touch b's probe");
     assert_eq!(
         registered.units_by_recipe.get("a").unwrap().units.len(),
         1,
@@ -2472,7 +2472,7 @@ cook.recipe("second", {}, function()
     cook.exec(cook.recipe_name(), 1)
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None)
+    let registered = register_cookfile(rt, lua_src, None)
         .unwrap_or_else(|e| panic!("register_cookfile failed: {e:?}"));
     let first = registered.units_by_recipe.get("first").expect("first registered");
     let second = registered.units_by_recipe.get("second").expect("second registered");
@@ -2519,7 +2519,7 @@ fn recipe_name_errors_outside_recipe_body() {
     let lua_src = r#"
 cook.recipe_name()
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "top-level call must error");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
@@ -2606,7 +2606,7 @@ fn require_recipe_errors_outside_recipe_body_top_level() {
     let lua_src = r#"
 cook.require_recipe("anything")
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "top-level call must error");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
@@ -2724,7 +2724,7 @@ cook.recipe("build", {}, function()
     cook.require_recipe("build")
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(
         result.is_err(),
         "self-reference must be caught even under a qualified prefix (bare-vs-qualified mix-up would silently pass)"
@@ -2774,7 +2774,7 @@ fn register_surface_target(
     let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
     let rt = make_registry(dir).with_target_argv(target.to_string(), vec![]);
-    register_cookfile(rt, &lua_src, None, None)
+    register_cookfile(rt, &lua_src, None)
 }
 
 /// Pull the `requires` recorded for `name` off the registered set.
@@ -2825,7 +2825,7 @@ cook.recipe("producer", {}, function()
     cook.export("producer", { lib_path = "build/libproducer.a" })
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "consumer"),
         "link build/libproducer.a",
@@ -2850,7 +2850,7 @@ cook.recipe("shared", {}, function()
     cook.exec("shared run " .. _G.runs, 1)
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "shared"),
         "shared run 1",
@@ -2876,7 +2876,7 @@ cook.recipe("producer", {}, function()
     cook.exec("producer body", 1)
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     let consumer = &registered.units_by_recipe.get("consumer").unwrap().units;
     let cmds: Vec<&str> = consumer
         .iter()
@@ -2908,7 +2908,7 @@ end)
 cook.recipe("producer", {}, function() end)
 cook.recipe("extra", {}, function() end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         requires_of(&registered, "consumer"),
         vec!["producer".to_string(), "extra".to_string()],
@@ -2928,7 +2928,7 @@ cook.recipe("consumer", {}, function()
 end)
 cook.recipe("producer", {}, function() end)
 "#;
-    let err = register_cookfile(rt, lua_src, None, None)
+    let err = register_cookfile(rt, lua_src, None)
         .expect_err("an unregistered name must be a hard error")
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
@@ -2947,7 +2947,7 @@ fn require_recipe_dynamic_cycle_errors_with_path() {
 cook.recipe("framework", {}, function() cook.require_recipe("idLib") end)
 cook.recipe("idLib", {}, function() cook.require_recipe("framework") end)
 "#;
-    let err = register_cookfile(rt, lua_src, None, None)
+    let err = register_cookfile(rt, lua_src, None)
         .expect_err("a dynamic cycle must be a hard error")
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
@@ -2968,7 +2968,7 @@ cook.recipe("z", {}, function() end)
 cook.recipe("a", {requires = {"z"}}, function() end)
 cook.recipe("m", {}, function() end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     let order: Vec<&str> = registered.names.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(
         order,
@@ -2986,7 +2986,7 @@ fn require_recipe_forces_parametric_chore_when_target_requested() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
     let registered =
-        register_cookfile(rt, &parametric_chore_fixture("gen"), None, None).unwrap();
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "gen"),
         "generate world",
@@ -3004,7 +3004,7 @@ fn require_recipe_forces_parametric_chore_with_no_target() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
     let registered =
-        register_cookfile(rt, &parametric_chore_fixture("gen"), None, None).unwrap();
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "gen"),
         "generate world",
@@ -3026,7 +3026,7 @@ fn require_recipe_forces_parametric_chore_seeded_before_its_requirer() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
     let registered =
-        register_cookfile(rt, &parametric_chore_fixture("agen"), None, None).unwrap();
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "agen"),
         "generate world",
@@ -3043,7 +3043,7 @@ fn require_recipe_forces_parametric_chore_seeded_before_its_requirer_no_target()
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
     let registered =
-        register_cookfile(rt, &parametric_chore_fixture("agen"), None, None).unwrap();
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "agen"),
         "generate world",
@@ -3061,7 +3061,7 @@ fn require_recipe_reinvoked_skip_arm_registers_exactly_one_entry() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
     let registered =
-        register_cookfile(rt, &parametric_chore_fixture("agen"), None, None).unwrap();
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     let entries: Vec<&str> = registered
         .names
         .iter()
@@ -3197,7 +3197,7 @@ cook.recipe("producer", {}, function()
     cook.export("producer", { lib_path = "build/libP.a" })
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "consumer"),
         "link build/libP.a",
@@ -3230,7 +3230,7 @@ cook.recipe("prod", {}, function()
     error("boom: the real failure")
 end)
 "#;
-    let err = register_cookfile(rt, lua_src, None, None)
+    let err = register_cookfile(rt, lua_src, None)
         .expect_err("prod's body raises, so the pass must fail")
         .to_string();
     assert!(
@@ -3277,7 +3277,7 @@ cook.recipe("flaky", {}, function()
     cook.exec("flaky re-ran", 1)
 end)
 "#;
-    let err = register_cookfile(rt, lua_src, None, None)
+    let err = register_cookfile(rt, lua_src, None)
         .expect_err("flaky's body raises, so the pass must fail")
         .to_string();
     assert!(
@@ -3319,7 +3319,7 @@ fn require_recipe_mixed_static_dynamic_cycle_errors_with_path() {
 cook.recipe("aaa", {requires = {"bbb"}}, function() end)
 cook.recipe("bbb", {}, function() cook.require_recipe("aaa") end)
 "#;
-    let err = register_cookfile(rt, lua_src, None, None)
+    let err = register_cookfile(rt, lua_src, None)
         .expect_err("a static+dynamic cycle must be rejected at register phase")
         .to_string();
     assert!(
@@ -3367,7 +3367,7 @@ cook.recipe("tools", {}, function()
     cook.export("tools", { bin = "protoc" })
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "app"),
         "app gen-using-protoc",
@@ -3399,7 +3399,7 @@ cook.recipe("eee", {}, function()
     table.insert(_G.order, "eee")
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "ddd"),
         "seen eee,ddd",
@@ -3432,7 +3432,7 @@ cook.recipe("ddd", {}, function()
     cook.exec("ddd run " .. _G.runs, 1)
 end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "ddd"),
         "ddd run 1",
@@ -3465,7 +3465,7 @@ cook.__register_surface_chore("agen",
         cook.exec("generate " .. __cook_params.who, 1)
     end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "agen"),
         "generate world",
@@ -3511,7 +3511,7 @@ cook.__register_surface_chore("achore",
         cook.exec("generate " .. __cook_params.who, 1)
     end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "achore"),
         "generate world",
@@ -3543,7 +3543,7 @@ cook.__register_surface_chore("achore",
         cook.exec("generate " .. __cook_params.who, 1)
     end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "achore"),
         "generate world",
@@ -3622,7 +3622,7 @@ cook.__register_surface_chore("codegen",
         cook.exec("codegen " .. __cook_params.lang, 1)
     end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "codegen"),
         "codegen ts",
@@ -3660,7 +3660,7 @@ cook.__register_surface_chore("achore",
         cook.exec("generate " .. __cook_params.who, 1)
     end)
 "#;
-    let registered = register_cookfile(rt, lua_src, None, None).unwrap();
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "achore"),
         "generate world",
@@ -3754,7 +3754,7 @@ fn canonical_cycle_path(err: &str) -> Vec<String> {
 fn require_recipe_force_through_already_visited_recipe_renders_full_cycle() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
-    let err = register_cookfile(rt, &mid_achore_cycle_fixture("zzz"), None, None)
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("zzz"), None)
         .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
@@ -3791,7 +3791,7 @@ fn require_recipe_force_through_already_visited_recipe_renders_full_cycle() {
 fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_case() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
-    let err = register_cookfile(rt, &mid_achore_cycle_fixture("app"), None, None)
+    let err = register_cookfile(rt, &mid_achore_cycle_fixture("app"), None)
         .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
@@ -3806,7 +3806,7 @@ fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_
     // the identical cycle as the `zzz` case above (Standard §22.8).
     let dir2 = TempDir::new().unwrap();
     let rt2 = make_registry(dir2.path());
-    let zzz_err = register_cookfile(rt2, &mid_achore_cycle_fixture("zzz"), None, None)
+    let zzz_err = register_cookfile(rt2, &mid_achore_cycle_fixture("zzz"), None)
         .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
         .to_string();
     assert_eq!(
@@ -3860,7 +3860,7 @@ cook.on_register_complete(function()
     end
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
 }
 
@@ -3884,7 +3884,7 @@ cook.on_register_complete(function()
     end
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
 }
 
@@ -3906,7 +3906,7 @@ cook.on_register_complete(function()
     end)
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
     let content = fs::read_to_string(dir.path().join("requeued.txt"))
         .expect("requeued callback should have run and written the file");
@@ -3929,7 +3929,7 @@ cook.on_register_complete(function()
     cook.recipe("late", {}, function() end)
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "expected Err, got Ok");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("cook.on_register_complete"), "got: {err}");
@@ -3949,7 +3949,7 @@ cook.on_register_complete(function()
     cook.probe("late_probe", { produce = "return 1" })
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "expected Err, got Ok");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("cook.on_register_complete"), "got: {err}");
@@ -3971,7 +3971,7 @@ cook.on_register_complete(function()
     cook.add_unit({ command = "echo x", inputs = {}, output = "x" })
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "expected Err, got Ok");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -3994,7 +3994,7 @@ cook.on_register_complete(function()
     error("boom")
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "expected Err, got Ok");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("boom"), "got: {err}");
@@ -4018,7 +4018,7 @@ cook.on_register_complete(function()
     fs.write("summary.txt", info.path)
 end)
 "#;
-    let result = register_cookfile(rt, lua_src, None, None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
     let content = fs::read_to_string(dir.path().join("summary.txt")).unwrap();
     assert_eq!(content, "build/lib.a");
@@ -4268,7 +4268,7 @@ fn cook_chore_body_gets_chore_unit_semantics() {
     );
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default())
         .with_target_argv("cc.fmt".to_string(), vec![]);
-    let err = register_cookfile(builder, r#"cook.load_module("cook_cc")"#, None, None).unwrap_err();
+    let err = register_cookfile(builder, r#"cook.load_module("cook_cc")"#, None).unwrap_err();
     assert!(
         err.to_string().contains("cache = true is not permitted in a chore body"),
         "chore semantics not established for a cook.chore body; got: {err}"

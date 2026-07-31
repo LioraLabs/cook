@@ -84,7 +84,7 @@ fn register_positive_conformance_corpus() {
         // register_cookfile registers ALL recipes in the file and invokes
         // every body; positive fixtures must succeed end-to-end without
         // singling out a specific name.
-        match register_cookfile(registry, &lua_source, None, None) {
+        match register_cookfile(registry, &lua_source, None) {
             Ok(_) => {}
             Err(e) => failures.push(format!("case {}: register failed: {}", name, e)),
         }
@@ -149,7 +149,7 @@ fn register_negative_conformance_corpus() {
             continue;
         }
 
-        match register_cookfile(registry, &lua_source, None, None) {
+        match register_cookfile(registry, &lua_source, None) {
             Ok(_) => {
                 failures.push(format!(
                     "case {}: expected register-phase error containing {:?}, got Ok\n",
