@@ -462,9 +462,8 @@ fn bridge_engine_to_progress_events(
 }
 
 /// Reported commands carry codegen's `set -e` prelude; strip it for display.
-fn strip_set_e(cmd: &str) -> &str {
-    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
-}
+/// The one inverse lives beside compose() (COOK-391).
+use cook_contracts::shell_block::strip_set_e;
 
 fn render_command_failure(failure: &CommandFailure) -> String {
     let command = strip_set_e(failure.command());

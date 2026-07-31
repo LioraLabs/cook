@@ -62,3 +62,31 @@ fn shell_metacharacters_pass_through_untouched() {
         "set -e\ncat a | grep x > b\necho 'single' \"double\" $VAR"
     );
 }
+
+#[test]
+fn strip_is_composes_inverse_including_the_empty_edge() {
+    // COOK-391: the round trip — strip(compose(body)) is the body's own
+    // text — holds for every block, INCLUDING the empty one whose composed
+    // form carries no trailing LF (the case the old strip_prefix twins
+    // left unstripped).
+    for body in [vec![], vec!["echo hi".to_string()],
+                 vec!["mkdir -p b".to_string(), "cc -o b/x x.c".to_string()]] {
+        assert_eq!(strip_set_e(&compose(&body)), body.join("\n"));
+    }
+}
+
+#[test]
+fn strip_passes_uncomposed_text_through() {
+    assert_eq!(strip_set_e("echo plain"), "echo plain");
+    // A mid-body `set -e` LINE is the author's text, not the prelude — the
+    // inverse only ever removes what compose() added.
+    assert_eq!(
+        strip_set_e("set -e\necho a\nset -e\necho b"),
+        "echo a\nset -e\necho b"
+    );
+}
+
+#[test]
+fn prefix_constant_matches_compose() {
+    assert!(compose(&["x".to_string()]).starts_with(SET_E_PREFIX));
+}

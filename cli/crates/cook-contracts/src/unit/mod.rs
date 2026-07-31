@@ -68,13 +68,17 @@ impl WorkPayload {
     pub fn display_name(&self) -> String {
         match self {
             Self::Shell { cmd, .. } => {
-                let body = cmd
+                // COOK-391: strip exactly the compose() prelude — the law's
+                // inverse — instead of filtering any `set -e` LINE anywhere
+                // (which mislabeled a body whose own text contains one).
+                let stripped = crate::shell_block::strip_set_e(cmd);
+                let body = stripped
                     .lines()
                     .map(str::trim)
-                    .find(|l| !l.is_empty() && *l != "set -e")
-                    // Degenerate body (empty, or nothing but the `set -e`
-                    // preamble): fall back to the first non-empty line so
-                    // callers surfacing this label never get a blank string.
+                    .find(|l| !l.is_empty())
+                    // Degenerate body (empty, or nothing but the preamble):
+                    // fall back so callers surfacing this label never get a
+                    // blank string.
                     .or_else(|| cmd.lines().map(str::trim).find(|l| !l.is_empty()))
                     .unwrap_or("sh");
                 if body.len() <= 60 {

@@ -573,9 +573,8 @@ pub enum EngineError {
 }
 
 /// Reported commands carry codegen's `set -e` prelude; strip it for display.
-fn strip_set_e(cmd: &str) -> &str {
-    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
-}
+/// The one inverse lives beside compose() (COOK-391).
+use cook_contracts::shell_block::strip_set_e;
 
 // Map `cook_register::RegisterError` onto `EngineError` so callers that
 // drive the register-phase via this crate can propagate failures with `?`

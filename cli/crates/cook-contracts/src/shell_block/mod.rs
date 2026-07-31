@@ -14,6 +14,12 @@
 //! them ignored. Two copies of a rule this load-bearing are two chances for a
 //! build to stop meaning what its author wrote (CS-0190).
 
+/// The halt-on-failure prelude `compose` puts before a non-empty body, as
+/// it appears in the composed text. Callers that must spell the prefix in
+/// another encoding (e.g. inside a generated Lua string literal) derive it
+/// from this constant rather than re-typing it (COOK-391).
+pub const SET_E_PREFIX: &str = "set -e\n";
+
 /// Compose a `shell_block`'s lines into the single shell text that runs them.
 ///
 /// The `set -e` prefix costs no source line: line *k* of `lines` is line *k* of
@@ -26,6 +32,23 @@ pub fn compose(lines: &[String]) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// `compose`'s inverse for display: strip the `set -e` prelude, leaving the
+/// author's body text. Not-composed text passes through unchanged.
+///
+/// The empty-block edge has ONE answer here (COOK-391): `compose(&[])`
+/// yields the bare `"set -e"` with no trailing LF, and stripping it yields
+/// the empty body the author wrote — the two former per-crate strippers
+/// (`strip_prefix("set -e\n")` twins) left that case unstripped, and a
+/// third site filtered any `set -e` LINE anywhere in the body, which is
+/// not this law's inverse at all.
+pub fn strip_set_e(cmd: &str) -> &str {
+    match cmd.strip_prefix(SET_E_PREFIX) {
+        Some(body) => body,
+        None if cmd == "set -e" => "",
+        None => cmd,
+    }
 }
 
 #[cfg(test)]
