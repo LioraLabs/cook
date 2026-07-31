@@ -55,37 +55,8 @@ fn ctx_oneshot_none(recipes: &BTreeSet<String>) -> ResolveCtx<'_> {
     }
 }
 
-// ─── quote_context tests (CS-0128) ───────────────────────────────────────
-
-#[test]
-fn quote_context_bare() {
-    assert_eq!(quote_context("echo "), QCtx::Bare);
-    assert_eq!(quote_context(""), QCtx::Bare);
-    // A closed double-quoted region returns to bare.
-    assert_eq!(quote_context("echo \"hi\" "), QCtx::Bare);
-}
-
-#[test]
-fn quote_context_double() {
-    assert_eq!(quote_context("echo \"hi "), QCtx::Double);
-    // A single quote inside a double-quoted region is literal, not an open.
-    assert_eq!(quote_context("echo \"it's "), QCtx::Double);
-}
-
-#[test]
-fn quote_context_single() {
-    assert_eq!(quote_context("echo 'hi "), QCtx::Single);
-    // A double quote inside a single-quoted region is literal.
-    assert_eq!(quote_context("echo 'say \"hi "), QCtx::Single);
-    // Backslash is inert inside single quotes (POSIX).
-    assert_eq!(quote_context("echo 'a\\"), QCtx::Single);
-}
-
-#[test]
-fn quote_context_backslash_escape_outside_quotes() {
-    // An escaped double-quote does not open a double-quoted region.
-    assert_eq!(quote_context("echo \\\" "), QCtx::Bare);
-}
+// The quote_context tests (CS-0128) moved to cook_contracts::quoting with
+// the classifier itself (COOK-389).
 
 #[test]
 fn no_placeholders_returns_quoted_literal() {
