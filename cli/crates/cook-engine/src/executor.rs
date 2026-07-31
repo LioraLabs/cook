@@ -2547,12 +2547,18 @@ pub fn execute_dag(
                     // outputs), but the call is uniform across dispatch paths so
                     // any future cook-style interactive variant inherits the
                     // contract.
+                    // CS-0164 (COOK-387): spawn with the process-env subset,
+                    // never the full config lookup map — a declared `var.*`
+                    // value must not reach a child's environment. The chore
+                    // window and the pool's execute_shell already obey this;
+                    // this arm passed `env_vars` and leaked every declared
+                    // variable into interactive children.
                     let result = match ensure_output_parent_dirs(work_node) {
                         Ok(()) => run_interactive_on_main(
                             cmd,
                             *line,
                             &work_node.working_dir,
-                            &work_node.env_vars,
+                            &work_node.process_env_vars,
                         ),
                         Err(e) => Err(e),
                     };

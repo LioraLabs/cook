@@ -1,0 +1,21 @@
+# CS-0164 (COOK-387): a declared config variable must never reach a child
+# process environment. The interactive dispatch arm passed the full config
+# lookup map to the spawn, so any `cook.add_unit({interactive = true})` child
+# could read every declared variable as an ambient env var. The chore window
+# and the worker pool already passed the process-env subset; this pins all
+# three arms to the same rule.
+
+config
+    var.SECRET = "leakme"
+
+recipe legacyinteractive
+    cook.add_unit({
+        name = "leakcheck",
+        inputs = {},
+        interactive = true,
+        command = "mkdir -p out && printf 's=[%s]\\n' \"$SECRET\" > out/legacy.txt",
+    })
+
+chore choreleak
+    mkdir -p out
+    printf 's=[%s]\n' "$SECRET" > out/chore.txt
