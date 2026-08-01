@@ -84,9 +84,7 @@ pub struct WorkResult {
     /// Wall-clock span of the actual work-item execution, measured by the
     /// worker around the `execute_work_item` dispatch (queue wait
     /// excluded). Measured for every payload kind so a unit's completion
-    /// line reports real elapsed time rather than a
-    /// unit's completion line can report real elapsed time instead of a
-    /// hardcoded zero. Individual `execute_*` helpers set this to
+    /// line reports real elapsed time instead of a hardcoded zero. Individual `execute_*` helpers set this to
     /// `Duration::ZERO` in their returned literals; `worker_loop`
     /// overwrites it with the measured span for every outcome (success,
     /// failure, and the worker-panic recovery path) before sending the

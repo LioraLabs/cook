@@ -2,7 +2,9 @@
 //!
 //! The graph knows shape and nothing else. Everything about whether a unit
 //! will actually run comes from `cook_engine::why`, and everything about what
-//! it cost comes from `cook_engine::timings`. This module is the seam: a map
+//! it cost comes from the observations `cook_engine::why` reads back (this
+//! named `cook_engine::timings`, a module that no longer exists). This module
+//! is the seam: a map
 //! from `(recipe, cache_key)` to what those two know, which
 //! [`crate::emit::aggregate`] rolls up as it collapses the graph.
 //!

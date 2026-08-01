@@ -13,10 +13,16 @@
 //! Each entry consults a [`SandboxSource`] (CS-0045) before performing
 //! I/O. Under `SandboxPolicy::Confined` the call rejects paths that
 //! resolve outside the project root with a Lua runtime error; under
-//! `SandboxPolicy::Off` the call behaves as it did pre-CS-0045. Plate
-//! step Lua bodies are the only execute-phase context that runs with
-//! `Off`; cook/test/chore step bodies and all register-phase Lua run
-//! with `Confined`.
+//! `SandboxPolicy::Off` the call behaves as it did pre-CS-0045.
+//!
+//! As of CS-0135 no step kind selects `Off`: every cook/test/chore Lua
+//! body and all register-phase Lua run `Confined`, and `Off` survives only
+//! as the worker's initial/unset state. This paragraph named `plate` step
+//! bodies as the one execute-phase context running with `Off` long after
+//! CS-0135 removed `plate`, so a reader auditing the sandbox got two
+//! contradictory answers about whether an unconfined path exists (the
+//! other, correct, one being `sandbox.rs`). The permissive path is a
+//! `chore`'s raw shell steps (§25.9).
 
 use mlua::prelude::*;
 
