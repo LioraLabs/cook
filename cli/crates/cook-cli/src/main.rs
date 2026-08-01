@@ -123,7 +123,9 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
                 cook_logs::BuildSelector::Latest
             };
             let project_root = resolve_project_root(&globals)?;
-            cook_logs::cmd_logs(&project_root, selector, cook_logs::Theme::default())
+            // COOK-409: `--theme` used to be parsed and discarded here.
+            let theme = cook_logs::Theme::from_name(&args.theme).map_err(CookError::Other)?;
+            cook_logs::cmd_logs(&project_root, selector, theme)
                 .map_err(|e| CookError::Other(e.to_string()))
         }
         Some(Cmd::Cache(args)) => match args.cmd {

@@ -51,8 +51,11 @@ fn render_row<'a>(state: &'a UiState, theme: &Theme, row: FlatRow) -> Line<'a> {
         FlatRow::Node(rid, nid) => {
             let node = &state.view.recipes[&rid].nodes[&nid];
             let (g, style) = status_glyph(theme, node.status);
+            // COOK-392 / CS-0198: THE duration law. This site hand-rolled
+            // `{:.1}s` and so disagreed with the header pane in the same frame
+            // (61,500ms read `1m01s` above and `61.5s` here).
             let dur = node.elapsed_ms
-                .map(|ms| format!("  ·  {:.1}s", ms as f64 / 1000.0))
+                .map(|ms| format!("  ·  {}", cook_contracts::render::duration_ms(ms)))
                 .unwrap_or_default();
             Line::from(vec![
                 Span::raw("  "),

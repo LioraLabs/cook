@@ -150,6 +150,25 @@ impl UiState {
         }
     }
 
+    /// Collapse (`false`) or expand (`true`) the selected recipe.
+    ///
+    /// COOK-409: `h` and `l` both called [`toggle_fold`], so they were the same
+    /// key, while the help text promised "h/l collapse/expand". Directional keys
+    /// need a directional operation: pressing `h` twice must leave a recipe
+    /// collapsed, not put it back.
+    pub fn set_fold(&mut self, expand: bool) {
+        if let Some(FlatRow::Recipe(rid)) = self.flat.get(self.selected).copied() {
+            let changed = if expand {
+                self.expanded.insert(rid)
+            } else {
+                self.expanded.remove(&rid)
+            };
+            if changed {
+                self.rebuild_flat();
+            }
+        }
+    }
+
     /// Adjust `tree_scroll` so `selected` sits inside the visible window.
     /// Sticky: scroll only changes when the selection would otherwise leave
     /// the viewport. No-op when `available_rows == 0`.

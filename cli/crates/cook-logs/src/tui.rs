@@ -21,7 +21,20 @@ use crate::render;
 use crate::state::{Focus, UiState};
 use crate::theme::Theme;
 
-pub fn run(view: BuildView, diag: LoadDiagnostics, theme: Theme) -> Result<(), ViewerError> {
+/// Run the viewer against the build log tree at `logs_root`.
+///
+/// COOK-409: `logs_root` is a parameter because it used to be re-derived from
+/// `current_dir()` inside the loop, after `cmd_logs` had already resolved the
+/// project root and thrown it away. Invoked from a subdirectory, reload, the
+/// build picker, and switching builds all looked at a `.cook/logs` that does
+/// not exist, and the misses were swallowed by `if let Ok(…)`, so the keys
+/// silently did nothing. Directly at odds with COOK-43 directory hopping.
+pub fn run(
+    logs_root: PathBuf,
+    view: BuildView,
+    diag: LoadDiagnostics,
+    theme: Theme,
+) -> Result<(), ViewerError> {
     if !std::io::stdout().is_tty() {
         return print_logs_fallback(&view);
     }
@@ -32,7 +45,7 @@ pub fn run(view: BuildView, diag: LoadDiagnostics, theme: Theme) -> Result<(), V
     let backend = CrosstermBackend::new(out);
     let mut terminal =
         Terminal::new(backend).map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
-    let result = run_with_backend(view, diag, theme, &mut terminal);
+    let result = run_with_backend(logs_root, view, diag, theme, &mut terminal);
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
@@ -69,22 +82,19 @@ fn write_logs_fallback<W: std::io::Write>(
 }
 
 pub fn run_with_backend<B: Backend>(
+    logs_root: PathBuf,
     view: BuildView,
     diag: LoadDiagnostics,
     theme: Theme,
     terminal: &mut Terminal<B>,
 ) -> Result<(), ViewerError> {
     let mut state = UiState::new(view, diag);
-    let logs_root: Option<PathBuf> =
-        std::env::current_dir().ok().map(|d| cook_contracts::layout::logs_dir(&d));
 
     loop {
         if let Some(p) = state.picker.as_mut() {
             if p.builds.is_empty() {
-                if let Some(root) = &logs_root {
-                    if let Ok(list) = log_reader::list_builds(root) {
-                        p.builds = list;
-                    }
+                if let Ok(list) = log_reader::list_builds(&logs_root) {
+                    p.builds = list;
                 }
             }
         }
@@ -97,11 +107,13 @@ pub fn run_with_backend<B: Backend>(
                 Action::Quit => break,
                 Action::Continue => {}
                 Action::Reload => {
-                    if let Some(root) = &logs_root {
-                        let build_dir = root.join(&state.view.build_id);
-                        if let Ok((view, diag)) = log_reader::load(&build_dir) {
-                            state = UiState::new(view, diag);
-                        }
+                    let build_dir = logs_root.join(&state.view.build_id);
+                    // Still swallowed: with the root now correct, a failure here
+                    // means a genuinely unreadable build rather than a wrong
+                    // path. Surfacing it needs a message channel `UiState` does
+                    // not have; see COOK-409's close note.
+                    if let Ok((view, diag)) = log_reader::load(&build_dir) {
+                        state = UiState::new(view, diag);
                     }
                 }
                 Action::YankSelectedLog => {
@@ -124,8 +136,8 @@ pub fn run_with_backend<B: Backend>(
                     }
                 }
                 Action::SwitchBuild(target_id) => {
-                    if let Some(root) = &logs_root {
-                        let build_dir = root.join(&target_id);
+                    {
+                        let build_dir = logs_root.join(&target_id);
                         if let Ok((view, diag)) = log_reader::load(&build_dir) {
                             // Preserve a few UI prefs across builds per spec §10.
                             let prev_filter = state.filter;
