@@ -909,25 +909,50 @@ fn print_verify_human(report: &cook_engine::verify::VerifyReport) {
     );
 }
 
-fn print_verify_json(report: &cook_engine::verify::VerifyReport) {
+/// Build the `cook cache verify --json` document.
+///
+/// COOK-406: this was hand-rolled, with an `esc` closure that escaped `\` and
+/// `"` and nothing else. `UnitVerdict::Error { detail }` carries engine error
+/// strings, which routinely contain newlines, so any verify failure with a
+/// multi-line detail emitted invalid JSON on a documented machine surface.
+///
+/// The stated reason for hand-rolling (avoid leaking serde derives into the
+/// engine crate) never applied: this crate already depends on `serde_json` and
+/// already uses it for `why` and `affected`, and building the value here leaks
+/// nothing into the engine.
+///
+/// Separate from the printing so the shape is testable without capturing
+/// stdout.
+fn verify_json_value(report: &cook_engine::verify::VerifyReport) -> serde_json::Value {
     use cook_engine::verify::UnitVerdict;
-    // Hand-rolled JSON to avoid leaking serde derives into the engine crate.
-    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let mut items = Vec::new();
-    for u in &report.units {
-        let (verdict, detail) = match &u.verdict {
-            UnitVerdict::Pass => ("pass", String::new()),
-            UnitVerdict::RecordExempt => ("record_exempt", String::new()),
-            UnitVerdict::Divergence { detail } => ("divergence", detail.clone()),
-            UnitVerdict::Error { detail } => ("error", detail.clone()),
-        };
-        items.push(format!(
-            "{{\"recipe\":\"{}\",\"unit\":\"{}\",\"key\":\"{}\",\"verdict\":\"{}\",\"detail\":\"{}\"}}",
-            esc(&u.recipe), esc(&u.unit), esc(&u.key), verdict, esc(&detail)
-        ));
-    }
-    println!("{{\"units\":[{}],\"divergences\":{},\"errors\":{}}}",
-        items.join(","), report.divergences(), report.errors());
+    let units: Vec<serde_json::Value> = report
+        .units
+        .iter()
+        .map(|u| {
+            let (verdict, detail) = match &u.verdict {
+                UnitVerdict::Pass => ("pass", ""),
+                UnitVerdict::RecordExempt => ("record_exempt", ""),
+                UnitVerdict::Divergence { detail } => ("divergence", detail.as_str()),
+                UnitVerdict::Error { detail } => ("error", detail.as_str()),
+            };
+            serde_json::json!({
+                "recipe": u.recipe,
+                "unit": u.unit,
+                "key": u.key,
+                "verdict": verdict,
+                "detail": detail,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "units": units,
+        "divergences": report.divergences(),
+        "errors": report.errors(),
+    })
+}
+
+fn print_verify_json(report: &cook_engine::verify::VerifyReport) {
+    println!("{}", verify_json_value(report));
 }
 
 pub fn cmd_run(

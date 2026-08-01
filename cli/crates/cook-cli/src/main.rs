@@ -275,6 +275,10 @@ fn partition_argv(
                 globals.quiet = true;
                 continue;
             }
+            "--replay-logs" => {
+                globals.replay_logs = true;
+                continue;
+            }
             "--no-prune" => {
                 globals.no_prune = true;
                 continue;
