@@ -3215,7 +3215,7 @@ fn publish_completion(
         let source_for_skip = judged_inputs.first().map(String::as_str).unwrap_or("");
         match cook_cache::parse_make_depfile(&abs_depfile, source_for_skip, working_dir) {
             Ok(discovered_paths) => {
-                match cook_cache::collect_records_public(&discovered_paths, working_dir) {
+                match cook_cache::collect_records(&discovered_paths, working_dir) {
                     Ok(records) => {
                         for rec in records {
                             step_entry.inputs.push(rec);

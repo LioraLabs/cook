@@ -271,8 +271,9 @@ struct BatchQueryResponse {
 /// `ureq::Request::send(reader)`.
 struct CappedReader<'a> {
     inner: &'a mut dyn Read,
-    total: u64,
-    limit: u64,
+    /// COOK-417: the accumulate-and-check, shared with `LocalBackend::put`.
+    /// This file used to carry its own copy and concede it in a comment.
+    cap: crate::cap::CapCounter,
     /// Sticky flag — once we've raised the cap-exceeded error, every
     /// subsequent read returns 0 (EOF). `ureq` may call `read` once more
     /// after we error; this avoids re-erroring.
@@ -283,8 +284,7 @@ impl<'a> CappedReader<'a> {
     fn new(inner: &'a mut dyn Read, limit: u64) -> Self {
         Self {
             inner,
-            total: 0,
-            limit,
+            cap: crate::cap::CapCounter::new(limit),
             done: false,
         }
     }
@@ -299,16 +299,9 @@ impl<'a> Read for CappedReader<'a> {
         if n == 0 {
             return Ok(0);
         }
-        self.total = self.total.saturating_add(n as u64);
-        if self.total > self.limit {
+        if let Err(msg) = self.cap.add(n as u64) {
             self.done = true;
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "artifact exceeds max_artifact_bytes ({}); cap {}",
-                    self.total, self.limit
-                ),
-            ));
+            return Err(io::Error::other(msg));
         }
         Ok(n)
     }
@@ -519,11 +512,8 @@ impl CacheBackend for CloudBackend {
                 // The CappedReader's io::Error("artifact exceeds ...")
                 // surfaces here as a transport error. Distinguish by
                 // checking the `total > limit` state.
-                if capped.done && capped.total > capped.limit {
-                    Err(BackendError::Other(format!(
-                        "artifact exceeds max_artifact_bytes ({}); cap {}",
-                        capped.total, capped.limit
-                    )))
+                if capped.done && capped.cap.exceeded() {
+                    Err(BackendError::Other(capped.cap.message()))
                 } else {
                     Err(BackendError::Transient(format!("put: transport: {t}")))
                 }
