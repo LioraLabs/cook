@@ -7,8 +7,11 @@
 //! sandbox is meant to close: the captured `lua_code` would not
 //! reflect the side-effects of an `os.execute("rm -rf /")`.
 //!
-//! Plate step bodies are explicitly the user's escape hatch for
-//! ad-hoc shell, so they remain untouched.
+//! CS-0135 removed `plate`, and with it the last step kind that ran
+//! unconfined; this paragraph went on naming plate bodies as the user's
+//! escape hatch afterwards. The escape hatch is a `chore`'s raw shell
+//! steps (§25.9), which is what the diagnostics below already tell the
+//! user to reach for.
 //!
 //! The guard is implemented by replacing the offending entries with
 //! Lua functions that consult a [`SandboxSource`] on each call. When
@@ -79,7 +82,7 @@ pub fn install_shell_escape_guards(lua: &Lua, sandbox: SandboxSource) -> LuaResu
                     "io.popen: Lua-side shell escape hatch is disabled \
                      in cook/test/chore step bodies; use \
                      cook.sh (which runs with the recipe's working_dir \
-                     and is recorded in the unit's command_hash) or move
+                     and is recorded in the unit's command_hash) or move \
                      the call to a `chore` (whose raw shell steps run unsandboxed)",
                 ));
             }
