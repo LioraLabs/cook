@@ -1699,37 +1699,41 @@ pub fn cmd_serve(
     recipe_name: &str,
     config: Option<&str>,
 ) -> Result<(), CookError> {
-    let parsed = read_and_parse(globals)?;
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
-
-    // Check for interactive steps -- not supported under cook serve
-    for recipe in &parsed.cookfile.recipes {
-        for step in &recipe.steps {
-            if let cook_lang::ast::Step::Shell {
-                interactive: true,
-                line,
-                ..
-            } = step
-            {
-                return Err(CookError::Other(format!(
-                    "line {}: interactive '@' steps are not supported under 'cook serve'",
-                    line
-                )));
-            }
-        }
-    }
 
     // Resolve execution order via engine analyzer for glob collection. The
     // analyzer's `recipe_infos` map now comes from the unified register
     // pass over the full workspace (root + every transitive import), so a
     // root recipe with a cross-Cookfile dependency resolves correctly here
-    // too. Glob collection below still walks only the root AST
-    // (`parsed.cookfile`) — imports only contribute file paths to watch.
+    // too. Glob collection below reads the registered units' declared inputs
+    // (COOK-407); it used to walk only the root AST, which saw neither
+    // module-registered recipes nor imported members.
     // `cmd_serve` also needs the loaded `Workspace` (unlike the other
     // commands): the imports' Cookfile paths feed the watcher below.
     let (workspace, serve_registered) =
         build_registered_workspace(globals, config, RegisterMode::Enumerate)?;
+    // Interactive steps are not supported under `cook serve`. COOK-407: this
+    // scanned `parsed.cookfile.recipes` and so saw only the entry Cookfile's
+    // surface recipes, missing an `@` step in an imported member or in a
+    // module-registered unit. The registered units are every unit there is.
+    for (rname, units) in &serve_registered.units_by_recipe {
+        for unit in &units.units {
+            if let cook_contracts::WorkPayload::Interactive {
+                line, is_chore, ..
+            } = &unit.payload
+            {
+                // A chore's interactive window is not a recipe `@` step; only
+                // the legacy in-recipe form is rejected here.
+                if !is_chore {
+                    return Err(CookError::Other(format!(
+                        "{rname}: line {line}: interactive '@' steps are not supported under 'cook serve'"
+                    )));
+                }
+            }
+        }
+    }
+
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&serve_registered);
     let order =
         cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
@@ -1743,7 +1747,9 @@ pub fn cmd_serve(
             e => CookError::Other(e.to_string()),
         })?;
 
-    let globs = CookWatcher::collect_globs_for_recipes(&parsed.cookfile, &order);
+    // COOK-407: from the registered units, not the root AST, so
+    // module-registered recipes and imported members contribute their inputs.
+    let globs = CookWatcher::collect_globs_for_recipes(&serve_registered, &order);
     if globs.is_empty() {
         return Err(CookError::Other(
             "nothing to watch: no recipes in the chain have ingredients".to_string(),
