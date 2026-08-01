@@ -448,13 +448,12 @@ pub fn execute_dag(
         return Ok(Vec::new());
     }
 
-    // Defensive cycle check before spawning any workers. The work-DAG
-    // builder cannot introduce cycles by construction (deps only point to
-    // already-emitted ids), but if a future builder change does, fail
-    // fast with a path-bearing diagnostic instead of deadlocking the pool.
-    if let Err(cycle) = dag.validate() {
-        return Err(EngineError::CycleDetected(cycle.to_string()));
-    }
+    // COOK-400: the defensive cycle check that used to sit here is gone with
+    // `Dag::validate`. Its own comment conceded the work-DAG builder cannot
+    // introduce a cycle by construction, and `Dag::add_node` enforces exactly
+    // that (it rejects any dep id >= the new node's), so the check could never
+    // fire. `EngineError::CycleDetected` is still raised by `run.rs` for
+    // recipe-level cycles, which are a real possibility on a different graph.
 
     // COOK-306: arm the per-run mtime memo. Registration (and every probe
     // capture it ran) is complete by now, so nothing has written to the tree

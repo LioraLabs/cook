@@ -8,7 +8,6 @@ fn empty_dag() {
     assert!(dag.is_empty());
     assert_eq!(dag.len(), 0);
     assert!(dag.initial_ready().is_empty());
-    assert!(dag.validate().is_ok());
 }
 
 // ── single node ────────────────────────────────────────────────────
@@ -23,7 +22,6 @@ fn single_node_is_initially_ready() {
 
     let ready = dag.initial_ready();
     assert_eq!(ready, vec![0]);
-    assert!(dag.validate().is_ok());
 }
 
 // ── linear chain ───────────────────────────────────────────────────
@@ -47,7 +45,6 @@ fn linear_chain_a_b_c() {
     // Complete c -> nothing new.
     assert!(dag.complete(c).is_empty());
 
-    assert!(dag.validate().is_ok());
 }
 
 // ── diamond pattern ────────────────────────────────────────────────
@@ -80,7 +77,6 @@ fn diamond_a_bc_d() {
     assert_eq!(dag.complete(c), vec![d]);
     assert_eq!(dag.node(d).remaining_deps(), 0);
 
-    assert!(dag.validate().is_ok());
 }
 
 // ── parallel roots ─────────────────────────────────────────────────
@@ -96,7 +92,6 @@ fn parallel_roots() {
     ready.sort();
     assert_eq!(ready, vec![r0, r1, r2]);
     assert_eq!(dag.len(), 3);
-    assert!(dag.validate().is_ok());
 }
 
 // ── node access by ID ──────────────────────────────────────────────
@@ -122,77 +117,6 @@ fn node_access_by_id() {
     assert_eq!(dag.node(0).remaining_deps(), 0);
     assert_eq!(dag.node(1).remaining_deps(), 1);
     assert_eq!(dag.node(2).remaining_deps(), 2);
-}
-
-// ── cycle detection (two-node loop) ────────────────────────────────
-
-#[test]
-fn cycle_detection_two_node_loop() {
-    // A real two-node cycle cannot be built through `add_node` (which
-    // forbids forward references). Construct the deps directly via the
-    // crate-private fields to exercise validate().
-    let mut dag: Dag<&str> = Dag::new();
-    // Insert two nodes with no deps via add_node.
-    let a = dag.add_node("a", &[]).unwrap();
-    let b = dag.add_node("b", &[]).unwrap();
-    // Manually wire a cycle: a depends on b, b depends on a.
-    dag.deps[a] = vec![b];
-    dag.deps[b] = vec![a];
-    dag.nodes[a].dependents = vec![b];
-    dag.nodes[b].dependents = vec![a];
-    dag.nodes[a].remaining_deps.store(1, Ordering::SeqCst);
-    dag.nodes[b].remaining_deps.store(1, Ordering::SeqCst);
-
-    let err = dag.validate().unwrap_err();
-    assert_eq!(err.blocked, 2);
-    assert_eq!(err.cycle_path.len(), 2);
-    // Path must contain both nodes.
-    assert!(err.cycle_path.contains(&a));
-    assert!(err.cycle_path.contains(&b));
-    // Each consecutive pair must be a real edge: cycle_path[i] depends
-    // on cycle_path[i+1] (and last depends on first).
-    for i in 0..err.cycle_path.len() {
-        let from = err.cycle_path[i];
-        let to = err.cycle_path[(i + 1) % err.cycle_path.len()];
-        assert!(
-            dag.deps[from].contains(&to),
-            "cycle edge {from} -> {to} not in deps"
-        );
-    }
-    let msg = format!("{err}");
-    assert!(msg.contains("cycle detected"));
-    assert!(msg.contains("->"));
-}
-
-// ── cycle detection (longer loop with tail) ────────────────────────
-
-#[test]
-fn cycle_detection_with_blocked_tail() {
-    // Build:  0 -> 1 -> 2 -> 1 (cycle) and 3 depends on 2 (blocked).
-    let mut dag: Dag<&str> = Dag::new();
-    let n0 = dag.add_node("n0", &[]).unwrap();
-    let n1 = dag.add_node("n1", &[n0]).unwrap();
-    let n2 = dag.add_node("n2", &[n1]).unwrap();
-    let n3 = dag.add_node("n3", &[n2]).unwrap();
-    // Add the back-edge n1 -> n2 (i.e. n1 depends on n2).
-    dag.deps[n1].push(n2);
-    dag.nodes[n2].dependents.push(n1);
-    dag.nodes[n1].remaining_deps.fetch_add(1, Ordering::SeqCst);
-
-    let err = dag.validate().unwrap_err();
-    // n1, n2, n3 are blocked (n0 still drains).
-    assert_eq!(err.blocked, 3);
-    // Cycle should be {n1, n2}.
-    assert_eq!(err.cycle_path.len(), 2);
-    assert!(err.cycle_path.contains(&n1));
-    assert!(err.cycle_path.contains(&n2));
-    for i in 0..err.cycle_path.len() {
-        let from = err.cycle_path[i];
-        let to = err.cycle_path[(i + 1) % err.cycle_path.len()];
-        assert!(dag.deps[from].contains(&to));
-    }
-    // n3 is not part of the cycle (just blocked by it).
-    assert!(!err.cycle_path.contains(&n3));
 }
 
 // ── add_node returns Err on bad dep ────────────────────────────────
@@ -303,4 +227,101 @@ fn dag_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Dag<String>>();
     assert_send_sync::<Node<String>>();
+}
+
+// ── once-only completion (COOK-400) ────────────────────────────────
+
+/// `remaining_deps` is unsigned and its decrement wraps. Before the guard, a
+/// second `complete(b)` took `d`'s counter from 1 to 0 and saw `prev == 1`,
+/// releasing `d` while `c` had not run at all.
+///
+/// Note the shape: the double-completed node must still have a WAITING
+/// dependent. Completing `a` twice here corrupts `b` and `c`, which are
+/// already at zero, and nothing downstream notices. The first version of this
+/// test did exactly that and passed with the guard removed.
+#[test]
+fn completing_twice_does_not_release_a_node_early() {
+    //   a
+    //  / \
+    // b   c      (b completed twice, by mistake; c never runs)
+    //  \ /
+    //   d
+    let mut dag = Dag::new();
+    let a = dag.add_node("a", &[]).unwrap();
+    let b = dag.add_node("b", &[a]).unwrap();
+    let c = dag.add_node("c", &[a]).unwrap();
+    let d = dag.add_node("d", &[b, c]).unwrap();
+
+    let mut ready = dag.complete(a);
+    ready.sort();
+    assert_eq!(ready, vec![b, c]);
+    assert_eq!(dag.node(d).remaining_deps(), 2);
+
+    assert!(dag.complete(b).is_empty(), "d still waits on c");
+    assert_eq!(dag.node(d).remaining_deps(), 1);
+
+    // The bug: a second completion of b.
+    assert!(
+        dag.complete(b).is_empty(),
+        "a repeat completion must release nothing; without the guard this \
+         returns [d] while c has not run"
+    );
+    assert_eq!(
+        dag.node(d).remaining_deps(),
+        1,
+        "d must still be waiting on c"
+    );
+
+    // Only c may release d.
+    assert_eq!(dag.complete(c), vec![d]);
+    assert_eq!(dag.node(d).remaining_deps(), 0);
+}
+
+#[test]
+fn is_completed_reports_completion() {
+    let mut dag = Dag::new();
+    let a = dag.add_node("a", &[]).unwrap();
+    let b = dag.add_node("b", &[a]).unwrap();
+
+    assert!(!dag.is_completed(a));
+    assert!(!dag.is_completed(b));
+    dag.complete(a);
+    assert!(dag.is_completed(a));
+    assert!(!dag.is_completed(b));
+}
+
+/// Two threads racing on the SAME id must still produce exactly one set of
+/// decrements, which is why the guard is a `swap` rather than a load/store.
+#[test]
+fn concurrent_completion_of_one_id_decrements_once() {
+    use std::sync::Arc;
+
+    let mut dag = Dag::new();
+    let a = dag.add_node("a", &[]).unwrap();
+    let _b = dag.add_node("b", &[a]).unwrap();
+    let dag = Arc::new(dag);
+
+    let mut released = 0usize;
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let d = Arc::clone(&dag);
+            std::thread::spawn(move || d.complete(a).len())
+        })
+        .collect();
+    for h in handles {
+        released += h.join().unwrap();
+    }
+
+    assert_eq!(
+        released, 1,
+        "exactly one of the racing calls may report b as newly ready"
+    );
+    // The decisive assertion: without the guard the first call reports the
+    // release and the other seven wrap `b`'s counter below zero, which the
+    // return value alone does not reveal.
+    assert_eq!(
+        dag.node(_b).remaining_deps(),
+        0,
+        "b's dependency count must be 0, not wrapped around by the losers"
+    );
 }
