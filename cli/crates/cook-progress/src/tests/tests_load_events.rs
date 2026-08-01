@@ -90,3 +90,60 @@ fn load_skips_corrupt_jsonl_lines_and_counts_them() {
     let (_view, diag) = load(&build_dir).unwrap();
     assert_eq!(diag.skipped_jsonl_lines, 2);
 }
+
+/// COOK-410: `events.jsonl` had two read policies. `load`'s replay gated on a
+/// locally re-derived envelope, while `summarize_build_dir`'s failed-count scan
+/// had no version gate at all, so a `node-failed` line written by a future
+/// schema was counted in the build summary that the full replay then refused
+/// to read. One format, one policy: both now call `check_schema_version`.
+#[test]
+fn a_future_schema_line_is_refused_by_the_summary_and_the_replay_alike() {
+    let tmp = tempfile::tempdir().unwrap();
+    let build_id = drive_minimal_build(tmp.path());
+    let build_dir = tmp.path().join(".cook").join("logs").join(&build_id);
+    let events = build_dir.join("events.jsonl");
+
+    let baseline_summary = crate::log_reader::list_builds(
+        &tmp.path().join(".cook").join("logs"),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|b| b.build_id == build_id)
+    .expect("build present")
+    .failed_count;
+
+    let (baseline_view, _) = crate::log_reader::load(&build_dir).unwrap();
+    let baseline_nodes: usize =
+        baseline_view.recipes.values().map(|r| r.nodes.len()).sum();
+
+    // A node-failed line from a writer one major schema ahead of us.
+    let future = crate::event::PROGRESS_SCHEMA_VERSION + 1;
+    let mut text = std::fs::read_to_string(&events).unwrap();
+    text.push_str(&format!(
+        "{{\"v\":{future},\"ts\":\"2026-08-01T00:00:00Z\",\"type\":\"node-failed\",\
+         \"recipe\":\"lib\",\"node\":\"a\",\"elapsed_ms\":5,\"error\":\"boom\"}}\n"
+    ));
+    std::fs::write(&events, text).unwrap();
+
+    let after_summary = crate::log_reader::list_builds(
+        &tmp.path().join(".cook").join("logs"),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|b| b.build_id == build_id)
+    .expect("build present")
+    .failed_count;
+
+    let (after_view, _) = crate::log_reader::load(&build_dir).unwrap();
+    let after_nodes: usize = after_view.recipes.values().map(|r| r.nodes.len()).sum();
+
+    assert_eq!(
+        after_summary, baseline_summary,
+        "the failed-count scan must refuse a v{future} line; the replay does, \
+         and a summary that disagrees with the replay is the bug"
+    );
+    assert_eq!(
+        after_nodes, baseline_nodes,
+        "the replay must refuse it too (regression guard on the shared gate)"
+    );
+}

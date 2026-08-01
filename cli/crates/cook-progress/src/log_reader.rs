@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead};
 use std::path::Path;
 
-use crate::event::{NodeId, NodeKind, RecipeId, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
+use crate::event::{NodeId, NodeKind, RecipeId, SkipReason, Stream};
 use crate::wire::{WireEvent, WireLine};
 use crate::model::{NodeStatus, Status};
 
@@ -184,6 +184,14 @@ fn summarize_build_dir(build_dir: &Path) -> io::Result<BuildSummary> {
         for line in cursor.lines().flatten() {
             // COOK-394: the same wire schema as the full replay — this was
             // a second, independent hand parser.
+            //
+            // COOK-410: and the same read policy. This scan had no version
+            // gate at all, so a v2 `node-failed` line from a newer writer was
+            // counted here while `load` refused to read the very same file.
+            // One format cannot have two read policies.
+            if crate::render::json::check_schema_version(&line).is_err() {
+                continue;
+            }
             if let Ok(wire) = serde_json::from_str::<WireLine>(&line) {
                 if matches!(wire.event, WireEvent::NodeFailed { .. }) {
                     summary.failed_count += 1;
@@ -291,31 +299,32 @@ fn replay_events_jsonl(
         };
         if line.trim().is_empty() { continue; }
         // COOK-394: the line parses as the one wire schema. Version-gate
-        // first via a loose envelope (a typed parse would accept any `v`);
-        // then a typed-parse failure under an ACCEPTED v with a `type`
-        // string is an unknown event from a newer additive writer —
-        // ignored, not corrupt. Everything else is a skipped line.
-        #[derive(serde::Deserialize)]
-        struct Envelope {
-            v: Option<u64>,
-            #[serde(rename = "type")]
-            ty: Option<String>,
-        }
-        let envelope: Envelope = match serde_json::from_str(&line) {
-            Ok(e) => e,
-            Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
-        };
-        let v_ok = envelope.v
-            .map(|n| n as u32 <= PROGRESS_SCHEMA_VERSION)
-            .unwrap_or(false);
-        if !v_ok {
+        // first (a typed parse would accept any `v`); then a typed-parse
+        // failure under an ACCEPTED v with a `type` string is an unknown
+        // event from a newer additive writer — ignored, not corrupt.
+        // Everything else is a skipped line.
+        //
+        // COOK-410: the gate is `check_schema_version`, the CS-0048 read
+        // policy, rather than a local `Envelope` re-derivation. This file used
+        // to spell the policy itself while the exported one had no caller at
+        // all, and the failed-count scan below had no gate whatsoever.
+        if crate::render::json::check_schema_version(&line).is_err() {
             diag.skipped_jsonl_lines += 1;
             continue;
         }
         let wire: WireLine = match serde_json::from_str(&line) {
             Ok(w) => w,
             Err(_) => {
-                if envelope.ty.is_none() {
+                // Accepted `v`, unparseable payload: a `type` string means a
+                // newer additive writer's event, which is ignored rather than
+                // counted as corruption.
+                let has_type = serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("type").and_then(|t| t.as_str()).map(str::to_owned)
+                    })
+                    .is_some();
+                if !has_type {
                     diag.skipped_jsonl_lines += 1;
                 }
                 continue;
