@@ -80,7 +80,7 @@ fn classify_declared_input(working_dir: &Path, path: &str) -> cook_contracts::ca
     if std::fs::metadata(&resolved).map(|m| m.is_file()).unwrap_or(false) {
         return cook_contracts::cache::DeclaredInput::path(path);
     }
-    if cook_fingerprint::is_terminal_output(path) {
+    if cook_cache::is_terminal_output(path) {
         cook_contracts::cache::DeclaredInput::pattern(path)
     } else {
         cook_contracts::cache::DeclaredInput::path(path)
@@ -403,7 +403,7 @@ pub fn register_unit_api(
             }
         }
         for out in &output_paths {
-            if cook_fingerprint::is_dir_output(out) {
+            if cook_cache::is_dir_output(out) {
                 // CS-0119: a trailing slash declares a build-owned directory
                 // output; it is intentionally a directory and MUST NOT be
                 // rejected by the file-path check below.
@@ -716,7 +716,7 @@ pub fn register_unit_api(
                             // Rejected at register time because an unparseable glob
                             // matches nothing, and "matches nothing" on an allowlist
                             // points the under-keying way.
-                            if let Err(e) = cook_fingerprint::consumes::validate_pattern(&sv) {
+                            if let Err(e) = cook_cache::consumes::validate_pattern(&sv) {
                                 return Err(LuaError::runtime(format!(
                                     "cook.add_unit: `consumes` entry '{sv}' is not a \
                                      valid glob ({e}); it would match no predecessor \

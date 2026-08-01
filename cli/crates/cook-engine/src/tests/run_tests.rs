@@ -243,6 +243,6 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
 // The ready-time input-resolution tests that stood here moved with the
 // behaviour they cover (CS-0186). WHICH paths a unit declares is now decided by
 // the lowering, and is pinned in `cook_luagen`'s codegen tests; HOW a declared
-// entry resolves against the tree is `cook_fingerprint::resolve_declared_inputs`,
+// entry resolves against the tree is `cook_cache::resolve_declared_inputs`,
 // and is pinned beside it. Neither is an engine concern any more: the engine's
 // cache path no longer takes the DAG as an argument at all.

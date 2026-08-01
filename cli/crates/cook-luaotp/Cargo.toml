@@ -5,10 +5,10 @@ edition = "2021"
 description = "Worker pool with per-thread Lua VMs for the Cook build system"
 
 [dependencies]
+cook-cache = { path = "../cook-cache" }
 cook-contracts = { path = "../cook-contracts" }
 cook-shell = { path = "../cook-shell" }
 cook-lua-stdlib = { path = "../cook-lua-stdlib" }
-cook-fingerprint = { path = "../cook-fingerprint" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 serde_json = "1"
 

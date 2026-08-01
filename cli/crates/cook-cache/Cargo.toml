@@ -5,10 +5,12 @@ edition = "2024"
 description = "Build artifact cache backend for the Cook build system"
 
 [dependencies]
+glob = "0.3"
+globset = "0.4"
 cook-contracts = { path = "../cook-contracts" }
-cook-fingerprint = { path = "../cook-fingerprint" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 sha2 = "0.10"
+which = "7"
 hex = "0.4"
 serde_json = "1"
 toml = "0.9"

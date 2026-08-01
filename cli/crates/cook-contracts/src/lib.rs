@@ -19,6 +19,7 @@ pub mod lua_string;
 pub mod member;
 pub mod naming;
 pub mod output;
+pub mod pathlaw;
 pub mod probe;
 pub mod quoting;
 pub mod recipe;

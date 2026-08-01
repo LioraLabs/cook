@@ -371,9 +371,10 @@ name = "cook-cache"
 version = "0.11.0"
 dependencies = [
  "cook-contracts",
- "cook-fingerprint",
  "dirs",
  "filetime",
+ "glob",
+ "globset",
  "hex",
  "mockito",
  "serde",
@@ -384,6 +385,7 @@ dependencies = [
  "toml 0.9.7",
  "tracing",
  "ureq",
+ "which",
  "xxhash-rust",
 ]
 
@@ -451,7 +453,6 @@ dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-dag",
- "cook-fingerprint",
  "cook-lang",
  "cook-luagen",
  "cook-luaotp",
@@ -472,30 +473,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cook-fingerprint"
-version = "0.11.0"
-dependencies = [
- "cook-contracts",
- "glob",
- "globset",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml 0.8.23",
- "tracing",
- "which",
- "xxhash-rust",
-]
-
-[[package]]
 name = "cook-graph"
 version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-engine",
- "cook-fingerprint",
  "insta",
  "serde",
  "serde_json",
@@ -532,9 +515,9 @@ dependencies = [
 name = "cook-lua-stdlib"
 version = "0.11.0"
 dependencies = [
+ "cook-cache",
  "cook-contracts",
  "cook-cookfile",
- "cook-fingerprint",
  "glob",
  "mlua",
  "serde_json",
@@ -555,8 +538,8 @@ dependencies = [
 name = "cook-luaotp"
 version = "0.11.0"
 dependencies = [
+ "cook-cache",
  "cook-contracts",
- "cook-fingerprint",
  "cook-lua-stdlib",
  "cook-probe",
  "cook-shell",
@@ -571,7 +554,6 @@ version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
- "cook-fingerprint",
  "tempfile",
 ]
 
@@ -597,7 +579,6 @@ version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
- "cook-fingerprint",
  "cook-lang",
  "cook-lua-stdlib",
  "cook-luagen",

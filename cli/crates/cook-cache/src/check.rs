@@ -3,10 +3,8 @@ use std::path::Path;
 
 use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
 
-use crate::{
-    hash_str,
-    record::{FileRecord, StepEntry, CACHE_VERSION},
-};
+use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
+use cook_contracts::hash_str;
 
 /// COOK-360: the judge half of observe / judge / repair reports which
 /// determinant moved; this crate's callers speak in rebuild reasons.
@@ -219,7 +217,7 @@ fn check_inputs(
 /// `format!("{project_id}/{cookfile_path}::{recipe_name}")`. Both sides MUST
 /// agree on this format or the recomposed `cloud_key` will differ.
 pub struct RestoreCtx<'a> {
-    pub backend: &'a dyn crate::backend::CacheBackend,
+    pub backend: &'a dyn crate::cas_backend::CacheBackend,
     pub recipe_namespace: &'a str,
 }
 
@@ -537,8 +535,8 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
 /// for the disk savings, the mtime touch in `cook_cache::backend` has to go
 /// first.
 fn restore_one(
-    backend: &dyn crate::backend::CacheBackend,
-    artifact_k: &crate::backend::CloudKey,
+    backend: &dyn crate::cas_backend::CacheBackend,
+    artifact_k: &crate::cas_backend::CloudKey,
     abs: &Path,
     anchor: &Path,
     expected_content_hash: Option<u64>,
@@ -611,7 +609,7 @@ fn try_restore(
     crate::statmemo::disarm();
     let mut sorted: Vec<u64> = updated_inputs.iter().map(|r| r.hash).collect();
     sorted.sort();
-    let key_inputs = crate::backend::CloudKeyInputs {
+    let key_inputs = crate::cas_backend::CloudKeyInputs {
         schema_version: CACHE_VERSION,
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
@@ -619,7 +617,7 @@ fn try_restore(
         seal_contribution: entry.seal_contribution,
         sorted_input_content_hashes: &sorted,
     };
-    let cloud_k = crate::backend::cloud_key(&key_inputs);
+    let cloud_k = crate::cas_backend::cloud_key(&key_inputs);
 
     // Two-pass restore (symlink-last). Pass 1 attempts every needed index;
     // misses are retried in pass 2 so a symlink whose target was materialised
@@ -630,7 +628,7 @@ fn try_restore(
     let mut pending: Vec<usize> = Vec::new();
     for &idx in needs_restore {
         let path = current_outputs[idx];
-        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let artifact_k = crate::cas_backend::artifact_key(&cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(
             ctx.backend,
@@ -644,7 +642,7 @@ fn try_restore(
     }
     for idx in pending {
         let path = current_outputs[idx];
-        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let artifact_k = crate::cas_backend::artifact_key(&cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(
             ctx.backend,
@@ -684,11 +682,11 @@ pub struct FetchOutcome {
 /// binaries. Returns `[]` when neither exists (or either is corrupt — a
 /// corrupt manifest degrades to a safe cold miss, never a wrong hit).
 pub fn read_discovered_input_sets(
-    backend: &dyn crate::backend::CacheBackend,
-    declared_key: &crate::backend::CloudKey,
+    backend: &dyn crate::cas_backend::CacheBackend,
+    declared_key: &crate::cas_backend::CloudKey,
 ) -> Vec<Vec<String>> {
     let read_json = |index: u32, path: &str| -> Option<Vec<u8>> {
-        let k = crate::backend::artifact_key(declared_key, index, path);
+        let k = crate::cas_backend::artifact_key(declared_key, index, path);
         let mut reader = backend.get(&k).ok().flatten()?;
         let mut buf = Vec::new();
         // Drain fully so the VerifyingReader hashes on read (CS-0054).
@@ -696,16 +694,16 @@ pub fn read_discovered_input_sets(
         Some(buf)
     };
     if let Some(sets) = read_json(
-        crate::backend::DISCOVERED_INPUT_SETS_INDEX,
-        crate::backend::DISCOVERED_INPUT_SETS_PATH,
+        crate::cas_backend::DISCOVERED_INPUT_SETS_INDEX,
+        crate::cas_backend::DISCOVERED_INPUT_SETS_PATH,
     )
     .and_then(|buf| serde_json::from_slice::<Vec<Vec<String>>>(&buf).ok())
     {
         return sets;
     }
     if let Some(set) = read_json(
-        crate::backend::DISCOVERED_INPUTS_MANIFEST_INDEX,
-        crate::backend::DISCOVERED_INPUTS_MANIFEST_PATH,
+        crate::cas_backend::DISCOVERED_INPUTS_MANIFEST_INDEX,
+        crate::cas_backend::DISCOVERED_INPUTS_MANIFEST_PATH,
     )
     .and_then(|buf| serde_json::from_slice::<Vec<String>>(&buf).ok())
     {
@@ -744,8 +742,8 @@ pub fn read_discovered_input_sets(
 /// empty output list at its own door, which is why an observing unit could
 /// never be served through it and why this one exists separately.
 pub fn shared_observation(
-    backend: &dyn crate::backend::CacheBackend,
-    key: &crate::backend::CloudKey,
+    backend: &dyn crate::cas_backend::CacheBackend,
+    key: &crate::cas_backend::CloudKey,
 ) -> Option<cook_contracts::cache::observation::Observation> {
     let manifest = backend.get_manifest(key).ok().flatten()?;
     // A manifest carrying outputs belongs to a producing unit; serving it here
@@ -764,13 +762,13 @@ pub fn shared_observation(
 /// This is deliberately separate from [`fetch_by_key`]: an observing unit has
 /// no output paths to restore, and its hit is a replay rather than a restore.
 pub fn fetch_observation(
-    backend: &dyn crate::backend::CacheBackend,
-    key: &crate::backend::CloudKey,
+    backend: &dyn crate::cas_backend::CacheBackend,
+    key: &crate::cas_backend::CloudKey,
 ) -> Option<cook_contracts::cache::observation::OutputLog> {
-    let artifact_k = crate::backend::artifact_key(
+    let artifact_k = crate::cas_backend::artifact_key(
         key,
-        crate::backend::OBSERVATION_INDEX,
-        crate::backend::OBSERVATION_PATH,
+        crate::cas_backend::OBSERVATION_INDEX,
+        crate::cas_backend::OBSERVATION_PATH,
     );
     let (mut reader, meta) = backend.get_with_meta(&artifact_k).ok().flatten()?;
     if meta.kind.as_deref() != Some("observation") {
@@ -834,7 +832,7 @@ pub fn fetch_by_key(
     // exactly one candidate: the empty set (full key == declared key).
     let candidates: Vec<Vec<String>> = match discovered_inputs {
         Some(_) => {
-            let declared_key = crate::backend::cloud_key(&crate::backend::CloudKeyInputs {
+            let declared_key = crate::cas_backend::cloud_key(&crate::cas_backend::CloudKeyInputs {
                 schema_version: CACHE_VERSION,
                 recipe_namespace: ctx.recipe_namespace,
                 command_hash,
@@ -860,7 +858,7 @@ pub fn fetch_by_key(
             }
             full_hashes.sort();
         }
-        let cloud_k = crate::backend::cloud_key(&crate::backend::CloudKeyInputs {
+        let cloud_k = crate::cas_backend::cloud_key(&crate::cas_backend::CloudKeyInputs {
             schema_version: CACHE_VERSION,
             recipe_namespace: ctx.recipe_namespace,
             command_hash,
@@ -903,13 +901,13 @@ pub fn fetch_by_key(
 /// (CS-0054 verify-on-restore).
 fn restore_all(
     ctx: &RestoreCtx,
-    cloud_k: &crate::backend::CloudKey,
+    cloud_k: &crate::cas_backend::CloudKey,
     paths: &[String],
     working_dir: &std::path::Path,
 ) -> bool {
     let mut pending: Vec<usize> = Vec::new();
     for (idx, path) in paths.iter().enumerate() {
-        let artifact_k = crate::backend::artifact_key(cloud_k, idx as u32, path);
+        let artifact_k = crate::cas_backend::artifact_key(cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
             pending.push(idx);
@@ -917,7 +915,7 @@ fn restore_all(
     }
     for idx in pending {
         let path = &paths[idx];
-        let artifact_k = crate::backend::artifact_key(cloud_k, idx as u32, path);
+        let artifact_k = crate::cas_backend::artifact_key(cloud_k, idx as u32, path);
         let abs = working_dir.join(path);
         if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
             return false;

@@ -20,7 +20,7 @@ use cook_cache::backend::{
 };
 use cook_cache::store::CACHE_VERSION;
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{
+use cook_cache::{
     CacheBackend, DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
     DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, RestoreCtx, fetch_by_key,
     read_discovered_input_sets,

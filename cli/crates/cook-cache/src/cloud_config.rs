@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use cook_fingerprint::backend::BackendConfig;
+use crate::backend::BackendConfig;
 use serde::Deserialize;
 
 /// serde default for `CloudSection::publish` — absent key means "publish".

@@ -22,13 +22,13 @@ pub fn setup_recipe_context(
     // Resolve exclude patterns into a set for fast lookup
     let mut excluded: BTreeSet<String> = BTreeSet::new();
     for pattern in &recipe.metadata.excludes {
-        excluded.extend(cook_fingerprint::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?);
+        excluded.extend(cook_cache::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?);
     }
 
     // Build ingredients table by resolving glob patterns, minus excludes
     let ingredients_table = lua.create_table()?;
     for (i, pattern) in recipe.metadata.ingredients.iter().enumerate() {
-        let files = cook_fingerprint::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?;
+        let files = cook_cache::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?;
         if files.is_empty() {
             warnings.borrow_mut().push(format!(
                 "ingredient {pattern:?} matched 0 files (recipe {})",
@@ -62,14 +62,14 @@ pub fn register_resolve_ingredients(lua: &Lua, working_dir: &Path, workspace_roo
         let mut excluded: BTreeSet<String> = BTreeSet::new();
         for exc in excludes.sequence_values::<String>() {
             let pattern = exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}")))?;
-            excluded.extend(cook_fingerprint::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?);
+            excluded.extend(cook_cache::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?);
         }
 
         // Resolve include patterns, filtering out excludes
         let mut result: Vec<String> = Vec::new();
         for inc in includes.sequence_values::<String>() {
             let pattern = inc.map_err(|e| mlua::Error::runtime(format!("bad include: {e}")))?;
-            let files = cook_fingerprint::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?;
+            let files = cook_cache::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?;
             for f in files {
                 if !excluded.contains(&f) {
                     result.push(f);

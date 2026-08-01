@@ -1,5 +1,5 @@
 use super::*;
-use crate::record::FileRecord;
+use cook_contracts::cache::step::FileRecord;
 
 // -------------------------------------------------------------------------
 // Task 4: hashing / mtime utilities
@@ -1026,7 +1026,7 @@ fn hash_reader_agrees_with_hash_file_on_the_same_bytes() {
 
 mod shared_observation_tests {
     use super::FakeBackend;
-    use crate::backend::{
+    use crate::cas_backend::{
         artifact_key, CloudKey, DeterminantManifest, OBSERVATION_INDEX, OBSERVATION_PATH,
     };
     use cook_contracts::cache::observation::{Observation, OutputLog};

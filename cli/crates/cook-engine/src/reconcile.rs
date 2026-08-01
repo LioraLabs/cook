@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use cook_fingerprint::hash_file;
+use cook_cache::hash_file;
 
 /// Outcome of a sweep: which orphans were removed and which were kept because
 /// they had changed since Cook recorded them.
@@ -65,7 +65,7 @@ pub fn sweep(prior: &BTreeMap<PathBuf, u64>, live: &BTreeSet<PathBuf>) -> SweepR
         }
         match hash_file(path) {
             Some(h) if h == *recorded_hash => {
-                cook_fingerprint::statmemo::disarm();
+                cook_cache::statmemo::disarm();
                 if std::fs::remove_file(path).is_ok() {
                     report.swept.push(path.clone());
                 }

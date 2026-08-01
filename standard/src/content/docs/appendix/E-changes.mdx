@@ -3070,6 +3070,24 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0199 — cook-fingerprint is dissolved; a stratum that never existed [#changes.cs-0199]
+
+**Date:** 2026-08-01
+**Version:** v0.18
+**Sections affected:** None normative. The Cookfile language and execution semantics are unchanged; this entry exists because the reference-implementation paths cited throughout this appendix no longer resolve, and a reader following them deserves the forwarding address. Reference implementation: `cli/crates/cook-fingerprint` (deleted), `cli/crates/cook-contracts/src/{consumes,context,envkey,evict,hash,pathlaw}` and `src/cache/{cas,step}.rs` (its effect-free half), `cli/crates/cook-cache/src/{check,probe,statmemo,resolve,cas_backend}.rs` (its acting half). COOK-418.
+
+**Summary.** `cook-fingerprint` was created as the home for "hashing law", a stratum in `cook-contracts`' sharing constitution with the dependency budget "+ xxhash". The stratum did not exist. The bar that crate enforces is about EFFECTS — `tests/layout.rs` fails the build on `std::fs`, `std::env`, `std::process` — and says nothing about dependencies; xxhash, sha2 and globset compute and reach nothing. The constitution's own worked-example list carried `hash_str` as "law, but xxhash-bearing", which is the mistake stated in one line.
+
+A crate made for a boundary that is not there fills with whatever is adjacent. This one accumulated the cache's IO: seven dependencies, `remove_file`, `remove_dir`, `fs::write` into the working tree, three calls to `which::which`, and a process-global stat memo — inside the crate the table described as pure hashing law. Two costs were live rather than theoretical. `evict.rs`, whose module doc has said since the CAS-hygiene milestone that it exists "precisely so Cook Cloud can reuse this exact policy server-side, where a client is not permitted to enumerate or delete", could only be linked by also linking the deletion code. And a reader trusting the budget would call `hash_file` from a context that must not touch disk.
+
+**What moved where.** Effect-free to `cook-contracts`: `consumes`, `context`, `envkey`, `evict`, `hash_str`, the path and output-shape rules (`pathlaw`), the step-index records (`cache::step`), and the content-addressed store's keys, artifact metadata, determinant manifests and reserved indices (`cache::cas`) — all of which have two ends, which is that crate's admission bar verbatim. Acting half to `cook-cache`: cache validity and artifact restore (`check`), tool and probe resolution (`probe`), the stat memo (`statmemo`), path resolution against a real tree (`resolve`), and the `CacheBackend` trait (`cas_backend`).
+
+The trait went with the implementations rather than with the law. A trait definition would have passed the purity test; it is the port to the outside world, and a port belongs where its implementations are.
+
+**Not fixed by this, recorded so it is not assumed.** The stat memo's arm/disarm invariant is still owned by convention at eight call sites across four crates. It cannot be enforced at the write site: `cook-shell`, which spawns the commands that write the files, depends on `cook-contracts` alone and refuses the edge deliberately. Moving the memo relocated the hazard correctly; making it structural is open.
+
+**Conformance.** No grammar change, no `CACHE_VERSION` bump, no key change: every moved function computes what it computed before, and the two lexical path normalisers consolidated in flight (`lexically_normalize` and `normalize_lexical`, byte-identical in behaviour, private, differently named, no agreement test) were already agreeing. One near-miss is worth recording: the consolidated `escapes_base` was first written counting `..` depth alone, dropping the original's `RootDir`/`Prefix` arm, which is what makes an absolute path count as escaping its base. That arm gates whether a declared input may sit outside the project. A tidy-up during a move is exactly where such a thing is lost, and it is now pinned by a test that says so.
+
 ## CS-0198 — an export either round-trips or raises [#changes.cs-0198]
 
 **Date:** 2026-07-31

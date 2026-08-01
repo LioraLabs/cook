@@ -186,7 +186,7 @@ pub fn rerun_outputs_in_sandbox(
     let resolved = crate::executor::resolve_output_paths(declared_outputs, sandbox.path());
     for rel in resolved {
         let abs = sandbox.path().join(&rel);
-        if let Some(h) = cook_fingerprint::hash_file(&abs) {
+        if let Some(h) = cook_cache::hash_file(&abs) {
             out.insert(rel, h);
         }
     }

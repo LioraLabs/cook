@@ -49,7 +49,7 @@ fn record_completion_with_resolved_glob_produces_concrete_step_entry() {
     // contract at the fingerprint layer (below the normalisation), so it
     // intentionally uses the already-normalised "build/**/*" form. The
     // engine-level normalisation is tested by unit tests in executor.rs.
-    let resolved: Vec<String> = cook_fingerprint::resolve_glob(wd, "build/**/*")
+    let resolved: Vec<String> = cook_cache::resolve_glob(wd, "build/**/*")
         .into_iter()
         .collect();
     assert_eq!(resolved.len(), 3, "glob resolves to three files");

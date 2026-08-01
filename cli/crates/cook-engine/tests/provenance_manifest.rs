@@ -21,8 +21,8 @@ use std::process::Command;
 
 use cook_cache::backend::LocalBackend;
 use cook_cache::CacheBackend;
-use cook_fingerprint::backend::DeterminantManifest;
-use cook_fingerprint::CACHE_VERSION;
+use cook_cache::backend::DeterminantManifest;
+use cook_cache::CACHE_VERSION;
 
 fn cook_binary() -> PathBuf {
     let mut path = std::env::current_exe().unwrap();

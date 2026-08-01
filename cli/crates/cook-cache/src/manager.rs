@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cook_contracts::CacheMeta;
-use cook_fingerprint::{hash_file, stat_mtime, FileRecord, StepEntry};
+use crate::{hash_file, stat_mtime, FileRecord, StepEntry};
 
 use crate::store::RecipeCache;
 

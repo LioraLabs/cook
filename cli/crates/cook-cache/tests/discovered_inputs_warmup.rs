@@ -4,14 +4,14 @@
 
 use cook_cache::store::{FileRecord, StepEntry};
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{needs_rebuild_cook, RebuildReason, RebuildResult};
+use cook_cache::{needs_rebuild_cook, RebuildReason, RebuildResult};
 
 
 fn fr(wd: &std::path::Path, rel: &str) -> FileRecord {
     FileRecord {
         path: rel.into(),
-        mtime: cook_fingerprint::stat_mtime(&wd.join(rel)).unwrap_or(0),
-        hash: cook_fingerprint::hash_file(&wd.join(rel)).unwrap(),
+        mtime: cook_cache::stat_mtime(&wd.join(rel)).unwrap_or(0),
+        hash: cook_cache::hash_file(&wd.join(rel)).unwrap(),
     }
 }
 
@@ -55,12 +55,12 @@ fn warmup_collapses_to_two_runs() {
             FileRecord {
                 path: "a.c".into(),
                 mtime: 0,
-                hash: cook_fingerprint::hash_file(&wd.join("a.c")).unwrap(),
+                hash: cook_cache::hash_file(&wd.join("a.c")).unwrap(),
             },
             FileRecord {
                 path: "a.h".into(),
                 mtime: 0,
-                hash: cook_fingerprint::hash_file(&wd.join("a.h")).unwrap(),
+                hash: cook_cache::hash_file(&wd.join("a.h")).unwrap(),
             },
         ],
         outputs: vec![fr(wd, "a.o"), fr(wd, ".cook/deps/a.d")],

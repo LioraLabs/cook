@@ -18,7 +18,7 @@ use mlua::{Lua, Result as LuaResult, Table as LuaTable};
 pub fn register_tools_api(lua: &Lua, cook: &LuaTable) -> LuaResult<()> {
     let tools = lua.create_table()?;
     let id_fn = lua.create_function(|lua, name: String| {
-        match cook_fingerprint::tool_identity(&name) {
+        match cook_cache::tool_identity(&name) {
             Some((hash, path)) => {
                 let t = lua.create_table()?;
                 t.set("hash", hash)?;

@@ -7,7 +7,6 @@ members = [
     "crates/cook-cookfile",
     "crates/cook-progress",
     "crates/cook-cache",
-    "crates/cook-fingerprint",
     "crates/cook-dag",
     "crates/cook-luagen",
     "crates/cook-lua-stdlib",

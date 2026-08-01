@@ -101,7 +101,7 @@ pub fn parse_make_depfile(
         // resolving to 6,730 distinct paths. Answered through the per-run stat
         // memo, which shares its entries with the input check below and is
         // disarmed by the first write cook performs.
-        if cook_fingerprint::statmemo::stat_mtime_memo(working_dir, token).is_none() {
+        if crate::statmemo::stat_mtime_memo(working_dir, token).is_none() {
             continue;
         }
         // Dedupe.

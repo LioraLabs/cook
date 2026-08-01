@@ -1308,7 +1308,7 @@ fn run_shell_in_worker(
     // COOK-306: an executed command may write anywhere in the tree. The memo is
     // the execute phase's, so disarming it stays here rather than moving into
     // `cook-shell` (the register-phase caller deliberately does not disarm).
-    cook_fingerprint::statmemo::disarm();
+    cook_cache::statmemo::disarm();
     let outcome = cook_shell::run(
         &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
         env_vars,
@@ -1472,7 +1472,7 @@ fn execute_shell(
     let cmd = cmd.as_str();
 
     // COOK-306: an executed command may write anywhere in the tree.
-    cook_fingerprint::statmemo::disarm();
+    cook_cache::statmemo::disarm();
     let outcome = match cook_shell::run(
         &cook_shell::Spawn {
             command: cmd,

@@ -371,7 +371,7 @@ fn reject_duplicate_outputs(ws: &RegisteredWorkspace) -> Result<(), PipelineErro
     for (recipe_name, units) in &ws.units_by_recipe {
         for unit in &units.units {
             for out in &unit.output_paths {
-                if is_output_pattern(out) || cook_fingerprint::is_dir_output(out) {
+                if is_output_pattern(out) || cook_cache::is_dir_output(out) {
                     continue;
                 }
                 if let Some((first_recipe, first_unit)) = seen.get(out.as_str()) {

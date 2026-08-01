@@ -11,11 +11,11 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
-pub use cook_fingerprint::backend::{
+pub use crate::cas_backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
     CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
 };
-pub use cook_fingerprint::evict::{
+pub use cook_contracts::evict::{
     is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
     SIZE_SWEEP_EXEMPT_KINDS,
 };
@@ -283,7 +283,7 @@ impl CacheBackend for LocalBackend {
         // `batch_query` is an existence probe, not a read, and is excluded.
         //
         // SAFETY ARGUMENT — this touch is inert *only because restore is a
-        // byte copy, not a hardlink*. `cook_fingerprint::check::restore_one`
+        // byte copy, not a hardlink*. `crate::check::restore_one`
         // does `read_to_end` -> write tmp -> rename, so the CAS blob and the
         // restored workspace file are different inodes and restamping the
         // blob cannot perturb workspace-file mtimes. If restore is ever
