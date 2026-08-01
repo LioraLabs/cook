@@ -1,7 +1,12 @@
+/// Escape a value for a double-quoted Lua literal.
+///
+/// The rule lives in `cook_contracts::lua_string` (COOK-398): `cook-register`
+/// builds the chore-param prelude with the same law, and the two hand-rolled
+/// versions had drifted. This crate's copy escaped `\`, `"` and newline only,
+/// so a carriage return in any of the ~60 sites below reached the generated
+/// source raw and Lua rejected the chunk.
 pub(crate) fn escape_lua_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+    cook_contracts::lua_string::escape_double_quoted(s)
 }
 
 /// Pick a long-bracket level high enough to safely wrap `s`.
