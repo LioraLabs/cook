@@ -87,3 +87,91 @@ fn print_logs_fallback_renders_build_recipe_node_and_lines() {
         "should show log line text"
     );
 }
+
+/// COOK-409: `G` set `scroll_y = u16::MAX` and nothing clamped it against the
+/// line count, so jumping to the bottom scrolled the whole pane past the end
+/// and rendered blank. The clamp lives in the output renderer because that is
+/// the only place that knows both the line count and the viewport height.
+#[test]
+fn jump_to_bottom_shows_the_last_line_rather_than_a_blank_pane() {
+    let mut view = one_failed_build();
+    let rid = RecipeId::new(0);
+    let nid = NodeId::new(0);
+    let node = view
+        .recipes
+        .get_mut(&rid)
+        .unwrap()
+        .nodes
+        .get_mut(&nid)
+        .unwrap();
+    node.lines = (0..200)
+        .map(|i| cook_progress::log_reader::LogLine {
+            stream: cook_progress::event::Stream::Stdout,
+            ts: None,
+            text: format!("line-{i:03}"),
+        })
+        .collect();
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = UiState::new(view, LoadDiagnostics::default());
+    state.scroll_y = u16::MAX; // what `G` does
+
+    let frame = terminal
+        .draw(|f| draw_frame(f, &mut state, &Theme::default()))
+        .unwrap();
+    let content: String = frame.buffer.content().iter().map(|c| c.symbol()).collect();
+
+    assert!(
+        content.contains("line-199"),
+        "the last line must be on screen after G; unclamped scroll rendered a \
+         blank pane instead"
+    );
+}
+
+/// COOK-409: `--theme` was parsed and discarded, and the `mono` value its help
+/// text advertised had no implementation at all.
+#[test]
+fn theme_from_name_resolves_both_documented_values_and_rejects_others() {
+    assert!(!Theme::from_name("auto").unwrap().is_mono());
+    assert!(Theme::from_name("mono").unwrap().is_mono());
+
+    let err = Theme::from_name("solarized").unwrap_err();
+    assert!(
+        err.contains("solarized") && err.contains("mono"),
+        "an unknown theme must name itself and the valid values, not fall back \
+         silently: {err}"
+    );
+}
+
+#[test]
+fn mono_theme_renders_a_failed_node_without_colour() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = UiState::new(one_failed_build(), LoadDiagnostics::default());
+    let frame = terminal
+        .draw(|f| draw_frame(f, &mut state, &Theme::mono()))
+        .unwrap();
+
+    let coloured = frame
+        .buffer
+        .content()
+        .iter()
+        .filter(|c| {
+            !matches!(
+                c.fg,
+                ratatui::style::Color::Reset | ratatui::style::Color::DarkGray
+            )
+        })
+        .count();
+    assert_eq!(
+        coloured, 0,
+        "the mono theme must emit no hue; status is carried by glyph and weight"
+    );
+
+    let content: String = frame.buffer.content().iter().map(|c| c.symbol()).collect();
+    assert!(
+        content.contains("lvm.c"),
+        "dropping colour must not drop content"
+    );
+}

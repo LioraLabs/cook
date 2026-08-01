@@ -40,7 +40,7 @@ pub fn cmd_logs(
         build_id: build_id.clone(),
         source: e,
     })?;
-    run(view, diag, theme)
+    run(logs_root, view, diag, theme)
 }
 
 #[derive(Debug, Clone)]

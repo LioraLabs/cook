@@ -133,3 +133,31 @@ fn ensure_tree_visible_clamps_when_viewport_larger_than_rows() {
     s.ensure_tree_visible(10);
     assert_eq!(s.tree_scroll, 0); // clamped because flat.len() <= viewport
 }
+
+/// COOK-409: `h` and `l` both called `toggle_fold`, so they were the same key
+/// and the help text ("h/l collapse/expand") was wrong half the time.
+/// Directional keys need a directional operation: `h` twice must leave a
+/// recipe collapsed rather than putting it back.
+#[test]
+fn set_fold_is_directional_and_idempotent() {
+    let mut s = UiState::new(mk(false), LoadDiagnostics::default());
+    // Select the first recipe row.
+    s.selected = 0;
+    assert!(matches!(s.flat[0], FlatRow::Recipe(_)));
+    let FlatRow::Recipe(rid) = s.flat[0] else { unreachable!() };
+
+    assert!(s.expanded.contains(&rid), "recipes start expanded");
+
+    s.set_fold(false);
+    assert!(!s.expanded.contains(&rid), "h collapses");
+    s.set_fold(false);
+    assert!(
+        !s.expanded.contains(&rid),
+        "h again must stay collapsed; toggle_fold would have re-expanded it"
+    );
+
+    s.set_fold(true);
+    assert!(s.expanded.contains(&rid), "l expands");
+    s.set_fold(true);
+    assert!(s.expanded.contains(&rid), "l again must stay expanded");
+}

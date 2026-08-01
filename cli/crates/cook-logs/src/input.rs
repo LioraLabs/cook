@@ -25,12 +25,15 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
         }
         (KeyCode::Down, _) | (KeyCode::Char('j'), _) => move_selection(state, 1),
         (KeyCode::Up, _) | (KeyCode::Char('k'), _) => move_selection(state, -1),
+        // COOK-409: these both called `toggle_fold`, so `h` expanded a
+        // collapsed recipe and the help text ("h/l collapse/expand") was wrong
+        // half the time. Enter and Space remain the toggle.
         (KeyCode::Left, _) | (KeyCode::Char('h'), _) => {
-            state.toggle_fold();
+            state.set_fold(false);
             Action::Continue
         }
         (KeyCode::Right, _) | (KeyCode::Char('l'), _) => {
-            state.toggle_fold();
+            state.set_fold(true);
             Action::Continue
         }
         (KeyCode::Enter, _) | (KeyCode::Char(' '), _) => { state.toggle_fold(); Action::Continue }

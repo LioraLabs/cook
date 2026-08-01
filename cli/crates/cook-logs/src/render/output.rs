@@ -16,9 +16,20 @@ use crate::theme::Theme;
 pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
     let block = Block::default().borders(Borders::NONE);
     let lines = build_lines(state, theme);
+    // COOK-409: clamp here rather than at the keymap, because this is the only
+    // place that knows both the line count and the viewport height. `G` sets
+    // `scroll_y` to `u16::MAX` and used to scroll the whole pane past the end,
+    // rendering blank; PageDown past the last line did the same more slowly.
+    //
+    // Conservative under `soft_wrap`: a wrapped line occupies more than one row,
+    // so the true bottom is further down and this stops short of it rather than
+    // overshooting into blank space.
+    let max_scroll = u16::try_from(lines.len().saturating_sub(area.height as usize))
+        .unwrap_or(u16::MAX);
+    let scroll_y = state.scroll_y.min(max_scroll);
     let mut para = Paragraph::new(Text::from(lines))
         .block(block)
-        .scroll((state.scroll_y, 0));
+        .scroll((scroll_y, 0));
     if state.soft_wrap {
         para = para.wrap(Wrap { trim: false });
     }
@@ -35,7 +46,10 @@ fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
         "{}/{}{}",
         recipe.name,
         node.name,
-        node.elapsed_ms.map(|ms| format!("  ·  {:.1}s", ms as f64 / 1000.0)).unwrap_or_default(),
+        // COOK-392 / CS-0198: THE duration law, not a second spelling of it.
+        node.elapsed_ms
+            .map(|ms| format!("  ·  {}", cook_contracts::render::duration_ms(ms)))
+            .unwrap_or_default(),
     );
     lines.push(Line::styled(label, theme.dim_style()));
     lines.push(Line::raw(""));
