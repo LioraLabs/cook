@@ -12,6 +12,7 @@ pub mod command_failure;
 pub mod lua_error;
 pub mod lua_string;
 pub mod member;
+pub mod naming;
 pub mod output;
 pub mod probe;
 pub mod quoting;

@@ -41,12 +41,18 @@ pub fn spawn_new_renderer(
         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
         let ci = std::env::var("CI").ok().is_some();
         let dumb = std::env::var("TERM").map(|t| t == "dumb").unwrap_or(false);
-        let no_color_env = std::env::var("NO_COLOR").is_ok();
-        let colored = match cli_color.as_str() {
-            "always" => !no_color_env,
-            "never" => false,
-            _ => is_tty && !no_color_env,
-        };
+        // COOK-411: this used to resolve colour itself and disagreed with the
+        // test reporter on both halves, so one `cook test` run answered
+        // differently for its two output streams. This spelling treated
+        // NO_COLOR="" as set (`is_ok()`), where no-color.org specifies
+        // "present and not an empty string", and let NO_COLOR override an
+        // explicit `--color=always`, where an explicit flag should win.
+        let no_color_env = std::env::var("NO_COLOR").ok();
+        let colored = crate::test_reporter::style::resolve_color_choice(
+            cli_color.as_str(),
+            no_color_env.as_deref(),
+            is_tty,
+        );
 
         let renderer: Box<dyn Renderer> = match mode {
             OutputMode::Json => Box::new(JsonWriter::new(std::io::stderr())),

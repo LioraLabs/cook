@@ -165,9 +165,14 @@ impl Reporter {
     }
 }
 
+/// COOK-411: this was a local re-derivation that disagreed with
+/// `cook_engine::id::id_recipe` for every namespaced test, so the JUnit
+/// sidecar grouped by a different key than every other consumer. Both answers
+/// were legitimate; the defect was one name for two of them. The qualified
+/// form is the right JUnit `classname`, and it now comes from the one place
+/// that defines it.
 fn recipe_of(id: &TestId) -> String {
-    let s = &id.0;
-    s.split(':').next().unwrap_or("").to_string()
+    cook_engine::id::id_recipe_path(id)
 }
 
 // ---------------------------------------------------------------------------

@@ -161,9 +161,7 @@ fn completion_globals() -> Option<Globals> {
 /// caught as well as a bare one. Note `cook list` still prints these — this is
 /// a completion-presentation choice, not a change to the listing surface.
 fn is_module_internal(name: &str) -> bool {
-    name.rsplit('.')
-        .next()
-        .is_some_and(|segment| segment.starts_with("__"))
+    cook_contracts::naming::is_internal_recipe(name)
 }
 
 /// Every registered name in the workspace worth proposing, with its kind.
