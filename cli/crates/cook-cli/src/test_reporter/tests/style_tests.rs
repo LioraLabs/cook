@@ -41,3 +41,24 @@ fn style_passes_through_when_uncolored() {
     assert_eq!(s.green("ok"), "ok");
     assert_eq!(s.bold_red("FAILED"), "FAILED");
 }
+
+/// COOK-411: `progress.rs` resolved colour itself and disagreed with this
+/// function on exactly two inputs, so a single `cook test` run answered
+/// differently for its progress output and its test report. Both callers share
+/// this function now; these are the two cases that differed.
+#[test]
+fn the_two_inputs_the_progress_renderer_used_to_answer_differently() {
+    // `--color=always` beats NO_COLOR: an explicit flag wins over the
+    // environment. progress.rs returned false here.
+    assert!(
+        resolve_color_choice("always", Some("1"), true),
+        "an explicit --color=always must win over NO_COLOR"
+    );
+
+    // NO_COLOR="" is NOT set, per no-color.org ("present and not an empty
+    // string"). progress.rs used `is_ok()` and treated it as set.
+    assert!(
+        resolve_color_choice("auto", Some(""), true),
+        "an empty NO_COLOR must not disable colour"
+    );
+}
