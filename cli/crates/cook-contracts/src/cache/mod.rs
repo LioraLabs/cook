@@ -2,6 +2,7 @@
 
 pub mod observation;
 pub mod record;
+pub mod step;
 
 /// How one declared input entry is read (§17.1.1.2, CS-0186).
 ///

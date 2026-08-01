@@ -11,13 +11,16 @@
 
 pub mod backend;
 pub mod check;
-pub mod consumes;
-pub mod context;
-pub mod envkey;
 pub mod evict;
 pub mod probe;
-pub mod record;
 pub mod statmemo;
+
+// COOK-418, in flight: these four moved to `cook-contracts` (effect-free, so
+// the stratum row that held them out here was mistaking a dependency for an
+// effect). Re-exported under their old paths until every consumer is switched
+// over and this crate is deleted.
+pub use cook_contracts::{consumes, context, envkey};
+pub use cook_contracts::cache::step as record;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -47,9 +50,11 @@ pub use record::{CACHE_VERSION, FileRecord, StepEntry};
 pub use statmemo::stat_mtime_memo;
 
 /// Hash a string (for command templates, env vars, etc.)
-pub fn hash_str(s: &str) -> u64 {
-    xxhash_rust::xxh3::xxh3_64(s.as_bytes())
-}
+///
+/// COOK-418: moved to `cook_contracts::hash_str`. The constitution's worked
+/// example held this out of contracts for "needing xxhash", which conflated a
+/// dependency with an effect; a hash reaches nothing.
+pub use cook_contracts::hash_str;
 
 // A test-unit fingerprint used to live here: `FingerprintInputs` and
 // `compute_test_fingerprint`, a second hash function over a second input

@@ -63,7 +63,7 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
     for (name, hash) in &tools {
         h.update(name.as_bytes());
         h.update(b"=");
-        h.update(probe_hex_encode(hash).as_bytes());
+        h.update(crate::render::lower_hex(hash).as_bytes());
         h.update(b"\n");
     }
 
@@ -74,7 +74,7 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
     for (path, hash) in &files {
         h.update(path.as_bytes());
         h.update(b"=");
-        h.update(probe_hex_encode(hash).as_bytes());
+        h.update(crate::render::lower_hex(hash).as_bytes());
         h.update(b"\n");
     }
 
@@ -85,7 +85,7 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
     for (key, fp) in &up {
         h.update(key.as_bytes());
         h.update(b"=");
-        h.update(probe_hex_encode(fp).as_bytes());
+        h.update(crate::render::lower_hex(fp).as_bytes());
         h.update(b"\n");
     }
 
@@ -93,11 +93,6 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&result);
     out
-}
-
-pub(crate) fn probe_hex_encode(bytes: &[u8]) -> String {
-    // COOK-392: the one lowercase-hex encoder.
-    cook_contracts::render::lower_hex(bytes)
 }
 
 #[cfg(test)]

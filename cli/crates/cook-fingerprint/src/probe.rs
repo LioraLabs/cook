@@ -84,7 +84,7 @@ pub fn tool_identity(name: &str) -> Option<(String, String)> {
     let path = which::which(name).ok()?;
     let hash = memoized_hash(&path);
     Some((
-        crate::context::probe_hex_encode(&hash),
+        cook_contracts::render::lower_hex(&hash),
         path.to_string_lossy().into_owned(),
     ))
 }
