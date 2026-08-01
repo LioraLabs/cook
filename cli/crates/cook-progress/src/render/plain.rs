@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::time::Duration;
 
-use crate::event::{ProgressEvent, RecipeId, SkipReason, Stream};
+use crate::event::{ProgressEvent, RecipeId, Stream};
 use crate::model::build::BuildState;
 use crate::naming::{display_recipe_name, is_internal_recipe, probe_module};
 use crate::render::Renderer;
@@ -68,12 +68,10 @@ impl<W: Write + Send> PlainRenderer<W> {
         buf.probes_elapsed = Duration::ZERO;
         if ran == 0 { return Ok(0); }
         let rname = self.name(state, recipe);
-        let noun = if ran + cached == 1 { "probe" } else { "probes" };
-        let label = if cached > 0 {
-            format!("probe:{module} ({} {noun}, {cached} cached)", ran + cached)
-        } else {
-            format!("probe:{module} ({ran} {noun})")
-        };
+        let label = format!(
+            "probe:{module} {}",
+            crate::naming::probe_group_detail(ran, cached)
+        );
         writeln!(self.out, "  {}/{:40}{}", rname, label, fmt_secs(elapsed))?;
         Ok(ran)
     }
@@ -136,7 +134,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 }
                 // No real work beyond probes: drop the held cached rows —
                 // the summary row alone tells the warm-build story.
-                if cached + probes_ran >= *total {
+                if crate::naming::recipe_did_no_real_work(*cached, probes_ran, *total) {
                     self.buffers.remove(recipe);
                 } else {
                     self.flush_cached(*recipe)?;
@@ -207,12 +205,17 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             ProgressEvent::NodeSkipped { recipe, name: nname, reason, .. } => {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
-                let reason_str = match reason {
-                    SkipReason::UpstreamFailed => "upstream-failed",
-                    SkipReason::ConditionFalse => "condition-false",
-                    SkipReason::Disabled => "disabled",
-                };
-                writeln!(self.out, "  {}/{:40}skipped ({reason_str})", rname, nname)?;
+                // COOK-413: this hand-spelled the three strings beside the
+                // `SkipReason::as_str` that `event_writer.rs` correctly calls.
+                // A fourth variant would have compiled here and rendered a
+                // different word than the event writer for the same event.
+                writeln!(
+                    self.out,
+                    "  {}/{:40}skipped ({})",
+                    rname,
+                    nname,
+                    reason.as_str()
+                )?;
             }
             ProgressEvent::NodeOutput { recipe, node, line, stream } => {
                 self.flush_recipe(state, *recipe)?;

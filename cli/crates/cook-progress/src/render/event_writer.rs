@@ -221,7 +221,7 @@ impl EventWriter {
                 // No real work: everything was cached except (at most) the
                 // toolchain probes, which just printed their own group line.
                 // The dominant warm-build case — one dim line per recipe.
-                if cached + probes_ran >= *total {
+                if crate::naming::recipe_did_no_real_work(*cached, probes_ran, *total) {
                     self.buffers.remove(recipe);
                     if internal { return Ok(probes_ran > 0); }
                     let rname = recipe_name(state, *recipe);
@@ -371,12 +371,7 @@ impl EventWriter {
         } else {
             format!("{module} toolchain for {rname}")
         };
-        let noun = if ran + cached == 1 { "probe" } else { "probes" };
-        let detail = if cached > 0 {
-            format!("({} {noun}, {cached} cached)", ran + cached)
-        } else {
-            format!("({ran} {noun})")
-        };
+        let detail = crate::naming::probe_group_detail(ran, cached);
         writeln!(out, "{} {subject} {detail} in {}",
             format_verb(v, self.opts.colored), fmt_secs(elapsed))?;
         Ok(ran)
