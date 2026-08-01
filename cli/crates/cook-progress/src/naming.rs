@@ -45,3 +45,35 @@ pub fn probe_module(display: &str) -> Option<&str> {
 #[cfg(test)]
 #[path = "tests/naming_tests.rs"]
 mod tests;
+
+/// True when a recipe did no work worth reporting: everything was cached
+/// except, at most, the toolchain probes, which have already printed their own
+/// group line.
+///
+/// COOK-413: `event_writer.rs` and `plain.rs` each spelled
+/// `cached + probes_ran >= total`. Both renderers must make the same
+/// suppression decision or a warm build is noisy in one output mode and quiet
+/// in the other, for the same events.
+pub fn recipe_did_no_real_work(cached: usize, probes_ran: usize, total: usize) -> bool {
+    cached + probes_ran >= total
+}
+
+/// The parenthesised detail on a probe group line: `(3 probes, 1 cached)`,
+/// `(1 probe)`.
+///
+/// COOK-413: the singular/plural choice and the `, N cached` suffix were
+/// spelled in both renderers. The surrounding line differs between them (one
+/// is verb-prefixed, one is a padded table row) and stays separate; this is
+/// the part that must read identically.
+pub fn probe_group_detail(ran: usize, cached: usize) -> String {
+    let noun = if ran + cached == 1 { "probe" } else { "probes" };
+    if cached > 0 {
+        format!("({} {noun}, {cached} cached)", ran + cached)
+    } else {
+        format!("({ran} {noun})")
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/naming_shared_tests.rs"]
+mod naming_shared_tests;
