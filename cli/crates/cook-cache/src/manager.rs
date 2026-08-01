@@ -1,7 +1,5 @@
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use cook_contracts::CacheMeta;
@@ -12,7 +10,7 @@ use crate::store::RecipeCache;
 /// Build FileRecord vec for a list of relative paths. Bails on the first
 /// path whose mtime or content cannot be read. Returning Err from here
 /// causes record_completion to skip the cache write entirely.
-fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecord>, String> {
+pub fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecord>, String> {
     let mut out = Vec::with_capacity(paths.len());
     for rel in paths {
         let abs = working_dir.join(rel);
@@ -23,14 +21,6 @@ fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecor
     Ok(out)
 }
 
-/// Public wrapper for [`collect_records`] used by the engine's post-execution
-/// augmentation path.
-pub fn collect_records_public(
-    paths: &[String],
-    working_dir: &Path,
-) -> Result<Vec<FileRecord>, String> {
-    collect_records(paths, working_dir)
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
@@ -40,38 +30,6 @@ pub enum RecordError {
     UnreadableFile(String),
 }
 
-pub struct CacheState {
-    pub cache: RecipeCache,
-    pub cache_dir: PathBuf,
-    pub recipe_name: String,
-    pub dirty: bool,
-}
-
-impl CacheState {
-    pub fn new(cache: RecipeCache, cache_dir: PathBuf, recipe_name: String) -> Self {
-        Self {
-            cache,
-            cache_dir,
-            recipe_name,
-            dirty: false,
-        }
-    }
-
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        if self.dirty {
-            self.cache.save(&self.cache_dir, &self.recipe_name)?;
-            self.dirty = false;
-        }
-        Ok(())
-    }
-
-    // Returns the resolved files per glob pattern
-    pub fn files_per_glob(&self) -> &BTreeMap<String, BTreeSet<String>> {
-        &self.cache.globs
-    }
-}
-
-pub type SharedCacheState = Rc<RefCell<CacheState>>;
 
 /// Outcome of a single keyed step lookup against a recipe index.
 ///

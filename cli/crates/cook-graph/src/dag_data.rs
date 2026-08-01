@@ -116,15 +116,6 @@ impl EdgeKind {
         }
     }
 
-    /// True when the edge imposes ordering rather than carrying data. These
-    /// are the edges worth interrogating when a build is less parallel than
-    /// expected.
-    pub fn is_ordering(self) -> bool {
-        matches!(
-            self,
-            EdgeKind::Group | EdgeKind::Serial | EdgeKind::DepOrder | EdgeKind::Barrier
-        )
-    }
 }
 
 #[derive(Serialize, Clone)]

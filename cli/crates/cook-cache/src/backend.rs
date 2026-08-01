@@ -325,8 +325,7 @@ impl CacheBackend for LocalBackend {
             .map_err(|e| BackendError::Other(format!("create {}: {e}", tmp.display())))?;
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
-        let mut total: u64 = 0;
-        let limit = self.config.max_artifact_bytes;
+        let mut cap = crate::cap::CapCounter::new(self.config.max_artifact_bytes);
         loop {
             let n = reader.read(&mut buf).map_err(|e| {
                 let _ = std::fs::remove_file(&tmp);
@@ -341,13 +340,12 @@ impl CacheBackend for LocalBackend {
             // On overflow, abort: discard the temp file, return an error
             // that names the limit. No partial bytes ever surface to a
             // reader because the rename-into-place commit hasn't run.
-            total = total.saturating_add(n as u64);
-            if total > limit {
+            // COOK-417: the accumulate-and-check is `CapCounter`, shared with
+            // the cloud backend, which used to spell it again.
+            if let Err(msg) = cap.add(n as u64) {
                 drop(tmp_file);
                 let _ = std::fs::remove_file(&tmp);
-                return Err(BackendError::Other(format!(
-                    "artifact exceeds max_artifact_bytes ({total}); cap {limit}"
-                )));
+                return Err(BackendError::Other(msg));
             }
             hasher.update(&buf[..n]);
             tmp_file.write_all(&buf[..n]).map_err(|e| {
@@ -461,7 +459,7 @@ impl CacheBackend for LocalBackend {
         // overwriting could regress callers who pre-set size_bytes
         // intentionally. Keep it caller-set; surface the streamed total
         // as a tracing field for observability.
-        let _ = total; // silenced — see comment above
+        let _ = cap.total(); // silenced — see comment above
 
         let meta_tmp = path.with_extension("meta.json.tmp");
         let meta_bytes = serde_json::to_vec(meta)

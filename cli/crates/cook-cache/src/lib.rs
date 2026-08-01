@@ -11,6 +11,7 @@
 //! `cook_cache::*` call sites.
 
 pub mod backend;
+pub mod cap;
 pub mod cache_ctx;
 pub mod cloud_backend;
 pub mod cloud_config;
@@ -35,5 +36,5 @@ pub use backend::LocalBackend;
 pub use cache_ctx::CacheContext;
 pub use cloud_backend::CloudBackend;
 pub use cloud_config::{parse_size, CloudConfig, CloudConfigError, SIZE_LITERAL_HELP};
-pub use manager::{collect_records_public, CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
+pub use manager::{collect_records, RecordError, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
