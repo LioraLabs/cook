@@ -110,7 +110,7 @@ impl Sharing {
 }
 
 /// Metadata used by the caching subsystem to determine whether a unit can be skipped.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct CacheMeta {
     pub recipe_name: String,
     pub project_id: String,
