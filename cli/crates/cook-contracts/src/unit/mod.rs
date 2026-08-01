@@ -98,13 +98,15 @@ impl WorkPayload {
     /// Every variant carries one, and four call sites used to match on the
     /// payload kind purely to reach it — one of which knew only about `Test`
     /// and reported 0 for everything else.
+    /// The match is deliberately exhaustive with no `_` arm: a fifth variant
+    /// must be a compile error here, not a silent `0`. The arm this replaced
+    /// was already unreachable and warned on every build.
     pub fn line(&self) -> usize {
         match self {
             Self::Shell { line, .. }
             | Self::Interactive { line, .. }
             | Self::LuaChunk { line, .. }
             | Self::Probe { line, .. } => *line,
-            _ => 0,
         }
     }
 }
