@@ -1661,22 +1661,12 @@ fn build_chore_params_table(
 
 /// Escape a string value for inclusion in a Lua double-quoted string literal.
 ///
-/// Only escapes characters that would break the literal if unescaped:
-/// `\`, `"`, newline, carriage return, and NUL. This is sufficient for the
-/// chore-param prelude use case (param values are CLI argv strings).
+/// The rule lives in `cook_contracts::lua_string` (COOK-398): `cook-luagen`
+/// emits the program this prelude runs against and needs the identical law.
+/// The version that used to live here emitted `\0` rather than `\000`, which
+/// Lua reads as a different character whenever the next byte is a digit.
 fn lua_escape_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\0' => out.push_str("\\0"),
-            other => out.push(other),
-        }
-    }
-    out
+    cook_contracts::lua_string::escape_double_quoted(s)
 }
 
 /// Local DFS-based topological sort of recipe names by their declared

@@ -1,0 +1,5 @@
+A shell body containing a raw carriage return must parse, codegen, and register
+without error (§{lexical.source-representation}, COOK-398). The character is
+ordinary body text: it is neither a line terminator nor trailing whitespace, so
+the per-segment trim of §{lexical.brace-blocks} leaves it in the command string,
+and the generated Lua must escape it rather than emit it raw.
