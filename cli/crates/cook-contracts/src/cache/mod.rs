@@ -1,6 +1,7 @@
 //! Cache metadata and sharing disposition.
 
 pub mod observation;
+pub mod cas;
 pub mod record;
 pub mod step;
 

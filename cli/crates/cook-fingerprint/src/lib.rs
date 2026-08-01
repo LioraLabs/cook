@@ -11,7 +11,7 @@
 
 pub mod backend;
 pub mod check;
-pub mod evict;
+
 pub mod probe;
 pub mod statmemo;
 
@@ -19,7 +19,7 @@ pub mod statmemo;
 // the stratum row that held them out here was mistaking a dependency for an
 // effect). Re-exported under their old paths until every consumer is switched
 // over and this crate is deleted.
-pub use cook_contracts::{consumes, context, envkey};
+pub use cook_contracts::{consumes, context, envkey, evict};
 pub use cook_contracts::cache::step as record;
 
 use std::collections::BTreeSet;

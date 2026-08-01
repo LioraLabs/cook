@@ -9,6 +9,7 @@ pub mod cache;
 pub mod consumes;
 pub mod context;
 pub mod envkey;
+pub mod evict;
 pub mod hash;
 pub mod layout;
 pub mod captured_stream;
