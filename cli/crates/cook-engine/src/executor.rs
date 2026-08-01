@@ -727,10 +727,19 @@ pub fn execute_dag(
     // for an observing unit and they were always the question for a producing
     // one.
     //
-    // No backend is consulted. There is nothing in the artifact store to fetch
-    // for a unit with no artifacts — `fetch_by_key` refuses an empty output
-    // list at its own door — and §17.4 rule 4's cross-machine replay is
-    // withdrawn as never-delivered, not quietly reimplemented here.
+    // The backend IS consulted, for the observation replay CS-0189 added:
+    // `fetch_by_key` refuses an empty output list at its own door, so an
+    // observing unit cannot be served through the artifact path, and
+    // `shared_observation` is the separate query that serves it from a
+    // recorded observation instead.
+    //
+    // COOK-401: this comment used to say "No backend is consulted... withdrawn
+    // as never-delivered, not quietly reimplemented here". That was written by
+    // CS-0186 and was true then; CS-0189 added the block below sixty lines
+    // down and did not update it. `cook why` had the same claim in its own
+    // words and went silent about a tier that would serve the unit. The
+    // question lives in `cook_fingerprint::shared_observation` now, and both
+    // sides ask it there.
     fn check_observing_node(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
@@ -832,43 +841,38 @@ pub fn execute_dag(
             seal_contribution: seal_contrib,
             sorted_input_content_hashes: &input_hashes,
         });
-        let manifest = cache_ctx.backend.get_manifest(&key).ok().flatten();
-        if let Some(manifest) = manifest {
-            if manifest.output_paths.is_empty() {
-                if let Some(observation) = manifest.observation {
-                    if cook_fingerprint::fetch_observation(cache_ctx.backend.as_ref(), &key)
-                        .is_some()
-                    {
-                        let inputs: Option<Vec<_>> = current_inputs
-                            .iter()
-                            .map(|path| {
-                                let abs = work_node.working_dir.join(path);
-                                cook_fingerprint::hash_file(&abs).map(|hash| {
-                                    cook_fingerprint::FileRecord {
-                                        path: path.as_str().into(),
-                                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
-                                        hash,
-                                    }
-                                })
-                            })
-                            .collect();
-                        if let Some(inputs) = inputs {
-                            cm.update_step(
-                                &meta.recipe_name,
-                                &meta.cache_key,
-                                cook_fingerprint::StepEntry {
-                                    inputs,
-                                    outputs: Vec::new(),
-                                    command_hash: meta.command_hash,
-                                    env_contribution: meta.env_contribution,
-                                    seal_contribution: seal_contrib,
-                                    observed: Some(observation),
-                                },
-                            );
-                            return CacheDecision::Hit;
-                        }
-                    }
-                }
+        // COOK-401: the "would the shared tier serve this?" half is
+        // `shared_observation`, shared with `cook why`. What stays here is
+        // what only the executor does: record the step entry so the next local
+        // run hits without a round trip, and report the hit.
+        if let Some(observation) =
+            cook_fingerprint::shared_observation(cache_ctx.backend.as_ref(), &key)
+        {
+            let inputs: Option<Vec<_>> = current_inputs
+                .iter()
+                .map(|path| {
+                    let abs = work_node.working_dir.join(path);
+                    cook_fingerprint::hash_file(&abs).map(|hash| cook_fingerprint::FileRecord {
+                        path: path.as_str().into(),
+                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                        hash,
+                    })
+                })
+                .collect();
+            if let Some(inputs) = inputs {
+                cm.update_step(
+                    &meta.recipe_name,
+                    &meta.cache_key,
+                    cook_fingerprint::StepEntry {
+                        inputs,
+                        outputs: Vec::new(),
+                        command_hash: meta.command_hash,
+                        env_contribution: meta.env_contribution,
+                        seal_contribution: seal_contrib,
+                        observed: Some(observation),
+                    },
+                );
+                return CacheDecision::Hit;
             }
         }
         if meta.sharing.is_pinned() {

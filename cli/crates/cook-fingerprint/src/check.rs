@@ -714,6 +714,51 @@ pub fn read_discovered_input_sets(
     Vec::new()
 }
 
+/// Would the shared tier serve this OBSERVING unit, and with what?
+///
+/// An observing unit declares no outputs, so its shared hit is a *replay* of a
+/// recorded observation rather than a restore of artifacts. A manifest alone
+/// is not enough: the scalar half lives on the manifest and the stream half is
+/// a separate artifact, and both must be present and decodable before the unit
+/// can be served without running it.
+///
+/// # Why this is a function (COOK-401)
+///
+/// This question had two implementations that disagreed. `cook-engine`'s
+/// executor asked it and served hits from the answer; `cook why` did not ask
+/// it at all, returning "the question does not apply" for every observing unit
+/// on the stated ground that such a unit "publishes nothing to the store".
+///
+/// That was true when CS-0186 wrote it and stopped being true at CS-0189,
+/// which taught the executor to serve observing units from the shared tier and
+/// updated neither the reasoning in `why.rs` nor the comment above
+/// `check_observing_node` that still says "No backend is consulted". So `cook
+/// why` went silent about a tier that would in fact serve the unit, on exactly
+/// the unit kind CS-0189 had just taught to use it.
+///
+/// One function now. The executor takes the returned `Observation` and records
+/// a step entry from it; `cook why` reports its presence. Neither re-derives
+/// the condition, so a third CS cannot move one without the other.
+///
+/// Note the deliberate asymmetry with [`fetch_by_key`]: that path refuses an
+/// empty output list at its own door, which is why an observing unit could
+/// never be served through it and why this one exists separately.
+pub fn shared_observation(
+    backend: &dyn crate::backend::CacheBackend,
+    key: &crate::backend::CloudKey,
+) -> Option<cook_contracts::cache::observation::Observation> {
+    let manifest = backend.get_manifest(key).ok().flatten()?;
+    // A manifest carrying outputs belongs to a producing unit; serving it here
+    // would replay an observation while leaving its artifacts unrestored.
+    if !manifest.output_paths.is_empty() {
+        return None;
+    }
+    let observation = manifest.observation?;
+    // The scalar half without the stream half is not a hit.
+    fetch_observation(backend, key)?;
+    Some(observation)
+}
+
 /// Fetch and verify the stream half of a recorded observation.
 ///
 /// This is deliberately separate from [`fetch_by_key`]: an observing unit has

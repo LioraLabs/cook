@@ -31,7 +31,7 @@ pub use backend::{
     OBSERVATION_PATH, artifact_key, cloud_key, recipe_namespace,
 };
 pub use check::{
-    FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation,
+    FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation, shared_observation,
     hash_env, hash_file, hash_input_paths, hash_reader, needs_rebuild_cook,
     read_discovered_input_sets, stat_mtime,
 };

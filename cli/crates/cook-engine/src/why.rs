@@ -477,20 +477,39 @@ fn classify(
     // COOK-276: probed even on a local hit, so both tiers get an explicit
     // answer (`[HIT (local), MISS (shared)]` instead of a bare tier label
     // that reads as "will rebuild").
-    // CS-0186: an OBSERVING unit has no shared tier to report on. It publishes
-    // nothing to the store — there is no artifact, and a manifest alone could
-    // never be served against, since `fetch_by_key` refuses an empty output
-    // list — so probing would report `MISS (shared)` for something that cannot
-    // be a hit, and a "no producer manifest published" diff for a key nothing
-    // was ever going to publish. Both read as a fixable absence. `None` is the
-    // honest answer: the question does not apply.
+    // An OBSERVING unit has no artifacts, so `shared_artifacts_present` below
+    // is the wrong probe for it: `fetch_by_key` refuses an empty output list at
+    // its own door and could never serve one. Its shared hit is a REPLAY of a
+    // recorded observation, which is a different query, and it is the same
+    // query the executor asks.
+    //
+    // COOK-401: this used to return `shared_present: None` and say "the
+    // question does not apply". That reasoning was CS-0186's and was true when
+    // written; CS-0189 taught the executor to serve observing units from a
+    // recorded observation and did not revisit it, so `cook why` went silent
+    // about a tier that would in fact serve the unit, on exactly the unit kind
+    // CS-0189 had just taught to use it. `shared_observation` is now the one
+    // implementation, and both sides call it.
     use cook_contracts::cache::record::{effect_kind, EffectKind};
     if effect_kind(meta) == EffectKind::Observed {
+        let shared = decode_key_hex(key_hex)
+            .and_then(|k| {
+                cook_fingerprint::shared_observation(cache_ctx.backend.as_ref(), &k)
+            })
+            .is_some();
         return Classification {
-            status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::SharedMiss },
+            status: if local_hit {
+                CacheStatus::LocalHit
+            } else if shared {
+                CacheStatus::SharedHit
+            } else {
+                CacheStatus::SharedMiss
+            },
             local_hit,
             local_cause,
-            shared_present: None,
+            shared_present: Some(shared),
+            // An observing unit publishes no artifact list, so a
+            // producer-shaped manifest diff would be noise either way.
             manifest_diff: None,
             shared_output_hashes: BTreeMap::new(),
         };
