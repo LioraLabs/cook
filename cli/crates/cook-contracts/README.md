@@ -71,14 +71,41 @@ dependency stratum**, and a law lives as low as its dependencies allow:
 
 | Stratum | Home | Budget |
 |---|---|---|
-| Plain data + pure rules | `cook-contracts` | serde only |
+| Pure law | `cook-contracts` | anything effect-free |
 | Lua-touching law | `cook-lua-stdlib` | + mlua |
-| Hashing/fingerprint law | `cook-fingerprint` | + xxhash |
 
 If a law's two consumers live in crates that both already depend on one of
 these homes, the law goes there — full stop. Adding a small dependency edge to
 reach the right home is almost always cheaper than the copy; the copy's cost
 is deferred and silent, the edge's cost is visible in `Cargo.toml` once.
+
+**The budget is about effects, not dependencies.** `layout.rs` fails the build
+on `std::fs`, `std::env` and `std::process`; it says nothing about the
+dependency list, and that is deliberate. A pure computation is admissible here
+however it is spelled: `xxhash`, `sha2` and `globset` compute, they do not act.
+What is inadmissible is reaching the world, and mutable process-global state
+counts as reaching the world even when the grep comes back clean.
+
+There used to be a third row, "Hashing/fingerprint law, `cook-fingerprint`,
++ xxhash". It was a mistake, and its failure is the best argument this document
+has for its own rules. The row conflated a *dependency* with an *effect*: it
+held `hash_str` out of this crate for needing xxhash, when the bar here has
+never been about what a law imports. The stratum it named did not exist, so the
+crate created to occupy it filled with the only thing adjacent: 2,100 lines of
+cache IO, seven dependencies, `remove_file`, `remove_dir`, and a process-global
+memo whose invariant is still owned by eight call sites in four crates. Nothing
+was neglected. The boundary was fictional from the day it was drawn, and it
+collected whatever had nowhere better to go.
+
+`cook-fingerprint` is being dissolved under COOK-418: the effect-free modules
+come here, the IO goes to `cook-cache`. Until that lands the crate still exists;
+do not file new law into it.
+
+The lesson generalises, and it is the counterweight to everything else in this
+document: **name boundaries, not computations.** A boundary you can observe
+(disjoint dependency sets, a value handed across a phase line) enforces itself
+once drawn. A boundary you reason your way to, ahead of the evidence, becomes an
+attractor for the code that fits nowhere. Split where the seam already is.
 
 ## The deliberate-copy protocol
 
@@ -127,6 +154,40 @@ trinity, and the tooling keeps its three parts in agreement:
 When you find yourself about to write a function this file's rules cover:
 grep first. The law you need probably has a name already, and if it does not,
 it wants to be born here rather than where you are standing.
+
+### Does it come with a check?
+
+Ask this of every structural decision before making it, and prefer the option
+that answers yes.
+
+The two purity rows above were written with equal authority in this same file.
+One held for the life of the crate; the other drifted to seven dependencies and
+two `remove_*` calls without anyone noticing. The difference was not intent,
+seniority, or how carefully the rule was argued. It was `tests/layout.rs`: forty
+lines that fail the build. Prose asks; a test refuses.
+
+So, in descending order of what actually holds:
+
+1. **A type that makes the wrong thing uncompilable.** `CachedTestResults` and
+   `BlockedTestResults` are newtypes for exactly this reason (COOK-395): the two
+   accumulators used to be one type, so transposing them anywhere compiled clean
+   and silently filed cache hits as blocked.
+2. **A crate boundary.** You cannot call across it without a `Cargo.toml` edge
+   that shows up in review. This is why a crate split is a real investment and
+   not tidying, and why one drawn on a fictional seam is expensive to undo.
+3. **A test that fails the build**, like `layout.rs` or an agreement test.
+4. **A comment.** Load-bearing only until the code beside it changes. This
+   audit found four comments that contradicted the function directly beneath
+   them, two of which had hidden a live bug from review for months.
+
+A structural change that ships with nothing below rank 3 is documentation with
+extra steps. That is not an argument against writing it down; it is an argument
+for not believing it will hold on its own.
+
+This matters more than it used to. Code arrives faster than review can read it,
+and the failure mode is no longer a bad function: it is a second correct one.
+Half the findings of the 2026-08-01 crate-charter audit were one decision with
+two homes. None of them was a mistake at the moment it was written.
 
 ## Lineage
 
