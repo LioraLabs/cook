@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use cook_contracts::cache::observation::Observation;
+use crate::cache::observation::Observation;
 
 /// Serde adapter: u64 <-> zero-padded lowercase hex string.
 ///
@@ -53,7 +53,7 @@ pub mod hex_u64 {
 /// Re-exported rather than aliased so every existing `CACHE_VERSION` reference
 /// keeps working while there is exactly one value behind them all. 7 → 8:
 /// superseded indexes are swept, not migrated (CS-0166).
-pub use cook_contracts::cache::record::RECORD_SCHEMA_VERSION as CACHE_VERSION;
+pub use crate::cache::record::RECORD_SCHEMA_VERSION as CACHE_VERSION;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
@@ -95,5 +95,5 @@ pub struct FileRecord {
 }
 
 #[cfg(test)]
-#[path = "tests/record_tests.rs"]
+#[path = "tests/step_tests.rs"]
 mod tests;

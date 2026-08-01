@@ -10,7 +10,7 @@ fn resolve_glob_filters_directories() {
     std::fs::write(dir.path().join("a.txt"), "").unwrap();
     std::fs::create_dir(dir.path().join("nested")).unwrap();
 
-    let got = cook_fingerprint::resolve_ingredient_glob(dir.path(), dir.path(), "*").unwrap();
+    let got = cook_cache::resolve_ingredient_glob(dir.path(), dir.path(), "*").unwrap();
     let expected: BTreeSet<String> = ["a.txt".to_string()].into_iter().collect();
     assert_eq!(got, expected);
 }

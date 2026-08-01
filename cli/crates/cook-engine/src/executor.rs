@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
 use cook_contracts::{CommandFailure, WorkPayload};
-use cook_fingerprint::backend::DeterminantManifest;
-use cook_fingerprint::{
+use cook_cache::backend::DeterminantManifest;
+use cook_cache::{
     artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
@@ -299,10 +299,10 @@ pub(crate) fn resolve_output_paths_with_unmatched(
     let mut out = Vec::with_capacity(declared.len());
     let mut unmatched_patterns = Vec::new();
     for entry in declared {
-        if cook_fingerprint::is_terminal_output(entry) {
-            let normalized = cook_fingerprint::normalize_glob_pattern(entry);
-            let resolved_paths = cook_fingerprint::resolve_glob(working_dir, normalized.as_ref());
-            if resolved_paths.is_empty() && cook_fingerprint::has_glob_meta(entry) {
+        if cook_cache::is_terminal_output(entry) {
+            let normalized = cook_cache::normalize_glob_pattern(entry);
+            let resolved_paths = cook_cache::resolve_glob(working_dir, normalized.as_ref());
+            if resolved_paths.is_empty() && cook_cache::has_glob_meta(entry) {
                 unmatched_patterns.push(entry.clone());
             }
             for resolved in resolved_paths {
@@ -338,7 +338,7 @@ fn run_interactive_on_main(
     // the unit its probe edges, so the values are materialised by now.
     let cmd = &cook_luaotp::resolve_probe_sigils(probe_store, cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
-    cook_fingerprint::statmemo::disarm();
+    cook_cache::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
     // terminal, so its output must reach the user's tty as it happens rather
     // than arriving as a buffer afterwards. Nothing is captured, which is why
@@ -458,8 +458,8 @@ pub fn execute_dag(
     // COOK-306: arm the per-run mtime memo. Registration (and every probe
     // capture it ran) is complete by now, so nothing has written to the tree
     // since the last stat; the first write from here on disarms it. See
-    // `cook_fingerprint::statmemo`.
-    cook_fingerprint::statmemo::arm();
+    // `cook_cache::statmemo`.
+    cook_cache::statmemo::arm();
 
     let total = dag.len();
     let (pool, rx) = WorkerPool::spawn_with_dep_outputs(num_workers, dep_outputs);
@@ -738,7 +738,7 @@ pub fn execute_dag(
     // CS-0186 and was true then; CS-0189 added the block below sixty lines
     // down and did not update it. `cook why` had the same claim in its own
     // words and went silent about a tier that would serve the unit. The
-    // question lives in `cook_fingerprint::shared_observation` now, and both
+    // question lives in `cook_cache::shared_observation` now, and both
     // sides ask it there.
     fn check_observing_node(
         work_node: &WorkNode,
@@ -759,7 +759,7 @@ pub fn execute_dag(
         // naming a consumed output resolves to the files that output now holds
         // (§17.4 rule 1). The same call serves a producing unit; nothing here
         // asks what kind of step this came from.
-        let current_inputs = cook_fingerprint::resolve_declared_inputs(
+        let current_inputs = cook_cache::resolve_declared_inputs(
             &meta.inputs,
             &meta.consumes,
             &work_node.working_dir,
@@ -827,7 +827,7 @@ pub fn execute_dag(
             return CacheDecision::Miss(cause);
         }
         let mut input_hashes =
-            match cook_fingerprint::hash_input_paths(&input_refs, &work_node.working_dir) {
+            match cook_cache::hash_input_paths(&input_refs, &work_node.working_dir) {
                 Some(hashes) => hashes,
                 None => return CacheDecision::Miss(cause),
             };
@@ -846,15 +846,15 @@ pub fn execute_dag(
         // what only the executor does: record the step entry so the next local
         // run hits without a round trip, and report the hit.
         if let Some(observation) =
-            cook_fingerprint::shared_observation(cache_ctx.backend.as_ref(), &key)
+            cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
         {
             let inputs: Option<Vec<_>> = current_inputs
                 .iter()
                 .map(|path| {
                     let abs = work_node.working_dir.join(path);
-                    cook_fingerprint::hash_file(&abs).map(|hash| cook_fingerprint::FileRecord {
+                    cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
                         path: path.as_str().into(),
-                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                        mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
                         hash,
                     })
                 })
@@ -863,7 +863,7 @@ pub fn execute_dag(
                 cm.update_step(
                     &meta.recipe_name,
                     &meta.cache_key,
-                    cook_fingerprint::StepEntry {
+                    cook_cache::StepEntry {
                         inputs,
                         outputs: Vec::new(),
                         command_hash: meta.command_hash,
@@ -948,7 +948,7 @@ pub fn execute_dag(
         // paths rather than the raw pattern strings.  Pattern strings don't
         // exist on disk, so passing them directly to needs_rebuild_cook would
         // trigger OutputMissing and force an unnecessary rebuild on every run.
-        let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::is_terminal_output(s));
+        let any_glob = meta.output_paths.iter().any(|s| cook_cache::is_terminal_output(s));
         let current_outputs_storage: Vec<String> = if any_glob && entry.is_some() {
             entry
                 .unwrap()
@@ -963,7 +963,7 @@ pub fn execute_dag(
         // inputs are literal paths today, so this returns them unchanged; it is
         // called anyway because "how a unit's inputs are computed" must have
         // exactly one answer (CS-0186).
-        let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
+        let resolved_inputs = cook_cache::resolve_declared_inputs(
             &meta.inputs,
             &meta.consumes,
             &work_node.working_dir,
@@ -1004,7 +1004,7 @@ pub fn execute_dag(
                     e.outputs.iter().map(|r| r.path.to_string()).collect();
                 for entry in &meta.output_paths {
                     if let Some(root) = entry.strip_suffix('/') {
-                        cook_fingerprint::reconcile_dir_output(
+                        cook_cache::reconcile_dir_output(
                             &work_node.working_dir,
                             root,
                             &kept,
@@ -1036,7 +1036,7 @@ pub fn execute_dag(
         // recomputing the one key from the declared inputs. A declared input
         // that is missing on disk means the unit cannot be a clean hit; treat it
         // as a backend miss.
-        let input_hashes = match cook_fingerprint::hash_input_paths(&input_refs, &work_node.working_dir) {
+        let input_hashes = match cook_cache::hash_input_paths(&input_refs, &work_node.working_dir) {
             Some(h) => h,
             None => {
                 return if meta.sharing.is_pinned() {
@@ -1046,7 +1046,7 @@ pub fn execute_dag(
                 };
             }
         };
-        if let Some(outcome) = cook_fingerprint::fetch_by_key(
+        if let Some(outcome) = cook_cache::fetch_by_key(
             &restore_ctx,
             meta.command_hash,
             meta.env_contribution,
@@ -1075,7 +1075,7 @@ pub fn execute_dag(
                 // Files first, then empty dirs (`remove_dir`, not `_all`): a
                 // stale dir record whose subtree gained restored files must
                 // survive — non-empty removal fails and that is correct.
-                cook_fingerprint::statmemo::disarm();
+                cook_cache::statmemo::disarm();
                 for abs in stale().filter(|p| !p.is_dir()) {
                     let _ = std::fs::remove_file(&abs);
                 }
@@ -1087,7 +1087,7 @@ pub fn execute_dag(
                 outcome.restored_outputs.iter().cloned().collect();
             for out in &meta.output_paths {
                 if let Some(root) = out.strip_suffix('/') {
-                    cook_fingerprint::reconcile_dir_output(
+                    cook_cache::reconcile_dir_output(
                         &work_node.working_dir,
                         root,
                         &kept,
@@ -1107,9 +1107,9 @@ pub fn execute_dag(
             // persisting a partial list whose artifact indices would misalign.
             let file_record = |p: &str| {
                 let abs = work_node.working_dir.join(p);
-                cook_fingerprint::hash_file(&abs).map(|h| cook_fingerprint::FileRecord {
+                cook_cache::hash_file(&abs).map(|h| cook_cache::FileRecord {
                     path: p.into(),
-                    mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                    mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
                     hash: h,
                 })
             };
@@ -1118,9 +1118,9 @@ pub fn execute_dag(
             let output_record = |p: &str| {
                 let abs = work_node.working_dir.join(p);
                 if abs.is_dir() {
-                    Some(cook_fingerprint::FileRecord {
+                    Some(cook_cache::FileRecord {
                         path: p.into(),
-                        mtime: cook_fingerprint::stat_mtime(&abs).unwrap_or(0),
+                        mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
                         hash: 0,
                     })
                 } else {
@@ -1145,7 +1145,7 @@ pub fn execute_dag(
                 cm.update_step(
                     &meta.recipe_name,
                     &meta.cache_key,
-                    cook_fingerprint::StepEntry {
+                    cook_cache::StepEntry {
                         inputs,
                         outputs,
                         command_hash: meta.command_hash,
@@ -1269,7 +1269,7 @@ pub fn execute_dag(
                     if dir.is_dir() {
                         let empty: std::collections::BTreeSet<String> =
                             std::collections::BTreeSet::new();
-                        cook_fingerprint::reconcile_dir_output(
+                        cook_cache::reconcile_dir_output(
                             &work_node.working_dir,
                             root,
                             &empty,
@@ -1494,7 +1494,7 @@ pub fn execute_dag(
                                                         ),
                                                     sorted_input_content_hashes: &hashes,
                                                 });
-                                                cook_fingerprint::fetch_observation(
+                                                cook_cache::fetch_observation(
                                                     cache_ctx.backend.as_ref(),
                                                     &key,
                                                 )
@@ -1957,7 +1957,7 @@ pub fn execute_dag(
                                         ),
                                         sorted_input_content_hashes: &hashes,
                                     });
-                                    if let Some(log) = cook_fingerprint::fetch_observation(
+                                    if let Some(log) = cook_cache::fetch_observation(
                                         cache_ctx.backend.as_ref(),
                                         &key,
                                     ) {
@@ -3140,7 +3140,7 @@ fn publish_completion(
     // one declaration that could disagree would report an input-set change on
     // every subsequent run.
     let judged_inputs =
-        cook_fingerprint::resolve_declared_inputs(&meta.inputs, &meta.consumes, working_dir);
+        cook_cache::resolve_declared_inputs(&meta.inputs, &meta.consumes, working_dir);
     let mut meta_for_record = meta.clone();
     meta_for_record.output_paths = resolved_output_paths.clone();
     meta_for_record.inputs = judged_inputs
@@ -3272,8 +3272,8 @@ fn publish_completion(
     if publish_to_backend {
         let observation_k = artifact_key(
             &cloud_k,
-            cook_fingerprint::OBSERVATION_INDEX,
-            cook_fingerprint::OBSERVATION_PATH,
+            cook_cache::OBSERVATION_INDEX,
+            cook_cache::OBSERVATION_PATH,
         );
         let mut observation_meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.clone(),
@@ -3284,8 +3284,8 @@ fn publish_completion(
             size_bytes: observation_bytes.len() as u64,
             tags: std::collections::BTreeSet::new(),
             consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-            output_index: cook_fingerprint::OBSERVATION_INDEX,
-            output_path: cook_fingerprint::OBSERVATION_PATH.to_string(),
+            output_index: cook_cache::OBSERVATION_INDEX,
+            output_path: cook_cache::OBSERVATION_PATH.to_string(),
             content_hash: ArtifactMeta::zero_content_hash(),
             kind: Some("observation".to_string()),
             mode: ArtifactMeta::default_mode(),
@@ -3427,7 +3427,7 @@ fn publish_completion(
             let declared_refs: Vec<&str> =
                 judged_inputs.iter().map(|s| s.as_str()).collect();
             if let Some(declared_hashes) =
-                cook_fingerprint::hash_input_paths(&declared_refs, working_dir)
+                cook_cache::hash_input_paths(&declared_refs, working_dir)
             {
                 let declared_key = cloud_key(&CloudKeyInputs {
                     schema_version: CACHE_VERSION,
@@ -3449,8 +3449,8 @@ fn publish_completion(
                 let json = serde_json::to_vec(&discovered_paths).unwrap_or_default();
                 let manifest_k = artifact_key(
                     &declared_key,
-                    cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_INDEX,
-                    cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_PATH,
+                    cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH,
                 );
                 let mut manifest_meta = ArtifactMeta {
                     recipe_namespace: recipe_namespace.clone(),
@@ -3461,8 +3461,8 @@ fn publish_completion(
                     size_bytes: json.len() as u64,
                     tags: std::collections::BTreeSet::new(),
                     consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                    output_index: cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_INDEX,
-                    output_path: cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_PATH
+                    output_index: cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    output_path: cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH
                         .to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
@@ -3489,18 +3489,18 @@ fn publish_completion(
                 // accumulates every distinct set seen for the declared key
                 // (newest first, capped). The v1 artifact keeps being written
                 // so pre-COOK-278 binaries sharing the store lose nothing.
-                let mut sets = cook_fingerprint::read_discovered_input_sets(
+                let mut sets = cook_cache::read_discovered_input_sets(
                     cache_ctx.backend.as_ref(),
                     &declared_key,
                 );
                 sets.retain(|s| *s != discovered_paths);
                 sets.insert(0, discovered_paths);
-                sets.truncate(cook_fingerprint::DISCOVERED_INPUT_SETS_CAP);
+                sets.truncate(cook_cache::DISCOVERED_INPUT_SETS_CAP);
                 let sets_json = serde_json::to_vec(&sets).unwrap_or_default();
                 let sets_k = artifact_key(
                     &declared_key,
-                    cook_fingerprint::DISCOVERED_INPUT_SETS_INDEX,
-                    cook_fingerprint::DISCOVERED_INPUT_SETS_PATH,
+                    cook_cache::DISCOVERED_INPUT_SETS_INDEX,
+                    cook_cache::DISCOVERED_INPUT_SETS_PATH,
                 );
                 let mut sets_meta = ArtifactMeta {
                     recipe_namespace: recipe_namespace.clone(),
@@ -3511,8 +3511,8 @@ fn publish_completion(
                     size_bytes: sets_json.len() as u64,
                     tags: std::collections::BTreeSet::new(),
                     consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                    output_index: cook_fingerprint::DISCOVERED_INPUT_SETS_INDEX,
-                    output_path: cook_fingerprint::DISCOVERED_INPUT_SETS_PATH.to_string(),
+                    output_index: cook_cache::DISCOVERED_INPUT_SETS_INDEX,
+                    output_path: cook_cache::DISCOVERED_INPUT_SETS_PATH.to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
                     kind: Some("discovered_input_sets".to_string()),
@@ -3552,7 +3552,7 @@ fn publish_completion(
     let mut empty_dir_paths: Vec<String> = Vec::new();
     for entry in &meta.output_paths {
         if let Some(root) = entry.strip_suffix('/') {
-            for ed in cook_fingerprint::empty_dirs_under(working_dir, root) {
+            for ed in cook_cache::empty_dirs_under(working_dir, root) {
                 empty_dir_paths.push(ed);
             }
         }
@@ -3575,9 +3575,9 @@ fn publish_completion(
             // units) fetches it at this exact index. The hash is irrelevant for a
             // dir: restore_one's "dir" branch ignores the body/hash, and the
             // cloud_key keys on INPUT hashes only.
-            step_entry.outputs.push(cook_fingerprint::FileRecord {
+            step_entry.outputs.push(cook_cache::FileRecord {
                 path: ed.as_str().into(),
-                mtime: cook_fingerprint::stat_mtime(&abs_ed).unwrap_or(0),
+                mtime: cook_cache::stat_mtime(&abs_ed).unwrap_or(0),
                 hash: 0,
             });
             let artifact_k = artifact_key(&cloud_k, next_idx, ed);
@@ -3654,7 +3654,7 @@ fn build_determinant_manifest(
     command_hash: u64,
     env_contribution: u64,
     seal_contribution: u64,
-    inputs: &[cook_fingerprint::FileRecord],
+    inputs: &[cook_cache::FileRecord],
     output_paths: &[String],
     empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,

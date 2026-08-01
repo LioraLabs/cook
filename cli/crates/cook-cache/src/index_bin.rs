@@ -69,7 +69,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
+use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_contracts::cache::observation::Observation;
 
 use crate::store::RecipeCache;

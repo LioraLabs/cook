@@ -5,11 +5,24 @@ edition = "2021"
 description = "Shared kernel types for the Cook build system"
 
 [dependencies]
-# `rc` (serde on `Arc<str>`) went with the prototype wire format in CS-0186.
-# The interned path type it served lives in cook-fingerprint, which enables the
-# feature for itself.
-serde = { version = "1", features = ["derive"] }
+# `rc` enables serde on `Arc<str>`, the interned path type on `FileRecord`
+# (`cache::step`). COOK-313 interned it because a large C++ graph records the
+# same header in hundreds of input sets. The feature was dropped here at
+# CS-0186 on the grounds that the type it served lived in cook-fingerprint;
+# COOK-418 moved that type here, so the feature comes back with it.
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
+# COOK-418: pure computation, not effects. `layout.rs` forbids std::fs /
+# std::env / std::process; it says nothing about dependencies, and a hash or a
+# glob match reaches nothing. These arrived with cook-fingerprint's effect-free
+# half, which had been held out of this crate by a stratum row that mistook a
+# dependency for an effect.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+sha2 = "0.10"
+globset = "0.4"
+# `envkey`'s baseline patterns (moved here with it under COOK-418).
+glob = "0.3"
 
 [dev-dependencies]
+toml = "0.8"
 tempfile = "3"

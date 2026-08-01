@@ -60,9 +60,16 @@ Worked examples from this repo's history:
   with two ends); `REGISTER_SURFACE_NAME` (an emitter/consumer literal);
   `Observation`/`OutputLog` and their canonical encoding.
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
-  their home is `cook-lua-stdlib`); `hash_str` (law, but xxhash-bearing — its
-  home is `cook-fingerprint`); executor scheduling, worker VM policy, cache
-  backends (mechanism, not law).
+  their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
+  `CacheBackend` trait and its implementations (mechanism, not law).
+- **Held out, WRONGLY, for a year:** `hash_str`. This list used to carry it as
+  "law, but xxhash-bearing — its home is `cook-fingerprint`", which is the
+  clearest statement of the mistake COOK-418 undid. xxhash is a dependency, not
+  an effect; the bar below is about effects; and the crate invented to hold it
+  went on to absorb 2,100 lines of cache IO. It lives in `hash` now. A worked
+  example is only as good as the rule it illustrates, so when a rule changes,
+  re-read the examples: this one outlived its own justification in the same
+  file that states the justification.
 
 ## The stratum rule
 
@@ -97,9 +104,19 @@ memo whose invariant is still owned by eight call sites in four crates. Nothing
 was neglected. The boundary was fictional from the day it was drawn, and it
 collected whatever had nowhere better to go.
 
-`cook-fingerprint` is being dissolved under COOK-418: the effect-free modules
-come here, the IO goes to `cook-cache`. Until that lands the crate still exists;
-do not file new law into it.
+`cook-fingerprint` no longer exists (COOK-418). Its effect-free half is here:
+`consumes`, `context`, `envkey`, `evict`, `hash`, `pathlaw`, `cache::cas` and
+`cache::step`. Its IO half is `cook-cache`, next to the backends and stores it
+was always serving. The `CacheBackend` trait went with the IO rather than the
+law: a trait definition would pass `layout.rs`, but it is the port to the
+outside world, and a port belongs with its implementations.
+
+One thing the dissolution did NOT fix, recorded so nobody assumes it did. The
+stat memo (`cook_cache::statmemo`) is still armed and disarmed by convention
+across eight call sites in four crates, because `cook-shell`, the crate that
+spawns the commands that write the files, depends on `cook-contracts` alone and
+refuses the edge. Moving the memo relocated the hazard correctly; making it
+structural is COOK-400's problem shape and still open.
 
 The lesson generalises, and it is the counterweight to everything else in this
 document: **name boundaries, not computations.** A boundary you can observe

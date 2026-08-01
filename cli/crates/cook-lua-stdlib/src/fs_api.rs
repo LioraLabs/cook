@@ -207,7 +207,7 @@ pub fn register_fs_api_with_sandbox(
             }
             // COOK-306: a Lua-side write is a write to the working tree like
             // any other — no memoised mtime survives it.
-            cook_fingerprint::statmemo::disarm();
+            cook_cache::statmemo::disarm();
             std::fs::write(&full, content)
                 .map_err(|e| mlua::Error::runtime(format!("fs.write: {e}")))?;
             Ok(())
@@ -245,7 +245,7 @@ pub fn register_fs_api_with_sandbox(
             }
             // Mirrors fs.write (COOK-306): a Lua-side removal changes the
             // working tree, so no memoised stat may survive it.
-            cook_fingerprint::statmemo::disarm();
+            cook_cache::statmemo::disarm();
             std::fs::remove_file(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.remove: {e}")))?;
             Ok(true)

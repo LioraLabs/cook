@@ -11,7 +11,7 @@ use cook_cache::{
     store::{FileRecord, StepEntry, CACHE_VERSION},
 };
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{needs_rebuild_cook, RebuildResult, RestoreCtx};
+use cook_cache::{needs_rebuild_cook, RebuildResult, RestoreCtx};
 
 
 #[test]
@@ -34,24 +34,24 @@ fn missing_outputs_and_depfile_are_both_restored() {
             FileRecord {
                 path: "a.c".into(),
                 mtime: 0,
-                hash: cook_fingerprint::hash_file(&wd.join("a.c")).unwrap(),
+                hash: cook_cache::hash_file(&wd.join("a.c")).unwrap(),
             },
             FileRecord {
                 path: "a.h".into(),
                 mtime: 0,
-                hash: cook_fingerprint::hash_file(&wd.join("a.h")).unwrap(),
+                hash: cook_cache::hash_file(&wd.join("a.h")).unwrap(),
             },
         ],
         outputs: vec![
             FileRecord {
                 path: "a.o".into(),
-                mtime: cook_fingerprint::stat_mtime(&wd.join("a.o")).unwrap_or(0),
-                hash: cook_fingerprint::hash_file(&wd.join("a.o")).unwrap(),
+                mtime: cook_cache::stat_mtime(&wd.join("a.o")).unwrap_or(0),
+                hash: cook_cache::hash_file(&wd.join("a.o")).unwrap(),
             },
             FileRecord {
                 path: ".cook/deps/a.d".into(),
-                mtime: cook_fingerprint::stat_mtime(&wd.join(".cook/deps/a.d")).unwrap_or(0),
-                hash: cook_fingerprint::hash_file(&wd.join(".cook/deps/a.d")).unwrap(),
+                mtime: cook_cache::stat_mtime(&wd.join(".cook/deps/a.d")).unwrap_or(0),
+                hash: cook_cache::hash_file(&wd.join(".cook/deps/a.d")).unwrap(),
             },
         ],
         command_hash: 0xc0de,

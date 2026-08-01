@@ -22,7 +22,7 @@ use cook_cache::{
     cloud_config::CloudConfig, ThreadSafeCacheManager,
 };
 use cook_contracts::{RecipeUnits, WorkPayload};
-use cook_fingerprint::{CacheBackend, EnvDenylist};
+use cook_cache::{CacheBackend, EnvDenylist};
 
 use crate::{
     dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace,

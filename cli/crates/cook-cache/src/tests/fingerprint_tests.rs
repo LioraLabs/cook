@@ -1,4 +1,8 @@
 use super::*;
+// COOK-418: these moved to cook-contracts with the rules they test; the
+// resolving half stayed here, so this file reaches for both.
+use cook_contracts::hash_str;
+use cook_contracts::pathlaw::{has_glob_meta, is_dir_output, is_terminal_output};
 use cook_contracts::cache::DeclaredInput;
 
 #[test]

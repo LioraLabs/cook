@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cook_fingerprint::{CacheBackend, EnvDenylist};
+use crate::{CacheBackend, EnvDenylist};
 
 use crate::cloud_config::CloudConfig;
 

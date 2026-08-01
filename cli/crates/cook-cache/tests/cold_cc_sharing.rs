@@ -17,7 +17,7 @@ use cook_cache::backend::{
 };
 use cook_cache::store::CACHE_VERSION;
 use cook_contracts::DiscoveredInputs;
-use cook_fingerprint::{
+use cook_cache::{
     fetch_by_key, RestoreCtx, DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH,
 };
 

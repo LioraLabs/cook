@@ -67,7 +67,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::backend::{CloudKey, EvictCandidate};
+use crate::cache::cas::{CloudKey, EvictCandidate};
 
 /// Kinds the size-driven sweep must never evict (milestone D1).
 pub const SIZE_SWEEP_EXEMPT_KINDS: &[&str] = &[

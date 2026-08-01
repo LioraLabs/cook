@@ -6,7 +6,6 @@ description = "Shared stateful probe lifecycle for the Cook build system"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
-cook-fingerprint = { path = "../cook-fingerprint" }
 cook-cache = { path = "../cook-cache" }
 
 [dev-dependencies]

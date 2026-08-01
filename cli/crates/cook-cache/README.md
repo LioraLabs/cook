@@ -1,19 +1,26 @@
 # cook-cache
 
-`cook-cache` stores a build's cache state and hands it back byte-identical.
+`cook-cache` decides whether a unit's answer is already known, and if it is,
+puts that answer back on disk byte for byte.
 
-Two stores, one job: the per-recipe step index (`.cook/cache/<recipe>.idx`,
+Two stores under that: the per-recipe step index (`.cook/cache/<recipe>.idx`,
 what ran and against which recorded inputs and outputs) and the
 content-addressed artifact store (the bytes those steps produced, local or
-remote). It writes both, reads both, and decides nothing about whether what it
-returns is still valid.
+remote).
+
+COOK-418 widened the sentence. This crate used to store and hand back, and
+judged nothing; it now also owns the judging, because roughly 1,900 lines
+arrived from `cook-fingerprint` when that crate was dissolved. What did NOT
+arrive is the part that needs no world: key composition, determinant drift,
+eviction policy, and what a declared path IS are pure rules in
+`cook-contracts`, and this crate calls them with real inputs.
 
 ## How it does that well
 
 - **Two tiers, one trait, one verifier.** `LocalBackend` (filesystem CAS) and
   `CloudBackend` (sync HTTP over the v1 wire protocol) both implement
-  `CacheBackend`, which is defined upstream in `cook-fingerprint` so neither
-  implementation can bend it toward itself. `VerifyingReader` is shared, not
+  `CacheBackend`, defined once in `cas_backend` so neither implementation can
+  bend it toward itself. `VerifyingReader` is shared, not
   copied: the same SHA-256 tee guards a `File` and an HTTP body.
 - **Verification streams; nothing is buffered to prove it.**
   `VerifyingReader` tees bytes through the hasher and raises `InvalidData` at
@@ -122,3 +129,35 @@ than none:
 - `parse_size` and `SIZE_LITERAL_HELP` are pure and shared with `cook-cli`'s
   `cache gc --max-size`, which by the `cook-contracts` admission bar puts their
   home upstream, not here.
+
+## What lives here that the sentence above does not cover
+
+Said plainly rather than stretched to fit, per the crate-charter convention.
+
+`statmemo` is a process-global memo with an arm/disarm discipline (COOK-306: a
+large C++ graph resolved 648,153 input records to 8,350 distinct paths, so
+validating a settled build cost 0.88s of `stat` where 0.01s would do). It is
+correctly located here rather than in `cook-contracts`, because global mutable
+state is not law however effect-free the grep looks. But its invariant is still
+owned by convention at eight call sites across four crates, and it cannot be
+enforced at the write site: `cook-shell`, which spawns the commands that write
+the files, depends on `cook-contracts` alone and refuses the edge. A known
+hole, not a design.
+
+`depfile` parses Make `.d` files. It neither reads nor writes cache state and
+its only consumer is `cook-engine` (COOK-425).
+
+## Lineage
+
+`cook-fingerprint` was created to be the home for "hashing law", and the
+stratum it named did not exist: the bar `cook-contracts` enforces is about
+effects, not dependencies, so nothing was ever keeping a hash out of it.
+Having been made for a boundary that was not there, it filled with the only
+thing adjacent to computing a fingerprint, which was this crate's IO. Its
+effect-free half is now in `cook-contracts` (`consumes`, `context`, `envkey`,
+`evict`, `hash`, `pathlaw`, `cache::cas`, `cache::step`) and its acting half
+is here.
+
+The `CacheBackend` trait came here rather than to contracts. A trait definition
+would have passed the purity test; it is the port to the outside world, and a
+port belongs with its implementations.

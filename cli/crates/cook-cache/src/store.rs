@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
+pub use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
 
 /// Default value used by `serde` when `schema_version` is absent from the
 /// TOML file. TOML is non-positional, so a missing key is plausible (e.g. a

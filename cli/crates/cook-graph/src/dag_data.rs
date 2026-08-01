@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cook_cache::ThreadSafeCacheManager;
-use cook_fingerprint::{hash_file, stat_mtime};
+use cook_cache::{hash_file, stat_mtime};
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
 use std::collections::BTreeSet;
 

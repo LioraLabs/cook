@@ -87,7 +87,7 @@ impl std::fmt::Display for ProbeError {
 /// `ingredients <probe>` driver re-produce on every invocation for the life of
 /// the feature.
 pub struct CacheAccess<'a> {
-    pub backend: &'a dyn cook_fingerprint::backend::CacheBackend,
+    pub backend: &'a dyn cook_cache::backend::CacheBackend,
     /// Root under which `.cook/probes/` is written.
     pub project_root: &'a Path,
     /// COOK-168: false suppresses every shared-store upload for this
@@ -182,12 +182,12 @@ pub fn lookup(
 
     // 1. Resolve declared inputs (env / tools / files / upstream fingerprints).
     let inputs =
-        cook_fingerprint::probe::resolve_probe_inputs(probe, ctx.working_dir, env_lookup, upstream_fps)
+        cook_cache::probe::resolve_probe_inputs(probe, ctx.working_dir, env_lookup, upstream_fps)
             .map_err(|message| ProbeError::ResolveInputs { key: key.to_string(), message })?;
 
     // 2. Fingerprint. §22.5.4 sections 1-3 are always present; 4-7 are empty
     //    unless declared.
-    let fingerprint = cook_fingerprint::compute_probe_fingerprint(&inputs);
+    let fingerprint = cook_cache::compute_probe_fingerprint(&inputs);
 
     // 3. CS-0178 keylessness. A probe declaring nothing has a fingerprint built
     //    from the marker, the key, and the produce source alone — constant for
@@ -207,7 +207,7 @@ pub fn lookup(
     //    the tool is NOW, which is precisely what a cached value must not say.
     let mut tool_paths = BTreeMap::new();
     for (name, _identity) in &inputs.tools {
-        if let Some(path) = cook_fingerprint::resolve_tool_path(name) {
+        if let Some(path) = cook_cache::resolve_tool_path(name) {
             tool_paths.insert(name.clone(), path);
         }
     }
@@ -372,21 +372,21 @@ fn is_files_manifest(probe: &ProbeUnit) -> bool {
 
 /// Cache metadata for a stored probe value. Identical in both phases; it was
 /// duplicated field-for-field before.
-fn probe_artifact_meta(key: &str, size: usize) -> cook_fingerprint::ArtifactMeta {
-    cook_fingerprint::ArtifactMeta {
+fn probe_artifact_meta(key: &str, size: usize) -> cook_cache::ArtifactMeta {
+    cook_cache::ArtifactMeta {
         recipe_namespace: format!("probe:{key}"),
         command_hash: 0,
         env_contribution: 0,
         seal_contribution: 0,
-        schema_version: cook_fingerprint::CACHE_VERSION,
+        schema_version: cook_cache::CACHE_VERSION,
         size_bytes: size as u64,
         tags: BTreeSet::new(),
         consulted_env_keys: BTreeSet::new(),
         output_index: 0,
         output_path: format!("probe:{key}"),
-        content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
+        content_hash: cook_cache::ArtifactMeta::zero_content_hash(),
         kind: None,
-        mode: cook_fingerprint::ArtifactMeta::default_mode(),
+        mode: cook_cache::ArtifactMeta::default_mode(),
         target: None,
     }
     .as_probe_value()

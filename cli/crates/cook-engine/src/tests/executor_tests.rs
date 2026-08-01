@@ -12,7 +12,7 @@ fn shell(cmd: &str) -> WorkPayload {
 
 #[test]
 fn build_determinant_manifest_captures_resolved_determinants() {
-    use cook_fingerprint::FileRecord;
+    use cook_cache::FileRecord;
     use std::collections::{BTreeMap, BTreeSet};
     let inputs = vec![
         FileRecord {
@@ -126,7 +126,7 @@ fn make_cache_ctx(tmp: &TempDir) -> Arc<CacheContext> {
     use cook_cache::{
         backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
     };
-    use cook_fingerprint::EnvDenylist;
+    use cook_cache::EnvDenylist;
     Arc::new(CacheContext {
         denylist: Arc::new(EnvDenylist::baseline()),
         backend: Arc::new(LocalBackend::new(tmp.path().join("cloud"))),
@@ -1226,33 +1226,33 @@ fn probe_work_node_with_env(
 /// Compute the fingerprint for a ProbeUnit with no env/tool/file/upstream
 /// inputs, suitable for pre-seeding the backend in cache-hit tests.
 fn fingerprint_for(pu: &cook_contracts::ProbeUnit, wd: &std::path::Path) -> [u8; 32] {
-    let inputs = cook_fingerprint::resolve_probe_inputs(
+    let inputs = cook_cache::resolve_probe_inputs(
         pu,
         wd,
         &|_| None,
         &BTreeMap::new(),
     )
     .expect("fingerprint resolution should succeed for simple probe");
-    cook_fingerprint::compute_probe_fingerprint(&inputs)
+    cook_cache::compute_probe_fingerprint(&inputs)
 }
 
 /// Pre-populate the cache backend with known bytes under the given
 /// fingerprint key. Used to set up the "cache hit" scenario for G4 tests.
 fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 32], bytes: &[u8]) {
-    let mut meta = cook_fingerprint::ArtifactMeta {
+    let mut meta = cook_cache::ArtifactMeta {
         recipe_namespace: "probe:test".into(),
         command_hash: 0,
         env_contribution: 0,
-        schema_version: cook_fingerprint::CACHE_VERSION,
+        schema_version: cook_cache::CACHE_VERSION,
         size_bytes: bytes.len() as u64,
         tags: std::collections::BTreeSet::new(),
         consulted_env_keys: std::collections::BTreeSet::new(),
         output_index: 0,
         output_path: "probe:test".into(),
-        content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
+        content_hash: cook_cache::ArtifactMeta::zero_content_hash(),
         kind: None,
         seal_contribution: 0,
-        mode: cook_fingerprint::ArtifactMeta::default_mode(),
+        mode: cook_cache::ArtifactMeta::default_mode(),
         target: None,
     }
     .as_probe_value();
@@ -1499,27 +1499,27 @@ fn probe_fingerprint_changes_invalidate_cache() {
     // Build ProbeUnit for env_val="first".
     let pu_v1 = probe_unit_with_env("test:inv", produce, env_var);
     let fp_v1 = {
-        let inputs = cook_fingerprint::resolve_probe_inputs(
+        let inputs = cook_cache::resolve_probe_inputs(
             &pu_v1,
             &wd,
             &|name| if name == env_var { Some("first".into()) } else { None },
             &BTreeMap::new(),
         )
         .unwrap();
-        cook_fingerprint::compute_probe_fingerprint(&inputs)
+        cook_cache::compute_probe_fingerprint(&inputs)
     };
 
     // Build ProbeUnit for env_val="second".
     let pu_v2 = probe_unit_with_env("test:inv", produce, env_var);
     let fp_v2 = {
-        let inputs = cook_fingerprint::resolve_probe_inputs(
+        let inputs = cook_cache::resolve_probe_inputs(
             &pu_v2,
             &wd,
             &|name| if name == env_var { Some("second".into()) } else { None },
             &BTreeMap::new(),
         )
         .unwrap();
-        cook_fingerprint::compute_probe_fingerprint(&inputs)
+        cook_cache::compute_probe_fingerprint(&inputs)
     };
     assert_ne!(fp_v1, fp_v2, "fingerprints must differ when env var changes");
 
@@ -1629,27 +1629,27 @@ fn probe_fingerprint_changes_invalidate_cache() {
 
 #[test]
 fn normalize_glob_pattern_appends_star_after_trailing_star_star() {
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("build/**").as_ref(), "build/**/*");
-    assert_eq!(cook_fingerprint::normalize_glob_pattern(".next/**").as_ref(), ".next/**/*");
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("apps/web/.next/**").as_ref(), "apps/web/.next/**/*");
+    assert_eq!(cook_cache::normalize_glob_pattern("build/**").as_ref(), "build/**/*");
+    assert_eq!(cook_cache::normalize_glob_pattern(".next/**").as_ref(), ".next/**/*");
+    assert_eq!(cook_cache::normalize_glob_pattern("apps/web/.next/**").as_ref(), "apps/web/.next/**/*");
 }
 
 #[test]
 fn normalize_glob_pattern_handles_bare_double_star() {
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("**").as_ref(), "**/*");
+    assert_eq!(cook_cache::normalize_glob_pattern("**").as_ref(), "**/*");
 }
 
 #[test]
 fn normalize_glob_pattern_passes_through_non_trailing_double_star() {
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("**/lib/*.so").as_ref(), "**/lib/*.so");
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("src/**/*.c").as_ref(), "src/**/*.c");
+    assert_eq!(cook_cache::normalize_glob_pattern("**/lib/*.so").as_ref(), "**/lib/*.so");
+    assert_eq!(cook_cache::normalize_glob_pattern("src/**/*.c").as_ref(), "src/**/*.c");
 }
 
 #[test]
 fn normalize_glob_pattern_passes_through_non_glob_patterns() {
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("*.c").as_ref(), "*.c");
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("file?.txt").as_ref(), "file?.txt");
-    assert_eq!(cook_fingerprint::normalize_glob_pattern("build/main.o").as_ref(), "build/main.o");
+    assert_eq!(cook_cache::normalize_glob_pattern("*.c").as_ref(), "*.c");
+    assert_eq!(cook_cache::normalize_glob_pattern("file?.txt").as_ref(), "file?.txt");
+    assert_eq!(cook_cache::normalize_glob_pattern("build/main.o").as_ref(), "build/main.o");
 }
 
 #[test]
@@ -1849,7 +1849,7 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
 fn publish_ctx(wd: &std::path::Path) -> cook_cache::cache_ctx::CacheContext {
     use cook_cache::{backend::LocalBackend, cloud_config::CloudConfig};
     cook_cache::cache_ctx::CacheContext {
-        denylist: std::sync::Arc::new(cook_fingerprint::EnvDenylist::baseline()),
+        denylist: std::sync::Arc::new(cook_cache::EnvDenylist::baseline()),
         backend: std::sync::Arc::new(LocalBackend::new(wd.join("cloud"))),
         cloud_config: std::sync::Arc::new(CloudConfig::default()),
         project_root: wd.to_path_buf(),

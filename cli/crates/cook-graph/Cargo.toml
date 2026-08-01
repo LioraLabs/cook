@@ -7,7 +7,6 @@ description = "Build-graph model, aggregation, and renderers for `cook why`"
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
 cook-cache = { path = "../cook-cache" }
-cook-fingerprint = { path = "../cook-fingerprint" }
 cook-engine = { path = "../cook-engine" }
 
 serde = { version = "1", features = ["derive"] }

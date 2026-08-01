@@ -249,7 +249,7 @@ fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
     // CS-0055 conflict detection refuses to overwrite a key with differing
     // bytes, so poisoning means replacing the entry, not writing over it.
     let poison = b"not json at all";
-    cook_fingerprint::backend::CacheBackend::delete(&be, &first.fingerprint).unwrap();
+    cook_cache::backend::CacheBackend::delete(&be, &first.fingerprint).unwrap();
     let mut meta = probe_artifact_meta("ns:keyed", poison.len());
     cook_cache::backend::put_bytes(&be, &first.fingerprint, poison, &mut meta).unwrap();
 

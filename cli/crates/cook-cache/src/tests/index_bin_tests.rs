@@ -1,7 +1,7 @@
 use super::*;
 use crate::store::RecipeCache;
 use cook_contracts::cache::observation::Observation;
-use cook_fingerprint::record::{FileRecord, StepEntry};
+use cook_contracts::cache::step::{FileRecord, StepEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn rec(path: &str, mtime: u64, hash: u64) -> FileRecord {

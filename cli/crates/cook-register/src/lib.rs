@@ -438,7 +438,7 @@ pub type SharedBodySlot = Rc<RefCell<Option<BodyCaptureState>>>;
 // Key-agreement law: register COMPUTES command_hash (unit_api.rs) with the
 // same function fingerprint COMPARES with (check.rs). One definition, in
 // cook-fingerprint; a local twin here drifted-by-construction (COOK-396).
-pub use cook_fingerprint::hash_str;
+pub use cook_cache::hash_str;
 
 // Re-exports for convenience.
 //

@@ -506,12 +506,12 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
     let wd = tmp.path().to_path_buf();
     touch(&wd, &["source.cpp", "output.o"]);
 
-    let source_record = cook_fingerprint::FileRecord {
+    let source_record = cook_cache::FileRecord {
         path: "source.cpp".into(),
         mtime: stat_mtime(&wd.join("source.cpp")).unwrap(),
         hash: hash_file(&wd.join("source.cpp")).unwrap(),
     };
-    let output_record = cook_fingerprint::FileRecord {
+    let output_record = cook_cache::FileRecord {
         path: "output.o".into(),
         mtime: stat_mtime(&wd.join("output.o")).unwrap(),
         hash: hash_file(&wd.join("output.o")).unwrap(),
@@ -569,7 +569,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
     mgr.update_step(
         "build",
         "k1",
-        cook_fingerprint::StepEntry {
+        cook_cache::StepEntry {
             inputs: vec![source_record],
             outputs: vec![output_record],
             command_hash: 0,

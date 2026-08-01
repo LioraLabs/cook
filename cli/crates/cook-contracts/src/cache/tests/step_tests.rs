@@ -75,7 +75,7 @@ env_contribution = "00"
 /// COOK-360: one version for every record store, owned by cook-contracts.
 #[test]
 fn cache_version_is_the_shared_record_schema_version() {
-    assert_eq!(CACHE_VERSION, cook_contracts::cache::record::RECORD_SCHEMA_VERSION);
+    assert_eq!(CACHE_VERSION, crate::cache::record::RECORD_SCHEMA_VERSION);
 }
 
 #[test]

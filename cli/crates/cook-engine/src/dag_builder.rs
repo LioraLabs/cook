@@ -681,7 +681,7 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
         for unit in &r.units {
             if let Some(meta) = &unit.cache_meta {
                 for entry in &meta.output_paths {
-                    if cook_fingerprint::is_terminal_output(entry) {
+                    if cook_cache::is_terminal_output(entry) {
                         globbed_outputs_by_recipe
                             .entry(r.recipe_name.as_str())
                             .or_default()
@@ -857,7 +857,7 @@ pub(crate) fn check_literal_read_after_write(
             };
             for output in &meta.output_paths {
                 // §22.1.2 owns terminal outputs — do not double-report.
-                if cook_fingerprint::is_terminal_output(output) {
+                if cook_cache::is_terminal_output(output) {
                     continue;
                 }
                 producers_by_path

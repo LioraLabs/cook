@@ -1,85 +1,21 @@
-//! Fingerprint and cache-key computation for the Cook build system.
+//! Resolving declared paths against a real tree, and repairing it (COOK-418).
 //!
-//! This crate is the "what changed?" surface: pure functions that compute
-//! content hashes, env contributions, probe fingerprints, and the
-//! SHA-256 cache keys that address artifacts in any backend. It also defines
-//! the `CacheBackend` trait — the seam the persistence layer (filesystem,
-//! Cook Cloud, etc.) implements.
+//! Expanding a pattern, reconciling a directory output to a recorded set,
+//! pruning the empty directories that leaves behind. Every one of these asks
+//! the filesystem, which is why they are here and not with the pure rules that
+//! decide what a declared path IS: those are `cook_contracts::pathlaw`.
 //!
-//! `cook-cache` provides the v3 filesystem backend and the recipe-cache
-//! manager built on top of these primitives.
-
-pub mod backend;
-pub mod check;
-pub mod consumes;
-pub mod context;
-pub mod envkey;
-pub mod evict;
-pub mod probe;
-pub mod record;
-pub mod statmemo;
+//! This was the back half of `cook-fingerprint`'s `lib.rs`, a crate the
+//! stratum table called a home for "hashing law".
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use cook_contracts::cache::DeclaredInput;
+use cook_contracts::consumes::ConsumesFilter;
+use cook_contracts::pathlaw::{escapes_base, normalize};
 
-pub use backend::{
-    ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey, CloudKeyInputs,
-    DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
-    DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, OBSERVATION_INDEX,
-    OBSERVATION_PATH, artifact_key, cloud_key, recipe_namespace,
-};
-pub use check::{
-    FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation, shared_observation,
-    hash_env, hash_file, hash_input_paths, hash_reader, needs_rebuild_cook,
-    read_discovered_input_sets, stat_mtime,
-};
-pub use consumes::ConsumesFilter;
-pub use context::{ProbeFingerprintInputs, compute_probe_fingerprint};
-pub use envkey::{EnvDenylist, env_contribution};
-pub use evict::{
-    DEFAULT_LOW_WATER, EvictPlan, EvictPolicy, SIZE_SWEEP_EXEMPT_KINDS, is_size_sweep_exempt,
-    plan_eviction,
-};
-pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
-pub use record::{CACHE_VERSION, FileRecord, StepEntry};
-pub use statmemo::stat_mtime_memo;
-
-/// Hash a string (for command templates, env vars, etc.)
-pub fn hash_str(s: &str) -> u64 {
-    xxhash_rust::xxh3::xxh3_64(s.as_bytes())
-}
-
-// A test-unit fingerprint used to live here: `FingerprintInputs` and
-// `compute_test_fingerprint`, a second hash function over a second input
-// struct, for the one unit kind that had its own store. CS-0186 gave every unit
-// one record under one key, and both went with the store — `needs_rebuild_cook`
-// judges a test unit now, on the same determinants as any other.
-
-/// Returns true if the string contains any glob metacharacter recognised by
-/// the reference implementation's `glob = "0.3"` matcher: `*`, `?`, `[`.
-///
-/// CS-0085 specifies these three characters as the glob metacharacter set.
-/// `{` is intentionally excluded — `glob` 0.3 does not support brace
-/// alternation, so a string like "out/{a,b}.txt" is treated as a literal
-/// path.
-pub fn has_glob_meta(s: &str) -> bool {
-    s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
-}
-
-/// A directory output (CS-0119): a trailing slash declares that Cook owns the
-/// entire subtree rooted here. Its concrete file set is known only after the
-/// command runs, so it is a terminal output like a glob.
-pub fn is_dir_output(s: &str) -> bool {
-    s.ends_with('/')
-}
-
-/// A non-literal output entry whose concrete file set is resolved only after the
-/// command runs: a glob pattern (CS-0085) or a directory output (CS-0119).
-pub fn is_terminal_output(s: &str) -> bool {
-    has_glob_meta(s) || is_dir_output(s)
-}
+use crate::statmemo;
 
 /// A unit's declared inputs, with every pattern entry expanded against the
 /// tree and the expansion narrowed by an optional `consumes` allowlist
@@ -210,7 +146,7 @@ pub fn resolve_ingredient_glob(
     {
         return Err(format!("malformed workspace anchor in ingredient pattern {raw:?}: use //"));
     }
-    if anchored.is_none() && lexically_escapes_base(Path::new(raw)) {
+    if anchored.is_none() && escapes_base(Path::new(raw)) {
         return Err(format!(
             "ingredient pattern {raw:?} escapes member root"
         ));
@@ -224,38 +160,9 @@ pub fn resolve_ingredient_glob(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|p| !matches!(std::fs::metadata(p), Ok(m) if m.is_dir()))
-        .map(|p| relative_path(member_root, &lexically_normalize(&p)))
+        .map(|p| relative_path(member_root, &normalize(&p)))
         .collect();
     Ok(resolved)
-}
-
-fn lexically_escapes_base(path: &Path) -> bool {
-    let mut depth = 0usize;
-    for component in path.components() {
-        match component {
-            std::path::Component::Normal(_) => depth += 1,
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir if depth > 0 => depth -= 1,
-            std::path::Component::ParentDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => return true,
-        }
-    }
-    false
-}
-
-fn lexically_normalize(path: &Path) -> std::path::PathBuf {
-    let mut normalized = std::path::PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
 }
 
 fn relative_path(from: &Path, to: &Path) -> String {

@@ -7,11 +7,11 @@
 
 use std::collections::BTreeMap;
 
-use cook_fingerprint::backend::DeterminantManifest;
+use cook_cache::backend::DeterminantManifest;
 /// CS-0157: fresh PATH resolution for `cook why`'s tool-path display — the
 /// sealed value no longer carries a path, so the CLI resolves it at query
 /// time (re-exported here so cook-cli needs no direct fingerprint dep).
-pub use cook_fingerprint::resolve_tool_path;
+pub use cook_cache::resolve_tool_path;
 
 /// How a unit's cache lookup resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,7 +358,7 @@ fn resolve_unit_determinants(
     // what the cache would compute at this moment too. A literal input a unit
     // in this closure produces is answered by `predictions` below, unchanged.
     let declared =
-        cook_fingerprint::resolve_declared_inputs(&meta.inputs, &meta.consumes, &node.working_dir);
+        cook_cache::resolve_declared_inputs(&meta.inputs, &meta.consumes, &node.working_dir);
     for p in &declared {
         let abs = node.working_dir.join(p);
         // CS-0173: an input that some unit in this closure produces is answered
@@ -378,7 +378,7 @@ fn resolve_unit_determinants(
             }
             None => {}
         }
-        let h = cook_fingerprint::hash_file(&abs).unwrap_or(0);
+        let h = cook_cache::hash_file(&abs).unwrap_or(0);
         inputs.insert(p.clone(), h);
     }
     let seal_contribution = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
@@ -401,12 +401,12 @@ fn resolve_unit_determinants(
 fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> String {
     let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
     sorted.sort();
-    let recipe_namespace = cook_fingerprint::recipe_namespace(
+    let recipe_namespace = cook_cache::recipe_namespace(
         &meta.project_id,
         &meta.cookfile_path,
         &meta.recipe_name,
     );
-    let k = cook_fingerprint::cloud_key(&cook_fingerprint::CloudKeyInputs {
+    let k = cook_cache::cloud_key(&cook_cache::CloudKeyInputs {
         schema_version: crate::executor::cache_version(),
         recipe_namespace: &recipe_namespace,
         command_hash: det.command_hash,
@@ -494,7 +494,7 @@ fn classify(
     if effect_kind(meta) == EffectKind::Observed {
         let shared = decode_key_hex(key_hex)
             .and_then(|k| {
-                cook_fingerprint::shared_observation(cache_ctx.backend.as_ref(), &k)
+                cook_cache::shared_observation(cache_ctx.backend.as_ref(), &k)
             })
             .is_some();
         return Classification {
@@ -558,7 +558,7 @@ fn first_missing_input(
             if predictions.contains_key(&abs) {
                 return false;
             }
-            cook_fingerprint::hash_file(&abs).is_none()
+            cook_cache::hash_file(&abs).is_none()
         })
         .cloned()
 }
@@ -582,7 +582,7 @@ fn record_predictions(
     for p in &meta.output_paths {
         // A glob output is a pattern, not a path; it names no file a consumer
         // could declare as an input, so there is nothing to predict.
-        if cook_fingerprint::is_terminal_output(p) {
+        if cook_cache::is_terminal_output(p) {
             continue;
         }
         let abs = node.working_dir.join(p);
@@ -592,7 +592,7 @@ fn record_predictions(
             Prediction::Known(*h)
         } else if let Some(h) = local_output_hash(node, meta, p, cache_managers) {
             Prediction::Known(h)
-        } else if let Some(h) = cook_fingerprint::hash_file(&abs) {
+        } else if let Some(h) = cook_cache::hash_file(&abs) {
             Prediction::Known(h)
         } else {
             Prediction::Unknowable
@@ -660,7 +660,7 @@ fn shared_artifacts_present(
     };
     let mut hashes = BTreeMap::new();
     for (idx, path) in probe_paths.iter().enumerate() {
-        let artifact_k = cook_fingerprint::artifact_key(&cloud_k, idx as u32, path);
+        let artifact_k = cook_cache::artifact_key(&cloud_k, idx as u32, path);
         match cache_ctx.backend.get(&artifact_k) {
             Ok(Some(mut reader)) => {
                 // Drain to trigger streaming verify-on-restore. CS-0173 keeps
@@ -668,7 +668,7 @@ fn shared_artifacts_present(
                 // either way, and `hash_reader` is `hash_file`'s streaming twin,
                 // so this is exactly the hash a consumer would compute from the
                 // restored file.
-                let h = cook_fingerprint::hash_reader(&mut reader)?;
+                let h = cook_cache::hash_reader(&mut reader)?;
                 hashes.insert(path.clone(), h);
             }
             _ => return None,
@@ -710,7 +710,7 @@ fn local_step_hit(
     };
     // Resolved by the same call `check_node_cache` makes, so the query judges
     // the unit against the set the build would (§17.1.1.2).
-    let resolved_inputs = cook_fingerprint::resolve_declared_inputs(
+    let resolved_inputs = cook_cache::resolve_declared_inputs(
         &meta.inputs,
         &meta.consumes,
         &node.working_dir,
@@ -720,14 +720,14 @@ fn local_step_hit(
     // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror
     // check_node_cache (executor.rs:654-664) by substituting the StepEntry's
     // recorded concrete output paths when any declared output is a glob.
-    let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::is_terminal_output(s));
+    let any_glob = meta.output_paths.iter().any(|s| cook_cache::is_terminal_output(s));
     let current_outputs_storage: Vec<String> = if any_glob {
         entry.outputs.iter().map(|f| f.path.to_string()).collect()
     } else {
         meta.output_paths.clone()
     };
     let outs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
-    let (result, _updated) = cook_fingerprint::needs_rebuild_cook(
+    let (result, _updated) = cook_cache::needs_rebuild_cook(
         Some(entry),
         &input_refs,
         &outs,
@@ -740,8 +740,8 @@ fn local_step_hit(
         meta.record,
     );
     match result {
-        cook_fingerprint::RebuildResult::Skip => (true, None),
-        cook_fingerprint::RebuildResult::Rebuild(reason) => (false, reason.cause_summary()),
+        cook_cache::RebuildResult::Skip => (true, None),
+        cook_cache::RebuildResult::Rebuild(reason) => (false, reason.cause_summary()),
     }
 }
 

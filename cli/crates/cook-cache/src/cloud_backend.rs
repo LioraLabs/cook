@@ -30,7 +30,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::VerifyingReader;
-use cook_fingerprint::backend::{
+use crate::backend::{
     ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend, CloudKey,
     DeterminantManifest,
 };
