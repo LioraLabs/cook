@@ -811,11 +811,21 @@ struct FakeBackend {
     store: std::sync::Mutex<
         std::collections::HashMap<crate::backend::CloudKey, (Vec<u8>, crate::backend::ArtifactMeta)>,
     >,
+    manifests: std::sync::Mutex<
+        std::collections::HashMap<crate::backend::CloudKey, crate::backend::DeterminantManifest>,
+    >,
 }
 
 impl FakeBackend {
     fn insert(&self, key: crate::backend::CloudKey, bytes: Vec<u8>, meta: crate::backend::ArtifactMeta) {
         self.store.lock().unwrap().insert(key, (bytes, meta));
+    }
+    fn insert_manifest(
+        &self,
+        key: crate::backend::CloudKey,
+        manifest: crate::backend::DeterminantManifest,
+    ) {
+        self.manifests.lock().unwrap().insert(key, manifest);
     }
 }
 
@@ -871,9 +881,9 @@ impl crate::backend::CacheBackend for FakeBackend {
     }
     fn get_manifest(
         &self,
-        _key: &crate::backend::CloudKey,
+        key: &crate::backend::CloudKey,
     ) -> crate::backend::BackendResult<Option<crate::backend::DeterminantManifest>> {
-        Ok(None)
+        Ok(self.manifests.lock().unwrap().get(key).cloned())
     }
 }
 
@@ -1009,5 +1019,118 @@ fn hash_reader_agrees_with_hash_file_on_the_same_bytes() {
             "hash_file and hash_reader disagree on {} bytes",
             body.len()
         );
+    }
+}
+
+// ── shared_observation: the query cook why and the executor share (COOK-401) ──
+
+mod shared_observation_tests {
+    use super::FakeBackend;
+    use crate::backend::{
+        artifact_key, CloudKey, DeterminantManifest, OBSERVATION_INDEX, OBSERVATION_PATH,
+    };
+    use cook_contracts::cache::observation::{Observation, OutputLog};
+
+    fn key() -> CloudKey {
+        CloudKey::from([7u8; 32])
+    }
+
+    fn manifest(output_paths: Vec<String>, observation: Option<Observation>) -> DeterminantManifest {
+        DeterminantManifest {
+            schema_version: crate::CACHE_VERSION,
+            recipe_namespace: "ns".into(),
+            key: "deadbeef".into(),
+            command_hash: 1,
+            env_contribution: 2,
+            seal_contribution: 3,
+            inputs: Default::default(),
+            output_paths,
+            empty_dir_outputs: Vec::new(),
+            consulted_env: Default::default(),
+            sealed_probes: Default::default(),
+            observation,
+        }
+    }
+
+    fn observation() -> Observation {
+        Observation::new(12, 1_700_000_000, None, 0)
+    }
+
+    /// Publish the stream half the way the real publish path does.
+    fn put_stream(b: &FakeBackend, k: &CloudKey) {
+        let log = OutputLog::new(vec![], 0);
+        let bytes = log.encode();
+        let meta = super::fake_meta(Some("observation".into()), 0o644, None, &bytes);
+        b.insert(artifact_key(k, OBSERVATION_INDEX, OBSERVATION_PATH), bytes, meta);
+    }
+
+    #[test]
+    fn no_manifest_is_not_a_hit() {
+        let b = FakeBackend::default();
+        put_stream(&b, &key());
+        assert!(crate::shared_observation(&b, &key()).is_none());
+    }
+
+    /// A manifest carrying outputs belongs to a PRODUCING unit. Serving it here
+    /// would replay an observation and leave its artifacts unrestored.
+    #[test]
+    fn a_manifest_with_outputs_is_not_an_observation_hit() {
+        let b = FakeBackend::default();
+        b.insert_manifest(key(), manifest(vec!["out.o".into()], Some(observation())));
+        put_stream(&b, &key());
+        assert!(crate::shared_observation(&b, &key()).is_none());
+    }
+
+    #[test]
+    fn a_manifest_without_an_observation_is_not_a_hit() {
+        let b = FakeBackend::default();
+        b.insert_manifest(key(), manifest(vec![], None));
+        put_stream(&b, &key());
+        assert!(crate::shared_observation(&b, &key()).is_none());
+    }
+
+    /// The scalar half lives on the manifest and the stream half is a separate
+    /// artifact. A manifest whose stream is missing must not be served: the
+    /// replay would have nothing to replay.
+    #[test]
+    fn the_scalar_half_alone_is_not_a_hit() {
+        let b = FakeBackend::default();
+        b.insert_manifest(key(), manifest(vec![], Some(observation())));
+        // no put_stream
+        assert!(crate::shared_observation(&b, &key()).is_none());
+    }
+
+    #[test]
+    fn manifest_plus_stream_serves_the_observation() {
+        let b = FakeBackend::default();
+        b.insert_manifest(key(), manifest(vec![], Some(observation())));
+        put_stream(&b, &key());
+        let got = crate::shared_observation(&b, &key()).expect("should serve");
+        assert_eq!(got, observation());
+    }
+
+    /// COOK-401's whole point: the executor served hits from this condition
+    /// while `cook why` answered "the question does not apply" for the same
+    /// unit. Both now call this function, so the executor cannot serve a hit
+    /// that `cook why` would report as absent. This test pins the condition
+    /// itself; if it changes, both callers change together or neither does.
+    #[test]
+    fn the_condition_is_exactly_manifest_no_outputs_observation_and_stream() {
+        let full = |outputs: Vec<String>, obs: bool, stream: bool| {
+            let b = FakeBackend::default();
+            b.insert_manifest(
+                key(),
+                manifest(outputs, obs.then(observation)),
+            );
+            if stream {
+                put_stream(&b, &key());
+            }
+            crate::shared_observation(&b, &key()).is_some()
+        };
+
+        assert!(full(vec![], true, true), "all three present");
+        assert!(!full(vec!["x".into()], true, true), "outputs present");
+        assert!(!full(vec![], false, true), "no observation");
+        assert!(!full(vec![], true, false), "no stream");
     }
 }
