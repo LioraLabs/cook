@@ -3070,6 +3070,28 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0200 — `cook.export` is register-phase, and the clause that said otherwise contradicted itself [#changes.cs-0200]
+
+**Date:** 2026-08-01
+**Version:** v0.18
+**Sections affected:** §{lua.cook-exports-imports} (**Phase** changes from Both to Register only; the permissive per-worker-store paragraph is replaced by new §{lua.cook-exports-phase} stating why), §{mods.lifecycle.rehydration} (its `cook.export` MUST is withdrawn), §{mods.both-phase-apis} (the "all are both-phase" sentence is split). Reference implementation: `cli/crates/cook-luaotp/src/pool.rs` (`install_execute_phase_cook_export` now refuses both functions by name). COOK-399.
+
+**Summary.** The Standard required two things of this channel that could not both hold. §{mods.lifecycle.rehydration} said a register-time `cook.export` MUST be observable to an execute-phase `cook.import`, "[Pinned by CS-0071]". §{lua.cook-exports-imports} said an implementation MAY "use a per-worker scratch store when the recipe body is both producer and consumer", with the minimum bar being that values "round-trip within a single worker VM", also "[Pinned by CS-0071]". A per-worker store cannot make a register-time value observable, so the permission and the requirement were mutually exclusive. Neither had a conformance fixture; the citation was to a pin that did not exist.
+
+The reference implementation satisfied the permission and violated the requirement. Its worker VM created an empty Lua table in the globals under `_cook_execute_exports` and never seeded it from the register-phase store, so an execute-phase `cook.import` returned `nil` for **every** register-time export — not intermittently, always. Verified against the shipped binary: a Cookfile that exports `{ a = "hello-from-register" }` in a `register` block and imports it from a `>{ … }` recipe body wrote `NIL`.
+
+The per-worker store was independently unsound. Units are dispatched from a shared queue (`WorkerPool::submit`) to whichever worker is free, so "within a single worker VM" is not a scope an author can rely on: two units of one recipe routinely land on different VMs, and an execute-phase export was therefore visible or invisible according to scheduling.
+
+**Why withdrawn rather than implemented.** Nothing needs the execute-phase half. The transitive-link walk that motivates the whole channel (§{cat.cc.transitive}) runs at register time, because its product is the compile and link command lines, and those must exist before any unit is captured. Reading an export also forces the referent's recipe body (§{reg.require-recipe}) — a register-phase act by definition. A corpus sweep found no module and no Cookfile calling either function from an execute-phase body: `cook_cc`'s `record_export` and `transitive.lua` are both register-phase, as is `compile_db.lua`, which feeds the §{reg.finalize} hook.
+
+This is the treatment §{lua.cook-probes-set} already gave `cook.probes.set` at CS-0074, for the same reason: a write into a per-VM store that no other unit can observe is refused by name rather than allowed to half-work. The two APIs are siblings and now agree.
+
+**Behavioural change.** `cook.export` or `cook.import` called from an execute-phase VM raises, naming the function, the phase, and this entry, and pointing at the register-phase target maker or at `cook.probe` for a value that must be produced at execute time. Previously `cook.import` returned `nil` and `cook.export` wrote into a table nothing else could read. No Cookfile that built correctly changes behaviour: there was no correct execute-phase use, only a silent one.
+
+**Conformance.** A positive fixture, `export-import-register-phase-register-ok`, pins the surviving half: a register-phase export round-trips to a register-phase import, and an absent name is `nil` rather than an error. Verified to bite by mutation. The refusal is pinned end-to-end in `cli/crates/cook-cli/tests/worker_vm_api.rs` and deliberately NOT in the corpus: the conformance harness stops after register, so an execute-phase claim made there would pass against an implementation that never ran a worker. Pin the fact, not the syntax.
+
+No `CACHE_VERSION` bump and no key change: exports never contributed to a cache key.
+
 ## CS-0199 — cook-fingerprint is dissolved; a stratum that never existed [#changes.cs-0199]
 
 **Date:** 2026-08-01

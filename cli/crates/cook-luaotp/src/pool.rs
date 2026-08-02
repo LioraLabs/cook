@@ -1085,44 +1085,57 @@ fn install_execute_phase_cook_probes(
     Ok(())
 }
 
-/// Install `cook.export(name, info)` and `cook.import(name) -> table?`
-/// on the execute-phase VM (Standard §6.3.4, CS-0071). Storage is an
-/// in-memory Lua table held in the globals under `_cook_execute_exports`
-/// — keyed by name (string), valued by arbitrary Lua values (typically
-/// the info table that `cc.bin`/`cc.lib` publish). Per-worker; no
-/// cross-run persistence and no cross-VM visibility.
+/// Refuse `cook.export` / `cook.import` on the execute-phase VM (CS-0200).
 ///
-/// The register-phase implementation lives in
-/// `cook-register/src/export_api.rs` and persists into a serde-JSON
-/// store the engine reads for transitive-link recording. The
-/// execute-phase shape mirrors the contract from the module author's
-/// POV — same signatures, same nil-on-miss semantics — without
-/// inheriting the JSON round-trip; recipe bodies pass Lua tables
-/// directly to each other within the worker.
+/// This used to install a working pair backed by an in-memory Lua table in the
+/// worker's globals under `_cook_execute_exports`. Two things were wrong with
+/// it, and the Standard licensed both.
+///
+/// The table was never seeded from the register-phase store, so a register-time
+/// `cook.export` was invisible here: an execute-phase `cook.import` returned
+/// `nil` for every one of them. §12.3.4 required the opposite in a normative
+/// MUST citing CS-0071, and the conformance fixture that citation claimed did
+/// not exist.
+///
+/// The table was also per-VM, while units are dispatched from a shared queue to
+/// whichever worker is free, so two units of one recipe routinely land on
+/// different VMs. The doc comment here asserted that "recipe bodies pass Lua
+/// tables directly to each other within the worker"; whether they did depended
+/// on scheduling.
+///
+/// Nothing needed either half. The transitive-link walk that motivates the
+/// channel runs at register time, because its product is the compile and link
+/// command lines, which exist before any unit is captured, and reading an
+/// export forces the referent's recipe body, which is register-phase by
+/// definition. So CS-0200 withdrew the execute-phase surface rather than
+/// implementing it, and this refuses it by name — the same treatment CS-0074
+/// gave `cook.probes.set`, for the same reason.
 fn install_execute_phase_cook_export(
     lua: &mlua::Lua,
     cook: &mlua::Table,
 ) -> mlua::Result<()> {
-    let export_store = lua.create_table()?;
-    lua.globals().set("_cook_execute_exports", export_store)?;
-
-    let export_fn =
-        lua.create_function(|lua, (name, info): (String, mlua::Value)| {
-            let store: mlua::Table =
-                lua.globals().get("_cook_execute_exports")?;
-            store.set(name, info)?;
-            Ok(())
-        })?;
+    let export_fn = lua.create_function(|_, (_name, _info): (String, mlua::Value)| -> mlua::Result<()> {
+        Err(export_register_only_error("cook.export"))
+    })?;
     cook.set("export", export_fn)?;
 
-    let import_fn = lua.create_function(|lua, name: String| {
-        let store: mlua::Table =
-            lua.globals().get("_cook_execute_exports")?;
-        store.get::<mlua::Value>(name)
+    let import_fn = lua.create_function(|_, _name: String| -> mlua::Result<mlua::Value> {
+        Err(export_register_only_error("cook.import"))
     })?;
     cook.set("import", import_fn)?;
 
     Ok(())
+}
+
+fn export_register_only_error(func: &str) -> mlua::Error {
+    mlua::Error::runtime(format!(
+        "{func}: register-phase only, not available on the execute-phase VM \
+         (CS-0200). Transitive-link info is published and read while recipes \
+         register, because it produces the compile and link command lines. \
+         Move the call into the recipe body's register-phase target maker, or \
+         use a probe (cook.probe) for a value that must be produced at \
+         execute time."
+    ))
 }
 
 /// Resolve a `cook.dep_output(name)` reference against the worker's
