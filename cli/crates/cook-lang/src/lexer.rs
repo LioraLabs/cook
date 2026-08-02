@@ -54,7 +54,7 @@ pub enum LexError {
     MissingProbeName { line: usize },
     #[error("line {line}: probe '{name}': unexpected token after the probe name; a dependency list is introduced with ':' (e.g. `probe {name}: dep1 dep2`)")]
     ProbeExtraTokens { name: String, line: usize },
-    #[error("line {line}: probe name '{name}': a probe key is at most `IDENT:IDENT`; '{name}' has too many ':' segments")]
+    #[error("line {line}: malformed probe key '{name}': '.' is member access in a probe reference and is not part of a key; use '-' or the quoted form \"{name}\"")]
     MalformedProbeName { name: String, line: usize },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter")]
     VariadicNotLast { line: usize, chore: String, name: String },
@@ -92,6 +92,19 @@ fn is_ident_start(c: char) -> bool {
 
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+/// One `PROBE_SEG` char (CS-0201). As [`is_ident_char`] but WITHOUT `.`.
+///
+/// `.` is member access in a probe reference, so admitting it inside a segment
+/// makes `$<demo:cc-version.ver>` ambiguous between "field `ver` of
+/// `demo:cc-version`" and "the key `demo:cc-version.ver`", with nothing in the
+/// text to separate them. CS-0131 admitted `.` before probe references had
+/// member access; the features are incompatible and member access is worth
+/// more. `TOOL_NAME` keeps the dot ([`is_ident_char`]) because an executable
+/// name may carry one and is never member-accessed.
+fn is_probe_seg_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
 /// Validate that a `use NAME` argument is a Lua identifier — `^[A-Za-z_][A-Za-z0-9_]*$`.
@@ -443,38 +456,52 @@ fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
     Ok(result)
 }
 
-/// Scan one `probe_ref ::= IDENT (":" IDENT)?` from the front of `s`.
-/// Each segment uses the recipe-name char set `is_ident_char`
-/// (`[A-Za-z0-9_.-]`, CS-0131). A `:` is consumed into the name ONLY when
-/// immediately followed by an ident-start char (no whitespace) — this is the
-/// module-prefix colon. A second contiguous `:` is the malformed triple-colon
-/// case. Returns `(name, rest_after_name)`.
+/// Scan one `probe_ref ::= PROBE_SEG (":" PROBE_SEG)*` from the front of `s`.
+///
+/// Each segment uses `is_probe_seg_char` (`[A-Za-z0-9_-]`, CS-0201). A `:` is
+/// consumed into the name ONLY when immediately followed by a segment-start
+/// char (no whitespace); that is the segment separator.
+///
+/// CS-0201 removed the two-segment cap. It was enforced here and nowhere else:
+/// `cook.probe()` validated nothing, so modules mint `cc:find:raylib` and
+/// `cc:compiler:auto` as their ordinary case. A cap one of two declaration
+/// paths enforces is an obstacle, not a rule.
+///
+/// Returns `(name, rest_after_name)`.
 fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
     fn seg_len(s: &str) -> usize {
-        s.find(|c: char| !is_ident_char(c)).unwrap_or(s.len())
+        s.find(|c: char| !is_probe_seg_char(c)).unwrap_or(s.len())
     }
     let s = s.trim_start();
     let n1 = seg_len(s);
     if n1 == 0 || !is_ident_start(s.chars().next().unwrap_or('\0')) {
         return Err(LexError::MissingProbeName { line });
     }
-    let after1 = &s[n1..];
-    // module-prefix colon: ':' immediately followed by an ident-start char
-    if let Some(rest) = after1.strip_prefix(':') {
-        if !rest.is_empty() && is_ident_start(rest.chars().next().unwrap_or('\0')) {
-            let n2 = seg_len(rest);
-            let name = format!("{}:{}", &s[..n1], &rest[..n2]);
-            let after2 = &rest[n2..];
-            // a third contiguous ':IDENT' is malformed
-            if let Some(more) = after2.strip_prefix(':') {
-                if !more.is_empty() && is_ident_start(more.chars().next().unwrap_or('\0')) {
-                    return Err(LexError::MalformedProbeName { name: format!("{name}:…"), line });
-                }
-            }
-            return Ok((name, after2));
+    let mut end = n1;
+    loop {
+        let after = &s[end..];
+        let Some(rest) = after.strip_prefix(':') else { break };
+        if rest.is_empty() || !is_ident_start(rest.chars().next().unwrap_or('\0')) {
+            break;
+        }
+        let n = seg_len(rest);
+        end += 1 + n;
+    }
+    // CS-0201: a '.' butted against the key is the author spelling a key the
+    // way CS-0131 used to allow. Name the cause here; otherwise the scan stops
+    // at the dot and the parser blames the remainder as an unexpected token,
+    // which reads as a syntax slip rather than a rule.
+    let after = &s[end..];
+    if let Some(tail) = after.strip_prefix('.') {
+        if tail.chars().next().is_some_and(is_probe_seg_char) {
+            let full_len = end + 1 + seg_len(tail);
+            return Err(LexError::MalformedProbeName {
+                name: s[..full_len].to_string(),
+                line,
+            });
         }
     }
-    Ok((s[..n1].to_string(), after1))
+    Ok((s[..end].to_string(), &s[end..]))
 }
 
 /// Parse a probe header's dependency list: whitespace-separated `probe_ref`s.

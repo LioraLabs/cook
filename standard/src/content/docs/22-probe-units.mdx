@@ -65,9 +65,15 @@ the offending line:
   `test`, or other non-producer step) — a conforming implementation MUST
   reject with a diagnostic indicating that only `ingredients` and a producer are
   permitted in a probe body.
-- A probe name containing three or more colon-separated segments (e.g.
-  `probe a:b:c`) — a conforming implementation MUST reject at the lexical level
-  with a diagnostic indicating that a probe key is at most `IDENT:IDENT`.
+- A probe name with an EMPTY segment (`probe :a`, `probe a:`, `probe a::b`) —
+  a conforming implementation MUST reject it. CS-0201 removed the former
+  three-or-more-segment rejection: the cap was enforced here and ignored by
+  `cook.probe`, so modules mint `cc:find:raylib` and `cc:compiler:auto` as
+  their ordinary case, and those keys could be neither spelled on the surface
+  nor sealed.
+- A probe name containing `.` (`probe cc.version`) — a conforming
+  implementation MUST reject it with a diagnostic naming member access as the
+  cause and offering the quoted form (§{grammar-appendix.probe}, CS-0201).
 - A `json` or `lines` kind applied to a `>{ … }` Lua block (e.g. `json >{ … }`)
   — a conforming implementation MUST reject with a diagnostic indicating that
   `json`/`lines` are valid only on a shell block, since a Lua block already
@@ -76,11 +82,14 @@ the offending line:
   place of a name list — a conforming implementation MUST reject with a
   diagnostic identifying the probe and the offending construct. A name outside
   the kind's character set is likewise rejected: `envs` admits `IDENT`, and
-  `tools` admits `TOOL_NAME` (= `PROBE_SEG`, internal `-` and `.` allowed;
-  §{grammar-appendix.probe}, CS-0181). Both require an `[A-Za-z_]` head, so
+  `tools` admits `TOOL_NAME` (internal `-` and `.` allowed; its own production
+  since CS-0201, because a `PROBE_SEG` has no `.`). Both require an
+  `[A-Za-z_]` head, so
   `tools { cc --version }` is rejected whichever kind is in play.
 
-Each segment of a bare probe key admits the recipe-name character set (internal `-` and `.`; §A.3.2 `PROBE_SEG`, CS-0131), so `demo:cc-version` is a single two-segment key. The two-`:`-segment maximum is unchanged: a bare key is at most `PROBE_SEG:PROBE_SEG`. The quoted `STRING` form denotes the same key and is the escape hatch for spellings outside `PROBE_SEG`.
+Each segment of a bare probe key is `[A-Za-z_][A-Za-z0-9_-]*` (§A.3.2 `PROBE_SEG`, CS-0201), so `demo:cc-version` is a single two-segment key and `cc:find:raylib` a three-segment one; there is no cap on segment count. `.` is not admitted, because it is member access in a probe reference. The quoted `STRING` form denotes the same key and is the escape hatch for any spelling the bare form cannot express.
+
+A conforming implementation MUST accept both spellings wherever a probe key is named: this declaration, a dependency-list entry, a `seal` ref (§{steps.disposition}), and an `ingredients` probe source (§{cat.probes.member-source}). Before CS-0201 they disagreed — `seal` and `ingredients` admitted neither `-` nor `.`, `seal` refused the quoted form outright, and both capped segments — so a key this section blessed could be declared and referenced from a command and then neither pinned nor consumed.
 
 A shell-block producer (`{ … }`, `json { … }`, `lines { … }`) and the Lua-block
 producer (`>{ … }`) reuse the `body ::= exec_lua_block | shell_block` grammar of

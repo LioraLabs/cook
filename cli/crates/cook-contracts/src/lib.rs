@@ -21,6 +21,7 @@ pub mod naming;
 pub mod output;
 pub mod pathlaw;
 pub mod probe;
+pub mod probe_key;
 pub mod quoting;
 pub mod recipe;
 pub mod render;

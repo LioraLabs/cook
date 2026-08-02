@@ -235,36 +235,37 @@ pub(crate) fn parse_test_modifiers(tail: &str, line: usize) -> Result<TestModifi
     Ok(m)
 }
 
-/// Validate + collect bare `BARE_PROBE_KEY` refs (`IDENT (":" IDENT)?`).
-/// Rejects empty idents, a third `:IDENT` segment, and the quoted form.
-/// `refs` is the already-split list of ref tokens. Shared by the recipe-level
-/// `seal` step (recipe.rs) and the trailing `cook_mods` parser above.
+/// Validate + collect probe key refs for `seal`.
+///
+/// CS-0201: accepts both spellings a probe key has. A bare ref must match
+/// `cook_contracts::probe_key` (one or more `:`-separated
+/// `[A-Za-z_][A-Za-z0-9_-]*` segments); a quoted ref is any non-empty string
+/// and is the escape hatch.
+///
+/// What this replaced: `seal` alone allowed neither `-` nor `.`, capped at two
+/// segments, and refused the quoted form outright, while the declaration that
+/// mints the key allowed `-`, `.` and quoting. So `probe cc-version` produced
+/// a key that could not be sealed, and `cc:find:raylib` — three segments, and
+/// the flagship module's ordinary case — could not be sealed either, which is
+/// precisely the pin a cache-trust story exists to offer.
 pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String>, ParseError> {
     let mut out = Vec::new();
     for tok in refs {
-        if tok.starts_with('"') {
-            return Err(ParseError::Parse {
-                line,
-                message: format!(
-                    "seal: probe ref must be a bare key (IDENT[:IDENT]), not the quoted form: {tok}"
-                ),
-            });
+        // The quoted form: strip the delimiters and take the contents as-is.
+        if let Some(inner) = tok.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+            if inner.is_empty() {
+                return Err(ParseError::Parse {
+                    line,
+                    message: "seal: probe key must not be empty".to_string(),
+                });
+            }
+            out.push(inner.to_string());
+            continue;
         }
-        let segs: Vec<&str> = tok.split(':').collect();
-        let ok = (segs.len() == 1 || segs.len() == 2)
-            && segs.iter().all(|s| {
-                !s.is_empty()
-                    && s.chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                    && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            });
-        if !ok {
+        if !cook_contracts::probe_key::is_valid_bare(tok) {
             return Err(ParseError::Parse {
                 line,
-                message: format!(
-                    "seal: malformed probe ref '{tok}' (expected IDENT or IDENT:IDENT)"
-                ),
+                message: cook_contracts::probe_key::bare_key_error("seal", tok),
             });
         }
         out.push(tok.clone());
