@@ -1082,91 +1082,68 @@ fn cook_probes_scope_set_on_execute_vm_raises_deprecation_error() {
 }
 
 // -----------------------------------------------------------------
-// CS-0071 regressions: execute-phase VM MUST expose `cook.export`
-// and `cook.import` with the same name-keyed surface as the
-// register-phase VM (Standard §6.3.4). Storage is in-memory and
-// per-worker; cross-worker visibility is not required.
+// CS-0200: the execute-phase VM REFUSES `cook.export` / `cook.import`.
+//
+// This block previously held three CS-0071 regressions asserting that the
+// worker exposed the same name-keyed surface as the register VM, backed by
+// an in-memory per-worker store, and that "cross-worker visibility is not
+// required". The Standard licensed that (§24.5 permitted a per-worker
+// scratch store) while §12.3.4 simultaneously required a register-time
+// export to be observable here. The permission and the requirement were
+// mutually exclusive; the implementation met the permission, so an
+// execute-phase import returned nil for every register-time export.
+// CS-0200 withdrew the surface. The surviving register-phase round trip is
+// pinned in standard/conformance/positive/export-import-register-phase-register-ok.
 // -----------------------------------------------------------------
 
-/// CS-0071: `cook.import(name)` on an unknown name MUST return nil,
-/// not raise — target makers probe via `cook.import` to decide
-/// whether a transitive dep was registered earlier in the same VM.
+/// CS-0200: `cook.export` and `cook.import` are register-phase only; the
+/// worker VM refuses both by name.
+///
+/// This replaces three tests that pinned the withdrawn behaviour, one of which
+/// deserves recording. `cook_export_store_isolated_per_worker` asserted that a
+/// second worker MUST NOT see the first worker's export, and read as a
+/// safety property ("no cross-worker leakage"). It was in fact pinning the
+/// defect: units of one recipe are dispatched from a shared queue to whichever
+/// worker is free, so that isolation is exactly what made an execute-phase
+/// export visible or invisible by scheduling. A test can hold a bug in place
+/// by describing it as a guarantee.
 #[test]
-fn cook_import_returns_nil_for_unknown_name() {
-    let code = r#"
-            local v = cook.import("never_exported")
-            assert(v == nil, "expected nil, got "..tostring(v))
-        "#;
-    let result = run_lua_chunk_in_worker(code);
+fn cook_export_is_refused_on_the_worker_vm() {
+    let out = run_lua_chunk_in_worker(r#"cook.export("scratch", { value = 1 })"#);
+    assert!(!out.success, "execute-phase cook.export must raise");
+    let err = out.error.unwrap_or_default();
     assert!(
-        result.success,
-        "cook.import for unknown name must return nil; got error: {:?}",
-        result.error
+        err.contains("cook.export: register-phase only") && err.contains("CS-0200"),
+        "diagnostic must name the function, the phase and the change: {err}"
     );
 }
 
-/// CS-0071: a table written by `cook.export(name, info)` MUST be
-/// retrievable via `cook.import(name)` on the same worker VM with
-/// all fields preserved. cook_cc's `cc.bin` body calls
-/// `cook.export(name, { lib_path = ..., includes = ..., links = ... })`
-/// and downstream `cook.import` must surface the same structure.
 #[test]
-fn cook_export_then_import_round_trips() {
-    let code = r#"
-            cook.export("mylib", {
-                lib_path = "build/libmylib.a",
-                includes = { "include/" },
-                links    = { "m", "pthread" },
-            })
-            local info = cook.import("mylib")
-            assert(info ~= nil, "import returned nil after export")
-            assert(info.lib_path == "build/libmylib.a",
-                "lib_path mismatch: "..tostring(info.lib_path))
-            assert(info.includes[1] == "include/",
-                "includes[1] mismatch: "..tostring(info.includes[1]))
-            assert(info.links[1] == "m",
-                "links[1] mismatch: "..tostring(info.links[1]))
-            assert(info.links[2] == "pthread",
-                "links[2] mismatch: "..tostring(info.links[2]))
-        "#;
-    let result = run_lua_chunk_in_worker(code);
+fn cook_import_is_refused_on_the_worker_vm() {
+    let out = run_lua_chunk_in_worker(r#"local _ = cook.import("scratch")"#);
+    assert!(!out.success, "execute-phase cook.import must raise");
+    let err = out.error.unwrap_or_default();
     assert!(
-        result.success,
-        "cook.export then cook.import must round-trip; got error: {:?}",
-        result.error
+        err.contains("cook.import: register-phase only") && err.contains("CS-0200"),
+        "diagnostic must name the function, the phase and the change: {err}"
     );
 }
 
-/// CS-0071: the execute-phase export store is per-worker. A second
-/// worker pool's VM MUST NOT see exports from the first. (Two
-/// concurrent recipe bodies in distinct workers must not collide
-/// through this scratch store.)
+/// The refusal must not be a silent nil, which is what an unknown name used to
+/// return and what made the whole surface look like it worked.
 #[test]
-fn cook_export_store_isolated_per_worker() {
-    // First worker: write a value.
-    let producer = run_lua_chunk_in_worker(
-        r#"cook.export("scratch", { value = 1 })"#,
-    );
-    assert!(
-        producer.success,
-        "producer worker should succeed; got error: {:?}",
-        producer.error
-    );
-
-    // A fresh pool spawns a fresh worker with a fresh VM and fresh
-    // `_cook_execute_exports` table. Importing the same name MUST
-    // return nil — no cross-worker leakage.
-    let consumer = run_lua_chunk_in_worker(
+fn an_unknown_name_also_raises_rather_than_returning_nil() {
+    let out = run_lua_chunk_in_worker(
         r#"
-            local v = cook.import("scratch")
-            assert(v == nil,
-                "cross-worker export leaked: got "..tostring(v))
-            "#,
+            local v = cook.import("never-exported-anywhere")
+            assert(false, "unreachable: import returned "..tostring(v))
+        "#,
     );
+    assert!(!out.success);
+    let err = out.error.unwrap_or_default();
     assert!(
-        consumer.success,
-        "consumer worker must not see producer's export; got error: {:?}",
-        consumer.error
+        err.contains("register-phase only"),
+        "must fail at the import, not at the assert: {err}"
     );
 }
 

@@ -1,0 +1,7 @@
+register
+    cook.export("mathlib", { includes = { "math/include" }, lib_path = "build/libmath.a" })
+    local info = cook.import("mathlib")
+    assert(info ~= nil, "a register-phase import must observe a register-phase export")
+    assert(info.includes[1] == "math/include", "exported fields must round-trip")
+    assert(info.lib_path == "build/libmath.a", "exported fields must round-trip")
+    assert(cook.import("never-exported") == nil, "an absent name is nil, not an error")

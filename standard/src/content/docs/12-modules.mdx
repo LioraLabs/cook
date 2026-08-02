@@ -95,7 +95,7 @@ Detection MUST survive recoverable errors: when a module's body or `init()` rais
 
 When a module's `init()` records state into `cook.probes` (§{lua.both}) during register-phase load, an execute-phase VM that later loads the same module MUST observe that cached state. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime (no cross-invocation persistence). [Pinned by CS-0070.]
 
-When a module records transitive-link info via `cook.export` (§{lua.both}) at register time, an execute-phase recipe body that calls `cook.import` MUST observe the recorded info. [Pinned by CS-0071.]
+`cook.export` / `cook.import` are register-phase only as of CS-0200 and take no part in rehydration. This paragraph previously required a register-time export to be observable to an execute-phase `cook.import`, citing CS-0071. That requirement contradicted §{lua.cook-exports-imports}, which permitted "a per-worker scratch store" and set the minimum bar at round-tripping "within a single worker VM" — a per-worker store cannot make a register-time value observable. The reference implementation followed §{lua.cook-exports-imports} and therefore violated this paragraph for the whole life of both: an execute-phase `cook.import` returned `nil` for every register-time export, and the fixture the citation claimed never existed. See CS-0200.
 
 ### 12.3.5. Register-completion callbacks [#mods.lifecycle.finalize]
 
@@ -149,7 +149,7 @@ A determinant a module detects MUST be modelled as a probe input so its fingerpr
 
 The sanctioned read of a probe value is `cook.probes.get(key)` (§{lua.cook-probes-get}); on the execute-phase VM it reads the per-run probe-value store. A `$<key>` or `$<key.field>` placeholder in a command desugars to exactly this read (§{cat.probes.templates}), so a module MAY consume a probe either textually in a command or programmatically in a `>{ … }` body.
 
-A module publishes a target's transitive-link information with `cook.export` and reads a dependency's with `cook.import` (§{lua.cook-exports-imports}); it reads a dependency recipe's outputs with `cook.dep_output` / `cook.dep_output_list` (§{lua.cook-dep-output}) or the equivalent `$<NAME>` surface. All are both-phase (§{lua.both}). The register-phase key/value methods `cook.probes.set` and `cook.probes.scope` are deprecated (§{lua.cook-probes-set}); a new module SHOULD use `cook.probe` for memoised values rather than a hand-managed store.
+A module publishes a target's transitive-link information with `cook.export` and reads a dependency's with `cook.import` (§{lua.cook-exports-imports}); it reads a dependency recipe's outputs with `cook.dep_output` / `cook.dep_output_list` (§{lua.cook-dep-output}) or the equivalent `$<NAME>` surface. `cook.dep_output` / `cook.dep_output_list` are both-phase (§{lua.both}); `cook.export` / `cook.import` are register-phase only (§{lua.cook-exports-imports}, CS-0200). The register-phase key/value methods `cook.probes.set` and `cook.probes.scope` are deprecated (§{lua.cook-probes-set}); a new module SHOULD use `cook.probe` for memoised values rather than a hand-managed store.
 
 ### 12.7.5. Seal policy [#mods.authoring.seal]
 

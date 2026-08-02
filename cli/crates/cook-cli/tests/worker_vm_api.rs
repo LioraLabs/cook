@@ -90,3 +90,60 @@ recipe decode
     let out = fs::read_to_string(tmp.path().join("build/out.txt")).unwrap();
     assert_eq!(out, "hi-cook");
 }
+
+/// CS-0200: `cook.export` / `cook.import` are register-phase only, and the
+/// execute-phase VM refuses both by name.
+///
+/// The refusal is deliberately not a conformance fixture: the corpus harness
+/// stops after register, so a fixture there would pass against the broken
+/// implementation and pin nothing. This runs the binary and reads the
+/// diagnostic a user actually sees.
+#[test]
+fn cook_import_in_a_worker_body_is_refused_by_name() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.export("thing", { a = "hello-from-register" })
+
+recipe build
+    cook "out.txt" >{
+        fs.write(output, tostring(cook.import("thing")))
+    }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+
+    let err = run_cook(tmp.path(), &["build"]).expect_err("execute-phase import must fail");
+    assert!(
+        err.contains("cook.import: register-phase only"),
+        "diagnostic must name the function and the phase: {err}"
+    );
+    assert!(err.contains("CS-0200"), "diagnostic must cite the change: {err}");
+
+    // The point of the change: before CS-0200 this SUCCEEDED and wrote "nil",
+    // because the worker's export table was built empty and never seeded from
+    // the register-phase store. A silent nil is what §12.3.4 forbade and what
+    // §24.5 permitted; the contradiction is why the surface was withdrawn.
+    assert!(
+        !tmp.path().join("out.txt").exists(),
+        "the body must not have run to completion"
+    );
+}
+
+#[test]
+fn cook_export_in_a_worker_body_is_refused_by_name() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+recipe build
+    cook "out.txt" >{
+        cook.export("late", { a = 1 })
+        fs.write(output, "unreachable")
+    }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+
+    let err = run_cook(tmp.path(), &["build"]).expect_err("execute-phase export must fail");
+    assert!(
+        err.contains("cook.export: register-phase only"),
+        "diagnostic must name the function and the phase: {err}"
+    );
+}

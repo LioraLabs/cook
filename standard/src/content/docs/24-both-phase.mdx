@@ -102,7 +102,9 @@ Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations 
 Scopes are conventionally named after the module that owns them (e.g. `cook_cc:toolchain`, `cook_cc:find:raylib`) to prevent key collisions between modules.
 
 ## 24.5. `cook.export` and `cook.import` [#lua.cook-exports-imports]
-**Phase.** Both. [Pinned by CS-0071.]
+**Phase.** Register only. [CS-0200; was "Both" and cited CS-0071, see below.]
+
+This section is retained in the both-phase chapter for stable anchors; the surface is register-phase and calling either function from an execute-phase VM MUST raise, in the manner of §{lua.cook-probes-set}.
 
 `cook.export` and `cook.import` are the Cook-managed transitive-link-info channel used by target makers (e.g. `cc.bin`/`cc.lib` per §{cat.cc.transitive}) to publish a target's outward-facing fields and by consumers to read them.
 
@@ -111,7 +113,7 @@ Scopes are conventionally named after the module that owns them (e.g. `cook_cc:t
 
 Records that the target named `name` exposes the fields in `info`. The `info` table's shape is conventionally established by the publisher's module documentation; for `cc` targets the conventional shape is documented in §{cat.cc.transitive}. Beyond requiring a Lua table, the Standard constrains `info` only to be **serialisable under the §{cat.probes.values} value contract** (CS-0198): the exported value crosses VM boundaries as JSON, so a table that JSON cannot faithfully carry — mixed string/integer keys, an array with holes, a non-finite number, a non-UTF-8 string, a function/userdata/cycle anywhere within — MUST be rejected with a register-phase (or execute-phase, per the calling VM) Lua error naming the offending path, in the manner of §{cat.probes.values}. A conforming implementation MUST NOT silently drop or coerce the unserialisable parts: before CS-0198 the reference implementation did exactly that (mixed keys dropped, holes compacted, NaN to `null`, non-UTF-8 lossy-substituted), so an export could differ from what the author published with no diagnostic.
 
-A conforming implementation MUST persist the exported value in a way that subsequent `cook.import(name)` calls (in either phase, within the same Cookfile evaluation) return the exported value.
+A conforming implementation MUST persist the exported value in a way that subsequent register-phase `cook.import(name)` calls, within the same Cookfile evaluation, return the exported value.
 
 ### 24.5.2. `cook.import` [#lua.cook-imports]
 **Signature.** `cook.import(name: string) -> table?`
@@ -120,7 +122,15 @@ Returns the table previously published for `name` via `cook.export`, or `nil` if
 
 A conforming implementation MUST resolve `cook.import` against the **same workspace's** export records — `cook.import` MUST NOT cross workspace boundaries. The interaction with cross-Cookfile composition is: a target maker invoked from an imported Cookfile (§{comp.import}) publishes exports against the workspace-global table, but resolution by recipe name in a different Cookfile uses the qualified name `alias.name` per §{comp.qualified-refs}.
 
-The Cook implementation MAY share the export table between register-phase and execute-phase Lua VMs, or use a per-worker scratch store when the recipe body is both producer and consumer; the minimum bar is that the calls resolve without error and round-trip values within a single worker VM. Implementations that omit the execute-phase API break any target maker whose register-recorded body calls `cook.export` at execute time.
+### 24.5.3. Why this is register-phase only [#lua.cook-exports-phase]
+
+The paragraph this replaces permitted "a per-worker scratch store when the recipe body is both producer and consumer", setting the minimum bar at round-tripping "within a single worker VM". §{mods.lifecycle.rehydration} simultaneously required a register-time export to be observable to an execute-phase `cook.import`. A per-worker store cannot satisfy that, so the two clauses could not both be met, and the reference implementation met the permissive one: its execute-phase VM built an empty per-VM table, never seeded it, and returned `nil` for every register-time export.
+
+Neither clause described anything a module needed. The transitive-link walk that motivates the whole channel (§{cat.cc.transitive}) runs at register time, because its product is the compile and link command lines, which must exist before any unit is captured. Reading an export also forces the referent's recipe body (§{reg.require-recipe}), which is a register-phase act by definition.
+
+The per-worker store was additionally unsound on its own terms: units of one recipe are dispatched from a shared queue to whichever worker is free, so "within a single worker VM" is not a scope an author can rely on. Two units of one recipe routinely land on different VMs, making an execute-phase export visible or invisible according to scheduling.
+
+CS-0200 therefore withdraws the execute-phase half rather than implementing it, matching the treatment §{lua.cook-probes-set} gives `cook.probes.set` for the same reason: a write into a per-VM store that no other unit can observe is refused by name rather than allowed to half-work.
 
 ## 24.6. `cook.platform` [#lua.cook-platform]
 **Type.** `table`

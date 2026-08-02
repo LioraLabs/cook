@@ -1,0 +1,9 @@
+A register-phase `cook.export` must be observable to a register-phase
+`cook.import` within the same Cookfile evaluation, and an absent name must
+return nil rather than raising (§{lua.cook-exports-imports}, CS-0200).
+
+This is the half of the channel that survives. The execute-phase half was
+withdrawn by CS-0200 and its refusal is pinned end-to-end in
+`cli/crates/cook-cli/tests/worker_vm_api.rs`, not here: this harness stops
+after register, so an execute-phase claim made in this corpus would pass
+against an implementation that never ran a worker at all.
