@@ -3070,6 +3070,47 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0201 — one probe-key grammar, at every site that names one [#changes.cs-0201]
+
+**Date:** 2026-08-01
+**Version:** v0.18
+**Sections affected:** §{grammar-appendix.probe} (`PROBE_SEG` loses `.` and the segment cap; `TOOL_NAME` becomes its own production; both charset notes rewritten, superseding CS-0131 and CS-0181), §{cat.probes.decl} (the three-segment rejection becomes an empty-segment rejection; a dotted-key rejection is added; the both-spellings-everywhere requirement is stated). Reference implementation: `cli/crates/cook-contracts/src/probe_key/` (new — the one grammar), `cli/crates/cook-lang/src/{lexer,disposition,cook_line}.rs`. COOK-408.
+
+**Summary.** Five sites named a probe key and no two agreed:
+
+| key | `probe` decl | `cook.probe()` | `$<ref>` | `seal` | `ingredients` |
+|---|---|---|---|---|---|
+| `plain` | yes | yes | yes | yes | yes |
+| `demo:ver` | yes | yes | yes | yes | yes |
+| `cc-version` | yes | yes | yes | **no** | **no** |
+| `cc.version` | yes | yes | yes | **no** | **no** |
+| `cc:find:raylib` | **no** | yes | yes | **no** | yes |
+
+So `probe cc-version` declared a key that could be referenced from a command and then neither sealed nor consumed, and `cc:find:raylib` — three segments, and `cook_cc`'s ordinary case — could not be sealed at all. Sealing a discovered library is precisely the pin a cache-trust story exists to offer, and the flagship module's own keys were unpinnable.
+
+The two rejection sites also blamed different things for one cause: `seal` reported "malformed probe ref", while `ingredients` reported "unexpected trailing content '-version'" because its scanner stopped at the hyphen and called the remainder a trailer.
+
+**How it happened.** CS-0131 widened the declaration and the sigil scanner to `PROBE_SEG`; `seal` and `ingredients` were not touched. Separately, `cook.probe(key)` never validated anything, so when modules began minting `cc:find:<name>` the "at most `IDENT:IDENT`" cap died without anyone deciding it should. A cap enforced on one of two declaration paths is not a rule.
+
+**The grammar.** One production, in `cook-contracts`, used by every site:
+
+```
+PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)*
+PROBE_SEG ::= [A-Za-z_] [A-Za-z0-9_-]*
+```
+
+with two spellings — **bare**, matching `PROBE_KEY`, and **quoted**, any non-empty string — and every site accepting both. The Lua API's string argument IS the quoted form, so `cook.probe("g++")` stays legal and no module migrates.
+
+**Why `.` left.** It is member access in a probe reference. With `.` inside a segment, `$<demo:cc-version.ver>` is either field `ver` of `demo:cc-version` or the key `demo:cc-version.ver`, and nothing in the text separates the readings. Resolving by longest match against the declared set was rejected as a fix: it would make an existing reference change meaning when an unrelated probe is declared. CS-0131 admitted `.` before references had member access; the features are incompatible and member access is worth more. The diagnostic names member access as the cause rather than reporting a malformed key, because a bare refusal reads as a typo over a spelling an earlier version accepted.
+
+**Why `TOOL_NAME` split off.** It was `PROBE_SEG` (CS-0181), conflating "a segment of a key" with "the name of an executable". Only the first has the ambiguity, and only the second needs the dot — `python3.11` is a real tool name. They are separate productions now.
+
+**Conformance.** Corpus swept before the change: no bare probe declaration anywhere in `standard/conformance`, `examples`, `cli/e2e-fixtures` or `cook-modules` uses a `.`, and the only dynamically-built module keys are `cc:find:<library>` and `cc:compiler:<name>`, both `PROBE_SEG`-safe. Breakage is therefore nil.
+
+Four negatives are retired, because they pinned rules this entry withdraws: `cook-disposition-seal-quoted-ref`, `cook-disposition-seal-triple-colon`, `probe-triple-colon-name`, `test-seal-quoted-ref`. `ingredients-probe-ref-malformed` is repointed from a four-segment key to an empty segment, which is the rule that survived. One negative is added, `probe-key-dotted-bare`, pinning the diagnostic rather than the refusal. One positive is added, `probe-key-grammar-register-ok`, declaring a hyphenated, a two-segment, a three-segment and a quoted key and then sealing three and consuming one — the four spellings across the three sites that used to disagree. It carries `register_ok.txt` rather than `parse.txt` alone, because a parse-only case would pass against an implementation that accepted the spelling and then failed to resolve it.
+
+No `CACHE_VERSION` bump: a key's spelling is unchanged, and the keys that were previously unspellable had no cache entries to invalidate.
+
 ## CS-0200 — `cook.export` is register-phase, and the clause that said otherwise contradicted itself [#changes.cs-0200]
 
 **Date:** 2026-08-01

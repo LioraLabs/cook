@@ -80,12 +80,7 @@ fn mods_record_keyword_hints_nondet() {
         }
     }
 
-    #[test]
-    fn mods_seal_quoted_and_triple_colon_rejected() {
-        assert!(parse_cook_modifiers("seal \"host\"", 1).is_err());
-    assert!(parse_cook_modifiers("seal a:b:c", 1).is_err());
-}
-
+    
 #[test]
 fn parse_seal_refs_accepts_bare_keys() {
     let refs = vec!["host".to_string(), "cc:toolchain".to_string()];
@@ -96,32 +91,8 @@ fn parse_seal_refs_accepts_bare_keys() {
     assert_eq!(out, vec!["_x".to_string(), "a1:_b2".to_string()]);
 }
 
-#[test]
-fn parse_seal_refs_rejects_third_segment() {
-    let refs = vec!["a:b:c".to_string()];
-    let err = parse_seal_refs(&refs, 7).unwrap_err();
-    match err {
-        ParseError::Parse { line, message } => {
-            assert_eq!(line, 7);
-            assert!(message.contains("a:b:c"));
-        }
-        _ => panic!("expected Parse error"),
-        }
-    }
 
-    #[test]
-    fn parse_seal_refs_rejects_quoted_form() {
-        let refs = vec!["\"host\"".to_string()];
-    let err = parse_seal_refs(&refs, 2).unwrap_err();
-    match err {
-        ParseError::Parse { line, message } => {
-            assert_eq!(line, 2);
-            assert!(message.contains("quoted"));
-        }
-        _ => panic!("expected Parse error"),
-        }
-    }
-
+    
     #[test]
     fn parse_seal_refs_rejects_leading_digit() {
         let refs = vec!["1bad".to_string()];
@@ -133,4 +104,48 @@ fn parse_seal_refs_rejects_empty_segment() {
     assert!(parse_seal_refs(&["".to_string()], 1).is_err());
     assert!(parse_seal_refs(&["a:".to_string()], 1).is_err());
     assert!(parse_seal_refs(&[":b".to_string()], 1).is_err());
+}
+
+/// CS-0201: `seal` takes both spellings a probe key has. It previously took
+/// neither `-` nor `.`, capped at two segments, and refused the quoted form
+/// outright — while the declaration that mints the key allowed `-`, `.` and
+/// quoting. `probe cc-version` therefore produced a key that could not be
+/// sealed, and `cc:find:raylib` could not be sealed either, which is exactly
+/// the pin a cache-trust story exists to offer.
+#[test]
+fn parse_seal_refs_takes_hyphens_multi_segments_and_the_quoted_form() {
+    let got = parse_seal_refs(
+        &[
+            "host".to_string(),
+            "cc-version".to_string(),
+            "demo:cc-version".to_string(),
+            "cc:find:raylib".to_string(),
+            "\"any spelling+here\"".to_string(),
+        ],
+        1,
+    )
+    .expect("all five are valid probe key refs");
+    assert_eq!(
+        got,
+        vec![
+            "host".to_string(),
+            "cc-version".to_string(),
+            "demo:cc-version".to_string(),
+            "cc:find:raylib".to_string(),
+            "any spelling+here".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn parse_seal_refs_rejects_a_dotted_bare_key_and_says_why() {
+    let err = parse_seal_refs(&["cc.version".to_string()], 3).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains("member access"), "must explain the dot: {msg}");
+    assert!(msg.contains("quoted"), "must offer the escape hatch: {msg}");
+}
+
+#[test]
+fn parse_seal_refs_rejects_an_empty_quoted_key() {
+    assert!(parse_seal_refs(&["\"\"".to_string()], 1).is_err());
 }

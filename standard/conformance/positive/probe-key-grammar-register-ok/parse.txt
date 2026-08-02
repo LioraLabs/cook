@@ -1,0 +1,36 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=13
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        MemberSource source=ProbeKey("cc-version")
+        Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo \"$<in>\" > $<out>"]) disposition=[local=false pinned=false record=false seal=["cc:find:raylib", "demo:cc-version", "odd+spelling"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="cc-version" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Lines commands=["echo one"]
+    Probe name="demo:cc-version" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Envs names=["PATH"]
+    Probe name="cc:find:raylib" line=7
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Envs names=["PATH"]
+    Probe name="odd+spelling" line=10
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Envs names=["PATH"]

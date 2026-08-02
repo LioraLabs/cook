@@ -222,8 +222,12 @@ pub(crate) fn parse_ingredients_probe_source(
     tokens: &[Located<Token>],
     current_pos: usize,
 ) -> Result<(MemberSourceStep, usize), ParseError> {
+    // CS-0201: `-` is in PROBE_SEG. It was missing here, so `ingredients
+    // cc-version` scanned only `cc` and then reported the remainder as
+    // "unexpected trailing content '-version'" — blaming the trailer for a
+    // charset the declaration had already accepted.
     let end = rest
-        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':')))
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '-')))
         .unwrap_or(rest.len());
     if end == 0 {
         return Err(ParseError::Parse {
@@ -239,21 +243,16 @@ pub(crate) fn parse_ingredients_probe_source(
     // parse time instead of surfacing as a bogus "no such probe" register
     // error. Which colon is key vs selector is resolved against the probe
     // registry in the register pre-pass, not here.
-    let segments: Vec<&str> = key.split(':').collect();
-    // Only the first char needs checking: the scan above already restricts
-    // every char to [A-Za-z0-9_:].
-    let seg_ok = |s: &&str| {
-        s.chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-    };
-    if segments.len() > 3 || !segments.iter().all(seg_ok) {
+    // CS-0201: the segment cap is gone. It was three here (a two-segment key
+    // plus an optional selector), but the cap was only ever enforced on the
+    // surface declaration and never by `cook.probe()`, so modules mint
+    // three-segment keys as their ordinary case and `cc:find:raylib:field`
+    // was unspellable. Which colon is key and which is selector is still
+    // resolved against the probe registry in the register pre-pass, not here.
+    if !cook_contracts::probe_key::is_valid_bare(&key) {
         return Err(ParseError::Parse {
             line,
-            message: format!(
-                "ingredients: malformed probe ref '{key}' (expected NAME, NS:NAME, \
-                 or an optional trailing :FIELD selector)"
-            ),
+            message: cook_contracts::probe_key::bare_key_error("ingredients", &key),
         });
     }
     // CS-0197: quoted file globs MAY trail the probe key. Each is an

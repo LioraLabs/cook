@@ -713,9 +713,19 @@ fn probe_header_hyphenated_bare_dep() {
 }
 
 #[test]
-fn probe_header_dotted_bare_name() {
-    // CS-0131: the widened segment matches BARE_IDENTIFIER (is_ident_char), which also admits '.'.
-    let t = tokenize("probe cc:zlib.dev").unwrap();
+fn probe_header_dotted_bare_name_stops_at_the_dot() {
+    // CS-0201 removed '.' from PROBE_SEG: it is member access in a probe
+    // reference, so a dot inside a segment makes `$<cc:zlib.dev>` ambiguous
+    // between "field dev of cc:zlib" and "the key cc:zlib.dev". CS-0131 added
+    // the dot before references had member access; member access is worth more.
+    // The name now ends at the dot, and the remainder is the header's dep list
+    // position, which rejects it.
+    assert!(
+        tokenize("probe cc:zlib.dev").is_err(),
+        "a dotted bare probe name must not lex as one key"
+    );
+    // The quoted form remains the escape hatch for exactly this spelling.
+    let t = tokenize("probe \"cc:zlib.dev\"").unwrap();
     assert_eq!(t[0].value, Token::ProbeHeader {
         name: "cc:zlib.dev".into(), deps: vec![],
     });
@@ -755,8 +765,26 @@ fn probe_keyword_only_at_column_zero() {
 }
 
 #[test]
-fn probe_triple_colon_name_rejected() {
-    assert!(tokenize("probe a:b:c").is_err());
+fn probe_name_accepts_three_or_more_segments() {
+    // CS-0201: the two-segment cap was enforced here and nowhere else.
+    // `cook.probe()` validated nothing, so modules mint `cc:find:raylib` and
+    // `cc:compiler:auto` as their ordinary case, and those keys could not be
+    // spelled on the surface or sealed. A cap one of two declaration paths
+    // enforces is an obstacle rather than a rule.
+    let t = tokenize("probe a:b:c").unwrap();
+    assert_eq!(t[0].value, Token::ProbeHeader { name: "a:b:c".into(), deps: vec![] });
+
+    let t = tokenize("probe cc:find:raylib").unwrap();
+    assert_eq!(t[0].value, Token::ProbeHeader { name: "cc:find:raylib".into(), deps: vec![] });
+}
+
+#[test]
+fn probe_name_accepts_hyphens_in_every_segment() {
+    // The COOK-408 case: declarable and sigil-referenceable, but `seal` and
+    // `ingredients` rejected it, so the key could be neither pinned nor
+    // consumed.
+    let t = tokenize("probe demo:cc-version").unwrap();
+    assert_eq!(t[0].value, Token::ProbeHeader { name: "demo:cc-version".into(), deps: vec![] });
 }
 
 #[test]
@@ -783,7 +811,11 @@ fn probe_missing_colon_before_deps_rejected() {
 }
 
 #[test]
-fn probe_triple_colon_in_dep_list_rejected() {
-    // triple-colon in a DEP position is rejected too (same guard via parse_probe_dep_list)
-    assert!(tokenize("probe good: a:b:c").is_err());
+fn probe_dep_list_accepts_multi_segment_keys() {
+    // CS-0201: a dep names a probe, so it takes the same grammar the
+    // declaration does. Modules depend on `cc:find:<name>` routinely.
+    let t = tokenize("probe good: a:b:c").unwrap();
+    assert_eq!(t[0].value, Token::ProbeHeader {
+        name: "good".into(), deps: vec!["a:b:c".into()],
+    });
 }

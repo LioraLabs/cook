@@ -1,4 +1,5 @@
-COOK-190: an `ingredients <probe>` source ref is `probe_ref (":" IDENT)?` —
-at most three `:`-separated ident segments (two-segment probe key per
-§22.5.2 plus an optional `:field` selector, §22.5.10). Four segments is
-malformed and MUST be rejected at parse time.
+CS-0201. An empty segment is still malformed at every site that names a probe
+key. This fixture previously pinned `a:b:c:d`, a four-segment key, when the cap
+was two; CS-0201 removed the cap (it was enforced on the surface declaration
+and ignored by `cook.probe()`, so modules mint `cc:find:raylib` as their
+ordinary case) and this case moved to the rule that survived.

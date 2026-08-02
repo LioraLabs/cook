@@ -1,0 +1,18 @@
+probe cc-version
+    lines { echo one }
+
+probe demo:cc-version
+    envs { PATH }
+
+probe cc:find:raylib
+    envs { PATH }
+
+probe "odd+spelling"
+    envs { PATH }
+
+recipe build
+    ingredients cc-version
+    seal demo:cc-version cc:find:raylib "odd+spelling"
+    cook "out/$<in>.stamp" {
+        echo "$<in>" > $<out>
+    }

@@ -1827,11 +1827,6 @@ fn probe_ingredients_after_produce_rejected() {
     assert!(msg.contains("must appear before the producer"), "got: {msg}");
 }
 
-#[test]
-fn probe_triple_colon_name_rejected_at_parse() {
-    // MalformedProbeName from the lexer propagates through crate::parse.
-    assert!(crate::parse("probe a:b:c\n    >{ return 1 }\n").is_err());
-}
 
 #[test]
 fn probe_unexpected_step_rejected() {
@@ -1912,22 +1907,17 @@ fn ingredients_three_segment_ref_parses_whole_ref() {
     );
 }
 
-#[test]
-fn ingredients_four_segment_ref_rejected() {
-    let msg = parse_err("recipe r\n    ingredients a:b:c:d\n    cook \"x\" { y }\n");
-    assert!(msg.contains("malformed probe ref"), "got: {msg}");
-}
 
 #[test]
 fn ingredients_trailing_colon_ref_rejected() {
     let msg = parse_err("recipe r\n    ingredients cards:\n    cook \"x\" { y }\n");
-    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+    assert!(msg.contains("malformed probe key"), "got: {msg}");
 }
 
 #[test]
 fn ingredients_leading_colon_ref_rejected() {
     let msg = parse_err("recipe r\n    ingredients :cards\n    cook \"x\" { y }\n");
-    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+    assert!(msg.contains("malformed probe key"), "got: {msg}");
 }
 
 #[test]
@@ -2292,7 +2282,10 @@ fn test_unknown_trailing_content_rejected() {
 /// third `:IDENT` segment are rejected on a test tail too.
 #[test]
 fn test_seal_ref_validation_matches_cook() {
-    for bad in ["seal \"host\"", "seal a:b:c"] {
+    // CS-0201: `seal "host"` and `seal a:b:c` are both VALID now — the quoted
+    // form is the escape hatch at every site, and the segment cap is gone.
+    // What is still malformed is an empty segment and a dotted bare key.
+    for bad in ["seal :host", "seal host:", "seal cc.version"] {
         let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {bad}\n");
         let err = parse(&src).expect_err("malformed probe ref must be rejected");
         let ParseError::Parse { message, .. } = err else {
@@ -2444,20 +2437,8 @@ fn disp_bare_trailing_seal_rejected() {
     assert!(parse("recipe r\n    cook \"x\" { c } unseal\n").is_err());
 }
 
-#[test]
-fn disp_trailing_seal_quoted_ref_errors() {
-    assert!(parse("recipe r\n    cook \"x\" { c } seal \"host\"\n").is_err());
-}
 
-#[test]
-fn disp_trailing_seal_triple_colon_ref_errors() {
-    assert!(parse("recipe r\n    cook \"x\" { c } seal a:b:c\n").is_err());
-}
 
-#[test]
-fn disp_recipe_seal_quoted_ref_errors() {
-    assert!(parse("recipe r\n    seal \"host\"\n    cook \"x\" { c }\n").is_err());
-}
 
 #[test]
 fn disp_bare_local_line_is_rejected_loose_shell() {
@@ -2505,4 +2486,43 @@ fn test_config_valid_lua_still_parses() {
         let src = format!("config\n{body}\n\nrecipe hello\n    cook.log(\"hi\")\n");
         assert!(parse(&src).is_ok(), "should parse: {body}");
     }
+}
+
+/// CS-0201: the quoted form is the escape hatch at every site that names a
+/// probe key, `seal` included. It used to be refused here alone.
+#[test]
+fn disp_seal_accepts_the_quoted_form_and_multi_segment_keys() {
+    let src = concat!(
+        "recipe build\n",
+        "    seal \"odd+key\" cc:find:raylib demo:cc-version\n",
+        "    cook \"o.txt\" {\n",
+        "        echo hi > $<out>\n",
+        "    }\n",
+    );
+    let cf = parse(src).expect("all three spellings are valid probe key refs");
+    let seals = &cf.recipes[0].steps;
+    assert!(
+        format!("{seals:?}").contains("odd+key"),
+        "quoted key must survive verbatim: {seals:?}"
+    );
+}
+
+/// CS-0201: the segment cap is gone everywhere. It was enforced on the surface
+/// declaration and by `seal`/`ingredients`, and ignored by `cook.probe()`, so
+/// modules mint `cc:find:raylib` as their ordinary case and it could be
+/// neither declared on the surface nor sealed.
+#[test]
+fn multi_segment_probe_keys_parse_at_every_site() {
+    let src = concat!(
+        "probe cc:find:raylib\n",
+        "    lines { echo a }\n",
+        "\n",
+        "recipe build\n",
+        "    ingredients cc:find:raylib\n",
+        "    seal cc:find:raylib\n",
+        "    cook \"o-$<in>.txt\" {\n",
+        "        echo hi > $<out>\n",
+        "    }\n",
+    );
+    parse(src).expect("a three-segment key must be declarable, consumable and sealable");
 }

@@ -112,11 +112,11 @@ As of CS-0134 a `chore_body` is a flat sequence of execute-phase (imperative) st
 ```ebnf
 probe_decl     ::= "probe" probe_name (":" probe_dep_list)? NEWLINE INDENT probe_body DEDENT
 probe_name     ::= BARE_PROBE_KEY | STRING
-BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)?
+BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)*   /* CS-0201: no segment cap */
 probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
-PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_.\-]*/   /* CS-0131: matches BARE_IDENTIFIER's inner charset */
+PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_\-]*/    /* CS-0201: no `.` — see below */
 probe_body       ::= "files" glob_list NEWLINE
                    | ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
@@ -125,7 +125,7 @@ producer         ::= ("json" | "lines")? shell_block
                    | exec_lua_block
 tool_name_list   ::= "{" ( TOOL_NAME ((WS | ",") WS* TOOL_NAME)* )? "}"
 env_name_list    ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
-TOOL_NAME        ::= PROBE_SEG                   /* CS-0181: executable names carry `-` and `.` */
+TOOL_NAME        ::= /[A-Za-z_][A-Za-z0-9_.\-]*/ /* CS-0201: its own production; keeps `.` */
 glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
 glob_pattern     ::= "!"? STRING
 ```
@@ -147,18 +147,6 @@ entry that is not a quoted `STRING`, and a body (in particular a `>{ … }`
 (§{cat.probes.decl}). Both list forms are written on a single physical line
 (unlike a multi-line `shell_block`).
 
-**Tool-name charset (normative; CS-0181).** A `TOOL_NAME` is a `PROBE_SEG`: the
-recipe-name character set, admitting internal `-` and `.`. A tool name denotes an
-executable resolved on `PATH`, and executable names routinely carry those
-characters — `tree-sitter`, `pkg-config`, `llvm-config`, `wasm-opt`. CS-0131
-widened `BARE_PROBE_KEY` to `PROBE_SEG` while deliberately leaving the whole
-`name_list` narrow; that left the `tools` kind unable to name the very tool
-§{cat.probes.inputs} uses as its worked example. An `env_name_list` entry is
-NOT widened and remains an `IDENT`: it names an environment variable, and a
-shell cannot address `FOO-BAR`, so admitting one would spell a name nothing
-could ever set. Both classes keep the `[A-Za-z_]` head, which is what continues
-to reject `tools { cc --version }` — a flag is not a tool name.
-
 **Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
 
 - A `:` that is immediately preceded by an `IDENT` segment **and** immediately followed (with no intervening whitespace) by an `IDENT`-start character is part of `BARE_PROBE_KEY` — the *module-prefix colon*. Example: `cc:zlib` is a single probe name.
@@ -166,7 +154,11 @@ to reject `tools { cc --version }` — a flag is not a tool name.
 - A contiguous third `:IDENT` segment (e.g. `a:b:c`) MUST be rejected. A conforming implementation MUST produce a diagnostic identifying the malformed name and source line. The diagnostic form is: `probe name 'NAME': a probe key is at most \`IDENT:IDENT\`; 'NAME' has too many ':' segments`.
 - The quoted `STRING` form (e.g. `probe "cc:zlib"`) is always unambiguous and bypasses the positional rule entirely.
 
-**Probe-key segment charset (normative; CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` uses the recipe-name character set (`BARE_IDENTIFIER`'s inner class — internal `-` and `.` admitted), NOT the narrow `IDENT` used by the `env_name_list` (CS-0181 gave the `tool_name_list` this same `PROBE_SEG` class). A conforming implementation MUST tokenise a hyphenated bare probe key (`demo:cc-version`) as a single `probe_name`, and MUST accept a hyphenated bare `probe_ref` in the dependency list (`probe x: demo:cc-path`). The module-prefix colon is still the sole segment separator — `-` and `.` never terminate a segment. The `STRING` form remains an exact-equivalent escape hatch for the same key (see the `probe_dep_list` element-shape note below); `"demo:cc-version"` and bare `demo:cc-version` denote the identical probe key.
+**Probe-key segment charset (normative; CS-0201, superseding CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` is `[A-Za-z_][A-Za-z0-9_-]*`: an alpha/underscore head, then alphanumerics, underscores and internal hyphens. The `:` is the sole segment separator, `-` never terminates a segment, and there is **no cap on segment count** — `cc:find:raylib` is a well-formed key. The `STRING` form is an exact-equivalent escape hatch for any non-empty spelling, including one the bare form cannot express: `"odd+key"` and `probe "odd+key"` denote the same key. A conforming implementation MUST accept both spellings at **every** site that names a probe key: the declaration, a `probe_dep_list` entry, `seal`, and an `ingredients` probe source.
+
+`.` is NOT admitted. It is member access in a probe reference, so a dot inside a segment makes `$<demo:cc-version.ver>` ambiguous between "field `ver` of `demo:cc-version`" and "the key `demo:cc-version.ver`", with nothing in the text to separate the readings. CS-0131 admitted `.` before probe references had member access; the two features are incompatible and member access is worth more. A conforming implementation MUST reject a dotted bare key with a diagnostic naming member access as the cause and offering the quoted form — "malformed key" alone reads as a typo rather than a rule, over a spelling an earlier version accepted.
+
+**Tool-name charset (normative; CS-0201, superseding CS-0181).** `TOOL_NAME` is its own production and keeps the dot: an executable name may carry one (`python3.11`) and is never member-accessed, so the ambiguity above does not arise. CS-0181 defined `TOOL_NAME ::= PROBE_SEG`, which conflated "a segment of a key" with "the name of an executable"; only the first has the ambiguity and only the second needs the dot.
 
 **Missing probe name (normative).** If the `probe` keyword is followed by content that does not parse as a valid `probe_name` (e.g. `probe :deps`), the implementation MUST reject the input with a diagnostic of the form: `line N: expected a probe name after \`probe\``.
 
