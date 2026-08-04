@@ -114,9 +114,6 @@
 (ingredients_step
   probe: (identifier) @variable)
 
-(ingredients_step
-  field: (identifier) @property)
-
 (ingredient_exclude
   "!" @operator)
 

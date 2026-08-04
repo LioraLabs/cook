@@ -22,7 +22,7 @@ JSON and lines shell producers
 probe json-cards
     json { cat cards.json }
 
-probe tag.list
+probe tag-list
     lines { git tag }
 
 ---
@@ -93,7 +93,7 @@ Probe keys and dependency references
 probe cc-version
     { cc --version }
 
-probe tool.chain: demo:cc-path dotted.dep "quoted:key"
+probe tool-chain: demo:cc-path multi:seg:dep "quoted:key"
     >{ return 1 }
 
 probe demo:cc-version
@@ -202,11 +202,28 @@ probe envdash
     (lua_code)))
 
 ================
-Probe declaration rejects a third segment
+Probe declaration accepts a multi-segment key (CS-0201)
 ================
 
 probe one:two:three
-    { echo bad }
+    { echo ok }
+
+---
+
+(source_file
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      body: (shell_block
+        (shell_content)))))
+
+================
+Probe declaration rejects a dotted bare key (CS-0201)
+================
+
+probe cc.version
+    envs { PATH }
 
 ---
 

@@ -284,7 +284,7 @@ A unit's cache participation is declared by two surfaces — *inputs* and *outpu
 
 **One rule:** a body line names a recipe-wide input; a tail tunes one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
 
-A `probe_ref` (used by `seal`/`unseal` everywhere) is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}. A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` (§{steps.ingredients}), not `seal`.
+A `probe_ref` (used by `seal`/`unseal` everywhere) follows §{grammar-appendix.probe} exactly: `BARE_PROBE_KEY | STRING`, module-prefixable with no cap on segment count (`cc:toolchain`, `cc:find:raylib`), the quoted `STRING` form admitted as at every other site that names a probe key (CS-0201, superseding the rejections this clause used to state). A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` (§{steps.ingredients}), not `seal`.
 
 **A seal/unseal ref is ALWAYS a probe name.** There is no `env.X` / `tool.X` ambient-determinant ref form — neither a way to seal an environment variable inline nor a way to seal a tool by file path. `probe_ref` is therefore complete as written above; it needs no extension. The referenced probe MAY be any probe — a shell or Lua probe, a `tools` probe, or an `envs` probe (§{cat.probes.decl}) — but the surface is uniform: every seal ref is just a probe name. The two ambient-determinant paths fold through that one surface:
 
@@ -326,7 +326,7 @@ test_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)*
 
 A `test` unit is a cacheable unit (§{exec.cache.test-unit}), so it takes the **input** half of `cook_mods` — and only that half. A conforming implementation MUST enforce:
 
-9. **`seal`/`unseal` behave exactly as on a `cook` step.** Rules 1-5 and 8 apply unchanged, reading "cacheable unit" for "cook unit": the recipe baseline reaches the test, the tail adjusts it, and the effective set is `(baseline ∪ trailing seals) − trailing unseals`. The `probe_ref` shape and its rejections (the quoted form, a third `:IDENT` segment) are identical.
+9. **`seal`/`unseal` behave exactly as on a `cook` step.** Rules 1-5 and 8 apply unchanged, reading "cacheable unit" for "cook unit": the recipe baseline reaches the test, the tail adjusts it, and the effective set is `(baseline ∪ trailing seals) − trailing unseals`. The `probe_ref` shape is identical (§{grammar-appendix.probe}; CS-0201 admits the quoted form and multi-segment keys).
 10. **`share_mod` is NOT admitted on a `test` step.** `local`, `pinned`, and `nondet` state a fact about an *output artifact* (§{exec.cache.sharing}, §{exec.cache.record}), and a test produces a pass/fail record rather than artifacts — there is nothing for them to describe. A conforming implementation MUST reject any of these keywords in a `test_mods` position, with a diagnostic naming the keyword and the reason. The removed `record` keyword (rule 7) is likewise rejected here.
 
 The seam is the one §8.4.3 already draws: `seal`/`unseal` name a determinant **input**, which every cacheable unit has; `local`/`pinned`/`nondet` state a fact about an **output**, which only a `cook` unit has. `test` therefore inherits exactly the input half. This is why the tail is spelled `test_mods` rather than reusing `cook_mods`: the two tails are different productions, not one production with a runtime check.
@@ -376,9 +376,9 @@ The baseline reaches both `test` units, exactly as it reaches the `cook`. The fi
 
 Positive: `standard/conformance/positive/cook-disposition-seal-line`, `cook-disposition-seal-stacked`, `cook-disposition-local-line`, `cook-disposition-pinned-line`, `cook-disposition-nondet`, `cook-disposition-trailing-seal-unseal`, `cook-disposition-seal-order-independent`, `cook-disposition-seal-multi-cook-baseline`, `cook-disposition-unseal-one-unit-only`, `cook-disposition-seal-envs-probe`, `cook-disposition-seal-tools-probe`.
 
-Negative: `standard/conformance/negative/cook-disposition-local-and-pinned`, `cook-disposition-double-share-mod`, `cook-disposition-bare-seal`, `cook-disposition-recipe-unseal`, `cook-disposition-record-renamed`, `cook-disposition-seal-quoted-ref`, `cook-disposition-seal-triple-colon`.
+Negative: `standard/conformance/negative/cook-disposition-local-and-pinned`, `cook-disposition-double-share-mod`, `cook-disposition-bare-seal`, `cook-disposition-recipe-unseal`, `cook-disposition-record-renamed`.
 
-Test-unit seal (CS-0159) — positive: `test-seal-baseline`, `test-seal-trailing`, `test-seal-trailing-unseal`, `test-seal-only-recipe`. Negative: `test-seal-bare`, `test-seal-share-mod`, `test-seal-quoted-ref`.
+Test-unit seal (CS-0159) — positive: `test-seal-baseline`, `test-seal-trailing`, `test-seal-trailing-unseal`, `test-seal-only-recipe`. Negative: `test-seal-bare`, `test-seal-share-mod`.
 
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the body:

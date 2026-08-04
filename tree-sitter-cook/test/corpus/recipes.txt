@@ -219,7 +219,7 @@ recipe colorize
       (module_call_text))))
 
 ================
-Ingredients from probe refs and selectors
+Ingredients from probe refs (CS-0201: a selector is part of the key)
 ================
 
 recipe cards
@@ -231,12 +231,16 @@ recipe namespaced
 recipe selected
     ingredients ns:cards:items
 
+recipe deep
+    ingredients ns:cards:items:extra
+
 ---
 
 (source_file
   (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
   (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
-  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier) field: (identifier))))
+  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
+  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier))))
 
 ================
 Ingredients quoted continuation
@@ -260,9 +264,6 @@ Malformed ingredient selectors
 recipe missing-field
     ingredients ns:cards:
 
-recipe extra-field
-    ingredients ns:cards:items:extra
-
 recipe quoted-selector
     ingredients "ns:cards":items
 
@@ -272,27 +273,22 @@ recipe quoted-selector
   (recipe
     (explicit_recipe_header name: (identifier))
     (ingredients_step probe: (identifier) (ERROR)))
-  (recipe
-    (explicit_recipe_header name: (identifier))
-    (ingredients_step
-      probe: (identifier)
-      (ERROR (identifier))
-      field: (identifier)))
   (recipe (explicit_recipe_header name: (identifier)))
   (ERROR (string) (lua_code)))
 
 ================
-Seal rejects a third probe-key segment
+Seal accepts a multi-segment key and the quoted form (CS-0201)
 ================
 
-recipe bad-seal
-    seal ns:key:field
+recipe pinned-seal
+    seal ns:key:field "odd+spelling"
 
 ---
 
 (source_file
-  (recipe (explicit_recipe_header name: (identifier)))
-  (ERROR (identifier) (lua_code)))
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (seal_step (identifier) (string))))
 
 ================
 Cook step (multi-line outputs, CS-0078)
@@ -642,37 +638,36 @@ recipe package
     (cook_step outputs: (string) body: (shell_block (shell_content)) (cook_mods (share_mod)))))
 
 ================
-Disposition refs reject quoted forms
+Disposition refs accept the quoted form (CS-0201)
 ================
 
-recipe bad
+recipe ok
     seal "cards"
 
 ---
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier)))
-  (ERROR
-    (lua_code)))
+    (explicit_recipe_header name: (identifier))
+    (seal_step (string))))
 
 ================
-Disposition refs reject a third segment
+Disposition refs accept a multi-segment key (CS-0201)
 ================
 
-recipe bad
+recipe ok
     cook "a" { x } seal ns:key:field
 
 ---
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier)))
-  (ERROR
-    (string)
-    (shell_block (shell_content))
-    (seal_group (identifier))
-    (lua_code)))
+    (explicit_recipe_header name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods
+        (seal_group (identifier))))))
 
 ================
 Share modifier is unique and final

@@ -249,13 +249,11 @@ module.exports = grammar({
       ),
 
     // probe_name / probe_ref ::= BARE_PROBE_KEY | STRING, where
-    // BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)? — at most one module-prefix
-    // colon. The single-token regex enforces the at-most-one-colon shape
-    // by maximal munch: `cc:zlib` lexes as one name, while the third
-    // contiguous `:IDENT` of `a:b:c` is left dangling and — since the
-    // dep-list colon below requires trailing whitespace — produces an
-    // ERROR (App. A.3.2 triple-colon rejection, made syntactic here
-    // rather than SEMANTIC_ONLY). See the dep-colon note below.
+    // BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)* — no cap on segment
+    // count (CS-0201, superseding CS-0131): `cc:find:raylib` is one key.
+    // PROBE_SEG has no `.` — a dot is member access in a probe reference,
+    // so a dotted segment would make `$<demo:cc-version.ver>` ambiguous;
+    // the quoted STRING form is the escape hatch for such spellings.
     _probe_name: ($) =>
       choice(alias($._bare_probe_key, $.identifier), $.string),
 
@@ -275,7 +273,7 @@ module.exports = grammar({
     // enforced by maximal munch in the regex itself (see the comment above),
     // not by precedence.
     _bare_probe_key: ($) =>
-      token(/[A-Za-z_][A-Za-z0-9_.-]*(:[A-Za-z_][A-Za-z0-9_.-]*)?/),
+      token(/[A-Za-z_][A-Za-z0-9_-]*(:[A-Za-z_][A-Za-z0-9_-]*)*/),
 
     // Module-prefix-colon disambiguation (App. A.3.2, normative). The
     // dep-list-introducing `:` is distinguished from the module-prefix
@@ -285,8 +283,8 @@ module.exports = grammar({
     // dep-colon token consumes one trailing whitespace char; maximal
     // munch then prefers it over `_bare_probe_key`'s internal colon only
     // when a space follows (`p: a` → deps), while `cc:zlib` (no space)
-    // stays a single name token. A third `:IDENT` with no space (`a:b:c`)
-    // matches neither this token nor `_newline`, so it ERRORs.
+    // stays a single name token — as does any longer chain (`a:b:c`,
+    // CS-0201).
     _probe_dep_colon: ($) => token(seq(":", /[ \t]/)),
 
     probe_dep_list: ($) => repeat1($._probe_ref),
@@ -295,11 +293,11 @@ module.exports = grammar({
     // after a probe header. JSON/lines decorate shell output; tools/envs
     // accept a non-empty, one-line list of bare names.
     //
-    // The two name lists take different charsets (CS-0181). A `tools` entry
-    // names an executable on PATH, so it is a TOOL_NAME (= PROBE_SEG, internal
-    // `-` and `.` admitted) and `tree-sitter` / `pkg-config` are spellable. An
-    // `envs` entry names an environment variable and stays the narrow IDENT: a
-    // shell cannot address `FOO-BAR`.
+    // The two name lists take different charsets (CS-0201). A `tools` entry
+    // names an executable on PATH, so it is a TOOL_NAME (its own production;
+    // internal `-` and `.` admitted) and `tree-sitter` / `python3.11` are
+    // spellable. An `envs` entry names an environment variable and stays the
+    // narrow IDENT: a shell cannot address `FOO-BAR`.
     producer: ($) =>
       seq(
         choice(
@@ -327,8 +325,10 @@ module.exports = grammar({
         "}",
       ),
 
-    // TOOL_NAME ::= PROBE_SEG. Same inner class as `_bare_probe_key`'s
-    // segment, without the module-prefix colon: a tool name has no namespace.
+    // TOOL_NAME is its own production (CS-0201) and keeps the dot: an
+    // executable name can carry one (`python3.11`) and is never
+    // member-accessed, so the probe-key ambiguity does not arise. No
+    // module-prefix colon: a tool name has no namespace.
     _tool_name: ($) => token(/[A-Za-z_][A-Za-z0-9_.-]*/),
 
     // A.3.2 `glob_list` — same brace shape as `name_list` (comma/whitespace
@@ -378,9 +378,10 @@ module.exports = grammar({
     // when the next line begins with `"` or `!"`; otherwise the declaration
     // terminates and the next line dispatches per App. A.4's priority order.
     // The quote-vs-bare discriminator makes filesystem items mutually
-    // exclusive with a probe source. A source may add one narrow field
-    // selector after the probe key; thus `ns:cards:items` is a two-segment
-    // key plus selector without widening probe keys elsewhere.
+    // exclusive with a probe source. Since CS-0201 a probe key has no
+    // segment cap, so `ns:cards:items` lexes as one key; whether a
+    // trailing segment selects a field is resolved at register time, not
+    // in the grammar.
     ingredients_step: ($) =>
       choice(
         seq(
@@ -395,7 +396,6 @@ module.exports = grammar({
         seq(
           "ingredients",
           field("probe", alias($._bare_probe_key, $.identifier)),
-          optional(seq(":", field("field", alias($._lua_ident, $.identifier)))),
           $._newline,
         ),
       ),
@@ -453,8 +453,9 @@ module.exports = grammar({
 
     _disposition_ref: ($) =>
       choice(
-        alias(token(prec(1, /[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*/)), $.identifier),
+        alias(token(prec(1, /[A-Za-z_][A-Za-z0-9_-]*(:[A-Za-z_][A-Za-z0-9_-]*)+/)), $.identifier),
         alias($._bare_probe_key, $.identifier),
+        $.string,
       ),
 
     share_mod: ($) => choice("local", "pinned", "nondet"),
