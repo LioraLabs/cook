@@ -6,6 +6,10 @@ description = "Shared Cook Lua API surface (fs.*, path.*, cook.platform.*) used 
 
 [dependencies]
 cook-cache = { path = "../cook-cache" }
+# The module-loader mechanics realize the cook_contracts::layout laws
+# (candidate order, memo key, diagnostics) — the stratum edge the
+# constitution prescribes: Lua-touching law here, pure law one floor down.
+cook-contracts = { path = "../cook-contracts" }
 cook-cookfile = { path = "../cook-cookfile" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 glob = "0.3"
@@ -13,8 +17,4 @@ serde_json = "1"
 serde_yml = "0.0.12"
 
 [dev-dependencies]
-# Test-only: the canonical-JSON encoder the probe store uses, so the codec
-# suite can pin store-byte round trips. NOT a production edge — the codec
-# itself is pure mlua+serde_json.
-cook-contracts = { path = "../cook-contracts" }
 tempfile = "3"
