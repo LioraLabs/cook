@@ -41,3 +41,68 @@ fn dot_cook_tree() {
     assert_eq!(probes_dir(b), Path::new("/p/.cook/probes"));
     assert_eq!(logs_dir(b), Path::new("/p/.cook/logs"));
 }
+
+// ---------------------------------------------------------------------------
+// Module-load laws
+// ---------------------------------------------------------------------------
+
+mod module_load_laws {
+    use crate::layout::*;
+    use std::path::Path;
+
+    #[test]
+    fn memo_key_is_cwd_and_name() {
+        assert_eq!(
+            module_memo_key(Path::new("/proj/sub"), "cook_cc"),
+            "/proj/sub::cook_cc"
+        );
+    }
+
+    /// §12.3.3: prefix, ` -> ` joining, re-entered name appended.
+    #[test]
+    fn cycle_message_renders_the_path() {
+        let stack = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            module_cycle_message(&stack, "a"),
+            "module cycle detected: a -> b -> a"
+        );
+    }
+
+    #[test]
+    fn cycle_message_self_cycle() {
+        assert_eq!(
+            module_cycle_message(&["solo".to_string()], "solo"),
+            "module cycle detected: solo -> solo"
+        );
+    }
+
+    /// §24.2: the diagnostic identifies the name and the searched paths.
+    #[test]
+    fn not_found_message_names_module_and_paths() {
+        let msg = module_not_found_message(Path::new("/proj"), "foo");
+        assert_eq!(
+            msg,
+            "cook.load_module: module 'foo' not found under /proj/cook_modules \
+             (tried foo.lua, foo/init.lua, share/lua/5.4/foo.lua, \
+             share/lua/5.4/foo/init.lua)"
+        );
+    }
+
+    #[test]
+    fn read_failed_message_names_module_path_and_cause() {
+        let msg =
+            module_read_failed_message("foo", Path::new("/p/foo.lua"), "permission denied");
+        assert_eq!(
+            msg,
+            "cook.load_module: failed to read module 'foo' at /p/foo.lua: permission denied"
+        );
+    }
+
+    #[test]
+    fn chunk_name_is_at_path() {
+        assert_eq!(
+            module_chunk_name(Path::new("/p/cook_modules/foo.lua")),
+            "@/p/cook_modules/foo.lua"
+        );
+    }
+}

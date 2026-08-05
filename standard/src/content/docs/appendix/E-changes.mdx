@@ -3070,6 +3070,22 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0203 — `cook.probes.scope` exists at register phase, and the Lua host is spelled once [#changes.cs-0203]
+
+**Date:** 2026-08-05
+**Version:** v0.18
+**Sections affected:** §{lua.cook-probes-scope} (available on both VMs, stated normatively; the availability banner corrected; per-phase semantics of the scoped view spelled out), §{lua.cook-probes-get} (the stale nil-on-miss sentence aligned with CS-0152), §{lua.cook-load-module} (informative note extended to the whole loader). Reference implementation: `cli/crates/cook-lua-stdlib/src/module_loader.rs` (the shared loader), `cli/crates/cook-contracts/src/layout/` and `src/probe/` and `src/probe_key/` (the laws). COOK-412.
+
+**Summary.** Three `cook.probes.scope` statements could not all be true: the §{lua.cook-probes-scope} banner said the API is "not available on the execute-phase VM"; §{cat.probes.exec} (CS-0152) normatively required an execute-phase scoped `get` to report the full prefixed key in its unmaterialised-read error; and §12.7-era module code used the scoped pattern at register phase. The reference implementation resolved the contradiction in the worst available direction: `scope` was installed on the execute VM (working scoped `get`, erroring `set`) and never installed on the register VM — so the register-phase pattern this section *defines* died with `attempt to call a nil value (field 'scope')`, an accident of omission nothing declared deliberate.
+
+This entry settles it the way the rest of the Standard already leans: `cook.probes.scope` MUST be available on both VMs, delegating to each phase's `get`/`set` semantics; the banner's availability claim is deleted; the §24.4.1 sentence "an unknown key returns `nil`" — a rule CS-0152 withdrew at its normative home but left standing here — is aligned. The label-colon rule (`MUST NOT contain ':'`), previously enforced nowhere, is enforced on both VMs from one shared validation.
+
+**Defect, and what made it invisible.** The register and execute Lua hosts each spelled the whole host surface privately: `cook.load_module` (register memoized by module name, the worker by `(working_dir, name)` — the worker matching §{mods.lifecycle.cycles}'s letter, the register VM only its spirit), the probe-`produce` lowering (chunk name and wrapper duplicated to the byte; one drifted line would have made a produce body's error report different line numbers per phase), and the renamed-`cook.cache` stub (a character-identical error literal, twice). Divergence between two hand-mirrored copies is exactly where the scope asymmetry hid: neither copy was wrong enough to fail, so nothing compared them. The reference implementation now installs one loader, one lowering, one stub on both VMs, with the pure decisions (memo key, cycle/not-found diagnostics, lowering bytes, scoped-key composition, label validation) defined once (informative).
+
+**Conformance.** Fixture `37-register-probes-scope` pins both halves: a module whose `init()` writes through a scope view at register phase and whose scoped and full-key reads agree; and a colon label refused with the shared diagnostic. Verified to bite by mutation (dropping the label prefix from the scoped `set` fails the fixture).
+
+**Backward compatibility.** Register-phase Cookfiles and modules gain a surface that previously errored; nothing that worked changes meaning. The unified module-not-found and read-failure diagnostics change wording between phases' previously-divergent texts; no fixture pinned the old wordings. No `CACHE_VERSION` bump: the loader stores no cached artifacts and probe lowering is byte-identical to both prior copies.
+
 ## CS-0202 — `cook why` reports the edges the engine imposes [#changes.cs-0202]
 
 **Date:** 2026-08-05

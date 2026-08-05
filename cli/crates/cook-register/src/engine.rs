@@ -2079,14 +2079,16 @@ impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
 }
 
 /// Run a probe's `produce` source on the register VM and return the
-/// canonical-JSON bytes (mirrors `cook-luaotp`'s execute-VM `execute_probe`;
-/// CS-0102).
+/// canonical-JSON bytes (the execute-VM counterpart is `cook-luaotp`'s
+/// `execute_probe`; CS-0102). The lowering — chunk name and wrapper — is
+/// `cook_contracts::probe::lower_produce`, the one law both VMs evaluate
+/// under, so a produce body's error reports the same line numbers
+/// whichever phase ran it.
 fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, String> {
-    let wrapped = format!("return (function()\n{}\nend)()", produce);
-    let chunk = format!("@probe:{key}");
+    let lowered = cook_contracts::probe::lower_produce(key, produce);
     let value: LuaValue = lua
-        .load(&wrapped)
-        .set_name(&chunk)
+        .load(&lowered.source)
+        .set_name(&lowered.chunk_name)
         .eval()
         .map_err(|e| e.to_string())?;
     let jv = crate::probe_value::lua_to_json(&value)?;

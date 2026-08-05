@@ -391,7 +391,7 @@ fn worker_loop(
 
                 // Refresh package.path and package.cpath so `require` resolves
                 // cook_modules/ relative to this unit's source Cookfile (CS-0062).
-                let _ = refresh_package_search_paths(&lua, &work.working_dir);
+                let _ = cook_lua_stdlib::refresh_package_search_paths(&lua, &work.working_dir);
 
                 // Run the work item under `catch_unwind`. A Rust panic
                 // anywhere in execute_work_item (e.g. an unexpected
@@ -694,119 +694,22 @@ fn register_worker_cook_table(
     // fresh path). Both-phase; shared implementation, same rationale.
     cook_lua_stdlib::register_tools_api(lua, &cook)?;
 
-    // cook.load_module(name) — execute-phase counterpart of the register-phase
-    // resolver in cook-register/src/module_loader.rs (CS-0017, CS-0035,
-    // §{lua.cook-load-module}). Lookup uses the unit's current_working_dir,
-    // so an imported Cookfile's body unit resolves against its own
-    // cook_modules/ directory (lexical per Cookfile, §{modules.use-scope}).
-    //
-    // Caches loaded modules in `_cook_module_cache` (a per-VM table keyed
-    // by `<cwd>::<name>`) so repeated calls within one body unit don't
-    // re-read the file. Module top-level and `init()` run once per
-    // (cwd, name, worker VM).
-    //
-    // CS-0035: cycle detection. Tracks an in-flight set in
-    // `_cook_module_loading` keyed the same way as the cache. If a
-    // re-entrant `cook.load_module(name)` would try to evaluate a module
-    // already in flight, we raise a diagnostic naming the cycle path so
-    // module authors can locate the offending edge.
-    let wd_load = Arc::clone(current_working_dir);
-    lua.globals().set("_cook_module_cache", lua.create_table()?)?;
-    lua.globals().set("_cook_module_loading", lua.create_table()?)?;
-    lua.globals().set("_cook_module_loading_stack", lua.create_table()?)?;
-    let load_module_fn = lua.create_function(move |lua, name: String| {
-        let cwd = wd_load.lock().expect("working_dir lock").clone();
-        let cache_key = format!("{}::{}", cwd.display(), name);
-
-        // Memoization (§6.3.4): a second cook.load_module(name) returns the
-        // cached value without re-reading or re-evaluating the module file.
-        let cache: mlua::Table = lua.globals().get("_cook_module_cache")?;
-        if let Ok(cached) = cache.get::<mlua::Value>(cache_key.clone()) {
-            if !matches!(cached, mlua::Value::Nil) {
-                return Ok(cached);
-            }
-        }
-
-        // Cycle detection (CS-0035): if `name` (under this cwd) is already in
-        // flight, raise a diagnostic that lists the cycle path.
-        let loading: mlua::Table = lua.globals().get("_cook_module_loading")?;
-        let stack: mlua::Table = lua.globals().get("_cook_module_loading_stack")?;
-        if let Ok(in_flight) = loading.get::<bool>(cache_key.clone()) {
-            if in_flight {
-                let mut path: Vec<String> = Vec::new();
-                let len = stack.raw_len();
-                for i in 1..=len {
-                    if let Ok(s) = stack.get::<String>(i) {
-                        path.push(s);
-                    }
-                }
-                path.push(name.clone());
-                return Err(mlua::Error::runtime(format!(
-                    "module cycle detected: {}",
-                    path.join(" -> ")
-                )));
-            }
-        }
-
-        // Resolve in §7's four-candidate order (CS-0069): hand-vendored wins
-        // over LuaRocks-installed. The order lives in cook_contracts::layout
-        // — the ONE list both phases probe (COOK-393).
-        let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
-        let module_path = match candidates.iter().find(|p| p.exists()) {
-            Some(p) => p.clone(),
-            None => {
-                return Err(mlua::Error::runtime(format!(
-                    "cook.load_module: module '{}' not found in {}/{}/ (tried {})",
-                    name,
-                    cwd.display(),
-                    cook_contracts::layout::COOK_MODULES_DIR,
-                    cook_contracts::layout::module_candidates_description(&name),
-                )));
-            }
-        };
-
-        let source = std::fs::read_to_string(&module_path).map_err(|e| {
-            mlua::Error::runtime(format!(
-                "cook.load_module: failed to read {}: {}",
-                module_path.display(),
-                e
-            ))
-        })?;
-
-        // Mark this (cwd, name) as in-flight before eval so a re-entrant call
-        // can detect the cycle. Cleanup on every exit path keeps detection
-        // sane after recoverable errors.
-        loading.set(cache_key.clone(), true)?;
-        let stack_idx = stack.raw_len() + 1;
-        stack.set(stack_idx, name.clone())?;
-
-        let chunk_name = format!("@{}", module_path.display());
-        let result: mlua::Value = match lua.load(&source).set_name(&chunk_name).eval() {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = loading.set(cache_key, mlua::Value::Nil);
-                let _ = stack.set(stack_idx, mlua::Value::Nil);
-                return Err(e);
-            }
-        };
-
-        // Run init() if the returned table has one (§7.5).
-        if let mlua::Value::Table(ref tbl) = result {
-            if let Ok(mlua::Value::Function(init_fn)) = tbl.get::<mlua::Value>("init") {
-                if let Err(e) = init_fn.call::<()>(()) {
-                    let _ = loading.set(cache_key, mlua::Value::Nil);
-                    let _ = stack.set(stack_idx, mlua::Value::Nil);
-                    return Err(e);
-                }
-            }
-        }
-
-        loading.set(cache_key.clone(), mlua::Value::Nil)?;
-        stack.set(stack_idx, mlua::Value::Nil)?;
-        cache.set(cache_key, result.clone())?;
-        Ok(result)
-    })?;
-    cook.set("load_module", load_module_fn)?;
+    // cook.load_module(name) — the shared loader sequence from
+    // cook-lua-stdlib (§{lua.cook-load-module}, §12.3; one implementation
+    // with the register VM since COOK-412). Lookup resolves the unit's
+    // current_working_dir per call via WorkingDirSource::Live, so an
+    // imported Cookfile's body unit resolves against its own cook_modules/
+    // (lexical per Cookfile, §{modules.use-scope}), and memoisation/cycle
+    // detection key by (working_dir, name) — one worker VM serving many
+    // Cookfiles keeps same-named modules distinct. Module top-level and
+    // `init()` run once per (cwd, name, worker VM); no register-phase
+    // obligations here, hence NoHooks.
+    cook_lua_stdlib::install_module_loader(
+        lua,
+        &cook,
+        cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(current_working_dir)),
+        cook_lua_stdlib::NoHooks,
+    )?;
 
     // CS-0070 / CS-0074: cook.probes on the execute-phase VM (Standard §6.3.4).
     //
@@ -1036,17 +939,21 @@ fn install_execute_phase_cook_probes(
     })?;
     cache_tbl.set("set", set_fn)?;
 
-    // cook.probes.scope(label) → { get } — scoped get still works for
-    // backwards compat; scoped set is also disabled.
+    // cook.probes.scope(label) → { get, set } — §24.4.3, on this VM with
+    // execute-phase semantics: scoped get reads the per-run store, scoped
+    // set raises like the unscoped form. Label validation is the shared
+    // §24.4.3 law (CS-0203) — the same diagnostic the register VM raises.
     let store_for_scope = probe_store.clone();
     let scope_fn = lua.create_function(move |lua, label: String| {
+        if let Some(msg) = cook_contracts::probe_key::scope_label_error(&label) {
+            return Err(mlua::Error::runtime(msg));
+        }
         let scoped = lua.create_table()?;
-        let prefix = format!("{}:", label);
 
         let store_for_scoped_get = store_for_scope.clone();
-        let prefix_for_get = prefix.clone();
+        let label_for_get = label.clone();
         let scoped_get = lua.create_function(move |lua, key: String| {
-            let full = format!("{}{}", prefix_for_get, key);
+            let full = cook_contracts::probe_key::scoped_key(&label_for_get, &key);
             match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
                     let jv = read_view(&store_for_scoped_get, &full, &bytes)
@@ -1071,17 +978,9 @@ fn install_execute_phase_cook_probes(
 
     cook.set("probes", cache_tbl)?;
 
-    // `cook.cache.*` renamed to `cook.probes.*` in v1.0 (CS-0136).
-    let stub = lua.create_table()?;
-    let mt = lua.create_table()?;
-    let index_fn = lua.create_function(|_, (_t, key): (mlua::Table, String)| -> mlua::Result<mlua::Value> {
-        Err(mlua::Error::runtime(format!(
-            "'cook.cache' was renamed to 'cook.probes' in v1.0 (use cook.probes.{key})"
-        )))
-    })?;
-    mt.set("__index", index_fn)?;
-    stub.set_metatable(Some(mt));
-    cook.set("cache", stub)?;
+    // `cook.cache.*` renamed to `cook.probes.*` in v1.0 (CS-0136); the one
+    // shared stub (the literal used to be spelled once per phase).
+    cook_lua_stdlib::install_renamed_cache_stub(lua, cook)?;
     Ok(())
 }
 
@@ -1239,64 +1138,12 @@ fn install_register_only_guard(
     Ok(())
 }
 
-/// Refresh `package.path` and `package.cpath` for the upcoming work unit so
-/// `require("foo")` finds rocks under `<cwd>/cook_modules/`. Called per-unit
-/// from the worker loop because `cwd` is per-Cookfile and each body unit may
-/// come from a different one.
-///
-/// Search-path order (Standard §7):
-///
-///   package.path:
-///     <cwd>/cook_modules/?.lua                          hand-vendored, single file
-///     <cwd>/cook_modules/?/init.lua                     hand-vendored, dir module
-///     <cwd>/cook_modules/share/lua/5.4/?.lua            LuaRocks pure Lua
-///     <cwd>/cook_modules/share/lua/5.4/?/init.lua       LuaRocks pure Lua
-///     <original>
-///
-///   package.cpath:
-///     <cwd>/cook_modules/?.<so-ext>                     hand-vendored, top level
-///     <cwd>/cook_modules/lib/lua/5.4/?.<so-ext>         LuaRocks-installed C
-///     <original>
-///
-/// `<so-ext>` is `.so` on Linux/macOS (Lua's loader convention; LuaRocks emits
-/// `.so` on macOS too) and `.dll` on Windows. The original suffixes are stashed
-/// once so per-unit refresh is idempotent across calls.
-fn refresh_package_search_paths(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
-    use cook_contracts::layout::{PACKAGE_CPATH_STASH_KEY, PACKAGE_PATH_STASH_KEY};
-    let pkg: mlua::Table = match lua.globals().get::<mlua::Value>("package")? {
-        mlua::Value::Table(t) => t,
-        _ => return Ok(()),
-    };
-
-    // Stash originals on first call so subsequent calls don't grow the suffix.
-    let original_path: String = match pkg.get::<mlua::Value>(PACKAGE_PATH_STASH_KEY)? {
-        mlua::Value::String(s) => s.to_str()?.to_string(),
-        _ => {
-            let cur: String = pkg.get::<String>("path").unwrap_or_default();
-            pkg.set(PACKAGE_PATH_STASH_KEY, cur.clone())?;
-            cur
-        }
-    };
-    let original_cpath: String = match pkg.get::<mlua::Value>(PACKAGE_CPATH_STASH_KEY)? {
-        mlua::Value::String(s) => s.to_str()?.to_string(),
-        _ => {
-            let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
-            pkg.set(PACKAGE_CPATH_STASH_KEY, cur.clone())?;
-            cur
-        }
-    };
-
-    // COOK-393: the composition is cook_contracts::layout — the SAME
-    // function the register phase calls.
-    let composed = cook_contracts::layout::compose_lua_search_paths(
-        cwd,
-        &original_path,
-        &original_cpath,
-    );
-    pkg.set("path", composed.path)?;
-    pkg.set("cpath", composed.cpath)?;
-    Ok(())
-}
+// `refresh_package_search_paths` — the per-unit `package.path`/`cpath`
+// refresh so `require("foo")` finds rocks under `<cwd>/cook_modules/` —
+// moved to `cook_lua_stdlib::refresh_package_search_paths` (COOK-412): the
+// stash-and-recompose idiom around the shared composer was spelled once
+// per phase. The worker loop still calls it per unit because `cwd` is
+// per-Cookfile; the shared loader also calls it inside `cook.load_module`.
 
 // ---------------------------------------------------------------------------
 // Shell execution (worker variant with prefixed output)
@@ -1545,10 +1392,16 @@ fn execute_probe(
     _line: usize,
     node_name: String,
 ) -> WorkResult {
-    let chunk_name = format!("@probe:{}", key);
-    let wrapped = format!("return (function()\n{}\nend)()", produce);
+    // The lowering — chunk name and wrapper — is the one law both VMs
+    // evaluate under (cook_contracts::probe::lower_produce), so a produce
+    // body's error reports the same line numbers whichever phase ran it.
+    let lowered = cook_contracts::probe::lower_produce(key, produce);
 
-    let value: mlua::Value = match lua.load(&wrapped).set_name(&chunk_name).eval() {
+    let value: mlua::Value = match lua
+        .load(&lowered.source)
+        .set_name(&lowered.chunk_name)
+        .eval()
+    {
         Ok(v) => v,
         Err(e) => {
             return WorkResult {
@@ -1717,7 +1570,3 @@ fn execute_lua_chunk(
 #[cfg(test)]
 #[path = "tests/pool_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "tests/search_path_tests.rs"]
-mod search_path_tests;

@@ -1,0 +1,7 @@
+use scoper
+
+register
+    print("scoped value: " .. scoper.value())
+
+chore scope_ok
+    echo scope surface ok

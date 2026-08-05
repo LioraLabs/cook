@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -39,18 +39,6 @@ pub struct ModuleLoaderState {
     /// can still access the cache after `load_module` has returned.
     pub last_module: Option<String>,
     pub caches: std::collections::HashMap<String, ModuleCache>,
-    /// Modules whose load is in flight on this VM. Used to detect
-    /// `cook.load_module` cycles (§6.3.4): if a re-entrant call names a module
-    /// already in this set, the loader raises a diagnostic naming the cycle.
-    pub currently_loading: BTreeSet<String>,
-    /// Ordered stack of in-flight module names, parallel to `currently_loading`.
-    /// Used to render the cycle path `a -> b -> a` in the diagnostic.
-    pub loading_stack: Vec<String>,
-    /// Memoization table for successful module loads (§6.3.4): a second
-    /// `cook.load_module(name)` MUST return the same Lua value without
-    /// re-reading or re-evaluating the module file. Keyed by module name;
-    /// values are registry keys held by the parent VM.
-    pub loaded: BTreeMap<String, LuaRegistryKey>,
 }
 
 pub type SharedModuleLoaderState = Rc<RefCell<ModuleLoaderState>>;
@@ -64,9 +52,6 @@ impl ModuleLoaderState {
             current_module: None,
             last_module: None,
             caches: std::collections::HashMap::new(),
-            currently_loading: BTreeSet::new(),
-            loading_stack: Vec::new(),
-            loaded: BTreeMap::new(),
         }
     }
 
@@ -89,191 +74,59 @@ impl ModuleLoaderState {
 // cook.load_module(name)
 // ---------------------------------------------------------------------------
 
-pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaResult<()> {
-    let cook: LuaTable = lua.globals().get("cook")?;
+/// The register phase's obligations around the shared loader sequence
+/// (`cook_lua_stdlib::install_module_loader`): per-module persistent caches
+/// backing `cook.probes.{get,set}`, and the current/last-module tracking
+/// that scopes those calls to the module they run in.
+struct RegisterLoadHooks {
+    state: SharedModuleLoaderState,
+}
 
-    let s = state.clone();
-    let load_module_fn = lua.create_function(move |lua, name: String| {
-        // 0. Memoization (§6.3.4): a second cook.load_module("name") on this VM
-        // returns the same value without re-reading or re-evaluating the file.
-        let cached_value: Option<LuaValue> = {
-            let st = s.borrow();
-            if let Some(key) = st.loaded.get(&name) {
-                Some(lua.registry_value(key)?)
-            } else {
-                None
-            }
-        };
-        if let Some(cached) = cached_value {
-            // Refresh last_module so post-load cache calls keep resolving.
-            s.borrow_mut().last_module = Some(name.clone());
-            return Ok(cached);
+impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
+    fn on_memo_hit(&self, name: &str) {
+        // Refresh last_module so post-load cache calls keep resolving.
+        self.state.borrow_mut().last_module = Some(name.to_string());
+    }
+
+    fn before_eval(&self, name: &str, source: &str) -> LuaResult<()> {
+        let source_hash = hash_str(source);
+        let mut state = self.state.borrow_mut();
+        let cache_dir = state.cache_dir.clone();
+        let cache = ModuleCache::load(&cache_dir, name, source_hash);
+        state.caches.insert(name.to_string(), cache);
+        if let Some(c) = state.caches.get_mut(name) {
+            c.set_source_hash(source_hash);
         }
+        // For cook.probes scoping during the module's top-level chunk / init().
+        state.current_module = Some(name.to_string());
+        Ok(())
+    }
 
-        // 0a. Cycle detection (§6.3.4): if `name` is already in the in-flight
-        // set, raise a diagnostic naming the cycle path so authors can locate
-        // the offending edge.
-        {
-            let st = s.borrow();
-            if st.currently_loading.contains(&name) {
-                let mut path = st.loading_stack.clone();
-                path.push(name.clone());
-                let rendered = path.join(" -> ");
-                return Err(LuaError::runtime(format!(
-                    "module cycle detected: {}",
-                    rendered
-                )));
-            }
-        }
-
-        // 1. Resolve path in §7's four-candidate order (CS-0069):
-        //    hand-vendored wins over LuaRocks-installed. The order lives in
-        //    cook_contracts::layout — the ONE list both phases probe
-        //    (COOK-393; drift here was "works in the Cookfile, missing-file
-        //    at execute").
-        let working_dir = s.borrow().working_dir.clone();
-        let candidates = cook_contracts::layout::module_candidates(&working_dir, &name);
-
-        let module_path = match candidates.iter().find(|p| p.exists()) {
-            Some(p) => p.clone(),
-            None => {
-                return Err(LuaError::runtime(format!(
-                    "module not found: {} (tried {})",
-                    name,
-                    cook_contracts::layout::module_candidates_description(&name)
-                )));
-            }
-        };
-
-        // 2. Read the file, hash with hash_str
-        let source = std::fs::read_to_string(&module_path).map_err(|e| {
-            LuaError::runtime(format!("failed to read module {}: {}", name, e))
-        })?;
-        let source_hash = hash_str(&source);
-
-        // 3. Create/load the module's cache, set source hash
-        {
-            let mut state = s.borrow_mut();
-            let cache_dir = state.cache_dir.clone();
-            let cache = ModuleCache::load(&cache_dir, &name, source_hash);
-            state.caches.insert(name.clone(), cache);
-            // Update source hash in cache
-            if let Some(c) = state.caches.get_mut(&name) {
-                c.set_source_hash(source_hash);
-            }
-        }
-
-        // 4. Mark as in-flight (for cycle detection) and set current_module
-        // (for cook.probes scoping).
-        {
-            let mut state = s.borrow_mut();
-            state.currently_loading.insert(name.clone());
-            state.loading_stack.push(name.clone());
-            state.current_module = Some(name.clone());
-        }
-
-        // Helper: drop in-flight marker on every exit path (success or error)
-        // so cycle detection survives recoverable errors.
-        let pop_inflight = |s: &SharedModuleLoaderState, name: &str| {
-            let mut state = s.borrow_mut();
-            state.currently_loading.remove(name);
-            if let Some(top) = state.loading_stack.last() {
-                if top == name {
-                    state.loading_stack.pop();
-                }
-            }
-            state.current_module = None;
-        };
-
-        // 4b. Extend package.path / package.cpath so that sub-requires within
-        // a multi-file rock (e.g. `require("cook_cc.toolchain")` inside
-        // cook_cc/init.lua, or `require("lpeg")` for a C extension) resolve
-        // against cook_modules/. The composition is
-        // cook_contracts::layout::compose_lua_search_paths — the SAME
-        // function the execute phase calls (COOK-393) — under the shared
-        // stash-and-prepend idiom so repeated load_module calls on the same
-        // VM are idempotent.
-        {
-            if let Ok(LuaValue::Table(pkg)) = lua.globals().get::<LuaValue>("package") {
-                use cook_contracts::layout::{
-                    PACKAGE_CPATH_STASH_KEY, PACKAGE_PATH_STASH_KEY,
-                };
-                let original_path: String = match pkg.get::<LuaValue>(PACKAGE_PATH_STASH_KEY) {
-                    Ok(LuaValue::String(s)) => s.to_string_lossy(),
-                    _ => {
-                        let cur: String = pkg.get::<String>("path").unwrap_or_default();
-                        let _ = pkg.set(PACKAGE_PATH_STASH_KEY, cur.clone());
-                        cur
-                    }
-                };
-                let original_cpath: String = match pkg.get::<LuaValue>(PACKAGE_CPATH_STASH_KEY) {
-                    Ok(LuaValue::String(s)) => s.to_string_lossy(),
-                    _ => {
-                        let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
-                        let _ = pkg.set(PACKAGE_CPATH_STASH_KEY, cur.clone());
-                        cur
-                    }
-                };
-                let composed = cook_contracts::layout::compose_lua_search_paths(
-                    &working_dir,
-                    &original_path,
-                    &original_cpath,
-                );
-                let _ = pkg.set("path", composed.path);
-                let _ = pkg.set("cpath", composed.cpath);
-            }
-        }
-
-        // 5. Execute the module file
-        let chunk_name = format!("@{}", module_path.display());
-        let result: LuaValue = match lua.load(&source).set_name(&chunk_name).eval() {
-            Ok(v) => v,
-            Err(e) => {
-                pop_inflight(&s, &name);
-                return Err(e);
-            }
-        };
-
-        // 6. If the returned table has an init() function, call it
-        if let LuaValue::Table(ref tbl) = result {
-            if let Ok(LuaValue::Function(init_fn)) = tbl.get::<LuaValue>("init") {
-                if let Err(e) = init_fn.call::<()>(()) {
-                    pop_inflight(&s, &name);
-                    return Err(e);
-                }
-            }
-        }
-
-        // 7. Flush cache, clear in-flight marker (but remember as last_module)
-        {
-            let state = s.borrow();
-            if let Some(cache) = state.caches.get(&name) {
+    fn after_load(&self, name: &str, success: bool) {
+        let mut state = self.state.borrow_mut();
+        if success {
+            if let Some(cache) = state.caches.get(name) {
                 let _ = cache.flush();
             }
+            state.last_module = Some(name.to_string());
         }
-        {
-            let mut state = s.borrow_mut();
-            state.currently_loading.remove(&name);
-            if let Some(top) = state.loading_stack.last() {
-                if top == &name {
-                    state.loading_stack.pop();
-                }
-            }
-            state.last_module = Some(name.clone());
-            state.current_module = None;
-        }
+        state.current_module = None;
+    }
+}
 
-        // 7a. Memoize successful load so subsequent cook.load_module(name)
-        // calls return the same Lua value (§6.3.4).
-        let key = lua.create_registry_value(result.clone())?;
-        s.borrow_mut().loaded.insert(name.clone(), key);
-
-        // 8. Return the module table
-        Ok(result)
-    })?;
-
-    cook.set("load_module", load_module_fn)?;
-    Ok(())
+/// Install `cook.load_module` on the register VM: the shared loader
+/// sequence from `cook-lua-stdlib` (memoisation, cycle detection,
+/// resolution, init(), package-path refresh — one implementation with the
+/// worker VMs since COOK-412) over the register phase's hooks.
+pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaResult<()> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let working_dir = state.borrow().working_dir.clone();
+    cook_lua_stdlib::install_module_loader(
+        lua,
+        &cook,
+        cook_lua_stdlib::WorkingDirSource::Static(working_dir),
+        RegisterLoadHooks { state },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +147,51 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 /// Values are decoded `serde_json::Value`s — JSON-native since CS-0102.
 pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 
+/// The register-phase `cook.probes.get` path for a full (possibly
+/// `label:`-prefixed) key: the pre-pass store first (COOK-64 member-source
+/// values — probe keys, which do not collide with module-cache keys), then
+/// the active module's persistent cache.
+fn probes_get(
+    lua: &Lua,
+    state: &SharedModuleLoaderState,
+    prepass: &SharedPrepassStore,
+    key: &str,
+) -> LuaResult<LuaValue> {
+    if let Some(val) = prepass.borrow().get(key) {
+        return crate::probe_value::json_to_lua(lua, val);
+    }
+    let state = state.borrow();
+    let module_name = state
+        .active_module()
+        .ok_or_else(|| {
+            LuaError::runtime("cook.probes.get called outside of a module context")
+        })?
+        .to_string();
+    match state.caches.get(&module_name).and_then(|c| c.get(key)) {
+        Some(val) => json_to_lua_value(lua, val.clone()),
+        None => Ok(LuaValue::Nil),
+    }
+}
+
+/// The register-phase `cook.probes.set` path for a full key: validate the
+/// value through THE walker (COOK-388) and store into the active module's
+/// persistent cache.
+fn probes_set(state: &SharedModuleLoaderState, key: &str, value: &LuaValue) -> LuaResult<()> {
+    let json_val = cook_lua_stdlib::json_codec::lua_to_json(value)
+        .map_err(|e| LuaError::runtime(format!("cook.probes.set('{key}'): {e}")))?;
+    let mut state = state.borrow_mut();
+    let module_name = state
+        .active_module()
+        .ok_or_else(|| {
+            LuaError::runtime("cook.probes.set called outside of a module context")
+        })?
+        .to_string();
+    if let Some(cache) = state.caches.get_mut(&module_name) {
+        cache.set(key, json_val);
+    }
+    Ok(())
+}
+
 pub fn register_cache_api(
     lua: &Lua,
     state: SharedModuleLoaderState,
@@ -305,23 +203,8 @@ pub fn register_cache_api(
     // cook.probes.get(key)
     let s = state.clone();
     let prepass_get = prepass.clone();
-    let get_fn = lua.create_function(move |lua, key: String| {
-        // COOK-64: a member-source probe value resolved by the pre-pass
-        // takes precedence. These keys are probe keys, which do not collide
-        // with module-cache keys, so the module-context path below is reached
-        // unchanged for every non-member-source lookup.
-        if let Some(val) = prepass_get.borrow().get(&key) {
-            return crate::probe_value::json_to_lua(lua, val);
-        }
-        let state = s.borrow();
-        let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.probes.get called outside of a module context")
-        })?.to_string();
-        match state.caches.get(&module_name).and_then(|c| c.get(&key)) {
-            Some(val) => json_to_lua_value(lua, val.clone()),
-            None => Ok(LuaValue::Nil),
-        }
-    })?;
+    let get_fn =
+        lua.create_function(move |lua, key: String| probes_get(lua, &s, &prepass_get, &key))?;
     cache_tbl.set("get", get_fn)?;
 
     // cook.__probe_subst(ident) — CS-0195: the register-time rendering of a
@@ -353,38 +236,45 @@ pub fn register_cache_api(
 
     // cook.probes.set(key, value)
     let s2 = state.clone();
-    let set_fn = lua.create_function(move |_, (key, value): (String, LuaValue)| {
-        let json_val = cook_lua_stdlib::json_codec::lua_to_json(&value)
-            .map_err(|e| LuaError::runtime(format!("cook.probes.set('{key}'): {e}")))?;
-        let mut state = s2.borrow_mut();
-        let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.probes.set called outside of a module context")
-        })?.to_string();
-        if let Some(cache) = state.caches.get_mut(&module_name) {
-            cache.set(&key, json_val);
-        }
-        Ok(())
-    })?;
+    let set_fn = lua
+        .create_function(move |_, (key, value): (String, LuaValue)| probes_set(&s2, &key, &value))?;
     cache_tbl.set("set", set_fn)?;
 
-    cook.set("probes", cache_tbl)?;
-    install_renamed_cache_stub(lua, &cook)?;
-    Ok(())
-}
+    // cook.probes.scope(label) — §24.4.3: a view whose get/set are the
+    // `label:key`-prefixed operations on the same store. Until COOK-412 the
+    // register VM never installed this, so the scoped pattern raised a
+    // nil-index error at register phase while working at execute phase.
+    let s3 = state.clone();
+    let prepass_scope = prepass.clone();
+    let scope_fn = lua.create_function(move |lua, label: String| {
+        if let Some(msg) = cook_contracts::probe_key::scope_label_error(&label) {
+            return Err(LuaError::runtime(msg));
+        }
+        let scoped = lua.create_table()?;
 
-/// `cook.cache.*` was renamed to `cook.probes.*` in v1.0 (CS-0136).
-/// Install a stub whose every field access is a hard error with a did-you-mean.
-fn install_renamed_cache_stub(lua: &Lua, cook: &LuaTable) -> LuaResult<()> {
-    let stub = lua.create_table()?;
-    let mt = lua.create_table()?;
-    let index_fn = lua.create_function(|_, (_t, key): (LuaTable, String)| -> LuaResult<LuaValue> {
-        Err(LuaError::runtime(format!(
-            "'cook.cache' was renamed to 'cook.probes' in v1.0 (use cook.probes.{key})"
-        )))
+        let s_get = s3.clone();
+        let prepass_get = prepass_scope.clone();
+        let label_get = label.clone();
+        let scoped_get = lua.create_function(move |lua, key: String| {
+            let full = cook_contracts::probe_key::scoped_key(&label_get, &key);
+            probes_get(lua, &s_get, &prepass_get, &full)
+        })?;
+        scoped.set("get", scoped_get)?;
+
+        let s_set = s3.clone();
+        let label_set = label.clone();
+        let scoped_set = lua.create_function(move |_, (key, value): (String, LuaValue)| {
+            let full = cook_contracts::probe_key::scoped_key(&label_set, &key);
+            probes_set(&s_set, &full, &value)
+        })?;
+        scoped.set("set", scoped_set)?;
+
+        Ok(scoped)
     })?;
-    mt.set("__index", index_fn)?;
-    stub.set_metatable(Some(mt));
-    cook.set("cache", stub)?;
+    cache_tbl.set("scope", scope_fn)?;
+
+    cook.set("probes", cache_tbl)?;
+    cook_lua_stdlib::install_renamed_cache_stub(lua, &cook)?;
     Ok(())
 }
 

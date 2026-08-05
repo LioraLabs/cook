@@ -891,6 +891,21 @@ fn cook_probes_scope_get_errors_for_missing_key() {
     );
 }
 
+/// §24.4.3 / CS-0203: a scope label containing ':' MUST raise on the
+/// execute-phase VM too — the same shared diagnostic the register VM
+/// raises. Until COOK-412 no phase enforced the rule.
+#[test]
+fn cook_probes_scope_refuses_a_colon_label() {
+    let code = r#"cook.probes.scope("a:b")"#;
+    let result = run_lua_chunk_in_worker(code);
+    assert!(!result.success, "colon label must raise");
+    let err = result.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("must not contain ':'"),
+        "error must name the label rule; got: {err}"
+    );
+}
+
 /// CS-0152: a key that IS present in the probe-value store whose
 /// canonical JSON payload is `null` MUST still decode to Lua `nil`
 /// with NO error — value-was-null is not the same thing as

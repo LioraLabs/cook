@@ -33,6 +33,7 @@ pub mod codec_api;
 pub mod cookfile_api;
 pub mod json_codec;
 pub mod fs_api;
+pub mod module_loader;
 pub mod path_api;
 pub mod platform_api;
 pub mod sandbox;
@@ -43,6 +44,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub use codec_api::{json_to_lua_value, register_codec_api};
+pub use module_loader::{
+    install_module_loader, install_renamed_cache_stub, refresh_package_search_paths,
+    ModuleLoadHooks, NoHooks,
+};
 pub use json_codec::{json_to_lua, lua_to_json};
 pub use cookfile_api::register_cookfile_api;
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};

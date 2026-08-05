@@ -75,6 +75,63 @@ pub fn module_candidates_description(name: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Module-load laws (§12.3, §24.2)
+// ---------------------------------------------------------------------------
+//
+// The `cook.load_module` sequence runs on both the register VM and every
+// worker VM. The mechanics live in `cook-lua-stdlib` (they need mlua); the
+// decisions inside them — how a load is keyed, what its diagnostics say,
+// what chunk name an eval runs under — are law, and they live here.
+
+/// The memoisation / in-flight key for a module load: `(working_dir, name)`,
+/// per §12.3.2–12.3.3. The register VM has one working_dir for its lifetime,
+/// so the prefix is constant there; a worker VM is reused across Cookfiles
+/// (CS-0017) and the prefix is what keeps two Cookfiles' same-named modules
+/// distinct.
+pub fn module_memo_key(working_dir: &Path, name: &str) -> String {
+    format!("{}::{}", working_dir.display(), name)
+}
+
+/// The §12.3.3 cycle diagnostic: `module cycle detected:` followed by the
+/// in-flight module names joined by ` -> `, with the re-entered name
+/// appended.
+pub fn module_cycle_message(loading_stack: &[String], reentered: &str) -> String {
+    let mut path = loading_stack.join(" -> ");
+    if !path.is_empty() {
+        path.push_str(" -> ");
+    }
+    path.push_str(reentered);
+    format!("module cycle detected: {path}")
+}
+
+/// The §24.2 resolution-failure diagnostic: identifies the name and the
+/// paths that were probed. One text for both phases (it was two).
+pub fn module_not_found_message(working_dir: &Path, name: &str) -> String {
+    format!(
+        "cook.load_module: module '{}' not found under {} (tried {})",
+        name,
+        modules_dir(working_dir).display(),
+        module_candidates_description(name)
+    )
+}
+
+/// The diagnostic for a candidate that resolved but could not be read.
+pub fn module_read_failed_message(name: &str, path: &Path, err: &str) -> String {
+    format!(
+        "cook.load_module: failed to read module '{}' at {}: {}",
+        name,
+        path.display(),
+        err
+    )
+}
+
+/// The chunk name a module's top-level chunk is loaded under: `@<path>`,
+/// so Lua tracebacks point at the module file itself.
+pub fn module_chunk_name(module_path: &Path) -> String {
+    format!("@{}", module_path.display())
+}
+
 /// A composed `package.path` / `package.cpath` pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LuaSearchPaths {

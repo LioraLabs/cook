@@ -224,9 +224,19 @@ fn test_load_module_recovers_after_error() {
     register_module_loader(&lua, state.clone()).unwrap();
 
     let _ = lua.load(r#"cook.load_module("boom")"#).exec();
-    // After the failure the in-flight set must be empty.
-    assert!(state.borrow().currently_loading.is_empty());
-    assert!(state.borrow().loading_stack.is_empty());
+    // After the failure the in-flight marker must be gone: a retry raises
+    // the module's own error again, not a phantom cycle diagnostic.
+    let msg = lua
+        .load(r#"cook.load_module("boom")"#)
+        .exec()
+        .expect_err("still failing")
+        .to_string();
+    assert!(
+        msg.contains("intentional") && !msg.contains("module cycle detected"),
+        "retry must re-raise the real error, got: {msg}"
+    );
+    // And the failed load must not leave a dangling module context.
+    assert!(state.borrow().current_module.is_none());
 }
 
 #[test]
@@ -250,6 +260,61 @@ fn test_cache_api_in_module() {
     state.borrow().flush_all();
     let cache_file = dir.path().join(".cook/cache/test_mod.json");
     assert!(cache_file.exists());
+}
+
+/// §24.4.3: the register VM carries `cook.probes.scope(label)` — a view
+/// whose get/set are the prefixed `label:key` operations on the module
+/// store. Until COOK-412 the register VM never installed it, so a module
+/// using the scoped pattern died with a nil-index error at register phase
+/// while working at execute phase.
+#[test]
+fn probes_scope_prefixes_get_and_set_on_the_module_store() {
+    let (lua, _dir, _state) = setup_with_module(
+        "test_mod",
+        r#"local m = {}
+            function m.init()
+                local sc = cook.probes.scope("toolchain")
+                sc.set("cc", "clang")
+            end
+            function m.read_scoped()
+                return cook.probes.scope("toolchain").get("cc")
+            end
+            function m.read_full()
+                return cook.probes.get("toolchain:cc")
+            end
+            return m"#,
+    );
+    let (scoped, full): (String, String) = lua
+        .load(
+            r#"local m = cook.load_module("test_mod")
+                return m.read_scoped(), m.read_full()"#,
+        )
+        .eval()
+        .unwrap();
+    assert_eq!(scoped, "clang");
+    assert_eq!(full, "clang", "scoped set stores under the full label:key");
+}
+
+/// §24.4.3: a label containing ':' MUST raise.
+#[test]
+fn probes_scope_refuses_a_colon_label() {
+    let (lua, _dir, _state) = setup_with_module(
+        "test_mod",
+        r#"local m = {}
+            function m.init()
+                cook.probes.scope("a:b")
+            end
+            return m"#,
+    );
+    let msg = lua
+        .load(r#"cook.load_module("test_mod")"#)
+        .exec()
+        .expect_err("colon label must raise")
+        .to_string();
+    assert!(
+        msg.contains("must not contain ':'"),
+        "names the rule: {msg}"
+    );
 }
 
 #[test]
