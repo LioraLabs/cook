@@ -300,3 +300,42 @@ fn renamed_cache_stub_errors_with_did_you_mean() {
         "{msg}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// refresh_package_search_paths (relocated from cook-luaotp with the fn)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn refresh_sets_path_and_cpath_with_rock_tree_entries() {
+    use crate::module_loader::refresh_package_search_paths;
+    let lua = Lua::new();
+    let cwd = PathBuf::from("/tmp/fake-project");
+    refresh_package_search_paths(&lua, &cwd).expect("refresh");
+    let pkg: LuaTable = lua.globals().get("package").unwrap();
+    let path: String = pkg.get("path").unwrap();
+    let cpath: String = pkg.get("cpath").unwrap();
+
+    assert!(path.contains("/tmp/fake-project/cook_modules/?.lua"));
+    assert!(path.contains("/tmp/fake-project/cook_modules/?/init.lua"));
+    assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?.lua"));
+    assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?/init.lua"));
+
+    assert!(cpath.contains("/tmp/fake-project/cook_modules/?."));
+    assert!(cpath.contains("/tmp/fake-project/cook_modules/lib/lua/5.4/?."));
+}
+
+#[test]
+fn refresh_is_idempotent() {
+    use crate::module_loader::refresh_package_search_paths;
+    let lua = Lua::new();
+    let cwd = PathBuf::from("/tmp/fake-project");
+    refresh_package_search_paths(&lua, &cwd).expect("first");
+    let pkg: LuaTable = lua.globals().get("package").unwrap();
+    let first_path: String = pkg.get("path").unwrap();
+    let first_cpath: String = pkg.get("cpath").unwrap();
+    refresh_package_search_paths(&lua, &cwd).expect("second");
+    let second_path: String = pkg.get("path").unwrap();
+    let second_cpath: String = pkg.get("cpath").unwrap();
+    assert_eq!(first_path, second_path, "path must not grow on repeated refresh");
+    assert_eq!(first_cpath, second_cpath, "cpath must not grow on repeated refresh");
+}
