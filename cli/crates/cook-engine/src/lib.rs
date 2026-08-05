@@ -11,13 +11,12 @@ pub mod id;
 pub mod observations;
 pub mod pipeline;
 pub mod reconcile;
-pub mod registered_workspace;
 pub mod run;
 mod seal;
 pub mod verify;
 pub mod why;
 
-pub use registered_workspace::RegisteredWorkspace;
+pub use cook_register::RegisteredWorkspace;
 pub use run::{
     build_cache_ctx_for_cli, cache_managers_for_cli, run, OutputGlobWarning, RunResult, TestScope,
 };

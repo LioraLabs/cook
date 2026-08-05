@@ -37,7 +37,7 @@ use super::env::parse_cli_overrides;
 use super::error::PipelineError;
 use super::recipe_info::find_full_prefix;
 use super::workspace::{LoadedCookfile, Workspace};
-use crate::registered_workspace::RegisteredWorkspace;
+use cook_register::RegisteredWorkspace;
 
 /// How the register pass binds a CLI dispatch target. The register layer has
 /// three distinct target behaviors (see `cook-register/src/engine.rs`:

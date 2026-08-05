@@ -14,6 +14,7 @@ pub mod module_loader;
 pub mod on_register_api;
 pub mod probe_api;
 pub mod probe_value;
+pub mod registered_workspace;
 pub mod test_api;
 pub mod unit_api;
 pub mod var_api;
@@ -449,6 +450,7 @@ pub use cook_cache::hash_str;
 pub use capture::RegistrationSource;
 pub use dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
 pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
+pub use registered_workspace::RegisteredWorkspace;
 
 /// The artifact of a full `register_cookfile` pass.
 ///

@@ -28,7 +28,7 @@ use super::workspace::Workspace;
 /// `RecipeUnits.dep_edges`, recorded directly by `cook.dep_output` /
 /// `cook.add_unit` during the register pass).
 pub fn build_recipe_infos_from_registered(
-    ws: &crate::registered_workspace::RegisteredWorkspace,
+    ws: &cook_register::RegisteredWorkspace,
 ) -> BTreeMap<String, RecipeInfo> {
     let mut infos = BTreeMap::new();
     for name in &ws.names {

@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use cook_contracts::{ProbeUnit, RecipeUnits};
-use cook_register::RegisteredRecipePub;
+
+use crate::RegisteredRecipePub;
 
 /// Workspace-level container that aggregates per-Cookfile registration
 /// results into a single view. Names are qualified with their import

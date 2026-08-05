@@ -1,5 +1,5 @@
 use super::*;
-use crate::registered_workspace::RegisteredWorkspace;
+use cook_register::RegisteredWorkspace;
 use cook_contracts::RecipeUnits;
 use cook_register::{RecipeKind, RegisteredRecipePub, RegistrationSource};
 use std::path::PathBuf;
