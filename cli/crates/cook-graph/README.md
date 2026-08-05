@@ -50,8 +50,9 @@ JSON.
 - **It borrows the cache index naming rule rather than guessing.** The on-disk
   index is written under the units' Cookfile-local `CacheMeta.recipe_name`, not
   the import-qualified workspace key; loading `rust.build` instead of `build`
-  would silently miss the index and render every node as never-cached
-  (`src/dag_data.rs:339`).
+  would silently miss the index and render every node as never-cached. The rule
+  is `cook_contracts::cache::recipe_cache_index_name` (`src/dag_data.rs:332`),
+  the same law the executor writes under and `cook cache verify` reads by.
 
 ## What it does not do
 
@@ -75,43 +76,33 @@ flat `Vec<NodeData>` / `Vec<EdgeData>` that exists to be looked at. One is the
 machine's graph, the other is the reader's. The names are the wrong way round
 for that split, but only the names.
 
-## The structure it renders is a second implementation
+## The structure it renders is the engine's
 
-These are not the engine's edges. `cook_engine::dag_builder` derives the real
-work-unit DAG from the same `RecipeUnits`; `src/dag_data.rs` derives a parallel
-one for display, re-deciding the sequential barrier, step-group entry and exit,
-probe non-participation, `dep_edges`, and cross-recipe wiring. The comments
-name their twin ("mirrors dag_builder.rs"), which satisfies one of the three
-conditions `cook-contracts` places on a deliberate copy. There is no agreement
-test, and the copy has drifted:
+These are the engine's edges, by construction. The unit-to-unit wiring —
+barriers, step groups, probe consumption and pruning, `dep_edges`, coarse
+cross-recipe barriers, leaf pass-through — is
+`cook_contracts::unit_graph::plan` (COOK-402 / CS-0202), the same pure plan
+`cook_engine::dag_builder` lowers into the DAG the executor runs. This crate
+maps the plan's per-dependency provenance onto `EdgeKind` and adds only the
+display layer the plan does not carry: file nodes, declared/discovered input
+edges, producer→consumer data edges, labels, staleness.
 
-- **A withdrawn rule, still implemented.** `src/dag_data.rs:227` suppresses the
-  whole-recipe `Barrier` edge when the consumer's `dep_edges` name the same
-  upstream. That is CS-0161's fine-covered narrowing rule, which the Standard
-  rejected: the shipped design is strictly additive, and a recipe that declares
-  `requires` keeps byte-identical whole-recipe ordering whether or not its units
-  carry fine refs (`standard/conformance/positive/dep-order-register-phase/notes.md:32`,
-  pinned by `cook-engine/tests/dep_order.rs:177`). So `cook why` hides a barrier
-  the engine does impose, which is the exact failure the edge-kind ordering
-  above exists to prevent. It cannot be fixed where it stands: `analyzer.rs:67`
-  merges `requires` and `orders` into one edge map before this crate sees it, so
-  the distinction the branch needs is already gone. No test covers the branch.
-- **No leaf pass-through.** The engine forwards a recipe's own deps' leaves
-  when its barrier ends up empty, so a dependency routed through a unit-less
-  meta-target still reaches the real upstream work. This crate records no
-  terminals for such a recipe (`src/dag_data.rs:652`) and both consumers step
-  past the missing entry (`src/dag_data.rs:197`, `src/dag_data.rs:239`), so the
-  edge silently disappears from the picture.
-
-The fix is not a third derivation; it is for `dag_builder` to hand over the
-edges it already computes.
+It was not always so. `src/dag_data.rs` used to re-derive the wiring in
+parallel — a deliberate copy with no agreement test — and it drifted twice:
+it kept implementing CS-0161's fine-covered narrowing rule after the Standard
+withdrew it (hiding a declared barrier the engine imposes, the exact failure
+the edge-kind ordering above exists to prevent), and it recorded no terminals
+for an empty-barrier recipe where the engine forwards its deps' leaves, so a
+dependency routed through a unit-less meta-target vanished from the output.
+The suppression was also unfixable in place: the closure edge map merges
+`requires` and `orders` before this crate sees it, so the branch could not
+distinguish the case it wanted. One decision, one home, and both bugs became
+unrepresentable.
 
 ## Residue
 
 - `ViewerError` (`src/lib.rs:36`) is never constructed. It outlived the
   ratatui viewer.
-- `EdgeKind::is_ordering` (`src/dag_data.rs:122`) has no caller in this crate
-  or any other.
 - `UnitFacts::observed_builds_ago` and `Node::observed_max_age` describe an
   observation's age in retained builds. CS-0189 deleted that model:
   observations live in the step index now and may be served to a machine with
@@ -120,9 +111,3 @@ edges it already computes.
   `observed_max_age` is a permanent zero in the JSON payload and the
   ", up to N builds ago" rendering (`src/emit.rs:398`) is unreachable.
   `recorded_at` replaced it on every other surface.
-- The whole `cook-engine` dependency is two calls: `render_ms`, a shim over a
-  `cook-contracts` function this crate already depends on, and
-  `recipe_cache_index_name`, which is pure, is documented as shared law
-  ("`pub` because `cook-graph` performs the same lookup"), and by the admission
-  bar belongs in `cook-contracts`. Move both and this crate stops depending on
-  the engine.

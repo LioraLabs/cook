@@ -228,7 +228,8 @@ where
     //    Recipes are passed in topological order (derived from `edges` via
     //    a Kahn walk) so that `build_dag`'s intra-call `recipe_leaves`
     //    accumulator has every dep present when wiring cross-recipe edges.
-    let topo_order = toposort_reachable(edges, reachable)?;
+    let topo_order = cook_contracts::unit_graph::toposort_recipes(edges, reachable)
+        .map_err(EngineError::from)?;
     let mut all_units: Vec<RecipeUnits> = Vec::with_capacity(topo_order.len());
     for name in &topo_order {
         let units = registered_workspace
@@ -244,7 +245,7 @@ where
             // barrier set to what the recipe actually declared. The filter is
             // shared with every other closure-stamping call site so `run`,
             // `why`, and the graph renderer agree on which barriers exist.
-            u.deps = dag_builder::declared_coarse_deps(&units.deps, deps);
+            u.deps = cook_contracts::unit_graph::declared_coarse_deps(&units.deps, deps);
         }
         all_units.push(u);
     }
@@ -374,7 +375,7 @@ where
             ) else {
                 continue;
             };
-            let index_name = recipe_cache_index_name(ru, name);
+            let index_name = cook_contracts::cache::recipe_cache_index_name(ru, name);
             let prior = cm.get_or_load(&index_name);
             let mut outs: BTreeMap<PathBuf, u64> = BTreeMap::new();
             for step in prior.steps.values() {
@@ -546,20 +547,6 @@ fn collect_output_glob_warnings_for_recipe(
         .collect()
 }
 
-/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.idx`): the `recipe_name`
-/// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
-/// executor uses as the manager's per-recipe key), falling back to the
-/// recipe's own name for unit-less meta-targets.
-///
-/// `pub` because `cook-graph` performs the same lookup when it loads
-/// per-recipe cache indexes for import members (workspace key "rust.build",
-/// Cookfile-local index name "build").
-pub fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
-    ru.units
-        .iter()
-        .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
-        .unwrap_or_else(|| fallback.to_string())
-}
 
 /// Sweep stale outputs for every reached recipe (§17.7).
 ///
@@ -622,7 +609,7 @@ fn reconcile_outputs(
             cache_managers.get(name),
             registered_workspace.units_by_recipe.get(name),
         ) {
-            let index_name = recipe_cache_index_name(ru, name);
+            let index_name = cook_contracts::cache::recipe_cache_index_name(ru, name);
             let wd = ru.working_dir.clone();
             let live_ref = &live;
             cm.retain_steps(&index_name, move |_k, step| {
@@ -650,80 +637,6 @@ fn reconcile_outputs(
 #[cfg(test)]
 #[path = "tests/output_warning_tests.rs"]
 mod output_warning_tests;
-
-/// Topologically sort `reachable` against the recipe-level `edges` map.
-///
-/// Returns recipe names in dependency-first order so that
-/// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
-/// every dep present before the dependent recipe is processed. Recipes
-/// missing from `edges` are placed first (no deps known).
-pub fn toposort_reachable_pub(
-    edges: &BTreeMap<String, Vec<String>>,
-    reachable: &BTreeSet<String>,
-) -> Result<Vec<String>, EngineError> {
-    toposort_reachable(edges, reachable)
-}
-
-fn toposort_reachable(
-    edges: &BTreeMap<String, Vec<String>>,
-    reachable: &BTreeSet<String>,
-) -> Result<Vec<String>, EngineError> {
-    use std::collections::VecDeque;
-
-    // Restrict the dep set per node to deps that are in `reachable`.
-    let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut in_degree: BTreeMap<String, usize> = BTreeMap::new();
-    let mut forward: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for name in reachable {
-        deps.entry(name.clone()).or_default();
-        in_degree.entry(name.clone()).or_insert(0);
-    }
-    for name in reachable {
-        if let Some(dep_list) = edges.get(name) {
-            for d in dep_list {
-                if reachable.contains(d) && d != name {
-                    if deps.get_mut(name).unwrap().insert(d.clone()) {
-                        *in_degree.get_mut(name).unwrap() += 1;
-                        forward.entry(d.clone()).or_default().insert(name.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    let mut queue: VecDeque<String> = in_degree
-        .iter()
-        .filter_map(|(n, &deg)| if deg == 0 { Some(n.clone()) } else { None })
-        .collect();
-    let mut order: Vec<String> = Vec::with_capacity(reachable.len());
-    while let Some(n) = queue.pop_front() {
-        order.push(n.clone());
-        if let Some(deps_of) = forward.get(&n) {
-            for next in deps_of {
-                let deg = in_degree.get_mut(next).unwrap();
-                *deg -= 1;
-                if *deg == 0 {
-                    queue.push_back(next.clone());
-                }
-            }
-        }
-    }
-    if order.len() != reachable.len() {
-        // Only nodes with unresolved in-degree are part of (or downstream of)
-        // the cycle. Naming them is far more useful than dumping the entire
-        // reachable set, which can include dozens of unrelated recipes.
-        let unresolved: Vec<&String> = in_degree
-            .iter()
-            .filter(|(_, &d)| d > 0)
-            .map(|(name, _)| name)
-            .collect();
-        return Err(EngineError::CycleDetected(format!(
-            "cycle among recipes: {:?}",
-            unresolved
-        )));
-    }
-    Ok(order)
-}
 
 /// Build a [`CacheContext`] for this build invocation.
 ///

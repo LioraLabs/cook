@@ -474,7 +474,6 @@ version = "0.11.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
- "cook-engine",
  "insta",
  "serde",
  "serde_json",

@@ -170,7 +170,8 @@ fn test_toposort_reachable_diamond() {
     edges.insert("d".into(), vec!["b".into(), "c".into()]);
     let reachable: BTreeSet<String> =
         ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
-    let order = toposort_reachable(&edges, &reachable).expect("toposort");
+    let order = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
+        .expect("toposort");
     let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
     assert!(pos("a") < pos("b"));
     assert!(pos("a") < pos("c"));
@@ -185,7 +186,8 @@ fn test_toposort_reachable_detects_cycle() {
     edges.insert("b".into(), vec!["a".into()]);
     let reachable: BTreeSet<String> =
         ["a", "b"].iter().map(|s| s.to_string()).collect();
-    let result = toposort_reachable(&edges, &reachable);
+    let result = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
+        .map_err(EngineError::from);
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::CycleDetected(msg) => {
@@ -217,7 +219,8 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let result = toposort_reachable(&edges, &reachable);
+    let result = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
+        .map_err(EngineError::from);
     match result.unwrap_err() {
         EngineError::CycleDetected(msg) => {
             assert!(msg.contains("\"a\""), "missing cycle node 'a': {msg}");

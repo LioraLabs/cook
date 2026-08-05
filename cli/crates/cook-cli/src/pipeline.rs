@@ -2049,7 +2049,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
         explicit_edges: &edges,
         cache_managers: &graph_cache_managers,
     })
-    .map_err(engine_error_to_cook_error)?;
+    .map_err(|e| engine_error_to_cook_error(e.into()))?;
     let graph = cook_graph::emit::aggregate(&dag, level, args.max_nodes, &annotations)
         .map_err(|e| CookError::Other(e.to_string()))?;
 

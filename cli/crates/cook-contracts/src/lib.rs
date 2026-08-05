@@ -30,6 +30,7 @@ pub mod sigil;
 pub mod registration;
 pub mod step;
 pub mod unit;
+pub mod unit_graph;
 
 pub use accessor::ACCESSORS;
 pub use hash::hash_str;

@@ -218,7 +218,8 @@ pub fn explain(
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     probes_dir: &Path,
 ) -> Result<WhyReport, crate::EngineError> {
-    let topo = crate::run::toposort_reachable_pub(edges, reachable)?;
+    let topo = cook_contracts::unit_graph::toposort_recipes(edges, reachable)
+        .map_err(crate::EngineError::from)?;
     let mut all_units = Vec::with_capacity(topo.len());
     for name in &topo {
         let units = registered_workspace
@@ -231,7 +232,7 @@ pub fn explain(
             // closure map merges `orders` in, and stamping those as coarse
             // deps would give this explanation DAG whole-recipe barriers the
             // scheduler never imposes.
-            u.deps = dag_builder::declared_coarse_deps(&units.deps, deps);
+            u.deps = cook_contracts::unit_graph::declared_coarse_deps(&units.deps, deps);
         }
         all_units.push(u);
     }

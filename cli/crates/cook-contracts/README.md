@@ -62,7 +62,14 @@ Worked examples from this repo's history:
   summary (`registration::{RegisteredWorkspace, RegisteredRecipePub, …}`,
   COOK-428 — what registration declared, as data; producer, aggregator, and
   consumers all import the one definition, and the engine consumes it without
-  a dependency on the crate that runs registration).
+  a dependency on the crate that runs registration); the unit-level wiring
+  plan (`unit_graph::plan`, COOK-402 / CS-0202 — which units become DAG nodes
+  and which dependencies each has, with per-edge provenance; the engine lowers
+  it into the DAG it executes and `cook why` renders it, replacing a
+  hand-mirrored copy in the renderer that had drifted into a spec rule the
+  Standard withdrew); `cache::recipe_cache_index_name` (the executor writing
+  the index, `cook cache verify` reading it, and the graph's staleness check
+  must resolve the same on-disk name).
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
   their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
   `CacheBackend` trait and its implementations (mechanism, not law).

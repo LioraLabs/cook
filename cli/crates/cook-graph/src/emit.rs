@@ -21,7 +21,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use cook_engine::observations::render_ms;
+// THE duration rendering (COOK-392) — straight from the law, not through
+// cook-engine's legacy `observations::render_ms` shim.
+use cook_contracts::render::duration_ms as render_ms;
 
 use crate::annotate::Annotations;
 use crate::dag_data::{DagData, EdgeKind};

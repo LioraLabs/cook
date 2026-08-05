@@ -151,3 +151,20 @@ pub struct CacheMeta {
     pub sharing: Sharing,
     pub record: bool,
 }
+
+/// The name of the on-disk cache index a recipe's units address.
+///
+/// The index is written under the units' Cookfile-local
+/// `CacheMeta::recipe_name`, not the (possibly import-qualified) workspace
+/// key the recipe is registered under: for an import recipe (workspace key
+/// "rust.build", cache_meta name "build") a lookup under the qualified key
+/// silently misses the index. Three surfaces must resolve the same name —
+/// the executor writing entries, `cook cache verify` reading them, and the
+/// `cook why` graph's staleness checks — which is why this five-line rule
+/// lives here rather than in any one of them (COOK-402).
+pub fn recipe_cache_index_name(ru: &crate::RecipeUnits, fallback: &str) -> String {
+    ru.units
+        .iter()
+        .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
+        .unwrap_or_else(|| fallback.to_string())
+}

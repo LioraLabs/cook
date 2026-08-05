@@ -236,7 +236,7 @@ pub fn verify_cache(
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let cache_dir = cook_contracts::layout::cache_dir(&wd);
         let mgr = cook_cache::ThreadSafeCacheManager::new(cache_dir);
-        let index_name = crate::run::recipe_cache_index_name(units, recipe_name);
+        let index_name = cook_contracts::cache::recipe_cache_index_name(units, recipe_name);
         let recipe_cache = mgr.get_or_load(&index_name);
 
         for unit in &units.units {

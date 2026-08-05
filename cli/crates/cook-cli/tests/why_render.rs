@@ -4,7 +4,9 @@
 //! Two load-bearing cases.
 //!
 //! *The engine's edges.* The graph reports the edges the scheduler imposes,
-//! read off the engine's own DAG builder (CS-0202). That is additive per
+//! read off the shared wiring law (`cook_contracts::unit_graph`, CS-0202) —
+//! the same plan the engine lowers into the DAG it executes. That is
+//! additive per
 //! CS-0161's shipped design: a declared `requires` renders as a barrier
 //! whether or not `cook.dep_order` also fine-covers the same producer,
 //! because the engine schedules that barrier either way. (An earlier

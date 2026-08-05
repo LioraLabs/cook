@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use cook_cache::ThreadSafeCacheManager;
 use cook_cache::{hash_file, stat_mtime};
+use cook_contracts::unit_graph;
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
 use std::collections::BTreeSet;
 
@@ -159,24 +160,24 @@ fn file_label(path: &str) -> String {
 ///
 /// The unit-to-unit wiring — serial barriers, group entry, probe consumption,
 /// coarse whole-recipe barriers, fine `dep_order` refs, and leaf pass-through
-/// across unit-less meta-targets — is NOT derived here. It is read off
-/// [`cook_engine::dag_builder::build_dag_traced`], the builder the executor
-/// runs, so the graph reports the edges the engine imposes by construction.
-/// This crate used to hand-mirror those rules and drifted twice (COOK-402):
-/// it kept the fine-covered narrowing rule the Standard withdrew (CS-0161,
-/// "Rejected alternative" — the shipped design is strictly additive), and it
-/// dropped every dependency routed through a unit-less meta-target because it
-/// recorded no terminals for an empty barrier.
+/// across unit-less meta-targets — is NOT derived here. It is
+/// [`cook_contracts::unit_graph::plan`], the same law the engine lowers into
+/// the DAG it executes, so the graph reports the edges the scheduler imposes
+/// by construction. This crate used to hand-mirror those rules and drifted
+/// twice (COOK-402): it kept the fine-covered narrowing rule the Standard
+/// withdrew (CS-0161, "Rejected alternative" — the shipped design is strictly
+/// additive), and it dropped every dependency routed through a unit-less
+/// meta-target because it recorded no terminals for an empty barrier.
 ///
-/// What remains derived here is the display layer the engine's DAG does not
-/// carry: file nodes, declared/discovered input edges, producer→consumer data
-/// edges, labels, and input staleness.
+/// What remains derived here is the display layer the plan does not carry:
+/// file nodes, declared/discovered input edges, producer→consumer data edges,
+/// labels, and input staleness.
 pub fn build_dag_data(
     target: &str,
     all_units: &[(String, RecipeUnits)],
     explicit_deps: &BTreeMap<String, Vec<String>>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> Result<DagData, cook_engine::EngineError> {
+) -> Result<DagData, unit_graph::UnitGraphError> {
     let units_by_name: BTreeMap<&str, &RecipeUnits> = all_units
         .iter()
         .map(|(name, ru)| (name.as_str(), ru))
@@ -186,11 +187,11 @@ pub fn build_dag_data(
     // Display pass: unit and file nodes, plus the data/discovered edges.
     let (mut nodes, mut edges) = build_nodes(&recipe_names, &units_by_name, cache_managers);
 
-    // Structural pass: the engine's own builder, on a slice prepared exactly
-    // the way `run_inner` prepares it — topologically ordered (build_dag's
-    // intra-call `recipe_leaves` accumulator needs every dep walked first)
-    // with coarse deps restricted to the declared `requires` (the closure map
-    // merges `orders` in; see `declared_coarse_deps`).
+    // Structural pass: the shared wiring law, on a slice prepared exactly the
+    // way the engine's run path prepares it — topologically ordered (plan's
+    // intra-call leaves accumulator needs every dep walked first) with coarse
+    // deps restricted to the declared `requires` (the closure map merges
+    // `orders` in; see `declared_coarse_deps`).
     let reachable: BTreeSet<String> = recipe_names.iter().cloned().collect();
     let mut topo_edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (name, ru) in all_units {
@@ -201,7 +202,7 @@ pub fn build_dag_data(
         entry.extend(ru.deps.iter().cloned());
         entry.extend(ru.dep_edges.iter().map(|(_, dep)| dep.clone()));
     }
-    let topo = cook_engine::run::toposort_reachable_pub(&topo_edges, &reachable)?;
+    let topo = unit_graph::toposort_recipes(&topo_edges, &reachable)?;
     let slice: Vec<RecipeUnits> = topo
         .iter()
         .map(|name| {
@@ -209,28 +210,30 @@ pub fn build_dag_data(
                 .get(name.as_str())
                 .expect("topo order is a permutation of all_units");
             let mut u = (*ru).clone();
-            // The engine reports origins under `recipe_name`; the display
+            // The plan reports origins under `recipe_name`; the display
             // nodes above are keyed by the workspace name. Force agreement.
             u.recipe_name = name.clone();
             if let Some(deps) = explicit_deps.get(name) {
-                u.deps = cook_engine::dag_builder::declared_coarse_deps(&ru.deps, deps);
+                u.deps = unit_graph::declared_coarse_deps(&ru.deps, deps);
             }
             u
         })
         .collect();
-    let (_dag, structure) = cook_engine::dag_builder::build_dag_traced(slice)?;
+    let graph = unit_graph::plan(&slice)?;
 
-    for e in &structure.edges {
+    for node in &graph.nodes {
         // Probes synthesised from register-block metadata have no captured
         // unit and therefore no display node; edges touching them are not
         // renderable yet. (Follow-up candidate: give them nodes.)
-        let (Some(from), Some(to)) = (
-            origin_node_id(&structure.origins[e.from]),
-            origin_node_id(&structure.origins[e.to]),
-        ) else {
+        let Some(to) = origin_node_id(&node.origin) else {
             continue;
         };
-        edges.push(EdgeData { from, to, kind: edge_kind(e.kind) });
+        for &(from_idx, kind) in &node.deps {
+            let Some(from) = origin_node_id(&graph.nodes[from_idx].origin) else {
+                continue;
+            };
+            edges.push(EdgeData { from, to: to.clone(), kind: edge_kind(kind) });
+        }
     }
 
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
@@ -243,18 +246,19 @@ pub fn build_dag_data(
     })
 }
 
-/// The display node id for an engine node origin, or `None` for node kinds
+/// The display node id for a planned node's origin, or `None` for node kinds
 /// the viewer does not render.
-fn origin_node_id(origin: &cook_engine::dag_builder::NodeOrigin) -> Option<String> {
-    use cook_engine::dag_builder::NodeOrigin;
+fn origin_node_id(origin: &unit_graph::NodeOrigin) -> Option<String> {
     match origin {
-        NodeOrigin::Unit { recipe, unit_idx } => Some(format!("unit:{recipe}:{unit_idx}")),
-        NodeOrigin::SynthProbe { .. } => None,
+        unit_graph::NodeOrigin::Unit { recipe, unit_idx } => {
+            Some(format!("unit:{recipe}:{unit_idx}"))
+        }
+        unit_graph::NodeOrigin::SynthProbe { .. } => None,
     }
 }
 
-fn edge_kind(kind: cook_engine::dag_builder::EdgeProvenance) -> EdgeKind {
-    use cook_engine::dag_builder::EdgeProvenance;
+fn edge_kind(kind: unit_graph::EdgeProvenance) -> EdgeKind {
+    use unit_graph::EdgeProvenance;
     match kind {
         EdgeProvenance::Serial => EdgeKind::Serial,
         EdgeProvenance::Group => EdgeKind::Group,
@@ -265,8 +269,8 @@ fn edge_kind(kind: cook_engine::dag_builder::EdgeProvenance) -> EdgeKind {
 }
 
 /// Display pass: emit every recipe's unit and file nodes, plus the data and
-/// discovered edges. Unit-to-unit wiring is the engine's (`build_dag_traced`)
-/// and is deliberately absent here.
+/// discovered edges. Unit-to-unit wiring is the shared law's
+/// (`cook_contracts::unit_graph::plan`) and is deliberately absent here.
 fn build_nodes(
     recipe_names: &[String],
     units_by_name: &BTreeMap<&str, &RecipeUnits>,
@@ -325,7 +329,7 @@ fn build_nodes(
         // qualified key would silently miss the index and render every node
         // as never-cached.
         let cache_index_name =
-            cook_engine::run::recipe_cache_index_name(ru, recipe_name);
+            cook_contracts::cache::recipe_cache_index_name(ru, recipe_name);
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
         for (unit_idx, unit) in ru.units.iter().enumerate() {
