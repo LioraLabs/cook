@@ -91,6 +91,32 @@ pub fn bare_key_error(site: &str, key: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Scoped keys (§24.4.3)
+// ---------------------------------------------------------------------------
+
+/// §24.4.3: the key a `cook.probes.scope(label)` view reads and writes —
+/// `label .. ":" .. key`. Both phases compose it: the register view over the
+/// module store, and the execute view over the per-run probe-value store
+/// (whose unmaterialised-read diagnostic MUST report this full form,
+/// §22.5.8).
+pub fn scoped_key(label: &str, key: &str) -> String {
+    format!("{label}:{key}")
+}
+
+/// §24.4.3: a scope label MUST NOT contain `:` — a colon in the label would
+/// make `scope("a:b").get("c")` and `scope("a").get("b:c")` collide on one
+/// stored key. `Some(diagnostic)` when the label is invalid; both phases
+/// raise it verbatim.
+pub fn scope_label_error(label: &str) -> Option<String> {
+    label.contains(':').then(|| {
+        format!(
+            "cook.probes.scope: label '{label}' must not contain ':' \
+             (the scope separator; Standard §24.4.3)"
+        )
+    })
+}
+
 #[cfg(test)]
 #[path = "tests/probe_key_tests.rs"]
 mod tests;

@@ -86,3 +86,30 @@ fn the_diagnostic_explains_a_dot_rather_than_just_refusing_it() {
     assert!(!plain.contains("member access"), "{plain}");
     assert!(plain.contains("quoted form"), "{plain}");
 }
+
+// ---------------------------------------------------------------------------
+// Scoped keys (§24.4.3)
+// ---------------------------------------------------------------------------
+
+mod scoped_keys {
+    use crate::probe_key::{scope_label_error, scoped_key};
+
+    #[test]
+    fn scoped_key_is_label_colon_key() {
+        assert_eq!(scoped_key("cook_cc", "toolchain"), "cook_cc:toolchain");
+    }
+
+    #[test]
+    fn valid_label_passes() {
+        assert_eq!(scope_label_error("cook_cc"), None);
+    }
+
+    /// §24.4.3: a label containing ':' MUST raise.
+    #[test]
+    fn colon_label_is_refused_with_the_shared_diagnostic() {
+        let msg = scope_label_error("a:b").expect("colon label must be refused");
+        assert!(msg.contains("cook.probes.scope"), "names the API: {msg}");
+        assert!(msg.contains("'a:b'"), "names the label: {msg}");
+        assert!(msg.contains("must not contain ':'"), "names the rule: {msg}");
+    }
+}
