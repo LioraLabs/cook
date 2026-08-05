@@ -47,7 +47,13 @@ pub struct DagInputs<'a> {
 }
 
 /// Build the unit-level graph. Every presentation path starts here.
-pub fn build_dag(inputs: &DagInputs<'_>) -> DagData {
+///
+/// Fallible since COOK-402: the structural edges come from the engine's own
+/// DAG builder, whose plan-time validation (output collisions, dangling
+/// `dep_edges`, dependency cycles) can reject the closure. On the `cook why`
+/// path these were already screened by `cook_engine::why::explain`, so an
+/// error here means the two calls were fed different inputs.
+pub fn build_dag(inputs: &DagInputs<'_>) -> Result<DagData, cook_engine::EngineError> {
     dag_data::build_dag_data(
         inputs.target,
         inputs.all_units,

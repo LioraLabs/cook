@@ -39,6 +39,91 @@ use cook_dag::Dag;
 
 use crate::{EngineError, WorkNode};
 
+// ---------------------------------------------------------------------------
+// Structural mirror (COOK-402)
+// ---------------------------------------------------------------------------
+
+/// Where a DAG node came from, in terms a caller that holds the original
+/// `RecipeUnits` slice can resolve: a captured unit is `(recipe, unit_idx)`;
+/// a probe synthesised from register-block metadata (SHI-222 Phase 8) has no
+/// unit index and is identified by its probe key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NodeOrigin {
+    Unit { recipe: String, unit_idx: usize },
+    SynthProbe { recipe: String, probe_key: String },
+}
+
+/// Why [`build_dag`] imposed a dependency — recorded at the exact points the
+/// dependency ids are assembled, so a consumer rendering the graph reports
+/// the edges the scheduler imposes rather than re-deriving them (COOK-402:
+/// the re-derivation in cook-graph drifted twice, once into the withdrawn
+/// CS-0161 fine-covered narrowing rule and once past leaf pass-through).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EdgeProvenance {
+    /// §15.1 sequential barrier between units of one recipe.
+    Serial,
+    /// Entry into a step group: each member depends on the barrier that was
+    /// current when the group started.
+    Group,
+    /// A probe value consumed by a unit (§22.5.5), including probe-on-probe
+    /// `inputs.requires`.
+    Probe,
+    /// Per-unit cross-recipe ordering — `cook.dep_order` / `cook.dep_output`
+    /// (§22.10). Only the referencing unit waits.
+    DepOrder,
+    /// Whole-recipe barrier — a dep-list entry or `cook.require_recipe`
+    /// (§22.8). Every root unit of the consumer waits for the referent's
+    /// leaves. Strictly additive with [`EdgeProvenance::DepOrder`] (CS-0161,
+    /// "Rejected alternative"): a fine ref never subtracts a declared
+    /// coarse edge.
+    Barrier,
+}
+
+/// One dependency the builder imposed, as DAG node indices into
+/// [`DagStructure::origins`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StructuralEdge {
+    pub from: usize,
+    pub to: usize,
+    pub kind: EdgeProvenance,
+}
+
+/// The structure [`build_dag`] computed, exposed alongside the `Dag` it
+/// lowered into. `origins` is indexed by DAG node id; `edges` is sorted and
+/// exact-duplicate-free (the same `(from, to)` pair may legitimately appear
+/// under two kinds — e.g. a `requires` barrier and a `dep_order` ref to the
+/// same producer are both real, per the additive rule).
+///
+/// This exists so `cook why` renders the DAG the engine executes instead of
+/// maintaining a parallel derivation of the wiring rules. Leaf pass-through
+/// (a unit-less meta-target forwarding its deps' leaves) is therefore visible
+/// here for free: the recorded edges already point at the forwarded leaves.
+#[derive(Debug, Clone)]
+pub struct DagStructure {
+    pub origins: Vec<NodeOrigin>,
+    pub edges: Vec<StructuralEdge>,
+}
+
+/// Restrict a recipe's coarse dep list to what it actually declared.
+///
+/// The closure edge map (`cook_plan::analyzer::dependency_edges`) merges
+/// `requires` with `orders` — names reached only through fine-grained
+/// per-unit refs (`$<B>`, `cook.dep_output`, `cook.dep_order`). Those carry
+/// their ordering in `dep_edges`; promoting them to `RecipeUnits::deps`
+/// would manufacture the coarse whole-recipe barrier the fine reference
+/// exists to avoid. Every caller that stamps closure edges onto a
+/// `RecipeUnits` slice bound for [`build_dag`] MUST filter through this
+/// helper so `run`, `why`, and the graph renderer agree on which barriers
+/// exist.
+pub fn declared_coarse_deps(declared: &[String], closure_deps: &[String]) -> Vec<String> {
+    let declared_set: BTreeSet<&str> = declared.iter().map(|s| s.as_str()).collect();
+    closure_deps
+        .iter()
+        .filter(|d| declared_set.contains(d.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// Compute the set of probe keys reached by at least one non-probe consumer
 /// in `units`, transitively closing under probe-on-probe `inputs.requires`.
 ///
@@ -157,6 +242,17 @@ fn compute_consumed_probe_keys(
 /// (`recipe middle : producer`) transparent to downstream ordering instead
 /// of silently severing it.
 pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError> {
+    build_dag_traced(recipe_units).map(|(dag, _)| dag)
+}
+
+/// [`build_dag`], additionally returning the [`DagStructure`] recorded while
+/// wiring — node origins and per-edge provenance. This is the graph
+/// renderer's entry point: consuming the recorded structure is what keeps
+/// `cook why` from maintaining a second derivation of the wiring rules
+/// (COOK-402).
+pub fn build_dag_traced(
+    recipe_units: Vec<RecipeUnits>,
+) -> Result<(Dag<WorkNode>, DagStructure), EngineError> {
     // ── Plan-time output-collision check ─────────────────────────────────────
     // Accumulate every (canonical_output_path -> {recipe_name, ...}) pair from
     // all CacheMetas across all recipes in the wave. Two recipes that share a
@@ -198,6 +294,12 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
     }
 
     let mut dag = Dag::new();
+
+    // Structural mirror: one origin per DAG node (pushed immediately after
+    // each `add_node`, so indices stay aligned), and every imposed dependency
+    // with the reason it was imposed.
+    let mut origins: Vec<NodeOrigin> = Vec::new();
+    let mut struct_edges: Vec<StructuralEdge> = Vec::new();
 
     // Map from recipe name -> its leaf node ids: normally its final barrier,
     // but forwarded from its own `deps`' leaves when that barrier is empty
@@ -352,11 +454,18 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 .get(key.as_str())
                 .expect("synth_keys filtered on probe_meta_by_key membership");
             let mut deps: Vec<usize> = cross_deps_for_synth.clone();
+            // Record (dep, kind) pairs as they are assembled; resolved into
+            // `struct_edges` once this node's dag id is known.
+            let mut dep_kinds: Vec<(usize, EdgeProvenance)> = cross_deps_for_synth
+                .iter()
+                .map(|&d| (d, EdgeProvenance::Barrier))
+                .collect();
             for upstream in &meta.inputs.requires {
                 if let Some(&id) = synthesised_probe_dag_ids.get(upstream) {
                     if !deps.contains(&id) {
                         deps.push(id);
                     }
+                    dep_kinds.push((id, EdgeProvenance::Probe));
                 }
                 // Upstream that resolves to a body-scope probe in
                 // `probe_unit_index_by_key` cannot be wired here because
@@ -389,6 +498,16 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             let dag_id = dag
                 .add_node(work_node, &deps)
                 .expect("synthesised probe deps originated from prior add_node calls");
+            debug_assert_eq!(origins.len(), dag_id, "origin index drifted from dag id");
+            origins.push(NodeOrigin::SynthProbe {
+                recipe: ru.recipe_name.clone(),
+                probe_key: key.clone(),
+            });
+            struct_edges.extend(
+                dep_kinds
+                    .into_iter()
+                    .map(|(from, kind)| StructuralEdge { from, to: dag_id, kind }),
+            );
             synthesised_probe_dag_ids.insert(key.clone(), dag_id);
         }
 
@@ -472,9 +591,24 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             // Combine within-recipe and cross-recipe deps.
             // Coarse cross-recipe deps only apply to root units (units with no
             // within-recipe deps).
+            //
+            // `dep_kinds` mirrors `all_deps` with the reason each id was
+            // imposed; the within-recipe kind is the consumer's own dep_kind
+            // (a step-group member depends on the prior barrier as a group
+            // entry, everything else as a sequential barrier).
+            let within_kind = match &unit.dep_kind {
+                DepKind::StepGroup(_) => EdgeProvenance::Group,
+                _ => EdgeProvenance::Serial,
+            };
+            let mut dep_kinds: Vec<(usize, EdgeProvenance)>;
             let mut all_deps = if within_deps.is_empty() {
+                dep_kinds = cross_deps
+                    .iter()
+                    .map(|&d| (d, EdgeProvenance::Barrier))
+                    .collect();
                 cross_deps.clone()
             } else {
+                dep_kinds = within_deps.iter().map(|&d| (d, within_kind)).collect();
                 within_deps
             };
 
@@ -484,6 +618,8 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 if *dep_unit_idx == unit_idx {
                     if let Some(terminal_nodes) = recipe_leaves.get(dep_recipe_name) {
                         all_deps.extend(terminal_nodes);
+                        dep_kinds
+                            .extend(terminal_nodes.iter().map(|&d| (d, EdgeProvenance::DepOrder)));
                     }
                 }
             }
@@ -509,6 +645,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                         if !all_deps.contains(&probe_dag_id) {
                             all_deps.push(probe_dag_id);
                         }
+                        dep_kinds.push((probe_dag_id, EdgeProvenance::Probe));
                         wired = true;
                     }
                     // If the probe dag_id isn't known yet (probe declared after consumer
@@ -522,6 +659,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                         if !all_deps.contains(&probe_dag_id) {
                             all_deps.push(probe_dag_id);
                         }
+                        dep_kinds.push((probe_dag_id, EdgeProvenance::Probe));
                     }
                 }
             }
@@ -574,6 +712,16 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             let dag_id = dag
                 .add_node(work_node, &all_deps)
                 .expect("dag_builder produced an out-of-range dep id (bug)");
+            debug_assert_eq!(origins.len(), dag_id, "origin index drifted from dag id");
+            origins.push(NodeOrigin::Unit {
+                recipe: ru.recipe_name.clone(),
+                unit_idx,
+            });
+            struct_edges.extend(
+                dep_kinds
+                    .into_iter()
+                    .map(|(from, kind)| StructuralEdge { from, to: dag_id, kind }),
+            );
 
             // Record dag_id so later units can resolve probe→consumer edges.
             dag_id_by_unit_idx.insert(unit_idx, dag_id);
@@ -628,7 +776,14 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         recipe_leaves.insert(ru.recipe_name.clone(), leaves);
     }
 
-    Ok(dag)
+    // Exact duplicates arise legitimately — a diamond of pass-through
+    // meta-targets forwards the same producer leaf down two dep entries —
+    // and carry no information. Distinct kinds on the same (from, to) pair
+    // are NOT duplicates and both survive (the additive rule).
+    struct_edges.sort();
+    struct_edges.dedup();
+
+    Ok((dag, DagStructure { origins, edges: struct_edges }))
 }
 
 /// A unit is presatisfied (cached) when it has an empty shell command and

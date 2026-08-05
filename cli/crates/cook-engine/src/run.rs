@@ -241,14 +241,10 @@ where
             // only through fine-grained per-unit refs. Those carry their ordering
             // in `dep_edges`; promoting them here would manufacture the coarse
             // whole-recipe barrier the fine reference exists to avoid. Keep the
-            // barrier set to what the recipe actually declared.
-            let declared: std::collections::BTreeSet<&str> =
-                units.deps.iter().map(|s| s.as_str()).collect();
-            u.deps = deps
-                .iter()
-                .filter(|d| declared.contains(d.as_str()))
-                .cloned()
-                .collect();
+            // barrier set to what the recipe actually declared. The filter is
+            // shared with every other closure-stamping call site so `run`,
+            // `why`, and the graph renderer agree on which barriers exist.
+            u.deps = dag_builder::declared_coarse_deps(&units.deps, deps);
         }
         all_units.push(u);
     }
@@ -661,7 +657,7 @@ mod output_warning_tests;
 /// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
 /// every dep present before the dependent recipe is processed. Recipes
 /// missing from `edges` are placed first (no deps known).
-pub(crate) fn toposort_reachable_pub(
+pub fn toposort_reachable_pub(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
 ) -> Result<Vec<String>, EngineError> {

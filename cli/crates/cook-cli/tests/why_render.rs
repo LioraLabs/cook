@@ -3,11 +3,16 @@
 //!
 //! Two load-bearing cases.
 //!
-//! *Fine coverage.* A recipe-level dependency that a module has covered with
-//! per-unit `cook.dep_order` references (CS-0161) does not execute as a
-//! whole-recipe barrier, so reporting one would be a lie — and an expensive
-//! one, since "why is my build serial" is half of what this command exists to
-//! answer.
+//! *The engine's edges.* The graph reports the edges the scheduler imposes,
+//! read off the engine's own DAG builder (CS-0202). That is additive per
+//! CS-0161's shipped design: a declared `requires` renders as a barrier
+//! whether or not `cook.dep_order` also fine-covers the same producer,
+//! because the engine schedules that barrier either way. (An earlier
+//! revision of this module doc claimed the opposite — the withdrawn
+//! fine-covered narrowing rule — and no test ever pinned it; the graph code
+//! that implemented it drifted from the engine, which is COOK-402.) A
+//! producer reached only through fine refs still renders `dep_order`-only:
+//! nothing coarse was declared, so nothing coarse is imposed or shown.
 //!
 //! *One command.* The other half is "what will actually run, and why". Before
 //! CS-0171 those were `cook dag` and `cook why`, and neither could answer the
@@ -543,4 +548,78 @@ fn live_and_historical_causes_are_reported_independently() {
     assert_eq!(unit["last_cause"], "input changed: src.txt", "history: {v}");
     // Distinct keys, both present, neither standing in for the other.
     assert!(!unit["local_cause"].is_null() && !unit["last_cause"].is_null(), "{v}");
+}
+
+// ---------------------------------------------------------------------------
+// CS-0202: the graph reports the engine's edges
+// ---------------------------------------------------------------------------
+
+/// A declared `cook.require_recipe` fine-covered by `cook.dep_order` on the
+/// same producer. The engine keeps the whole-recipe barrier (CS-0161 is
+/// strictly additive), so the graph must render BOTH kinds. Before CS-0202
+/// the barrier was suppressed whenever any unit fine-covered the producer.
+fn additive_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(
+        root,
+        "Cookfile",
+        "recipe producer\n\
+         \x20   cook \"g.txt\" {\n        echo g > g.txt\n    }\n\
+         \n\
+         recipe consumer\n\
+         \x20   cook.require_recipe(\"producer\")\n\
+         \x20   cook \"first.txt\" {\n        echo a > first.txt\n    }\n\
+         \x20   cook.dep_order(\"producer\")\n\
+         \x20   cook \"out.txt\" {\n        echo b > out.txt\n    }\n",
+    );
+}
+
+#[test]
+fn a_declared_barrier_renders_alongside_its_fine_cover() {
+    let tmp = TempDir::new().unwrap();
+    additive_workspace(tmp.path());
+    let out = cook(tmp.path(), &["why", "consumer", "--level", "unit", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let edges = v["edges"].as_array().unwrap();
+    assert!(
+        edges.iter().any(|e| e["kind"] == "barrier"),
+        "the declared require_recipe barrier must render (additive, CS-0161): {v}"
+    );
+    assert!(
+        edges.iter().any(|e| e["kind"] == "dep_order"),
+        "the fine ref must render too: {v}"
+    );
+}
+
+/// A dependency routed through a unit-less meta-target (`recipe middle :
+/// producer` with no body). The engine forwards the producer's leaves through
+/// the empty barrier; before CS-0202 the graph recorded no terminals for the
+/// middle recipe and the dependency vanished from `cook why` entirely.
+#[test]
+fn a_dep_through_a_unit_less_meta_target_is_not_hidden() {
+    let tmp = TempDir::new().unwrap();
+    isolate_shared_cache(tmp.path());
+    write(
+        tmp.path(),
+        "Cookfile",
+        "recipe producer\n\
+         \x20   cook \"g.txt\" {\n        echo g > g.txt\n    }\n\
+         \n\
+         recipe middle: producer\n\
+         \n\
+         recipe consumer: middle\n\
+         \x20   cook \"a.txt\" {\n        echo a > a.txt\n    }\n",
+    );
+    let out = cook(tmp.path(), &["why", "consumer", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let edges = v["edges"].as_array().unwrap();
+    assert!(
+        edges.iter().any(|e| e["from"] == "recipe:producer"
+            && e["to"] == "recipe:consumer"
+            && e["kind"] == "barrier"),
+        "the dep must forward through the unit-less middle to the real \
+         producer: {v}"
+    );
 }

@@ -227,7 +227,11 @@ pub fn explain(
             .ok_or_else(|| crate::EngineError::UnknownRecipe(name.clone()))?;
         let mut u = units.clone();
         if let Some(deps) = edges.get(name) {
-            u.deps = deps.clone();
+            // Same declared-requires filter as `run_inner` (COOK-402): the
+            // closure map merges `orders` in, and stamping those as coarse
+            // deps would give this explanation DAG whole-recipe barriers the
+            // scheduler never imposes.
+            u.deps = dag_builder::declared_coarse_deps(&units.deps, deps);
         }
         all_units.push(u);
     }

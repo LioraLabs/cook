@@ -3070,6 +3070,25 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0202 — `cook why` reports the edges the engine imposes [#changes.cs-0202]
+
+**Date:** 2026-08-05
+**Version:** v0.18
+**Sections affected:** §{exec.cache.why.aggregation} (the reported unit-to-unit edges are the execution DAG's, stated normatively, with the two consequences: declared barriers survive fine coverage; unit-less recipes forward). Reference implementation: `cli/crates/cook-engine/src/dag_builder.rs` (`build_dag_traced` / `DagStructure` / `declared_coarse_deps`), `cli/crates/cook-graph/src/dag_data.rs`. COOK-402.
+
+**Summary.** The graph renderer behind `cook why` derived its structure by hand-mirroring the engine's DAG builder — a second implementation of the barrier, step-group, probe, `dep_order` and dep-list wiring rules, with no agreement test — and it drifted from the engine twice, in both directions:
+
+- It still implemented the fine-covered narrowing rule this Standard withdrew (CS-0161, "Rejected alternative"): a declared `requires` whose producer any unit of the recipe also referenced with `cook.dep_order` was suppressed from the output. The engine schedules that barrier regardless — the shipped design is strictly additive, pinned by `dep_order_does_not_suppress_a_declared_require_recipe_barrier` — so the tool reported parallelism that does not exist, in exactly the "why is my build serial" case the query exists to answer. The suppression was also unfixable where it stood: the closure edge map it branched on merges `requires` with `orders` (names reached only through fine refs), so it could not distinguish an orders-only dependency (correctly barrier-free) from a declared `requires` plus a fine ref (must keep its barrier), and used the recipe's `dep_edges` as a proxy for both.
+- It recorded no terminal units for a recipe whose barrier ends empty, where the engine forwards the recipe's own deps' leaves (leaf pass-through). A dependency routed through a unit-less meta-target (`recipe middle : producer` with no body) therefore vanished from the output entirely — both the coarse and the fine form.
+
+**The fix is structural, not a third derivation.** The engine's builder now records, at the exact points it assembles each node's dependency list, the origin of every node (recipe and unit index, or synthesised probe key) and the provenance of every edge (sequential barrier, group entry, probe consumption, per-unit `dep_order`, whole-recipe barrier), and exposes the recording alongside the DAG it lowers into. The renderer consumes that recording; the mirrored wiring rules are deleted. What remains derived in the renderer is the display layer the execution DAG does not carry — file nodes, declared/discovered input edges, producer→consumer data edges, labels, staleness.
+
+What CS-0170's suppression wanted ("a `barrier` in the output denotes a real whole-recipe barrier") is preserved by construction, in the direction that is true: the coarse dep set handed to the builder is filtered to the recipe's declared `requires` by one shared helper (`declared_coarse_deps`), so an orders-only dependency renders `dep_order`-only because the engine imposes nothing coarser — not because a renderer cancelled an edge an author declared. That entry's fine-covered-suppression paragraph is superseded by this one. The same shared filter also closes a third, quieter drift: the `why` determinant path stamped the merged closure map onto its explanation DAG unfiltered, giving it coarse edges the run path never had.
+
+**Backward compatibility.** `cook why` output only; no grammar, Lua API, or cache observable changes, and no `CACHE_VERSION` bump. The rendered graph gains edges that were wrongly absent (declared-but-fine-covered barriers; dependencies through unit-less targets) and loses none that were rightly present. The wire schema is unchanged in shape (schema 4); consumers see additional edges.
+
+**Conformance.** The query is a tooling affordance and is not conformance-checked (CS-0170 precedent). Pinned by unit tests on both sides of the seam — the engine's recorded structure (provenance per kind, additive barrier, pass-through routing) and the renderer's output over the same shapes — and end-to-end in `why_render.rs`: a declared `require_recipe` fine-covered by `cook.dep_order` renders both kinds; a dependency through a unit-less meta-target reaches the real producer. The e2e module's doc comment had asserted the withdrawn rule as load-bearing while no test exercised it; it now states the additive contract, and the tests exist.
+
 ## CS-0201 — one probe-key grammar, at every site that names one [#changes.cs-0201]
 
 **Date:** 2026-08-01

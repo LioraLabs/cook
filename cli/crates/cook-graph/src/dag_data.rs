@@ -157,118 +157,121 @@ fn file_label(path: &str) -> String {
 
 /// Build the graph from registered `RecipeUnits`.
 ///
-/// Two passes, which is what removing waves buys: pass one emits every
-/// recipe's nodes and intra-recipe edges and records each recipe's terminal
-/// units; pass two wires the cross-recipe edges against those terminals. No
-/// ordering of recipes is needed, so no grouping is needed to establish one.
+/// The unit-to-unit wiring — serial barriers, group entry, probe consumption,
+/// coarse whole-recipe barriers, fine `dep_order` refs, and leaf pass-through
+/// across unit-less meta-targets — is NOT derived here. It is read off
+/// [`cook_engine::dag_builder::build_dag_traced`], the builder the executor
+/// runs, so the graph reports the edges the engine imposes by construction.
+/// This crate used to hand-mirror those rules and drifted twice (COOK-402):
+/// it kept the fine-covered narrowing rule the Standard withdrew (CS-0161,
+/// "Rejected alternative" — the shipped design is strictly additive), and it
+/// dropped every dependency routed through a unit-less meta-target because it
+/// recorded no terminals for an empty barrier.
+///
+/// What remains derived here is the display layer the engine's DAG does not
+/// carry: file nodes, declared/discovered input edges, producer→consumer data
+/// edges, labels, and input staleness.
 pub fn build_dag_data(
     target: &str,
     all_units: &[(String, RecipeUnits)],
     explicit_deps: &BTreeMap<String, Vec<String>>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> DagData {
+) -> Result<DagData, cook_engine::EngineError> {
     let units_by_name: BTreeMap<&str, &RecipeUnits> = all_units
         .iter()
         .map(|(name, ru)| (name.as_str(), ru))
         .collect();
     let recipe_names: Vec<String> = all_units.iter().map(|(n, _)| n.clone()).collect();
 
-    // Pass 1: nodes + intra-recipe edges, collecting per-recipe terminals and
-    // roots for pass 2.
-    let (mut nodes, mut edges, recipe_terminals, recipe_roots) =
-        build_nodes(&recipe_names, &units_by_name, cache_managers);
+    // Display pass: unit and file nodes, plus the data/discovered edges.
+    let (mut nodes, mut edges) = build_nodes(&recipe_names, &units_by_name, cache_managers);
 
-    // Pass 2a: per-unit cross-recipe edges (cook.dep_order / cook.dep_output).
-    for recipe_name in &recipe_names {
-        let Some(ru) = units_by_name.get(recipe_name.as_str()) else {
-            continue;
-        };
-        for (unit_idx, dep_recipe) in &ru.dep_edges {
-            let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
-            let Some(terminals) = recipe_terminals.get(dep_recipe) else {
-                continue;
-            };
-            for terminal in terminals {
-                edges.push(EdgeData {
-                    from: terminal.clone(),
-                    to: unit_id.clone(),
-                    kind: EdgeKind::DepOrder,
-                });
-            }
+    // Structural pass: the engine's own builder, on a slice prepared exactly
+    // the way `run_inner` prepares it — topologically ordered (build_dag's
+    // intra-call `recipe_leaves` accumulator needs every dep walked first)
+    // with coarse deps restricted to the declared `requires` (the closure map
+    // merges `orders` in; see `declared_coarse_deps`).
+    let reachable: BTreeSet<String> = recipe_names.iter().cloned().collect();
+    let mut topo_edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, ru) in all_units {
+        let entry = topo_edges.entry(name.clone()).or_default();
+        if let Some(deps) = explicit_deps.get(name) {
+            entry.extend(deps.iter().cloned());
         }
+        entry.extend(ru.deps.iter().cloned());
+        entry.extend(ru.dep_edges.iter().map(|(_, dep)| dep.clone()));
     }
+    let topo = cook_engine::run::toposort_reachable_pub(&topo_edges, &reachable)?;
+    let slice: Vec<RecipeUnits> = topo
+        .iter()
+        .map(|name| {
+            let ru = units_by_name
+                .get(name.as_str())
+                .expect("topo order is a permutation of all_units");
+            let mut u = (*ru).clone();
+            // The engine reports origins under `recipe_name`; the display
+            // nodes above are keyed by the workspace name. Force agreement.
+            u.recipe_name = name.clone();
+            if let Some(deps) = explicit_deps.get(name) {
+                u.deps = cook_engine::dag_builder::declared_coarse_deps(&ru.deps, deps);
+            }
+            u
+        })
+        .collect();
+    let (_dag, structure) = cook_engine::dag_builder::build_dag_traced(slice)?;
 
-    // Pass 2b: whole-recipe edges, for each explicit dep A -> B, connecting
-    // the terminals of B to the roots of A.
-    //
-    // Only where the dependency is NOT already fine-covered. A recipe-level
-    // `requires` edge that a module has covered with per-unit `cook.dep_order`
-    // references (CS-0161) does not execute as a whole-recipe barrier — the
-    // consumer's units are free to run in one flat wave with the upstream's,
-    // and only the units that named the upstream actually wait. Those fine
-    // edges are already in the graph, emitted by pass 2a above.
-    //
-    // Emitting the coarse edge anyway would be worse than redundant: it
-    // outnumbers the fine edges (one per consumer root, so ~1685 to 1 on a
-    // large C++ target) and, once aggregated, would mask them entirely — the
-    // tool would report a barrier that the engine does not impose. So the
-    // coarse edge is emitted only when nothing fine-covers it, which makes its
-    // presence meaningful: a `barrier` in the output is a real whole-recipe
-    // barrier, and the absence of one is a dependency that was fine-covered.
-    for (recipe, deps) in explicit_deps {
-        let Some(roots) = recipe_roots.get(recipe) else {
+    for e in &structure.edges {
+        // Probes synthesised from register-block metadata have no captured
+        // unit and therefore no display node; edges touching them are not
+        // renderable yet. (Follow-up candidate: give them nodes.)
+        let (Some(from), Some(to)) = (
+            origin_node_id(&structure.origins[e.from]),
+            origin_node_id(&structure.origins[e.to]),
+        ) else {
             continue;
         };
-        let fine_covered: BTreeSet<&str> = units_by_name
-            .get(recipe.as_str())
-            .map(|ru| ru.dep_edges.iter().map(|(_, dep)| dep.as_str()).collect())
-            .unwrap_or_default();
-        for dep in deps {
-            if fine_covered.contains(dep.as_str()) {
-                continue;
-            }
-            let Some(terminals) = recipe_terminals.get(dep) else {
-                continue;
-            };
-            for terminal in terminals {
-                for root in roots {
-                    edges.push(EdgeData {
-                        from: terminal.clone(),
-                        to: root.clone(),
-                        // An explicit dep-list edge between recipes: every unit
-                        // of the consumer waits for every unit of the referent.
-                        kind: EdgeKind::Barrier,
-                    });
-                }
-            }
-        }
+        edges.push(EdgeData { from, to, kind: edge_kind(e.kind) });
     }
 
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
-    DagData {
+    Ok(DagData {
         schema_version: DAG_SCHEMA_VERSION,
         target: target.to_string(),
         recipes: recipe_names,
         nodes,
         edges,
+    })
+}
+
+/// The display node id for an engine node origin, or `None` for node kinds
+/// the viewer does not render.
+fn origin_node_id(origin: &cook_engine::dag_builder::NodeOrigin) -> Option<String> {
+    use cook_engine::dag_builder::NodeOrigin;
+    match origin {
+        NodeOrigin::Unit { recipe, unit_idx } => Some(format!("unit:{recipe}:{unit_idx}")),
+        NodeOrigin::SynthProbe { .. } => None,
     }
 }
 
-/// Pass 1: emit every recipe's nodes and intra-recipe edges.
-///
-/// Returns the nodes, the intra-recipe edges, and per-recipe terminal and
-/// root unit IDs for pass 2 to wire cross-recipe edges against.
-#[allow(clippy::type_complexity)]
+fn edge_kind(kind: cook_engine::dag_builder::EdgeProvenance) -> EdgeKind {
+    use cook_engine::dag_builder::EdgeProvenance;
+    match kind {
+        EdgeProvenance::Serial => EdgeKind::Serial,
+        EdgeProvenance::Group => EdgeKind::Group,
+        EdgeProvenance::Probe => EdgeKind::Probe,
+        EdgeProvenance::DepOrder => EdgeKind::DepOrder,
+        EdgeProvenance::Barrier => EdgeKind::Barrier,
+    }
+}
+
+/// Display pass: emit every recipe's unit and file nodes, plus the data and
+/// discovered edges. Unit-to-unit wiring is the engine's (`build_dag_traced`)
+/// and is deliberately absent here.
 fn build_nodes(
     recipe_names: &[String],
     units_by_name: &BTreeMap<&str, &RecipeUnits>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> (
-    Vec<NodeData>,
-    Vec<EdgeData>,
-    BTreeMap<String, Vec<String>>,
-    BTreeMap<String, Vec<String>>,
-) {
+) -> (Vec<NodeData>, Vec<EdgeData>) {
     let mut nodes: Vec<NodeData> = Vec::new();
     let mut edges: Vec<EdgeData> = Vec::new();
 
@@ -307,11 +310,6 @@ fn build_nodes(
         }
     }
 
-    // Per-recipe terminal unit node IDs (final barrier after processing units).
-    let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Per-recipe root unit node IDs (first barrier encountered).
-    let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
     for recipe_name in recipe_names {
         let Some(ru) = units_by_name.get(recipe_name.as_str()) else {
             continue;
@@ -330,30 +328,8 @@ fn build_nodes(
             cook_engine::run::recipe_cache_index_name(ru, recipe_name);
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
-        // Probe key → unit id index. Used to wire probe→consumer edges from
-        // each unit's `probes` field (mirrored from `inputs.requires` /
-        // `needs`). The engine's dag_builder does the equivalent wiring in
-        // `probe_unit_index_by_key`. Without this, the viewer would lose
-        // probe-to-consumer edges once probes stop participating in the
-        // sequential barrier below.
-        let probe_unit_id_by_key: BTreeMap<String, String> = ru
-            .units
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, u)| match &u.payload {
-                WorkPayload::Probe { key, .. } => {
-                    Some((key.clone(), format!("unit:{}:{}", recipe_name, idx)))
-                }
-                _ => None,
-            })
-            .collect();
-
-        let mut barrier: Vec<String> = Vec::new();
-        let mut recipe_root_recorded = false;
-
         for (unit_idx, unit) in ru.units.iter().enumerate() {
             let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
-            let is_probe = matches!(unit.payload, WorkPayload::Probe { .. });
 
             // --- Command label ---
             // CS-0191: test-ness is the unit's, not the payload's. Prefixing
@@ -551,102 +527,10 @@ fn build_nodes(
                 }
             }
 
-            // --- Probe → consumer edges (from this unit's `probes` field) ---
-            // Mirror of the engine's CapturedUnit.probes wiring. Works for
-            // any consumer kind (including a probe whose `inputs.requires`
-            // names another probe in the same recipe).
-            for req_key in &unit.probes {
-                if let Some(probe_uid) = probe_unit_id_by_key.get(req_key) {
-                    edges.push(EdgeData {
-                        from: probe_uid.clone(),
-                        to: unit_id.clone(),
-                        kind: EdgeKind::Probe,
-                    });
-                }
-            }
-
-            // --- Barrier / intra-recipe unit→unit edges ---
-            // Probes never read or advance the barrier (mirrors dag_builder.rs):
-            // they are pure fact-gathering, ordered only via `inputs.requires`.
-            if is_probe {
-                // Still record the recipe root if we haven't yet, so the
-                // recipe has a reasonable entry point.
-                if !recipe_root_recorded {
-                    recipe_roots
-                        .entry(recipe_name.clone())
-                        .or_insert_with(|| vec![unit_id.clone()]);
-                    recipe_root_recorded = true;
-                }
-                continue;
-            }
-            match &unit.dep_kind {
-                DepKind::Sequential => {
-                    for b in &barrier {
-                        edges.push(EdgeData {
-                            from: b.clone(),
-                            to: unit_id.clone(),
-                            kind: EdgeKind::Serial,
-                        });
-                    }
-                    barrier = vec![unit_id.clone()];
-                }
-                DepKind::StepGroup(gi) => {
-                    let group = &ru.step_groups[*gi];
-                    let is_first = group.first() == Some(&unit_idx);
-                    if is_first {
-                        for b in &barrier {
-                            for &member_idx in group {
-                                let member_id =
-                                    format!("unit:{}:{}", recipe_name, member_idx);
-                                edges.push(EdgeData {
-                                    from: b.clone(),
-                                    to: member_id,
-                                    kind: EdgeKind::Group,
-                                });
-                            }
-                        }
-                    }
-                    let is_last = group.last() == Some(&unit_idx);
-                    if is_last {
-                        barrier = group
-                            .iter()
-                            .map(|&idx| format!("unit:{}:{}", recipe_name, idx))
-                            .collect();
-                    }
-                }
-                // `DepKind` is `#[non_exhaustive]`; render unknown future
-                // variants as a fresh sequential edge so the viewer stays
-                // structurally honest.
-                _ => {
-                    for b in &barrier {
-                        edges.push(EdgeData {
-                            from: b.clone(),
-                            to: unit_id.clone(),
-                            kind: EdgeKind::Serial,
-                        });
-                    }
-                    barrier = vec![unit_id.clone()];
-                }
-            }
-
-            // Issue 1: Record recipe root AFTER the dep_kind match updates the
-            // barrier, so StepGroup-first recipes capture all group members.
-            if !recipe_root_recorded && !barrier.is_empty() {
-                recipe_roots
-                    .entry(recipe_name.clone())
-                    .or_insert(barrier.clone());
-                recipe_root_recorded = true;
-            }
         }
-
-        // Terminal nodes for this recipe = final barrier.
-        if !barrier.is_empty() {
-            recipe_terminals.insert(recipe_name.clone(), barrier);
-        }
-
     }
 
-    (nodes, edges, recipe_terminals, recipe_roots)
+    (nodes, edges)
 }
 
 /// Check whether a file is modified relative to its cached record.

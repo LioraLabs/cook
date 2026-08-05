@@ -142,7 +142,7 @@ fn independent_probes_have_no_edges_between_them() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("game", &all_units, &explicit, &cms);
+    let g = build_dag_data("game", &all_units, &explicit, &cms).unwrap();
     let edges = &g.edges;
     // No edge between the two independent probes.
     let probe_to_probe = edges.iter().any(|e| {
@@ -192,7 +192,7 @@ fn build_dag_data_emits_discovered_file_nodes() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
     let nodes = &g.nodes;
     let by_id = |id: &str| nodes.iter().find(|n| n.id == id);
 
@@ -310,7 +310,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
     // shared.h is declared by one unit and discovered by the other; the
     // declared classification wins regardless of processing order.
@@ -346,7 +346,7 @@ fn missing_depfile_does_not_panic_or_emit_discovered() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
     
     // Declared file is present; no discovered nodes.
@@ -370,7 +370,7 @@ fn malformed_depfile_does_not_panic_or_emit_discovered() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
     
     assert!(g.nodes.iter().any(|n| n.id == "file:bar.cpp"));
@@ -476,7 +476,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
-    let g = build_dag_data("build", &all_units, &explicit, &cms);
+    let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
     // Across whatever wave layout the grouper picks, no `file:a.o` ever
     // appears — a.o is a unit output, not a source file.
@@ -584,7 +584,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
     let mut cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
     cms.insert("rust.build".into(), Arc::new(mgr));
 
-    let g = build_dag_data("rust.build", &all_units, &explicit, &cms);
+    let g = build_dag_data("rust.build", &all_units, &explicit, &cms).unwrap();
 
     let file = g
         .nodes
@@ -607,4 +607,167 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
         .find(|n| n.id == "unit:rust.build:0")
         .expect("unit node missing");
     assert_eq!(unit.cache_key.as_deref(), Some("k1"));
+}
+
+// ---------------------------------------------------------------------------
+// COOK-402: structural edges are the engine's, not a re-derivation
+// ---------------------------------------------------------------------------
+
+fn bare_unit(cmd: &str) -> CapturedUnit {
+    CapturedUnit {
+        payload: WorkPayload::Shell { cmd: cmd.into(), line: 1 },
+        cache_meta: None,
+        dep_kind: DepKind::Sequential,
+        probes: vec![],
+        unit_env_vars: Default::default(),
+        member: None,
+        output_paths: Vec::new(),
+        test_name: None,
+    }
+}
+
+fn bare_recipe(name: &str, deps: &[&str], units: Vec<CapturedUnit>) -> (String, RecipeUnits) {
+    (
+        name.into(),
+        RecipeUnits {
+            recipe_name: name.into(),
+            deps: deps.iter().map(|s| s.to_string()).collect(),
+            units,
+            step_groups: vec![],
+            working_dir: std::path::PathBuf::from("/"),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        },
+    )
+}
+
+fn kinds_between<'a>(g: &'a DagData, from: &str, to: &str) -> Vec<EdgeKind> {
+    g.edges
+        .iter()
+        .filter(|e| e.from == from && e.to == to)
+        .map(|e| e.kind)
+        .collect()
+}
+
+fn edge_list(g: &DagData) -> String {
+    g.edges
+        .iter()
+        .map(|e| format!("{} -> {} [{}]", e.from, e.to, e.kind.label()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Bug 1 regression (the withdrawn CS-0161 narrowing rule). A recipe that
+/// DECLARES `requires` keeps its whole-recipe barrier in the graph whether or
+/// not a unit also fine-covers the same producer — the engine schedules that
+/// barrier (`dep_order_does_not_suppress_a_declared_require_recipe_barrier`
+/// in cook-engine), so hiding it reported parallelism that does not exist.
+#[test]
+fn a_declared_requires_barrier_survives_fine_coverage() {
+    let producer = bare_recipe("producer", &[], vec![bare_unit("make gen")]);
+    let (name, mut ru) = bare_recipe(
+        "consumer",
+        &["producer"],
+        vec![bare_unit("cp src first"), bare_unit("cp gen out")],
+    );
+    ru.dep_edges = vec![(1, "producer".into())];
+
+    let all_units = vec![producer, (name, ru)];
+    let explicit: BTreeMap<String, Vec<String>> = [
+        ("producer".to_string(), vec![]),
+        ("consumer".to_string(), vec!["producer".to_string()]),
+    ]
+    .into();
+    let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+    let g = build_dag_data("consumer", &all_units, &explicit, &cms).unwrap();
+
+    assert!(
+        kinds_between(&g, "unit:producer:0", "unit:consumer:0").contains(&EdgeKind::Barrier),
+        "declared requires must render as a barrier even when fine-covered: {}",
+        edge_list(&g)
+    );
+    assert!(
+        kinds_between(&g, "unit:producer:0", "unit:consumer:1").contains(&EdgeKind::DepOrder),
+        "the fine ref renders too (additive): {}",
+        edge_list(&g)
+    );
+}
+
+/// The case the suppression was FOR, now handled by construction: a producer
+/// reached only through fine-grained refs (`orders` in the closure map, no
+/// dep-list entry) imposes no whole-recipe barrier, so none is rendered. The
+/// old code could not tell this apart from a declared-requires-plus-dep_order
+/// recipe because the analyzer merges both into one edge map.
+#[test]
+fn an_orders_only_dep_renders_dep_order_and_no_barrier() {
+    let producer = bare_recipe("producer", &[], vec![bare_unit("make gen")]);
+    let (name, mut ru) = bare_recipe(
+        "consumer",
+        &[],
+        vec![bare_unit("cp src first"), bare_unit("cp gen out")],
+    );
+    ru.dep_edges = vec![(1, "producer".into())];
+
+    let all_units = vec![producer, (name, ru)];
+    // The closure map carries the orders-derived name; the recipe declares
+    // nothing. This is exactly what `cook-plan::dependency_edges` hands over.
+    let explicit: BTreeMap<String, Vec<String>> = [
+        ("producer".to_string(), vec![]),
+        ("consumer".to_string(), vec!["producer".to_string()]),
+    ]
+    .into();
+    let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+    let g = build_dag_data("consumer", &all_units, &explicit, &cms).unwrap();
+
+    assert!(
+        !g.edges.iter().any(|e| e.kind == EdgeKind::Barrier),
+        "an orders-only dependency must not render a whole-recipe barrier: {}",
+        edge_list(&g)
+    );
+    assert!(
+        kinds_between(&g, "unit:producer:0", "unit:consumer:1").contains(&EdgeKind::DepOrder),
+        "{}",
+        edge_list(&g)
+    );
+    assert!(
+        kinds_between(&g, "unit:producer:0", "unit:consumer:0").is_empty(),
+        "the non-referencing root unit waits on nothing: {}",
+        edge_list(&g)
+    );
+}
+
+/// Bug 2 regression. A dependency routed through a unit-less meta-target
+/// (`recipe middle : producer` with no body) must not vanish: the engine's
+/// leaf pass-through forwards the producer's leaves, and the graph now reads
+/// the same edges.
+#[test]
+fn a_dep_through_a_unit_less_meta_target_reaches_the_real_producer() {
+    let producer = bare_recipe("producer", &[], vec![bare_unit("make gen")]);
+    let middle = bare_recipe("middle", &["producer"], vec![]);
+    let (name, mut ru) = bare_recipe("consumer", &["middle"], vec![bare_unit("use gen")]);
+    ru.dep_edges = vec![(0, "middle".into())];
+
+    let all_units = vec![producer, middle, (name, ru)];
+    let explicit: BTreeMap<String, Vec<String>> = [
+        ("producer".to_string(), vec![]),
+        ("middle".to_string(), vec!["producer".to_string()]),
+        ("consumer".to_string(), vec!["middle".to_string()]),
+    ]
+    .into();
+    let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+    let g = build_dag_data("consumer", &all_units, &explicit, &cms).unwrap();
+
+    let kinds = kinds_between(&g, "unit:producer:0", "unit:consumer:0");
+    assert!(
+        kinds.contains(&EdgeKind::Barrier),
+        "the coarse dep must forward through the unit-less middle: {}",
+        edge_list(&g)
+    );
+    assert!(
+        kinds.contains(&EdgeKind::DepOrder),
+        "the fine ref must forward through the unit-less middle: {}",
+        edge_list(&g)
+    );
 }
