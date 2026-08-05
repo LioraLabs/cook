@@ -2,14 +2,12 @@
 name = "cook-engine"
 version.workspace = true
 edition = "2021"
-description = "Build pipeline orchestrator for the Cook build system"
+description = "Walks the work-unit DAG, deciding per unit whether the cache already holds the answer"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
 cook-shell = { path = "../cook-shell" }
 cook-probe = { path = "../cook-probe" }
-cook-lang = { path = "../cook-lang" }
-cook-luagen = { path = "../cook-luagen" }
 cook-register = { path = "../cook-register" }
 cook-dag = { path = "../cook-dag" }
 cook-luaotp = { path = "../cook-luaotp" }
@@ -17,9 +15,7 @@ cook-cache = { path = "../cook-cache" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 thiserror = "2"
 globset = "0.4"
-dotenvy = "0.15"
 tempfile = "3"
-pathdiff = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

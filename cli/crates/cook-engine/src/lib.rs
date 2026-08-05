@@ -1,15 +1,14 @@
-//! cook-engine — build pipeline orchestrator for the Cook build system.
+//! cook-engine — the walk of one work-unit DAG for the Cook build system.
 //!
-//! Drives the recipe DAG, calls cook-register per wave, evaluates cache,
-//! builds work-unit DAGs, and feeds ready nodes to cook-luaotp.
+//! Takes a fully-built `RegisteredWorkspace` (produced by `cook-plan`),
+//! builds the unified work-unit DAG, decides for every unit whether the
+//! cache already holds the answer, and feeds ready nodes to cook-luaotp.
 
 pub mod affected;
-pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
 pub mod id;
 pub mod observations;
-pub mod pipeline;
 pub mod reconcile;
 pub mod run;
 mod seal;

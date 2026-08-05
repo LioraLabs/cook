@@ -3,7 +3,7 @@
 `cook-engine` walks one work-unit DAG, deciding for every unit on it whether
 the cache already holds the answer before spending anything to produce it.
 
-That is the one thing. It is not the only thing in this directory; see
+That is the one thing. It is not quite the only thing in this directory; see
 [What else lives here](#what-else-lives-here), which is the honest part of
 this file.
 
@@ -72,12 +72,17 @@ this file.
 
 ## What it does not do
 
-It does not parse a Cookfile, generate its Lua, or run register-phase Lua:
-those are `cook-lang`, `cook-luagen`, and `cook-register`. It does not own a
-worker VM (`cook-luaotp`), a cache backend or store layout (`cook-cache`), the
-fingerprint and key law (`cook-fingerprint`), or a process spawn (`cook-shell`).
-It defines no contracts; `CacheMeta`, `WorkPayload`, `Sharing`, and the
-cacheability classification are `cook-contracts`.
+It does not plan. Turning an invocation (a cwd, a target, some flags) into
+the `RegisteredWorkspace` and recipe edge map this crate consumes is
+`cook-plan` (COOK-419), and this crate does not depend on it — the handoff
+type lives in `cook-register`, the stratum both share. Consequently it never
+parses a Cookfile or generates its Lua: `cook-lang` and `cook-luagen` are not
+in its dependency set at all. It does not own a worker VM (`cook-luaotp`), a
+cache backend or store layout (`cook-cache`), or a process spawn
+(`cook-shell`). It defines no contracts; `CacheMeta`, `WorkPayload`,
+`Sharing`, the cacheability classification, and the fingerprint and key law
+are `cook-contracts` (with the store-side half in `cook-cache` since
+COOK-418 dissolved `cook-fingerprint`).
 
 It does not render. It emits `EngineEvent` and the CLI translates. `NodeKind`
 and `RecipeKind` are deliberate engine-side mirrors of the `cook-progress`
@@ -89,28 +94,24 @@ diagnostics wording belong to `cook-cli`.
 
 ## What else lives here
 
-Stating the one thing above required ignoring three quarters of the directory.
-The dependency edges have already cut the seam; only the `Cargo.toml` has not
-caught up. `cook-lang` and `cook-luagen` are reached from `pipeline/*` and
-`analyzer.rs` and from nowhere else in the crate. `cook-luaotp`, `cook-probe`,
-and `cook-shell` are never reached from either of those. Four crates share one
-manifest:
+COOK-419 cut this section down. The plan (`pipeline/*`, `analyzer`) is
+`cook-plan` now, the dead `recipe_dag` wave scheduler is deleted (COOK-423),
+and what remains beyond the walk is deliberate:
 
-| Piece | Modules | LoC | Its one thing |
-|---|---|---:|---|
-| The walk | `executor`, `run`, `dag_builder`, `seal`, `reconcile`, `id`, `registered_workspace`, `lib` | 6,541 | the statement at the top of this file |
-| The plan | `pipeline/*`, `analyzer` | 2,439 | turn an invocation (a cwd, a target, some flags) into a `RegisteredWorkspace` and a recipe-level edge map |
-| The query | `why`, `observations`, `verify` | 1,094 | answer what a build *would* do, and whether what it recorded was true, without being the build |
-| The selection | `affected/*` | 281 | intersect a recipe closure with what `git` says changed |
+| Piece | Modules | Its one thing |
+|---|---|---|
+| The query | `why`, `observations` | answer what a build *would* do without being the build |
+| The selection | `affected/*` | intersect a recipe closure with what `git` says changed |
 
-`recipe_dag` (92 LoC) is a fifth thing that is nothing: the wave scheduler
-SHI-222 Phase 4 retired. Nothing outside its own unit tests has referenced it
-since.
+`verify` is not on that list because it is not a query: `cook cache verify`
+re-runs a unit in a sandbox to check the record reproduces. It spends work;
+it is an experiment, and it stays with the walk.
 
-The split is not cosmetic. The query surface re-derives the walk's cache
-decision in a second implementation, on purpose, because it must answer without
-executing: `why::local_step_hit` reconstructs the glob-output substitution that
-`check_node_cache` performs, and cites it by a line number that has since moved.
-Under the `cook-contracts` deliberate-copy protocol that copy owes an agreement
-test, and does not have one. Living in the same crate is what has kept the two
-close enough to notice; it is not what keeps them equal.
+The query stays in this crate on purpose. Since COOK-401 both the walk and
+`cook why` reach the cache verdict through one shared observation query, but
+`why` still re-derives adjacent plumbing around it; a crate boundary between
+the two implementations of one decision would freeze the remaining
+duplication instead of exposing it. When that residue is gone the query can
+move (likely to `cook-graph`), and the boundary will be real rather than
+declared. The selection (`affected/*`, ~280 lines) is a module, not a crate;
+it stays until it earns an edge of its own.

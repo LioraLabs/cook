@@ -13,6 +13,7 @@ members = [
     "crates/cook-luaotp",
     "crates/cook-register",
     "crates/cook-engine",
+    "crates/cook-plan",
     "crates/cook-graph",
     "crates/cook-logs",
     "crates/cook-cli",

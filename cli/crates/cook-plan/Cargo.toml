@@ -1,0 +1,17 @@
+[package]
+name = "cook-plan"
+version.workspace = true
+edition = "2021"
+description = "Turns a cook invocation into a RegisteredWorkspace plus a recipe edge map"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+cook-lang = { path = "../cook-lang" }
+cook-luagen = { path = "../cook-luagen" }
+cook-register = { path = "../cook-register" }
+cook-cache = { path = "../cook-cache" }
+thiserror = "2"
+pathdiff = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

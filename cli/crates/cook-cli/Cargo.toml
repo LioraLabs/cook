@@ -13,13 +13,16 @@ name = "cook_cli"
 path = "src/lib.rs"
 
 [dependencies]
-# cook-cli is the thin CLI shell. Heavy lifting (parse, workspace, registry
-# assembly, dep inference, execution) lives in cook-engine; cook-cli depends
-# only on what it needs to render progress, watch files, and dispatch. Other
-# crates are reached transitively through cook-engine's public API.
+# cook-cli is the thin CLI shell. Heavy lifting lives one layer down:
+# cook-plan turns the invocation into a RegisteredWorkspace plus a recipe
+# edge map (parse, workspace, register phase), and cook-engine walks the
+# work-unit DAG that results. cook-cli depends only on what it needs to
+# render progress, watch files, and dispatch. Other crates are reached
+# transitively through those crates' public APIs.
 cook-lang = { path = "../cook-lang" }
 cook-contracts = { path = "../cook-contracts" }
 cook-progress = { path = "../cook-progress" }
+cook-plan = { path = "../cook-plan" }
 cook-engine = { path = "../cook-engine" }
 cook-logs = { path = "../cook-logs" }
 cook-graph = { path = "../cook-graph" }

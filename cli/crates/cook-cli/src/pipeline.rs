@@ -1,7 +1,7 @@
-//! CLI dispatch: thin wrappers around `cook_engine::pipeline` orchestration.
+//! CLI dispatch: thin wrappers around `cook_plan` orchestration.
 //!
 //! Heavy lifting (parse, workspace load, registry assembly, dep inference)
-//! lives in `cook_engine::pipeline`. This module owns CLI-specific glue:
+//! lives in `cook_plan`. This module owns CLI-specific glue:
 //!   * mapping `menu` / `init` / `serve` / `dag` subcommands to the right
 //!     engine entry point
 //!   * bridging `cook_engine::EngineEvent` to `cook_progress::ProgressEvent`
@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{OnceLock, mpsc};
 
 use cook_contracts::CommandFailure;
-use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, RegisterMode, Workspace};
+use cook_plan::{self as pipeline, ParsedCookfile, PipelineError, RegisterMode, Workspace};
 use cook_engine::RegisteredWorkspace;
 
 use crate::cli::Globals;
@@ -28,7 +28,7 @@ use crate::watcher::CookWatcher;
 // Error mapping
 // ---------------------------------------------------------------------------
 
-/// Map `cook_engine::pipeline::PipelineError` onto `CookError` for the CLI's
+/// Map `cook_plan::PipelineError` onto `CookError` for the CLI's
 /// exit-code classification.
 fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
     match e {
@@ -634,7 +634,7 @@ fn no_publish_enabled(globals: &Globals) -> bool {
 /// engine takes responsibility for the topological order downstream.
 fn run_with_progress(
     globals: &Globals,
-    recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
+    recipe_infos: &BTreeMap<String, cook_plan::analyzer::RecipeInfo>,
     targets: &[String],
     registered_workspace: &RegisteredWorkspace,
     num_jobs: usize,
@@ -644,12 +644,12 @@ fn run_with_progress(
     // Recipe-level dependency edges across the reachable closure. The engine
     // toposorts internally; we just need a complete edge map keyed by every
     // reachable recipe name.
-    let mut edges = cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(
+    let mut edges = cook_plan::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(
         |e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+            cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
                 CookError::RecipeNotFound(name)
             }
             other => CookError::Other(other.to_string()),
@@ -1131,12 +1131,12 @@ pub fn cmd_test(
             .cloned()
             .collect(),
         Some(TestScope::Recipe(name)) => {
-            cook_engine::analyzer::dependency_edges(&recipe_infos, name)
+            cook_plan::analyzer::dependency_edges(&recipe_infos, name)
                 .map_err(|e| match e {
-                    cook_engine::analyzer::GraphError::CycleDetected(s) => {
+                    cook_plan::analyzer::GraphError::CycleDetected(s) => {
                         crate::error::CookError::Other(format!("dependency cycle involving: {s}"))
                     }
-                    cook_engine::analyzer::GraphError::UnknownRecipe(s) => {
+                    cook_plan::analyzer::GraphError::UnknownRecipe(s) => {
                         crate::error::CookError::RecipeNotFound(s)
                     }
                     other => crate::error::CookError::Other(other.to_string()),
@@ -1220,15 +1220,15 @@ pub fn cmd_test(
         // gets `finish` called below with an empty slice.
         Vec::new()
     } else {
-        let edges = cook_engine::analyzer::dependency_edges_multi(
+        let edges = cook_plan::analyzer::dependency_edges_multi(
             &recipe_infos,
             &candidate_recipe_names,
         )
         .map_err(|e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+            cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 crate::error::CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
                 crate::error::CookError::RecipeNotFound(name)
             }
             other => crate::error::CookError::Other(other.to_string()),
@@ -1736,11 +1736,11 @@ pub fn cmd_serve(
 
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&serve_registered);
     let order =
-        cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+        cook_plan::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
+            cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
                 CookError::RecipeNotFound(name)
             }
             // Io/Parse cannot be produced by topological_sort (pure graph op).
@@ -1908,12 +1908,12 @@ fn resolve_reachable_closure(
     targets: &[String],
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeSet<String>), CookError> {
     let recipe_infos = pipeline::build_recipe_infos_from_registered(registered);
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, targets).map_err(
+    let edges = cook_plan::analyzer::dependency_edges_multi(&recipe_infos, targets).map_err(
         |e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+            cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
                 CookError::RecipeNotFound(name)
             }
             other => CookError::Other(other.to_string()),

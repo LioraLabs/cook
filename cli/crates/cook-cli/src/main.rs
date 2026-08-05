@@ -78,7 +78,7 @@ fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookE
         return Ok(()); // nearest Cookfile is cwd — identical to today
     }
     let cwd = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
-    let found = cook_engine::pipeline::discover_entry_cookfile(
+    let found = cook_plan::discover_entry_cookfile(
         &cwd,
         cli.globals.root.as_deref(),
     )
