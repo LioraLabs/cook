@@ -28,7 +28,7 @@ Until CS-0188 this section said only that "stderr is streamed to the worker's st
 
 A conforming implementation MUST configure `package.path` and `package.cpath` for the calling Lua VM such that sub-requires within a multi-file module resolve against the project's `cook_modules/` search paths rather than the host system's Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during `cook.load_module` evaluation. [amended CS-0066]
 
-When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phase implementation MUST honour the same four-path resolution order used at register phase. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069] In the reference implementation both phases probe the ONE candidate list and compose `package.path`/`package.cpath` through the ONE composer in `cook_contracts::layout` (COOK-393), so the agreement is structural rather than manually mirrored (informative).
+When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phase implementation MUST honour the same four-path resolution order used at register phase. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069] In the reference implementation both phases probe the ONE candidate list and compose `package.path`/`package.cpath` through the ONE composer in `cook_contracts::layout` (COOK-393), and since CS-0203 the whole loader sequence around them — memoisation and cycle detection keyed by `(working_dir, name)` per §{mods.lifecycle}, resolution, `init()`, and the diagnostics — is likewise one implementation (`cook-lua-stdlib`) installed on both VMs, so the agreement is structural rather than manually mirrored (informative).
 
 A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path(s) that were searched.
 
@@ -77,7 +77,7 @@ The config body writes the sink; the top-level module call reads the same names 
 ### 24.4.1. `cook.probes.get` [#lua.cook-probes-get]
 **Signature.** `cook.probes.get(key: string) -> any`
 
-On the execute-phase VM, `cook.probes.get(key)` MUST read from the per-run probe-value store specified in §{cat.probes.exec}. The store is populated by completed probe units in topological order before any consuming unit dispatches. An unknown key returns `nil`. `cook.probes.set` is NOT available on the execute-phase VM (deprecated entirely per CS-0074).
+On the execute-phase VM, `cook.probes.get(key)` MUST read from the per-run probe-value store specified in §{cat.probes.exec}. The store is populated by completed probe units in topological order before any consuming unit dispatches. A key absent from the store MUST raise §{cat.probes.exec}'s unmaterialised-read error (CS-0152); a key that IS materialised whose canonical value is `null` reads as Lua `nil` with no error. [This sentence said "an unknown key returns `nil`" until CS-0203 — the nil-on-miss rule CS-0152 had already withdrawn where it is normatively specified.] `cook.probes.set` is NOT available on the execute-phase VM (deprecated entirely per CS-0074).
 
 On the register-phase VM, `cook.probes.get(key)` returns the value previously stored under `key` via `cook.probes.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.probes.set`.
 
@@ -95,9 +95,11 @@ A register-phase write MUST be persisted by the implementation in a way that sur
 ### 24.4.3. `cook.probes.scope` [#lua.cook-probes-scope]
 **Signature.** `cook.probes.scope(label: string) -> table`
 
-> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Not available on the execute-phase VM; full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
+> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
 
-Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.probes.get(label .. ":" .. key)` and `cook.probes.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
+Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.probes.get(label .. ":" .. key)` and `cook.probes.set(label .. ":" .. key, value)` respectively — on whichever VM the view was created, with that phase's `get`/`set` semantics and restrictions (§{lua.cook-probes-get}, §{lua.cook-probes-set}). In particular, a scoped `set` on the execute-phase VM raises exactly as the unscoped form does, and a scoped `get` there reads the per-run store and reports the full prefixed `label:key` in the §{cat.probes.exec} unmaterialised-read error (CS-0152). The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
+
+`cook.probes.scope` MUST be available on both VMs. [CS-0203. The deprecation banner above claimed "not available on the execute-phase VM" while §{cat.probes.exec} normatively described the execute-phase scoped `get`; the reference implementation meanwhile had the inversion — `scope` installed on the execute VM and absent from the register VM, where the scoped pattern this section defines died with a nil-call error. Both the banner and the implementation were wrong in opposite directions; conformance fixture `37-register-probes-scope` pins the register side, and the label rule above is now enforced on both.]
 
 Scopes are conventionally named after the module that owns them (e.g. `cook_cc:toolchain`, `cook_cc:find:raylib`) to prevent key collisions between modules.
 

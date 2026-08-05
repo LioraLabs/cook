@@ -1,0 +1,10 @@
+[[run]]
+args = ["scope_ok"]
+[run.assert]
+output_contains = ["scoped value: clang-lawful"]
+
+[[run]]
+args = ["-f", "Cookfile.badlabel", "scope_bad"]
+exit = 1
+[run.assert]
+output_contains = ["cook.probes.scope: label 'a:b' must not contain ':'"]
