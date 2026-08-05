@@ -75,9 +75,13 @@ this file.
 It does not plan. Turning an invocation (a cwd, a target, some flags) into
 the `RegisteredWorkspace` and recipe edge map this crate consumes is
 `cook-plan` (COOK-419), and this crate does not depend on it — the handoff
-type lives in `cook-register`, the stratum both share. Consequently it never
-parses a Cookfile or generates its Lua: `cook-lang` and `cook-luagen` are not
-in its dependency set at all. It does not own a worker VM (`cook-luaotp`), a
+type is contract data (`cook_contracts::registration`, COOK-428). It does
+not register either, and cannot: `cook-register` is not in this crate's
+dependency closure, so an engine that cannot even name `register_cookfile`
+is uncompilable into re-opening registration mid-walk — the two-phase law
+held by the crate graph, not by convention. Consequently it never parses a
+Cookfile or generates its Lua: `cook-lang` and `cook-luagen` are not in its
+closure at all. It does not own a worker VM (`cook-luaotp`), a
 cache backend or store layout (`cook-cache`), or a process spawn
 (`cook-shell`). It defines no contracts; `CacheMeta`, `WorkPayload`,
 `Sharing`, the cacheability classification, and the fingerprint and key law

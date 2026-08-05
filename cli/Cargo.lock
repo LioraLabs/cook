@@ -456,7 +456,6 @@ dependencies = [
  "cook-dag",
  "cook-luaotp",
  "cook-probe",
- "cook-register",
  "cook-shell",
  "filetime",
  "globset",

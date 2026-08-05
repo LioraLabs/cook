@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use clap::{Arg, Command, CommandFactory};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::CompleteEnv;
-use cook_engine::cook_register::RecipeKind;
+use cook_plan::cook_register::RecipeKind;
 use cook_plan::{self as pipeline, Workspace};
 
 use crate::cli::{Cli, Globals};

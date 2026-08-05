@@ -11,25 +11,11 @@ use cook_contracts::{
 
 use crate::{RecipeKind, SharedBodySlot};
 
-/// Where a `RegisteredRecipe` came from. Used by Phase 2 collision detection
-/// (and surface diagnostics) to name BOTH sites of a name conflict and
-/// identify the kind of each.
-///
-/// - `Static`  — emitted by codegen from a surface `recipe NAME` /
-///   `chore NAME` block via `cook.__register_surface(...)` or
-///   `cook.__register_surface_chore(...)`. The `RecipeKind` carried alongside
-///   on `RegisteredRecipe` distinguishes recipe from chore so
-///   `detect_collisions` can label the site correctly.
-/// - `Dynamic` — recorded by user / wrapper Lua code calling
-///   `cook.recipe(...)` (e.g. `cook_cc.bin` target-makers). Always
-///   recipe-kind: chores cannot be registered dynamically.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistrationSource {
-    /// Emitted by codegen from a surface `recipe NAME` block.
-    Static { line: usize },
-    /// Recorded by user / wrapper Lua code calling `cook.recipe(...)`.
-    Dynamic { line: usize },
-}
+// Where a `RegisteredRecipe` came from: used by Phase 2 collision detection
+// (and surface diagnostics) to name BOTH sites of a name conflict. The
+// definition is contract data since COOK-428 — the summary types it rides on
+// (`RegisteredRecipePub`) live in `cook_contracts::registration`.
+pub use cook_contracts::registration::RegistrationSource;
 
 pub struct RegisteredRecipe {
     pub name: String,
@@ -77,62 +63,9 @@ fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDes
     }))
 }
 
-/// One parameter declared in a `chore NAME param …` header.
-///
-/// Mirrors the `kind` strings emitted by `cook-luagen` into the
-/// `__params` metadata table.
-#[derive(Debug, Clone)]
-pub enum ChoreParamMeta {
-    /// A required positional — must be supplied by argv.
-    Required { name: String },
-    /// A defaulted positional — falls back to `default` when argv
-    /// is exhausted at this position.
-    DefaultedString { name: String, default: String },
-    /// A defaulted positional with a Lua-expression default — evaluates
-    /// the closure when argv is exhausted at this position.
-    ///
-    /// `default_key_name` is a named-registry key (set via
-    /// `lua.set_named_registry_value`) referencing the closure
-    /// `function() return (EXPR) end` emitted by codegen. Retrieved at
-    /// binding time via `lua.named_registry_value::<LuaFunction>(&name)`.
-    ///
-    /// Named registry keys use a unique string per registration pass;
-    /// the key is `"__cook_chore_default:<chore>:<param>:<serial>"`.
-    DefaultedLua { name: String, default_key_name: String },
-    /// A one-or-more variadic — collects all remaining argv into a Lua sequence;
-    /// zero remaining argv is an error.
-    VariadicPlus { name: String },
-    /// A zero-or-more variadic — collects all remaining argv into a Lua sequence;
-    /// zero remaining argv binds to an empty table.
-    VariadicStar { name: String },
-}
-
-impl ChoreParamMeta {
-    /// The parameter name (for binding into the Lua table).
-    pub fn param_name(&self) -> &str {
-        match self {
-            ChoreParamMeta::Required { name } => name,
-            ChoreParamMeta::DefaultedString { name, .. } => name,
-            ChoreParamMeta::DefaultedLua { name, .. } => name,
-            ChoreParamMeta::VariadicPlus { name } => name,
-            ChoreParamMeta::VariadicStar { name } => name,
-        }
-    }
-
-    /// Human-readable token for `cook menu` display, e.g. `caller`,
-    /// `who="world"`, `tail...`, `[rest...]`. Mirrors the `chore NAME …`
-    /// header syntax closely enough to be recognisable, without claiming
-    /// to be a re-parseable grammar.
-    pub fn display_token(&self) -> String {
-        match self {
-            ChoreParamMeta::Required { name } => name.clone(),
-            ChoreParamMeta::DefaultedString { name, default } => format!("{name}={default:?}"),
-            ChoreParamMeta::DefaultedLua { name, .. } => format!("{name}=<lua>"),
-            ChoreParamMeta::VariadicPlus { name } => format!("{name}..."),
-            ChoreParamMeta::VariadicStar { name } => format!("[{name}...]"),
-        }
-    }
-}
+// `ChoreParamMeta` is contract data since COOK-428: it rides on
+// `RegisteredRecipePub` out of this crate, and `cook menu` renders it.
+pub use cook_contracts::registration::ChoreParamMeta;
 
 #[derive(Debug)]
 pub struct RegisteredMetadata {

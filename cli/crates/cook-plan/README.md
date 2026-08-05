@@ -8,10 +8,11 @@ needs, before anything is spent producing outputs.
 
 - **It hands one value across the boundary.** `register_workspace` is the only
   register-phase entry point, and what it returns is the whole plan. The walk
-  (`cook-engine`) consumes that value without depending on this crate: the
-  handoff type lives in `cook-register`, the stratum both sides already share,
-  so neither crate can reach into the other's internals without a `Cargo.toml`
-  edge showing up in review (COOK-419).
+  (`cook-engine`) consumes that value without depending on this crate — or on
+  `cook-register` at all: the registration summary is contract data
+  (`cook_contracts::registration`, COOK-419/COOK-428), so neither side can
+  reach the other's machinery without a `Cargo.toml` edge showing up in
+  review, and the engine structurally cannot re-open registration mid-walk.
 - **A single Cookfile is a workspace of one member.** There is no separate
   single-Cookfile code path to drift from the imported-workspace one
   (SHI-222 / CS-0077); `RegisterMode` names the dispatch/introspect/enumerate

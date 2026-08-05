@@ -15,29 +15,24 @@ mod seal;
 pub mod verify;
 pub mod why;
 
-pub use cook_register::RegisteredWorkspace;
 pub use run::{
     build_cache_ctx_for_cli, cache_managers_for_cli, run, OutputGlobWarning, RunResult, TestScope,
 };
 // `cook why` types are consumed through the `cook_engine::why::` module path
 // (CLI renderers, E2E); no flat re-export — one public name per type.
 
-// Re-export the registration-phase public types so consumers can build a
-// `RegisteredWorkspace` without taking a direct `cook-register` dependency.
+// The registration summary this crate consumes is contract data
+// (`cook_contracts::registration`, COOK-428). This crate does NOT depend on
+// cook-register: an engine that cannot name `register_cookfile` is
+// structurally prevented from re-opening registration mid-walk, which is the
+// two-phase law enforced by the crate graph rather than by convention.
 //
-// Note: `cook_register::RecipeKind` is intentionally NOT re-exported at the
+// Note: `registration::RecipeKind` is intentionally NOT re-exported at the
 // engine root — it would collide with the engine's own `RecipeKind` (the
 // progress-event mirror enum a few lines below). Consumers that need the
-// registration-phase kind reach it through the re-exported `cook_register`
-// module path: `cook_engine::cook_register::RecipeKind`.
-pub use cook_register::{RegisteredCookfile, RegisteredRecipePub};
-
-// Re-export the `cook_register` crate as a module so consumers (notably
-// `cook-cli`) can name `cook_engine::cook_register::RecipeKind` and other
-// registration-phase types without taking a direct `cook-register`
-// dependency. The collision-avoidance rule above still applies to the
-// engine's own root namespace.
-pub use cook_register;
+// registration-phase kind reach it through the re-exported `cook_contracts`
+// module path: `cook_engine::cook_contracts::registration::RecipeKind`.
+pub use cook_contracts::registration::{RegisteredRecipePub, RegisteredWorkspace};
 
 // Re-export `cook_contracts` and `cook_cache` as modules so consumers
 // (notably `cook-cli`) can name `cook_engine::cook_contracts::RecipeUnits`

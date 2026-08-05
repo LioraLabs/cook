@@ -8,7 +8,6 @@ description = "Walks the work-unit DAG, deciding per unit whether the cache alre
 cook-contracts = { path = "../cook-contracts" }
 cook-shell = { path = "../cook-shell" }
 cook-probe = { path = "../cook-probe" }
-cook-register = { path = "../cook-register" }
 cook-dag = { path = "../cook-dag" }
 cook-luaotp = { path = "../cook-luaotp" }
 cook-cache = { path = "../cook-cache" }

@@ -58,6 +58,15 @@ pub use entry::{discover_entry_cookfile, resolve_workspace_root};
 pub use workspace::{LoadedCookfile, Workspace};
 
 // The value handed across the boundary: the plan produces it, the engine's
-// walk consumes it. Re-exported so a caller driving the full plan → run
-// sequence can name it from either side.
-pub use cook_register::RegisteredWorkspace;
+// walk consumes it. Contract data since COOK-428
+// (`cook_contracts::registration`); re-exported so a caller driving the
+// full plan → run sequence can name it from either side.
+pub use cook_contracts::registration::RegisteredWorkspace;
+
+// Re-export the `cook_register` crate as a module so consumers (notably
+// `cook-cli`, rendering register-phase collision diagnostics) can name
+// `cook_plan::cook_register::RegistrationSiteKind` and other registration
+// types without taking a direct `cook-register` dependency. This re-export
+// lived on cook-engine until COOK-428 removed the engine's register
+// dependency; the register phase is this crate's domain, so it moved here.
+pub use cook_register;

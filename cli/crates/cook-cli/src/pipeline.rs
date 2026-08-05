@@ -44,16 +44,16 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
             let mut msg = format!("error: recipe '{name}' is registered more than once:\n");
             for s in &sites {
                 let kind_str = match s.kind {
-                    cook_engine::cook_register::RegistrationSiteKind::SurfaceRecipe => {
+                    cook_plan::cook_register::RegistrationSiteKind::SurfaceRecipe => {
                         "as a `recipe` block"
                     }
-                    cook_engine::cook_register::RegistrationSiteKind::SurfaceChore => {
+                    cook_plan::cook_register::RegistrationSiteKind::SurfaceChore => {
                         "as a `chore` block"
                     }
-                    cook_engine::cook_register::RegistrationSiteKind::Dynamic => {
+                    cook_plan::cook_register::RegistrationSiteKind::Dynamic => {
                         "by cook.recipe at register-phase"
                     }
-                    cook_engine::cook_register::RegistrationSiteKind::DynamicChore => {
+                    cook_plan::cook_register::RegistrationSiteKind::DynamicChore => {
                         "by cook.chore at register-phase"
                     }
                 };
@@ -61,7 +61,7 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
                 // MODULE, not the Cookfile, so prefixing it with `Cookfile:`
                 // would send the reader to an unrelated line of their own file.
                 // Name the site without a false location instead.
-                if s.kind == cook_engine::cook_register::RegistrationSiteKind::DynamicChore {
+                if s.kind == cook_plan::cook_register::RegistrationSiteKind::DynamicChore {
                     msg.push_str(&format!("  - {}\n", kind_str));
                 } else {
                     msg.push_str(&format!("  - Cookfile:{}: {}\n", s.line, kind_str));
@@ -1100,7 +1100,7 @@ pub fn cmd_test(
     let chore_names: std::collections::BTreeSet<String> = registered
         .names
         .iter()
-        .filter(|n| matches!(n.kind, cook_engine::cook_register::RecipeKind::Chore))
+        .filter(|n| matches!(n.kind, cook_plan::cook_register::RecipeKind::Chore))
         .map(|n| n.name.clone())
         .collect();
 
@@ -1425,7 +1425,7 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|r| matches!(r.kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .filter(|r| matches!(r.kind, cook_plan::cook_register::RecipeKind::Recipe))
             .map(|r| r.name)
             .collect(),
     )
@@ -1438,13 +1438,13 @@ pub fn set_invoked_builtin(name: &'static str) {
 }
 
 fn warn_if_invoked_builtin_is_registered<'a>(
-    names: impl IntoIterator<Item = (&'a str, &'a cook_engine::cook_register::RecipeKind)>,
+    names: impl IntoIterator<Item = (&'a str, &'a cook_plan::cook_register::RecipeKind)>,
 ) {
     let Some(name) = INVOKED_BUILTIN.get().copied() else {
         return;
     };
     if names.into_iter().any(|(candidate, kind)| {
-        candidate == name && matches!(kind, cook_engine::cook_register::RecipeKind::Recipe)
+        candidate == name && matches!(kind, cook_plan::cook_register::RecipeKind::Recipe)
     }) {
         eprintln!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
     }
@@ -1495,7 +1495,7 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
     // Pass 1: render `{name}{suffix}` per entry.
-    let rendered: Vec<(String, &cook_engine::cook_register::RegisteredRecipePub)> = names
+    let rendered: Vec<(String, &cook_plan::cook_register::RegisteredRecipePub)> = names
         .iter()
         .map(|r| {
             let suffix = if r.params.is_empty() {
@@ -1533,8 +1533,8 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     // Pass 3: print.
     for (name_and_suffix, r) in &rendered {
         let label = match r.kind {
-            cook_engine::cook_register::RecipeKind::Recipe => "recipe ",
-            cook_engine::cook_register::RecipeKind::Chore => "chore  ",
+            cook_plan::cook_register::RecipeKind::Recipe => "recipe ",
+            cook_plan::cook_register::RecipeKind::Chore => "chore  ",
         };
         match (&r.origin, annotated_width) {
             (Some(origin), Some(width)) => {

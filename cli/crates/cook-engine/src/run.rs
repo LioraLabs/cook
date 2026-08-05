@@ -7,10 +7,12 @@
 //! Cross-recipe edges live directly on the unified DAG; there is no per-wave
 //! register / DAG / execute loop (SHI-222 Phase 4).
 //!
-//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`,
-//! which runs `cook_register::register_cookfile` once per Cookfile and merges
-//! per-import results. A single-Cookfile project (no imports) is a workspace
-//! of one member — `register_workspace` is the only entry point.
+//! Callers build the [`RegisteredWorkspace`] via
+//! `cook_plan::register_workspace`, which runs registration once per
+//! Cookfile and merges per-import results. A single-Cookfile project (no
+//! imports) is a workspace of one member — `register_workspace` is the only
+//! entry point. This crate consumes the result as contract data; it has no
+//! dependency on cook-plan or cook-register (COOK-428).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -309,15 +311,16 @@ where
             .map(|i| dag.node(i).payload().recipe_name.clone())
             .collect();
         // Map qualified-recipe-name → cook_engine::RecipeKind (Recipe/Chore).
-        // The kind on `RegisteredRecipePub` is `cook_register::RecipeKind`,
-        // which has the same variants but is a distinct type (Task 4.1).
+        // The kind on `RegisteredRecipePub` is the register-phase
+        // `cook_contracts::registration::RecipeKind`, which has the same
+        // variants but is a distinct type (Task 4.1).
         let kind_by_name: BTreeMap<&str, RecipeKind> = registered_workspace
             .names
             .iter()
             .map(|r| {
                 let kind = match r.kind {
-                    cook_register::RecipeKind::Recipe => RecipeKind::Recipe,
-                    cook_register::RecipeKind::Chore => RecipeKind::Chore,
+                    cook_contracts::registration::RecipeKind::Recipe => RecipeKind::Recipe,
+                    cook_contracts::registration::RecipeKind::Chore => RecipeKind::Chore,
                 };
                 (r.name.as_str(), kind)
             })

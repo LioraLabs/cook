@@ -14,7 +14,6 @@ pub mod module_loader;
 pub mod on_register_api;
 pub mod probe_api;
 pub mod probe_value;
-pub mod registered_workspace;
 pub mod test_api;
 pub mod unit_api;
 pub mod var_api;
@@ -450,7 +449,7 @@ pub use cook_cache::hash_str;
 pub use capture::RegistrationSource;
 pub use dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
 pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
-pub use registered_workspace::RegisteredWorkspace;
+pub use cook_contracts::registration::RegisteredWorkspace;
 
 /// The artifact of a full `register_cookfile` pass.
 ///
@@ -480,36 +479,9 @@ pub struct RegisteredCookfile {
     pub config_host_reads: Vec<crate::config_sandbox::HostRead>,
 }
 
-/// Public summary of one registered recipe. Distinct from the internal
-/// `capture::RegisteredRecipe` (which holds a `LuaRegistryKey` closure
-/// that cannot cross the public API boundary).
-#[derive(Debug, Clone)]
-pub struct RegisteredRecipePub {
-    pub name: String,
-    pub source: RegistrationSource,
-    pub kind: RecipeKind,
-    pub requires: Vec<String>,
-    /// Declared chore parameters (empty for normal recipes), carried through
-    /// so `cook menu` can render `chore greet caller who="world"` instead of
-    /// a bare name.
-    pub params: Vec<crate::capture::ChoreParamMeta>,
-    /// The module-qualified function name that minted this recipe (e.g.
-    /// `"cook_pnpm.workspace"`), when the author opted in via the
-    /// `cook.recipe(name, {origin = "..."}, body)` field. `None` when no
-    /// `origin` was supplied, and always `None` for surface (`recipe NAME` /
-    /// `chore NAME`) registrations — see `capture::parse_origin_meta`.
-    pub origin: Option<String>,
-}
-
-/// Whether a registered name is a normal recipe or a chore.
-///
-/// Chores are register-phase-only side-effecting blocks that
-/// MUST NOT pass `cache = true` to `cook.add_unit` (§{chores.no-caching}).
-/// Tracked on the public summary so consumers (CLI dispatch, surface
-/// diagnostics) can branch on it without reaching into the internal
-/// `RegisteredRecipe` shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecipeKind {
-    Recipe,
-    Chore,
-}
+// The registration summary — `RegisteredRecipePub`, `RecipeKind`, and the
+// `RegisteredWorkspace` aggregate — is contract data since COOK-428: one
+// definition in `cook_contracts::registration`, produced here, aggregated by
+// cook-plan, consumed by cook-engine and cook-cli. Re-exported so this
+// crate's public API is unchanged.
+pub use cook_contracts::registration::{RecipeKind, RegisteredRecipePub};
