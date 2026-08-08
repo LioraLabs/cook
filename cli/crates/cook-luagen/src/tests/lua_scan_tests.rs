@@ -112,3 +112,57 @@ fn ident_end_returns_start_on_a_non_identifier() {
     let src = "1abc";
     assert_eq!(ident_end(src.as_bytes(), 0), 0);
 }
+
+// ---------------------------------------------------------------------------
+// identifier_occurs (CS-0205)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn identifier_occurs_finds_a_bare_reference() {
+    assert!(identifier_occurs("print(greet.say(\"x\"))", "greet"));
+}
+
+#[test]
+fn identifier_occurs_is_word_bounded() {
+    assert!(!identifier_occurs("greeting.say()", "greet"));
+    assert!(!identifier_occurs("mygreet.say()", "greet"));
+    assert!(!identifier_occurs("_greet.say()", "greet"));
+    assert!(!identifier_occurs("greet2.say()", "greet"));
+}
+
+#[test]
+fn identifier_occurs_ignores_strings_and_comments() {
+    assert!(!identifier_occurs("print(\"greet\")", "greet"));
+    assert!(!identifier_occurs("print('greet')", "greet"));
+    assert!(!identifier_occurs("print([[greet]])", "greet"));
+    assert!(!identifier_occurs("-- greet\nprint(1)", "greet"));
+    assert!(!identifier_occurs("--[[ greet ]] print(1)", "greet"));
+}
+
+#[test]
+fn identifier_occurs_after_a_string_still_matches() {
+    // The scanner must resume scanning code AFTER a literal, not stop at it.
+    assert!(identifier_occurs("print(\"hello\") greet.say()", "greet"));
+}
+
+#[test]
+fn identifier_occurs_matches_a_field_access_too() {
+    // Deliberately NOT refined on `.`/`:`. A false positive costs one memoised
+    // module load; a false negative is the defect CS-0205 fixes, and telling
+    // `x .. greet.f()` from `t.greet` needs lookbehind this scanner does not
+    // want to own.
+    assert!(identifier_occurs("t.greet = 1", "greet"));
+    assert!(identifier_occurs("x .. greet.f()", "greet"));
+}
+
+#[test]
+fn identifier_occurs_stops_at_an_unterminated_literal() {
+    // Same halt the other scanners take: past an unterminated literal there is
+    // no honest answer, and guessing invents matches.
+    assert!(!identifier_occurs("print(\"open [[ greet", "greet"));
+}
+
+#[test]
+fn identifier_occurs_is_false_for_an_empty_body() {
+    assert!(!identifier_occurs("", "greet"));
+}

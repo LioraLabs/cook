@@ -15,6 +15,7 @@ pub(crate) mod resolver;
 pub mod sigil;
 mod template;
 mod test_step;
+mod use_prelude;
 
 pub mod dep_ref;
 

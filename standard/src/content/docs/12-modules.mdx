@@ -15,7 +15,11 @@ A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_
 
 A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
 
-The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile.
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, `test_step` body, chore body, `probe` `produce` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile. [amended CS-0205]
+
+### Note 12.1.2
+
+The list above names the execute-phase bodies individually because an implementation that generates code per body kind will bind the alias per body kind, and one omitted kind is a silent hole: for a year the reference implementation bound the alias in a chore body and in no other execute-phase body, so `use greet` followed by `test >{ greet.say() }` failed with `attempt to index a nil value (global 'greet')` (CS-0205). "Visible" is a property of each body, not of the Cookfile. How the binding reaches an execute-phase body, and when an implementation may skip a body that does not name the alias, is specified in §{lua.cook-load-module}.
 
 A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered. The full lifecycle contract for `init()` and for module loading is in §{mods.lifecycle}.
 

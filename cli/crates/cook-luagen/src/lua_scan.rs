@@ -112,6 +112,49 @@ pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
     k
 }
 
+/// Does `ident` occur as a whole identifier token in the CODE regions of `src`?
+///
+/// CS-0205: the execute-phase `use` prelude binds a Lua **local**, and a local
+/// is reachable only by code that names it lexically — `load()`ed chunks and
+/// `_ENV` lookups cannot see it at all. So "the body can observe this alias"
+/// and "the alias appears as an identifier in the body's code" are the same
+/// question, and this answers it.
+///
+/// Deliberately unrefined on `.`/`:` field access: `t.greet` reports true. A
+/// false positive costs one memoised `cook.load_module` call; a false negative
+/// reinstates the defect. Telling `x .. greet.f()` from `t.greet` needs
+/// lookbehind that would trade that safe direction for an unsafe one.
+pub(crate) fn identifier_occurs(src: &str, ident: &str) -> bool {
+    if ident.is_empty() {
+        return false;
+    }
+    let bytes = src.as_bytes();
+    let needle = ident.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match skip_non_code(src, bytes, i) {
+            Skip::Ended(next) => i = next.max(i + 1),
+            // Past an unterminated literal there is no honest answer; the
+            // other scanners in this crate stop here for the same reason.
+            Skip::Unterminated => return false,
+            Skip::Code => {
+                if is_ident_start(bytes[i]) {
+                    // Consume the WHOLE token, so `mygreet` and `greet2` can
+                    // never partial-match `greet`.
+                    let end = ident_end(bytes, i);
+                    if &bytes[i..end] == needle {
+                        return true;
+                    }
+                    i = end;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 #[path = "tests/lua_scan_tests.rs"]
 mod tests;
