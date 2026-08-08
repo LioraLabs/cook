@@ -187,9 +187,48 @@ fn missing_module_raises_the_shared_diagnostic() {
         .exec()
         .expect_err("missing module must raise")
         .to_string();
-    let expected =
-        cook_contracts::layout::module_not_found_message(tmp.path(), "ghost");
+    // CS-0206 split this: the SENTENCE is law in `cook-contracts`, the two
+    // directory stats are this crate's (the contracts admission bar excludes
+    // the filesystem). Composing the expectation through the same observer the
+    // loader uses is what keeps the split from drifting into two messages.
+    let expected = cook_contracts::layout::module_not_found_message(
+        tmp.path(),
+        "ghost",
+        crate::module_loader::observe_module_tree(tmp.path()),
+    );
     assert!(msg.contains(&expected), "got: {msg}\nwant: {expected}");
+}
+
+/// The conditional halves of that diagnostic, executed against a real tree.
+/// The sentences are pinned in `cook-contracts`; what is pinned HERE is that
+/// this crate observes the right two directories, which is the half a pure
+/// test cannot reach.
+#[test]
+fn a_stale_package_directory_is_observed_and_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("cook_modules")).unwrap();
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+    let msg = lua
+        .load(r#"cook.load_module("ghost")"#)
+        .exec()
+        .expect_err("missing module must raise")
+        .to_string();
+    assert!(msg.contains("still exists"), "{msg}");
+    assert!(msg.contains("cook modules install"), "{msg}");
+    assert!(msg.contains("use ./path/to/it.lua"), "{msg}");
+}
+
+#[test]
+fn a_wiped_dot_cook_is_observed_and_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+    let msg = lua
+        .load(r#"cook.load_module("ghost")"#)
+        .exec()
+        .expect_err("missing module must raise")
+        .to_string();
+    assert!(msg.contains("no module tree here"), "{msg}");
+    assert!(!msg.contains("still exists"), "{msg}");
 }
 
 /// The flat `<name>.lua` candidate wins over `<name>/init.lua` — the whole of

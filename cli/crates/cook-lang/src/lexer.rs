@@ -200,6 +200,18 @@ fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError>
     Ok(args)
 }
 
+/// `layout::normalise_use_path` with this crate's error type on the failure
+/// side. The two argument positions that can hold a path both need it, and the
+/// diagnostic MUST be the same at both — one refusal, one wording.
+fn normalised_use_path(raw: &str, line: usize) -> Result<String, LexError> {
+    cook_contracts::layout::normalise_use_path(raw).map_err(|rejection| {
+        LexError::InvalidUsePath {
+            message: cook_contracts::layout::use_path_rejected_message(raw, rejection),
+            line,
+        }
+    })
+}
+
 /// Turn a `use` declaration's arguments into the `(alias, target)` pair the
 /// AST carries (§12.1, CS-0206).
 ///
@@ -208,7 +220,6 @@ fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError>
 /// CS-0035's malformed-NAME diagnostic rather than being re-read as a path
 /// that forgot its suffix.
 fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, String), LexError> {
-    use cook_contracts::layout::{normalise_use_path, use_path_rejected_message};
     use cook_contracts::module_binding::{alias_of, derived_alias, is_path_target};
 
     // A trailing `#` comment is not a `use` argument, and reporting it as one
@@ -218,8 +229,15 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
     // discarded the rest of the line, so `use cpp # note` silently worked,
     // even though `tree-sitter-cook` has always rejected it. The two readers
     // now agree; this arm is what makes the disagreement legible.
-    if let Some(comment) = args.iter().find(|a| a.starts_with('#')) {
-        if args.first().map(|f| f.as_str()) != Some(comment.as_str()) {
+    // Positional, not by value: comparing the found comment against `args[0]`
+    // by equality let `use #a #a` slip through, because the second `#a` IS
+    // equal to the first.
+    if let Some((index, comment)) = args
+        .iter()
+        .enumerate()
+        .find(|(_, a)| a.starts_with('#'))
+    {
+        if index > 0 {
             return Err(LexError::UseTrailingComment {
                 argument: comment.clone(),
                 line,
@@ -239,11 +257,7 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
             Ok((alias_of(only), only.clone()))
         }
         [only] => {
-            let normalised = normalise_use_path(only)
-                .map_err(|r| LexError::InvalidUsePath {
-                    message: use_path_rejected_message(only, r),
-                    line,
-                })?;
+            let normalised = normalised_use_path(only, line)?;
             let alias = derived_alias(&normalised);
             check_use_name(&alias, UseNamePosition::Alias, line).map_err(|_| LexError::UnusableDerivedAlias {
                 path: only.clone(),
@@ -269,11 +283,7 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
                 });
             }
             check_use_name(first, UseNamePosition::Alias, line)?;
-            let normalised = normalise_use_path(second)
-                .map_err(|r| LexError::InvalidUsePath {
-                    message: use_path_rejected_message(second, r),
-                    line,
-                })?;
+            let normalised = normalised_use_path(second, line)?;
             Ok((first.clone(), normalised))
         }
         _ => Err(LexError::UseTooManyArguments { line }),

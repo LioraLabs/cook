@@ -86,27 +86,6 @@ pub fn alias_of(module_name: &str) -> String {
     module_name.replace('-', "_")
 }
 
-/// The identifier a path-form `use` binds when the author wrote no explicit
-/// alias (§12.1, CS-0206): the path's final segment with its `.lua` suffix
-/// removed, through [`alias_of`].
-///
-/// The result is NOT guaranteed to be a Lua identifier — `./build/9lives.lua`
-/// derives `9lives` — and this function does not judge it. Validation belongs
-/// to the caller that owns the diagnostic: `cook-lang` rejects the declaration
-/// and names the explicit-alias form as the remedy. Returning a bad identifier
-/// rather than an error keeps this a pure derivation with one job, and keeps
-/// the "what is a legal Lua identifier" rule in the one place that already
-/// answers it for `use_name`.
-pub fn derived_alias(path_target: &str) -> String {
-    let stem = path_target
-        .rsplit('/')
-        .next()
-        .unwrap_or(path_target)
-        .strip_suffix(PATH_TARGET_SUFFIX)
-        .unwrap_or(path_target);
-    alias_of(stem)
-}
-
 /// What a module is CALLED, independent of what a Cookfile bound it to
 /// (§12.7.8, CS-0206).
 ///
@@ -130,6 +109,25 @@ pub fn module_identity(target: &str) -> &str {
     }
     let base = target.rsplit('/').next().unwrap_or(target);
     base.strip_suffix(PATH_TARGET_SUFFIX).unwrap_or(base)
+}
+
+/// The identifier a path-form `use` binds when the author wrote no explicit
+/// alias (§12.1, CS-0206): the path's final segment with its `.lua` suffix
+/// removed, through [`alias_of`].
+///
+/// The result is NOT guaranteed to be a Lua identifier — `./build/9lives.lua`
+/// derives `9lives` — and this function does not judge it. Validation belongs
+/// to the caller that owns the diagnostic: `cook-lang` rejects the declaration
+/// and names the explicit-alias form as the remedy. Returning a bad identifier
+/// rather than an error keeps this a pure derivation with one job, and keeps
+/// the "what is a legal Lua identifier" rule in the one place that already
+/// answers it for `use_name`.
+pub fn derived_alias(path_target: &str) -> String {
+    // Composed rather than re-walked: the alias a path binds IS its module
+    // identity put through the Lua-identifier rewrite, and writing the stem
+    // walk twice would let the two drift into disagreeing about what a
+    // basename is.
+    alias_of(module_identity(path_target))
 }
 
 /// The resolver call, qualified and with the target escaped as a

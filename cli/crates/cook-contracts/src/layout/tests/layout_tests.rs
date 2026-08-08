@@ -147,45 +147,19 @@ mod use_paths {
         );
     }
 
+    /// The comparison is law here; the canonicalising is the shell's, so this
+    /// test is pure like the function. The symlink and cannot-canonicalise
+    /// cases are exercised against the real filesystem where the reaching
+    /// happens — `cook-lua-stdlib`'s loader tests.
     #[test]
-    fn containment_follows_symlinks_and_refuses_what_it_cannot_resolve() {
-        let tmp = std::env::temp_dir().join(format!(
-            "cook-431-containment-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let inside = tmp.join("proj");
-        let outside = tmp.join("elsewhere");
-        std::fs::create_dir_all(inside.join("build")).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(inside.join("build/real.lua"), "return {}").unwrap();
-        std::fs::write(outside.join("escaped.lua"), "return {}").unwrap();
-
-        assert!(contains_resolved_module_path(
-            &inside,
-            &inside.join("build/real.lua")
-        ));
-
-        // A symlink inside the tree pointing out of it: `normalise_use_path`
-        // sees a clean relative path and cannot know.
-        #[cfg(unix)]
-        {
-            let link = inside.join("build/link.lua");
-            std::os::unix::fs::symlink(outside.join("escaped.lua"), &link).unwrap();
-            assert!(!contains_resolved_module_path(&inside, &link));
-        }
-
-        // Nothing there at all reports NOT contained: the permissive answer on
-        // a rule whose failure mode is a silent wrong cache is the wrong one.
-        assert!(!contains_resolved_module_path(
-            &inside,
-            &inside.join("build/absent.lua")
-        ));
-
-        std::fs::remove_dir_all(&tmp).ok();
+    fn containment_is_a_prefix_test_over_already_resolved_paths() {
+        let root = Path::new("/proj");
+        assert!(path_is_contained(root, Path::new("/proj/lua/helpers.lua")));
+        assert!(path_is_contained(root, Path::new("/proj")));
+        assert!(!path_is_contained(root, Path::new("/elsewhere/x.lua")));
+        // Prefix-of-a-STRING is not prefix-of-a-PATH: `/projector` is not
+        // inside `/proj`, and a `starts_with` over strings would say it was.
+        assert!(!path_is_contained(root, Path::new("/projector/x.lua")));
     }
 
     #[test]
@@ -253,7 +227,11 @@ mod module_load_laws {
     /// §24.2: the diagnostic identifies the name and the searched paths.
     #[test]
     fn not_found_message_names_module_and_paths() {
-        let msg = module_not_found_message(Path::new("/proj"), "foo");
+        let msg = module_not_found_message(
+            Path::new("/proj"),
+            "foo",
+            ModuleTreeState { legacy_present: false, tree_present: true },
+        );
         assert!(msg.starts_with(
             "cook.load_module: module 'foo' not found under /proj/.cook/modules \
              (tried share/lua/5.4/foo.lua, share/lua/5.4/foo/init.lua)"
@@ -266,10 +244,11 @@ mod module_load_laws {
     /// its whole life, which is the conflation the cut exists to delete.
     #[test]
     fn a_stale_package_directory_is_recognised_and_the_migration_named() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(LEGACY_MODULES_DIR)).unwrap();
-
-        let msg = module_not_found_message(tmp.path(), "foo");
+        let msg = module_not_found_message(
+            Path::new("/proj"),
+            "foo",
+            ModuleTreeState { legacy_present: true, tree_present: false },
+        );
         assert!(msg.contains("still exists"), "{msg}");
         assert!(msg.contains("cook modules install"), "{msg}");
         // Both halves of the migration: reinstall the rocks, and move a module
@@ -282,8 +261,11 @@ mod module_load_laws {
     /// habit and it now takes installed rocks with it.
     #[test]
     fn a_wiped_dot_cook_is_named_as_such() {
-        let tmp = tempfile::tempdir().unwrap();
-        let msg = module_not_found_message(tmp.path(), "foo");
+        let msg = module_not_found_message(
+            Path::new("/proj"),
+            "foo",
+            ModuleTreeState { legacy_present: false, tree_present: false },
+        );
         assert!(msg.contains("no module tree here"), "{msg}");
         assert!(msg.contains("cook modules install"), "{msg}");
         assert!(!msg.contains("still exists"), "{msg}");

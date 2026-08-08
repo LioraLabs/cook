@@ -45,7 +45,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
-  // CS-0206: the `use` path form. FOUR of its six negatives ARE syntactic and
+  // CS-0206: the `use` path form. SIX of its eight negatives ARE syntactic and
   // are deliberately absent from this list — `..`, a leading `/`, the `//`
   // sigil and a third argument are all shapes the token cannot take, and
   // `test/corpus/declarations.txt` pins each. These two are not, and each

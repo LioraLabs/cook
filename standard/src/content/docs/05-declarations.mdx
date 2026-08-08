@@ -18,7 +18,11 @@ A conforming implementation MUST accept both the quoted form (`use "cpp"`, `use 
 
 A conforming implementation MUST reject a `use_declaration` whose `use_name` or `use_alias` does not match the `LUA_IDENT` production (App. A.5) — that is, any name containing a character outside `[A-Za-z0-9_]`, any name not starting with `[A-Za-z_]`, or the empty string. In particular, names containing whitespace, hyphens, or dots are rejected. The diagnostic MUST identify the offending name and source line. The restriction reflects the load-time binding (§{mods.use}): the name is bound as a Lua local under the same spelling, and a non-identifier name would yield malformed Lua at codegen time. Hyphens are rejected to avoid silent collisions when codegen rewriters fold `-` to `_` (e.g. `foo-bar` and `foo_bar` would otherwise resolve to the same Lua local).
 
-A conforming implementation MUST reject a `use_declaration` whose `use_path` is absolute, begins with the `//` workspace-root sigil, or contains a `..` segment. Each diagnostic MUST identify the offending path and source line. The confinement is specified at §{mods.use-scope} and argued at §{rationale.use-path-containment}.
+A conforming implementation MUST reject a `use_declaration` carrying anything after its arguments, including a trailing `#` comment. App. A.2's production ends at `NEWLINE` and admits no trailing text, and the diagnostic MUST name the comment rather than counting it as a further argument.
+
+The rule is stated because the reference implementation had been breaking it. Its lexer read the first token of a `use` line and discarded the remainder, so `use cpp # the C module` parsed as `use cpp` while `tree-sitter-cook` rejected the same line — a Cookfile two conforming readers disagreed about. CS-0206 gives the declaration a second argument position, which makes the discarded remainder meaningful, so the divergence had to be settled; it is settled toward what the grammar always said. Put the comment on its own line above. [amended CS-0206]
+
+A conforming implementation MUST reject a `use_declaration` whose `use_path` is absolute, begins with the `//` workspace-root sigil, contains a `..` segment, or contains whitespace (App. A.5's `path_segment` admits none, and quoting does not admit it either). Each diagnostic MUST identify the offending path and source line. The confinement is specified at §{mods.use-scope.containment} and argued at §{rationale.use-path-containment}.
 
 ### Example 5.1.1
 

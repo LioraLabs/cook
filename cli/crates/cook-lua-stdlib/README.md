@@ -100,3 +100,24 @@ The dividing question for anything new: does answering it require touching
 `mlua`, the filesystem, or a process? If not, it belongs upstream in
 `cook-contracts`. If it needs `mlua` and both phases must agree on the answer,
 it belongs here, and it belongs here *once*.
+
+CS-0206 is the worked example in the *filesystem* direction, and it went the
+wrong way first. §12.2.1 says a path-form `use` may not resolve outside the
+declaring Cookfile's subtree, including through a symlink — so the rule needs
+`canonicalize`, and the first draft put the whole check in `cook-contracts`
+with a comment conceding that it "touches the filesystem". A comment is not an
+exemption. The check is split now: `cook-contracts` owns the comparison
+(`path_is_contained`) and what a canonicalisation failure MEANS (not contained,
+because the permissive answer on a cache-soundness rule is the wrong one), and
+this crate does the canonicalising. Same split for the module-not-found
+diagnostic: statting the two directories is `observe_module_tree` here, and the
+sentence a user reads is law upstream.
+
+## This crate is language surface
+
+Because of that split, `cook-lua-stdlib` is on `CONTRIBUTING.md`'s
+language-surface list and the `.githooks/pre-commit` watchlist. The
+`cook.load_module` door is where §12.2.1 is enforced against a path a *body
+computed* rather than one a parser saw, so a change here can change what a
+conforming Cookfile means. Changes to the loader and the observer pair with
+`standard/` movement like any other language change.

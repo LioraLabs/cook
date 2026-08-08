@@ -220,29 +220,35 @@ pub fn module_path_candidate(working_dir: &Path, normalised: &str) -> PathBuf {
     working_dir.join(normalised)
 }
 
-/// Does `resolved` lie inside `working_dir` once both are canonicalised?
+/// Does `resolved` lie inside `root`? Both MUST already be canonicalised by
+/// the caller.
 ///
-/// The last of the three containment checks, and the only one that touches the
-/// filesystem: `normalise_use_path` cannot see that `build/helpers.lua` is a
-/// symlink to `../../elsewhere/helpers.lua`. It matters for the same reason
-/// the other two do — [`relative_module_paths`] drops a determinant it cannot
-/// express relative to the working directory, so a module reached across the
-/// boundary would be run and not keyed.
+/// The last of the three containment checks, and the only one that needs a
+/// look at the real filesystem: `normalise_use_path` cannot see that
+/// `build/helpers.lua` is a symlink to `../../elsewhere/helpers.lua`. It
+/// matters for the same reason the other two do — [`relative_module_paths`]
+/// drops a determinant it cannot express relative to the working directory, so
+/// a module reached across the boundary would be run and not keyed.
 ///
-/// A path that cannot be canonicalised (it does not exist yet, or a component
-/// is unreadable) is reported as NOT contained: the caller's next step is a
-/// not-found or refusal diagnostic either way, and answering "contained" for a
-/// path nothing could resolve would be the permissive direction on a rule
-/// whose failure mode is a silent wrong cache.
-pub fn contains_resolved_module_path(working_dir: &Path, resolved: &Path) -> bool {
-    match (working_dir.canonicalize(), resolved.canonicalize()) {
-        (Ok(root), Ok(target)) => target.starts_with(&root),
-        _ => false,
-    }
+/// The **canonicalisation is the caller's**, and deliberately. This crate's
+/// admission bar is purity (see its README): a function of its arguments, no
+/// filesystem. Resolving a symlink is reaching the world, so it belongs to the
+/// shell — `cook-lua-stdlib`, which is already the crate that touches disk to
+/// read the module. What is law, and what stays here, is the COMPARISON and
+/// what a failure to canonicalise means.
+///
+/// A caller that cannot canonicalise a path (it does not exist, or a component
+/// is unreadable) MUST report it as NOT contained rather than skipping the
+/// check: its next step is a not-found or refusal diagnostic either way, and
+/// answering "contained" for a path nothing could resolve is the permissive
+/// direction on a rule whose failure mode is a silent wrong cache.
+pub fn path_is_contained(root: &Path, resolved: &Path) -> bool {
+    resolved.starts_with(root)
 }
 
 /// The §12.2.1 refusal for a path that normalised cleanly but resolved outside
 /// the Cookfile's subtree — in practice, through a symbolic link.
+/// Paired with [`path_is_contained`].
 pub fn module_path_escaped_message(working_dir: &Path, raw: &str, resolved: &Path) -> String {
     format!(
         "cook.load_module: module path '{}' resolves to {}, outside the Cookfile's directory {} \
@@ -353,24 +359,38 @@ pub fn module_cycle_message(loading_stack: &[String], reentered: &str) -> String
 /// working directory is recognised and named, and so is the `rm -rf .cook`
 /// habit that now also removes installed rocks — the one cost of putting the
 /// tree under the build-output root.
-pub fn module_not_found_message(working_dir: &Path, name: &str) -> String {
+/// What the caller observed about the two directories, so this stays a pure
+/// function of its arguments (see the crate README's admission bar). Statting
+/// them is the shell's job; deciding what the answer MEANS to a user is law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModuleTreeState {
+    /// A pre-CS-0207 `cook_modules/` directory is present in the working dir.
+    pub legacy_present: bool,
+    /// The current tree, [`modules_dir`], is present.
+    pub tree_present: bool,
+}
+
+pub fn module_not_found_message(
+    working_dir: &Path,
+    name: &str,
+    state: ModuleTreeState,
+) -> String {
     let mut msg = format!(
         "cook.load_module: module '{}' not found under {} (tried {})",
         name,
         modules_dir(working_dir).display(),
         module_candidates_description(name)
     );
-    let legacy = legacy_modules_dir(working_dir);
-    if legacy.is_dir() {
+    if state.legacy_present {
         msg.push_str(&format!(
             "\n  note: {} still exists. Installed modules moved to {} in CS-0207; \
              run `cook modules install` to repopulate it. A module you WROTE is no \
              longer resolved by name from there — move it where it belongs in the \
              repo and `use ./path/to/it.lua`.",
-            legacy.display(),
+            legacy_modules_dir(working_dir).display(),
             modules_dir(working_dir).display()
         ));
-    } else if !modules_dir(working_dir).exists() {
+    } else if !state.tree_present {
         msg.push_str(
             "\n  note: no module tree here. If you removed `.cook/` it took the \
              installed modules with it; `cook modules install` rebuilds them from \

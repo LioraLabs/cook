@@ -180,7 +180,19 @@ pub fn install_module_loader(
             // make: `build/helpers.lua` may be a symlink out of the tree.
             // Ordered after the existence check so a missing file reports as
             // missing rather than as an escape.
-            if !cook_contracts::layout::contains_resolved_module_path(&cwd, &candidate) {
+            // The shell does the reaching; `cook-contracts` stays pure and owns
+            // only the comparison and what a canonicalisation failure means
+            // (see that crate's README admission bar). A path that will not
+            // canonicalise counts as NOT contained — the permissive answer on
+            // a rule whose failure mode is a silent wrong cache is the wrong
+            // one.
+            let contained = match (cwd.canonicalize(), candidate.canonicalize()) {
+                (Ok(root), Ok(target)) => {
+                    cook_contracts::layout::path_is_contained(&root, &target)
+                }
+                _ => false,
+            };
+            if !contained {
                 return Err(LuaError::runtime(
                     cook_contracts::layout::module_path_escaped_message(
                         &cwd,
@@ -204,7 +216,11 @@ pub fn install_module_loader(
                 Some(p) => p.clone(),
                 None => {
                     return Err(LuaError::runtime(
-                        cook_contracts::layout::module_not_found_message(&cwd, &name),
+                        cook_contracts::layout::module_not_found_message(
+                            &cwd,
+                            &name,
+                            observe_module_tree(&cwd),
+                        ),
                     ));
                 }
             }
@@ -286,6 +302,20 @@ pub fn install_module_loader(
     // this loader (and therefore the CS-0204 observer inside it) never sees.
     cook.set(cook_contracts::module_binding::LOAD_MODULE_FN, load_module_fn)?;
     Ok(())
+}
+
+/// Stat the two module-tree locations the not-found diagnostic reports on.
+///
+/// Lives here rather than in `cook_contracts::layout` because it touches the
+/// filesystem, which that crate's admission bar excludes. What it reports is
+/// two booleans; what those booleans MEAN to a user — that a stale
+/// `cook_modules/` needs `cook modules install` and a path-form `use`, or that
+/// a wiped `.cook/` took the rocks with it — is law and stays there.
+pub(crate) fn observe_module_tree(working_dir: &Path) -> cook_contracts::layout::ModuleTreeState {
+    cook_contracts::layout::ModuleTreeState {
+        legacy_present: cook_contracts::layout::legacy_modules_dir(working_dir).is_dir(),
+        tree_present: cook_contracts::layout::modules_dir(working_dir).exists(),
+    }
 }
 
 /// Refresh `package.path` / `package.cpath` so `require("foo")` resolves
