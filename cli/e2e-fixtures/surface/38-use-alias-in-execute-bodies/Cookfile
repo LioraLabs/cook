@@ -1,0 +1,31 @@
+# §24.2 / CS-0205: `use greet` binds the alias in BOTH phases. Every
+# execute-phase body kind that can hold Lua is represented here, because the
+# defect was per-emission-site: the chore body worked while the cook-step,
+# test-step and probe bodies all died with `attempt to index a nil value
+# (global 'greet')`.
+use greet
+
+# A probe's `produce` body is execute-phase Lua too.
+probe motto
+    >{ return greet.value() }
+
+recipe build
+    # cook-step Lua body: the cacheable one, so it doubles as the CS-0204
+    # proof — editing greet.lua must rebuild it.
+    cook "build/out.txt" >{
+        local f = io.open(outputs[1], "w")
+        f:write(greet.value())
+        f:close()
+    }
+
+recipe checks
+    # test-step Lua body.
+    test >{ print("test sees " .. greet.value()) }
+
+recipe motto_check
+    seal motto
+    test >{ print("probe produced " .. cook.probes.get("motto")) }
+
+chore say
+    # Chore Lua body — the surface that was already carrying the contract.
+    > print("chore sees " .. greet.value())

@@ -23,7 +23,7 @@ Runtime semantics are pinned as executable assertions elsewhere:
     `cli/crates/cook-register/src/dep_output_api.rs` tests;
   - closure membership without a dep-list entry or `cook.require_recipe`
     (§22.10, "Closure membership is established") —
-    `cli/crates/cook-engine/tests/dep_order_e2e.rs`, and the `orders` field
+    `cli/crates/cook-engine/tests/dep_order.rs`, and the `orders` field
     threaded through `analyzer.rs` / `pipeline/recipe_info.rs`;
   - the empty-`step_group` idiom that separates the force from the edge
     (Note 22.10.1) — `cook_cc` 0.17.0's `declare_link_deps`, with its own
