@@ -1039,6 +1039,136 @@ fn no_literal_is_written_in_two_crates() {
     enforce("duplicate-literals", &duplicate_literals(&corpus()));
 }
 
+// ----------------------------------------------- tier 3: cross-crate clones
+
+/// How many tokens must match before a run of code is a copy rather than an
+/// idiom.
+///
+/// Measured, not chosen: at 30 tokens the workspace has 24 cross-crate groups
+/// and roughly ten are real; at 45 it has one; at 20 it has 606 and is
+/// unusable. Below this floor the matches are `.iter().map(…).collect()` and
+/// the `Display` impl every crate writes.
+const CLONE_WINDOW: usize = 30;
+
+/// How far a matching run must spread before it is logic rather than a
+/// signature.
+///
+/// Without this the widest finding in the workspace is thirteen files sharing
+/// `impl std::fmt::Display for … { fn fmt(&self, f: &mut Formatter<'_>) ->
+/// Result { match self {`, which is thirty tokens of Rust and no decision at
+/// all. A declaration packs its tokens into two or three lines; a copied piece
+/// of reasoning spreads them out. Measuring the spread separates the two
+/// without needing to know what either one says.
+const CLONE_MIN_LINES: usize = 4;
+
+/// A source's tokens, as `(line, text)`, comments gone and imports skipped.
+///
+/// Identifiers are NOT normalised. Both were measured: normalising them finds
+/// 53 cross-crate groups dominated by struct field lists that merely rhyme
+/// (`RecipeCompleted { name, elapsed, cached_nodes }` against
+/// `RecipeSkipped { recipe, elapsed, skipped }`), which is the kind of noise
+/// that gets a lint disabled. Exact tokens find fewer clones and lie less.
+///
+/// Import blocks are skipped for the same reason: two crates that both open
+/// with `use std::collections::{BTreeMap, BTreeSet};` have agreed on nothing.
+pub fn tokens(text: &str) -> Vec<(usize, String)> {
+    let scrubbed = scrub(text, Scrub::Comments);
+    let bytes = scrubbed.as_bytes();
+    let mut line_of = LineIndex::new(&scrubbed);
+    let mut out = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if let Some(after) = use_keyword_at(&scrubbed, i) {
+            i = statement_end(&scrubbed, after) + 1;
+            continue;
+        }
+        let line = line_of.line(i);
+        if let Some(end) = char_literal_end(bytes, i) {
+            out.push((line, scrubbed[i..end].to_string()));
+            i = end;
+            continue;
+        }
+        if let Some((_, end)) = string_span(bytes, i) {
+            out.push((line, scrubbed[i..end].to_string()));
+            i = end;
+            continue;
+        }
+        if is_ident_char(bytes[i]) {
+            let end = ident_end(bytes, i);
+            out.push((line, scrubbed[i..end].to_string()));
+            i = end;
+            continue;
+        }
+        out.push((line, scrubbed[i..i + 1].to_string()));
+        i += 1;
+    }
+    out
+}
+
+/// Runs of [`CLONE_WINDOW`] identical tokens shared by two or more crates.
+///
+/// Keyed on the set of files involved rather than on the matching tokens, so
+/// editing inside a known clone does not churn the baseline into a rewrite
+/// nobody reviews. The cost of that choice, stated rather than hidden: a
+/// *second*, unrelated clone between two files already listed here is absorbed
+/// by the existing entry. Those two files are already flagged as sharing code,
+/// so the pair is known-dirty either way, but the rule does not claim to count
+/// them.
+pub fn cross_crate_clones(corpus: &[Source]) -> Vec<Finding> {
+    let mut windows: BTreeMap<u64, BTreeMap<String, (String, usize)>> = BTreeMap::new();
+    for source in corpus {
+        let tokens = tokens(&source.text);
+        for window in tokens.windows(CLONE_WINDOW) {
+            if window[CLONE_WINDOW - 1].0.saturating_sub(window[0].0) < CLONE_MIN_LINES {
+                continue;
+            }
+            let text: Vec<&str> = window.iter().map(|(_, token)| token.as_str()).collect();
+            windows
+                .entry(cook_contracts::hash::hash_str(&text.join("\u{1}")))
+                .or_default()
+                .entry(source.path.clone())
+                .or_insert((source.krate.clone(), window[0].0));
+        }
+    }
+
+    let mut groups: BTreeMap<Vec<String>, BTreeMap<String, usize>> = BTreeMap::new();
+    for sites in windows.into_values() {
+        let crates: BTreeSet<&str> = sites.values().map(|(krate, _)| krate.as_str()).collect();
+        if crates.len() < 2 {
+            continue;
+        }
+        let key: Vec<String> = sites.keys().cloned().collect();
+        let group = groups.entry(key).or_default();
+        for (path, (_, line)) in sites {
+            group.entry(path).and_modify(|at| *at = (*at).min(line)).or_insert(line);
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(paths, lines)| Finding {
+            key: paths.join(" == "),
+            sites: lines.iter().map(|(path, line)| format!("{path}:{line}")).collect(),
+            detail: format!(
+                "{} tokens or more of identical code in {} files across crates; the copy that \
+                 is not edited is the one that goes wrong",
+                CLONE_WINDOW,
+                paths.len()
+            ),
+        })
+        .collect()
+}
+
+#[test]
+fn no_run_of_code_is_copied_across_crates() {
+    enforce("cross-crate-clones", &cross_crate_clones(&corpus()));
+}
+
 // ------------------------------------------------------- tracked-tree guard
 
 /// Paths `git` reports as tracked, relative to the workspace root, or `None`
@@ -1382,6 +1512,71 @@ fn a_literal_is_read_as_written_including_its_escapes_and_raw_form() {
     assert_eq!(literals("let x = r#\"raw \"quoted\" text\"#;\n"), ["raw \"quoted\" text"]);
     // A quote character must not open a literal and swallow the rest of the file.
     assert_eq!(literals("let q = '\"'; let after = \"visible\";\n"), ["visible"]);
+}
+
+/// A run of code long enough and spread out enough to count as a clone.
+fn copied_body(name: &str) -> String {
+    format!(
+        "fn {name}(items: &[Item]) -> Vec<String> {{\n\
+        \x20   let mut out = Vec::new();\n\
+        \x20   for item in items {{\n\
+        \x20       if item.enabled {{\n\
+        \x20           out.push(item.name.clone());\n\
+        \x20       }}\n\
+        \x20   }}\n\
+        \x20   out.sort();\n\
+        \x20   out\n\
+        }}\n"
+    )
+}
+
+#[test]
+fn a_run_of_code_copied_across_crates_is_caught_and_one_crate_is_not() {
+    let body = copied_body("collect");
+    let findings = cross_crate_clones(&[source("cook-a", &body), source("cook-b", &body)]);
+    assert_eq!(
+        findings.len(),
+        1,
+        "a copied body across crates must be one finding, got {:?}",
+        findings.iter().map(|f| &f.key).collect::<Vec<_>>()
+    );
+    assert_eq!(findings[0].key, "crates/cook-a/src/lib.rs == crates/cook-b/src/lib.rs");
+
+    assert!(
+        cross_crate_clones(&[source("cook-a", &format!("{body}{}", copied_body("again")))]).is_empty(),
+        "a crate repeating itself is that crate's business"
+    );
+    assert!(
+        cross_crate_clones(&[
+            source("cook-a", &body),
+            source("cook-b", &copied_body("collect").replace("item.enabled", "item.ready")),
+        ])
+        .is_empty(),
+        "an edited copy is no longer an exact run; this rule catches copies before they \
+         drift, which is the limit the baseline file states"
+    );
+}
+
+#[test]
+fn a_signature_is_not_a_clone_however_many_tokens_it_has() {
+    // Thirty tokens of `impl Display`, packed into two lines, in two crates.
+    // Before the line-spread floor this was the workspace's widest finding.
+    let preamble = "impl std::fmt::Display for Thing { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n    match self { Thing::One => write!(f, \"one\"), Thing::Two => write!(f, \"two\") } } }\n";
+    assert!(
+        cross_crate_clones(&[source("cook-a", preamble), source("cook-b", preamble)]).is_empty(),
+        "a declaration packs its tokens into a couple of lines; only spread-out runs count"
+    );
+}
+
+#[test]
+fn imports_and_comments_are_not_tokens() {
+    let of = |text: &str| tokens(text).into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+    assert!(
+        of("use std::collections::{BTreeMap, BTreeSet};\n").is_empty(),
+        "two crates opening with the same imports have agreed on nothing"
+    );
+    assert!(of("// let x = 1;\n").is_empty());
+    assert_eq!(of("let x = 1;\n"), ["let", "x", "=", "1", ";"]);
 }
 
 #[test]
