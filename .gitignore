@@ -27,6 +27,13 @@ dist/
 **/cook_modules/**
 !**/.cook/
 !**/.cook/cloud.toml
+# Hand-authored fixture modules are source, not an installed tree. Without
+# this, a new surface fixture's cook_modules/*.lua is silently never added,
+# the suite passes locally off the working tree, and CI fails on the tracked
+# tree with the module missing (COOK-412's fixture 37 shipped that way).
+# Installed trees under cook_modules/share/... stay ignored.
+!cli/e2e-fixtures/**/cook_modules/
+!cli/e2e-fixtures/**/cook_modules/*.lua
 build/
 bin/
 # Vendored luarocks ships its own src/bin/ and src/luarocks/build/ trees
