@@ -7,22 +7,29 @@ sidebar:
 > **Normative.** This chapter defines the four top-level declaration forms — `use`, `import`, `config`, and `register` — along with their bodies and composition rules. Each declaration's effect on Cook Lua state, on cross-Cookfile composition, or on the register-phase program is specified in the chapter named in the cross-reference.
 
 ## 5.1. `use` declarations [#decl.use]
-A `use_declaration` is the top-level form `"use" use_name NEWLINE` (App. A.2), where `use_name` is a `LUA_IDENT` (App. A.5) optionally written either as a bare identifier or as a double-quoted `STRING` whose contents lex as a `LUA_IDENT`. It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by §{mods.use}.
+A `use_declaration` is the top-level form `"use" ( use_name | use_alias? use_path ) NEWLINE` (App. A.2). It requests that a module be made available to the Cookfile's recipes, chores, and config blocks. Module resolution is governed by §{mods.use}. The declaration has two forms, distinguished by App. A.2's rule: the last argument is a `use_path` if and only if it ends in `.lua`, and a `use_name` otherwise.
 
-The keyword `use` MUST be followed by whitespace, a tab, or a `"` character before the name; otherwise the line is not a `use_declaration`. A bare word such as `useful` MUST be classified as a `Content` token rather than a `use_declaration`.
+- The **name form** names a module the implementation installs: a built-in (§{mods.builtin}) or a module in the project's package tree (§{mods.local}). Its `use_name` is a `LUA_IDENT` (App. A.5), written bare or as a double-quoted `STRING` whose contents lex as a `LUA_IDENT`.
+- The **path form** names a Lua file in the declaring Cookfile's own directory subtree, addressed as a `tree_path` (App. A.5). It MAY be preceded by an explicit `use_alias`, itself a `LUA_IDENT` under the same rules as a `use_name`.
 
-A conforming implementation MUST accept both the quoted form (`use "cpp"`) and the bare form (`use cpp`) and treat them as equivalent.
+The keyword `use` MUST be followed by whitespace, a tab, or a `"` character before the argument; otherwise the line is not a `use_declaration`. A bare word such as `useful` MUST be classified as a `Content` token rather than a `use_declaration`.
 
-A conforming implementation MUST reject a `use_declaration` whose `use_name` does not match the `LUA_IDENT` production (App. A.5) — that is, any name containing a character outside `[A-Za-z0-9_]`, any name not starting with `[A-Za-z_]`, or the empty string. In particular, names containing whitespace, hyphens, or dots are rejected. The diagnostic MUST identify the offending name and source line. The restriction reflects the load-time binding (§{mods.use}): the `use_name` is bound as a Lua local under the same spelling, and a non-identifier name would yield malformed Lua at codegen time. Hyphens are rejected to avoid silent collisions when codegen rewriters fold `-` to `_` (e.g. `foo-bar` and `foo_bar` would otherwise resolve to the same Lua local).
+A conforming implementation MUST accept both the quoted form (`use "cpp"`, `use "./build/helpers.lua"`) and the bare form (`use cpp`, `use ./build/helpers.lua`) and treat them as equivalent.
+
+A conforming implementation MUST reject a `use_declaration` whose `use_name` or `use_alias` does not match the `LUA_IDENT` production (App. A.5) — that is, any name containing a character outside `[A-Za-z0-9_]`, any name not starting with `[A-Za-z_]`, or the empty string. In particular, names containing whitespace, hyphens, or dots are rejected. The diagnostic MUST identify the offending name and source line. The restriction reflects the load-time binding (§{mods.use}): the name is bound as a Lua local under the same spelling, and a non-identifier name would yield malformed Lua at codegen time. Hyphens are rejected to avoid silent collisions when codegen rewriters fold `-` to `_` (e.g. `foo-bar` and `foo_bar` would otherwise resolve to the same Lua local).
+
+A conforming implementation MUST reject a `use_declaration` whose `use_path` is absolute, begins with the `//` workspace-root sigil, or contains a `..` segment. Each diagnostic MUST identify the offending path and source line. The confinement is specified at §{mods.use-scope} and argued at §{rationale.use-path-containment}.
 
 ### Example 5.1.1
 
 ```cook
 use cpp
 use "proto"
+use ./build/helpers.lua
+use fmt ./tools/lua/formatting.lua
 ```
 
-Both forms are accepted; the module names are `cpp` and `proto` respectively.
+The first two are the name form and are equivalent to each other in shape; the module names are `cpp` and `proto`. The third is the path form with the alias derived from the file's basename, binding `helpers`. The fourth is the path form with an explicit alias, binding `fmt`.
 
 ### Example 5.1.2
 
@@ -30,7 +37,18 @@ Both forms are accepted; the module names are `cpp` and `proto` respectively.
 use foo-bar
 ```
 
-Rejected: `foo-bar` is not a `LUA_IDENT` (hyphen is not permitted). The same rule rejects `use cpp.bad`, `use "has spaces"`, and `use "9lives"`.
+Rejected: `foo-bar` is not a `LUA_IDENT` (hyphen is not permitted). The same rule rejects `use cpp.bad`, `use "has spaces"`, and `use "9lives"`. None of these ends in `.lua`, so each is a `use_name` and each is judged as one.
+
+### Example 5.1.3
+
+```cook
+use ../shared/helpers.lua
+use //build/helpers.lua
+use /opt/cook/helpers.lua
+use ./build/9lives.lua
+```
+
+All four are rejected. The first escapes the declaring Cookfile's directory; the second is the workspace-root sigil, which `use` does not admit; the third is absolute. The fourth is a well-formed `use_path` whose derived alias `9lives` is not a `LUA_IDENT` — the diagnostic MUST name the explicit-alias form (`use nine_lives ./build/9lives.lua`) as the remedy (§{mods.use}).
 
 ### Note 5.1.1
 

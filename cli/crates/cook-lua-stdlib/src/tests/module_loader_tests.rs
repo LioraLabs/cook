@@ -365,7 +365,7 @@ fn the_composed_use_binding_executes_against_the_installed_loader() {
     // front of every execute-phase body that names the alias.
     let chunk = format!(
         "{}\nreturn greet.value()",
-        cook_contracts::module_binding::binding("greet")
+        cook_contracts::module_binding::binding("greet", "greet")
     );
     let got: String = lua.load(&chunk).eval().unwrap();
     assert_eq!(got, "bound");
@@ -381,7 +381,7 @@ fn a_hyphenated_module_binds_its_underscore_alias_through_the_same_door() {
     // AND the composed lookup must be the un-rewritten disk name.
     let chunk = format!(
         "{}\nreturn my_mod.value",
-        cook_contracts::module_binding::binding("my-mod")
+        cook_contracts::module_binding::binding(&cook_contracts::module_binding::alias_of("my-mod"), "my-mod")
     );
     let got: i64 = lua.load(&chunk).eval().unwrap();
     assert_eq!(got, 7);
@@ -409,7 +409,7 @@ fn the_binding_goes_through_the_observed_door() {
 
     lua.load(&format!(
         "{}\nreturn greet.value",
-        cook_contracts::module_binding::binding("greet")
+        cook_contracts::module_binding::binding("greet", "greet")
     ))
     .eval::<i64>()
     .unwrap();
@@ -417,4 +417,194 @@ fn the_binding_goes_through_the_observed_door() {
     let seen = observer.take();
     assert_eq!(seen.len(), 1, "the composed binding must be observed: {seen:?}");
     assert!(seen[0].ends_with("greet.lua"), "{seen:?}");
+}
+
+// ---------------------------------------------------------------------------
+// CS-0206: a path target resolves, keys, and is refused at THIS door
+// ---------------------------------------------------------------------------
+//
+// §12.2.1 puts the containment rule on `cook.load_module`, not only on the
+// `use` surface, because this function takes a string a body computed. A rule
+// checked only where the parser can see it constrains spellings rather than
+// loads.
+
+fn write_file(dir: &std::path::Path, rel: &str, source: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, source).unwrap();
+}
+
+#[test]
+fn a_path_target_resolves_against_the_working_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(tmp.path(), "lua/helpers.lua", "return { value = 42 }");
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    let got: i64 = lua
+        .load(r#"return cook.load_module("lua/helpers.lua").value"#)
+        .eval()
+        .unwrap();
+    assert_eq!(got, 42);
+}
+
+#[test]
+fn two_spellings_of_one_path_are_one_module_instance() {
+    // §12.3.2. Keying the raw string would run the file's top-level chunk
+    // twice and hand out two tables with independent state.
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        tmp.path(),
+        "lua/counter.lua",
+        "counted = (counted or 0) + 1\nreturn { n = counted }",
+    );
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    let (same, evals): (bool, i64) = lua
+        .load(
+            r#"
+            local a = cook.load_module("./lua/counter.lua")
+            local b = cook.load_module("lua/counter.lua")
+            local c = cook.load_module("lua/./counter.lua")
+            return a == b and b == c, counted
+        "#,
+        )
+        .eval()
+        .unwrap();
+    assert!(same, "three spellings of one file must be one table");
+    assert_eq!(evals, 1, "the top-level chunk runs once");
+}
+
+#[test]
+fn a_path_target_is_recorded_as_a_determinant() {
+    // The whole reason §24.2 forbids the path form a resolver of its own: it
+    // goes through the door CS-0204 observes, or it is run without being keyed.
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(tmp.path(), "lua/helpers.lua", "return { value = 1 }");
+    let observer = ModuleObserver::new();
+    let lua = Lua::new();
+    let cook = lua.create_table().unwrap();
+    install_module_loader(
+        &lua,
+        &cook,
+        WorkingDirSource::Static(tmp.path().to_path_buf()),
+        NoHooks,
+        observer.clone(),
+    )
+    .unwrap();
+    lua.globals().set("cook", cook).unwrap();
+
+    lua.load(&format!(
+        "{}\nreturn helpers.value",
+        cook_contracts::module_binding::binding("helpers", "lua/helpers.lua")
+    ))
+    .eval::<i64>()
+    .unwrap();
+
+    let seen = observer.take();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(seen[0].ends_with("lua/helpers.lua"), "{seen:?}");
+    // Recorded under the JOINED path, so CS-0204's working-directory prefix
+    // still strips. A canonicalised path can carry a different prefix
+    // (`/tmp` -> `/private/tmp`) that does not.
+    assert!(
+        cook_contracts::layout::relative_module_paths(tmp.path(), &seen)
+            == vec!["lua/helpers.lua".to_string()],
+        "path-loaded module dropped out of the recorded determinant set: {seen:?}"
+    );
+}
+
+#[test]
+fn the_door_refuses_an_escaping_path_a_parser_never_saw() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(tmp.path(), "lua/helpers.lua", "return {}");
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    for target in ["../outside.lua", "//lua/helpers.lua", "/opt/x.lua"] {
+        let err = lua
+            .load(&format!(r#"return cook.load_module("{target}")"#))
+            .eval::<LuaValue>()
+            .expect_err(&format!("`{target}` must be refused at the door"));
+        let msg = err.to_string();
+        assert!(msg.contains(target), "{target}: {msg}");
+        assert!(
+            msg.contains("§12.2.1") || msg.contains("absolute paths are not permitted"),
+            "{target}: diagnostic does not name the rule: {msg}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_out_of_the_tree_is_refused_and_the_reason_is_the_cache() {
+    // The one containment check a pure path rule cannot make.
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("escaped.lua"), "return { value = 9 }").unwrap();
+    std::fs::create_dir_all(tmp.path().join("lua")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("escaped.lua"),
+        tmp.path().join("lua/link.lua"),
+    )
+    .unwrap();
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    let err = lua
+        .load(r#"return cook.load_module("lua/link.lua")"#)
+        .eval::<LuaValue>()
+        .expect_err("a symlink out of the tree must be refused");
+    let msg = err.to_string();
+    assert!(msg.contains("lua/link.lua"), "{msg}");
+    assert!(
+        msg.contains("determinant"),
+        "the diagnostic must say WHY, not just that it refused: {msg}"
+    );
+}
+
+#[test]
+fn a_missing_path_reports_the_file_not_a_candidate_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    let err = lua
+        .load(r#"return cook.load_module("lua/absent.lua")"#)
+        .eval::<LuaValue>()
+        .expect_err("must fail");
+    let msg = err.to_string();
+    assert!(msg.contains("lua/absent.lua"), "{msg}");
+    // §12.5: a path-addressed module has no candidate list. Reporting one
+    // would invite the author to go looking in directories nothing searched.
+    assert!(!msg.contains("tried"), "{msg}");
+    assert!(!msg.contains("init.lua"), "{msg}");
+}
+
+#[test]
+fn a_path_module_gets_init_and_cycle_detection_like_any_other() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        tmp.path(),
+        "lua/inited.lua",
+        "local m = { ran = false }\nfunction m.init() m.ran = true end\nreturn m",
+    );
+    write_file(
+        tmp.path(),
+        "lua/cyclic.lua",
+        r#"cook.load_module("lua/cyclic.lua")
+return {}"#,
+    );
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    let ran: bool = lua
+        .load(r#"return cook.load_module("lua/inited.lua").ran"#)
+        .eval()
+        .unwrap();
+    assert!(ran, "§12.3.1: init() runs for a path-addressed module too");
+
+    let err = lua
+        .load(r#"return cook.load_module("lua/cyclic.lua")"#)
+        .eval::<LuaValue>()
+        .expect_err("a self-referential path module must be detected");
+    assert!(
+        err.to_string().contains("module cycle detected:"),
+        "{err}"
+    );
 }

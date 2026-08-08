@@ -6,7 +6,10 @@ pub enum Token {
     RecipeHeader { name: String, deps: Vec<String> },
     ChoreHeader { name: String, params: Vec<crate::ast::ChoreParam>, deps: Vec<String> },
     ConfigHeader { name: Option<String> },
-    UseDecl { name: String },
+    /// `use` in either of its two forms (App. A.2, CS-0206). `alias` is the
+    /// Lua identifier bound; `target` is the module name or the normalised
+    /// tree-relative path resolution is given.
+    UseDecl { alias: String, target: String },
     ImportDecl { name: String, path: String },
     RegisterHeader,
     ProbeHeader { name: String, deps: Vec<String> },
@@ -36,6 +39,16 @@ pub enum LexError {
     ReservedTripleArrow { line: usize },
     #[error("line {line}: 'use' name '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
     InvalidUseName { name: String, line: usize },
+    #[error("line {line}: {message}")]
+    InvalidUsePath { message: String, line: usize },
+    #[error("line {line}: 'use {path}' derives the alias '{alias}', which is not a valid Lua identifier; give it one explicitly: 'use <alias> {path}'")]
+    UnusableDerivedAlias { path: String, alias: String, line: usize },
+    #[error("line {line}: 'use {first} {second}': the second argument of a two-argument 'use' must be a path ending in '.lua'")]
+    UseSecondArgumentNotAPath { first: String, second: String, line: usize },
+    #[error("line {line}: 'use {first} {second}': a module name takes no second argument; only a path form may be preceded by an alias")]
+    UseNameWithExtraArgument { first: String, second: String, line: usize },
+    #[error("line {line}: 'use' takes at most two arguments — an optional alias and a path")]
+    UseTooManyArguments { line: usize },
     #[error("line {line}: recipe name '{name}': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
     DottedDeclaredRecipeName { name: String, line: usize },
     #[error("line {line}: chore name '{name}': dotted chore names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
@@ -107,12 +120,21 @@ fn is_probe_seg_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
-/// Validate that a `use NAME` argument is a Lua identifier — `^[A-Za-z_][A-Za-z0-9_]*$`.
-/// Per CS-0035, `use` names are dropped verbatim into a `local NAME = ...` Lua binding
-/// by the codegen layer, so they MUST be syntactically valid Lua identifiers; otherwise
-/// the generated Lua is malformed and the failure surfaces far from the source. Hyphens
-/// and dots are rejected outright; in particular, hyphen rejection eliminates the
-/// `foo-bar` / `foo_bar` collision under the codegen's `replace('-', "_")` workaround.
+/// Validate that a `use` name — or, since CS-0206, a `use` ALIAS, whether the
+/// author wrote it or it was derived from a path's basename — is a Lua
+/// identifier, `^[A-Za-z_][A-Za-z0-9_]*$`.
+///
+/// Per CS-0035 the name is dropped verbatim into a `local NAME = ...` binding by
+/// the codegen layer, so it MUST be a syntactically valid Lua identifier;
+/// otherwise the generated Lua is malformed and the failure surfaces far from the
+/// source. Hyphens and dots are rejected outright; in particular, hyphen
+/// rejection eliminates the `foo-bar` / `foo_bar` collision under
+/// `cook_contracts::module_binding::alias_of`.
+///
+/// A DERIVED alias is checked here too but reported by its own variant
+/// (`UnusableDerivedAlias`): the author did not write `9lives`, the basename of
+/// the file they named did, so the remedy is the explicit-alias form and the
+/// diagnostic has to say so rather than complaining about a name nobody typed.
 fn check_use_name(name: &str, line: usize) -> Result<(), LexError> {
     let mut chars = name.chars();
     let ok_start = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
@@ -121,6 +143,95 @@ fn check_use_name(name: &str, line: usize) -> Result<(), LexError> {
         return Err(LexError::InvalidUseName { name: name.to_string(), line });
     }
     Ok(())
+}
+
+/// Split the text after `use` into its whitespace-separated arguments,
+/// honouring the double-quoted form of each (App. A.2, CS-0206).
+///
+/// This is not [`parse_name`]: a `use` argument may be a path, and
+/// `is_ident_char` admits neither `/` nor a leading `.`. Nor is it a plain
+/// `split_whitespace`, because `use "./my helpers.lua"` is one argument. The
+/// scanner is deliberately dumb about what each token MEANS — classification
+/// is [`classify_use_arguments`]'s job, which is where the diagnostics live.
+fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError> {
+    let mut args = Vec::new();
+    let mut rest = text.trim_start();
+    while !rest.is_empty() {
+        if let Some(after_quote) = rest.strip_prefix('"') {
+            let end = after_quote
+                .find('"')
+                .ok_or(LexError::UnterminatedString { line })?;
+            args.push(after_quote[..end].to_string());
+            rest = after_quote[end + 1..].trim_start();
+        } else {
+            let end = rest
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(rest.len());
+            args.push(rest[..end].to_string());
+            rest = rest[end..].trim_start();
+        }
+    }
+    Ok(args)
+}
+
+/// Turn a `use` declaration's arguments into the `(alias, target)` pair the
+/// AST carries (§12.1, CS-0206).
+///
+/// Every rejection this can produce names the form the author actually wrote:
+/// the trailing-`.lua` discriminator is applied first, so `use my-mod` reaches
+/// CS-0035's malformed-NAME diagnostic rather than being re-read as a path
+/// that forgot its suffix.
+fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, String), LexError> {
+    use cook_contracts::layout::{normalise_use_path, use_path_rejected_message};
+    use cook_contracts::module_binding::{alias_of, derived_alias, is_path_target};
+
+    match args {
+        [] => Err(LexError::MissingRecipeName { line }),
+        [only] if !is_path_target(only) => {
+            // The name form, unchanged since CS-0035.
+            check_use_name(only, line)?;
+            Ok((alias_of(only), only.clone()))
+        }
+        [only] => {
+            let normalised = normalise_use_path(only)
+                .map_err(|r| LexError::InvalidUsePath {
+                    message: use_path_rejected_message(only, r),
+                    line,
+                })?;
+            let alias = derived_alias(&normalised);
+            check_use_name(&alias, line).map_err(|_| LexError::UnusableDerivedAlias {
+                path: only.clone(),
+                alias: alias.clone(),
+                line,
+            })?;
+            Ok((alias, normalised))
+        }
+        [first, second] => {
+            if !is_path_target(second) {
+                return Err(if is_path_target(first) {
+                    LexError::UseSecondArgumentNotAPath {
+                        first: first.clone(),
+                        second: second.clone(),
+                        line,
+                    }
+                } else {
+                    LexError::UseNameWithExtraArgument {
+                        first: first.clone(),
+                        second: second.clone(),
+                        line,
+                    }
+                });
+            }
+            check_use_name(first, line)?;
+            let normalised = normalise_use_path(second)
+                .map_err(|r| LexError::InvalidUsePath {
+                    message: use_path_rejected_message(second, r),
+                    line,
+                })?;
+            Ok((first.clone(), normalised))
+        }
+        _ => Err(LexError::UseTooManyArguments { line }),
+    }
 }
 
 /// Parse either a quoted name (`"foo"`) or a bare identifier (`foo`, `backend.build`).
@@ -658,9 +769,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 || trimmed.as_bytes()[3] == b'"')
         {
             let rest = trimmed["use".len()..].trim();
-            let (name, _) = parse_name(rest, line_num)?;
-            check_use_name(&name, line_num)?;
-            Token::UseDecl { name }
+            let args = split_use_arguments(rest, line_num)?;
+            let (alias, target) = classify_use_arguments(&args, line_num)?;
+            Token::UseDecl { alias, target }
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("import")
             && trimmed.len() > 6

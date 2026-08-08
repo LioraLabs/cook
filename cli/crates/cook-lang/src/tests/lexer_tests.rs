@@ -305,7 +305,7 @@ fn test_config_header_not_keyword_prefix() {
 fn test_use_decl() {
     let tokens = tokenize(r#"use "cpp""#).unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn test_use_prefix_is_content() {
 fn test_use_bare_name() {
     let tokens = tokenize("use cpp").unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn test_use_name_underscore_accepted() {
     let tokens = tokenize("use my_module").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { name: "my_module".to_string() }
+        Token::UseDecl { alias: "my_module".to_string(), target: "my_module".to_string() }
     );
 }
 
@@ -380,7 +380,7 @@ fn test_use_name_leading_underscore_accepted() {
     let tokens = tokenize("use _private").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { name: "_private".to_string() }
+        Token::UseDecl { alias: "_private".to_string(), target: "_private".to_string() }
     );
 }
 

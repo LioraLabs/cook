@@ -1,11 +1,14 @@
 use super::*;
 
+use cook_contracts::module_binding::alias_of;
+
 fn uses(names: &[&str]) -> Vec<UseStatement> {
     names
         .iter()
         .enumerate()
         .map(|(i, n)| UseStatement {
-            module_name: (*n).to_string(),
+            alias: alias_of(n),
+            target: (*n).to_string(),
             line: i + 1,
         })
         .collect()

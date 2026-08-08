@@ -43,6 +43,150 @@ fn dot_cook_tree() {
 }
 
 // ---------------------------------------------------------------------------
+// Path-addressed modules (§12.2.1, CS-0206)
+// ---------------------------------------------------------------------------
+
+mod use_paths {
+    use crate::layout::*;
+    use std::path::Path;
+
+    #[test]
+    fn a_tree_relative_path_normalises_to_one_spelling() {
+        // §12.3.2: two spellings of one file must be ONE module instance.
+        for raw in [
+            "build/helpers.lua",
+            "./build/helpers.lua",
+            "build/./helpers.lua",
+            "build//helpers.lua",
+        ] {
+            assert_eq!(normalise_use_path(raw), Ok("build/helpers.lua".to_string()), "{raw}");
+        }
+    }
+
+    #[test]
+    fn the_sigil_is_refused_as_a_sigil_not_as_an_absolute_path() {
+        // `//x` is also `/x`-shaped. Reporting it as "absolute" would tell an
+        // author to make it relative when the real answer is that `use` does
+        // not admit `import`'s workspace-root reach at all.
+        assert_eq!(
+            normalise_use_path("//build/helpers.lua"),
+            Err(UsePathRejection::Sigil)
+        );
+        let msg = use_path_rejected_message("//build/helpers.lua", UsePathRejection::Sigil);
+        assert!(msg.contains("//build/helpers.lua"));
+        assert!(msg.contains("§12.2.1"));
+    }
+
+    #[test]
+    fn absolute_and_dotdot_are_refused() {
+        assert_eq!(
+            normalise_use_path("/opt/cook/helpers.lua"),
+            Err(UsePathRejection::Absolute)
+        );
+        assert_eq!(
+            normalise_use_path("../shared/helpers.lua"),
+            Err(UsePathRejection::DotDotSegment)
+        );
+        // A `..` anywhere, not only in front.
+        assert_eq!(
+            normalise_use_path("build/../../helpers.lua"),
+            Err(UsePathRejection::DotDotSegment)
+        );
+    }
+
+    #[test]
+    fn a_dotdot_inside_a_segment_is_not_a_dotdot_segment() {
+        // `..foo.lua` is a legal file name, not an escape.
+        assert_eq!(
+            normalise_use_path("build/..foo.lua"),
+            Ok("build/..foo.lua".to_string())
+        );
+    }
+
+    #[test]
+    fn a_path_that_elides_to_nothing_is_refused() {
+        assert_eq!(normalise_use_path("./"), Err(UsePathRejection::Empty));
+        assert_eq!(normalise_use_path(""), Err(UsePathRejection::Empty));
+    }
+
+    #[test]
+    fn the_candidate_is_the_normalised_path_under_the_working_dir() {
+        assert_eq!(
+            module_path_candidate(Path::new("/proj"), "build/helpers.lua"),
+            Path::new("/proj/build/helpers.lua")
+        );
+    }
+
+    #[test]
+    fn containment_follows_symlinks_and_refuses_what_it_cannot_resolve() {
+        let tmp = std::env::temp_dir().join(format!(
+            "cook-431-containment-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let inside = tmp.join("proj");
+        let outside = tmp.join("elsewhere");
+        std::fs::create_dir_all(inside.join("build")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(inside.join("build/real.lua"), "return {}").unwrap();
+        std::fs::write(outside.join("escaped.lua"), "return {}").unwrap();
+
+        assert!(contains_resolved_module_path(
+            &inside,
+            &inside.join("build/real.lua")
+        ));
+
+        // A symlink inside the tree pointing out of it: `normalise_use_path`
+        // sees a clean relative path and cannot know.
+        #[cfg(unix)]
+        {
+            let link = inside.join("build/link.lua");
+            std::os::unix::fs::symlink(outside.join("escaped.lua"), &link).unwrap();
+            assert!(!contains_resolved_module_path(&inside, &link));
+        }
+
+        // Nothing there at all reports NOT contained: the permissive answer on
+        // a rule whose failure mode is a silent wrong cache is the wrong one.
+        assert!(!contains_resolved_module_path(
+            &inside,
+            &inside.join("build/absent.lua")
+        ));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn the_escape_diagnostic_explains_the_cache_reason() {
+        let msg = module_path_escaped_message(
+            Path::new("/proj"),
+            "build/link.lua",
+            Path::new("/elsewhere/x.lua"),
+        );
+        assert!(msg.contains("build/link.lua"));
+        assert!(msg.contains("/elsewhere/x.lua"));
+        assert!(msg.contains("determinant"));
+    }
+
+    #[test]
+    fn the_path_not_found_diagnostic_reports_one_file_not_a_candidate_list() {
+        let msg = module_path_not_found_message(
+            Path::new("/proj"),
+            "./build/helpers.lua",
+            Path::new("/proj/build/helpers.lua"),
+        );
+        assert_eq!(
+            msg,
+            "cook.load_module: module file './build/helpers.lua' not found at \
+             /proj/build/helpers.lua (relative to /proj)"
+        );
+        assert!(!msg.contains("tried"));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Module-load laws
 // ---------------------------------------------------------------------------
 

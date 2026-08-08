@@ -91,6 +91,20 @@
 (use_declaration
   module: (string) @module)
 
+; CS-0206 path form: the alias binds the same way a module name does, so it
+; highlights the same; the path highlights like an import path.
+(use_declaration
+  alias: (identifier) @module)
+
+(use_declaration
+  alias: (string) @module)
+
+(use_declaration
+  path: (path) @string.special.path)
+
+(use_declaration
+  path: (string) @string.special.path)
+
 (import_declaration
   name: (import_name) @module)
 

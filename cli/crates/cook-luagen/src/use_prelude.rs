@@ -24,27 +24,26 @@ use cook_contracts::module_binding;
 
 use crate::lua_scan::free_identifier_occurs;
 
-/// The Lua identifier a `use <name>` declaration binds (Note 12.1.1).
-///
-/// Re-exported from `cook_contracts::module_binding` rather than spelled here:
-/// the §12.1 rewrite is language law, and COOK-431's path-form `use` will need
-/// the same answer from a third crate. (The hyphen case is unreachable from
-/// today's `use` surface — see the note on `module_binding::alias_of`.)
-pub(crate) use module_binding::alias_of;
-
 /// The execute-phase prelude for `body`: one `local <alias> =
-/// cook.load_module("<name>")` statement per `use` the body names, in
+/// cook.load_module("<target>")` statement per `use` the body names, in
 /// declaration order, `; `-joined on a single line with a trailing space.
 /// Empty when the body names none of them.
+///
+/// CS-0206: the alias is read off the declaration rather than derived here.
+/// The two `use` forms derive it by different rules — a name IS its alias
+/// after the §12.1 rewrite, a path's is explicit or comes from its basename —
+/// and only the parser can still tell them apart. A derivation repeated here
+/// would have to re-classify `target`, and the two classifications would be
+/// free to disagree.
 pub(crate) fn execute_prelude(uses: &[UseStatement], body: &str) -> String {
     let mut out = String::new();
-    let mut bound: Vec<String> = Vec::new();
+    let mut bound: Vec<&str> = Vec::new();
     for use_stmt in uses {
-        let alias = alias_of(&use_stmt.module_name);
-        if bound.contains(&alias) || !free_identifier_occurs(body, &alias) {
+        let alias = use_stmt.alias.as_str();
+        if bound.contains(&alias) || !free_identifier_occurs(body, alias) {
             continue;
         }
-        out.push_str(&module_binding::binding(&use_stmt.module_name));
+        out.push_str(&module_binding::binding(alias, &use_stmt.target));
         out.push_str("; ");
         bound.push(alias);
     }

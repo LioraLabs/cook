@@ -94,8 +94,34 @@ pub fn install_module_loader(
         stack: Vec::new(),
     }));
 
-    let load_module_fn = lua.create_function(move |lua, name: String| {
+    let load_module_fn = lua.create_function(move |lua, raw_target: String| {
         let cwd = working_dir.resolve();
+
+        // CS-0206: a target ending in `.lua` is a PATH, and is normalised
+        // before anything else happens to it.
+        //
+        // Both halves of that are load-bearing. Normalising first is what
+        // makes `./build/x.lua` and `build/x.lua` one memo key and therefore
+        // one module instance (§12.3.2) — key first and they are two, and the
+        // file's top-level chunk runs twice. Refusing here rather than at the
+        // search is what makes §12.2.1 a property of the system: a `use`
+        // declaration is checked by the parser, but this function takes a
+        // string a body computed, and a rule enforced only where the parser
+        // can see it constrains spellings rather than loads.
+        let is_path = cook_contracts::module_binding::is_path_target(&raw_target);
+        let name = if is_path {
+            match cook_contracts::layout::normalise_use_path(&raw_target) {
+                Ok(normalised) => normalised,
+                Err(rejection) => {
+                    return Err(LuaError::runtime(
+                        cook_contracts::layout::use_path_rejected_message(&raw_target, rejection),
+                    ));
+                }
+            }
+        } else {
+            raw_target.clone()
+        };
+
         let memo_key = cook_contracts::layout::module_memo_key(&cwd, &name);
 
         // Memoisation (§12.3.2): a second load of (cwd, name) on this VM
@@ -129,15 +155,49 @@ pub fn install_module_loader(
             }
         }
 
-        // §7 / CS-0069 four-candidate resolution: hand-vendored wins over
-        // LuaRocks-installed; the ONE list both phases probe (COOK-393).
-        let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
-        let module_path = match candidates.iter().find(|p| p.exists()) {
-            Some(p) => p.clone(),
-            None => {
+        let module_path = if is_path {
+            // §12.5 (CS-0206): a path-addressed module has no candidate list.
+            // The declaration named one file; either it is there or resolution
+            // fails.
+            let candidate = cook_contracts::layout::module_path_candidate(&cwd, &name);
+            if !candidate.exists() {
                 return Err(LuaError::runtime(
-                    cook_contracts::layout::module_not_found_message(&cwd, &name),
+                    cook_contracts::layout::module_path_not_found_message(
+                        &cwd,
+                        &raw_target,
+                        &candidate,
+                    ),
                 ));
+            }
+            // The third containment check, and the only one the parser cannot
+            // make: `build/helpers.lua` may be a symlink out of the tree.
+            // Ordered after the existence check so a missing file reports as
+            // missing rather than as an escape.
+            if !cook_contracts::layout::contains_resolved_module_path(&cwd, &candidate) {
+                return Err(LuaError::runtime(
+                    cook_contracts::layout::module_path_escaped_message(
+                        &cwd,
+                        &raw_target,
+                        &candidate,
+                    ),
+                ));
+            }
+            // Recorded and evaluated under the JOINED path, not the
+            // canonicalised one: CS-0204 records it by stripping the working
+            // directory prefix, and a canonicalised path can carry a different
+            // prefix (`/tmp` -> `/private/tmp`) that no longer strips.
+            candidate
+        } else {
+            // §7 / CS-0069 four-candidate resolution: hand-vendored wins over
+            // LuaRocks-installed; the ONE list both phases probe (COOK-393).
+            let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
+            match candidates.iter().find(|p| p.exists()) {
+                Some(p) => p.clone(),
+                None => {
+                    return Err(LuaError::runtime(
+                        cook_contracts::layout::module_not_found_message(&cwd, &name),
+                    ));
+                }
             }
         };
 

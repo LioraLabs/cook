@@ -1,0 +1,4 @@
+use cpp proto
+
+recipe build
+    echo unreachable

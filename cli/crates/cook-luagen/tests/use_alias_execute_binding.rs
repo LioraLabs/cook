@@ -156,3 +156,110 @@ fn a_files_producer_keeps_its_sentinel_produce_verbatim() {
         "files producer must keep the reserved sentinel verbatim:\n{out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// CS-0206: the path form composes the SAME binding through the SAME door
+// ---------------------------------------------------------------------------
+//
+// The two `use` forms reach one binding by different derivations — a name IS
+// its alias after the §12.1 rewrite, a path's is explicit or comes from its
+// basename — so a codegen that gets one right can get the other wrong. And the
+// failure would be invisible where it matters most: §24.2 requires the path
+// form to bind through `cook.load_module` precisely because CS-0204 observes
+// that door, so a path-loaded module bound any other way would be run without
+// being keyed, on a key that addresses a store shared between machines.
+
+/// The prelude for a path-form `use`, glued onto a body that opens with the
+/// alias. The TARGET is the normalised path, not the alias.
+const PATH_GLUED: &str = r#"local helpers = cook.load_module("lua/helpers.lua"); helpers."#;
+
+fn assert_path_bound(src: &str, what: &str) {
+    let out = lua(src);
+    assert!(
+        out.contains(PATH_GLUED),
+        "{what}: a path-form `use` never reached the body (§24.2, CS-0206).\n\
+         Generated Lua:\n{out}"
+    );
+}
+
+#[test]
+fn cook_step_lua_body_binds_a_path_form_alias() {
+    assert_path_bound(
+        "use ./lua/helpers.lua\n\nrecipe a\n    cook \"out.txt\" >{ helpers.say() }\n",
+        "cook one-shot",
+    );
+}
+
+#[test]
+fn test_step_lua_body_binds_a_path_form_alias() {
+    assert_path_bound(
+        "use ./lua/helpers.lua\n\nrecipe a\n    test >{ helpers.say() }\n",
+        "test one-shot",
+    );
+}
+
+#[test]
+fn probe_produce_body_binds_a_path_form_alias() {
+    assert_path_bound(
+        "use ./lua/helpers.lua\n\nprobe p\n    >{ helpers.say() }\n",
+        "probe produce",
+    );
+}
+
+#[test]
+fn chore_lua_body_binds_a_path_form_alias() {
+    assert_path_bound(
+        "use ./lua/helpers.lua\n\nchore c\n    > helpers.say()\n",
+        "chore",
+    );
+}
+
+#[test]
+fn the_register_chunk_binds_a_path_form_alias_too() {
+    let out = lua("use ./lua/helpers.lua\n\nrecipe a\n    cook \"o.txt\" { touch $<out> }\n");
+    assert!(
+        out.contains("local helpers = cook.load_module(\"lua/helpers.lua\")\n"),
+        "register chunk missing the path-form binding:\n{out}"
+    );
+}
+
+#[test]
+fn an_explicit_alias_is_emitted_not_re_derived_from_the_basename() {
+    let out = lua("use fmt ./lua/code-formatting.lua\n\nrecipe a\n    test >{ fmt.run() }\n");
+    assert!(
+        out.contains(r#"local fmt = cook.load_module("lua/code-formatting.lua"); fmt."#),
+        "explicit alias must reach the body verbatim:\n{out}"
+    );
+    // The basename would have derived `code_formatting`. If the emitter
+    // re-derived instead of reading the declaration, this would appear.
+    assert!(
+        !out.contains("code_formatting"),
+        "emitter re-derived the alias instead of using the declared one:\n{out}"
+    );
+}
+
+#[test]
+fn a_hyphenated_basename_binds_the_underscore_alias_and_the_unrewritten_path() {
+    // COOK-436: §12.1's hyphen-to-underscore rewrite had no reachable input
+    // until CS-0206 — CS-0035 rejects a hyphen in a `use` NAME. A basename
+    // passes through no name production, so it can carry one. Both halves at
+    // once: the alias loses the hyphen, the path on disk does not.
+    let out = lua("use ./lua/my-helpers.lua\n\nrecipe a\n    test >{ my_helpers.say() }\n");
+    assert!(
+        out.contains(r#"local my_helpers = cook.load_module("lua/my-helpers.lua"); my_helpers."#),
+        "hyphenated basename did not derive its underscore alias:\n{out}"
+    );
+}
+
+#[test]
+fn a_path_form_body_that_never_names_the_alias_gets_no_binding() {
+    // The CS-0205 gate is about references, and it must apply to the path form
+    // for the same reason: binding anyway would evaluate the module on a worker
+    // VM and make its source a determinant of a unit that never touched it.
+    let out = lua("use ./lua/helpers.lua\n\nrecipe a\n    test >{ print(\"hi\") }\n");
+    assert!(
+        !out.contains("load_module(\"lua/helpers.lua\"); "),
+        "an unreferenced path-form alias must not be bound into the body:\n{out}"
+    );
+    assert!(out.contains("local helpers = cook.load_module(\"lua/helpers.lua\")\n"));
+}

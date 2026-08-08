@@ -76,6 +76,143 @@ pub fn module_candidates_description(name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Path-addressed modules (§12.5, §12.2.1 — CS-0206)
+// ---------------------------------------------------------------------------
+//
+// A path form's target is confined to the declaring Cookfile's own subtree.
+// The rule is here, not in the parser, because the parser is not the only
+// door: `cook.load_module` takes a string a body computed, so a check that
+// lived only at parse time would constrain spellings rather than the system.
+
+/// Why a `use` path is not admissible (§12.2.1). Ordered as the checks run,
+/// most-specific first, so a `//` sigil reports as a sigil rather than as the
+/// absolute path it also is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsePathRejection {
+    /// `//build/helpers.lua` — `import`'s workspace-root sigil, which `use`
+    /// does not admit.
+    Sigil,
+    /// `/opt/cook/helpers.lua` — absolute.
+    Absolute,
+    /// `../shared/helpers.lua` — escapes the Cookfile's subtree.
+    DotDotSegment,
+    /// The path is empty, or every segment was elided by normalisation.
+    Empty,
+}
+
+impl UsePathRejection {
+    /// The clause of the diagnostic that says what is wrong and what to do.
+    /// One text, so the parse-time refusal and the resolver's refusal cannot
+    /// tell an author two different stories about one rule.
+    pub fn reason(self) -> &'static str {
+        match self {
+            UsePathRejection::Sigil => {
+                "the '//' workspace-root sigil is not permitted in a `use` path; \
+                 a module is confined to the declaring Cookfile's own subtree (§12.2.1)"
+            }
+            UsePathRejection::Absolute => {
+                "absolute paths are not permitted in a `use` path; \
+                 write it relative to the Cookfile's directory"
+            }
+            UsePathRejection::DotDotSegment => {
+                "'..' segments are not permitted in a `use` path; \
+                 a module is confined to the declaring Cookfile's own subtree (§12.2.1)"
+            }
+            UsePathRejection::Empty => "a `use` path names no file",
+        }
+    }
+}
+
+/// The §12.2.1 refusal diagnostic, named after the path it refuses.
+pub fn use_path_rejected_message(raw: &str, rejection: UsePathRejection) -> String {
+    format!("use path '{}': {}", raw, rejection.reason())
+}
+
+/// Normalise a `use` path to the single spelling it is keyed and recorded
+/// under, or say why it is not admissible (§12.2.1).
+///
+/// Normalisation drops a leading `./`, interior `.` segments, and repeated
+/// separators, so `./build/helpers.lua`, `build/./helpers.lua` and
+/// `build//helpers.lua` all key as `build/helpers.lua`. §12.3.2 requires that:
+/// two spellings of one file must be one module instance, not two.
+///
+/// It does NOT touch symlinks or the filesystem — it is pure, and runs in the
+/// parser where there is no working directory yet. The escape a symlink can
+/// still perform is caught at resolution by [`contains_resolved_module_path`].
+pub fn normalise_use_path(raw: &str) -> Result<String, UsePathRejection> {
+    if raw.starts_with("//") {
+        return Err(UsePathRejection::Sigil);
+    }
+    if raw.starts_with('/') {
+        return Err(UsePathRejection::Absolute);
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in raw.split('/') {
+        match segment {
+            "" | "." => continue,
+            ".." => return Err(UsePathRejection::DotDotSegment),
+            other => segments.push(other),
+        }
+    }
+    if segments.is_empty() {
+        return Err(UsePathRejection::Empty);
+    }
+    Ok(segments.join("/"))
+}
+
+/// The file a normalised `use` path names, under a Cookfile's working
+/// directory.
+pub fn module_path_candidate(working_dir: &Path, normalised: &str) -> PathBuf {
+    working_dir.join(normalised)
+}
+
+/// Does `resolved` lie inside `working_dir` once both are canonicalised?
+///
+/// The last of the three containment checks, and the only one that touches the
+/// filesystem: `normalise_use_path` cannot see that `build/helpers.lua` is a
+/// symlink to `../../elsewhere/helpers.lua`. It matters for the same reason
+/// the other two do — [`relative_module_paths`] drops a determinant it cannot
+/// express relative to the working directory, so a module reached across the
+/// boundary would be run and not keyed.
+///
+/// A path that cannot be canonicalised (it does not exist yet, or a component
+/// is unreadable) is reported as NOT contained: the caller's next step is a
+/// not-found or refusal diagnostic either way, and answering "contained" for a
+/// path nothing could resolve would be the permissive direction on a rule
+/// whose failure mode is a silent wrong cache.
+pub fn contains_resolved_module_path(working_dir: &Path, resolved: &Path) -> bool {
+    match (working_dir.canonicalize(), resolved.canonicalize()) {
+        (Ok(root), Ok(target)) => target.starts_with(&root),
+        _ => false,
+    }
+}
+
+/// The §12.2.1 refusal for a path that normalised cleanly but resolved outside
+/// the Cookfile's subtree — in practice, through a symbolic link.
+pub fn module_path_escaped_message(working_dir: &Path, raw: &str, resolved: &Path) -> String {
+    format!(
+        "cook.load_module: module path '{}' resolves to {}, outside the Cookfile's directory {} \
+         (§12.2.1); a module loaded from outside cannot be recorded as a determinant of the unit \
+         that loaded it, so it is refused rather than silently left out of the cache key",
+        raw,
+        resolved.display(),
+        working_dir.display()
+    )
+}
+
+/// The resolution failure for a path form. Distinct from
+/// [`module_not_found_message`] because there is no candidate list to report:
+/// the declaration named one file, and it is not there.
+pub fn module_path_not_found_message(working_dir: &Path, raw: &str, candidate: &Path) -> String {
+    format!(
+        "cook.load_module: module file '{}' not found at {} (relative to {})",
+        raw,
+        candidate.display(),
+        working_dir.display()
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Module-load laws (§12.3, §24.2)
 // ---------------------------------------------------------------------------
 //
@@ -84,13 +221,19 @@ pub fn module_candidates_description(name: &str) -> String {
 // decisions inside them — how a load is keyed, what its diagnostics say,
 // what chunk name an eval runs under — are law, and they live here.
 
-/// The memoisation / in-flight key for a module load: `(working_dir, name)`,
+/// The memoisation / in-flight key for a module load: `(working_dir, target)`,
 /// per §12.3.2–12.3.3. The register VM has one working_dir for its lifetime,
 /// so the prefix is constant there; a worker VM is reused across Cookfiles
 /// (CS-0017) and the prefix is what keeps two Cookfiles' same-named modules
 /// distinct.
-pub fn module_memo_key(working_dir: &Path, name: &str) -> String {
-    format!("{}::{}", working_dir.display(), name)
+///
+/// `target` is a module name or a NORMALISED path (CS-0206). The two share one
+/// key space and cannot collide in it: a name is a Lua identifier and admits
+/// no `.`, a path ends in `.lua`. Passing a raw path here rather than
+/// [`normalise_use_path`]'s output would key `./x.lua` and `x.lua` separately
+/// and evaluate one file twice, against §12.3.2.
+pub fn module_memo_key(working_dir: &Path, target: &str) -> String {
+    format!("{}::{}", working_dir.display(), target)
 }
 
 /// Render observed module paths for recording (§{exec.cache.module-source},

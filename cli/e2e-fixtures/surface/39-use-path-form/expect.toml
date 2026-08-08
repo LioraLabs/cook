@@ -1,0 +1,74 @@
+# CS-0206. `use ./tools/greet.lua` reaches a Lua file that is ordinary tracked
+# project source, in no package directory at all. Before this entry the file
+# had to be copied or symlinked into `cook_modules/` first — into the same
+# directory a package manager installs into, which is why that directory could
+# never be given a correct ignore rule (COOK-412, COOK-430).
+#
+# Runs 6-8 are the CS-0204 interaction proof, and they are the reason this
+# fixture exists rather than a parse-only corpus entry. §24.2 requires the
+# path form to bind through `cook.load_module` and not through a resolver of
+# its own, precisely because CS-0204 observes THAT door: a path-loaded module
+# reached any other way would be run without being keyed, and a
+# content-addressed key that travels between machines would be composed
+# without the source that produced the bytes. Nothing about that is visible to
+# a parser.
+
+# 1. A cook-step Lua body resolves a path-form alias.
+[[run]]
+args = ["build"]
+[run.assert]
+equals = { "build/out.txt" = "ORIGINAL" }
+
+# 2. A test-step Lua body.
+[[run]]
+args = ["checks"]
+[run.assert]
+output_contains = ["test sees ORIGINAL"]
+
+# 3. A probe's produce body.
+[[run]]
+args = ["motto_check"]
+[run.assert]
+output_contains = ["probe produced ORIGINAL"]
+
+# 4. A chore body.
+[[run]]
+args = ["say"]
+[run.assert]
+output_contains = ["chore sees ORIGINAL"]
+
+# 5. Both alias derivations. `say_hello` is the hyphen rewrite's first
+#    reachable input (COOK-436); `fmt` is the explicit form.
+[[run]]
+args = ["aliases"]
+[run.assert]
+output_contains = ["aliases see HYPHEN-DERIVED and EXPLICIT-ALIAS"]
+
+# 6. Nothing edited: the cook step is served from cache. Without this bar,
+#    run 7 is satisfied just as well by a unit that rebuilds forever.
+[[run]]
+args = ["build"]
+[run.assert]
+output_contains = ["1 cached"]
+unchanged = ["build/out.txt"]
+
+# 7. Edit the path-loaded module. It is reached ONLY through the `use` alias.
+#    A miss here — and the NEW bytes, not just a rebuild.
+[[run]]
+args = ["build"]
+write = { "tools/greet.lua" = "local m = {}\n\nfunction m.value()\n  return \"UPDATED\"\nend\n\nreturn m\n" }
+[run.assert]
+output_not_contains = ["1 cached"]
+changed = ["build/out.txt"]
+equals = { "build/out.txt" = "UPDATED" }
+
+# 8. The probe's own fingerprint folds it too, so a keyed probe re-produces.
+[[run]]
+args = ["motto_check"]
+[run.assert]
+output_contains = ["probe produced UPDATED"]
+
+[[run]]
+args = ["checks"]
+[run.assert]
+output_contains = ["test sees UPDATED"]
