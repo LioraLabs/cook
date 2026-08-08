@@ -1,8 +1,8 @@
-//! Filesystem layout law: the `cook_modules/` tree and the `.cook/` tree
-//! (COOK-393).
+//! Filesystem layout law: the `.cook/` tree, including the installed-module
+//! tree at `.cook/modules/` (COOK-393, CS-0207).
 //!
 //! Module resolution — the tree root, the LuaRocks share/lib subtrees, the
-//! §7 four-candidate probe order, the `package.path`/`package.cpath`
+//! §12 candidate probe order, the `package.path`/`package.cpath`
 //! templates, so/dll selection, and the stash keys — was spelled
 //! independently by the register phase (cook-register/module_loader), the
 //! execute phase (cook-luaotp/pool, twice), and the installer (cook-cli
@@ -16,16 +16,34 @@
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
-// cook_modules/ — the module tree (Standard §7, §12)
+// .cook/modules/ — the installed-module tree (Standard §12, §27.1.1)
 // ---------------------------------------------------------------------------
 
-/// The project-relative module tree root.
-pub const COOK_MODULES_DIR: &str = "cook_modules";
+/// The installed-module tree, under [`DOT_COOK_DIR`] (§27.1.1, CS-0207).
+///
+/// It holds only what `cook modules install` put there. Before CS-0207 this
+/// was a top-level `cook_modules/`, which was ALSO the only legal home for a
+/// hand-authored module — one directory holding source and build output at
+/// once, which is why no ignore rule for it could be correct (COOK-412,
+/// COOK-430). A module the project authors is now addressed by path
+/// ([`normalise_use_path`]) and lives wherever the author put it.
+pub const MODULES_SUBDIR: &str = "modules";
 
-/// LuaRocks' pure-Lua install subtree under [`COOK_MODULES_DIR`].
+/// The pre-CS-0207 tree root, retained for ONE purpose: recognising a stale
+/// checkout so [`module_not_found_message`] can name the migration.
+///
+/// It is never searched. A dual-read window was refused because it would have
+/// to keep `cook_modules/?.lua` in the search path for its whole life, and
+/// that path IS the conflation CS-0207 exists to delete — the window would
+/// ship the defect it is a window for. What a window buys is that a user with
+/// a stale tree is told what happened; that is bought here instead, and a
+/// stale tree can be reported but never silently loaded.
+pub const LEGACY_MODULES_DIR: &str = "cook_modules";
+
+/// LuaRocks' pure-Lua install subtree under [`modules_dir`].
 pub const MODULES_SHARE_LUA_SUBDIR: &str = "share/lua/5.4";
 
-/// LuaRocks' C-extension install subtree under [`COOK_MODULES_DIR`].
+/// LuaRocks' C-extension install subtree under [`modules_dir`].
 pub const MODULES_LIB_LUA_SUBDIR: &str = "lib/lua/5.4";
 
 /// `package` stash key holding the VM's pre-cook `package.path`, so
@@ -47,20 +65,33 @@ pub fn native_lua_ext() -> &'static str {
     }
 }
 
-/// The module tree root for a Cookfile working directory.
+/// The installed-module tree root for a Cookfile working directory:
+/// `<working_dir>/.cook/modules` (§27.1.1, CS-0207).
 pub fn modules_dir(working_dir: &Path) -> PathBuf {
-    working_dir.join(COOK_MODULES_DIR)
+    working_dir.join(DOT_COOK_DIR).join(MODULES_SUBDIR)
 }
 
-/// The §7 / CS-0069 four-candidate resolution order for
-/// `cook.load_module(name)`: hand-vendored wins over LuaRocks-installed.
-/// BOTH phases must probe exactly this list in exactly this order.
-pub fn module_candidates(working_dir: &Path, name: &str) -> [PathBuf; 4] {
-    let modules = modules_dir(working_dir);
-    let share = modules.join(MODULES_SHARE_LUA_SUBDIR);
+/// The pre-CS-0207 tree root, for [`module_not_found_message`]'s migration
+/// hint only. Nothing resolves against it.
+pub fn legacy_modules_dir(working_dir: &Path) -> PathBuf {
+    working_dir.join(LEGACY_MODULES_DIR)
+}
+
+/// The §12 / CS-0069 resolution order for `cook.load_module(name)`. BOTH
+/// phases must probe exactly this list in exactly this order.
+///
+/// Two candidates, not four. CS-0069's list led with `cook_modules/<name>.lua`
+/// and `cook_modules/<name>/init.lua` — the hand-vendored top level, which
+/// existed so a project could shadow a rock by dropping a file beside it.
+/// CS-0207 withdrew that workflow rather than relocating it: shadowing by
+/// precedence leaves no record in the Cookfile that it happened, so a reader
+/// saw `use cook_cc` and had to know the search order and inspect the tree to
+/// learn which `cook_cc` ran. An author who needs a patched module now points
+/// a path-form `use` at their own file, which names the file it means. With
+/// the top level gone there is no precedence question left to specify.
+pub fn module_candidates(working_dir: &Path, name: &str) -> [PathBuf; 2] {
+    let share = modules_dir(working_dir).join(MODULES_SHARE_LUA_SUBDIR);
     [
-        modules.join(format!("{}.lua", name)),
-        modules.join(name).join("init.lua"),
         share.join(format!("{}.lua", name)),
         share.join(name).join("init.lua"),
     ]
@@ -70,7 +101,7 @@ pub fn module_candidates(working_dir: &Path, name: &str) -> [PathBuf; 4] {
 /// the two phases' module-not-found errors describe the same probe order.
 pub fn module_candidates_description(name: &str) -> String {
     format!(
-        "{name}.lua, {name}/init.lua, {share}/{name}.lua, {share}/{name}/init.lua",
+        "{share}/{name}.lua, {share}/{name}/init.lua",
         share = MODULES_SHARE_LUA_SUBDIR
     )
 }
@@ -96,7 +127,23 @@ pub enum UsePathRejection {
     Absolute,
     /// `../shared/helpers.lua` — escapes the Cookfile's subtree.
     DotDotSegment,
+    /// `./my helpers.lua` — whitespace inside a path.
+    ///
+    /// App. A.5's `path_segment` is `/[^\s\n\/]+/`, which admits none, and
+    /// `tree-sitter-cook` matches the Standard. The Rust lexer's argument
+    /// splitter honours the quoted form so that a path CAN be quoted, and
+    /// without this rule that leniency would let `use h "./my helpers.lua"`
+    /// parse in one implementation and fail in the other — a Cookfile whose
+    /// meaning two conforming readers disagree about, which is worse than
+    /// either answer (COOK-431 review).
+    Whitespace,
     /// The path is empty, or every segment was elided by normalisation.
+    ///
+    /// Not reachable from either door: everything that gets here has already
+    /// passed `module_binding::is_path_target`, so it ends in `.lua` and has a
+    /// non-empty final segment that is neither `.` nor `..`. Kept because this
+    /// function is public law and its contract should not depend on who calls
+    /// it, and tested directly.
     Empty,
 }
 
@@ -117,6 +164,10 @@ impl UsePathRejection {
             UsePathRejection::DotDotSegment => {
                 "'..' segments are not permitted in a `use` path; \
                  a module is confined to the declaring Cookfile's own subtree (§12.2.1)"
+            }
+            UsePathRejection::Whitespace => {
+                "whitespace is not permitted in a `use` path (App. A.5 `path_segment`); \
+                 quoting does not admit it"
             }
             UsePathRejection::Empty => "a `use` path names no file",
         }
@@ -140,6 +191,9 @@ pub fn use_path_rejected_message(raw: &str, rejection: UsePathRejection) -> Stri
 /// parser where there is no working directory yet. The escape a symlink can
 /// still perform is caught at resolution by [`contains_resolved_module_path`].
 pub fn normalise_use_path(raw: &str) -> Result<String, UsePathRejection> {
+    if raw.chars().any(char::is_whitespace) {
+        return Err(UsePathRejection::Whitespace);
+    }
     if raw.starts_with("//") {
         return Err(UsePathRejection::Sigil);
     }
@@ -244,13 +298,13 @@ pub fn module_memo_key(working_dir: &Path, target: &str) -> String {
 ///
 /// A recorded module path is re-hashed later — on the next run, and on another
 /// machine that fetches the entry — by joining it onto that reader's working
-/// directory. An absolute `/home/alice/proj/cook_modules/x.lua` re-hashes to
+/// directory. An absolute `/home/alice/proj/.cook/modules/x.lua` re-hashes to
 /// nothing on Bob's machine, so every shared entry would degrade to a cold
 /// miss.
 ///
 /// # Why a path outside the project is DROPPED, not kept absolute
 ///
-/// `cook.load_module` cannot resolve outside `<working_dir>/cook_modules`, but
+/// `cook.load_module` cannot resolve outside `<working_dir>`, but
 /// Lua's `require` searches the composed `package.path`, whose tail is the
 /// interpreter's own — a bundled rock, a system Lua tree, whatever the host
 /// happens to have. Those are not the project's source; they are the toolchain
@@ -290,13 +344,40 @@ pub fn module_cycle_message(loading_stack: &[String], reentered: &str) -> String
 
 /// The §24.2 resolution-failure diagnostic: identifies the name and the
 /// paths that were probed. One text for both phases (it was two).
+///
+/// CS-0207 gives it two conditional clauses, and they are the reason a hard
+/// cut was affordable without a deprecation window. A window would have had to
+/// keep the old root in the search path for its whole life, which is the
+/// conflation the cut exists to delete; what a window actually buys is that a
+/// user is TOLD, and that is bought here. A stale `cook_modules/` in the
+/// working directory is recognised and named, and so is the `rm -rf .cook`
+/// habit that now also removes installed rocks — the one cost of putting the
+/// tree under the build-output root.
 pub fn module_not_found_message(working_dir: &Path, name: &str) -> String {
-    format!(
+    let mut msg = format!(
         "cook.load_module: module '{}' not found under {} (tried {})",
         name,
         modules_dir(working_dir).display(),
         module_candidates_description(name)
-    )
+    );
+    let legacy = legacy_modules_dir(working_dir);
+    if legacy.is_dir() {
+        msg.push_str(&format!(
+            "\n  note: {} still exists. Installed modules moved to {} in CS-0207; \
+             run `cook modules install` to repopulate it. A module you WROTE is no \
+             longer resolved by name from there — move it where it belongs in the \
+             repo and `use ./path/to/it.lua`.",
+            legacy.display(),
+            modules_dir(working_dir).display()
+        ));
+    } else if !modules_dir(working_dir).exists() {
+        msg.push_str(
+            "\n  note: no module tree here. If you removed `.cook/` it took the \
+             installed modules with it; `cook modules install` rebuilds them from \
+             cook.toml + cook.lock.",
+        );
+    }
+    msg
 }
 
 /// The diagnostic for a candidate that resolved but could not be read.
@@ -323,15 +404,19 @@ pub struct LuaSearchPaths {
 }
 
 /// Compose the `package.path` / `package.cpath` values that make
-/// sub-requires within a multi-file rock resolve against `cook_modules/`:
+/// sub-requires within a multi-file rock resolve against `.cook/modules/`:
 ///
 /// ```text
-/// path:  <wd>/cook_modules/?.lua ; <wd>/cook_modules/?/init.lua ;
-///        <wd>/cook_modules/share/lua/5.4/?.lua ;
-///        <wd>/cook_modules/share/lua/5.4/?/init.lua ; <original>
-/// cpath: <wd>/cook_modules/?.<ext> ;
-///        <wd>/cook_modules/lib/lua/5.4/?.<ext> ; <original>
+/// path:  <wd>/.cook/modules/share/lua/5.4/?.lua ;
+///        <wd>/.cook/modules/share/lua/5.4/?/init.lua ; <original>
+/// cpath: <wd>/.cook/modules/lib/lua/5.4/?.<ext> ; <original>
 /// ```
+///
+/// The top-level `?.lua` / `?.<ext>` entries that used to lead each list went
+/// with the hand-vendored candidates they served (CS-0207); these mirror
+/// [`module_candidates`] and MUST stay in step with it, since a name that
+/// resolves through one and not the other is exactly the "works at register,
+/// missing at execute" failure this module exists to prevent.
 ///
 /// The caller stashes the originals under [`PACKAGE_PATH_STASH_KEY`] /
 /// [`PACKAGE_CPATH_STASH_KEY`] on first mutation so refresh is idempotent.
@@ -344,13 +429,11 @@ pub fn compose_lua_search_paths(
     let ext = native_lua_ext();
     LuaSearchPaths {
         path: format!(
-            "{cm}/?.lua;{cm}/?/init.lua;\
-             {cm}/{share}/?.lua;{cm}/{share}/?/init.lua;\
-             {original_path}",
+            "{cm}/{share}/?.lua;{cm}/{share}/?/init.lua;{original_path}",
             share = MODULES_SHARE_LUA_SUBDIR
         ),
         cpath: format!(
-            "{cm}/?.{ext};{cm}/{lib}/?.{ext};{original_cpath}",
+            "{cm}/{lib}/?.{ext};{original_cpath}",
             lib = MODULES_LIB_LUA_SUBDIR
         ),
     }

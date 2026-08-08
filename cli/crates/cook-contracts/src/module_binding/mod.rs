@@ -107,6 +107,31 @@ pub fn derived_alias(path_target: &str) -> String {
     alias_of(stem)
 }
 
+/// What a module is CALLED, independent of what a Cookfile bound it to
+/// (§12.7.8, CS-0206).
+///
+/// A name form's identity is the name. A path form's is the file's basename
+/// with `.lua` removed — the disk name, NOT put through [`alias_of`], because
+/// this is the module naming itself rather than a Lua local being declared
+/// (Note 12.1.1).
+///
+/// This is a different question from both of its neighbours and the three
+/// answers genuinely differ. [`derived_alias`] asks what identifier the
+/// CALLER binds, and rewrites hyphens because the answer has to be a Lua
+/// local. `layout::module_memo_key` asks which load this IS, and takes the
+/// whole target because two files with one basename in two directories are
+/// two modules. This asks what the module may call itself: §12.7.8 checks a
+/// module-registered chore's namespace prefix against it, and a module that
+/// answered `lua/cook_demo.lua` could register nothing at all — every legal
+/// prefix would have to contain a `/`, which no chore name may.
+pub fn module_identity(target: &str) -> &str {
+    if !is_path_target(target) {
+        return target;
+    }
+    let base = target.rsplit('/').next().unwrap_or(target);
+    base.strip_suffix(PATH_TARGET_SUFFIX).unwrap_or(base)
+}
+
 /// The resolver call, qualified and with the target escaped as a
 /// double-quoted Lua literal: `cook.load_module("my-mod")`,
 /// `cook.load_module("build/helpers.lua")`.

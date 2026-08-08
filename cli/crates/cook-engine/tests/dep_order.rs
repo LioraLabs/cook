@@ -295,7 +295,11 @@ recipe consumer
         sgmod.inside("producer")
 "#,
     );
-    let modules = tmp.path().join("cook_modules/share/lua/5.4");
+    // Installed where a rock installs it, so `sgmod` resolves by NAME.
+    // Through `cook_contracts::layout` so the next move of the tree root does
+    // not have to touch this test (CS-0207).
+    let modules = cook_contracts::layout::modules_dir(tmp.path())
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules).unwrap();
     fs::write(
         modules.join("sgmod.lua"),

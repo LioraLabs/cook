@@ -6,10 +6,10 @@ A primer on the runtime mechanics that make `require("cjson")` work inside cook'
 
 Cook's binary statically links a copy of Lua 5.4 (via mlua's `vendored` feature). When cook starts, there is exactly one Lua state in memory, owned by the cook process. Every recipe body, every chore, every `cook.fs.copy` call — all running inside that one Lua state.
 
-LuaRocks-installed rocks live on disk under `cook_modules/`:
+LuaRocks-installed rocks live on disk under `.cook/modules/` — the tree `cook modules install` populates, under the same `.cook/` root as the cache (CS-0207; before that it was a top-level `cook_modules/`):
 
 ```
-cook_modules/
+.cook/modules/
 ├── share/lua/5.4/argparse.lua          ← pure-Lua rock
 └── lib/lua/5.4/cjson.so                ← C-extension rock (a shared library)
 ```
@@ -18,9 +18,9 @@ When a Cookfile says `use cjson` and a recipe body calls `cjson.encode({})`, wha
 
 ## Pure-Lua rocks: boring
 
-`require("argparse")` searches `package.path`, finds `cook_modules/share/lua/5.4/argparse.lua`, reads the file, runs the Lua source through cook's embedded Lua interpreter, and returns whatever the chunk returned. The argparse module's `local` variables and functions live in cook's Lua heap. Calling `argparse.parse(...)` is a normal Lua function call.
+`require("argparse")` searches `package.path`, finds `.cook/modules/share/lua/5.4/argparse.lua`, reads the file, runs the Lua source through cook's embedded Lua interpreter, and returns whatever the chunk returned. The argparse module's `local` variables and functions live in cook's Lua heap. Calling `argparse.parse(...)` is a normal Lua function call.
 
-No magic. Same as today's `cook_modules/foo.lua` resolution.
+No magic. Same as `use foo`'s own `.cook/modules/share/lua/5.4/foo.lua` resolution.
 
 ## C-extension rocks: the interesting case
 
@@ -53,10 +53,10 @@ If you statically link `cjson.so` against a copy of `liblua5.4.a`, those symbols
 
 ## dlopen: opening a `.so` from a running process
 
-When `require("cjson")` searches `package.cpath` and finds `cook_modules/lib/lua/5.4/cjson.so`, Lua calls a C function called `dlopen()`. Roughly:
+When `require("cjson")` searches `package.cpath` and finds `.cook/modules/lib/lua/5.4/cjson.so`, Lua calls a C function called `dlopen()`. Roughly:
 
 ```c
-void *handle = dlopen("cook_modules/lib/lua/5.4/cjson.so", RTLD_NOW | RTLD_GLOBAL);
+void *handle = dlopen(".cook/modules/lib/lua/5.4/cjson.so", RTLD_NOW | RTLD_GLOBAL);
 int (*luaopen_cjson)(lua_State *) = dlsym(handle, "luaopen_cjson");
 luaopen_cjson(L);
 ```

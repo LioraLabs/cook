@@ -73,7 +73,7 @@ struct LoaderCore {
 /// Install `cook.load_module` on `cook`.
 ///
 /// The full sequence, identical in both phases: memo lookup → cycle check →
-/// §7 four-candidate resolution → source read → `hooks.before_eval` →
+/// §12 candidate resolution → source read → `hooks.before_eval` →
 /// in-flight marking → `package.path`/`cpath` refresh → chunk eval →
 /// `init()` → in-flight cleanup → `hooks.after_load` → memoize.
 ///
@@ -122,6 +122,13 @@ pub fn install_module_loader(
             raw_target.clone()
         };
 
+        // §12.7.8 (CS-0206): what the module is CALLED, which is not what this
+        // load is keyed by. The register phase checks a module-registered
+        // chore's namespace prefix against this identity, and a path-loaded
+        // module whose identity were `lua/cook_demo.lua` could register no
+        // chore at all — every legal prefix would have to contain a `/`.
+        let identity = cook_contracts::module_binding::module_identity(&name).to_string();
+
         let memo_key = cook_contracts::layout::module_memo_key(&cwd, &name);
 
         // Memoisation (§12.3.2): a second load of (cwd, name) on this VM
@@ -140,7 +147,7 @@ pub fn install_module_loader(
             if let Some(p) = path {
                 observer.record(&p);
             }
-            hooks.on_memo_hit(&name);
+            hooks.on_memo_hit(&identity);
             return Ok(v);
         }
 
@@ -188,8 +195,10 @@ pub fn install_module_loader(
             // prefix (`/tmp` -> `/private/tmp`) that no longer strips.
             candidate
         } else {
-            // §7 / CS-0069 four-candidate resolution: hand-vendored wins over
-            // LuaRocks-installed; the ONE list both phases probe (COOK-393).
+            // §12 / CS-0069 resolution over the installed tree; the ONE list
+            // both phases probe (COOK-393). CS-0207 removed the hand-vendored
+            // top-level candidates that used to lead it — a project patches a
+            // module by pointing a path-form `use` at its own file now.
             let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
             match candidates.iter().find(|p| p.exists()) {
                 Some(p) => p.clone(),
@@ -216,7 +225,7 @@ pub fn install_module_loader(
             ))
         })?;
 
-        hooks.before_eval(&name, &source)?;
+        hooks.before_eval(&identity, &source)?;
 
         {
             let mut c = core.borrow_mut();
@@ -234,7 +243,7 @@ pub fn install_module_loader(
         };
 
         // Sub-requires within a multi-file rock resolve against
-        // cook_modules/ (§24.2). Idempotent per cwd via the stash keys, so
+        // .cook/modules/ (§24.2). Idempotent per cwd via the stash keys, so
         // nested and repeated loads compose.
         refresh_package_search_paths(lua, &cwd)?;
 
@@ -243,7 +252,7 @@ pub fn install_module_loader(
             Ok(v) => v,
             Err(e) => {
                 finish(&core);
-                hooks.after_load(&name, false);
+                hooks.after_load(&identity, false);
                 return Err(e);
             }
         };
@@ -253,14 +262,14 @@ pub fn install_module_loader(
             if let Ok(LuaValue::Function(init_fn)) = tbl.get::<LuaValue>("init") {
                 if let Err(e) = init_fn.call::<()>(()) {
                     finish(&core);
-                    hooks.after_load(&name, false);
+                    hooks.after_load(&identity, false);
                     return Err(e);
                 }
             }
         }
 
         finish(&core);
-        hooks.after_load(&name, true);
+        hooks.after_load(&identity, true);
 
         let key = lua.create_registry_value(result.clone())?;
         {
@@ -280,7 +289,7 @@ pub fn install_module_loader(
 }
 
 /// Refresh `package.path` / `package.cpath` so `require("foo")` resolves
-/// against `<cwd>/cook_modules/` (§24.2, Standard §7 order).
+/// against `<cwd>/.cook/modules/` (§24.2, Standard §12 order).
 ///
 /// The originals are stashed on the `package` table under the
 /// `cook_contracts::layout` stash keys on first mutation, and every refresh

@@ -6,7 +6,7 @@ name: release
 # compilation: cli/.cargo/config.toml adds -rdynamic (Linux) / -export_dynamic
 # (macOS) so C rocks can dlopen lua_* symbols out of the cook binary, and cargo
 # silently drops those conditional rustflags the moment --target is passed
-# (see cook_modules/dist.lua for the long version). Native hosts keep the
+# (see lua/dist.lua for the long version). Native hosts keep the
 # rustflags, and dist.check_exports gates on the symbols actually being there.
 #
 # The Linux jobs build inside ubuntu:20.04 to pin the glibc floor at 2.31, so

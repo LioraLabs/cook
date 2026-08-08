@@ -289,8 +289,8 @@ fn module_records_round_trip_alongside_inputs_and_outputs() {
         vec![rec("build/main.o", 2, 0xbb)],
     );
     with_modules.module_inputs = vec![
-        rec("cook_modules/helper.lua", 3, 0xcc),
-        rec("cook_modules/share/lua/5.4/rock/init.lua", 4, 0xdd),
+        rec("lua/helper.lua", 3, 0xcc),
+        rec(".cook/modules/share/lua/5.4/rock/init.lua", 4, 0xdd),
     ];
     cache.steps.insert("with".to_string(), with_modules.clone());
     // A neighbour with no module set, so the slice bounds have to be right for
@@ -314,7 +314,7 @@ fn module_records_round_trip_alongside_inputs_and_outputs() {
 fn module_records_encode_deterministically() {
     let mut cache = RecipeCache::new();
     let mut s = step(vec![rec("a.c", 1, 1)], vec![rec("a.o", 2, 2)]);
-    s.module_inputs = vec![rec("cook_modules/m.lua", 3, 3)];
+    s.module_inputs = vec![rec("lua/m.lua", 3, 3)];
     cache.steps.insert("k".to_string(), s);
     assert_eq!(encode(&cache), encode(&cache));
 }
@@ -325,7 +325,7 @@ fn module_records_encode_deterministically() {
 fn out_of_range_module_slice_decodes_as_error() {
     let mut cache = RecipeCache::new();
     let mut s = step(vec![rec("a.c", 1, 1)], vec![rec("a.o", 2, 2)]);
-    s.module_inputs = vec![rec("cook_modules/m.lua", 3, 3)];
+    s.module_inputs = vec![rec("lua/m.lua", 3, 3)];
     cache.steps.insert("k".to_string(), s);
     let mut bytes = encode(&cache);
 

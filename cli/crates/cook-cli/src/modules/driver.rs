@@ -1,8 +1,9 @@
 //! M3.3 — `~/.cook/bin/luarocks` subprocess wrapper.
 //!
 //! The driver wraps every state-changing or read-only luarocks invocation
-//! cook needs. Every call passes `--tree <project>/cook_modules` so rocks
-//! land in the project's tree, never in a user-global luarocks tree.
+//! cook needs. Every call passes `--tree <project>/.cook/modules` so rocks
+//! land in the project's own build-output tree, never in a user-global
+//! luarocks tree (§27.1.1, CS-0207).
 //! Index precedence is realised by passing `--server <url>` repeatedly in
 //! left-to-right order.
 //!
@@ -56,8 +57,11 @@ impl RocksDriver {
         self.prefix.join("bin/luarocks")
     }
 
+    /// Where luarocks installs. One law with the resolver: this is the same
+    /// `modules_dir` the loader probes, so an install can never land somewhere
+    /// a `use` will not look.
     pub fn tree_arg(&self) -> PathBuf {
-        self.project_dir.join(cook_contracts::layout::COOK_MODULES_DIR)
+        cook_contracts::layout::modules_dir(&self.project_dir)
     }
 
     /// Build the base argv prefix used by every invocation.

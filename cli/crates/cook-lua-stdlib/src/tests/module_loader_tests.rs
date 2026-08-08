@@ -31,8 +31,18 @@ fn vm_with_loader(working_dir: PathBuf) -> Lua {
     lua
 }
 
+/// Install `<name>.lua` where a rock installs it, so `cook.load_module(name)`
+/// resolves by NAME. Routed through `cook_contracts::layout` rather than
+/// spelling the subtree, so the next move of the tree root does not have to
+/// touch this suite (CS-0207 moved it from `cook_modules/` to
+/// `.cook/modules/`).
+fn installed_share_dir(dir: &std::path::Path) -> PathBuf {
+    cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+}
+
 fn write_module(dir: &std::path::Path, name: &str, source: &str) {
-    let modules = dir.join("cook_modules");
+    let modules = installed_share_dir(dir);
     std::fs::create_dir_all(&modules).unwrap();
     std::fs::write(modules.join(format!("{name}.lua")), source).unwrap();
 }
@@ -182,13 +192,16 @@ fn missing_module_raises_the_shared_diagnostic() {
     assert!(msg.contains(&expected), "got: {msg}\nwant: {expected}");
 }
 
-/// Hand-vendored `<name>.lua` wins over `<name>/init.lua` and the LuaRocks
-/// tree (§7 / CS-0069 order, via the one candidate list).
+/// The flat `<name>.lua` candidate wins over `<name>/init.lua` — the whole of
+/// the CS-0207 candidate list, in order, via the one shared list. (Pre-CS-0207
+/// this also pinned the hand-vendored top level ahead of both; that level was
+/// withdrawn, and a project patches a module by pointing a path-form `use` at
+/// its own file.)
 #[test]
-fn resolution_prefers_hand_vendored_flat_file() {
+fn resolution_prefers_the_flat_file_over_the_init_directory() {
     let tmp = tempfile::tempdir().unwrap();
     write_module(tmp.path(), "dual", "return { where = 'flat' }");
-    let dir = tmp.path().join("cook_modules/dual");
+    let dir = installed_share_dir(tmp.path()).join("dual");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("init.lua"), "return { where = 'dir' }").unwrap();
     let lua = vm_with_loader(tmp.path().to_path_buf());
@@ -319,13 +332,20 @@ fn refresh_sets_path_and_cpath_with_rock_tree_entries() {
     let path: String = pkg.get("path").unwrap();
     let cpath: String = pkg.get("cpath").unwrap();
 
-    assert!(path.contains("/tmp/fake-project/cook_modules/?.lua"));
-    assert!(path.contains("/tmp/fake-project/cook_modules/?/init.lua"));
-    assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?.lua"));
-    assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?/init.lua"));
+    assert!(path.contains("/tmp/fake-project/.cook/modules/share/lua/5.4/?.lua"));
+    assert!(path.contains("/tmp/fake-project/.cook/modules/share/lua/5.4/?/init.lua"));
+    assert!(cpath.contains("/tmp/fake-project/.cook/modules/lib/lua/5.4/?."));
 
-    assert!(cpath.contains("/tmp/fake-project/cook_modules/?."));
-    assert!(cpath.contains("/tmp/fake-project/cook_modules/lib/lua/5.4/?."));
+    // CS-0207: the top-level `?.lua` / `?.<ext>` entries that used to lead each
+    // list went with the hand-vendored candidates they served, and the search
+    // paths must stay in step with `module_candidates` — a name that resolves
+    // through `require` but not through `cook.load_module` is exactly the
+    // register/execute split this module exists to prevent.
+    assert!(!path.contains("/tmp/fake-project/.cook/modules/?.lua"), "{path}");
+    assert!(!path.contains("/tmp/fake-project/.cook/modules/?/init.lua"), "{path}");
+    assert!(!path.contains("cook_modules"), "the old tree root must not be searched: {path}");
+    assert!(!cpath.contains("/tmp/fake-project/.cook/modules/?."), "{cpath}");
+    assert!(!cpath.contains("cook_modules"), "the old tree root must not be searched: {cpath}");
 }
 
 #[test]

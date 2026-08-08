@@ -1,4 +1,4 @@
 use ./build/9lives.lua
 
 recipe build
-    echo unreachable
+    cook "out.txt" { echo unreachable > $<out> }

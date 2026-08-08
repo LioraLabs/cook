@@ -1,4 +1,4 @@
--- standard/cook_modules/checks.lua
+-- standard/lua/checks.lua
 --
 -- Repo-local checks for the Cook Standard:
 --   * checks.lint_keywords()        — flag lowercase RFC 2119 keywords in normative chapters (skips fenced blocks and inline code).
@@ -80,14 +80,18 @@ end
 function checks.lint_keywords()
     cook.add_unit({
         step_kind = "test",
-        lua_code = 'require("checks").scan_keywords()',
+        lua_code = 'cook.load_module("./lua/checks.lua").scan_keywords()',
         inputs = normative_files(),
     })
 end
 
--- Execute-phase half, reached via the `lua_code` above. It re-requires the
--- module because `use`-bound globals are register-phase only. Raising a Lua
--- error is how a lua_code test reports failure (§22.4).
+-- Execute-phase half, reached via the `lua_code` above. It re-loads the module
+-- because `use`-bound globals are register-phase only. The load is the CS-0206
+-- path form, tree-relative to this Cookfile's directory: since CS-0207 a
+-- hand-authored module is not resolvable by name at all, and `cook.load_module`
+-- (unlike a bare `require`) is the door CS-0204 observes, so this file's content
+-- is a determinant of the test unit that runs it. Raising a Lua error is how a
+-- lua_code test reports failure (§22.4).
 function checks.scan_keywords()
     local files = normative_files()
 

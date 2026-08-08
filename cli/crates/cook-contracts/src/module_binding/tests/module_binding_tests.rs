@@ -98,3 +98,28 @@ fn an_explicit_alias_is_bound_verbatim_not_re_derived() {
         "local fmt = cook.load_module(\"tools/lua/code-formatting.lua\")"
     );
 }
+
+#[test]
+fn a_modules_identity_is_what_it_is_called_not_what_bound_it() {
+    // §12.7.8: the namespace a module-registered chore may claim.
+    assert_eq!(module_identity("cook_cc"), "cook_cc");
+    assert_eq!(module_identity("lua/cook_demo.lua"), "cook_demo");
+    assert_eq!(module_identity("cook_demo.lua"), "cook_demo");
+    // NOT through `alias_of`: this is the module naming itself, not a Lua
+    // local being declared (Note 12.1.1). The disk name is not rewritten.
+    assert_eq!(module_identity("lua/my-mod.lua"), "my-mod");
+    assert_eq!(alias_of(module_identity("lua/my-mod.lua")), "my_mod");
+}
+
+#[test]
+fn identity_alias_and_memo_key_are_three_different_questions() {
+    // Kept honest against each other, because collapsing any two would be a
+    // plausible-looking simplification. The alias is a Lua local, so it loses
+    // the hyphen; the identity is the disk name, so it keeps it; and the memo
+    // key is the whole target, because two files with one basename in two
+    // directories are two modules.
+    let target = "lua/nested/my-mod.lua";
+    assert_eq!(derived_alias(target), "my_mod");
+    assert_eq!(module_identity(target), "my-mod");
+    assert_ne!(derived_alias(target), module_identity(target));
+}

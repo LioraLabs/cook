@@ -2,4 +2,4 @@ use helpers
 use helpers ./build/other.lua
 
 recipe build
-    echo unreachable
+    cook "out.txt" { echo unreachable > $<out> }

@@ -1,12 +1,21 @@
 use super::*;
 use tempfile::TempDir;
 
+/// Where an installed rock's pure-Lua files land, so `cook.load_module(name)`
+/// resolves BY NAME. Through `cook_contracts::layout` so the next move of the
+/// tree root does not have to touch this suite (CS-0207 moved it from
+/// `cook_modules/` to `.cook/modules/`).
+fn installed_share(dir: &std::path::Path) -> std::path::PathBuf {
+    cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+}
+
 fn setup_with_module(
     module_name: &str,
     module_code: &str,
 ) -> (Lua, TempDir, SharedModuleLoaderState) {
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(modules_dir.join(format!("{}.lua", module_name)), module_code).unwrap();
 
@@ -60,7 +69,7 @@ fn test_load_module_not_found() {
 #[test]
 fn test_load_module_init_lua() {
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules").join("mymod");
+    let modules_dir = installed_share(dir.path()).join("mymod");
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(
         modules_dir.join("init.lua"),
@@ -132,7 +141,7 @@ fn test_load_module_cycle_two_modules_raises() {
     // §6.3.4 cycle detection: a cycle a -> b -> a MUST raise a diagnostic
     // naming the cycle, not stack-overflow.
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(
         modules_dir.join("a.lua"),
@@ -177,7 +186,7 @@ fn test_load_module_cycle_two_modules_raises() {
 fn test_load_module_self_cycle_raises() {
     // A module that loads itself must surface the same diagnostic.
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(
         modules_dir.join("solo.lua"),
@@ -208,7 +217,7 @@ fn test_load_module_recovers_after_error() {
     // a subsequent retry can proceed (cycle detection survives recoverable
     // errors).
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(
         modules_dir.join("boom.lua"),
@@ -335,7 +344,7 @@ fn cook_cache_is_hard_error_with_did_you_mean() {
 #[test]
 fn test_load_module_resolves_share_lua_flat() {
     let dir = TempDir::new().unwrap();
-    let share_dir = dir.path().join("cook_modules/share/lua/5.4");
+    let share_dir = installed_share(dir.path());
     std::fs::create_dir_all(&share_dir).unwrap();
     std::fs::write(
         share_dir.join("rockmod.lua"),
@@ -360,7 +369,7 @@ fn test_load_module_resolves_share_lua_flat() {
 #[test]
 fn test_load_module_resolves_share_lua_init() {
     let dir = TempDir::new().unwrap();
-    let share_dir = dir.path().join("cook_modules/share/lua/5.4/rockmod");
+    let share_dir = installed_share(dir.path()).join("rockmod");
     std::fs::create_dir_all(&share_dir).unwrap();
     std::fs::write(
         share_dir.join("init.lua"),
@@ -382,16 +391,25 @@ fn test_load_module_resolves_share_lua_init() {
     assert_eq!(tag, "share-init");
 }
 
+/// CS-0207 withdrew the hand-vendored top level; this used to assert it WON.
+/// Inverted rather than deleted, because the cut is only real if a decoy at
+/// either retired location is invisible: shadowing by precedence left no
+/// record in the Cookfile that it happened, so a reader saw `use rockmod` and
+/// had to know the search order to learn which `rockmod` ran.
 #[test]
-fn test_load_module_top_level_wins_over_share_lua() {
+fn test_retired_top_level_candidates_are_not_resolved() {
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
-    let share_dir = modules_dir.join("share/lua/5.4");
+    let share_dir = installed_share(dir.path());
     std::fs::create_dir_all(&share_dir).unwrap();
+    let tree_root = cook_contracts::layout::modules_dir(dir.path());
+    let legacy_root = cook_contracts::layout::legacy_modules_dir(dir.path());
+    std::fs::create_dir_all(&legacy_root).unwrap();
 
-    // hand-vendored at top level
-    std::fs::write(modules_dir.join("rockmod.lua"), "return { tag = 'top' }").unwrap();
-    // also installed under share/lua/5.4 — top-level must win
+    // Decoy 1: the top level of the CURRENT tree root, which is not a candidate.
+    std::fs::write(tree_root.join("rockmod.lua"), "return { tag = 'tree-top' }").unwrap();
+    // Decoy 2: the pre-CS-0207 root, which is never searched at all.
+    std::fs::write(legacy_root.join("rockmod.lua"), "return { tag = 'legacy' }").unwrap();
+    // The only candidate.
     std::fs::write(share_dir.join("rockmod.lua"), "return { tag = 'share' }").unwrap();
 
     let lua = Lua::new();
@@ -405,5 +423,5 @@ fn test_load_module_top_level_wins_over_share_lua() {
         .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
         .eval()
         .unwrap();
-    assert_eq!(tag, "top");
+    assert_eq!(tag, "share");
 }

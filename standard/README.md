@@ -8,7 +8,7 @@ This project contains the authoritative specification of the Cookfile language a
 - `conformance/` — the conformance corpus consumed by `cook-lang`'s test suite and (planned) by `tree-sitter-cook`'s harness.
 - `src/plugins/` — the remark/rehype plugins that drive spec-specific rendering (Cookfile syntax highlighting via `tree-sitter-cook`, RFC-2119 keyword styling, clause anchors, `CS-NNNN` permalinks).
 - `src/styles/spec.css` — styling for the above.
-- `cook_modules/checks.lua` — repo-local checks: the normative-keyword lint and the backwards-conformance harness, exposed as `cook standard.lint` and `cook standard.against-tag`.
+- `lua/checks.lua` — repo-local checks: the normative-keyword lint and the backwards-conformance harness, exposed as `cook standard.lint` and `cook standard.against-tag`.
 
 ## Building the site
 
@@ -24,7 +24,7 @@ The `prebuild` step compiles `../tree-sitter-cook` to WebAssembly (`public/tree-
 ```bash
 pnpm dev                 # start Astro dev server
 pnpm test                # run plugin tests
-cook standard.lint       # normative-keyword lint (routes through cook_modules/checks.lua)
+cook standard.lint       # normative-keyword lint (routes through lua/checks.lua)
 ```
 
 ## Hosting the preview on your network

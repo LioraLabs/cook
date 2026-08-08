@@ -505,11 +505,13 @@ Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 
 
 `cc.find` does NOT raise on a miss; it returns `{ found = false }`. Callers that require a hit MUST test `result.found` and raise their own error.
 
-## 28.6. Vendoring after install [#cat.cc.vendoring]
+## 28.6. Patching `cook_cc` [#cat.cc.vendoring]
 
-Per §{cat.bootstrap.vendor}, a project MAY hand-vendor a copy of `cook_cc` by placing `cook_modules/cook_cc.lua` (or `cook_modules/cook_cc/init.lua`) at the top of the project's `cook_modules/` directory. The hand-vendored file becomes the source of truth for that project; subsequent `cook modules install` invocations MUST leave it untouched (the install only writes under `cook_modules/share/lua/5.4/`).
+> **Rewritten by CS-0207.** This section described hand-vendoring a copy of `cook_cc` at the top of `cook_modules/`, where the search order gave it precedence over the installed rock, and stated that `cook modules install` had to leave it alone. §{cat.bootstrap.vendor} withdrew that workflow together with the precedence it rested on.
 
-A re-installed rock at `share/lua/5.4/cook_cc/init.lua` coexisting with a hand-vendored `cook_cc.lua` at the top level is unambiguously resolved: §{mods.use} specifies hand-vendored top-level wins.
+A project that needs a patched `cook_cc` copies the rock's source into its own tree and reaches it with a path-form `use` (§{decl.use}), for example `use cook_cc ./lua/cook_cc/init.lua`. The declaration names the file, so nothing about which `cook_cc` ran depends on a search order, and the copy is ordinary tracked source that review and `git diff` can see.
+
+There is correspondingly no coexistence question left to answer. An installed rock under `.cook/modules/share/lua/5.4/cook_cc/` and a patched copy in the project are reached by two different declarations and cannot shadow one another.
 
 ## 28.7. Per-platform source selection [#cat.cc.platform-sources]
 

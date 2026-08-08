@@ -1,4 +1,4 @@
--- cook_modules/dist.lua
+-- lua/dist.lua
 --
 -- Build the redistributable cook tarball: lua + luarocks + cook binary,
 -- staged into target/cook-stage/, tarballed into cli/target/dist/, and
@@ -90,7 +90,7 @@ exec "$COOK_PREFIX/bin/lua" "$COOK_PREFIX/share/cook/luarocks-driver.lua" "$@"
 -- one difference: --version is pre-empted to print "LuaRocks <ver>" rather
 -- than "<full-path> <ver>" (upstream's default leaks the staged install
 -- path into the version banner).
-local LUAROCKS_DRIVER = [[-- Cook-staged LuaRocks driver. See cook_modules/dist.lua → LUAROCKS_DRIVER.
+local LUAROCKS_DRIVER = [[-- Cook-staged LuaRocks driver. See lua/dist.lua → LUAROCKS_DRIVER.
 for _, a in ipairs(arg) do
     if a == "--version" then
         print("LuaRocks 3.11.0")
@@ -307,7 +307,13 @@ end
 local function verify_part_a(ctx)
     print("[dist.verify] Part A: building cook_hello.so")
 
-    local so_path = ctx.proj_modules .. "/cook_hello.so"
+    -- CS-0207: the composed `package.cpath` has exactly ONE project entry,
+    -- `<proj>/.cook/modules/lib/lua/5.4/?.<ext>` — the top-level entry that
+    -- used to lead it went with the hand-vendored candidates it served. A
+    -- hand-rolled C rock therefore lands where LuaRocks would have put it.
+    local so_dir = ctx.proj_modules .. "/lib/lua/5.4"
+    fs.mkdir_p(so_dir)
+    local so_path = so_dir .. "/cook_hello.so"
     local cc_cmd
     if ctx.plat == "macos" then
         cc_cmd = string.format(
@@ -405,7 +411,7 @@ local function verify()
 
     local td = scratchdir()
     local proj = td .. "/proj"
-    local proj_modules = proj .. "/cook_modules"
+    local proj_modules = proj .. "/.cook/modules"
     print("[dist.verify] scratch dir: " .. td)
     print("[dist.verify] cook_prefix: " .. cook_prefix)
 

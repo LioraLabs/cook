@@ -32,6 +32,15 @@ is_language_surface() {
     cli/crates/cook-lang/*)       return 0 ;;
     cli/crates/cook-luagen/*)     return 0 ;;
     cli/crates/cook-register/*)   return 0 ;;
+    # CS-0205 and CS-0206 moved genuinely normative rules into these two:
+    # `module_binding` holds App. A.2's `.lua` discriminator, §12.1's alias
+    # derivation and §12.7.8's module identity; `layout` holds §12.2.1's
+    # containment rule; `cook-lua-stdlib` enforces that rule at the
+    # `cook.load_module` door. A change to any of those changes the language,
+    # and before this entry none of it was watched.
+    cli/crates/cook-contracts/src/module_binding/*) return 0 ;;
+    cli/crates/cook-contracts/src/layout/*)         return 0 ;;
+    cli/crates/cook-lua-stdlib/*) return 0 ;;
     tree-sitter-cook/grammar.js)  return 0 ;;
     # Only the hand-written external scanner is language surface. The rest of
     # src/ (parser.c, node-types.json, grammar.json, tree_sitter/*.h) is

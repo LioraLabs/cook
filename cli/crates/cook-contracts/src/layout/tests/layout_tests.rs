@@ -1,28 +1,58 @@
 use super::*;
 
+/// CS-0207: two candidates in the installed tree, and NO hand-vendored top
+/// level. The removed pair is what §{cat.bootstrap.vendor}'s shadowing
+/// workflow rested on; with it gone there is no precedence rule left to test,
+/// which is the point.
 #[test]
-fn candidate_order_is_hand_vendored_first() {
+fn candidates_are_the_installed_tree_only() {
     let wd = Path::new("/proj");
     let c = module_candidates(wd, "cook_cc");
-    assert_eq!(c[0], Path::new("/proj/cook_modules/cook_cc.lua"));
-    assert_eq!(c[1], Path::new("/proj/cook_modules/cook_cc/init.lua"));
-    assert_eq!(c[2], Path::new("/proj/cook_modules/share/lua/5.4/cook_cc.lua"));
-    assert_eq!(c[3], Path::new("/proj/cook_modules/share/lua/5.4/cook_cc/init.lua"));
+    assert_eq!(c.len(), 2);
+    assert_eq!(c[0], Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc.lua"));
+    assert_eq!(c[1], Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc/init.lua"));
+    for p in &c {
+        assert!(
+            !p.to_string_lossy().contains(LEGACY_MODULES_DIR),
+            "the retired root must not be probed: {}",
+            p.display()
+        );
+    }
 }
 
+/// The composed search paths MUST mirror `module_candidates`. A name that
+/// resolves through one and not the other is the "works at register, missing
+/// at execute" failure this module exists to prevent.
 #[test]
-fn search_paths_compose_all_roots_and_keep_original_suffix() {
+fn search_paths_mirror_the_candidates_and_keep_the_original_suffix() {
     let p = compose_lua_search_paths(Path::new("/proj"), "ORIG_PATH", "ORIG_CPATH");
     let ext = native_lua_ext();
     assert_eq!(
         p.path,
-        "/proj/cook_modules/?.lua;/proj/cook_modules/?/init.lua;\
-         /proj/cook_modules/share/lua/5.4/?.lua;/proj/cook_modules/share/lua/5.4/?/init.lua;\
+        "/proj/.cook/modules/share/lua/5.4/?.lua;\
+         /proj/.cook/modules/share/lua/5.4/?/init.lua;\
          ORIG_PATH"
     );
     assert_eq!(
         p.cpath,
-        format!("/proj/cook_modules/?.{ext};/proj/cook_modules/lib/lua/5.4/?.{ext};ORIG_CPATH")
+        format!("/proj/.cook/modules/lib/lua/5.4/?.{ext};ORIG_CPATH")
+    );
+    assert!(!p.path.contains(LEGACY_MODULES_DIR));
+    assert!(!p.cpath.contains(LEGACY_MODULES_DIR));
+}
+
+/// The rocks tree lives under the SAME `.cook/` root as the caches, and that
+/// is what keeps CS-0204 sound across the move: an installed module still
+/// resolves inside the unit's working directory, so `relative_module_paths`
+/// keeps it in the recorded determinant set instead of dropping it.
+#[test]
+fn the_installed_tree_stays_under_the_working_directory() {
+    let wd = Path::new("/proj");
+    let resolved = module_candidates(wd, "cook_cc")[0].clone();
+    assert!(resolved.starts_with(wd));
+    assert_eq!(
+        relative_module_paths(wd, &[resolved]),
+        vec![".cook/modules/share/lua/5.4/cook_cc.lua".to_string()]
     );
 }
 
@@ -224,12 +254,39 @@ mod module_load_laws {
     #[test]
     fn not_found_message_names_module_and_paths() {
         let msg = module_not_found_message(Path::new("/proj"), "foo");
-        assert_eq!(
-            msg,
-            "cook.load_module: module 'foo' not found under /proj/cook_modules \
-             (tried foo.lua, foo/init.lua, share/lua/5.4/foo.lua, \
-             share/lua/5.4/foo/init.lua)"
-        );
+        assert!(msg.starts_with(
+            "cook.load_module: module 'foo' not found under /proj/.cook/modules \
+             (tried share/lua/5.4/foo.lua, share/lua/5.4/foo/init.lua)"
+        ), "{msg}");
+    }
+
+    /// CS-0207: the hard cut is affordable because the diagnostic does the one
+    /// job a deprecation window would have done — telling the user what moved.
+    /// A window would have had to keep the retired root in the search path for
+    /// its whole life, which is the conflation the cut exists to delete.
+    #[test]
+    fn a_stale_package_directory_is_recognised_and_the_migration_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(LEGACY_MODULES_DIR)).unwrap();
+
+        let msg = module_not_found_message(tmp.path(), "foo");
+        assert!(msg.contains("still exists"), "{msg}");
+        assert!(msg.contains("cook modules install"), "{msg}");
+        // Both halves of the migration: reinstall the rocks, and move a module
+        // you WROTE somewhere else and reach it by path.
+        assert!(msg.contains("use ./path/to/it.lua"), "{msg}");
+    }
+
+    /// The other conditional clause, and the cost CS-0207 accepted by putting
+    /// the tree under the build-output root: `rm -rf .cook` is an established
+    /// habit and it now takes installed rocks with it.
+    #[test]
+    fn a_wiped_dot_cook_is_named_as_such() {
+        let tmp = tempfile::tempdir().unwrap();
+        let msg = module_not_found_message(tmp.path(), "foo");
+        assert!(msg.contains("no module tree here"), "{msg}");
+        assert!(msg.contains("cook modules install"), "{msg}");
+        assert!(!msg.contains("still exists"), "{msg}");
     }
 
     #[test]
@@ -245,8 +302,8 @@ mod module_load_laws {
     #[test]
     fn chunk_name_is_at_path() {
         assert_eq!(
-            module_chunk_name(Path::new("/p/cook_modules/foo.lua")),
-            "@/p/cook_modules/foo.lua"
+            module_chunk_name(Path::new("/p/.cook/modules/share/lua/5.4/foo.lua")),
+            "@/p/.cook/modules/share/lua/5.4/foo.lua"
         );
     }
 }

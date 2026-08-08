@@ -402,7 +402,7 @@ fn worker_loop(
                 }
 
                 // Refresh package.path and package.cpath so `require` resolves
-                // cook_modules/ relative to this unit's source Cookfile (CS-0062).
+                // .cook/modules/ relative to this unit's source Cookfile (CS-0062).
                 let _ = cook_lua_stdlib::refresh_package_search_paths(&lua, &work.working_dir);
 
                 // CS-0204: start this item's module set empty, for the same
@@ -727,7 +727,7 @@ fn register_worker_cook_table(
     // cook-lua-stdlib (§{lua.cook-load-module}, §12.3; one implementation
     // with the register VM since COOK-412). Lookup resolves the unit's
     // current_working_dir per call via WorkingDirSource::Live, so an
-    // imported Cookfile's body unit resolves against its own cook_modules/
+    // imported Cookfile's body unit resolves against its own .cook/modules/
     // (lexical per Cookfile, §{modules.use-scope}), and memoisation/cycle
     // detection key by (working_dir, name) — one worker VM serving many
     // Cookfiles keeps same-named modules distinct. Module top-level and
@@ -1175,7 +1175,7 @@ fn install_register_only_guard(
 }
 
 // `refresh_package_search_paths` — the per-unit `package.path`/`cpath`
-// refresh so `require("foo")` finds rocks under `<cwd>/cook_modules/` —
+// refresh so `require("foo")` finds rocks under `<cwd>/.cook/modules/` —
 // moved to `cook_lua_stdlib::refresh_package_search_paths` (COOK-412): the
 // stash-and-recompose idiom around the shared composer was spelled once
 // per phase. The worker loop still calls it per unit because `cwd` is

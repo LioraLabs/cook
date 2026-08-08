@@ -12,13 +12,17 @@ The Standard governs the contract, not the reference implementation. The publish
 
 ### 27.1.1. Install [#cat.bootstrap.install]
 
-A conforming project obtains a blessed module by listing it under `[modules]` in `cook.toml` and running `cook modules install`. The install populates `cook_modules/share/lua/5.4/<name>/init.lua` (and `cook_modules/lib/lua/5.4/<name>.<so-ext>` for C extensions) under the calling Cookfile's `cook_modules/` directory, per §{mods.use}'s resolution order.
+A conforming project obtains a blessed module by listing it under `[modules]` in `cook.toml` and running `cook modules install`. The install populates `.cook/modules/share/lua/5.4/<name>/init.lua` (and `.cook/modules/lib/lua/5.4/<name>.<so-ext>` for C extensions) under the calling Cookfile's module tree, per §{mods.use-scope}'s resolution order. [amended CS-0207]
 
-### 27.1.2. Vendoring escape hatch [#cat.bootstrap.vendor]
+Nothing an author writes belongs in that tree. It is a child of the build-output root (`.cook/`), it is regenerable from `cook.toml` and `cook.lock`, and it is covered wholesale by the ignore rules an implementation's project-initialisation writes. A module the project itself authors is addressed by path instead (§{mods.local}, §{decl.use}).
 
-A project MAY hand-vendor a copy of a blessed module by placing `cook_modules/<name>.lua` or `cook_modules/<name>/init.lua` at the top of the project's `cook_modules/` directory. Per §{mods.use}, hand-vendored top-level paths take precedence over LuaRocks-installed `share/lua/5.4/` paths. Hand-vendored copies are the project's responsibility; the implementation MUST treat them as the source of truth without consulting the published rock or the lockfile.
+### 27.1.2. Patching a blessed module [#cat.bootstrap.vendor]
 
-A future `cook modules install` MUST NOT overwrite a hand-vendored top-level file; the install step inserts only into `cook_modules/share/lua/5.4/` (and siblings) per the standard layout.
+> **Removed by CS-0207.** This subsection defined a *vendoring escape hatch*: a project MAY hand-vendor a copy of a blessed module at the top of `cook_modules/`, where §{mods.use-scope}'s search order gave it precedence over the installed copy, and `cook modules install` MUST NOT overwrite it.
+
+Both halves are withdrawn, and the capability is subsumed rather than lost. A project that needs a patched module now points a path-form `use` (§{decl.use}) at its own file. That is strictly better on the point the old workflow was weakest: shadowing by precedence left no record in the Cookfile that it had happened, so a reader saw `use cook_cc` and had to know the search order and inspect the tree to learn which `cook_cc` ran. A path names the file it means.
+
+The install-time non-overwrite rule went with it because there is nothing left for the install to collide with: the tree it writes contains only what it put there.
 
 ## 27.2. Catalogue index [#cat.index]
 

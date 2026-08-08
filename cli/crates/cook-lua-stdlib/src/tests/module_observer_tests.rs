@@ -8,8 +8,14 @@ use crate::module_loader::{install_module_loader, NoHooks};
 use crate::module_observer::{install_require_observer, ModuleObserver};
 use crate::WorkingDirSource;
 
+/// Install a module where a rock installs it — `rel` is relative to the
+/// pure-Lua share subtree, which since CS-0207 is the ONLY place a name
+/// resolves from. Routed through `cook_contracts::layout` so a future move of
+/// the tree root does not have to touch this suite.
 fn write_module(dir: &std::path::Path, rel: &str, source: &str) -> PathBuf {
-    let path = dir.join("cook_modules").join(rel);
+    let path = cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+        .join(rel);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, source).unwrap();
     path
@@ -61,12 +67,13 @@ fn a_memo_hit_still_records() {
     assert_eq!(observer.take(), vec![expected]);
 }
 
-/// §7 resolution order: hand-vendored beats LuaRocks-installed. The recorded
-/// path must be the candidate that WON, not the first one probed.
+/// §12 resolution order: the flat `<name>.lua` candidate is probed before
+/// `<name>/init.lua`, and the recorded path must be the candidate that WON,
+/// not the first one probed. Here only the second exists.
 #[test]
 fn records_the_winning_candidate_not_the_first_probed() {
     let tmp = tempfile::tempdir().unwrap();
-    let installed = write_module(tmp.path(), "share/lua/5.4/dual.lua", "return { v = 'rock' }");
+    let installed = write_module(tmp.path(), "dual/init.lua", "return { v = 'rock' }");
     let observer = ModuleObserver::new();
     let lua = vm(tmp.path().to_path_buf(), &observer);
 
@@ -157,7 +164,7 @@ fn require_observer_install_is_idempotent() {
 }
 
 /// The `cpath` door. A native module is reachable through `require` and through
-/// nothing else — `module_candidates` probes four `.lua` paths — so if this arm
+/// nothing else — `module_candidates` probes two `.lua` paths — so if this arm
 /// were dead, every `.so` in the project would sit outside every key.
 ///
 /// The module is satisfied from `package.preload` rather than actually
@@ -167,9 +174,8 @@ fn require_observer_install_is_idempotent() {
 #[test]
 fn a_native_module_on_cpath_is_recorded() {
     let tmp = tempfile::tempdir().unwrap();
-    let native = tmp
-        .path()
-        .join("cook_modules/lib/lua/5.4")
+    let native = cook_contracts::layout::modules_dir(tmp.path())
+        .join(cook_contracts::layout::MODULES_LIB_LUA_SUBDIR)
         .join(format!("native.{}", cook_contracts::layout::native_lua_ext()));
     std::fs::create_dir_all(native.parent().unwrap()).unwrap();
     std::fs::write(&native, b"\x7fELF not really").unwrap();

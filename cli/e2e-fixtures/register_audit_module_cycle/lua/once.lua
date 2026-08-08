@@ -1,5 +1,5 @@
 -- Module 'once' increments a global counter from its top-level body and from
--- init(). CS-0035 memoizes successful loads, so repeated cook.load_module("once")
+-- init(). CS-0035 memoizes successful loads, so repeated cook.load_module("./lua/once.lua")
 -- on the same VM must not re-evaluate the file or re-run init().
 local m = {}
 _G.once_top_level_calls = (_G.once_top_level_calls or 0) + 1

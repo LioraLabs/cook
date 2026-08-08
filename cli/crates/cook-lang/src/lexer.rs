@@ -27,6 +27,24 @@ pub struct Located<T> {
     pub line: usize,
 }
 
+/// Which of the two `LUA_IDENT` positions in a `use` declaration a diagnostic
+/// is about (App. A.2). `use a.lua b.lua` puts `a.lua` in the ALIAS position,
+/// and reporting it as a "name" would point the author at the wrong argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UseNamePosition {
+    Name,
+    Alias,
+}
+
+impl std::fmt::Display for UseNamePosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            UseNamePosition::Name => "name",
+            UseNamePosition::Alias => "alias",
+        })
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum LexError {
     #[error("line {line}: unterminated string")]
@@ -37,8 +55,8 @@ pub enum LexError {
     ReservedRecipeName { line: usize, segment: String },
     #[error("line {line}: a run of three or more `>` characters at line start is reserved")]
     ReservedTripleArrow { line: usize },
-    #[error("line {line}: 'use' name '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
-    InvalidUseName { name: String, line: usize },
+    #[error("line {line}: 'use' {position} '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
+    InvalidUseName { name: String, position: UseNamePosition, line: usize },
     #[error("line {line}: {message}")]
     InvalidUsePath { message: String, line: usize },
     #[error("line {line}: 'use {path}' derives the alias '{alias}', which is not a valid Lua identifier; give it one explicitly: 'use <alias> {path}'")]
@@ -49,6 +67,10 @@ pub enum LexError {
     UseNameWithExtraArgument { first: String, second: String, line: usize },
     #[error("line {line}: 'use' takes at most two arguments — an optional alias and a path")]
     UseTooManyArguments { line: usize },
+    #[error("line {line}: 'use {argument}': a `use` declaration takes no trailing comment; put the comment on its own line above")]
+    UseTrailingComment { argument: String, line: usize },
+    #[error("line {line}: 'use' takes a module name or a path")]
+    UseMissingArgument { line: usize },
     #[error("line {line}: recipe name '{name}': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
     DottedDeclaredRecipeName { name: String, line: usize },
     #[error("line {line}: chore name '{name}': dotted chore names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
@@ -135,12 +157,16 @@ fn is_probe_seg_char(c: char) -> bool {
 /// (`UnusableDerivedAlias`): the author did not write `9lives`, the basename of
 /// the file they named did, so the remedy is the explicit-alias form and the
 /// diagnostic has to say so rather than complaining about a name nobody typed.
-fn check_use_name(name: &str, line: usize) -> Result<(), LexError> {
+fn check_use_name(name: &str, position: UseNamePosition, line: usize) -> Result<(), LexError> {
     let mut chars = name.chars();
     let ok_start = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
     let ok_rest = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !ok_start || !ok_rest || name.is_empty() {
-        return Err(LexError::InvalidUseName { name: name.to_string(), line });
+        return Err(LexError::InvalidUseName {
+            name: name.to_string(),
+            position,
+            line,
+        });
     }
     Ok(())
 }
@@ -185,11 +211,31 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
     use cook_contracts::layout::{normalise_use_path, use_path_rejected_message};
     use cook_contracts::module_binding::{alias_of, derived_alias, is_path_target};
 
+    // A trailing `#` comment is not a `use` argument, and reporting it as one
+    // ("takes at most two arguments") names nothing the author can act on:
+    // `#` starts a comment everywhere else in a Cookfile. Rejecting it at all
+    // is a TIGHTENING — before CS-0206 the lexer parsed the first token and
+    // discarded the rest of the line, so `use cpp # note` silently worked,
+    // even though `tree-sitter-cook` has always rejected it. The two readers
+    // now agree; this arm is what makes the disagreement legible.
+    if let Some(comment) = args.iter().find(|a| a.starts_with('#')) {
+        if args.first().map(|f| f.as_str()) != Some(comment.as_str()) {
+            return Err(LexError::UseTrailingComment {
+                argument: comment.clone(),
+                line,
+            });
+        }
+    }
+
     match args {
-        [] => Err(LexError::MissingRecipeName { line }),
+        // Unreachable through the line classifier (it requires a
+        // separator after `use`, and the remainder is trimmed), but this
+        // function is reachable from tests and should not answer a `use`
+        // question with a recipe diagnostic.
+        [] => Err(LexError::UseMissingArgument { line }),
         [only] if !is_path_target(only) => {
             // The name form, unchanged since CS-0035.
-            check_use_name(only, line)?;
+            check_use_name(only, UseNamePosition::Name, line)?;
             Ok((alias_of(only), only.clone()))
         }
         [only] => {
@@ -199,7 +245,7 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
                     line,
                 })?;
             let alias = derived_alias(&normalised);
-            check_use_name(&alias, line).map_err(|_| LexError::UnusableDerivedAlias {
+            check_use_name(&alias, UseNamePosition::Alias, line).map_err(|_| LexError::UnusableDerivedAlias {
                 path: only.clone(),
                 alias: alias.clone(),
                 line,
@@ -222,7 +268,7 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
                     }
                 });
             }
-            check_use_name(first, line)?;
+            check_use_name(first, UseNamePosition::Alias, line)?;
             let normalised = normalise_use_path(second)
                 .map_err(|r| LexError::InvalidUsePath {
                     message: use_path_rejected_message(second, r),

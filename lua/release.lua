@@ -1,4 +1,4 @@
--- cook_modules/release.lua — repo-wide release helpers.
+-- lua/release.lua — repo-wide release helpers.
 --
 -- Functions:
 --   release.bump_claim(version)  — mirror a Standard version into every

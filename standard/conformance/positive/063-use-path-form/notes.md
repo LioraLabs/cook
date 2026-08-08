@@ -1,12 +1,15 @@
 Pins CS-0206: the path form of `use`. All four accepted spellings in one
-Cookfile, each binding an alias a recipe-body `module_call` then names, so the
-fixture fails if any of them does not bind:
+Cookfile, each pinned by the `alias` column of `parse.txt`, so the fixture
+fails if any of them derives the wrong identifier. Each alias is also named by
+a recipe-body `module_call`, which keeps the Cookfile a realistic one — but
+this corpus is parse-only, so those calls are recorded, not executed. The
+binding itself is pinned where it runs (see below).
 
-- `use ./build/helpers.lua` — bare path, alias derived from the basename.
-- `use "./build/quoted.lua"` — quoted path, same derivation.
+- `use ./lua/helpers.lua` — bare path, alias derived from the basename.
+- `use "./lua/quoted.lua"` — quoted path, same derivation.
 - `use fmt ./tools/lua/formatting.lua` — explicit alias, which the basename
   would not have produced.
-- `use ./build/my-helpers.lua` — a hyphenated basename, binding `my_helpers`.
+- `use ./lua/my-helpers.lua` — a hyphenated basename, binding `my_helpers`.
   This is the first reachable input §12.1's hyphen-to-underscore rewrite has
   ever had: CS-0035 rejects a hyphen in a `use` NAME, so before CS-0206 the
   rule described a spelling no conforming Cookfile could write (COOK-436). A

@@ -1,4 +1,4 @@
-use badlabel
+use ./lua/badlabel.lua
 
 chore scope_bad
     echo unreachable

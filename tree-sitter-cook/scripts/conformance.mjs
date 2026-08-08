@@ -45,6 +45,16 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
+  // CS-0206: the `use` path form. FOUR of its six negatives ARE syntactic and
+  // are deliberately absent from this list — `..`, a leading `/`, the `//`
+  // sigil and a third argument are all shapes the token cannot take, and
+  // `test/corpus/declarations.txt` pins each. These two are not, and each
+  // would otherwise be reported green off an unrelated CS-0134 error in the
+  // fixture's recipe body rather than off the rule it names.
+  ['068-use-path-derived-alias-rejected',
+   'CS-0206: the alias DERIVED from a path basename must be a Lua identifier — a lexer check over a derivation, and the identical path text is legal one position over (`use fmt ./build/9lives.lua`), so a grammar that refused the path would refuse a legal Cookfile'],
+  ['069-use-duplicate-alias-rejected',
+   'CS-0206: two `use` declarations binding one identifier to different targets — a whole-Cookfile check in the parser, invisible to a per-declaration grammar rule'],
   ['cs0187-retired-file-prefix',
    'CS-0187: the retired `file:` prefix — codegen-phase rejection; the token is syntactically an ordinary placeholder ident'],
   // CS-0022 Phase G: codegen-only rejections — Cookfile parses cleanly,

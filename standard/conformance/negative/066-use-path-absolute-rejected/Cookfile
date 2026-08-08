@@ -1,4 +1,4 @@
 use /opt/cook/helpers.lua
 
 recipe build
-    echo unreachable
+    cook "out.txt" { echo unreachable > $<out> }

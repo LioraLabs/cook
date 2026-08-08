@@ -336,7 +336,10 @@ fn merging_caps_the_retained_sets() {
 #[test]
 fn path_sets_round_trip_through_the_wire_form() {
     let sets = vec![
-        vec!["cook_modules/a.lua".to_string(), "cook_modules/b.lua".to_string()],
+        vec![
+            ".cook/modules/share/lua/5.4/a.lua".to_string(),
+            ".cook/modules/share/lua/5.4/b.lua".to_string(),
+        ],
         vec![],
     ];
     assert_eq!(decode_path_sets(&encode_path_sets(&sets)), sets);
