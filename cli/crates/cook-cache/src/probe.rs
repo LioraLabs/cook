@@ -115,6 +115,15 @@ fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
     h
 }
 
+/// SHA-256 of a file's bytes, or all-zero when it cannot be read.
+///
+/// Public because CS-0204 hashes module source with it: the probe fingerprint
+/// folds every other file through the same function, and a second hasher over
+/// the same question is how two halves of one key come to disagree.
+pub fn hash_file_sha256(path: &Path) -> [u8; 32] {
+    hash_file(path)
+}
+
 fn hash_file(path: &Path) -> [u8; 32] {
     let Ok(bytes) = std::fs::read(path) else {
         return [0u8; 32];

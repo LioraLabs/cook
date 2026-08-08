@@ -206,6 +206,9 @@ impl ThreadSafeCacheManager {
         meta: &CacheMeta,
         working_dir: &Path,
         seal_contribution: u64,
+        // CS-0204: the module files the unit's Lua body loaded, as reported by
+        // the VM that ran it. Empty for every unit that ran no Lua.
+        module_paths: &[String],
     ) -> Result<StepEntry, RecordError> {
         // The caller hands us a `CacheMeta` whose inputs are the RESOLVED set
         // the unit was judged against (§17.1.1.2), so every entry here names a
@@ -232,6 +235,13 @@ impl ThreadSafeCacheManager {
             }
         }
 
+        // CS-0204. An unreadable module fails the whole record rather than
+        // being dropped: dropping it would file an entry keyed on LESS than
+        // the unit actually ran, which is the defect this change closes. No
+        // entry is a cold miss; a short entry is a wrong hit.
+        let module_inputs = collect_records(module_paths, working_dir)
+            .map_err(RecordError::UnreadableFile)?;
+
         let entry = StepEntry {
             inputs: new_inputs,
             outputs: new_outputs,
@@ -241,6 +251,7 @@ impl ThreadSafeCacheManager {
             // computed by the engine from the materialised probe values and
             // passed in (the CacheMeta carries only the seal *key set*).
             seal_contribution,
+            module_inputs,
             observed: None,
         };
         self.update_step(recipe_name, cache_key, entry.clone());

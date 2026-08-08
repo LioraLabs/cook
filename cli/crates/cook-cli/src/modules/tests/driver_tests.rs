@@ -51,7 +51,14 @@ fn install_argv_includes_tree_and_servers() {
     assert_eq!(argv[0], "install");
     assert!(argv.iter().any(|a| a == "--tree"));
     let tree_idx = argv.iter().position(|a| a == "--tree").unwrap();
-    assert!(argv[tree_idx + 1].ends_with("cook_modules"));
+    // CS-0207: the install tree is the SAME path the resolver probes, derived
+    // from the one law rather than spelled here — an install that landed
+    // somewhere a `use` does not look would be a silent no-op.
+    assert_eq!(
+        std::path::Path::new(&argv[tree_idx + 1]),
+        cook_contracts::layout::modules_dir(project.path())
+    );
+    assert!(argv[tree_idx + 1].ends_with(".cook/modules"));
     let server_args: Vec<&String> = argv
         .iter()
         .filter(|a| a.starts_with("--server="))

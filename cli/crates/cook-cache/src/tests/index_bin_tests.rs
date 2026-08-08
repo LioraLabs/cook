@@ -15,6 +15,7 @@ fn step(inputs: Vec<FileRecord>, outputs: Vec<FileRecord>) -> StepEntry {
         command_hash: 0x0102030405060708,
         env_contribution: 0x2222222222222222,
         seal_contribution: 0x3333333333333333,
+        module_inputs: Vec::new(),
         observed: None,
     }
 }
@@ -275,4 +276,82 @@ fn zero_length_payload_is_refused() {
 fn reseal(bytes: &mut [u8]) {
     let hash = xxhash_rust::xxh3::xxh3_64(&bytes[HEADER_LEN..]);
     bytes[24..32].copy_from_slice(&hash.to_le_bytes());
+}
+
+/// CS-0204: the module slice is a third region of the same flat record pool,
+/// and the cursor arithmetic on the encode side must line up with the slice
+/// bounds on the decode side.
+#[test]
+fn module_records_round_trip_alongside_inputs_and_outputs() {
+    let mut cache = RecipeCache::new();
+    let mut with_modules = step(
+        vec![rec("src/main.c", 1, 0xaa)],
+        vec![rec("build/main.o", 2, 0xbb)],
+    );
+    with_modules.module_inputs = vec![
+        rec("lua/helper.lua", 3, 0xcc),
+        rec(".cook/modules/share/lua/5.4/rock/init.lua", 4, 0xdd),
+    ];
+    cache.steps.insert("with".to_string(), with_modules.clone());
+    // A neighbour with no module set, so the slice bounds have to be right for
+    // BOTH and not merely for a single-step index.
+    cache.steps.insert(
+        "without".to_string(),
+        step(vec![rec("src/util.c", 5, 0xee)], vec![rec("build/util.o", 6, 0xff)]),
+    );
+
+    let decoded = decode(&encode(&cache)).expect("round trip");
+    assert_eq!(decoded.steps["with"].module_inputs, with_modules.module_inputs);
+    assert!(decoded.steps["without"].module_inputs.is_empty());
+    assert_eq!(decoded.steps["with"].inputs, with_modules.inputs);
+    assert_eq!(decoded.steps["with"].outputs, with_modules.outputs);
+}
+
+/// Determinism survives the new region: the same cache must encode to the same
+/// bytes, because `update_step` short-circuits on equality and the dirty set
+/// assumes an unchanged index produces an unchanged file.
+#[test]
+fn module_records_encode_deterministically() {
+    let mut cache = RecipeCache::new();
+    let mut s = step(vec![rec("a.c", 1, 1)], vec![rec("a.o", 2, 2)]);
+    s.module_inputs = vec![rec("lua/m.lua", 3, 3)];
+    cache.steps.insert("k".to_string(), s);
+    assert_eq!(encode(&cache), encode(&cache));
+}
+
+/// Totality: a module slice pointing past the record pool is corruption, and
+/// corruption is an `Err` rather than a panic or an out-of-bounds read.
+#[test]
+fn out_of_range_module_slice_decodes_as_error() {
+    let mut cache = RecipeCache::new();
+    let mut s = step(vec![rec("a.c", 1, 1)], vec![rec("a.o", 2, 2)]);
+    s.module_inputs = vec![rec("lua/m.lua", 3, 3)];
+    cache.steps.insert("k".to_string(), s);
+    let mut bytes = encode(&cache);
+
+    // Find the encoded `modules_len` (1) and inflate it past the pool. The
+    // step struct is the only place a lone LE u32 `1` follows the three other
+    // slice fields, so scan for the tail of the step record and widen it.
+    let payload_start = HEADER_LEN;
+    let mut patched = false;
+    for i in payload_start..bytes.len().saturating_sub(4) {
+        if bytes[i..i + 4] == 1u32.to_le_bytes() {
+            let saved: [u8; 4] = bytes[i..i + 4].try_into().unwrap();
+            bytes[i..i + 4].copy_from_slice(&0xffff_ffffu32.to_le_bytes());
+            // Re-stamp the payload checksum so the bounds checks are what
+            // rejects this, not the checksum.
+            let payload = bytes[HEADER_LEN..].to_vec();
+            let h = xxhash_rust::xxh3::xxh3_64(&payload);
+            bytes[24..32].copy_from_slice(&h.to_le_bytes());
+            if decode(&bytes).is_err() {
+                patched = true;
+                break;
+            }
+            bytes[i..i + 4].copy_from_slice(&saved);
+            let payload = bytes[HEADER_LEN..].to_vec();
+            let h = xxhash_rust::xxh3::xxh3_64(&payload);
+            bytes[24..32].copy_from_slice(&h.to_le_bytes());
+        }
+    }
+    assert!(patched, "no widened slice field produced a decode error");
 }

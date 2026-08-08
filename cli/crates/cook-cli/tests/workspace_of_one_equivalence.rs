@@ -39,6 +39,21 @@ recipe consume
     }
 "#;
 
+/// Where `use toolmod` resolves a NAME from, relative to the declaring
+/// Cookfile's directory: the installed-module tree (CS-0207). Through
+/// `cook_contracts::layout` so a future move of the tree root does not have to
+/// touch this test — and taking a prefix, because half the point here is that
+/// the mounted member resolves against `sub/`, not against the workspace root.
+fn installed_module_rel(prefix: &str, name: &str) -> String {
+    format!(
+        "{prefix}{}/{}/{name}.lua",
+        cook_contracts::layout::DOT_COOK_DIR,
+        std::path::Path::new(cook_contracts::layout::MODULES_SUBDIR)
+            .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+            .display(),
+    )
+}
+
 fn write(dir: &std::path::Path, rel: &str, body: &str) {
     let p = dir.join(rel);
     if let Some(parent) = p.parent() {
@@ -67,7 +82,7 @@ fn run_cook(dir: &std::path::Path, target: &str) -> (bool, String) {
 #[test]
 fn module_recipe_dep_ref_on_bare_cookfile() {
     let tmp = TempDir::new().expect("tempdir");
-    write(tmp.path(), "cook_modules/toolmod.lua", TOOLMOD_LUA);
+    write(tmp.path(), &installed_module_rel("", "toolmod"), TOOLMOD_LUA);
     write(tmp.path(), "Cookfile", MEMBER_COOKFILE);
 
     let (ok, diag) = run_cook(tmp.path(), "consume");
@@ -84,7 +99,7 @@ fn module_recipe_dep_ref_on_bare_cookfile() {
 #[test]
 fn module_recipe_dep_ref_equivalent_when_mounted_via_import() {
     let tmp = TempDir::new().expect("tempdir");
-    write(tmp.path(), "sub/cook_modules/toolmod.lua", TOOLMOD_LUA);
+    write(tmp.path(), &installed_module_rel("sub/", "toolmod"), TOOLMOD_LUA);
     write(tmp.path(), "sub/Cookfile", MEMBER_COOKFILE);
     write(
         tmp.path(),

@@ -23,6 +23,117 @@ use "cpp"
     module: (string)))
 
 ================
+Use declaration (path)
+================
+
+use ./build/helpers.lua
+
+---
+
+(source_file
+  (use_declaration
+    path: (path)))
+
+================
+Use declaration (quoted path)
+================
+
+use "./build/helpers.lua"
+
+---
+
+(source_file
+  (use_declaration
+    path: (string)))
+
+================
+Use declaration (alias and path)
+================
+
+use fmt ./tools/lua/formatting.lua
+
+---
+
+(source_file
+  (use_declaration
+    alias: (identifier)
+    path: (path)))
+
+================
+Use declaration (quoted alias and quoted path)
+================
+
+use "fmt" "./tools/lua/formatting.lua"
+
+---
+
+(source_file
+  (use_declaration
+    alias: (string)
+    path: (string)))
+
+================
+Use declaration (suffix-only path, no leading ./)
+================
+
+use helpers.lua
+
+---
+
+(source_file
+  (use_declaration
+    path: (path)))
+
+================
+Use path with a parent segment is rejected
+================
+
+use ../x.lua
+
+---
+
+(source_file
+  (ERROR
+    (lua_code)))
+
+================
+Use path with the workspace-root sigil is rejected
+================
+
+use //build/x.lua
+
+---
+
+(source_file
+  (ERROR
+    (lua_code)))
+
+================
+Absolute use path is rejected
+================
+
+use /opt/x.lua
+
+---
+
+(source_file
+  (ERROR
+    (lua_code)))
+
+================
+Use name with a second argument is rejected
+================
+
+use foo bar
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier)
+    (ERROR)))
+
+================
 Import declaration
 ================
 

@@ -7,7 +7,7 @@ on the pnpm lockfile.
 
 This example is a genuine module-contract consumer: it pins `cook_pnpm` in
 `cook.toml`/`cook.lock` and loads it from a LuaRocks-installed
-`cook_modules/` tree — it does **not** vendor a hand-written copy.
+`.cook/modules/` tree — it does **not** keep a hand-written copy.
 
 ## Prerequisites
 
@@ -22,18 +22,19 @@ cd examples/modules/monorepo
 # 1. Install the JS toolchain + workspace links (generates pnpm-lock.yaml).
 pnpm install
 
-# 2. Realise the pinned cook_pnpm into ./cook_modules.
+# 2. Realise the pinned cook_pnpm into ./.cook/modules.
 #    Published consumers run `cook install`, which reads cook.toml/cook.lock
 #    and fetches from rocks.usecook.com. To consume an UNPUBLISHED build of
 #    cook_pnpm (e.g. a local module checkout) install it directly with the
 #    bundled 5.4 LuaRocks:
-~/.cook/bin/luarocks make --tree cook_modules \
+~/.cook/bin/luarocks make --tree .cook/modules \
     /path/to/cook-modules/cook_pnpm/cook_pnpm-0.2.0-1.rockspec
 ```
 
-The install lands `cook_modules/share/lua/5.4/cook_pnpm/…`, the LuaRocks
-search path Cook adds for every recipe (Cook Standard §12.2). `cook_modules/`
-is git-ignored — only the `cook.toml` pin and `cook.lock` are committed.
+The install lands `.cook/modules/share/lua/5.4/cook_pnpm/…`, the LuaRocks
+search path Cook adds for every recipe (Cook Standard §12.2). It is under
+`.cook/`, so the existing ignore rule already covers it — only the `cook.toml`
+pin and `cook.lock` are committed (Cook Standard §27.1.1, CS-0207).
 
 ## Usage
 

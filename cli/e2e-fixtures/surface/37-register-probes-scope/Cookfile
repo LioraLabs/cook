@@ -1,4 +1,4 @@
-use scoper
+use ./lua/scoper.lua
 
 register
     print("scoped value: " .. scoper.value())

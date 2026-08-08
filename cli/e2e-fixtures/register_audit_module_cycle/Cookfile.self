@@ -1,2 +1,2 @@
 chore audit_self
-    >> cook.load_module("solo")
+    >> cook.load_module("./lua/solo.lua")

@@ -168,6 +168,7 @@ fn cold_fetch_shares_depfile_unit_across_fleet() {
         &["build/main.o"],
         wd,
         Some(&di),
+        false,
     );
 
     let outcome = hit.expect("cold fetch should HIT via manifest recovery");
@@ -231,6 +232,7 @@ fn cold_fetch_safe_miss_when_header_differs() {
         &["build/main.o"],
         wd,
         Some(&di),
+        false,
     );
 
     assert!(hit.is_none(), "safe miss: consumer dep.h differs, full key must not match");

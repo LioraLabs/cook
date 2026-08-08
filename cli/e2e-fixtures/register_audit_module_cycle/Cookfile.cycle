@@ -1,2 +1,2 @@
 chore audit_cycle
-    >> cook.load_module("a")
+    >> cook.load_module("./lua/a.lua")

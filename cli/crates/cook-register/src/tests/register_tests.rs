@@ -124,7 +124,8 @@ fn test_module_loads_and_adds_units() {
     let dir = TempDir::new().unwrap();
 
     // Create a module
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = cook_contracts::layout::modules_dir(dir.path())
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
     fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
@@ -163,7 +164,8 @@ end)
 fn test_export_import_across_recipes() {
     let dir = TempDir::new().unwrap();
 
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = cook_contracts::layout::modules_dir(dir.path())
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
     fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
@@ -213,7 +215,8 @@ end)
 #[test]
 fn test_platform_available_in_module() {
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
+    let modules_dir = cook_contracts::layout::modules_dir(dir.path())
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
     fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
@@ -4059,9 +4062,12 @@ end)
 // accepting path.
 // -----------------------------------------------------------------------
 
-/// Write `<dir>/cook_modules/<name>.lua` so `cook.load_module(name)` resolves.
+/// Install `<name>.lua` where a rock installs it, so `cook.load_module(name)`
+/// resolves BY NAME. Through `cook_contracts::layout` so the next move of the
+/// tree root does not have to touch this suite (CS-0207).
 fn write_module(dir: &std::path::Path, name: &str, code: &str) {
-    let modules_dir = dir.join("cook_modules");
+    let modules_dir = cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     std::fs::create_dir_all(&modules_dir).unwrap();
     std::fs::write(modules_dir.join(format!("{name}.lua")), code).unwrap();
 }

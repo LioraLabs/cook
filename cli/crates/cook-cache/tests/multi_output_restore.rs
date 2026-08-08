@@ -105,7 +105,8 @@ fn multi_output_restore_writes_all_outputs() {
         command_hash: 0x1234,
         env_contribution: 0,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let ctx = RestoreCtx {
@@ -196,7 +197,8 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         command_hash: 0x1234,
         env_contribution: 0,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
     let ctx = RestoreCtx {
         backend: backend.as_ref(),

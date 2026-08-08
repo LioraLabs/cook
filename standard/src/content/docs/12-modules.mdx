@@ -8,14 +8,31 @@ sidebar:
 
 ## 12.1. The `use` declaration [#mods.use]
 
-A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.2; the lexical and syntactic rules are restated in §{decl.use}). A conforming implementation MUST resolve a `use` declaration by applying the following steps in order, with the first matching step winning:
+A `use` declaration has one of two forms (App. A.2; the lexical and syntactic rules are restated in §{decl.use}):
+
+- the **name form**, `use <name>`, where `<name>` is a `LUA_IDENT` written bare or quoted;
+- the **path form**, `use <path>` or `use <alias> <path>`, where `<path>` is a `tree_path` ending in `.lua` and `<alias>` is a `LUA_IDENT`.
+
+The two forms are **disjoint by construction**, not ordered by precedence: App. A.2 selects the path form if and only if the last argument ends in `.lua`, and a `<name>` admits no `.` at all, so no argument can be read both ways and there is nothing for a precedence rule to arbitrate. [amended CS-0206]
+
+A conforming implementation MUST resolve a **name form** by applying the following steps in order, with the first matching step winning:
 
 1. If `<name>` designates a built-in module (§{mods.builtin}), the built-in module is selected.
-2. Otherwise, the implementation MUST attempt to resolve `<name>` as a local module under `cook_modules/` by the lookup algorithm of §{mods.local}.
+2. Otherwise, the implementation MUST attempt to resolve `<name>` as an installed local module by the lookup algorithm of §{mods.local}.
 
-A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
+A conforming implementation MUST resolve a **path form** by selecting the file at `<path>`, resolved relative to the declaring Cookfile's directory, subject to the containment rule of §{mods.use-scope}. The path form consults neither the built-in set nor the installed package tree.
 
-The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile.
+A conforming implementation MUST reject a Cookfile for which resolution does not succeed, with a diagnostic that names the argument and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
+
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under an identifier that a conforming implementation MUST derive as follows:
+
+- **Name form** — the identifier is `<name>` with each ASCII hyphen (`-`) replaced by an underscore (`_`). All other characters admitted by the name production pass through unchanged.
+- **Path form with an explicit `<alias>`** — the identifier is `<alias>`, which App. A.2 already constrains to a `LUA_IDENT`.
+- **Path form without an alias** — the identifier is `<path>`'s final segment with its `.lua` suffix removed, put through the same hyphen-to-underscore rewrite. A conforming implementation MUST reject a declaration whose derived identifier is not a `LUA_IDENT`, with a diagnostic that names the derived identifier and directs the author to the explicit-alias form. [amended CS-0206]
+
+A conforming implementation MUST reject a Cookfile in which two `use` declarations bind the same identifier to different targets, with a diagnostic naming the identifier and both source lines. Two declarations that name the same target are not a conflict: §{mods.lifecycle.caching} already makes the second a memo hit. [amended CS-0206]
+
+A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, `test_step` body, chore body, `probe` `produce` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile. [amended CS-0205]
 
 A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered. The full lifecycle contract for `init()` and for module loading is in §{mods.lifecycle}.
 
@@ -27,37 +44,70 @@ use cpp
 cpp.bin("colorize", { sources = { "src/colorize.c" } })
 ```
 
-The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The top-level `cpp.bin(...)` call is dispatched as a top-level module_call (§{toplevel.module-call}) — a register-phase expression that runs against the same register-phase Lua VM as a `register_block` body.
+The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `.cook/modules/share/lua/5.4/cpp.lua` (or `.cook/modules/share/lua/5.4/cpp/init.lua`). The top-level `cpp.bin(...)` call is dispatched as a top-level module_call (§{toplevel.module-call}) — a register-phase expression that runs against the same register-phase Lua VM as a `register_block` body.
+
+### Example 12.1.2
+
+```cook
+use ./build/helpers.lua
+use fmt ./tools/lua/code-formatting.lua
+
+recipe check
+    > helpers.assert_clean()
+    > fmt.run()
+```
+
+The first declaration binds `helpers`, derived from the basename. The second binds `fmt` explicitly; its file's basename would have derived `code_formatting`, which is a legal identifier, so the alias here is a preference rather than a necessity. Both files are ordinary tracked source in the project, reached where they live.
 
 ### Note 12.1.1
 
-The hyphen-to-underscore rewrite exists because `BARE_IDENTIFIER` permits internal hyphens (App. A.5) whereas Lua identifiers do not. Thus `use my-mod` binds the Lua global `my_mod`, but the on-disk lookup searches for `cook_modules/my-mod.lua` verbatim: the disk name is not rewritten.
+The hyphen-to-underscore rewrite predates CS-0035 and was written for a `use_name` drawn from `BARE_IDENTIFIER`, which permits internal hyphens where Lua identifiers do not. CS-0035 then narrowed the name to `LUA_IDENT` and rejected hyphens outright, which left the rewrite describing a spelling no conforming Cookfile could express — a rule with no reachable input, reported as COOK-436.
+
+CS-0206 makes it reachable rather than deleting it. A path form's derived identifier comes from a **file basename**, which passes through no name production and is under no obligation to be a Lua identifier: `use ./build/my-helpers.lua` binds `my_helpers`, and the file on disk keeps its own name, unrewritten. That is the same rule the name form was always supposed to state, now applied where it has an input. The name form's clause is retained for a future name production that admits hyphens; today it is a no-op there, and this note says so rather than leaving a reader to discover it.
+
+### Note 12.1.2
+
+The list above names the execute-phase bodies individually because an implementation that generates code per body kind will bind the alias per body kind, and one omitted kind is a silent hole: for a year the reference implementation bound the alias in a chore body and in no other execute-phase body, so `use greet` followed by `test >{ greet.say() }` failed with `attempt to index a nil value (global 'greet')` (CS-0205). "Visible" is a property of each body, not of the Cookfile.
+
+Visibility binds per body, but it is not a requirement to *evaluate* the module for every body. An implementation binds the alias as a Lua local, which only code that names the alias lexically can reach, so a body that names no alias cannot observe whether one was bound and an implementation MAY skip it there. §{lua.cook-load-module} states that option and the conditions on it.
 
 ## 12.2. `use` scope is lexical per Cookfile [#mods.use-scope]
 A `use` declaration's alias is scoped to its **declaring Cookfile** and is not visible across `import` boundaries. Each Cookfile in a workspace defines its own `use`-resolution scope. The aliases established by `use foo` in Cookfile A are not in scope for any Lua evaluated from Cookfile B's recipes, and vice versa, regardless of import direction.
 
-For an execute-phase work unit, "the calling work unit's source Cookfile" (§{lua.cook-load-module}) is the Cookfile that contained the recipe whose body unit is being evaluated. A conforming implementation MUST resolve `cook.load_module(name)` and `require(name)` against that Cookfile's `cook_modules/` directory and MUST NOT fall back to a sibling Cookfile's `cook_modules/`.
+For an execute-phase work unit, "the calling work unit's source Cookfile" (§{lua.cook-load-module}) is the Cookfile that contained the recipe whose body unit is being evaluated. A conforming implementation MUST resolve `cook.load_module(name)` and `require(name)` against that Cookfile's own module tree and MUST NOT fall back to a sibling Cookfile's.
 
-A conforming implementation MUST resolve `cook.load_module(name)` at register phase, and MUST configure `package.path` and `package.cpath` for each execute-phase work unit, such that the calling Cookfile's `cook_modules/` is searched in the following order: (1) `cook_modules/?.lua` and `cook_modules/?/init.lua` (hand-vendored, top level); (2) `cook_modules/share/lua/<lua-version>/?.lua` and `cook_modules/share/lua/<lua-version>/?/init.lua` (LuaRocks-installed pure Lua); for native modules: (a) `cook_modules/?.<so-ext>` (hand-vendored, top level); (b) `cook_modules/lib/lua/<lua-version>/?.<so-ext>` (LuaRocks-installed). `<lua-version>` is the embedded Lua's MAJOR.MINOR (currently `5.4`). `<so-ext>` is the platform's loadable-module extension (`.so` on Linux/macOS, `.dll` on Windows).
+A conforming implementation MUST resolve a name-form `cook.load_module(name)` at register phase, and MUST configure `package.path` and `package.cpath` for each execute-phase work unit, such that the calling Cookfile's installed-module tree at `.cook/modules/` is searched in the following order: (1) `.cook/modules/share/lua/<lua-version>/?.lua`; (2) `.cook/modules/share/lua/<lua-version>/?/init.lua`; for native modules: `.cook/modules/lib/lua/<lua-version>/?.<so-ext>`. `<lua-version>` is the embedded Lua's MAJOR.MINOR (currently `5.4`). `<so-ext>` is the platform's loadable-module extension (`.so` on Linux/macOS, `.dll` on Windows). [amended CS-0207]
 
-A conforming implementation MUST also configure `package.path` and `package.cpath` (following the same search order) on the register-phase Lua VM before executing the body of any module loaded via `cook.load_module`. This ensures that sub-requires within a multi-file module (e.g., `require("cook_cc.toolchain")` inside `cook_cc/init.lua`) resolve against the project's `cook_modules/` rather than the system Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during register-phase `cook.load_module` evaluation; the register-phase VM MUST NOT restrict native module loading. [amended CS-0066]
+Until CS-0207 this list had four `.lua` candidates and two native ones, led in each case by a *hand-vendored top level* — `cook_modules/?.lua`, `cook_modules/?.<so-ext>` — whose whole purpose was to let a project shadow an installed rock by dropping a file beside it. §{cat.bootstrap.vendor} built a workflow on that precedence and CS-0207 withdrew both. The capability is subsumed rather than lost: an author who needs a patched module points a path-form `use` (§{mods.use}) at their own file, which names the file it means, where shadowing by search order left no record in the Cookfile that it had happened. With the top level gone there is no precedence question left for this section to specify.
 
-A conforming implementation MAY expose `cook.load_module(name)` on the execute-phase Lua VM as an extension over the register-phase requirement above; when exposed, the execute-phase `cook.load_module` MUST honour the same four-path resolution order. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+A conforming implementation MUST also configure `package.path` and `package.cpath` (following the same search order) on the register-phase Lua VM before executing the body of any module loaded via `cook.load_module`. This ensures that sub-requires within a multi-file module (e.g., `require("cook_cc.toolchain")` inside `cook_cc/init.lua`) resolve against the project's installed-module tree rather than the system Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during register-phase `cook.load_module` evaluation; the register-phase VM MUST NOT restrict native module loading. [amended CS-0066]
 
-Cross-Cookfile composition is at the **recipe** level via qualified name references (§{comp.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
+A conforming implementation MAY expose `cook.load_module(name)` on the execute-phase Lua VM as an extension over the register-phase requirement above; when exposed, the execute-phase `cook.load_module` MUST honour the same resolution order, and the same path-form rules of §{mods.use-scope.containment}. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+
+Cross-Cookfile composition is at the **recipe** level via qualified name references (§{comp.qualified-refs}), not at the **module** level. The cook runtime treats each Cookfile's module tree as an independent search root, and a Cookfile shares module code with another only within its own subtree, by the path form of §{mods.use-scope.containment}. Until CS-0206 this paragraph directed an author to "a vendored copy, a symlink, or a shared parent"; a vendored copy is a second file to keep in step with the first, and a symlink is a vendored copy an author cannot see. The path form is the sanctioned answer, and the containment rule states how far it reaches. [amended CS-0206]
+
+### 12.2.1. A path-form `use` is confined to the declaring Cookfile's subtree [#mods.use-scope.containment]
+
+> **Normative (CS-0206).** A path form's `<path>` is resolved relative to the declaring Cookfile's directory. A conforming implementation MUST reject a `<path>` that is absolute, that begins with the `//` workspace-root sigil, or that contains a `..` segment, and MUST reject a `<path>` whose resolved location — after following any symbolic link — lies outside the declaring Cookfile's directory subtree. The same obligations apply to a path argument reaching `cook.load_module` directly (§{lua.cook-load-module}), which the surface check cannot see.
+
+The path form deliberately relaxes what this section otherwise forbids: it lets a Cookfile reach a Lua file that is in no package directory at all. What it does **not** relax is locality. The containment boundary is the declaring Cookfile's own subtree — exactly the region this section already treats as that Cookfile's own — so a Cookfile still cannot reach a sibling's files by any spelling.
+
+The boundary is chosen, and the `//` sigil that `import_path` admits is refused, for a reason that is not stylistic. §{exec.cache.module-source} keys a work unit on the resolved path of every module it loaded, and those paths must be recorded in a form a *different* machine can reconstruct against its own tree — a host-absolute path folded into a shared key names a location that machine does not have, which is exactly the toolchain identity §{exec.cache.single-key} forbids an implementation from inferring. The only path form that reconstructs is one relative to the unit's own working directory. A module reached across that boundary therefore cannot be keyed, and an implementation that admitted the reach would have to choose between refusing the load and serving a shared cache entry composed without the file it ran. Refusing the spelling is the same decision, taken where the author can see it rather than in a cache the author cannot. See §{rationale.use-path-containment}.
+
+Two Cookfiles can still reach one file — a Cookfile and a Cookfile in its own subdirectory may each name it — and when they do, Example 12.2.1's rule is unchanged: the load is keyed `(working_dir, target)`, so the same source file evaluated from two Cookfiles is two module instances with independent state.
 
 ### Example 12.2.1
 
 ```
 ws/Cookfile:        import b ./b
-                    use cpp           # resolves to ws/cook_modules/cpp.lua
+                    use cpp           # ws/.cook/modules/share/lua/5.4/cpp.lua
                     recipe top
                         cpp.plan("a")               # register-phase
                         > cpp.assemble("a")         # execute-phase, same alias
                         b.build                     # qualified dep on B's recipe
                     end
 
-ws/b/Cookfile:      use proto         # resolves to ws/b/cook_modules/proto.lua
+ws/b/Cookfile:      use proto         # ws/b/.cook/modules/share/lua/5.4/proto.lua
                     recipe build
                         proto.regen()
                         > proto.verify()
@@ -83,11 +133,13 @@ Module code MUST NOT register work units during top-level chunk execution. Work-
 
 ### 12.3.2. Per-VM caching [#mods.lifecycle.caching]
 
-A conforming implementation MUST cache the resolved module table by `(working_dir, name)`. A second `use <name>` within the same Cookfile returns the same table without re-reading or re-evaluating the file; the top-level chunk and `init()` MUST run **at most once** per `(working_dir, name)` per Lua VM as a direct consequence of this caching contract. The cache is per-VM: a register-phase VM and an execute-phase VM that both load the same module each independently load the module top-level chunk once.
+A conforming implementation MUST cache the resolved module table by `(working_dir, target)`, where `target` is the declaration's module name or, for a path form, its path (§{mods.use}). A second `use` of the same target within the same Cookfile returns the same table without re-reading or re-evaluating the file; the top-level chunk and `init()` MUST run **at most once** per `(working_dir, target)` per Lua VM as a direct consequence of this caching contract. The cache is per-VM: a register-phase VM and an execute-phase VM that both load the same module each independently load the module top-level chunk once.
+
+A name and a path never collide in this key space: a name is a `LUA_IDENT` and admits no `.`, while a path ends in `.lua` (App. A.2). Two *different* paths that denote one file — a spelling with and without a leading `./`, say — MUST be normalised to one key, so that a Cookfile naming the same file twice gets one instance rather than two. [amended CS-0206]
 
 ### 12.3.3. Cycle detection [#mods.lifecycle.cycles]
 
-A conforming implementation MUST detect `cook.load_module` cycles. A cycle is a re-entrant call to `cook.load_module(name)` that occurs while an earlier load of the same `(working_dir, name)` is still in flight on this VM — that is, the earlier call's module body or `init()` has not yet returned. On detection, the implementation MUST raise a runtime error whose message begins with `module cycle detected:` and includes the cycle path rendered as the in-flight module names joined by ` -> `, with the offending re-entered name appended.
+A conforming implementation MUST detect `cook.load_module` cycles. A cycle is a re-entrant call to `cook.load_module(target)` that occurs while an earlier load of the same `(working_dir, target)` is still in flight on this VM — that is, the earlier call's module body or `init()` has not yet returned. On detection, the implementation MUST raise a runtime error whose message begins with `module cycle detected:` and includes the cycle path rendered as the in-flight module names joined by ` -> `, with the offending re-entered name appended.
 
 Detection MUST survive recoverable errors: when a module's body or `init()` raises, the implementation MUST remove that module from the in-flight set so a later retry on the same VM can proceed (and a genuine subsequent cycle remains detectable).
 
@@ -103,11 +155,28 @@ A module MAY queue work to run once, after every recipe body of the registration
 
 A module's top-level chunk and its `init()` function (§{mods.lifecycle.load-order}) run before any recipe body in the enclosing Cookfile registers — they are this lifecycle's **start**. A callback queued via `cook.on_register_complete` runs after every recipe body of the pass has registered — it is the lifecycle's **end**, the finalize counterpart to `init()`'s start. Where `init()` lets a module establish state before any recipe body could depend on it, a queued callback lets a module act on state recipe bodies accumulated while registering — state that, by construction, is not complete until the last body of the pass has run.
 
+### 12.3.6. Module source is a determinant [#mods.lifecycle.determinant]
+
+> **Normative (CS-0204).** A module is source. Loading one is running its code, so its content decides what the loading body does, and a conforming implementation MUST treat it as a determinant of the work that loaded it. §{exec.cache.module-source} states the rule for work units and §{cat.probes.module-source} for probes; this subsection states where in the lifecycle the obligation falls, and where it does not.
+>
+> **Execute phase: observe the load.** For a body evaluated on an execute-phase VM, the obligation is to observe: a conforming implementation MUST record the resolved path of every module the body loaded, through every door it offers into module code, and MUST NOT substitute the module search directory for the loaded set.
+>
+> **Register phase: already covered, and why.** A module that runs at register phase reaches a work unit only through the unit's DECLARATION — the command text or Lua chunk it emits, the inputs and outputs it declares, the probes it seals on. Every one of those is already a determinant (§{exec.cache.single-key}), so a register-phase module change that changes what a unit does necessarily changes the unit's key, and one that changes nothing about the declaration changes nothing about the unit. A conforming implementation therefore need not observe register-phase loads on a work unit's behalf, and this is a consequence of the key's definition rather than an exemption granted here.
+>
+> The one register-phase evaluation NOT covered by that argument is a probe's `produce` body run during a member-source pre-pass (§{cat.probes.templates}): its result is a probe VALUE, addressed by a fingerprint rather than by a unit declaration. §{cat.probes.module-source} binds it wherever it runs, and a conforming implementation MUST observe those loads on whichever VM evaluates the body.
+
 ## 12.4. Built-in modules [#mods.builtin]
 A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§{rationale.modules}).
 
 ## 12.5. Local modules [#mods.local]
-A **local module** is a file in the project's `cook_modules/` directory. The lookup algorithm resolves `<name>` against `cook_modules/<name>.lua`, then `cook_modules/<name>/init.lua`. The first existing file wins.
+A **local module** is Lua the project supplies, as opposed to a built-in (§{mods.builtin}). There are two kinds, reached by the two forms of §{mods.use}, and an implementation MUST NOT resolve one kind through the other's lookup:
+
+- An **installed module** is a package placed in the project's module tree by a package manager and reached by name. The lookup algorithm resolves `<name>` against the candidate list of §{mods.use-scope}, in that order; the first existing file wins.
+- A **path-addressed module** is an ordinary tracked file of the project, reached by the path form. There is no lookup and no candidate list: the declaration names the file, and either it exists or resolution fails. It is subject to the containment rule of §{mods.use-scope.containment}.
+
+The two kinds differ in what an author owes them. An installed module is regenerable from a manifest and belongs in the project's ignore rules; a path-addressed module is source, tracked and reviewed like the rest of the project, and belongs in no ignore rule at all. Before CS-0206 both lived in one directory, which is why no ignore rule for that directory could be correct.
+
+This section previously named two candidate paths — `<name>.lua` and `<name>/init.lua` — where §{mods.use-scope} normatively specifies the full list. The two had drifted; §{mods.use-scope} is and was the authority, and this section now cites it rather than restating it. [amended CS-0206]
 
 ## 12.6. Standard module catalogue [#mods.catalogue-index]
 
@@ -171,7 +240,7 @@ A module distributed through the official registry (§{mods.catalogue-index}, §
 - MUST reflect any change to its public surface in the module's Part IV catalogue section (§{cat}) under a Standard change entry (App. E) before or alongside the implementation, per the spec-first rule of §{intro.architecture-relationship};
 - SHOULD pin its source with a `git+https` URL and omit `source.dir` so the rendered index resolves the module verbatim.
 
-The distribution mechanics — the `cook_modules/` search paths a published module lands in — are §{mods.use-scope}; this subsection governs the publishing contract, not the Lua API.
+The distribution mechanics — the `.cook/modules/` search paths a published module lands in — are §{mods.use-scope} and §{cat.bootstrap.install}; this subsection governs the publishing contract, not the Lua API.
 
 ### 12.7.8. Minting recipes [#mods.authoring.minting]
 
@@ -194,6 +263,10 @@ A module that mints a recipe under either shape:
 The annotation is attribution, not a restriction. A minted recipe is an ordinary member of the discovered set and remains dispatchable by name like any other (§{lua.reg.discovery}); a module author who regards a support recipe as an internal detail conveys that through the annotation and the documentation this subsection requires, not by expecting an implementation to refuse the invocation. See §{rationale.recipe-origin-annotation}.
 
 **Scope: recipes, not chores (CS-0176).** Everything above is scoped to recipes. A module MAY register a chore of its own through `cook.chore` (§{lua.cook-chore}) without any of the shapes above applying, subject to that section's namespace rule and registration window.
+
+**A module's identity, for the namespace rule (CS-0206).** That namespace rule checks a chore's first segment against the module registering it, so a module needs a name of its own — a fact about the module, not about what a `use` declaration bound it to. A conforming implementation MUST take a name form's identity to be its `<name>`, and a path form's to be the final path segment with its `.lua` suffix removed. The hyphen rewrite of §{mods.use} is NOT applied: that rewrite exists to produce a Lua local, and this is the module naming itself.
+
+The three questions a `use` declaration raises about a target have three different answers, and an implementation that collapses any two of them is wrong in a way that is hard to see. The **alias** is a Lua local, so `my-mod.lua` binds `my_mod`. The **identity** is the disk name, so the same module is `my-mod`. The **load key** (§{mods.lifecycle.caching}) is the whole target, because two files with one basename in two directories are two modules. A path-form module whose identity were taken to be its whole path could register no chore at all: every prefix it could legally claim would contain a `/`, which no chore name may.
 
 The distinction is not a loophole in the ownership rule but the reason the rule exists. What the rule protects is the author's build: a recipe is a node in the DAG, and minting one silently changes what `cook` does — what gets built, what it depends on, what the cache covers. A chore changes none of that. It is uncached, absent from the DAG, and does nothing at all until invoked by name; a module that registers one has added a command the author may run, not work the author's build will do.
 

@@ -69,6 +69,25 @@ pub struct StepEntry {
     /// case), keeping non-sealed entries byte-stable apart from the version bump.
     #[serde(default, with = "hex_u64")]
     pub seal_contribution: u64,
+    /// CS-0204: the module files the unit's Lua body loaded during its last
+    /// successful run, with the content hash each had at the time.
+    ///
+    /// **A separate list from `inputs`, on purpose.** A declared input is
+    /// judged by comparing the RECORD against the DECLARATION, so a path in
+    /// one and not the other is an input-set change. Module paths appear in no
+    /// declaration and could appear in none: folding them into `inputs` would
+    /// make every module-loading unit report `InputsChanged { added }` against
+    /// its own record, forever. They are instead judged against THEMSELVES —
+    /// absorb-and-forget, the rule COOK-313 already applies to depfile
+    /// discovered inputs — which is sound because every way the loaded SET can
+    /// change traces back to a determinant that is already keyed: the body
+    /// text, a module's own content, the env, or a sealed probe value.
+    ///
+    /// Empty for every unit that runs no Lua, and for a Lua body that loads
+    /// nothing, in which case every decision below is bit-identical to the
+    /// pre-CS-0204 one.
+    #[serde(default)]
+    pub module_inputs: Vec<FileRecord>,
     /// What the last successful execution did. Scalars stay in the index;
     /// stream bytes live in the CAS under the reserved observation artifact.
     #[serde(skip)]

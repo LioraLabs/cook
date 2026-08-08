@@ -1,9 +1,35 @@
 use std::collections::BTreeSet;
 
+/// A `use` declaration (§5.1, §12.1).
+///
+/// The declaration has two forms and one meaning: something is resolved and
+/// bound under a Lua identifier. `target` is what is resolved — a module name,
+/// or a normalised tree-relative path — and `alias` is the identifier it binds.
+///
+/// The two are kept as separate fields rather than derived downstream because
+/// only the parser can still tell which form was written: by the time a
+/// `target` reaches the code generator, `helpers` and `build/helpers.lua` are
+/// two strings whose aliases come from different rules (App. A.2, CS-0206).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseStatement {
-    pub module_name: String,
+    /// The Lua identifier bound in the Cookfile's environment. For the name
+    /// form this is the name through the §12.1 hyphen rewrite; for the path
+    /// form it is the explicit alias, or the basename stem through the same
+    /// rewrite.
+    pub alias: String,
+    /// What `cook.load_module` is called with. A module name, or a path
+    /// already through `layout::normalise_use_path`, so that two spellings of
+    /// one file key as one module (§12.3.2).
+    pub target: String,
     pub line: usize,
+}
+
+impl UseStatement {
+    /// Is this the path form? Decided by the one shared rule, so a Cookfile's
+    /// meaning cannot disagree with the resolver's (App. A.2).
+    pub fn is_path_form(&self) -> bool {
+        cook_contracts::module_binding::is_path_target(&self.target)
+    }
 }
 
 /// The shape of an import path token (§7.2).

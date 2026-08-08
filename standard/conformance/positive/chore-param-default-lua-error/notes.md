@@ -2,7 +2,7 @@ Invocation-time error: Lua-expression default raises a Lua error.
 
 The conformance harness check is parse-only (the Cookfile lexes and parses
 cleanly — this is a positive/parse-success fixture). The integration test in
-`cli/crates/cook-cli/tests/chore_params_test.rs`
+`cli/crates/cook-cli/tests/chore_params.rs`
 (`chore_lua_default_error_surfaces_diagnostic`) asserts the runtime diagnostic.
 
 Implementations MUST surface a diagnostic of the form:

@@ -85,7 +85,11 @@ fn ensure_shared_cook_cc() {
 }
 
 /// Symlinks (or copies on non-Unix) the shared cook_cc tree into a fixture's
-/// tempdir `cook_modules/` path, so that `use cook_cc` resolves at runtime.
+/// tempdir installed-module tree, so that `use cook_cc` resolves at runtime.
+///
+/// Routed through `cook_contracts::layout` rather than spelling the subtree,
+/// so a future move of the tree root does not have to touch this test
+/// (CS-0207 moved it from `cook_modules/` to `.cook/modules/`).
 ///
 /// Called from execute-mode cc-* fixture runners; not called from the
 /// parse-only paths in this file.
@@ -93,7 +97,8 @@ fn ensure_shared_cook_cc() {
 fn install_cc_into(fixture_tmpdir: &std::path::Path) {
     ensure_shared_cook_cc();
 
-    let target_parent = fixture_tmpdir.join("cook_modules/share/lua/5.4");
+    let target_parent = cook_contracts::layout::modules_dir(fixture_tmpdir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     std::fs::create_dir_all(&target_parent).unwrap();
     let shared = shared_cook_cc_dir();
     let dst = target_parent.join("cook_cc");
@@ -252,7 +257,19 @@ fn format_step(step: &Step) -> String {
 }
 
 fn format_use(u: &UseStatement) -> String {
-    format!("UseStatement module_name={} line={}", repr(&u.module_name), u.line)
+    // The name form renders exactly as it did before CS-0206, so the corpus's
+    // 42 existing parse.txt files stay byte-identical; only the path form,
+    // whose alias is derivable but not always obvious, spells the binding out.
+    if u.is_path_form() {
+        format!(
+            "UseStatement path={} alias={} line={}",
+            repr(&u.target),
+            repr(&u.alias),
+            u.line
+        )
+    } else {
+        format!("UseStatement module_name={} line={}", repr(&u.target), u.line)
+    }
 }
 
 fn format_import(i: &ImportDecl) -> String {

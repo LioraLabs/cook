@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::lua_string::lua_chunk_literal;
+use crate::use_prelude::with_execute_prelude;
 use crate::template::{
     detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
     ConsultedEnv, PlateTestMode,
@@ -55,6 +56,7 @@ pub(crate) fn generate_test_step(
     out: &mut String,
     test_step: &TestStep,
     line: usize,
+    uses: &[UseStatement],
     last_cook_index: Option<usize>,
     has_ingredients: bool,
     recipe_names: &BTreeSet<String>,
@@ -201,7 +203,7 @@ pub(crate) fn generate_test_step(
                 // Binding convention: build lua_code at register time with `local input = <value>`.
                 out.push_str(&format!(
                     "        cook.add_unit({{step_kind = \"test\", lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}{}line = {}, member = _test_in, consulted_env_keys = \"*\"}})\n",
-                    lua_chunk_literal(code), inputs_field, seal_field, line
+                    lua_chunk_literal(&with_execute_prelude(uses, code)), inputs_field, seal_field, line
                 ));
                 out.push_str("    end\n");
             }
@@ -209,13 +211,13 @@ pub(crate) fn generate_test_step(
                 // Serialise the inputs table at register time into the lua_code string.
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}{}line = {}, consulted_env_keys = \"*\"}})\n",
-                    source_expr, lua_chunk_literal(code), inputs_field, seal_field, line
+                    source_expr, lua_chunk_literal(&with_execute_prelude(uses, code)), inputs_field, seal_field, line
                 ));
             }
             PlateTestMode::OneShot => {
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", lua_code = {}, {}{}line = {}, consulted_env_keys = \"*\"}})\n",
-                    lua_chunk_literal(code), inputs_field, seal_field, line
+                    lua_chunk_literal(&with_execute_prelude(uses, code)), inputs_field, seal_field, line
                 ));
             }
         },
@@ -250,6 +252,7 @@ pub(crate) fn generate_member_fanout_test_step(
     out: &mut String,
     test_step: &TestStep,
     line: usize,
+    uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
@@ -294,7 +297,7 @@ pub(crate) fn generate_member_fanout_test_step(
             out.push_str(MEMBER_SOURCE_LINE);
             out.push_str(&format!(
                 "        cook.add_unit({{step_kind = \"test\", lua_code = {}, inputs = _test_src, {}line = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
-                lua_chunk_literal(code), seal_field, line
+                lua_chunk_literal(&with_execute_prelude(uses, code)), seal_field, line
             ));
             out.push_str("    end\n");
         }

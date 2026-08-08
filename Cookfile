@@ -2,8 +2,8 @@ import cli ./cli
 import standard ./standard
 import ts ./tree-sitter-cook
 
-use dist
-use release
+use ./lua/dist.lua
+use ./lua/release.lua
 
 # Build variants live in cli/Cookfile beside the crate they build (config
 # presets now compose across imports, COOK-307 / §11.6):

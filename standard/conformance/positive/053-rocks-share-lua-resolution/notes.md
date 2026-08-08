@@ -1,5 +1,5 @@
 Pins CS-0065: `use rockmod` resolves
-`cook_modules/share/lua/5.4/rockmod.lua` (the LuaRocks-style path) at
+`.cook/modules/share/lua/5.4/rockmod.lua` (the LuaRocks-style path) at
 register time. The `chore verify` body reads `rockmod.value` and asserts
 42 — proving the register VM successfully loaded the share/lua/5.4-installed
 module.

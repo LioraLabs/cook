@@ -80,7 +80,19 @@ fn format_step(step: &Step) -> String {
 }
 
 fn format_use(u: &UseStatement) -> String {
-    format!("UseStatement module_name={} line={}", repr(&u.module_name), u.line)
+    // The name form renders exactly as it did before CS-0206, so the corpus's
+    // 42 existing parse.txt files stay byte-identical; only the path form,
+    // whose alias is derivable but not always obvious, spells the binding out.
+    if u.is_path_form() {
+        format!(
+            "UseStatement path={} alias={} line={}",
+            repr(&u.target),
+            repr(&u.alias),
+            u.line
+        )
+    } else {
+        format!("UseStatement module_name={} line={}", repr(&u.target), u.line)
+    }
 }
 
 fn format_import(i: &ImportDecl) -> String {

@@ -48,7 +48,7 @@ For each call the registry:
 | `cook.require_env(name)` | Returns `cook.env[name]` if `name` is in the frozen keyset; otherwise raises a diagnostic listing the declared keys (`env_api.rs:72`). | Not present. |
 | `cook.platform.os` / `cook.platform.arch` | Set from `std::env::consts` at registration time (`cli/crates/cook-lua-stdlib/src/platform_api.rs:16`). | Same, registered once per worker. |
 | `cook.json_decode(s)` / `cook.yaml_decode(s)` | Parses to a Lua table via `serde_json` / `serde_yml` (`codec_api.rs:6`). | Not present. |
-| `cook.load_module(name)` | Resolves `cook_modules/<name>.lua` or `cook_modules/<name>/init.lua` relative to the recipe's working dir, evaluates it once, runs `init()` if present, memoizes the result, and detects cycles (`module_loader.rs:144`). | A worker-side counterpart exists for `use foo` modules referenced from execute-phase Lua chunks (`pool.rs:391`). Each worker VM keeps its own `_cook_module_cache` keyed by `(cwd, name)`. |
+| `cook.load_module(name)` | Resolves `.cook/modules/share/lua/5.4/<name>.lua` or `.cook/modules/share/lua/5.4/<name>/init.lua` relative to the recipe's working dir — the two candidates `cook_contracts::layout::module_candidates` returns (CS-0207 withdrew the hand-vendored top level; a module the project WROTE is addressed by path, `use ./lua/helpers.lua`), evaluates it once, runs `init()` if present, memoizes the result, and detects cycles (`module_loader.rs:144`). | A worker-side counterpart exists for `use foo` modules referenced from execute-phase Lua chunks (`pool.rs:391`). Each worker VM keeps its own `_cook_module_cache` keyed by `(cwd, name)`. |
 | `cook.passthrough(list)` | Pushes paths into `current_step_outputs` without recording an emitting unit. Used by codegen for plate/test/bare-shell steps so the recipe's terminal output list is still well-defined (`unit_api.rs:418`). | Not present. |
 | `cook.taste()` | Removed. The DAG codegen path no longer emits it; the old debugger placeholder is gone. | — |
 
@@ -68,7 +68,7 @@ Each worker thread is a `worker_loop` (`pool.rs:153`) that:
 4. Registers `fs.*` with `WorkingDirSource::Live` and `SandboxSource::Live` so a single VM serving items from multiple Cookfiles (CS-0017 multi-Cookfile imports) resolves each call against the active item's cwd and the active item's sandbox policy (`pool.rs:193`).
 5. Installs the `os.execute` / `io.popen` escape-hatch guards with the same live sandbox source (`pool.rs:203`).
 6. Installs register-only guards on `cook.exec` / `cook.interactive` / `cook.add_unit` / `cook.step_group` / `cook.recipe` (`pool.rs:504`–`pool.rs:542`).
-7. Enters the work loop. Each iteration: pop a `QueueItem` (`pool.rs:210`); on `Shutdown`, break; on `Work(item)`, update the per-item slots, pick a `SandboxPolicy` from the payload's `StepKind` (`pool.rs:250`), refresh `package.path` / `package.cpath` for the unit's `cook_modules/` directory (`pool.rs:275`, `pool.rs:587`), run `execute_work_item` under `catch_unwind` (`pool.rs:287`), and send the `WorkResult` on the channel.
+7. Enters the work loop. Each iteration: pop a `QueueItem` (`pool.rs:210`); on `Shutdown`, break; on `Work(item)`, update the per-item slots, pick a `SandboxPolicy` from the payload's `StepKind` (`pool.rs:250`), refresh `package.path` / `package.cpath` for the unit's `.cook/modules/` tree (`pool.rs:275`, `pool.rs:587`), run `execute_work_item` under `catch_unwind` (`pool.rs:287`), and send the `WorkResult` on the channel.
 
 The `catch_unwind` boundary converts Rust panics into failure `WorkResult`s so the engine never hangs on `rx.recv()`. The Lua VM is reused after the panic — mlua catches panics raised inside Lua callbacks and converts them to Lua errors, so VM state stays sane.
 
@@ -85,10 +85,12 @@ The `catch_unwind` boundary converts Rust panics into failure `WorkResult`s so t
 
 ### Per-worker `package.path` refresh
 
-`refresh_package_search_paths` (`pool.rs:587`) is called before every work item. It stashes the original Lua `package.path` / `package.cpath` once, then for each unit prepends entries for the unit's `<cwd>/cook_modules/`:
+`refresh_package_search_paths` (`pool.rs:587`) is called before every work item. It stashes the original Lua `package.path` / `package.cpath` once, then for each unit prepends entries for the unit's `<cwd>/.cook/modules/`. The composition is `cook_contracts::layout::compose_lua_search_paths`, the one composer both phases use — and it MUST stay in step with `module_candidates`, since a name that resolves through `require` but not through `cook.load_module` is exactly the "works in the Cookfile, missing at execute" failure that module exists to prevent:
 
-- `package.path`: `<cwd>/cook_modules/?.lua`, `<cwd>/cook_modules/?/init.lua`, `<cwd>/cook_modules/share/lua/5.4/?.lua`, `<cwd>/cook_modules/share/lua/5.4/?/init.lua`, then the original.
-- `package.cpath`: `<cwd>/cook_modules/?.<so-ext>`, `<cwd>/cook_modules/lib/lua/5.4/?.<so-ext>`, then the original. (`<so-ext>` is `dll` on Windows, `so` everywhere else.)
+- `package.path`: `<cwd>/.cook/modules/share/lua/5.4/?.lua`, `<cwd>/.cook/modules/share/lua/5.4/?/init.lua`, then the original.
+- `package.cpath`: `<cwd>/.cook/modules/lib/lua/5.4/?.<so-ext>`, then the original. (`<so-ext>` is `dll` on Windows, `so` everywhere else.)
+
+Two path entries and one cpath entry, not four and two: CS-0207 withdrew the top-level `?.lua` / `?.<so-ext>` entries along with the hand-vendored candidates they served.
 
 The original suffixes are stashed exactly once so per-unit refresh is idempotent across many calls.
 

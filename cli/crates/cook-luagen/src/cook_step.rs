@@ -4,6 +4,7 @@ use cook_lang::ast::*;
 
 use crate::lua_var;
 use crate::resolver::{IterMode, OutputShape};
+use crate::use_prelude::with_execute_prelude;
 use crate::template::{
     expand_command_template, expand_output_pattern, output_pattern_kind_with_recipes, ConsultedEnv,
     OutputPatternKind,
@@ -179,6 +180,7 @@ fn record_field(record: bool) -> String {
 fn one_to_one_add_unit_line(
     cook_step: &CookStep,
     line: usize,
+    uses: &[UseStatement],
     ingredients_len: usize,
     recipe_names: &BTreeSet<String>,
     iter_mode: IterMode,
@@ -198,7 +200,8 @@ fn one_to_one_add_unit_line(
             )
         }
         Some(Body::LuaBlock(code)) => {
-            let code_literal = crate::lua_string::wrap_lua_string(code);
+            let code_literal =
+                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
             let ing_groups = format_ingredient_groups(ingredients_len);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
@@ -216,6 +219,7 @@ pub(crate) fn generate_cook_step(
     out: &mut String,
     cook_step: &CookStep,
     line: usize,
+    uses: &[UseStatement],
     index: usize,
     prev_cook_index: Option<usize>,
     ingredients: &[String],
@@ -279,6 +283,7 @@ pub(crate) fn generate_cook_step(
             let add_unit_line = one_to_one_add_unit_line(
                 cook_step,
                 line,
+                uses,
                 ingredients.len(),
                 recipe_names,
                 iter_mode,
@@ -336,6 +341,7 @@ pub(crate) fn generate_cook_step(
             let add_unit_line = one_to_one_add_unit_line(
                 cook_step,
                 line,
+                uses,
                 ingredients.len(),
                 recipe_names,
                 iter_mode,
@@ -389,7 +395,9 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let code_literal = crate::lua_string::wrap_lua_string(
+                        &with_execute_prelude(uses, code),
+                    );
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
@@ -442,7 +450,9 @@ pub(crate) fn generate_cook_step(
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let code_literal = crate::lua_string::wrap_lua_string(
+                        &with_execute_prelude(uses, code),
+                    );
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
@@ -506,7 +516,9 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let code_literal = crate::lua_string::wrap_lua_string(
+                        &with_execute_prelude(uses, code),
+                    );
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
@@ -544,6 +556,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     out: &mut String,
     cook_step: &CookStep,
     line: usize,
+    uses: &[UseStatement],
     index: usize,
     recipe_names: &BTreeSet<String>,
     extra_ingredients: &[String],
@@ -624,7 +637,8 @@ pub(crate) fn generate_member_fanout_cook_step(
         Some(Body::LuaBlock(code)) => {
             // §8.2: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
-            let code_literal = crate::lua_string::wrap_lua_string(code);
+            let code_literal =
+                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
                 "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}, line = {}}})\n",

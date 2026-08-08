@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
+use crate::module_observer::ModuleObserver;
 use crate::WorkingDirSource;
 
 /// Register-only obligations around a module load. Every method defaults to
@@ -58,6 +59,13 @@ impl ModuleLoadHooks for NoHooks {}
 /// names because that is what the cycle diagnostic renders.
 struct LoaderCore {
     loaded: BTreeMap<String, LuaRegistryKey>,
+    /// The path each memoized load resolved to, under the same key.
+    ///
+    /// Kept beside `loaded` rather than derived on demand because a memo hit
+    /// short-circuits resolution: without this the second unit served by a
+    /// reused worker VM would load the module and record nothing, and would
+    /// then be keyed on a module the first unit paid for (CS-0204).
+    paths: BTreeMap<String, std::path::PathBuf>,
     in_flight: BTreeSet<String>,
     stack: Vec<String>,
 }
@@ -65,7 +73,7 @@ struct LoaderCore {
 /// Install `cook.load_module` on `cook`.
 ///
 /// The full sequence, identical in both phases: memo lookup → cycle check →
-/// §7 four-candidate resolution → source read → `hooks.before_eval` →
+/// §12 candidate resolution → source read → `hooks.before_eval` →
 /// in-flight marking → `package.path`/`cpath` refresh → chunk eval →
 /// `init()` → in-flight cleanup → `hooks.after_load` → memoize.
 ///
@@ -77,28 +85,69 @@ pub fn install_module_loader(
     cook: &LuaTable,
     working_dir: WorkingDirSource,
     hooks: impl ModuleLoadHooks + 'static,
+    observer: ModuleObserver,
 ) -> LuaResult<()> {
     let core = Rc::new(RefCell::new(LoaderCore {
         loaded: BTreeMap::new(),
+        paths: BTreeMap::new(),
         in_flight: BTreeSet::new(),
         stack: Vec::new(),
     }));
 
-    let load_module_fn = lua.create_function(move |lua, name: String| {
+    let load_module_fn = lua.create_function(move |lua, raw_target: String| {
         let cwd = working_dir.resolve();
+
+        // CS-0206: a target ending in `.lua` is a PATH, and is normalised
+        // before anything else happens to it.
+        //
+        // Both halves of that are load-bearing. Normalising first is what
+        // makes `./build/x.lua` and `build/x.lua` one memo key and therefore
+        // one module instance (§12.3.2) — key first and they are two, and the
+        // file's top-level chunk runs twice. Refusing here rather than at the
+        // search is what makes §12.2.1 a property of the system: a `use`
+        // declaration is checked by the parser, but this function takes a
+        // string a body computed, and a rule enforced only where the parser
+        // can see it constrains spellings rather than loads.
+        let is_path = cook_contracts::module_binding::is_path_target(&raw_target);
+        let name = if is_path {
+            match cook_contracts::layout::normalise_use_path(&raw_target) {
+                Ok(normalised) => normalised,
+                Err(rejection) => {
+                    return Err(LuaError::runtime(
+                        cook_contracts::layout::use_path_rejected_message(&raw_target, rejection),
+                    ));
+                }
+            }
+        } else {
+            raw_target.clone()
+        };
+
+        // §12.7.8 (CS-0206): what the module is CALLED, which is not what this
+        // load is keyed by. The register phase checks a module-registered
+        // chore's namespace prefix against this identity, and a path-loaded
+        // module whose identity were `lua/cook_demo.lua` could register no
+        // chore at all — every legal prefix would have to contain a `/`.
+        let identity = cook_contracts::module_binding::module_identity(&name).to_string();
+
         let memo_key = cook_contracts::layout::module_memo_key(&cwd, &name);
 
         // Memoisation (§12.3.2): a second load of (cwd, name) on this VM
         // returns the same Lua value without re-reading or re-evaluating.
-        let cached: Option<LuaValue> = {
+        let cached: Option<(LuaValue, Option<std::path::PathBuf>)> = {
             let c = core.borrow();
             match c.loaded.get(&memo_key) {
-                Some(key) => Some(lua.registry_value(key)?),
+                Some(key) => {
+                    Some((lua.registry_value(key)?, c.paths.get(&memo_key).cloned()))
+                }
                 None => None,
             }
         };
-        if let Some(v) = cached {
-            hooks.on_memo_hit(&name);
+        if let Some((v, path)) = cached {
+            // CS-0204: the memo suppresses re-evaluation, not the dependency.
+            if let Some(p) = path {
+                observer.record(&p);
+            }
+            hooks.on_memo_hit(&identity);
             return Ok(v);
         }
 
@@ -113,17 +162,76 @@ pub fn install_module_loader(
             }
         }
 
-        // §7 / CS-0069 four-candidate resolution: hand-vendored wins over
-        // LuaRocks-installed; the ONE list both phases probe (COOK-393).
-        let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
-        let module_path = match candidates.iter().find(|p| p.exists()) {
-            Some(p) => p.clone(),
-            None => {
+        let module_path = if is_path {
+            // §12.5 (CS-0206): a path-addressed module has no candidate list.
+            // The declaration named one file; either it is there or resolution
+            // fails.
+            let candidate = cook_contracts::layout::module_path_candidate(&cwd, &name);
+            if !candidate.exists() {
                 return Err(LuaError::runtime(
-                    cook_contracts::layout::module_not_found_message(&cwd, &name),
+                    cook_contracts::layout::module_path_not_found_message(
+                        &cwd,
+                        &raw_target,
+                        &candidate,
+                    ),
                 ));
             }
+            // The third containment check, and the only one the parser cannot
+            // make: `build/helpers.lua` may be a symlink out of the tree.
+            // Ordered after the existence check so a missing file reports as
+            // missing rather than as an escape.
+            // The shell does the reaching; `cook-contracts` stays pure and owns
+            // only the comparison and what a canonicalisation failure means
+            // (see that crate's README admission bar). A path that will not
+            // canonicalise counts as NOT contained — the permissive answer on
+            // a rule whose failure mode is a silent wrong cache is the wrong
+            // one.
+            let contained = match (cwd.canonicalize(), candidate.canonicalize()) {
+                (Ok(root), Ok(target)) => {
+                    cook_contracts::layout::path_is_contained(&root, &target)
+                }
+                _ => false,
+            };
+            if !contained {
+                return Err(LuaError::runtime(
+                    cook_contracts::layout::module_path_escaped_message(
+                        &cwd,
+                        &raw_target,
+                        &candidate,
+                    ),
+                ));
+            }
+            // Recorded and evaluated under the JOINED path, not the
+            // canonicalised one: CS-0204 records it by stripping the working
+            // directory prefix, and a canonicalised path can carry a different
+            // prefix (`/tmp` -> `/private/tmp`) that no longer strips.
+            candidate
+        } else {
+            // §12 / CS-0069 resolution over the installed tree; the ONE list
+            // both phases probe (COOK-393). CS-0207 removed the hand-vendored
+            // top-level candidates that used to lead it — a project patches a
+            // module by pointing a path-form `use` at its own file now.
+            let candidates = cook_contracts::layout::module_candidates(&cwd, &name);
+            match candidates.iter().find(|p| p.exists()) {
+                Some(p) => p.clone(),
+                None => {
+                    return Err(LuaError::runtime(
+                        cook_contracts::layout::module_not_found_message(
+                            &cwd,
+                            &name,
+                            observe_module_tree(&cwd),
+                        ),
+                    ));
+                }
+            }
         };
+
+        // CS-0204: a resolved candidate is about to have its content
+        // evaluated, so it is a determinant of whatever is running — whether
+        // or not the chunk goes on to raise. Recorded here rather than at the
+        // memoisation below so that a module which fails halfway still keys
+        // the retry on the file that failed.
+        observer.record(&module_path);
 
         let source = std::fs::read_to_string(&module_path).map_err(|e| {
             LuaError::runtime(cook_contracts::layout::module_read_failed_message(
@@ -133,7 +241,7 @@ pub fn install_module_loader(
             ))
         })?;
 
-        hooks.before_eval(&name, &source)?;
+        hooks.before_eval(&identity, &source)?;
 
         {
             let mut c = core.borrow_mut();
@@ -151,7 +259,7 @@ pub fn install_module_loader(
         };
 
         // Sub-requires within a multi-file rock resolve against
-        // cook_modules/ (§24.2). Idempotent per cwd via the stash keys, so
+        // .cook/modules/ (§24.2). Idempotent per cwd via the stash keys, so
         // nested and repeated loads compose.
         refresh_package_search_paths(lua, &cwd)?;
 
@@ -160,7 +268,7 @@ pub fn install_module_loader(
             Ok(v) => v,
             Err(e) => {
                 finish(&core);
-                hooks.after_load(&name, false);
+                hooks.after_load(&identity, false);
                 return Err(e);
             }
         };
@@ -170,26 +278,48 @@ pub fn install_module_loader(
             if let Ok(LuaValue::Function(init_fn)) = tbl.get::<LuaValue>("init") {
                 if let Err(e) = init_fn.call::<()>(()) {
                     finish(&core);
-                    hooks.after_load(&name, false);
+                    hooks.after_load(&identity, false);
                     return Err(e);
                 }
             }
         }
 
         finish(&core);
-        hooks.after_load(&name, true);
+        hooks.after_load(&identity, true);
 
         let key = lua.create_registry_value(result.clone())?;
-        core.borrow_mut().loaded.insert(memo_key, key);
+        {
+            let mut c = core.borrow_mut();
+            c.paths.insert(memo_key.clone(), module_path.clone());
+            c.loaded.insert(memo_key, key);
+        }
         Ok(result)
     })?;
 
-    cook.set("load_module", load_module_fn)?;
+    // CS-0205: the field name is law, not a local choice — `cook-luagen`
+    // COMPOSES `cook.load_module("…")` into every `use` binding it emits, and a
+    // rename on either side would leave the alias binding through something
+    // this loader (and therefore the CS-0204 observer inside it) never sees.
+    cook.set(cook_contracts::module_binding::LOAD_MODULE_FN, load_module_fn)?;
     Ok(())
 }
 
+/// Stat the two module-tree locations the not-found diagnostic reports on.
+///
+/// Lives here rather than in `cook_contracts::layout` because it touches the
+/// filesystem, which that crate's admission bar excludes. What it reports is
+/// two booleans; what those booleans MEAN to a user — that a stale
+/// `cook_modules/` needs `cook modules install` and a path-form `use`, or that
+/// a wiped `.cook/` took the rocks with it — is law and stays there.
+pub(crate) fn observe_module_tree(working_dir: &Path) -> cook_contracts::layout::ModuleTreeState {
+    cook_contracts::layout::ModuleTreeState {
+        legacy_present: cook_contracts::layout::legacy_modules_dir(working_dir).is_dir(),
+        tree_present: cook_contracts::layout::modules_dir(working_dir).exists(),
+    }
+}
+
 /// Refresh `package.path` / `package.cpath` so `require("foo")` resolves
-/// against `<cwd>/cook_modules/` (§24.2, Standard §7 order).
+/// against `<cwd>/.cook/modules/` (§24.2, Standard §12 order).
 ///
 /// The originals are stashed on the `package` table under the
 /// `cook_contracts::layout` stash keys on first mutation, and every refresh

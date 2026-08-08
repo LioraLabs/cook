@@ -3,7 +3,7 @@ are supplied than declared parameters.
 
 The conformance harness check is parse-only (the Cookfile lexes and registers cleanly
 so this is a positive/parse-success fixture). The integration test in
-`cli/crates/cook-cli/tests/chore_params_test.rs` covers the binding path.
+`cli/crates/cook-cli/tests/chore_params.rs` covers the binding path.
 
 Implementations MUST surface a diagnostic of the form:
 

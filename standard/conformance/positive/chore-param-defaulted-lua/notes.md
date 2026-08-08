@@ -9,4 +9,4 @@ expression is evaluated against the Cookfile-scope VM (§13.2 load phase).
 The result MUST be a string; non-string returns raise a diagnostic (§7.1.2).
 
 Integration tests covering runtime invocation are in
-`cli/crates/cook-cli/tests/chore_params_test.rs`.
+`cli/crates/cook-cli/tests/chore_params.rs`.

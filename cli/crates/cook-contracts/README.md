@@ -69,7 +69,12 @@ Worked examples from this repo's history:
   hand-mirrored copy in the renderer that had drifted into a spec rule the
   Standard withdrew); `cache::recipe_cache_index_name` (the executor writing
   the index, `cook cache verify` reading it, and the graph's staleness check
-  must resolve the same on-disk name).
+  must resolve the same on-disk name); `module_binding` (COOK-433 / CS-0205 —
+  the `use`-alias derivation, the two door names, and the text of the binding;
+  `cook-luagen` composes `local foo = cook.load_module("foo")` and
+  `cook-lua-stdlib` installs the function it names, and drift between them does
+  not break the build, it routes the binding past the door CS-0204 observes and
+  quietly drops the module from a shared cache key).
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
   their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
   `CacheBackend` trait and its implementations (mechanism, not law).

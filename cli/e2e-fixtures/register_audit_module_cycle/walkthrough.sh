@@ -106,21 +106,21 @@ echo
 
 echo "--- Scenario 1: 2-module cycle a -> b -> a (was infinite recursion) ---"
 clean_state
-run_assert_diag "cook.load_module(\"a\") with a->b->a cycle" \
-    "module cycle detected: a -> b -> a" \
+run_assert_diag "cook.load_module(\"./lua/a.lua\") with a->b->a cycle" \
+    "module cycle detected: lua/a.lua -> lua/b.lua -> lua/a.lua" \
     "Cookfile.cycle" "audit_cycle"
 
 echo
 echo "--- Scenario 2: self-cycle solo -> solo ---"
 clean_state
-run_assert_diag "cook.load_module(\"solo\") that self-loads" \
-    "module cycle detected: solo -> solo" \
+run_assert_diag "cook.load_module(\"./lua/solo.lua\") that self-loads" \
+    "module cycle detected: lua/solo.lua -> lua/solo.lua" \
     "Cookfile.self" "audit_self"
 
 echo
 echo "--- Scenario 3: memoization (top-level + init() each run once) ---"
 clean_state
-run_assert_success "cook.load_module(\"once\") x3 must hit cache" \
+run_assert_success "cook.load_module(\"./lua/once.lua\") x3 must hit cache" \
     "memoization OK: top-level=1 init=1" \
     "Cookfile.memo" "audit_memo"
 

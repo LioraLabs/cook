@@ -4,6 +4,39 @@
 // Conforms to Cook Standard v0.18. See standard/src/content/docs/
 // appendix/A-grammar.mdx for the normative grammar.
 
+// ── CS-0206 `use_path` ──────────────────────────────────────────
+//
+// App. A.2 gives `use` a second argument shape: `use_path`, a tree_path
+// ending in `.lua`. The `.lua` suffix IS the discriminator — the last
+// argument of a `use` is a path if and only if it ends in `.lua` — which is
+// what keeps the two alternatives disjoint without backtracking, and what
+// keeps `use my-mod` failing as a malformed NAME rather than being re-read
+// as a path that forgot its suffix.
+//
+// Every clause of the tree_path constraint that a token can state is stated
+// here rather than deferred:
+//   • ends in `.lua`   — USE_PATH_LAST;
+//   • no leading `/`   — the body opens on a segment character, and `/` is
+//                        not one, so `/opt/x.lua` matches nothing;
+//   • no `//` sigil    — the same clause: `//build/x.lua` also opens on `/`,
+//                        and no segment precedes it to license the separator;
+//   • no `..` segment  — USE_PATH_SEG spells "a non-empty segment that is not
+//                        `..`" as the four cases a DFA needs, because
+//                        tree-sitter's regex engine has no lookaround.
+// Repeated separators (`build//helpers.lua`) are tolerated, matching
+// `cook_contracts::layout::normalise_use_path`, which elides them rather than
+// refusing them. A LEADING `//` is still refused: `(SEG "/"+)*` requires a
+// segment before any separator.
+const USE_PATH_CHAR = '[^\\s/"]';
+const USE_PATH_NONDOT = '[^.\\s/"]';
+const USE_PATH_SEG =
+  `(?:${USE_PATH_CHAR}` + //                           "." or "x"
+  `|${USE_PATH_NONDOT}${USE_PATH_CHAR}+` + //          "build"
+  `|\\.${USE_PATH_NONDOT}${USE_PATH_CHAR}*` + //       ".config"
+  `|\\.\\.${USE_PATH_CHAR}+)`; //                      "..cache", never ".."
+const USE_PATH_LAST = `${USE_PATH_CHAR}*\\.lua`;
+const USE_PATH_BODY = `(?:${USE_PATH_SEG}/+)*${USE_PATH_LAST}`;
+
 module.exports = grammar({
   name: "cook",
 
@@ -43,8 +76,25 @@ module.exports = grammar({
 
     // ── Top-level declarations ─────────────────────────────────
 
+    // App. A.2 (CS-0206). Two forms behind one keyword:
+    //   `use NAME`            — the name form, unchanged since CS-0035;
+    //   `use ALIAS? PATH`     — the path form, PATH ending in `.lua`.
+    // The three productions share the prefix `"use" _lua_ident_name`, so the
+    // choice between binding that identifier as `module` or as `alias` is
+    // settled by one token of lookahead: a NEWLINE closes the name form, a
+    // `use_path` continues the path form.
     use_declaration: ($) =>
-      seq("use", field("module", $._lua_ident_name), $._newline),
+      seq(
+        "use",
+        choice(
+          field("module", $._lua_ident_name),
+          seq(
+            optional(field("alias", $._lua_ident_name)),
+            field("path", $._use_path),
+          ),
+        ),
+        $._newline,
+      ),
 
     import_declaration: ($) =>
       seq(
@@ -580,6 +630,18 @@ module.exports = grammar({
       ),
     _lua_ident: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     _lua_ident_string: ($) => /"[A-Za-z_][A-Za-z0-9_]*"/,
+
+    // CS-0206 use_path. Bare and double-quoted spellings of the same
+    // tree_path shape (see USE_PATH_BODY at the head of this file). The bare
+    // arm aliases to `path`, the same node `import_declaration` produces, so
+    // one highlight rule covers both declarations' path position.
+    _use_path: ($) =>
+      choice(
+        alias($._use_path_bare, $.path),
+        alias($._use_path_string, $.string),
+      ),
+    _use_path_bare: ($) => new RegExp(USE_PATH_BODY),
+    _use_path_string: ($) => new RegExp(`"${USE_PATH_BODY}"`),
 
     // §2.11 placeholder. The seq is structured (rather than `token(...)`)
     // so the `$<`/`>` punctuation and the inner identifier can each be

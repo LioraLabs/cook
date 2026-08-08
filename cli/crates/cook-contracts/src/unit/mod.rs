@@ -64,6 +64,20 @@ pub enum WorkPayload {
 }
 
 impl WorkPayload {
+    /// Does running this payload evaluate author Lua on a VM (§12.3, CS-0204)?
+    ///
+    /// Which is the same question as: can this unit load a module? A payload
+    /// that spawns a process cannot — the module surface is a Lua API, and a
+    /// spawned command reaches it through no door at all. The distinction
+    /// decides whether the cold-fetch path consults the module manifest, so it
+    /// is asked here rather than pattern-matched at each site that needs it.
+    ///
+    /// `Interactive` is deliberately false: it spawns, and it is uncacheable
+    /// besides.
+    pub fn evaluates_lua(&self) -> bool {
+        matches!(self, Self::LuaChunk { .. } | Self::Probe { .. })
+    }
+
     /// Human-readable name for progress UI and result reporting.
     pub fn display_name(&self) -> String {
         match self {

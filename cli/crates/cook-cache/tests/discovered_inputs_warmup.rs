@@ -68,6 +68,7 @@ fn warmup_collapses_to_two_runs() {
         env_contribution: 0,
         seal_contribution: 0,
         observed: None,
+        module_inputs: Vec::new(),
     };
 
     // ---- Run 2: pre-check augments current_inputs, equality check skips ----

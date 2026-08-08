@@ -666,7 +666,7 @@ fn test_use_generates_load_module() {
         ])],
         chores: vec![],
         uses: vec![
-            UseStatement { module_name: "cpp".to_string(), line: 1 },
+            UseStatement { alias: "cpp".to_string(), target: "cpp".to_string(), line: 1 },
         ],
         imports: vec![],
         register_blocks: vec![],
@@ -739,8 +739,8 @@ fn test_multiple_uses_generate_in_order() {
         recipes: vec![],
         chores: vec![],
         uses: vec![
-            UseStatement { module_name: "cpp".to_string(), line: 1 },
-            UseStatement { module_name: "proto".to_string(), line: 2 },
+            UseStatement { alias: "cpp".to_string(), target: "cpp".to_string(), line: 1 },
+            UseStatement { alias: "proto".to_string(), target: "proto".to_string(), line: 2 },
         ],
         imports: vec![],
         register_blocks: vec![],

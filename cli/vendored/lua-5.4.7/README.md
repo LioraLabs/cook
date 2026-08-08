@@ -56,7 +56,7 @@ When mlua bumps `lua-src` (visible in `cli/Cargo.lock`):
    copy `src/lua.c` and `src/luac.c` into `cli/vendored/lua-5.4.7/`.
 5. Update this README's pin section.
 6. If Lua MAJOR.MINOR moved (e.g., 5.4 → 5.5), rename the directory and
-   update every reference in `cook_modules/dist.lua` and the
+   update every reference in `lua/dist.lua` and the
    default-rocks-config.lua template.
 7. `cargo test -p cook-cli --test lua_source_drift` — must pass.
 8. Run `cook package` on Linux x86_64 and darwin-arm64 (mini) — the

@@ -309,3 +309,47 @@ fn determinant_manifest_serializes_deterministically() {
     assert_eq!(back.inputs["src/b.c"], 0xFFFF_FFFF_FFFF_FFFF_u64);
     assert_eq!(back, m);
 }
+
+// ---------------------------------------------------------------------------
+// CS-0204: the extra-input path-set manifest
+// ---------------------------------------------------------------------------
+
+/// Newest first, deduplicated, capped. The dedup is what stops a settled
+/// project from rewriting a growing manifest on every run.
+#[test]
+fn merging_a_path_set_puts_it_first_and_deduplicates() {
+    let old = vec![vec!["a.lua".to_string()], vec!["b.lua".to_string()]];
+    let merged = merge_path_set(&old, &["b.lua".to_string()]);
+    assert_eq!(merged, vec![vec!["b.lua".to_string()], vec!["a.lua".to_string()]]);
+}
+
+#[test]
+fn merging_caps_the_retained_sets() {
+    let mut existing: Vec<Vec<String>> = Vec::new();
+    for i in 0..(MODULE_SET_CAP + 5) {
+        existing = merge_path_set(&existing, &[format!("m{i}.lua")]);
+    }
+    assert_eq!(existing.len(), MODULE_SET_CAP);
+    assert_eq!(existing[0], vec![format!("m{}.lua", MODULE_SET_CAP + 4)]);
+}
+
+#[test]
+fn path_sets_round_trip_through_the_wire_form() {
+    let sets = vec![
+        vec![
+            ".cook/modules/share/lua/5.4/a.lua".to_string(),
+            ".cook/modules/share/lua/5.4/b.lua".to_string(),
+        ],
+        vec![],
+    ];
+    assert_eq!(decode_path_sets(&encode_path_sets(&sets)), sets);
+}
+
+/// Total: a corrupt manifest decodes to nothing, which every caller reads as a
+/// safe miss rather than as a reason to panic.
+#[test]
+fn malformed_manifest_bytes_decode_to_no_sets() {
+    assert!(decode_path_sets(b"not json at all").is_empty());
+    assert!(decode_path_sets(b"[\"a string, not a list of lists\"]").is_empty());
+    assert!(decode_path_sets(&[]).is_empty());
+}

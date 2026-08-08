@@ -42,7 +42,25 @@ use cook_contracts::ProbeUnit;
 /// and keeps its own dispatch in between; [`evaluate`] is the two of them plus
 /// a `ProduceRunner`, which is exactly what a synchronous caller needs.
 pub trait ProduceRunner {
-    fn run(&self, key: &str, source: &str) -> Result<Vec<u8>, String>;
+    fn run(&self, key: &str, source: &str) -> Result<Produced, String>;
+}
+
+/// What running a `produce` body yielded: the canonical value bytes, and the
+/// module files the body loaded on the way there (CS-0204).
+///
+/// The second half is not decoration. §22.5.3's fingerprint folds seven
+/// DECLARED sections and no module source, so before CS-0204 a `produce` body
+/// that called into a module stayed addressable at the same fingerprint after
+/// the module changed, and the consumer was served the old answer. The set can
+/// only be known by running the body, which is why it comes back with the
+/// bytes rather than being computed alongside the fingerprint.
+#[derive(Debug, Clone, Default)]
+pub struct Produced {
+    pub bytes: Vec<u8>,
+    /// Working-directory-relative where possible; hashed by joining onto the
+    /// reader's own working directory, so the same list means the same thing
+    /// on another machine.
+    pub module_paths: Vec<String>,
 }
 
 /// A failure with enough context for either caller to render its own
@@ -152,6 +170,11 @@ pub enum ValueSource {
 /// a key at all, where the declared tools resolve, and either the bytes (when
 /// no VM is needed) or nothing (when the caller must produce).
 pub struct Lookup {
+    /// This probe's identity as best known right now: the DECLARED fingerprint
+    /// on a miss, and on a cache hit the FULL one that the winning candidate
+    /// module set composed (CS-0204). Callers propagate it to downstream
+    /// `requires` and hand it back to [`record`], so a module edit rekeys the
+    /// whole downstream chain rather than just the probe that loaded it.
     pub fingerprint: [u8; 32],
     pub keyless: bool,
     pub tool_paths: BTreeMap<String, String>,
@@ -213,35 +236,58 @@ pub fn lookup(
     }
 
     // 5. Cache GET, unless there is no key to look up.
-    let cached: Option<Vec<u8>> = match (&ctx.cache, keyless) {
-        (Some(access), false) => match cook_cache::backend::get_bytes(access.backend, &fingerprint) {
-            Ok(Some(bytes)) if cook_contracts::probe_value::decode_json(&bytes).is_ok() => {
-                Some(bytes)
+    //
+    // CS-0204 makes this two-level. The declared fingerprint identifies the
+    // probe; the value is stored under the fingerprint that ALSO folds the
+    // content of the modules the body loaded, and which modules those are is
+    // knowable only by having run it. So the recorded candidate sets are read
+    // from a manifest keyed by the declared fingerprint, re-hashed against
+    // THIS machine's tree, and the composed full fingerprints probed
+    // newest-first. A set that no longer describes this tree composes a
+    // fingerprint nothing is stored under: a safe miss, never a wrong hit.
+    //
+    // A probe that has never loaded a module has no manifest, the single empty
+    // candidate composes the declared fingerprint unchanged, and this is
+    // byte-for-byte the pre-CS-0204 lookup.
+    let declared_fingerprint = fingerprint;
+    let mut fingerprint = declared_fingerprint;
+    let mut cached: Option<Vec<u8>> = None;
+    if let (Some(access), false) = (&ctx.cache, keyless) {
+        for candidate in module_candidates(access.backend, &declared_fingerprint) {
+            let full = fold_candidate(&declared_fingerprint, ctx.working_dir, &candidate);
+            match cook_cache::backend::get_bytes(access.backend, &full) {
+                Ok(Some(bytes)) if cook_contracts::probe_value::decode_json(&bytes).is_ok() => {
+                    // Only a DECODABLE value settles the identity. A candidate
+                    // that hit and then failed to parse is evicted below and
+                    // leaves the identity where it was, so the miss that
+                    // follows re-folds from the declared fingerprint rather
+                    // than from an already-folded one.
+                    fingerprint = full;
+                    cached = Some(bytes);
+                    break;
+                }
+                // CS-0102 stale-artifact defence, second layer behind the V2
+                // fingerprint marker. Evict rather than merely ignoring: a key
+                // that addresses unparseable bytes stays addressable to every
+                // other reader of a SHARED store until something removes it,
+                // and the put below then self-heals it.
+                Ok(Some(_)) => {
+                    warnings.push(format!(
+                        "probe '{key}': cached bytes are not probe-value JSON \
+                         (pre-CS-0102 artifact?); treating as miss"
+                    ));
+                    let _ = access.backend.delete(&full);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warnings.push(format!(
+                        "probe '{key}': cache backend error on get ({e}); treating as miss"
+                    ));
+                    break;
+                }
             }
-            // CS-0102 stale-artifact defence, second layer behind the V2
-            // fingerprint marker. Evict rather than merely ignoring: a key that
-            // addresses unparseable bytes stays addressable to every other
-            // reader of a SHARED store until something removes it, and the put
-            // below then self-heals it. (The executor previously fell through
-            // silently, leaving the poisoned key in place.)
-            Ok(Some(_)) => {
-                warnings.push(format!(
-                    "probe '{key}': cached bytes are not probe-value JSON \
-                     (pre-CS-0102 artifact?); treating as miss"
-                ));
-                let _ = access.backend.delete(&fingerprint);
-                None
-            }
-            Ok(None) => None,
-            Err(e) => {
-                warnings.push(format!(
-                    "probe '{key}': cache backend error on get ({e}); treating as miss"
-                ));
-                None
-            }
-        },
-        _ => None,
-    };
+        }
+    }
 
     // 6. Decide whether a VM is needed at all. A `files { }` probe never
     //    reaches one: its produce string is the reserved `@files-manifest`
@@ -264,6 +310,11 @@ pub fn lookup(
 /// What [`record`] did.
 #[derive(Debug, Clone, Default)]
 pub struct Recorded {
+    /// CS-0204: the fingerprint the value is stored under — the declared one
+    /// folded with the module content the body ran against. This is the
+    /// probe's true identity, and it is what callers propagate to downstream
+    /// `requires` so a module edit rekeys the whole chain.
+    pub fingerprint: [u8; 32],
     pub warnings: Vec<String>,
     /// True when bytes were actually written to the shared store. Reported
     /// rather than left for the caller to re-derive from source/keylessness/
@@ -288,9 +339,24 @@ pub fn record(
     keyless: bool,
     bytes: &[u8],
     source: ValueSource,
+    // CS-0204: the modules the `produce` body loaded. Empty on a cache hit
+    // (nothing ran) and for a body that loaded nothing, in which case every
+    // decision below is the pre-CS-0204 one.
+    module_paths: &[String],
 ) -> Recorded {
     let mut warnings = Vec::new();
     let mut published = false;
+
+    // CS-0204: a produced value is stored under the fingerprint that folds the
+    // module content it ran against, not under the declared one. `fingerprint`
+    // IS the declared one on this path, because a miss is what brought us here.
+    // On a cache hit nothing is published, so the caller's (already full)
+    // fingerprint passes through untouched.
+    let stored_fingerprint = if source == ValueSource::Produced {
+        fold_candidate(fingerprint, ctx.working_dir, module_paths)
+    } else {
+        *fingerprint
+    };
 
     // A keyless probe publishes nothing. Skipping only the GET would leave a
     // stable fingerprint addressing a stored value that another reader — a
@@ -303,7 +369,7 @@ pub fn record(
             // publish failure costs later runs a hit and costs this one nothing.
             match cook_cache::backend::put_bytes(
                 access.backend,
-                fingerprint,
+                &stored_fingerprint,
                 bytes,
                 &mut meta,
             ) {
@@ -311,6 +377,11 @@ pub fn record(
                 Err(e) => warnings.push(format!(
                     "probe '{key}': cache backend put failed ({e}); continuing without caching"
                 )),
+            }
+            // The bridge a cold reader crosses: without this, the value just
+            // published sits at a fingerprint no one else can compute.
+            if published && !module_paths.is_empty() {
+                warnings.extend(publish_module_manifest(access, fingerprint, module_paths));
             }
         }
     }
@@ -325,7 +396,82 @@ pub fn record(
         ));
     }
 
-    Recorded { warnings, published }
+    Recorded { fingerprint: stored_fingerprint, warnings, published }
+}
+
+/// The candidate module-path sets to try, newest first.
+///
+/// Always at least one: the empty set, which folds to the declared
+/// fingerprint. That is the whole of the pre-CS-0204 behaviour for a probe
+/// that loads nothing, and a correct first guess for one whose manifest has
+/// been evicted (it misses, and the re-run republishes).
+fn module_candidates(
+    backend: &dyn cook_cache::backend::CacheBackend,
+    declared: &[u8; 32],
+) -> Vec<Vec<String>> {
+    cook_cache::path_set_candidates(read_module_manifest(backend, declared))
+}
+
+/// The recorded path sets under a probe's declared fingerprint. Absent,
+/// unreadable or malformed all decode to none, which the caller reads as
+/// "nothing to reconstruct from" and turns into a safe miss.
+fn read_module_manifest(
+    backend: &dyn cook_cache::backend::CacheBackend,
+    declared: &[u8; 32],
+) -> Vec<Vec<String>> {
+    let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
+    cook_cache::backend::get_bytes(backend, &manifest_key)
+        .ok()
+        .flatten()
+        .map(|b| cook_cache::decode_path_sets(&b))
+        .unwrap_or_default()
+}
+
+/// Compose the full fingerprint for one candidate set by hashing its paths
+/// against THIS working directory. The hashing is `cook_cache`'s, the same
+/// function §22.5.3's FILES section folds with; the composition is the
+/// Standard's, in `cook_contracts`.
+///
+/// Deliberately unmemoised, unlike the tool-binary hashes beside it. A tool is
+/// a ~60MB binary hashed once per probe NODE across a whole workspace; a module
+/// is a few KB of Lua, hashed once per candidate set, and `MODULE_SET_CAP`
+/// bounds the candidates at eight — with the first one hitting in the settled
+/// case. A memo here would buy nothing and would have to be invalidated the
+/// moment a run started writing modules.
+fn fold_candidate(declared: &[u8; 32], working_dir: &Path, paths: &[String]) -> [u8; 32] {
+    if paths.is_empty() {
+        return *declared;
+    }
+    let hashed: Vec<(String, [u8; 32])> = paths
+        .iter()
+        .map(|p| (p.clone(), cook_cache::hash_file_sha256(&working_dir.join(p))))
+        .collect();
+    cook_contracts::context::fold_module_sources(declared, &hashed)
+}
+
+/// Record this run's module set under the DECLARED fingerprint so a cold
+/// reader can reconstruct the full one. Returns warnings; never fatal, because
+/// the value itself is already stored and a lost manifest costs a re-run.
+fn publish_module_manifest(
+    access: &CacheAccess<'_>,
+    declared: &[u8; 32],
+    observed: &[String],
+) -> Vec<String> {
+    let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
+    let existing = read_module_manifest(access.backend, declared);
+    // Merge and wire form are the shared law, so this store and the step store
+    // cannot drift on what the manifest means or on how it is written down.
+    let sets = cook_cache::merge_path_set(&existing, observed);
+    let json = cook_cache::encode_path_sets(&sets);
+    let mut meta = probe_artifact_meta(cook_cache::MODULE_INPUT_SETS_PATH, json.len());
+    meta.kind = Some("module_input_sets".to_string());
+    match cook_cache::backend::put_bytes(access.backend, &manifest_key, &json, &mut meta) {
+        Ok(()) => Vec::new(),
+        Err(e) => vec![format!(
+            "probe module manifest: put failed ({e}); the value just published \
+             will not be reachable from a cold lookup until the next run"
+        )],
+    }
 }
 
 /// [`lookup`] + produce + [`record`], for a caller that produces synchronously.
@@ -340,24 +486,31 @@ pub fn evaluate(
     let key = probe.key.as_str();
     let mut found = lookup(probe, ctx, env_lookup, upstream_fps, keyless_upstreams)?;
 
-    let (bytes, source) = match found.resolved.take() {
-        Some(pair) => pair,
-        None => (
-            runner
+    let (bytes, module_paths, source) = match found.resolved.take() {
+        Some((bytes, source)) => (bytes, Vec::new(), source),
+        None => {
+            let produced = runner
                 .run(key, &probe.produce_source)
-                .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?,
-            ValueSource::Produced,
-        ),
+                .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?;
+            (produced.bytes, produced.module_paths, ValueSource::Produced)
+        }
     };
 
     let mut warnings = std::mem::take(&mut found.warnings);
-    warnings.extend(
-        record(key, ctx, &found.fingerprint, found.keyless, &bytes, source).warnings,
+    let recorded = record(
+        key,
+        ctx,
+        &found.fingerprint,
+        found.keyless,
+        &bytes,
+        source,
+        &module_paths,
     );
+    warnings.extend(recorded.warnings);
 
     Ok(Evaluated {
         bytes,
-        fingerprint: found.fingerprint,
+        fingerprint: recorded.fingerprint,
         keyless: found.keyless,
         cache_hit: source == ValueSource::Cache,
         tool_paths: found.tool_paths,

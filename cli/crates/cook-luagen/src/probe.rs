@@ -1,11 +1,11 @@
-use cook_lang::ast::{Probe, ProbeProduce, ShellProduceType};
+use cook_lang::ast::{Probe, ProbeProduce, ShellProduceType, UseStatement};
 
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
 
 /// Emit `cook.probe(key, { inputs = {...}, produce = "..." })` for one native
 /// `probe` declaration. Pure surface sugar over the register-phase API
 /// (§22.5.2); the runtime is unchanged.
-pub(crate) fn emit_probe(out: &mut String, probe: &Probe) {
+pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement]) {
     out.push_str(&format!(
         "cook.probe(\"{}\", {{\n",
         escape_lua_string(&probe.name)
@@ -64,7 +64,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe) {
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
     }
     out.push_str("  },\n");
-    let produce_src = lower_produce(&probe.produce);
+    let produce_src = lower_produce(&probe.produce, uses);
     out.push_str(&format!("  produce = {},\n", wrap_lua_string(&produce_src)));
     out.push_str("})\n\n");
 }
@@ -83,9 +83,14 @@ fn quoted_list(names: &[String]) -> String {
 /// (the body of the producing function — `cook.probe` wraps it in
 /// `function() ... end`). Uses only existing worker APIs (`cook.sh`,
 /// `cook.json_decode`), so the runtime is unchanged.
-fn lower_produce(p: &ProbeProduce) -> String {
+fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
     match p {
-        ProbeProduce::Lua(code) => code.clone(),
+        // CS-0205: a probe's `produce` body is execute-phase Lua like any
+        // other, so a `use` alias it names is bound the same way. The other
+        // arms are generated Lua that can never name a user alias, and the
+        // `files { }` arm MUST stay byte-identical to the reserved sentinel —
+        // `cook-probe` compares it by equality to intercept the producer.
+        ProbeProduce::Lua(code) => crate::use_prelude::with_execute_prelude(uses, code),
         ProbeProduce::Shell { commands, typing } => {
             let script = commands.join("\n");
             let sh = format!("cook.sh({})", wrap_lua_string(&script));

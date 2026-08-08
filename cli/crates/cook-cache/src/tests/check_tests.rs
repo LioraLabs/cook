@@ -193,6 +193,7 @@ fn test_command_hash_changed_rebuilds() {
         command_hash: 0x1111,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     };
 
@@ -220,6 +221,7 @@ fn test_output_missing_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     };
 
@@ -245,6 +247,7 @@ fn test_nothing_changed_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     };
 
@@ -283,6 +286,7 @@ fn test_input_content_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     };
 
@@ -326,7 +330,8 @@ fn record_unit_with_drifted_present_output_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     // Control: a non-record unit with a drifted present output and no
@@ -383,7 +388,8 @@ fn record_unit_with_missing_output_still_rebuilds_without_restore() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     // record cannot conjure bytes without a backend: a genuinely missing
@@ -438,7 +444,8 @@ fn no_outputs_nothing_changed_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let (result, updated) =
@@ -507,7 +514,8 @@ fn env_contribution_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0x1111,
         seal_contribution: 0,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None, false);
@@ -531,7 +539,8 @@ fn seal_contribution_changed_rebuilds() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0x1111,
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     // Same command/env/inputs/outputs, different seal value -> SealChanged.
@@ -576,6 +585,7 @@ fn augments_current_inputs_from_depfile_and_skips() {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     };
 
@@ -791,6 +801,7 @@ fn fat_entry(wd: &std::path::Path) -> StepEntry {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        module_inputs: Vec::new(),
         observed: None,
     }
 }
@@ -1133,4 +1144,140 @@ mod shared_observation_tests {
         assert!(!full(vec![], false, true), "no observation");
         assert!(!full(vec![], true, false), "no stream");
     }
+}
+
+// ---------------------------------------------------------------------------
+// CS-0204: module source is a determinant
+// ---------------------------------------------------------------------------
+
+/// The whole point: the declaration has not moved, the outputs are intact, and
+/// the unit must still rebuild because the code its body ran has changed.
+#[test]
+fn module_content_change_rebuilds() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"src").expect("write");
+    std::fs::write(wd.join("out.o"), b"binary").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
+
+    // mtime 0 forces the content comparison, the same way the declared-input
+    // tests do: a rewrite within the same millisecond leaves the mtime alone,
+    // and the walk stops at the stat by design.
+    let mut module_record = make_file_record("lua/helper.lua", wd);
+    module_record.mtime = 0;
+
+    let entry = StepEntry {
+        inputs: vec![make_file_record("in.c", wd)],
+        outputs: vec![make_file_record("out.o", wd)],
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        seal_contribution: 0,
+        module_inputs: vec![module_record],
+        observed: None,
+    };
+
+    // Same declaration, same command, different module bytes.
+    std::fs::write(wd.join("lua/helper.lua"), b"return 2").expect("rewrite");
+    crate::statmemo::disarm();
+
+    let (result, updated) =
+        needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
+    assert_eq!(
+        result,
+        RebuildResult::Rebuild(RebuildReason::ModulesChanged {
+            changed: vec!["lua/helper.lua".to_string()],
+        }),
+    );
+    assert!(updated.is_none());
+}
+
+/// A module that vanished cannot have its last run replayed as-is.
+#[test]
+fn module_removed_rebuilds() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"src").expect("write");
+    std::fs::write(wd.join("out.o"), b"binary").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
+    let record = make_file_record("lua/helper.lua", wd);
+    std::fs::remove_file(wd.join("lua/helper.lua")).expect("rm");
+    crate::statmemo::disarm();
+
+    let entry = StepEntry {
+        inputs: vec![make_file_record("in.c", wd)],
+        outputs: vec![make_file_record("out.o", wd)],
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        seal_contribution: 0,
+        module_inputs: vec![record],
+        observed: None,
+    };
+
+    let (result, _) =
+        needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
+    assert!(matches!(
+        result,
+        RebuildResult::Rebuild(RebuildReason::ModulesChanged { .. })
+    ));
+}
+
+/// An unchanged module must not cost a rebuild — the counterpart that proves
+/// the rule above is a determinant and not a permanent miss.
+#[test]
+fn unchanged_module_still_skips() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"src").expect("write");
+    std::fs::write(wd.join("out.o"), b"binary").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
+
+    let entry = StepEntry {
+        inputs: vec![make_file_record("in.c", wd)],
+        outputs: vec![make_file_record("out.o", wd)],
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        seal_contribution: 0,
+        module_inputs: vec![make_file_record("lua/helper.lua", wd)],
+        observed: None,
+    };
+
+    let (result, updated) =
+        needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
+    assert_eq!(result, RebuildResult::Skip);
+    let updated = updated.expect("a skip carries the refreshed entry");
+    assert_eq!(updated.module_inputs.len(), 1);
+}
+
+/// Touched, same bytes: absorb the new mtime so the next run stats and stops
+/// rather than re-hashing this module for the life of the entry.
+#[test]
+fn touched_module_with_same_bytes_absorbs_the_mtime() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"src").expect("write");
+    std::fs::write(wd.join("out.o"), b"binary").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
+
+    let mut record = make_file_record("lua/helper.lua", wd);
+    let recorded_mtime = record.mtime;
+    record.mtime = recorded_mtime.saturating_sub(5_000);
+
+    let entry = StepEntry {
+        inputs: vec![make_file_record("in.c", wd)],
+        outputs: vec![make_file_record("out.o", wd)],
+        command_hash: 0xbeef,
+        env_contribution: 0,
+        seal_contribution: 0,
+        module_inputs: vec![record],
+        observed: None,
+    };
+
+    let (result, updated) =
+        needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
+    assert_eq!(result, RebuildResult::Skip);
+    assert_eq!(updated.expect("skip entry").module_inputs[0].mtime, recorded_mtime);
 }

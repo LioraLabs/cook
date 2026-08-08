@@ -64,7 +64,7 @@ All other rules of §{xref} apply unchanged: dependency implications (§{xref.de
 
 ## 11.4. `use` scope pointer [#comp.use-scope-pointer]
 
-`use` scope is defined in §{mods.use-scope}. Cross-Cookfile composition is at the **recipe** level via qualified name references (§{comp.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
+`use` scope is defined in §{mods.use-scope}. Cross-Cookfile composition is at the **recipe** level via qualified name references (§{comp.qualified-refs}), not at the **module** level. The cook runtime treats each Cookfile's module tree as an independent search root, and a Cookfile shares module code with another only within its own subtree, by the path form of §{mods.use-scope.containment}. [amended CS-0206]
 
 ## 11.5. Duplicate and cycle detection [#comp.duplicates-and-cycles]
 A conforming implementation MUST reject a Cookfile in which two `import` declarations share the same local alias. This rule is restated normatively in App. A.2 (duplicate-import clause); this section specifies the timing and the diagnostic surface.

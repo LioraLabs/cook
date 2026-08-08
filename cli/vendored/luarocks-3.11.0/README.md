@@ -2,7 +2,7 @@
 
 Verbatim copy of the upstream `luarocks-3.11.0` release tarball
 (https://luarocks.org/releases/luarocks-3.11.0.tar.gz). The
-`stage_luarocks` helper in `cook_modules/dist.lua` (an internal step of
+`stage_luarocks` helper in `lua/dist.lua` (an internal step of
 `dist.package`) stages `src/luarocks/` into `target/cook-stage/share/luarocks/`
 so the bundled `bin/luarocks` shell launcher can `require()` against it.
 
@@ -11,7 +11,7 @@ LuaRocks itself is a pure-Lua program that runs against the bundled
 build or configure step is invoked at cook build time — the only artifact
 copied into the staged tree is the `src/luarocks/` library directory.
 The relocatable launcher script and the default config template are
-authored cook-side and live in `cook_modules/dist.lua` and
+authored cook-side and live in `lua/dist.lua` and
 `cli/crates/cook-cli/templates/default-rocks-config.lua`.
 
 ## Pin
@@ -44,7 +44,7 @@ When LuaRocks cuts a new release:
    segment if LuaRocks MAJOR.MINOR.PATCH moved —
    `cp -a <extracted>/. cli/vendored/luarocks-X.Y.Z/`.
 3. Update this README's pin section (URL, SHA-256, vendor date).
-4. Update `LUAROCKS_SRC_DIR` in `cook_modules/dist.lua`
+4. Update `LUAROCKS_SRC_DIR` in `lua/dist.lua`
    and the version string the bundled `bin/luarocks --version` is
    expected to print (referenced in the `verify` helper).
 5. Run `cook package` and confirm

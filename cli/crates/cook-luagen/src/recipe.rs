@@ -380,6 +380,24 @@ fn step_line(step: &Step) -> usize {
     }
 }
 
+/// The Lua source a bundle contributes to its body unit, concatenated.
+///
+/// CS-0205 asks one question of it — does this body name a `use` alias? — so
+/// only the steps whose text reaches the worker VM verbatim are collected.
+/// Shell steps do not: they reach it as a `cook.sh` argument, and the sigil
+/// expansion that builds that argument can only produce register-VM helper
+/// calls, never a user alias.
+fn bundle_lua_source(bundle: &[Step]) -> String {
+    let mut src = String::new();
+    for step in bundle {
+        if let Step::Lua { code, .. } | Step::LuaBlock { code, .. } = step {
+            src.push_str(code);
+            src.push('\n');
+        }
+    }
+    src
+}
+
 /// One contiguous piece of an execute-phase body unit's `lua_code` chunk.
 ///
 /// `Static` pieces are raw Lua source text that the worker VM evaluates
@@ -440,14 +458,15 @@ fn emit_body_unit_with_names(
     // RegisterTimeShellCmd boundary.
     let mut static_buf = String::new();
 
-    for use_stmt in uses {
-        let lua_name = use_stmt.module_name.replace('-', "_");
-        static_buf.push_str(&format!(
-            "local {} = cook.load_module(\"{}\")\n",
-            lua_name,
-            escape_lua_string(&use_stmt.module_name),
-        ));
-    }
+    // CS-0205: the `use` prelude for whichever aliases this bundle's Lua names,
+    // through the one helper every execute-phase body kind now shares. Single
+    // line, glued: it costs the chunk no lines, so the step's own `line` needs
+    // no compensation (the pre-CS-0205 `saturating_sub(uses.len())` could
+    // underflow for a body near the top of the file).
+    static_buf.push_str(&crate::use_prelude::execute_prelude(
+        uses,
+        &bundle_lua_source(bundle),
+    ));
 
     fn flush_raw_into_static(static_buf: &mut String, run: &mut Vec<String>) {
         if run.is_empty() {
@@ -543,15 +562,14 @@ fn emit_body_unit_with_names(
     // of `lua_code_expr` evaluate (register time), so hoist them just before.
     // COOK-191/CS-0126: report the bundle's first step's Cookfile line, so
     // pool.rs can newline-pad the chunk and make an execute-phase error
-    // read `Cookfile:LINE:`. The `use`-statement preamble above adds
-    // `uses.len()` lines ahead of the first step's own code within this
-    // same chunk, so that count is subtracted here to compensate — known
-    // imprecision: a bundle spanning more than one original step (e.g. two
-    // adjacent `>` lines with no blank line between them) only gets an
-    // exact line for the first step; later steps in the same bundle may
-    // report a nearby-but-not-exact line. This is a follow-up concern, not
-    // in scope here.
-    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
+    // read `Cookfile:LINE:`. The CS-0205 `use` prelude is glued onto that
+    // first line rather than emitted above it, so it costs the chunk no
+    // lines and nothing is subtracted here. Known imprecision: a bundle
+    // spanning more than one original step (e.g. two adjacent `>` lines with
+    // no blank line between them) only gets an exact line for the first
+    // step; later steps in the same bundle may report a nearby-but-not-exact
+    // line. This is a follow-up concern, not in scope here.
+    let line = bundle.first().map(step_line).unwrap_or(0);
     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
     // units that are never cached. The cacheable cook-step path in
     // cook_step.rs is the only emission site that includes it.
@@ -723,12 +741,14 @@ pub fn generate_with_names(
 
         // Emit module loading for use statements
         for use_stmt in &cookfile.uses {
-            let lua_name = use_stmt.module_name.replace('-', "_");
-            out.push_str(&format!(
-                "local {} = cook.load_module(\"{}\")\n",
-                lua_name,
-                escape_lua_string(&use_stmt.module_name),
+            // CS-0205: the binding text is law (`cook_contracts::module_binding`)
+            // because the loader that answers it lives in another crate; the
+            // newline framing is this emitter's.
+            out.push_str(&cook_contracts::module_binding::binding(
+                &use_stmt.alias,
+                &use_stmt.target,
             ));
+            out.push('\n');
         }
         if !cookfile.uses.is_empty() {
             out.push('\n');
@@ -744,12 +764,11 @@ pub fn generate_with_names(
 
         // Emit module loading for use statements, one per line.
         for (i, use_stmt) in cookfile.uses.iter().enumerate() {
-            let lua_name = use_stmt.module_name.replace('-', "_");
-            let mut line = format!(
-                "local {} = cook.load_module(\"{}\")",
-                lua_name,
-                escape_lua_string(&use_stmt.module_name),
-            );
+            // Same law, different framing: CS-0126 needs one binding per
+            // generated line with the header comment folded onto the first,
+            // which is why `binding` carries no terminator of its own.
+            let mut line =
+                cook_contracts::module_binding::binding(&use_stmt.alias, &use_stmt.target);
             if i == 0 {
                 line.push_str(" -- Generated by Cook");
             }
@@ -971,6 +990,7 @@ pub fn generate_with_names(
                                     &mut out,
                                     cook_step,
                                     *line,
+                                    &cookfile.uses,
                                     cook_index,
                                     recipe_names,
                                     member_source
@@ -987,6 +1007,7 @@ pub fn generate_with_names(
                                     &mut out,
                                     cook_step,
                                     *line,
+                                    &cookfile.uses,
                                     cook_index,
                                     prev_cook_index,
                                     &recipe.ingredients,
@@ -1012,6 +1033,7 @@ pub fn generate_with_names(
                                     &mut out,
                                     test_step_val,
                                     *line,
+                                    &cookfile.uses,
                                     recipe_names,
                                 )?;
                             } else {
@@ -1019,6 +1041,7 @@ pub fn generate_with_names(
                                     &mut out,
                                     test_step_val,
                                     *line,
+                                    &cookfile.uses,
                                     prev_cook_index,
                                     !recipe.ingredients.is_empty(),
                                     recipe_names,
@@ -1091,7 +1114,7 @@ pub fn generate_with_names(
                 out.push_str(&compile_chore_checked(chore, &cookfile.uses, recipe_names)?);
             }
             TopLevelItem::Probe(p) => {
-                crate::probe::emit_probe(&mut out, p);
+                crate::probe::emit_probe(&mut out, p, &cookfile.uses);
             }
         }
     }
@@ -1412,14 +1435,11 @@ fn emit_chore_body_unit(
     // so its io.write(cook.sh(...)) flush was unreachable.
     let mut chunk = String::new();
 
-    for use_stmt in uses {
-        let lua_name = use_stmt.module_name.replace('-', "_");
-        chunk.push_str(&format!(
-            "local {} = cook.load_module(\"{}\")\n",
-            lua_name,
-            escape_lua_string(&use_stmt.module_name),
-        ));
-    }
+    // CS-0205: same shared prelude as every other execute-phase body kind.
+    chunk.push_str(&crate::use_prelude::execute_prelude(
+        uses,
+        &bundle_lua_source(bundle),
+    ));
 
     for step in bundle {
         match step {
@@ -1438,11 +1458,11 @@ fn emit_chore_body_unit(
     }
 
     let wrapped = wrap_lua_string(&chunk);
-    // COOK-191/CS-0126: same first-step-line-minus-uses-preamble accounting
-    // as `emit_body_unit_with_names`; unit_api.rs additionally subtracts
-    // the chore-param-binding prelude's line count for chore units, since
-    // that prelude is prepended to `code` after this point.
-    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
+    // COOK-191/CS-0126: line 1 of `chunk` IS the first step's Cookfile line —
+    // the CS-0205 prelude is glued onto it rather than sitting above it, so
+    // there is nothing to subtract. (unit_api.rs still subtracts 1 for the
+    // chore-param prelude, which it prepends as its own line after this point.)
+    let line = bundle.first().map(step_line).unwrap_or(0);
     // §7.1.2.1 (CS-0194 defect fix): a declared parameter is exported into
     // EVERY shell child spawned by the chore body — including a `cook.sh`
     // child of a Lua step. Only the shell-step emission carried `env` before,
