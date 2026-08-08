@@ -17,6 +17,7 @@ pub mod command_failure;
 pub mod lua_error;
 pub mod lua_string;
 pub mod member;
+pub mod module_binding;
 pub mod naming;
 pub mod output;
 pub mod pathlaw;

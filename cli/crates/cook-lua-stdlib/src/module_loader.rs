@@ -211,7 +211,11 @@ pub fn install_module_loader(
         Ok(result)
     })?;
 
-    cook.set("load_module", load_module_fn)?;
+    // CS-0205: the field name is law, not a local choice — `cook-luagen`
+    // COMPOSES `cook.load_module("…")` into every `use` binding it emits, and a
+    // rename on either side would leave the alias binding through something
+    // this loader (and therefore the CS-0204 observer inside it) never sees.
+    cook.set(cook_contracts::module_binding::LOAD_MODULE_FN, load_module_fn)?;
     Ok(())
 }
 
