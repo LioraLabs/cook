@@ -183,10 +183,40 @@ trinity, and the tooling keeps its three parts in agreement:
 3. **The conformance corpus** (`cli/e2e-fixtures/` and the law-level unit
    tests here) pins the two to each other — and every new fixture is verified
    to bite by mutation before it is trusted.
+4. **`tests/constitution.rs`** refuses new violations of this document. Until
+   it existed, everything above was enforced and this file was not: five hand
+   audits found duplicated decisions and nothing caught anything between them.
 
 When you find yourself about to write a function this file's rules cover:
 grep first. The law you need probably has a name already, and if it does not,
 it wants to be born here rather than where you are standing.
+
+### The gate, and what it can and cannot see
+
+`cook cli.constitution`, or `cargo test -p cook-contracts --test constitution`.
+Four rules hold outright, because the tree satisfies them today: the effect
+budget above (reaches, not spellings — `use std::time::{Duration, Instant}`
+reads as two distinct reaches, and `path.is_dir()` imports nothing), this
+crate's dependency allowlist, a stratum table every crate must be placed in,
+and no item reached through another crate's re-export.
+
+Three more read a tracked baseline in `constitution/`, so the gate lands green
+and fails on what is *new*: the tunnels, string literals shared across crates,
+and runs of copied code. Those files are the shrinking to-do list, not a
+settlement. Adding to one is deliberately costly — an entry with no written
+justification fails the build, and so does an entry that no longer matches
+anything, because a list that only grows stops being read.
+
+Read what those files say about their own limits before trusting a green run.
+The clone rule matches exact tokens, so it catches a copy before it drifts and
+never after; the duration renderers were found by hand precisely because they
+had already diverged. Law shorter than its window is invisible to it. The
+answer to both is this document, not the gate.
+
+Every rule carries a mutation test, and that is not ceremony. The purity budget
+used to scan `use std::{…}` statements, so a `path.is_dir()` walked past it and
+filesystem access sat in this crate with the gate green until a human reviewer
+found it. A rule nobody mutated is decoration.
 
 ### Does it come with a check?
 
@@ -216,6 +246,10 @@ So, in descending order of what actually holds:
 A structural change that ships with nothing below rank 3 is documentation with
 extra steps. That is not an argument against writing it down; it is an argument
 for not believing it will hold on its own.
+
+This document spent a long time at rank 4, asking. `tests/constitution.rs` is
+its own answer to its own question, and the parts of it that cannot be checked
+mechanically are marked as such above rather than left to look enforced.
 
 This matters more than it used to. Code arrives faster than review can read it,
 and the failure mode is no longer a bad function: it is a second correct one.
