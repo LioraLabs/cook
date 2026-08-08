@@ -3094,6 +3094,8 @@ Both are worse than ordinary staleness. The key is content-addressed and the sto
 
 `cook why` gains a cause it could not previously express, `module changed: <path>`, kept distinct from `input changed` because it answers a different question — nothing the author declared moved; the code their body ran did.
 
+**Known gap.** `cook why`'s SHARED-tier prediction composes a unit's key from declared inputs alone, so for a module-loading unit it predicts a miss the executor then serves as a hit. This is not new with this entry — the same prediction omits depfile-discovered inputs and has since they existed — but the determinant class is new, so it is recorded rather than left to be rediscovered. Local attribution is unaffected: the miss path runs the real check, so `module changed` reaches the report.
+
 **Conformance.** Not conformance-fixture territory: the rule is about cache identity and the observation of a run, neither of which a parse or register fixture can see. Pinned instead beside each law — the observer (both doors, memo hits, failed loads, stdlib names, per-item draining), the record shape and its binary encoding, the check's module walk, the fold and manifest laws — and end-to-end against the built binary over this entry's two repro cases: the `cook.load_module` body, and a keyed probe whose `produce` body loads a module, both of which must produce the new value on the run after the edit and must be fully cached on a run with no edit at all.
 
 ## CS-0203 — `cook.probes.scope` exists at register phase, and the Lua host is spelled once [#changes.cs-0203]

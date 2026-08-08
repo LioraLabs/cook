@@ -95,8 +95,8 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    module_inputs: Vec::new(),
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let ctx = RestoreCtx {
@@ -153,8 +153,8 @@ fn restore_miss_falls_through_to_output_changed() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    module_inputs: Vec::new(),
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let ctx = RestoreCtx {
@@ -261,8 +261,8 @@ fn restore_rejects_tampered_backend_bytes() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    module_inputs: Vec::new(),
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let ctx = RestoreCtx {
@@ -325,8 +325,8 @@ fn restore_with_no_ctx_returns_output_changed() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-    module_inputs: Vec::new(),
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
 
     let (result, _) = needs_rebuild_cook(

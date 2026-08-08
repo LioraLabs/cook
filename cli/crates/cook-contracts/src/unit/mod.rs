@@ -64,7 +64,6 @@ pub enum WorkPayload {
 }
 
 impl WorkPayload {
-    /// Human-readable name for progress UI and result reporting.
     /// Does running this payload evaluate author Lua on a VM (§12.3, CS-0204)?
     ///
     /// Which is the same question as: can this unit load a module? A payload
@@ -79,6 +78,7 @@ impl WorkPayload {
         matches!(self, Self::LuaChunk { .. } | Self::Probe { .. })
     }
 
+    /// Human-readable name for progress UI and result reporting.
     pub fn display_name(&self) -> String {
         match self {
             Self::Shell { cmd, .. } => {

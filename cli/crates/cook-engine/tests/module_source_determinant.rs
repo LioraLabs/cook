@@ -177,45 +177,93 @@ fn editing_a_module_reproduces_the_probe_that_loaded_it() {
 }
 
 /// The severity bar. Two working trees share one content-addressed store; their
-/// modules differ. Neither may be served the other's answer.
+/// modules differ. Neither may be served the other's answer — and a third tree
+/// whose module MATCHES must still be served, because the fix has to key on
+/// module content rather than merely refuse to share.
+///
+/// The hit is asserted through a side-effect log, not through the declared
+/// output: a restored output and a rebuilt one hold the same bytes, so
+/// comparing them proves nothing about whether the body ran.
 #[test]
 fn a_shared_store_does_not_carry_a_result_across_differing_modules() {
     let store = tempfile::tempdir().unwrap();
-    let cloud = format!(
-        "[cache]\ncache_dir = {:?}\n",
-        store.path().to_string_lossy()
-    );
     let cookfile = "recipe emit\n\
                     \x20   cook \"out.txt\" >{\n\
                     \x20       local h = cook.load_module(\"helper\")\n\
+                    \x20       cook.sh(\"echo ran >> runlog\")\n\
                     \x20       fs.write(\"out.txt\", h.value())\n\
                     \x20   }\n";
 
-    let make = |value: &str| {
+    // Each call is a fresh "machine": its own working tree and its own local
+    // index, sharing only the CAS.
+    let machine = |value: &str| -> (tempfile::TempDir, usize) {
         let tmp = tempfile::tempdir().unwrap();
         let wd = tmp.path();
-        fs::create_dir_all(wd.join(".cook")).unwrap();
-        fs::write(wd.join(".cook/cloud.toml"), &cloud).unwrap();
-        let _ = &store;
+        isolate_store(wd, store.path());
         fs::write(wd.join("Cookfile"), cookfile).unwrap();
         write_helper(wd, value);
         build(wd, "emit");
         assert_eq!(
             fs::read_to_string(wd.join("out.txt")).unwrap(),
             value,
-            "each machine must produce its own module's answer"
+            "each machine must end up with its own module's answer"
         );
-        tmp
+        let executions = runs(wd, "runlog");
+        (tmp, executions)
     };
 
-    // Machine A publishes under its module's content.
-    let _a = make("ALPHA");
-    // Machine B has the same Cookfile, the same declared inputs, the same
-    // command text, and a different module. Before CS-0204 it composed A's key.
-    let _b = make("BETA");
+    let (_a, a_runs) = machine("ALPHA");
+    assert_eq!(a_runs, 1, "the first machine has nothing to fetch");
 
-    // And a third tree whose module matches A's must be free to reuse A's
-    // entry: the fold must key on content, not merely refuse to share.
-    let c = make("ALPHA");
-    assert_eq!(fs::read_to_string(c.path().join("out.txt")).unwrap(), "ALPHA");
+    // Same Cookfile, same declared inputs, same command text, different module.
+    // Before CS-0204 this composed A's key and was served A's artifact.
+    let (_b, b_runs) = machine("BETA");
+    assert_eq!(b_runs, 1, "a differing module must not be served A's answer");
+
+    // Same module content as A: the fold must let this one reuse A's entry.
+    let (_c, c_runs) = machine("ALPHA");
+    assert_eq!(
+        c_runs, 0,
+        "a matching module must still cold-fetch through the module manifest"
+    );
+}
+
+/// The observing (output-less) half of the same bar. A `test` body has no
+/// artifact to restore, so its shared hit replays a recorded verdict — through
+/// a different code path, which is exactly why it gets its own test.
+#[test]
+fn a_shared_verdict_is_reused_only_across_matching_modules() {
+    let store = tempfile::tempdir().unwrap();
+    // `ingredients` gives the test unit something to key on: an output-less
+    // unit that declares nothing has nothing whose movement could invalidate
+    // it, so §17.4 rule 1 refuses it a key entirely (CS-0186).
+    let cookfile = "recipe check\n\
+                    \x20   ingredients \"seed.txt\"\n\
+                    \x20   test >{\n\
+                    \x20       local h = cook.load_module(\"helper\")\n\
+                    \x20       cook.sh(\"echo ran >> runlog\")\n\
+                    \x20       assert(h.value() ~= nil)\n\
+                    \x20   }\n";
+
+    let machine = |value: &str| -> (tempfile::TempDir, usize) {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        isolate_store(wd, store.path());
+        fs::write(wd.join("Cookfile"), cookfile).unwrap();
+        fs::write(wd.join("seed.txt"), "seed\n").unwrap();
+        write_helper(wd, value);
+        build(wd, "check");
+        let executions = runs(wd, "runlog");
+        (tmp, executions)
+    };
+
+    let (_a, a_runs) = machine("ALPHA");
+    assert_eq!(a_runs, 1);
+    let (_b, b_runs) = machine("BETA");
+    assert_eq!(b_runs, 1, "a differing module must not replay A's verdict");
+    let (_c, c_runs) = machine("ALPHA");
+    assert_eq!(
+        c_runs, 0,
+        "a matching module must still replay the shared verdict"
+    );
 }

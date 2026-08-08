@@ -164,34 +164,6 @@ pub fn probe_module_manifest_key(declared: &[u8; 32]) -> [u8; 32] {
     out
 }
 
-/// How many distinct module-path sets one manifest remembers.
-///
-/// More than one because a set is not stable: a branch inside a module, a
-/// platform-conditional `require`, or a revert can each produce a different
-/// set for the same declaration, and remembering only the newest would make a
-/// revert a permanent cold miss (the defect COOK-278 fixed for depfiles).
-/// Capped because the list is re-read and re-hashed on every cold lookup.
-pub const MODULE_SET_CAP: usize = 8;
-
-/// Merge an observed path set into a manifest, newest first, deduplicated,
-/// capped at [`MODULE_SET_CAP`].
-///
-/// Pure and total so both stores that keep such a manifest — the probe store
-/// and the step store — merge it the same way rather than each rolling the
-/// obvious three lines slightly differently.
-pub fn merge_path_set(existing: &[Vec<String>], observed: &[String]) -> Vec<Vec<String>> {
-    let observed = observed.to_vec();
-    let mut out = Vec::with_capacity(existing.len() + 1);
-    out.push(observed.clone());
-    for set in existing {
-        if *set != observed {
-            out.push(set.clone());
-        }
-    }
-    out.truncate(MODULE_SET_CAP);
-    out
-}
-
 #[cfg(test)]
 #[path = "tests/context_tests.rs"]
 mod tests;

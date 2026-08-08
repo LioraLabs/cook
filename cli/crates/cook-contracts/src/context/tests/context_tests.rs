@@ -131,21 +131,3 @@ fn manifest_key_is_derived_and_distinct_from_the_declared_fingerprint() {
     assert_eq!(probe_module_manifest_key(&declared), probe_module_manifest_key(&declared));
 }
 
-/// Newest first, deduplicated, capped. The dedup is what stops a settled
-/// project from rewriting a growing manifest on every run.
-#[test]
-fn merging_a_path_set_puts_it_first_and_deduplicates() {
-    let old = vec![vec!["a.lua".to_string()], vec!["b.lua".to_string()]];
-    let merged = merge_path_set(&old, &["b.lua".to_string()]);
-    assert_eq!(merged, vec![vec!["b.lua".to_string()], vec!["a.lua".to_string()]]);
-}
-
-#[test]
-fn merging_caps_the_retained_sets() {
-    let mut existing: Vec<Vec<String>> = Vec::new();
-    for i in 0..(MODULE_SET_CAP + 5) {
-        existing = merge_path_set(&existing, &[format!("m{i}.lua")]);
-    }
-    assert_eq!(existing.len(), MODULE_SET_CAP);
-    assert_eq!(existing[0], vec![format!("m{}.lua", MODULE_SET_CAP + 4)]);
-}

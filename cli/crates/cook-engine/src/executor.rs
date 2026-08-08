@@ -833,7 +833,7 @@ pub fn execute_dag(
             };
         input_hashes.sort();
         let namespace = recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
-        let key = cloud_key(&CloudKeyInputs {
+        let declared_key = cloud_key(&CloudKeyInputs {
             schema_version: CACHE_VERSION,
             recipe_namespace: &namespace,
             command_hash: meta.command_hash,
@@ -841,25 +841,71 @@ pub fn execute_dag(
             seal_contribution: seal_contrib,
             sorted_input_content_hashes: &input_hashes,
         });
+        // CS-0204: an observing unit's body can load a module too, and
+        // `publish_completion` stores its observation under the module-folded
+        // key. So the same candidate reconstruction `fetch_by_key` does has to
+        // happen here, or a module-loading `test` body would publish to a key
+        // this side never asks for and lose shared reuse permanently — on a
+        // cold machine the local check always misses, so this is the only
+        // branch ever consulted.
+        let candidates: Vec<Vec<String>> =
+            if work_node.payload.as_ref().is_some_and(WorkPayload::evaluates_lua) {
+                cook_cache::path_set_candidates(cook_cache::read_module_input_sets(
+                    cache_ctx.backend.as_ref(),
+                    &declared_key,
+                ))
+            } else {
+                vec![Vec::new()]
+            };
         // COOK-401: the "would the shared tier serve this?" half is
         // `shared_observation`, shared with `cook why`. What stays here is
         // what only the executor does: record the step entry so the next local
         // run hits without a round trip, and report the hit.
-        if let Some(observation) =
-            cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
-        {
-            let inputs: Option<Vec<_>> = current_inputs
-                .iter()
-                .map(|path| {
-                    let abs = work_node.working_dir.join(path);
-                    cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
-                        path: path.as_str().into(),
-                        mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
-                        hash,
-                    })
+        for module_set in candidates {
+            let key = if module_set.is_empty() {
+                declared_key
+            } else {
+                let refs: Vec<&str> = module_set.iter().map(String::as_str).collect();
+                // A listed module absent locally means this candidate cannot
+                // describe this tree; try the next.
+                let Some(mut module_hashes) =
+                    cook_cache::hash_input_paths(&refs, &work_node.working_dir)
+                else {
+                    continue;
+                };
+                let mut full = input_hashes.clone();
+                full.append(&mut module_hashes);
+                full.sort();
+                cloud_key(&CloudKeyInputs {
+                    schema_version: CACHE_VERSION,
+                    recipe_namespace: &namespace,
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    sorted_input_content_hashes: &full,
                 })
-                .collect();
-            if let Some(inputs) = inputs {
+            };
+            let Some(observation) =
+                cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
+            else {
+                continue;
+            };
+            let record_of = |path: &str| {
+                let abs = work_node.working_dir.join(path);
+                cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
+                    path: path.into(),
+                    mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
+                    hash,
+                })
+            };
+            let inputs: Option<Vec<_>> =
+                current_inputs.iter().map(|p| record_of(p)).collect();
+            // CS-0204: record the module set whose content composed the key
+            // that hit, so the next local check judges it as module source and
+            // the entry is what a fresh execution would have written.
+            let modules: Option<Vec<_>> =
+                module_set.iter().map(|p| record_of(p)).collect();
+            if let (Some(inputs), Some(module_inputs)) = (inputs, modules) {
                 cm.update_step(
                     &meta.recipe_name,
                     &meta.cache_key,
@@ -869,14 +915,7 @@ pub fn execute_dag(
                         command_hash: meta.command_hash,
                         env_contribution: meta.env_contribution,
                         seal_contribution: seal_contrib,
-                        // CS-0204: an observing unit's shared replay is keyed
-                        // on the declared terms alone, so nothing here knows
-                        // which modules produced the recorded verdict. Left
-                        // empty rather than guessed: an empty module set makes
-                        // the next local check judge exactly what it judged
-                        // before CS-0204, and the unit's first real execution
-                        // fills it in.
-                        module_inputs: Vec::new(),
+                        module_inputs,
                         observed: Some(observation),
                     },
                 );
@@ -3615,10 +3654,11 @@ fn publish_completion(
                 cache_ctx.backend.as_ref(),
                 &declared_key,
             );
-            // The merge is the shared law, so the probe store and this one
-            // cannot drift on what "newest first, deduplicated, capped" means.
-            let sets = cook_contracts::context::merge_path_set(&existing, &observed);
-            let sets_json = serde_json::to_vec(&sets).unwrap_or_default();
+            // Merge and wire form are both the shared law, so the probe store
+            // and this one cannot drift on what "newest first, deduplicated,
+            // capped" means or on how it is written down.
+            let sets = cook_cache::merge_path_set(&existing, &observed);
+            let sets_json = cook_cache::encode_path_sets(&sets);
             let sets_k = artifact_key(
                 &declared_key,
                 cook_cache::MODULE_INPUT_SETS_INDEX,

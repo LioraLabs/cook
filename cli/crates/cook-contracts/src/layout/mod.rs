@@ -93,28 +93,39 @@ pub fn module_memo_key(working_dir: &Path, name: &str) -> String {
     format!("{}::{}", working_dir.display(), name)
 }
 
-/// Render observed module paths for recording (§17.4.4, CS-0204).
+/// Render observed module paths for recording (§{exec.cache.module-source},
+/// CS-0204): workspace-relative, sorted, deduplicated, and **confined to the
+/// project**.
 ///
-/// A recorded module path is re-hashed later — on the next run, and on
-/// another machine that fetches the entry — by joining it onto that reader's
-/// working directory. So the recorded form must be relative wherever it can
-/// be: an absolute `/home/alice/proj/cook_modules/x.lua` re-hashes to nothing
-/// on Bob's machine, which would turn every shared entry into a cold miss.
+/// # Why relative
 ///
-/// A path that does NOT lie under `working_dir` is kept absolute rather than
-/// dropped. Dropping it would silently un-key the unit on a module it really
-/// loaded, which is the exact defect CS-0204 exists to close; keeping it
-/// absolute is honest — `Path::join` returns an absolute argument unchanged,
-/// so it hashes correctly here and safely misses elsewhere.
+/// A recorded module path is re-hashed later — on the next run, and on another
+/// machine that fetches the entry — by joining it onto that reader's working
+/// directory. An absolute `/home/alice/proj/cook_modules/x.lua` re-hashes to
+/// nothing on Bob's machine, so every shared entry would degrade to a cold
+/// miss.
 ///
-/// Output is sorted and deduplicated: it is folded into a cache key, and a
-/// key that moved with load order would be a false rebuild.
+/// # Why a path outside the project is DROPPED, not kept absolute
+///
+/// `cook.load_module` cannot resolve outside `<working_dir>/cook_modules`, but
+/// Lua's `require` searches the composed `package.path`, whose tail is the
+/// interpreter's own — a bundled rock, a system Lua tree, whatever the host
+/// happens to have. Those are not the project's source; they are the toolchain
+/// the project ran on, and §{exec.cache.single-key} is explicit that the engine
+/// infers no toolchain or machine identity of its own. An author who wants the
+/// toolchain in a key declares it as a probe and seals on it.
+///
+/// Keeping them would also be self-defeating in exactly the direction this
+/// change exists to protect: an absolute host path folded into a
+/// content-addressed key makes the entry unreconstructable anywhere else, and
+/// moves the key whenever cook itself is reinstalled elsewhere.
 pub fn relative_module_paths(working_dir: &Path, loaded: &[std::path::PathBuf]) -> Vec<String> {
     let mut out: Vec<String> = loaded
         .iter()
-        .map(|p| match p.strip_prefix(working_dir) {
-            Ok(rel) => rel.to_string_lossy().into_owned(),
-            Err(_) => p.to_string_lossy().into_owned(),
+        .filter_map(|p| {
+            p.strip_prefix(working_dir)
+                .ok()
+                .map(|rel| rel.to_string_lossy().into_owned())
         })
         .collect();
     out.sort();

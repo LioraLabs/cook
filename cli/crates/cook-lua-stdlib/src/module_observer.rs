@@ -30,8 +30,10 @@
 //! "every module actually loaded by the unit" means every module, not every
 //! module that happened to come through the front.
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use mlua::prelude::*;
@@ -88,24 +90,38 @@ impl ModuleObserver {
     }
 }
 
-/// Wrap the global `require` so every module it resolves is observed.
+/// Wrap the global `require` so every module it loads is observed.
 ///
-/// The wrapper calls the original `require` first and records only on
-/// success, so a failed require contributes nothing to a key. Resolution
-/// goes through `package.searchpath` against the live `package.path` and
-/// `package.cpath` — the same two strings `refresh_package_search_paths`
-/// composed for this work item — which means the recorded path is the one
-/// Lua itself would have picked, rather than a second implementation of the
-/// search order that could drift from it.
+/// # What is recorded, and why not simply "what `searchpath` says"
 ///
-/// A name that resolves through neither (`require("string")`, a preloaded
-/// module, anything already in `package.loaded` that never had a file)
-/// records nothing: there is no file whose content could move.
+/// `require` memoises in `package.loaded`, and a worker VM outlives the work
+/// item (CS-0017): `package.loaded` is never cleared between items while
+/// `package.path` IS recomposed per item. So on the second item, from a
+/// different Cookfile directory, `require("helper")` hands back the FIRST
+/// directory's module while `package.searchpath` resolves the SECOND
+/// directory's file. Recording the search result would key the unit on a file
+/// it never ran, and leave edits to the file it did run invisible — the exact
+/// defect this change exists to close, reintroduced by the fix for it.
 ///
-/// Idempotent per VM. Installing twice would nest wrappers and record the
-/// same path twice, which the set absorbs, but the nesting would grow
-/// without bound on a long-lived worker VM, so the second install is a
-/// no-op.
+/// So the wrapper distinguishes the two cases the way `cook.load_module` does
+/// (§12.3.2, and `module_loader`'s `paths` map):
+///
+/// * `package.loaded[name]` already set — nothing is read from disk, and what
+///   ran is whatever this VM loaded earlier. The path memoised at THAT load is
+///   recorded. A name loaded before the wrapper existed, or with no file behind
+///   it at all (`string`, a `package.preload` entry), has no memo and records
+///   nothing, which is correct: there is no file whose content could move.
+/// * not yet loaded — the original `require` runs, and on success the file is
+///   resolved through `package.searchpath` against the live `package.path` and
+///   `package.cpath`. That is the same two strings Lua's own searchers just
+///   used, so the recorded path is the one Lua picked rather than a second
+///   implementation of the search order.
+///
+/// The memo also removes the per-call cost: a repeated `require` inside a hot
+/// function pays one table lookup instead of re-probing every path template.
+///
+/// A failed require records nothing. Idempotent per VM: a second install would
+/// nest wrappers on a long-lived worker VM, so it is a no-op.
 pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResult<()> {
     // In the registry, not in `_G`: the register VM's globals are the Cookfile
     // author's namespace, and a bookkeeping flag parked there is a name they
@@ -123,15 +139,28 @@ pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResul
         _ => return Ok(()),
     };
 
+    // name -> the file this VM actually loaded it from. Per-VM, like the
+    // `package.loaded` table it shadows.
+    let memo: Rc<RefCell<BTreeMap<String, PathBuf>>> = Rc::default();
+
     let wrapper = lua.create_function(move |lua, args: LuaMultiValue| {
         let name: Option<String> = args
             .iter()
             .next()
             .and_then(|v| v.as_str().map(|s| s.to_string()));
+        let already_loaded = match &name {
+            Some(n) => is_loaded(lua, n)?,
+            None => false,
+        };
         let result = original.call::<LuaMultiValue>(args)?;
         if let Some(name) = name {
-            if let Some(path) = searchpath_hit(lua, &name)? {
+            if already_loaded {
+                if let Some(path) = memo.borrow().get(&name) {
+                    observer.record(path);
+                }
+            } else if let Some(path) = searchpath_hit(lua, &name)? {
                 observer.record(&path);
+                memo.borrow_mut().insert(name, path);
             }
         }
         Ok(result)
@@ -142,10 +171,26 @@ pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResul
     Ok(())
 }
 
+/// Is `name` already in `package.loaded`? Asked BEFORE the call, because
+/// afterwards every successful require answers yes.
+fn is_loaded(lua: &Lua, name: &str) -> LuaResult<bool> {
+    let pkg: LuaTable = match lua.globals().get::<LuaValue>("package")? {
+        LuaValue::Table(t) => t,
+        _ => return Ok(false),
+    };
+    let loaded: LuaTable = match pkg.get::<LuaValue>("loaded")? {
+        LuaValue::Table(t) => t,
+        _ => return Ok(false),
+    };
+    Ok(loaded.get::<LuaValue>(name)? != LuaValue::Nil)
+}
+
 /// Where Lua would find `name`: `package.path` first, then `package.cpath`.
 ///
 /// Returns the first hit. `package.searchpath` returns `nil, err` on a miss,
 /// which is not an error condition here — a stdlib name simply has no file.
+/// The `cpath` arm is how a native module (`.so`/`.dll`) is observed at all:
+/// `cook.load_module` probes four `.lua` candidates and can never reach one.
 fn searchpath_hit(lua: &Lua, name: &str) -> LuaResult<Option<PathBuf>> {
     let pkg: LuaTable = match lua.globals().get::<LuaValue>("package")? {
         LuaValue::Table(t) => t,

@@ -87,8 +87,8 @@ fn seal_contribution_round_trips_as_hex() {
         command_hash: 0x0102030405060708,
         env_contribution: 0,
         seal_contribution: 0xAABBCCDDEEFF0011,
-    module_inputs: Vec::new(),
-    observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
     };
     let s = toml::to_string(&entry).expect("toml serialize");
     assert!(s.contains(r#"seal_contribution = "aabbccddeeff0011""#), "got: {s}");

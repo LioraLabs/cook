@@ -41,6 +41,9 @@ pub use cook_contracts::cache::cas::{
     DISCOVERED_INPUT_SETS_PATH, MODULE_INPUT_SETS_INDEX, MODULE_INPUT_SETS_PATH,
     OBSERVATION_INDEX, OBSERVATION_PATH,
 };
+pub use cook_contracts::cache::cas::{
+    decode_path_sets, encode_path_sets, merge_path_set, path_set_candidates,
+};
 pub use cook_contracts::cache::step::{CACHE_VERSION as STEP_CACHE_VERSION};
 pub use cook_contracts::consumes::ConsumesFilter;
 pub use cook_contracts::context::{compute_probe_fingerprint, ProbeFingerprintInputs};

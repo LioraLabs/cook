@@ -155,3 +155,72 @@ fn require_observer_install_is_idempotent() {
 
     assert_eq!(observer.take(), vec![sub]);
 }
+
+/// The `cpath` door. A native module is reachable through `require` and through
+/// nothing else — `module_candidates` probes four `.lua` paths — so if this arm
+/// were dead, every `.so` in the project would sit outside every key.
+///
+/// The module is satisfied from `package.preload` rather than actually
+/// dlopen'd: building a real `.so` here would test the C toolchain, not the
+/// observation. What is under test is that a name resolved on `cpath` is the
+/// path recorded, and that is exactly the branch this drives.
+#[test]
+fn a_native_module_on_cpath_is_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let native = tmp
+        .path()
+        .join("cook_modules/lib/lua/5.4")
+        .join(format!("native.{}", cook_contracts::layout::native_lua_ext()));
+    std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+    std::fs::write(&native, b"\x7fELF not really").unwrap();
+
+    let observer = ModuleObserver::new();
+    let lua = vm(tmp.path().to_path_buf(), &observer);
+    lua.load(r#"package.preload["native"] = function() return { v = 1 } end"#)
+        .exec()
+        .unwrap();
+
+    lua.load(r#"assert(require("native").v == 1)"#).exec().unwrap();
+
+    assert_eq!(observer.take(), vec![native]);
+}
+
+/// The defect the memo exists to prevent. A worker VM outlives the work item:
+/// `package.loaded` survives while `package.path` is recomposed per item. The
+/// second require hands back the FIRST directory's module, so recording what
+/// `searchpath` resolves NOW would key the unit on a file it never ran.
+#[test]
+fn a_require_served_from_package_loaded_records_the_file_it_actually_ran() {
+    let one = tempfile::tempdir().unwrap();
+    let two = tempfile::tempdir().unwrap();
+    let first = write_module(one.path(), "shared.lua", "return { from = 'one' }");
+    let decoy = write_module(two.path(), "shared.lua", "return { from = 'two' }");
+
+    let observer = ModuleObserver::new();
+    let lua = vm(one.path().to_path_buf(), &observer);
+    let from_one: String = lua
+        .load(r#"return require("shared").from"#)
+        .eval()
+        .unwrap();
+    assert_eq!(from_one, "one");
+    assert_eq!(observer.take(), vec![first.clone()]);
+
+    // Second work item, different Cookfile directory, same VM.
+    crate::module_loader::refresh_package_search_paths(&lua, two.path()).unwrap();
+    let still_one: String = lua
+        .load(r#"return require("shared").from"#)
+        .eval()
+        .unwrap();
+
+    assert_eq!(
+        still_one, "one",
+        "precondition: package.loaded is what makes this a hazard at all"
+    );
+    let seen = observer.take();
+    assert_eq!(
+        seen,
+        vec![first],
+        "the recorded path must be the file that ran, not {}",
+        decoy.display()
+    );
+}

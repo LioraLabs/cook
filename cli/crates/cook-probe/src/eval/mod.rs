@@ -409,22 +409,35 @@ fn module_candidates(
     backend: &dyn cook_cache::backend::CacheBackend,
     declared: &[u8; 32],
 ) -> Vec<Vec<String>> {
+    cook_cache::path_set_candidates(read_module_manifest(backend, declared))
+}
+
+/// The recorded path sets under a probe's declared fingerprint. Absent,
+/// unreadable or malformed all decode to none, which the caller reads as
+/// "nothing to reconstruct from" and turns into a safe miss.
+fn read_module_manifest(
+    backend: &dyn cook_cache::backend::CacheBackend,
+    declared: &[u8; 32],
+) -> Vec<Vec<String>> {
     let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
-    let mut sets: Vec<Vec<String>> = cook_cache::backend::get_bytes(backend, &manifest_key)
+    cook_cache::backend::get_bytes(backend, &manifest_key)
         .ok()
         .flatten()
-        .and_then(|b| serde_json::from_slice::<Vec<Vec<String>>>(&b).ok())
-        .unwrap_or_default();
-    if !sets.iter().any(Vec::is_empty) {
-        sets.push(Vec::new());
-    }
-    sets
+        .map(|b| cook_cache::decode_path_sets(&b))
+        .unwrap_or_default()
 }
 
 /// Compose the full fingerprint for one candidate set by hashing its paths
 /// against THIS working directory. The hashing is `cook_cache`'s, the same
 /// function §22.5.3's FILES section folds with; the composition is the
 /// Standard's, in `cook_contracts`.
+///
+/// Deliberately unmemoised, unlike the tool-binary hashes beside it. A tool is
+/// a ~60MB binary hashed once per probe NODE across a whole workspace; a module
+/// is a few KB of Lua, hashed once per candidate set, and `MODULE_SET_CAP`
+/// bounds the candidates at eight — with the first one hitting in the settled
+/// case. A memo here would buy nothing and would have to be invalidated the
+/// moment a run started writing modules.
 fn fold_candidate(declared: &[u8; 32], working_dir: &Path, paths: &[String]) -> [u8; 32] {
     if paths.is_empty() {
         return *declared;
@@ -445,17 +458,12 @@ fn publish_module_manifest(
     observed: &[String],
 ) -> Vec<String> {
     let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
-    let existing: Vec<Vec<String>> = cook_cache::backend::get_bytes(access.backend, &manifest_key)
-        .ok()
-        .flatten()
-        .and_then(|b| serde_json::from_slice::<Vec<Vec<String>>>(&b).ok())
-        .unwrap_or_default();
-    let sets = cook_contracts::context::merge_path_set(&existing, observed);
-    let json = match serde_json::to_vec(&sets) {
-        Ok(j) => j,
-        Err(e) => return vec![format!("probe module manifest: encode failed ({e})")],
-    };
-    let mut meta = probe_artifact_meta("__cook_module_inputs__", json.len());
+    let existing = read_module_manifest(access.backend, declared);
+    // Merge and wire form are the shared law, so this store and the step store
+    // cannot drift on what the manifest means or on how it is written down.
+    let sets = cook_cache::merge_path_set(&existing, observed);
+    let json = cook_cache::encode_path_sets(&sets);
+    let mut meta = probe_artifact_meta(cook_cache::MODULE_INPUT_SETS_PATH, json.len());
     meta.kind = Some("module_input_sets".to_string());
     match cook_cache::backend::put_bytes(access.backend, &manifest_key, &json, &mut meta) {
         Ok(()) => Vec::new(),

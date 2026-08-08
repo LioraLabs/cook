@@ -779,7 +779,7 @@ pub fn read_module_input_sets(
     if std::io::Read::read_to_end(&mut reader, &mut buf).is_err() {
         return Vec::new();
     }
-    serde_json::from_slice::<Vec<Vec<String>>>(&buf).unwrap_or_default()
+    cook_contracts::cache::cas::decode_path_sets(&buf)
 }
 
 /// Read the candidate discovered-input path sets recorded under a unit's
@@ -961,12 +961,10 @@ pub fn fetch_by_key(
     // candidate, which composes the declared key and is exactly the
     // pre-CS-0204 probe.
     let module_candidates: Vec<Vec<String>> = if may_load_modules {
-        let sets = read_module_input_sets(ctx.backend, &declared_key);
-        if sets.is_empty() {
-            vec![Vec::new()]
-        } else {
-            sets
-        }
+        cook_contracts::cache::cas::path_set_candidates(read_module_input_sets(
+            ctx.backend,
+            &declared_key,
+        ))
     } else {
         vec![Vec::new()]
     };
