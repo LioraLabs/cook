@@ -28,14 +28,24 @@ top_level_module_call  ::= module_call  (* column-0; multi-line via brace-balanc
 
 ## A.2. Top-level declarations [#grammar-appendix.declarations]
 ```ebnf
-use_declaration       ::= "use" use_name NEWLINE
+use_declaration       ::= "use" ( use_name | use_alias? use_path ) NEWLINE
 use_name              ::= LUA_IDENT | ( '"' LUA_IDENT '"' )
+use_alias             ::= LUA_IDENT | ( '"' LUA_IDENT '"' )
+use_path              ::= tree_path | ( '"' tree_path '"' )
 import_declaration    ::= "import" BARE_IDENTIFIER import_path NEWLINE
 config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
 
-**`use_name` constraint (normative; CS-0035).** The `use_name` MUST match the `LUA_IDENT` production (§{grammar-appendix.primitives}), regardless of whether it is written bare or inside double quotes. A conforming implementation MUST reject any `use_declaration` whose name contains characters outside `[A-Za-z0-9_]`, does not start with `[A-Za-z_]`, or is empty — including names containing whitespace, hyphens (`-`), or dots (`.`). The diagnostic MUST identify the offending name and source line. The restriction follows from the `use` binding (§{mods.use}): the name is bound at load time as a Lua local under the same spelling, and any non-identifier spelling would yield malformed generated Lua. Hyphens are rejected outright (rather than rewritten to underscores) to eliminate silent collisions between names like `foo-bar` and `foo_bar`.
+**Which alternative a `use` argument selects (normative; CS-0206).** A `use_declaration` carries either one argument or two. The **last** argument is a `use_path` if and only if it ends in `.lua`; otherwise it is a `use_name`. A conforming implementation MUST reject a two-argument `use_declaration` whose last argument is not a `use_path`, and MUST reject a `use_name` written in the two-argument form.
+
+The discriminator is the `.lua` suffix rather than "does the argument fail to lex as a `LUA_IDENT`", because the two productions are already disjoint under it — a `use_name` admits no `.` at all — and because the alternative would silently reclassify every name CS-0035 rejects. `use my-mod` continues to fail as a malformed *name*, rather than as a path that omitted its suffix.
+
+**`use_name` constraint (normative; CS-0035; amended CS-0206).** The `use_name` MUST match the `LUA_IDENT` production (§{grammar-appendix.primitives}), regardless of whether it is written bare or inside double quotes. A conforming implementation MUST reject any `use_declaration` whose name contains characters outside `[A-Za-z0-9_]`, does not start with `[A-Za-z_]`, or is empty — including names containing whitespace, hyphens (`-`), or dots (`.`). The diagnostic MUST identify the offending name and source line. The restriction follows from the `use` binding (§{mods.use}): the name is bound at load time as a Lua local under the same spelling, and any non-identifier spelling would yield malformed generated Lua. Hyphens are rejected outright (rather than rewritten to underscores) to eliminate silent collisions between names like `foo-bar` and `foo_bar`. The same constraint and the same diagnostic apply to a `use_alias`, which is bound identically.
+
+**`use_path` constraint (normative; CS-0206).** A `use_path` MUST be a `tree_path`: relative, forward-only, containing no `..` segment, and not beginning with `/`. The `sigil_path` alternative that `import_path` admits is NOT admitted here, and a conforming implementation MUST reject a `use_path` beginning with `//`. A `use_path` MUST end in `.lua`, and MUST contain no whitespace — `path_segment` admits none, and the quoted form does not widen it. The production ends at `NEWLINE`: a conforming implementation MUST reject trailing text after a `use_declaration`'s arguments, including a `#` comment. Each rejection's diagnostic MUST identify the offending text and source line.
+
+`use` is therefore strictly more confined than `import`, which is the opposite of the two declarations' usual relationship and is deliberate. §{mods.use-scope} states the rule and §{rationale.use-path-containment} states why: the boundary is not a stylistic preference but the boundary a portable cache key can reconstruct (§{exec.cache.module-source}).
 
 **Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe` or `chore`. A conforming implementation MUST reject a Cookfile that places any of these after a `recipe` or `chore`.
 
@@ -356,7 +366,7 @@ The `ACCESSOR` production is defined above. The `recipe_member` alternative (CS-
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
-**`LUA_IDENT` vs `BARE_IDENTIFIER` (CS-0035).** A `LUA_IDENT` is the strict Lua identifier shape `/[A-Za-z_][A-Za-z0-9_]*/` — narrower than `BARE_IDENTIFIER`, which additionally admits internal dots and hyphens. The `LUA_IDENT` production is used wherever the matched text is bound as a Lua local at load time and therefore needs to round-trip through the Lua identifier grammar; the `use_declaration`'s `use_name` (§{grammar-appendix.declarations}) is currently the sole site.
+**`LUA_IDENT` vs `BARE_IDENTIFIER` (CS-0035).** A `LUA_IDENT` is the strict Lua identifier shape `/[A-Za-z_][A-Za-z0-9_]*/` — narrower than `BARE_IDENTIFIER`, which additionally admits internal dots and hyphens. The `LUA_IDENT` production is used wherever the matched text is bound as a Lua local at load time and therefore needs to round-trip through the Lua identifier grammar. Its sites are the `use_declaration`'s `use_name` and its `use_alias` (§{grammar-appendix.declarations}) — the two spellings of the same thing, a name the generated Lua declares as a local.
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 

@@ -1,4 +1,4 @@
-use checks
+use ./lua/checks.lua
 
 # `remark-cook-highlight` loads the wasm parser to highlight Cook fences, and
 # the vitest suite exercises it. `ts.wasm` is what produces that artifact, into

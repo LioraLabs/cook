@@ -82,6 +82,26 @@ fn production_source_has_no_stateful_standard_library_access() {
                         ));
                     }
                 }
+                for forbidden in [
+                    ".canonicalize()",
+                    ".exists()",
+                    ".is_dir()",
+                    ".is_file()",
+                    ".metadata()",
+                    ".read_dir()",
+                    ".symlink_metadata()",
+                    ".try_exists()",
+                ] {
+                    if compact.contains(forbidden) {
+                        violations.push(format!(
+                            "{}:{} reaches the filesystem via `{forbidden}` — this crate's \
+                             admission bar is purity; canonicalise or stat in the shell \
+                             and pass the result in",
+                            path.display(),
+                            index + 1
+                        ));
+                    }
+                }
             }
             for forbidden in ["fs", "env", "process"] {
                 if grouped_std_use_contains(&source, forbidden) {

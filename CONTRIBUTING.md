@@ -40,6 +40,9 @@ The hook's goal is to make language impact visible at commit time. If you're mak
 - `cli/crates/cook-lang/**` — the lexer, parser, and AST
 - `cli/crates/cook-luagen/**` — codegen that materializes language constructs
 - `cli/crates/cook-register/**` — Cook Lua API registration
+- `cli/crates/cook-contracts/src/module_binding/**` — what a `use` declaration binds and which door it binds through: App. A.2's `.lua` discriminator, §12.1's alias derivation, §12.7.8's module identity
+- `cli/crates/cook-contracts/src/layout/**` — module resolution law: the candidate order and §12.2.1's `use`-path containment rule
+- `cli/crates/cook-lua-stdlib/**` — the `cook.load_module` door, where §12.2.1 is enforced against paths a body computed rather than a parser saw
 - `tree-sitter-cook/grammar.js` — tree-sitter grammar (claims Cook Standard v0.14)
 - `tree-sitter-cook/src/scanner.c` — the hand-written external scanner
 
@@ -48,6 +51,8 @@ The rest of `tree-sitter-cook/src/**` (`parser.c`, `node-types.json`, `grammar.j
 Markdown files under these paths (crate READMEs, `CONFORMANCE.md`) are documentation, not language surface; the hook exempts `*.md`.
 
 If you add a new crate that contributes to language surface, update both this list and the hook.
+
+The three `cook-contracts` / `cook-lua-stdlib` entries were added by CS-0206 after review found the gap: CS-0205 and CS-0206 had moved normative rules into crates the hook did not watch, so a commit could have changed App. A.2's discriminator with no `standard/` movement and the hook would have stayed silent. Only the two `cook-contracts` subdirectories that hold language law are watched, not the whole crate — it also holds cache and process contracts, which are not.
 
 ### Conformance
 
@@ -60,7 +65,7 @@ The Rust parser claims a Cook Standard version via the `pub const COOK_STANDARD_
 
 **Default harness mode.** `cargo test -p cook-lang --test conformance` walks `standard/conformance/` as it exists in the working tree. Every case must pass. When the parser falls behind a spec change, this gate goes red — that's the visible signal to catch up. There is no separate ledger of "pending CSes"; the failing harness is the ledger.
 
-**Backwards-conformance mode.** `cook --set VERSION=X.Y standard.against-tag` materializes the corpus from the `cs-standard/<vX.Y>` git tag and runs the harness against that corpus. The recipe routes through `standard/cook_modules/checks.lua` (`checks.against_tag`). Use this to verify the parser still satisfies a previously-cut version during a brief catch-up window, or to bisect when a regression appeared.
+**Backwards-conformance mode.** `cook --set VERSION=X.Y standard.against-tag` materializes the corpus from the `cs-standard/<vX.Y>` git tag and runs the harness against that corpus. The recipe routes through `standard/lua/checks.lua` (`checks.against_tag`). Use this to verify the parser still satisfies a previously-cut version during a brief catch-up window, or to bisect when a regression appeared.
 
 **Bumping the claim.** When the parser catches up to a new cut, bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to match `standard/VERSION` in the same commit. Update the claim in `cli/crates/cook-lang/README.md` and `cli/crates/cook-lang/CONFORMANCE.md`'s "Pending CSes" section (the project root `README.md` is a product page and carries no version claim). The conformance harness should be green at that commit.
 
@@ -108,7 +113,7 @@ These are not enforced by any automated check pre-1.0; they are a project discip
 cook standard.lint
 ````
 
-The lint routes through `standard/cook_modules/checks.lua` (`checks.lint_keywords`) and flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).
+The lint routes through `standard/lua/checks.lua` (`checks.lint_keywords`) and flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).
 
 ## Rust test layout
 

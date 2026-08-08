@@ -1,0 +1,4 @@
+use ./lua/greet.lua
+
+recipe "say-hello"
+    test >{ greet.say("world") }

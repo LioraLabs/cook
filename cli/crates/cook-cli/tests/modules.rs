@@ -66,9 +66,9 @@ fn online_install_cook_smoke_from_fixture_project() {
         String::from_utf8_lossy(&install.stderr),
     );
 
-    let installed = dir
-        .path()
-        .join("cook_modules/share/lua/5.4/cook_smoke.lua");
+    let installed = cook_contracts::layout::modules_dir(dir.path())
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+        .join("cook_smoke.lua");
     assert!(
         installed.exists(),
         "cook_smoke.lua missing at {}",

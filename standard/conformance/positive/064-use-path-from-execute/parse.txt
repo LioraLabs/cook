@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement path="lua/greet.lua" alias="greet" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="say-hello" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=LuaBlock("greet.say(\"world\")")
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

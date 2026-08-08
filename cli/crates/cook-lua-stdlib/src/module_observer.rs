@@ -14,11 +14,13 @@
 //! # Why paths, not a directory
 //!
 //! The sink holds the RESOLVED PATH of each load. Keying on "the
-//! `cook_modules/` directory" would have been cheaper and is wrong twice
+//! module search directory" would have been cheaper and is wrong twice
 //! over: it makes every unit in the project depend on every module in it
-//! (one edit busts everything), and it hard-codes a layout that is already
-//! moving (COOK-431 relocates rocks to `.cookmodules/`). A rule written over
-//! resolved paths survives that move untouched.
+//! (one edit busts everything), and it hard-codes a layout that was already
+//! moving. CS-0207 then moved it — installed rocks went from `cook_modules/`
+//! to `.cook/modules/`, and CS-0206 added a second kind of module that is in
+//! no search directory at all — and this rule needed no amendment for either.
+//! That is the argument, demonstrated rather than asserted.
 //!
 //! # Two doors, one sink
 //!

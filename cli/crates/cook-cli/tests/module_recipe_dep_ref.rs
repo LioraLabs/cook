@@ -56,6 +56,19 @@ recipe consume
     }
 "#;
 
+/// Where `use toolmod` resolves a NAME from: the installed-module tree
+/// (CS-0207). Through `cook_contracts::layout` so a future move of the tree
+/// root does not have to touch this test.
+fn installed_module_rel(name: &str) -> String {
+    format!(
+        "{}/{}/{name}.lua",
+        cook_contracts::layout::DOT_COOK_DIR,
+        std::path::Path::new(cook_contracts::layout::MODULES_SUBDIR)
+            .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+            .display(),
+    )
+}
+
 fn write(dir: &std::path::Path, rel: &str, body: &str) {
     let p = dir.join(rel);
     if let Some(parent) = p.parent() {
@@ -67,7 +80,7 @@ fn write(dir: &std::path::Path, rel: &str, body: &str) {
 #[test]
 fn native_recipe_resolves_module_registered_recipe_via_dep_ref() {
     let tmp = TempDir::new().expect("tempdir");
-    write(tmp.path(), "cook_modules/toolmod.lua", TOOLMOD_LUA);
+    write(tmp.path(), &installed_module_rel("toolmod"), TOOLMOD_LUA);
     write(tmp.path(), "Cookfile", COOKFILE);
 
     let out = Command::new(cook_bin())

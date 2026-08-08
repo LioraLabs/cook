@@ -49,7 +49,7 @@ unchanged = ["build/out.txt"]
 #    never names cook.load_module.
 [[run]]
 args = ["build"]
-write = { "cook_modules/greet.lua" = "local m = {}\n\nfunction m.value()\n  return \"UPDATED\"\nend\n\nreturn m\n" }
+write = { ".cook/modules/share/lua/5.4/greet.lua" ="local m = {}\n\nfunction m.value()\n  return \"UPDATED\"\nend\n\nreturn m\n" }
 [run.assert]
 output_not_contains = ["1 cached"]
 changed = ["build/out.txt"]

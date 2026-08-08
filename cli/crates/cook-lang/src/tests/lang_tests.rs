@@ -28,7 +28,7 @@ fn test_bare_dotted_dep() {
 fn test_bare_use_statement() {
     let source = "use cpp\n\nrecipe build\n    cook.log(\"hi\")\n";
     let cookfile = parse(source).unwrap();
-    assert_eq!(cookfile.uses[0].module_name, "cpp");
+    assert_eq!(cookfile.uses[0].target, "cpp");
 }
 
 #[test]
@@ -602,7 +602,7 @@ fn test_parse_use_statement() {
     let source = "use \"cpp\"\n\nrecipe \"build\"\n    cook.log(\"hi\")\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
-    assert_eq!(cookfile.uses[0].module_name, "cpp");
+    assert_eq!(cookfile.uses[0].target, "cpp");
     assert_eq!(cookfile.uses[0].line, 1);
     assert_eq!(cookfile.recipes.len(), 1);
 }
@@ -612,8 +612,8 @@ fn test_parse_multiple_use_statements() {
     let source = "use \"cpp\"\nuse \"proto\"\n\nrecipe \"build\"\n    cook.log(\"hi\")\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 2);
-    assert_eq!(cookfile.uses[0].module_name, "cpp");
-    assert_eq!(cookfile.uses[1].module_name, "proto");
+    assert_eq!(cookfile.uses[0].target, "cpp");
+    assert_eq!(cookfile.uses[1].target, "proto");
 }
 
 #[test]

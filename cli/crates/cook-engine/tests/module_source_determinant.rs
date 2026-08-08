@@ -52,13 +52,14 @@ fn isolate_store(wd: &Path, store: &Path) {
     .unwrap();
 }
 
+/// `helper` is loaded BY NAME, so it is installed where a rock installs it.
+/// Through `cook_contracts::layout` so the next move of the tree root does not
+/// have to touch this test (CS-0207).
 fn write_helper(wd: &Path, value: &str) {
-    fs::create_dir_all(wd.join("cook_modules")).unwrap();
-    fs::write(
-        wd.join("cook_modules/helper.lua"),
-        HELPER.replace("%V%", value),
-    )
-    .unwrap();
+    let share = cook_contracts::layout::modules_dir(wd)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
+    fs::create_dir_all(&share).unwrap();
+    fs::write(share.join("helper.lua"), HELPER.replace("%V%", value)).unwrap();
 }
 
 fn run(wd: &Path, recipe: &str) -> Output {

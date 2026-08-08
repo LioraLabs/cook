@@ -744,7 +744,15 @@ fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
     result
 }
 
-/// CS-0069: a module installed under `cook_modules/share/lua/5.4/<name>/init.lua`
+/// Where an installed rock's pure-Lua files land, so `cook.load_module(name)`
+/// resolves BY NAME. Through `cook_contracts::layout` so the next move of the
+/// tree root does not have to touch this suite (CS-0207).
+fn installed_share(dir: &std::path::Path) -> std::path::PathBuf {
+    cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+}
+
+/// CS-0069: a module installed under `.cook/modules/share/lua/5.4/<name>/init.lua`
 /// (the canonical LuaRocks share-tree layout for multi-file rocks) MUST
 /// be resolvable by execute-phase `cook.load_module`, not just by the
 /// register phase. Pre-CS-0069 this raised "module not found" because
@@ -752,8 +760,7 @@ fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
 #[test]
 fn cook_load_module_resolves_share_lua_5_4_init() {
     let dir = TempDir::new().unwrap();
-    let share_pkg = dir.path()
-        .join("cook_modules/share/lua/5.4/share_only_pkg");
+    let share_pkg = installed_share(dir.path()).join("share_only_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share path");
     fs::write(
         share_pkg.join("init.lua"),
@@ -772,12 +779,12 @@ fn cook_load_module_resolves_share_lua_5_4_init() {
     );
 }
 
-/// CS-0069: a flat module file at `cook_modules/share/lua/5.4/<name>.lua`
+/// CS-0069: a flat module file at `.cook/modules/share/lua/5.4/<name>.lua`
 /// (single-file rocks) MUST also be resolvable from the execute phase.
 #[test]
 fn cook_load_module_resolves_share_lua_5_4_flat() {
     let dir = TempDir::new().unwrap();
-    let share_dir = dir.path().join("cook_modules/share/lua/5.4");
+    let share_dir = installed_share(dir.path());
     fs::create_dir_all(&share_dir).expect("mkdir share path");
     fs::write(
         share_dir.join("share_flat_pkg.lua"),
@@ -796,21 +803,32 @@ fn cook_load_module_resolves_share_lua_5_4_flat() {
     );
 }
 
-/// CS-0069: when a module exists at both the top-level and share-tree
-/// paths, the top-level (hand-vendored) copy MUST win. Mirrors the
-/// priority test in cook-register/src/module_loader.rs.
+/// CS-0207 withdrew the hand-vendored top level, which CS-0069 had ranked
+/// FIRST. This test used to assert it won; inverted rather than deleted, and
+/// kept in step with the register phase's mirror
+/// (`test_retired_top_level_candidates_are_not_resolved`) — a candidate the
+/// two phases disagree about is the "works in the Cookfile, missing at
+/// execute" failure the shared list exists to prevent.
 #[test]
-fn cook_load_module_top_level_wins_over_share_lua() {
+fn cook_load_module_ignores_the_retired_top_level_candidates() {
     let dir = TempDir::new().unwrap();
-    let modules_dir = dir.path().join("cook_modules");
-    let share_dir = modules_dir.join("share/lua/5.4");
+    let tree_root = cook_contracts::layout::modules_dir(dir.path());
+    let share_dir = installed_share(dir.path());
     fs::create_dir_all(&share_dir).expect("mkdir share path");
-    // Top-level (should win): flat <name>.lua under cook_modules/.
+    let legacy_root = cook_contracts::layout::legacy_modules_dir(dir.path());
+    fs::create_dir_all(&legacy_root).expect("mkdir legacy root");
+
+    // Decoy 1: the top level of the CURRENT tree root, no longer a candidate.
     fs::write(
-        modules_dir.join("dup_pkg.lua"),
-        "return { from = 'top-level' }",
-    ).expect("write top-level module");
-    // Share-tree (should lose): init.lua under share/lua/5.4/<name>/.
+        tree_root.join("dup_pkg.lua"),
+        "return { from = 'tree-top' }",
+    ).expect("write tree-top decoy");
+    // Decoy 2: the pre-CS-0207 root, which is never searched at all.
+    fs::write(
+        legacy_root.join("dup_pkg.lua"),
+        "return { from = 'legacy' }",
+    ).expect("write legacy decoy");
+    // The only candidate: init.lua under share/lua/5.4/<name>/.
     let share_pkg = share_dir.join("dup_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share pkg");
     fs::write(
@@ -820,12 +838,12 @@ fn cook_load_module_top_level_wins_over_share_lua() {
 
     let code = r#"
             local m = cook.load_module("dup_pkg")
-            assert(m.from == "top-level", "expected from=top-level, got "..tostring(m.from))
+            assert(m.from == "share", "expected from=share, got "..tostring(m.from))
         "#;
     let result = run_lua_chunk_in_worker_at(dir.path(), code);
     assert!(
         result.success,
-        "cook.load_module must prefer top-level over share-tree; got error: {:?}",
+        "the retired top-level candidates must be invisible; got error: {:?}",
         result.error
     );
 }

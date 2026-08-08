@@ -1,4 +1,4 @@
-use cook_edit
+use ./lua/cook_edit.lua
 
 recipe app
     cook_edit.bin({

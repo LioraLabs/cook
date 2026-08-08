@@ -88,7 +88,7 @@ pub fn write(path: &Path, lock: &Lockfile) -> Result<()> {
 }
 
 /// Verify the on-disk source rock matches the integrity in the lockfile.
-/// `cache_dir` is `cook_modules/lib/luarocks/cache/` — the directory luarocks
+/// `cache_dir` is `<modules_dir>/lib/luarocks/cache/` — the directory luarocks
 /// caches downloaded source rocks into.
 pub fn verify_integrity(locked: &LockedModule, cache_dir: &Path) -> Result<()> {
     if !locked.has_known_integrity() {
@@ -118,13 +118,19 @@ pub fn verify_integrity(locked: &LockedModule, cache_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Walk `cook_modules/lib/luarocks/rocks-5.4/<name>/<version>/` and produce a
+/// Walk `<modules_dir>/lib/luarocks/rocks-5.4/<name>/<version>/` and produce a
 /// Lockfile pinning every rock present. `direct = true` for rocks named in the
 /// manifest, else `false`.
 ///
 /// Source URLs come from each rock's `<name>-<version>.rockspec` file (the
 /// `source.url` field). Integrity hashes come from
-/// `cook_modules/lib/luarocks/cache/<name>-<version>.src.rock`.
+/// `<modules_dir>/lib/luarocks/cache/<name>-<version>.src.rock`.
+///
+/// `modules_dir` is `cook_contracts::layout::modules_dir` — since CS-0207,
+/// `<project>/.cook/modules`. The two subpaths below are luarocks' OWN
+/// bookkeeping layout rather than Cook's, which is why they stay literals
+/// here: relocating Cook's tree root moved them with it, and nothing else
+/// in the codebase has an opinion about where luarocks keeps its manifests.
 pub fn introspect_closure(modules_dir: &Path, manifest: &ManifestModules) -> Result<Lockfile> {
     let rocks_root = modules_dir.join("lib/luarocks/rocks-5.4");
     let cache_dir = modules_dir.join("lib/luarocks/cache");

@@ -93,14 +93,14 @@ fn test_cookfile_with_uses() {
         config_blocks: vec![],
         recipes: vec![],
         chores: vec![],
-        uses: vec![UseStatement { module_name: "cpp".to_string(), line: 1 }],
+        uses: vec![UseStatement { alias: "cpp".to_string(), target: "cpp".to_string(), line: 1 }],
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
         probes: vec![],
     };
     assert_eq!(cookfile.uses.len(), 1);
-    assert_eq!(cookfile.uses[0].module_name, "cpp");
+    assert_eq!(cookfile.uses[0].target, "cpp");
 }
 
 #[test]

@@ -1,0 +1,4 @@
+use cpp # the C-family module
+
+recipe build
+    cook "out.txt" { echo unreachable > $<out> }

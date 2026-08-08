@@ -1,0 +1,4 @@
+use cpp proto
+
+recipe build
+    cook "out.txt" { echo unreachable > $<out> }

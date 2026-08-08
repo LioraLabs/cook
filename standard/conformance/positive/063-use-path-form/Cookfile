@@ -1,0 +1,10 @@
+use ./lua/helpers.lua
+use "./lua/quoted.lua"
+use fmt ./tools/lua/formatting.lua
+use ./lua/my-helpers.lua
+
+recipe check
+    helpers.plan()
+    quoted.plan()
+    fmt.plan()
+    my_helpers.plan()

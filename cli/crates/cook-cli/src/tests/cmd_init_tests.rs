@@ -6,8 +6,16 @@ fn merge_creates_section_when_no_gitignore() {
     match merged {
         GitignoreMerge::Created(content) => {
             assert!(content.contains(COOK_GITIGNORE_MARKER));
-            assert!(content.contains("cook_modules/lib/"));
+            // CS-0207: `.cook/**` is the WHOLE rule. The block used to carry
+            // `cook_modules/lib/` beside it, which covered the native-extension
+            // subtree and left `cook_modules/share/lua/5.4/` — where every
+            // pure-Lua rock lands — untracked and un-ignored in the user's
+            // repo, looking exactly like code they wrote.
             assert!(content.contains(".cook/**"));
+            assert!(
+                !content.contains("cook_modules"),
+                "the managed block must not name the retired package directory"
+            );
             assert!(content.ends_with('\n'));
             // Guard against drift: the comment must reference the
             // current subcommand name, not the renamed-and-removed
@@ -35,7 +43,7 @@ fn merge_appends_with_blank_line_separator() {
         GitignoreMerge::Appended(content) => {
             assert!(content.starts_with("target/\nnode_modules/\n\n"));
             assert!(content.contains(COOK_GITIGNORE_MARKER));
-            assert!(content.contains("cook_modules/lib/"));
+            assert!(content.contains(".cook/**"));
         }
         other => panic!("expected Appended, got {other:?}"),
     }

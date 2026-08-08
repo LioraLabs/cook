@@ -83,12 +83,46 @@
           "value": "use"
         },
         {
-          "type": "FIELD",
-          "name": "module",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_lua_ident_name"
-          }
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "module",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_lua_ident_name"
+              }
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "FIELD",
+                      "name": "alias",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_lua_ident_name"
+                      }
+                    },
+                    {
+                      "type": "BLANK"
+                    }
+                  ]
+                },
+                {
+                  "type": "FIELD",
+                  "name": "path",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_use_path"
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -1732,6 +1766,37 @@
     "_lua_ident_string": {
       "type": "PATTERN",
       "value": "\"[A-Za-z_][A-Za-z0-9_]*\""
+    },
+    "_use_path": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_use_path_bare"
+          },
+          "named": true,
+          "value": "path"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_use_path_string"
+          },
+          "named": true,
+          "value": "string"
+        }
+      ]
+    },
+    "_use_path_bare": {
+      "type": "PATTERN",
+      "value": "(?:(?:[^\\s/\"]|[^.\\s/\"][^\\s/\"]+|\\.[^.\\s/\"][^\\s/\"]*|\\.\\.[^\\s/\"]+)\\/+)*[^\\s/\"]*\\.lua"
+    },
+    "_use_path_string": {
+      "type": "PATTERN",
+      "value": "\"(?:(?:[^\\s/\"]|[^.\\s/\"][^\\s/\"]+|\\.[^.\\s/\"][^\\s/\"]*|\\.\\.[^\\s/\"]+)\\/+)*[^\\s/\"]*\\.lua\""
     },
     "placeholder": {
       "type": "SEQ",

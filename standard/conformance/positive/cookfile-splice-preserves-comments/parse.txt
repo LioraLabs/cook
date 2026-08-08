@@ -1,5 +1,5 @@
 Cookfile
-  uses: [UseStatement module_name="cook_edit" line=1]
+  uses: [UseStatement path="lua/cook_edit.lua" alias="cook_edit" line=1]
   imports: []
   config_blocks: []
   recipes:

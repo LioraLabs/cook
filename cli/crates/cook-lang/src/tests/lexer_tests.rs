@@ -305,7 +305,7 @@ fn test_config_header_not_keyword_prefix() {
 fn test_use_decl() {
     let tokens = tokenize(r#"use "cpp""#).unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn test_use_prefix_is_content() {
 fn test_use_bare_name() {
     let tokens = tokenize("use cpp").unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn test_use_name_underscore_accepted() {
     let tokens = tokenize("use my_module").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { name: "my_module".to_string() }
+        Token::UseDecl { alias: "my_module".to_string(), target: "my_module".to_string() }
     );
 }
 
@@ -380,7 +380,7 @@ fn test_use_name_leading_underscore_accepted() {
     let tokens = tokenize("use _private").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { name: "_private".to_string() }
+        Token::UseDecl { alias: "_private".to_string(), target: "_private".to_string() }
     );
 }
 
@@ -818,4 +818,152 @@ fn probe_dep_list_accepts_multi_segment_keys() {
     assert_eq!(t[0].value, Token::ProbeHeader {
         name: "good".into(), deps: vec!["a:b:c".into()],
     });
+}
+
+// ---------------------------------------------------------------------------
+// CS-0206: the `use` path form, at the lexer seam
+// ---------------------------------------------------------------------------
+//
+// The corpus (fixtures 063-070) covers these end to end, but a corpus case is
+// a coarse gate: it reports "this Cookfile was rejected" and the substring it
+// was rejected with. These pin the token and the error VARIANT, which is where
+// a wrong-but-plausible refactor shows up first.
+
+fn use_token(src: &str) -> (String, String) {
+    let tokens = tokenize(src).expect("must lex");
+    match &tokens[0].value {
+        Token::UseDecl { alias, target } => (alias.clone(), target.clone()),
+        other => panic!("expected UseDecl, got {other:?}"),
+    }
+}
+
+fn use_error(src: &str) -> LexError {
+    tokenize(src).expect_err("must not lex")
+}
+
+#[test]
+fn a_bare_path_binds_its_basename_and_normalises_the_target() {
+    assert_eq!(
+        use_token("use ./lua/helpers.lua\n"),
+        ("helpers".to_string(), "lua/helpers.lua".to_string())
+    );
+}
+
+#[test]
+fn a_quoted_path_is_equivalent_to_the_bare_one() {
+    assert_eq!(
+        use_token("use \"./lua/helpers.lua\"\n"),
+        use_token("use ./lua/helpers.lua\n")
+    );
+}
+
+#[test]
+fn an_explicit_alias_wins_over_the_basename() {
+    assert_eq!(
+        use_token("use fmt ./lua/code-formatting.lua\n"),
+        ("fmt".to_string(), "lua/code-formatting.lua".to_string())
+    );
+    // Quoted on both sides.
+    assert_eq!(
+        use_token("use \"fmt\" \"./lua/code-formatting.lua\"\n"),
+        ("fmt".to_string(), "lua/code-formatting.lua".to_string())
+    );
+}
+
+#[test]
+fn a_hyphenated_basename_derives_an_underscore_alias() {
+    // COOK-436: §12.1's rewrite reaching its first live input.
+    assert_eq!(
+        use_token("use ./lua/my-helpers.lua\n"),
+        ("my_helpers".to_string(), "lua/my-helpers.lua".to_string())
+    );
+}
+
+#[test]
+fn the_name_form_is_unchanged() {
+    assert_eq!(
+        use_token("use cpp\n"),
+        ("cpp".to_string(), "cpp".to_string())
+    );
+    assert_eq!(
+        use_token("use \"proto\"\n"),
+        ("proto".to_string(), "proto".to_string())
+    );
+}
+
+#[test]
+fn containment_violations_are_refused_with_their_own_reasons() {
+    for (src, needle) in [
+        ("use ../shared/helpers.lua\n", "'..' segments are not permitted"),
+        ("use /opt/cook/helpers.lua\n", "absolute paths are not permitted"),
+        // The sigil must report as a sigil, not as the absolute path it also
+        // is: the remedy is different.
+        ("use //lua/helpers.lua\n", "'//' workspace-root sigil"),
+        ("use \"./my helpers.lua\"\n", "whitespace is not permitted"),
+    ] {
+        let err = use_error(src).to_string();
+        assert!(err.contains(needle), "{src:?} -> {err}");
+        assert!(matches!(
+            use_error(src),
+            LexError::InvalidUsePath { .. }
+        ));
+    }
+}
+
+#[test]
+fn a_derived_alias_that_is_not_an_identifier_names_the_explicit_form() {
+    let err = use_error("use ./lua/9lives.lua\n");
+    assert!(matches!(err, LexError::UnusableDerivedAlias { .. }));
+    let msg = err.to_string();
+    // The author never typed `9lives`; the basename of the file they named
+    // did. The remedy has to be the explicit form.
+    assert!(msg.contains("'9lives'"), "{msg}");
+    assert!(msg.contains("use <alias> ./lua/9lives.lua"), "{msg}");
+}
+
+#[test]
+fn the_two_argument_form_rejects_a_second_argument_that_is_not_a_path() {
+    // Both halves of the two-argument shape, each with its own variant.
+    assert!(matches!(
+        use_error("use cpp proto\n"),
+        LexError::UseNameWithExtraArgument { .. }
+    ));
+    assert!(matches!(
+        use_error("use ./lua/a.lua trailing\n"),
+        LexError::UseSecondArgumentNotAPath { .. }
+    ));
+}
+
+#[test]
+fn more_than_two_arguments_is_refused() {
+    assert!(matches!(
+        use_error("use a b ./lua/c.lua\n"),
+        LexError::UseTooManyArguments { .. }
+    ));
+}
+
+#[test]
+fn an_alias_that_is_not_an_identifier_is_reported_as_an_alias() {
+    // `a.lua` sits in the ALIAS position here. Calling it a "name" would point
+    // the author at the wrong argument.
+    let err = use_error("use a.lua b.lua\n");
+    match &err {
+        LexError::InvalidUseName { position, .. } => {
+            assert_eq!(*position, UseNamePosition::Alias)
+        }
+        other => panic!("expected InvalidUseName, got {other:?}"),
+    }
+    assert!(err.to_string().contains("'use' alias 'a.lua'"), "{err}");
+}
+
+#[test]
+fn a_trailing_comment_is_refused_by_name_not_as_an_extra_argument() {
+    // CS-0206 TIGHTENED this: before it, the lexer parsed the first token and
+    // threw the rest of the line away, so `use cpp # note` silently worked —
+    // while `tree-sitter-cook` had always rejected it. The two readers now
+    // agree, and the diagnostic says what is actually wrong rather than
+    // counting `#` as an argument.
+    let err = use_error("use cpp # the C module\n");
+    assert!(matches!(err, LexError::UseTrailingComment { .. }));
+    assert!(err.to_string().contains("takes no trailing comment"), "{err}");
 }

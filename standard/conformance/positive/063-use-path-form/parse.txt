@@ -1,0 +1,17 @@
+Cookfile
+  uses: [UseStatement path="lua/helpers.lua" alias="helpers" line=1, UseStatement path="lua/quoted.lua" alias="quoted" line=2, UseStatement path="tools/lua/formatting.lua" alias="fmt" line=3, UseStatement path="lua/my-helpers.lua" alias="my_helpers" line=4]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="check" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="helpers.plan()"
+        InlineLua code="quoted.plan()"
+        InlineLua code="fmt.plan()"
+        InlineLua code="my_helpers.plan()"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

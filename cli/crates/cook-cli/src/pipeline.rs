@@ -1625,15 +1625,15 @@ const COOK_GITIGNORE_MARKER: &str = "# Cook artifacts (added by cook init)";
 /// are the user's call.
 const COOK_GITIGNORE_SECTION: &str = "\
 # Cook artifacts (added by cook init)
-# .cook/ holds caches and per-project state; cloud.toml is the one tracked
+# .cook/ holds caches, per-project state, and the luarocks tree that
+# `cook modules install` populates (.cook/modules/). cloud.toml is the one
+# tracked file. Everything cook generates is under here, so one rule covers it.
+# Your own Lua is not: a module you wrote lives wherever you put it in the
+# repo and is reached by path (`use ./lua/helpers.lua`).
 .cook/**
 **/.cook/**
 !**/.cook/
 !**/.cook/cloud.toml
-# Project-local luarocks tree populated by `cook modules install`. Pinned by
-# cook.lock + the registry, so it's build output, not source. Top-level
-# user-authored lua files in cook_modules/ stay tracked.
-cook_modules/lib/
 ";
 
 #[derive(Debug, PartialEq, Eq)]

@@ -36,12 +36,12 @@ pub struct ModulesArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ModulesCmd {
-    /// Realise cook.toml + cook.lock into ./cook_modules. With names, add and install them.
+    /// Realise cook.toml + cook.lock into ./.cook/modules. With names, add and install them.
     Install {
         /// Optional rock names. With no args, installs the locked closure.
         names: Vec<String>,
     },
-    /// Drop modules from cook.toml and prune cook_modules.
+    /// Drop modules from cook.toml and prune .cook/modules.
     Remove {
         names: Vec<String>,
     },
@@ -129,10 +129,9 @@ fn install_locked_closure(
             driver.install(name, constraint)?;
         }
         let lock = lockfile::introspect_closure(
-            &lockfile_path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join(cook_contracts::layout::COOK_MODULES_DIR),
+            &cook_contracts::layout::modules_dir(
+                lockfile_path.parent().unwrap_or(std::path::Path::new(".")),
+            ),
             manifest,
         )?;
         lockfile::write(lockfile_path, &lock)?;
@@ -161,10 +160,9 @@ fn install_named(
     }
     write_manifest_modules(cook_toml, &updated)?;
     let lock = lockfile::introspect_closure(
-        &cook_toml
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(cook_contracts::layout::COOK_MODULES_DIR),
+        &cook_contracts::layout::modules_dir(
+            cook_toml.parent().unwrap_or(std::path::Path::new(".")),
+        ),
         &updated,
     )?;
     lockfile::write(lockfile_path, &lock)?;
@@ -185,10 +183,9 @@ fn remove_named(
     }
     write_manifest_modules(cook_toml, &updated)?;
     let lock = lockfile::introspect_closure(
-        &cook_toml
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(cook_contracts::layout::COOK_MODULES_DIR),
+        &cook_contracts::layout::modules_dir(
+            cook_toml.parent().unwrap_or(std::path::Path::new(".")),
+        ),
         &updated,
     )?;
     lockfile::write(lockfile_path, &lock)?;
@@ -210,10 +207,9 @@ fn update_one_or_all(
         driver.install(n, &constraint)?;
     }
     let lock = lockfile::introspect_closure(
-        &lockfile_path
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(cook_contracts::layout::COOK_MODULES_DIR),
+        &cook_contracts::layout::modules_dir(
+            lockfile_path.parent().unwrap_or(std::path::Path::new(".")),
+        ),
         manifest,
     )?;
     lockfile::write(lockfile_path, &lock)?;

@@ -264,15 +264,35 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                     message: "unexpected content outside of a recipe".to_string(),
                 });
             }
-            Token::UseDecl { name } => {
+            Token::UseDecl { alias, target } => {
                 if seen_recipe {
                     return Err(ParseError::Parse {
                         line: tok.line,
                         message: "use statements must appear before recipes and chores".to_string(),
                     });
                 }
+                // §12.1 (CS-0206): one identifier, one target. Two declarations
+                // naming the SAME target are not a conflict — §12.3.2 already
+                // makes the second a memo hit — but two that bind one alias to
+                // two different things are the last-wins hazard C.11.1 refuses
+                // for `import`, and it is cheapest to see at the line that
+                // wrote it. Reachable in the name form too (`use a` twice is
+                // fine; `use helpers` beside `use helpers ./x.lua` is not).
+                if let Some(prior) = uses.iter().find(|u: &&ast::UseStatement| u.alias == *alias) {
+                    if prior.target != *target {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: format!(
+                                "'use' binds '{}' to '{}' here, but line {} already bound it to '{}'; \
+                                 give one of them an explicit alias",
+                                alias, target, prior.line, prior.target
+                            ),
+                        });
+                    }
+                }
                 uses.push(ast::UseStatement {
-                    module_name: name.clone(),
+                    alias: alias.clone(),
+                    target: target.clone(),
                     line: tok.line,
                 });
                 pos += 1;

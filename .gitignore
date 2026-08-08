@@ -19,21 +19,37 @@ target/
 node_modules/
 dist/
 
-# Cook artifacts: ignore everything inside .cook/ EXCEPT the checked-in
-# cloud config (.cook/cloud.toml carries project_id and cache.ignore_env
-# per spec §9 and is meant to be tracked).
+# Cook artifacts: everything cook generates lives under .cook/ — caches,
+# per-project state, and since CS-0207 the luarocks tree `cook modules
+# install` populates (.cook/modules/). Ignore all of it EXCEPT the checked-in
+# cloud config (.cook/cloud.toml carries project_id and cache.ignore_env per
+# spec §9 and is meant to be tracked).
+#
+# There used to be a second, contradictory pair of rules for `cook_modules/`
+# — `**/cook_modules/**` here and a root-anchored `cook_modules/lib/` further
+# down — because that one directory held BOTH the install tree and the only
+# legal home for a hand-authored module, and no single rule can be right for
+# a directory that holds source and build output at once. The broad rule
+# silently swallowed COOK-412's fixture modules, the suite passed locally off
+# the working tree, and v0.13.0 was tagged against a tree CI rejected
+# (COOK-430). CS-0206/CS-0207 split the two: generated goes under .cook/,
+# hand-authored is ordinary tracked source addressed by path.
 .cook/**
 **/.cook/**
-**/cook_modules/**
 !**/.cook/
 !**/.cook/cloud.toml
-# Hand-authored fixture modules are source, not an installed tree. Without
-# this, a new surface fixture's cook_modules/*.lua is silently never added,
-# the suite passes locally off the working tree, and CI fails on the tracked
-# tree with the module missing (COOK-412's fixture 37 shipped that way).
-# Installed trees under cook_modules/share/... stay ignored.
-!cli/e2e-fixtures/**/cook_modules/
-!cli/e2e-fixtures/**/cook_modules/*.lua
+# ...with one deliberate exception. Four fixtures check in an INSTALLED module
+# tree — the shape `cook modules install` produces — because the installed
+# shape is exactly what they pin (name-form resolution, the share/lua/5.4
+# candidate, a vendored cook_cc). It is generated content committed as a
+# fixture, like a golden file. The negation is narrowed to `modules/` so a
+# test run's own .cook/cache/ inside a fixture directory stays ignored.
+!standard/conformance/**/.cook/
+!standard/conformance/**/.cook/modules/
+!standard/conformance/**/.cook/modules/**
+!cli/e2e-fixtures/**/.cook/
+!cli/e2e-fixtures/**/.cook/modules/
+!cli/e2e-fixtures/**/.cook/modules/**
 build/
 bin/
 # Vendored luarocks ships its own src/bin/ and src/luarocks/build/ trees
@@ -65,11 +81,6 @@ docs/superpowers/
 
 # luarocks pack outputs (Phase 3 cook_smoke fixture and future rocks)
 rocks/*/*-*.src.rock
-
-# Project-local luarocks tree populated by `cook modules add`. Pinned by
-# cook.lock + the registry, so this is build output, not source. Top-level
-# user-authored lua files in cook_modules/ stay tracked.
-cook_modules/lib/
 
 # cmake-compat finder (cook_cc §9.2.3.8.1) shells out to `cmake --find-package`,
 # which side-effects a CMakeFiles/ directory in the caller's cwd. Build output.

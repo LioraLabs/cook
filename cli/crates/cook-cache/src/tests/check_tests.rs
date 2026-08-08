@@ -1158,13 +1158,13 @@ fn module_content_change_rebuilds() {
     let wd = dir.path();
     std::fs::write(wd.join("in.c"), b"src").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
-    std::fs::create_dir_all(wd.join("cook_modules")).expect("mkdir");
-    std::fs::write(wd.join("cook_modules/helper.lua"), b"return 1").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
 
     // mtime 0 forces the content comparison, the same way the declared-input
     // tests do: a rewrite within the same millisecond leaves the mtime alone,
     // and the walk stops at the stat by design.
-    let mut module_record = make_file_record("cook_modules/helper.lua", wd);
+    let mut module_record = make_file_record("lua/helper.lua", wd);
     module_record.mtime = 0;
 
     let entry = StepEntry {
@@ -1178,7 +1178,7 @@ fn module_content_change_rebuilds() {
     };
 
     // Same declaration, same command, different module bytes.
-    std::fs::write(wd.join("cook_modules/helper.lua"), b"return 2").expect("rewrite");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 2").expect("rewrite");
     crate::statmemo::disarm();
 
     let (result, updated) =
@@ -1186,7 +1186,7 @@ fn module_content_change_rebuilds() {
     assert_eq!(
         result,
         RebuildResult::Rebuild(RebuildReason::ModulesChanged {
-            changed: vec!["cook_modules/helper.lua".to_string()],
+            changed: vec!["lua/helper.lua".to_string()],
         }),
     );
     assert!(updated.is_none());
@@ -1199,10 +1199,10 @@ fn module_removed_rebuilds() {
     let wd = dir.path();
     std::fs::write(wd.join("in.c"), b"src").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
-    std::fs::create_dir_all(wd.join("cook_modules")).expect("mkdir");
-    std::fs::write(wd.join("cook_modules/helper.lua"), b"return 1").expect("write");
-    let record = make_file_record("cook_modules/helper.lua", wd);
-    std::fs::remove_file(wd.join("cook_modules/helper.lua")).expect("rm");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
+    let record = make_file_record("lua/helper.lua", wd);
+    std::fs::remove_file(wd.join("lua/helper.lua")).expect("rm");
     crate::statmemo::disarm();
 
     let entry = StepEntry {
@@ -1231,8 +1231,8 @@ fn unchanged_module_still_skips() {
     let wd = dir.path();
     std::fs::write(wd.join("in.c"), b"src").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
-    std::fs::create_dir_all(wd.join("cook_modules")).expect("mkdir");
-    std::fs::write(wd.join("cook_modules/helper.lua"), b"return 1").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
 
     let entry = StepEntry {
         inputs: vec![make_file_record("in.c", wd)],
@@ -1240,7 +1240,7 @@ fn unchanged_module_still_skips() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
-        module_inputs: vec![make_file_record("cook_modules/helper.lua", wd)],
+        module_inputs: vec![make_file_record("lua/helper.lua", wd)],
         observed: None,
     };
 
@@ -1259,10 +1259,10 @@ fn touched_module_with_same_bytes_absorbs_the_mtime() {
     let wd = dir.path();
     std::fs::write(wd.join("in.c"), b"src").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
-    std::fs::create_dir_all(wd.join("cook_modules")).expect("mkdir");
-    std::fs::write(wd.join("cook_modules/helper.lua"), b"return 1").expect("write");
+    std::fs::create_dir_all(wd.join("lua")).expect("mkdir");
+    std::fs::write(wd.join("lua/helper.lua"), b"return 1").expect("write");
 
-    let mut record = make_file_record("cook_modules/helper.lua", wd);
+    let mut record = make_file_record("lua/helper.lua", wd);
     let recorded_mtime = record.mtime;
     record.mtime = recorded_mtime.saturating_sub(5_000);
 

@@ -1,0 +1,40 @@
+# §12.1 / CS-0206: the path form of `use`. These three files are ordinary
+# tracked project source sitting where they belong — none of them is in a
+# package directory, and none of them had to be copied or symlinked into one
+# to be reachable.
+use ./tools/greet.lua
+use ./tools/say-hello.lua
+use fmt ./tools/nested/formatting.lua
+
+# A probe's `produce` body is execute-phase Lua, and its fingerprint folds
+# module source (CS-0204). It must fold a path-loaded module's too.
+probe motto
+    >{ return greet.value() }
+
+recipe build
+    # The cacheable body, so it doubles as the CS-0204 proof: the ONLY route
+    # from this unit to tools/greet.lua is the `use` alias, so if the path
+    # form ever bound through anything other than cook.load_module, the module
+    # would leave the determinant set and run 7 would serve ORIGINAL forever.
+    cook "build/out.txt" >{
+        local f = io.open(outputs[1], "w")
+        f:write(greet.value())
+        f:close()
+    }
+
+recipe checks
+    test >{ print("test sees " .. greet.value()) }
+
+recipe motto_check
+    seal motto
+    test >{ print("probe produced " .. cook.probes.get("motto")) }
+
+chore say
+    > print("chore sees " .. greet.value())
+
+recipe aliases
+    # Both derivations at once: `say_hello` came from a HYPHENATED basename
+    # through §12.1's rewrite (its first reachable input — COOK-436), and
+    # `fmt` was written explicitly because the basename would have derived
+    # `formatting`.
+    test >{ print("aliases see " .. say_hello.value() .. " and " .. fmt.value()) }
