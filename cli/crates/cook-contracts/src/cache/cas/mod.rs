@@ -246,9 +246,90 @@ pub const DISCOVERED_INPUT_SETS_PATH: &str = "__cook_discovered_input_sets__";
 pub const OBSERVATION_INDEX: u32 = u32::MAX - 2;
 pub const OBSERVATION_PATH: &str = "__cook_observation__";
 
+/// CS-0204: reserved index for the multi-entry MODULE-path sets manifest,
+/// keyed under a unit's DECLARED-inputs-only cloud key.
+///
+/// Deliberately a separate artifact from the discovered-input sets above,
+/// rather than a widening of them. The two lists have different destinations
+/// on the way back: a depfile-discovered path is recorded into
+/// `StepEntry::inputs`, a module path into `StepEntry::module_inputs`, and the
+/// two are judged by different rules. Merging them into one list would save an
+/// artifact and lose the distinction the whole design rests on.
+pub const MODULE_INPUT_SETS_INDEX: u32 = u32::MAX - 3;
+/// Reserved output path for the module-path sets manifest artifact.
+pub const MODULE_INPUT_SETS_PATH: &str = "__cook_module_inputs__";
+
 /// Cap on retained discovered-path sets per declared key. Oldest sets fall
 /// off; a fallen-off set degrades to a safe re-execute, never a wrong hit.
 pub const DISCOVERED_INPUT_SETS_CAP: usize = 64;
+
+/// How many distinct extra-input path sets one manifest remembers.
+///
+/// More than one because a set is not stable: a branch inside a module, a
+/// platform-conditional `require`, or a revert can each produce a different set
+/// for the same declaration, and remembering only the newest would make a
+/// revert a permanent cold miss — the defect COOK-278 fixed for depfiles.
+/// Capped because the list is re-read and re-hashed on every cold lookup.
+pub const MODULE_SET_CAP: usize = 8;
+
+/// Merge an observed path set into a manifest: newest first, deduplicated,
+/// capped at [`MODULE_SET_CAP`].
+///
+/// Pure and total, and here rather than beside either caller, because both the
+/// step store and the probe store keep such a manifest. Two obvious three-line
+/// implementations of "newest first, deduplicated, capped" would agree until
+/// the day one of them stopped.
+pub fn merge_path_set(existing: &[Vec<String>], observed: &[String]) -> Vec<Vec<String>> {
+    let observed = observed.to_vec();
+    let mut out = Vec::with_capacity(existing.len() + 1);
+    out.push(observed.clone());
+    for set in existing {
+        if *set != observed {
+            out.push(set.clone());
+        }
+    }
+    out.truncate(MODULE_SET_CAP);
+    out
+}
+
+/// The candidate sets a reader should try, newest first: whatever the manifest
+/// recorded, always ending with the empty set.
+///
+/// The empty set is not an optimisation, it is the fallback that keeps a
+/// recorded manifest from becoming a trap. A body that loaded modules last time
+/// and loads none this time — a branch, a deleted module, a `use` removed —
+/// has its value stored under the DECLARED key, which only the empty candidate
+/// composes. Without it the manifest's own entries are the only things tried,
+/// every one of them misses, and the unit cold-misses permanently.
+///
+/// One function because two stores derive this list, and they had already
+/// diverged on it once: the probe path appended the empty set and the step path
+/// did not.
+pub fn path_set_candidates(recorded: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    let mut sets = recorded;
+    if !sets.iter().any(Vec::is_empty) {
+        sets.push(Vec::new());
+    }
+    sets
+}
+
+/// The manifest's wire form: a JSON list of path lists.
+///
+/// One encoder and one decoder for a format three stores read and two write.
+/// It is trivial, which is exactly why it wants a single home: a format spelled
+/// once per call site is a format that can be spelled differently per call
+/// site, and the failure would be a silent cold miss rather than a compile
+/// error.
+pub fn encode_path_sets(sets: &[Vec<String>]) -> Vec<u8> {
+    serde_json::to_vec(sets).unwrap_or_default()
+}
+
+/// Inverse of [`encode_path_sets`], total: unreadable or malformed bytes decode
+/// to no sets at all, which every caller reads as "nothing to reconstruct from"
+/// and turns into a safe miss.
+pub fn decode_path_sets(bytes: &[u8]) -> Vec<Vec<String>> {
+    serde_json::from_slice::<Vec<Vec<String>>>(bytes).unwrap_or_default()
+}
 
 /// Derive an output-scoped artifact key from a cache entry's cloud_key.
 ///

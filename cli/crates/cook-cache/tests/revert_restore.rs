@@ -170,6 +170,7 @@ fn revert_restores_despite_stale_caller_output_names() {
         &["build/chunk-edited.txt", "deps.d"],
         wd,
         Some(&di()),
+        false,
     )
     .expect("revert must restore via the candidate key's manifest");
 
@@ -238,6 +239,7 @@ fn revert_restores_older_discovered_set() {
         &["out.txt", "deps.d"],
         wd,
         Some(&di()),
+        false,
     )
     .expect("older discovered set must be tried after the newest one misses");
 
@@ -292,6 +294,7 @@ fn v1_single_set_manifest_still_recovers() {
         &["out.txt", "deps.d"],
         wd,
         Some(&di()),
+        false,
     )
     .expect("v1 store must keep working");
     assert_eq!(outcome.restored_outputs, vec!["out.txt".to_string(), "deps.d".to_string()]);

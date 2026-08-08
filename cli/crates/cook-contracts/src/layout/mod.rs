@@ -93,6 +93,46 @@ pub fn module_memo_key(working_dir: &Path, name: &str) -> String {
     format!("{}::{}", working_dir.display(), name)
 }
 
+/// Render observed module paths for recording (§{exec.cache.module-source},
+/// CS-0204): workspace-relative, sorted, deduplicated, and **confined to the
+/// project**.
+///
+/// # Why relative
+///
+/// A recorded module path is re-hashed later — on the next run, and on another
+/// machine that fetches the entry — by joining it onto that reader's working
+/// directory. An absolute `/home/alice/proj/cook_modules/x.lua` re-hashes to
+/// nothing on Bob's machine, so every shared entry would degrade to a cold
+/// miss.
+///
+/// # Why a path outside the project is DROPPED, not kept absolute
+///
+/// `cook.load_module` cannot resolve outside `<working_dir>/cook_modules`, but
+/// Lua's `require` searches the composed `package.path`, whose tail is the
+/// interpreter's own — a bundled rock, a system Lua tree, whatever the host
+/// happens to have. Those are not the project's source; they are the toolchain
+/// the project ran on, and §{exec.cache.single-key} is explicit that the engine
+/// infers no toolchain or machine identity of its own. An author who wants the
+/// toolchain in a key declares it as a probe and seals on it.
+///
+/// Keeping them would also be self-defeating in exactly the direction this
+/// change exists to protect: an absolute host path folded into a
+/// content-addressed key makes the entry unreconstructable anywhere else, and
+/// moves the key whenever cook itself is reinstalled elsewhere.
+pub fn relative_module_paths(working_dir: &Path, loaded: &[std::path::PathBuf]) -> Vec<String> {
+    let mut out: Vec<String> = loaded
+        .iter()
+        .filter_map(|p| {
+            p.strip_prefix(working_dir)
+                .ok()
+                .map(|rel| rel.to_string_lossy().into_owned())
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The §12.3.3 cycle diagnostic: `module cycle detected:` followed by the
 /// in-flight module names joined by ` -> `, with the re-entered name
 /// appended.

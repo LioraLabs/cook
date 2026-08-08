@@ -44,7 +44,9 @@
 //!
 //! Depfile units use a two-level fetch (`check.rs`) where a manifest
 //! (`discovered_input_sets` / `discovered_inputs`) is the only route to its
-//! artifacts' full keys. Evicting the manifest corrupts nothing but
+//! artifacts' full keys. CS-0204 gives a Lua-bodied unit the same shape for
+//! the modules it loaded (`module_input_sets`), on the same reasoning.
+//! Evicting such a manifest corrupts nothing but
 //! STRANDS every artifact reachable only through it: the bytes stay on
 //! disk, unreachable, until a rebuild republishes the manifest. Since
 //! manifests average ~9 KB and artifacts average ~575 KB, a byte-hungry
@@ -73,6 +75,10 @@ use crate::cache::cas::{CloudKey, EvictCandidate};
 pub const SIZE_SWEEP_EXEMPT_KINDS: &[&str] = &[
     "discovered_input_sets",
     "discovered_inputs",
+    // CS-0204: the module-path manifest is the same shape of hazard — it is
+    // the only route from a Lua-bodied unit's declared key to the full key its
+    // artifacts sit under, so evicting it strands them.
+    "module_input_sets",
     "probe_value",
     "symlink",
     "dir",

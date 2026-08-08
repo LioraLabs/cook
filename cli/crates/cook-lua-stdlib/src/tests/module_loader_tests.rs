@@ -13,6 +13,7 @@ use std::rc::Rc;
 use mlua::prelude::*;
 
 use crate::module_loader::{install_module_loader, ModuleLoadHooks, NoHooks};
+use crate::module_observer::ModuleObserver;
 use crate::WorkingDirSource;
 
 fn vm_with_loader(working_dir: PathBuf) -> Lua {
@@ -23,6 +24,7 @@ fn vm_with_loader(working_dir: PathBuf) -> Lua {
         &cook,
         WorkingDirSource::Static(working_dir),
         NoHooks,
+        ModuleObserver::new(),
     )
     .unwrap();
     lua.globals().set("cook", cook).unwrap();
@@ -216,6 +218,7 @@ fn live_cwd_keys_memoisation_per_cookfile() {
         &cook,
         WorkingDirSource::Live(Arc::clone(&slot)),
         NoHooks,
+        ModuleObserver::new(),
     )
     .unwrap();
     lua.globals().set("cook", cook).unwrap();
@@ -264,6 +267,7 @@ fn hooks_fire_in_sequence() {
         &cook,
         WorkingDirSource::Static(tmp.path().to_path_buf()),
         Recording(Rc::clone(&log)),
+        ModuleObserver::new(),
     )
     .unwrap();
     lua.globals().set("cook", cook).unwrap();

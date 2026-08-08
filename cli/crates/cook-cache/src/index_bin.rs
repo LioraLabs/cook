@@ -25,6 +25,7 @@
 //!   steps     count u32, keyblob_len u32, [u32; count+1] key offsets, key blob,
 //!             [{ inputs_start u32, inputs_len u32,
 //!                outputs_start u32, outputs_len u32,
+//!                modules_start u32, modules_len u32,
 //!                command_hash u64, env_contribution u64,
 //!                seal_contribution u64,
 //!                observed u8,
@@ -167,7 +168,12 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
     // ids independent of insertion history.
     let mut paths: BTreeSet<&str> = BTreeSet::new();
     for step in cache.steps.values() {
-        for r in step.inputs.iter().chain(step.outputs.iter()) {
+        for r in step
+            .inputs
+            .iter()
+            .chain(step.outputs.iter())
+            .chain(step.module_inputs.iter())
+        {
             paths.insert(&*r.path);
         }
     }
@@ -189,11 +195,19 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
     let record_count: usize = cache
         .steps
         .values()
-        .map(|s| s.inputs.len() + s.outputs.len())
+        .map(|s| s.inputs.len() + s.outputs.len() + s.module_inputs.len())
         .sum();
     w.u32(record_count as u32);
     for step in cache.steps.values() {
-        for r in step.inputs.iter().chain(step.outputs.iter()) {
+        // Inputs, outputs, then modules — the same order the slice bounds
+        // below advance the cursor in, which is what keeps the two sides
+        // aligned by construction rather than by agreement.
+        for r in step
+            .inputs
+            .iter()
+            .chain(step.outputs.iter())
+            .chain(step.module_inputs.iter())
+        {
             w.u32(path_ids[&*r.path]);
             w.u64(r.mtime);
             w.u64(r.hash);
@@ -209,11 +223,15 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
         let inputs_len = step.inputs.len() as u32;
         let outputs_start = cursor + inputs_len;
         let outputs_len = step.outputs.len() as u32;
-        cursor = outputs_start + outputs_len;
+        let modules_start = outputs_start + outputs_len;
+        let modules_len = step.module_inputs.len() as u32;
+        cursor = modules_start + modules_len;
         w.u32(inputs_start);
         w.u32(inputs_len);
         w.u32(outputs_start);
         w.u32(outputs_len);
+        w.u32(modules_start);
+        w.u32(modules_len);
         w.u64(step.command_hash);
         w.u64(step.env_contribution);
         w.u64(step.seal_contribution);
@@ -389,6 +407,8 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         let inputs_len = r.u32()? as usize;
         let outputs_start = r.u32()? as usize;
         let outputs_len = r.u32()? as usize;
+        let modules_start = r.u32()? as usize;
+        let modules_len = r.u32()? as usize;
         let command_hash = r.u64()?;
         let env_contribution = r.u64()?;
         let seal_contribution = r.u64()?;
@@ -418,6 +438,7 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
                 command_hash,
                 env_contribution,
                 seal_contribution,
+                module_inputs: slice_records(&records, modules_start, modules_len)?,
                 observed,
             },
         );

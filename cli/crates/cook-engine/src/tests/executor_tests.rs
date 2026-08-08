@@ -1901,6 +1901,7 @@ fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,
         &published,
+        &[],
     );
 
     assert_eq!(
@@ -1942,6 +1943,7 @@ fn a_producing_unit_still_publishes() {
         &cook_luaotp::ProbeValueStore::new(),
         &ctx,
         &published,
+        &[],
     );
 
     assert_eq!(published.load(std::sync::atomic::Ordering::Relaxed), 1);

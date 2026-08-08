@@ -58,6 +58,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         env_contribution: 0,
         seal_contribution: 0,
         observed: None,
+        module_inputs: Vec::new(),
     };
 
     // Compose cloud_key from the fat input set.

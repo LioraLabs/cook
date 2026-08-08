@@ -2027,7 +2027,7 @@ fn evaluate_prepass_probe(
     let evaluated = cook_probe::eval::evaluate(
         probe,
         &eval_ctx,
-        &RegisterVmRunner { lua },
+        &RegisterVmRunner { lua, working_dir },
         env_lookup,
         upstream_fps,
         keyless,
@@ -2070,11 +2070,36 @@ fn evaluate_prepass_probe(
 /// the reason the whole sequence used to exist twice.
 struct RegisterVmRunner<'a> {
     lua: &'a Lua,
+    /// Base for rendering observed module paths in the portable, relative form
+    /// a reader on another machine can re-hash (CS-0204).
+    working_dir: &'a std::path::Path,
 }
 
 impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
-    fn run(&self, key: &str, source: &str) -> Result<Vec<u8>, String> {
-        run_prepass_produce(self.lua, key, source)
+    fn run(&self, key: &str, source: &str) -> Result<cook_probe::eval::Produced, String> {
+        // CS-0204: snapshot what this body loaded, so a member-source probe is
+        // keyed on the module code it ran exactly as an executor-dispatched
+        // one is. The observer is VM app data, installed by
+        // `register_module_loader`; a VM without one (none in production,
+        // some in tests) reports an empty set and behaves as it did before.
+        let observer = self
+            .lua
+            .app_data_ref::<cook_lua_stdlib::ModuleObserver>()
+            .map(|o| o.clone());
+        if let Some(o) = &observer {
+            // Anything loaded while evaluating the Cookfile's own top-level
+            // chunk belongs to registration, not to this probe.
+            o.clear();
+        }
+        let bytes = run_prepass_produce(self.lua, key, source)?;
+        let module_paths = match &observer {
+            Some(o) => cook_contracts::layout::relative_module_paths(
+                self.working_dir,
+                &o.take(),
+            ),
+            None => Vec::new(),
+        };
+        Ok(cook_probe::eval::Produced { bytes, module_paths })
     }
 }
 
@@ -2449,7 +2474,11 @@ fn install_all_apis(
 
     // Module loader + remaining cook APIs. `module_state` is the caller's
     // (see the parameter note) — the loader is registered over it here.
-    crate::module_loader::register_module_loader(lua, module_state.clone())?;
+    crate::module_loader::register_module_loader(
+        lua,
+        module_state.clone(),
+        cook_lua_stdlib::ModuleObserver::new(),
+    )?;
     crate::module_loader::register_cache_api(lua, module_state.clone(), prepass)?;
     crate::unit_api::register_unit_api(
         lua,

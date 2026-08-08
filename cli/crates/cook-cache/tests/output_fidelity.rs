@@ -147,6 +147,7 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
         env_contribution: 0,
         seal_contribution: 0,
         observed: None,
+        module_inputs: Vec::new(),
     };
 
     let ctx = RestoreCtx {
@@ -271,6 +272,7 @@ fn security_poisoned_symlink_targets_are_rejected() {
         env_contribution: 0,
         seal_contribution: 0,
         observed: None,
+        module_inputs: Vec::new(),
     };
 
     let ctx = RestoreCtx {

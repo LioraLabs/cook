@@ -833,7 +833,7 @@ pub fn execute_dag(
             };
         input_hashes.sort();
         let namespace = recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
-        let key = cloud_key(&CloudKeyInputs {
+        let declared_key = cloud_key(&CloudKeyInputs {
             schema_version: CACHE_VERSION,
             recipe_namespace: &namespace,
             command_hash: meta.command_hash,
@@ -841,25 +841,71 @@ pub fn execute_dag(
             seal_contribution: seal_contrib,
             sorted_input_content_hashes: &input_hashes,
         });
+        // CS-0204: an observing unit's body can load a module too, and
+        // `publish_completion` stores its observation under the module-folded
+        // key. So the same candidate reconstruction `fetch_by_key` does has to
+        // happen here, or a module-loading `test` body would publish to a key
+        // this side never asks for and lose shared reuse permanently — on a
+        // cold machine the local check always misses, so this is the only
+        // branch ever consulted.
+        let candidates: Vec<Vec<String>> =
+            if work_node.payload.as_ref().is_some_and(WorkPayload::evaluates_lua) {
+                cook_cache::path_set_candidates(cook_cache::read_module_input_sets(
+                    cache_ctx.backend.as_ref(),
+                    &declared_key,
+                ))
+            } else {
+                vec![Vec::new()]
+            };
         // COOK-401: the "would the shared tier serve this?" half is
         // `shared_observation`, shared with `cook why`. What stays here is
         // what only the executor does: record the step entry so the next local
         // run hits without a round trip, and report the hit.
-        if let Some(observation) =
-            cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
-        {
-            let inputs: Option<Vec<_>> = current_inputs
-                .iter()
-                .map(|path| {
-                    let abs = work_node.working_dir.join(path);
-                    cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
-                        path: path.as_str().into(),
-                        mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
-                        hash,
-                    })
+        for module_set in candidates {
+            let key = if module_set.is_empty() {
+                declared_key
+            } else {
+                let refs: Vec<&str> = module_set.iter().map(String::as_str).collect();
+                // A listed module absent locally means this candidate cannot
+                // describe this tree; try the next.
+                let Some(mut module_hashes) =
+                    cook_cache::hash_input_paths(&refs, &work_node.working_dir)
+                else {
+                    continue;
+                };
+                let mut full = input_hashes.clone();
+                full.append(&mut module_hashes);
+                full.sort();
+                cloud_key(&CloudKeyInputs {
+                    schema_version: CACHE_VERSION,
+                    recipe_namespace: &namespace,
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    sorted_input_content_hashes: &full,
                 })
-                .collect();
-            if let Some(inputs) = inputs {
+            };
+            let Some(observation) =
+                cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
+            else {
+                continue;
+            };
+            let record_of = |path: &str| {
+                let abs = work_node.working_dir.join(path);
+                cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
+                    path: path.into(),
+                    mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
+                    hash,
+                })
+            };
+            let inputs: Option<Vec<_>> =
+                current_inputs.iter().map(|p| record_of(p)).collect();
+            // CS-0204: record the module set whose content composed the key
+            // that hit, so the next local check judges it as module source and
+            // the entry is what a fresh execution would have written.
+            let modules: Option<Vec<_>> =
+                module_set.iter().map(|p| record_of(p)).collect();
+            if let (Some(inputs), Some(module_inputs)) = (inputs, modules) {
                 cm.update_step(
                     &meta.recipe_name,
                     &meta.cache_key,
@@ -869,6 +915,7 @@ pub fn execute_dag(
                         command_hash: meta.command_hash,
                         env_contribution: meta.env_contribution,
                         seal_contribution: seal_contrib,
+                        module_inputs,
                         observed: Some(observation),
                     },
                 );
@@ -1055,6 +1102,7 @@ pub fn execute_dag(
             &current_outputs,
             &work_node.working_dir,
             meta.discovered_inputs.as_ref(),
+            work_node.payload.as_ref().is_some_and(WorkPayload::evaluates_lua),
         ) {
             let restored: std::collections::BTreeSet<&str> =
                 outcome.restored_outputs.iter().map(|s| s.as_str()).collect();
@@ -1136,12 +1184,20 @@ pub fn execute_dag(
                 .map(|p| file_record(p))
                 .chain(outcome.discovered_paths.iter().map(|p| file_record(p)))
                 .collect();
+            // CS-0204: the module set whose content composed the key that just
+            // hit. Recorded into its own field so the next local check judges
+            // it as module source, and so a fetch hit leaves the index in the
+            // state a fresh execution would have.
+            let module_inputs: Option<Vec<_>> =
+                outcome.module_paths.iter().map(|p| file_record(p)).collect();
             let outputs: Option<Vec<_>> = outcome
                 .restored_outputs
                 .iter()
                 .map(|p| output_record(p))
                 .collect();
-            if let (Some(inputs), Some(outputs)) = (inputs, outputs) {
+            if let (Some(inputs), Some(outputs), Some(module_inputs)) =
+                (inputs, outputs, module_inputs)
+            {
                 cm.update_step(
                     &meta.recipe_name,
                     &meta.cache_key,
@@ -1151,6 +1207,7 @@ pub fn execute_dag(
                         command_hash: meta.command_hash,
                         env_contribution: meta.env_contribution,
                         seal_contribution: seal_contrib,
+                        module_inputs,
                         observed: outcome.observation,
                     },
                 );
@@ -1741,6 +1798,12 @@ pub fn execute_dag(
                                     found.keyless,
                                     bytes,
                                     *source,
+                                    // CS-0204: no VM ran on either arm of this
+                                    // branch. A cache hit's identity is already
+                                    // the folded one `lookup` settled on; a
+                                    // `files { }` value is synthesised from the
+                                    // declared FILES section and loads nothing.
+                                    &[],
                                 );
                                 for w in &recorded.warnings {
                                     tracing::warn!("{w}");
@@ -1753,7 +1816,7 @@ pub fn execute_dag(
                                 // can resolve their own upstream entries, exactly
                                 // as the worker-result handler does on a miss.
                                 upstream_probe_fingerprints
-                                    .insert(probe_key.clone(), found.fingerprint);
+                                    .insert(probe_key.clone(), recorded.fingerprint);
                                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                                 match source {
                                     // Served by the cache: report a hit.
@@ -2572,6 +2635,7 @@ pub fn execute_dag(
                                     &pool.probe_value_store(),
                                     &cache_ctx,
                                     published,
+                                    &[],
                                 );
                             }
                         }
@@ -2664,9 +2728,6 @@ pub fn execute_dag(
             if result.success {
                 match probe_fingerprint_by_node.get(&result.id) {
                     Some(&fp) => {
-                        // Populate upstream_fingerprints for downstream probes.
-                        upstream_probe_fingerprints.insert(probe_out.key.clone(), fp);
-
                         let working_dir = dag.node(result.id).payload().working_dir.clone();
                         let eval_ctx = cook_probe::eval::EvalCtx {
                             working_dir: &working_dir,
@@ -2686,7 +2747,18 @@ pub fn execute_dag(
                             keyless_probes.contains(&probe_out.key),
                             &probe_out.bytes,
                             cook_probe::eval::ValueSource::Produced,
+                            // CS-0204: what the `produce` body loaded on the
+                            // worker VM that ran it.
+                            &result.module_inputs,
                         );
+                        // CS-0204: propagate the fingerprint the value is
+                        // actually STORED under, so a downstream probe that
+                        // `requires` this one rekeys when this one's module
+                        // source moves. Done after `record` rather than before,
+                        // because the folded identity is not known until the
+                        // module set is in hand.
+                        upstream_probe_fingerprints
+                            .insert(probe_out.key.clone(), recorded.fingerprint);
                         for w in &recorded.warnings {
                             tracing::warn!("{w}");
                         }
@@ -2768,6 +2840,7 @@ pub fn execute_dag(
                         &pool.probe_value_store(),
                         &cache_ctx,
                         published,
+                        &result.module_inputs,
                     );
                 }
             }
@@ -3123,6 +3196,10 @@ fn publish_completion(
     probe_store: &cook_luaotp::ProbeValueStore,
     cache_ctx: &CacheContext,
     published: &AtomicU64,
+    // CS-0204: the module files this unit's Lua body loaded, as reported by
+    // the VM that ran it. Empty for a unit that ran no Lua, and for the
+    // interactive path (a spawned terminal session loads no module).
+    module_paths: &[String],
 ) {
     // CS-0085 §17.6: expand any glob patterns in output_paths against the
     // unit's working directory before recording.
@@ -3181,6 +3258,7 @@ fn publish_completion(
         &meta_for_record,
         working_dir,
         seal_contrib,
+        module_paths,
     ) {
         Ok(step_entry) => step_entry,
         Err(e) => {
@@ -3245,7 +3323,18 @@ fn publish_completion(
     }
 
     // Compute cloud_key for this unit (spec §5.3).
-    let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
+    //
+    // CS-0204: the module records join the declared and depfile-discovered
+    // ones. This is the half that stops a poisoned entry escaping the machine
+    // that made it — the local index would catch a module edit on its own, but
+    // the shared store is addressed by this key alone, so two machines whose
+    // modules differ must not compose the same one.
+    let mut sorted_hashes: Vec<u64> = step_entry
+        .inputs
+        .iter()
+        .chain(step_entry.module_inputs.iter())
+        .map(|fr| fr.hash)
+        .collect();
     sorted_hashes.sort();
     let recipe_namespace =
         recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
@@ -3530,6 +3619,75 @@ fn publish_completion(
                         e
                     );
                 }
+            }
+        }
+    }
+
+    // CS-0204: the module path list, under the DECLARED-inputs-only key, so a
+    // cold consumer on another machine can reconstruct the full key this unit
+    // just published under. Same two-level shape and same soundness argument
+    // as COOK-177/278 above: every listed path's CONTENT is folded into the
+    // key it composes, so a manifest that no longer describes the reader's
+    // tree can only cause a safe MISS.
+    //
+    // Written only when the unit loaded something, so a store full of shell
+    // units gains no artifacts and a cold fetch for one consults nothing.
+    if publish_to_backend && !step_entry.module_inputs.is_empty() {
+        let declared_refs: Vec<&str> = judged_inputs.iter().map(|s| s.as_str()).collect();
+        if let Some(declared_hashes) =
+            cook_cache::hash_input_paths(&declared_refs, working_dir)
+        {
+            let declared_key = cloud_key(&CloudKeyInputs {
+                schema_version: CACHE_VERSION,
+                recipe_namespace: &recipe_namespace,
+                command_hash: meta.command_hash,
+                env_contribution: meta.env_contribution,
+                seal_contribution: seal_contrib,
+                sorted_input_content_hashes: &declared_hashes,
+            });
+            let observed: Vec<String> = step_entry
+                .module_inputs
+                .iter()
+                .map(|r| r.path.to_string())
+                .collect();
+            let existing = cook_cache::read_module_input_sets(
+                cache_ctx.backend.as_ref(),
+                &declared_key,
+            );
+            // Merge and wire form are both the shared law, so the probe store
+            // and this one cannot drift on what "newest first, deduplicated,
+            // capped" means or on how it is written down.
+            let sets = cook_cache::merge_path_set(&existing, &observed);
+            let sets_json = cook_cache::encode_path_sets(&sets);
+            let sets_k = artifact_key(
+                &declared_key,
+                cook_cache::MODULE_INPUT_SETS_INDEX,
+                cook_cache::MODULE_INPUT_SETS_PATH,
+            );
+            let mut sets_meta = ArtifactMeta {
+                recipe_namespace: recipe_namespace.clone(),
+                command_hash: meta.command_hash,
+                env_contribution: meta.env_contribution,
+                seal_contribution: seal_contrib,
+                schema_version: CACHE_VERSION,
+                size_bytes: sets_json.len() as u64,
+                tags: std::collections::BTreeSet::new(),
+                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                output_index: cook_cache::MODULE_INPUT_SETS_INDEX,
+                output_path: cook_cache::MODULE_INPUT_SETS_PATH.to_string(),
+                // CS-0054: stamped by the backend on put.
+                content_hash: ArtifactMeta::zero_content_hash(),
+                kind: Some("module_input_sets".to_string()),
+                mode: 0o644,
+                target: None,
+            };
+            if let Err(e) = cook_cache::backend::put_bytes(
+                cache_ctx.backend.as_ref(),
+                &sets_k,
+                &sets_json,
+                &mut sets_meta,
+            ) {
+                tracing::warn!("cache backend put failed for module-inputs manifest: {e}");
             }
         }
     }

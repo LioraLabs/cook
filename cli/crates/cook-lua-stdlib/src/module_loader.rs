@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
+use crate::module_observer::ModuleObserver;
 use crate::WorkingDirSource;
 
 /// Register-only obligations around a module load. Every method defaults to
@@ -58,6 +59,13 @@ impl ModuleLoadHooks for NoHooks {}
 /// names because that is what the cycle diagnostic renders.
 struct LoaderCore {
     loaded: BTreeMap<String, LuaRegistryKey>,
+    /// The path each memoized load resolved to, under the same key.
+    ///
+    /// Kept beside `loaded` rather than derived on demand because a memo hit
+    /// short-circuits resolution: without this the second unit served by a
+    /// reused worker VM would load the module and record nothing, and would
+    /// then be keyed on a module the first unit paid for (CS-0204).
+    paths: BTreeMap<String, std::path::PathBuf>,
     in_flight: BTreeSet<String>,
     stack: Vec<String>,
 }
@@ -77,9 +85,11 @@ pub fn install_module_loader(
     cook: &LuaTable,
     working_dir: WorkingDirSource,
     hooks: impl ModuleLoadHooks + 'static,
+    observer: ModuleObserver,
 ) -> LuaResult<()> {
     let core = Rc::new(RefCell::new(LoaderCore {
         loaded: BTreeMap::new(),
+        paths: BTreeMap::new(),
         in_flight: BTreeSet::new(),
         stack: Vec::new(),
     }));
@@ -90,14 +100,20 @@ pub fn install_module_loader(
 
         // Memoisation (§12.3.2): a second load of (cwd, name) on this VM
         // returns the same Lua value without re-reading or re-evaluating.
-        let cached: Option<LuaValue> = {
+        let cached: Option<(LuaValue, Option<std::path::PathBuf>)> = {
             let c = core.borrow();
             match c.loaded.get(&memo_key) {
-                Some(key) => Some(lua.registry_value(key)?),
+                Some(key) => {
+                    Some((lua.registry_value(key)?, c.paths.get(&memo_key).cloned()))
+                }
                 None => None,
             }
         };
-        if let Some(v) = cached {
+        if let Some((v, path)) = cached {
+            // CS-0204: the memo suppresses re-evaluation, not the dependency.
+            if let Some(p) = path {
+                observer.record(&p);
+            }
             hooks.on_memo_hit(&name);
             return Ok(v);
         }
@@ -124,6 +140,13 @@ pub fn install_module_loader(
                 ));
             }
         };
+
+        // CS-0204: a resolved candidate is about to have its content
+        // evaluated, so it is a determinant of whatever is running — whether
+        // or not the chunk goes on to raise. Recorded here rather than at the
+        // memoisation below so that a module which fails halfway still keys
+        // the retry on the file that failed.
+        observer.record(&module_path);
 
         let source = std::fs::read_to_string(&module_path).map_err(|e| {
             LuaError::runtime(cook_contracts::layout::module_read_failed_message(
@@ -180,7 +203,11 @@ pub fn install_module_loader(
         hooks.after_load(&name, true);
 
         let key = lua.create_registry_value(result.clone())?;
-        core.borrow_mut().loaded.insert(memo_key, key);
+        {
+            let mut c = core.borrow_mut();
+            c.paths.insert(memo_key.clone(), module_path.clone());
+            c.loaded.insert(memo_key, key);
+        }
         Ok(result)
     })?;
 

@@ -38,7 +38,11 @@ pub use cook_contracts::cache::cas::{
     artifact_key, cloud_key, recipe_namespace, ArtifactMeta, CloudKey, CloudKeyInputs,
     DeterminantManifest, EvictCandidate, DISCOVERED_INPUTS_MANIFEST_INDEX,
     DISCOVERED_INPUTS_MANIFEST_PATH, DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX,
-    DISCOVERED_INPUT_SETS_PATH, OBSERVATION_INDEX, OBSERVATION_PATH,
+    DISCOVERED_INPUT_SETS_PATH, MODULE_INPUT_SETS_INDEX, MODULE_INPUT_SETS_PATH,
+    OBSERVATION_INDEX, OBSERVATION_PATH,
+};
+pub use cook_contracts::cache::cas::{
+    decode_path_sets, encode_path_sets, merge_path_set, path_set_candidates,
 };
 pub use cook_contracts::cache::step::{CACHE_VERSION as STEP_CACHE_VERSION};
 pub use cook_contracts::consumes::ConsumesFilter;
@@ -52,10 +56,10 @@ pub use cook_contracts::pathlaw::{has_glob_meta, is_dir_output, is_terminal_outp
 pub use cas_backend::{BackendConfig, BackendError, BackendResult, CacheBackend};
 pub use check::{
     fetch_by_key, fetch_observation, hash_env, hash_file, hash_input_paths, hash_reader,
-    needs_rebuild_cook, read_discovered_input_sets, shared_observation, stat_mtime, FetchOutcome,
+    needs_rebuild_cook, read_discovered_input_sets, read_module_input_sets, shared_observation, stat_mtime, FetchOutcome,
     RebuildReason, RebuildResult, RestoreCtx,
 };
-pub use probe::{resolve_probe_inputs, resolve_tool_path, tool_identity};
+pub use probe::{hash_file_sha256, resolve_probe_inputs, resolve_tool_path, tool_identity};
 pub use resolve::{
     empty_dirs_under, normalize_glob_pattern, reconcile_dir_output, resolve_declared_inputs,
     resolve_glob, resolve_ingredient_glob,

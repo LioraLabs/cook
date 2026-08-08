@@ -2,6 +2,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Persistent JSON key-value cache scoped to a single module.
+///
+/// The `source_hash` below is NOT a determinant of anything a unit is keyed on,
+/// and the distinction is worth stating because it reads like one. It scopes a
+/// module's OWN persistent `cook.probes` store to the module text that wrote it:
+/// change the module, and the values it stashed for itself are discarded. The
+/// units the module registered are unaffected, and were unaffected by module
+/// source entirely until CS-0204 gave them their own rule
+/// (§{exec.cache.module-source}; the observation lives in
+/// `cook-lua-stdlib::module_observer`). COOK-381 read this hash as evidence
+/// that "the register-replay key folds the module tree"; there is no such key.
 pub struct ModuleCache {
     module_name: String,
     cache_dir: PathBuf,

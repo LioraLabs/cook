@@ -103,6 +103,15 @@ pub enum RebuildReason {
         /// Paths in the recorded set but not the current one.
         removed: Vec<String>,
     },
+    /// CS-0204: a module the unit's Lua body loaded has changed content or is
+    /// gone. Kept apart from `InputsChanged` because it answers a different
+    /// question for the author — nothing they declared moved; the CODE their
+    /// body ran did — and because `cook why` had no way at all to say so.
+    ModulesChanged {
+        /// Recorded module paths whose content differs, or that can no longer
+        /// be read.
+        changed: Vec<String>,
+    },
 }
 
 impl RebuildReason {
@@ -139,7 +148,60 @@ impl RebuildReason {
                     Some("input set reordered".into())
                 }
             }
+            RebuildReason::ModulesChanged { changed } => {
+                let more = changed.len() - 1;
+                if more > 0 {
+                    Some(format!("module changed: {} (+{more} more)", changed[0]))
+                } else {
+                    Some(format!("module changed: {}", changed[0]))
+                }
+            }
         }
+    }
+}
+
+/// Judge a unit's recorded module set against the tree as it stands
+/// (§17.4.4, CS-0204).
+///
+/// Absorb-and-forget, exactly as COOK-313 made the depfile walk: the record IS
+/// the set, so nothing re-derives which modules the body would load — that is
+/// unknowable without running it. Each recorded path is stat'd through the
+/// same per-run memo the declared-input walk uses, and hashed only when its
+/// mtime moved, so a settled build pays one stat per module.
+///
+/// A recorded path that no longer exists counts as changed. That is the right
+/// answer whether the module was deleted or the loaded SET moved on: either
+/// way the last recorded run cannot be replayed as-is.
+fn check_module_inputs(
+    recorded: &[FileRecord],
+    working_dir: &Path,
+) -> Result<Vec<FileRecord>, RebuildReason> {
+    let mut updated = recorded.to_vec();
+    let mut changed: Vec<String> = Vec::new();
+    for (i, rec) in recorded.iter().enumerate() {
+        let disk_mtime = match crate::statmemo::stat_mtime_memo(working_dir, &rec.path) {
+            Some(m) => m,
+            None => {
+                changed.push(rec.path.to_string());
+                continue;
+            }
+        };
+        if disk_mtime != rec.mtime {
+            let abs_path = working_dir.join(&*rec.path);
+            if hash_file(&abs_path) != Some(rec.hash) {
+                changed.push(rec.path.to_string());
+                continue;
+            }
+            // Touched, same bytes. Absorb the new mtime so the next run stats
+            // and stops, instead of re-hashing this module for the life of the
+            // entry.
+            updated[i].mtime = disk_mtime;
+        }
+    }
+    if changed.is_empty() {
+        Ok(updated)
+    } else {
+        Err(RebuildReason::ModulesChanged { changed })
     }
 }
 
@@ -314,6 +376,15 @@ pub fn needs_rebuild_cook(
         Ok(u) => u,
     };
 
+    // CS-0204: module source is a determinant of any unit whose body loaded
+    // one. Judged here, after the declared inputs and before any restore is
+    // attempted, because restoring outputs for an entry whose code has moved
+    // is work spent producing the wrong answer.
+    let updated_modules = match check_module_inputs(&entry.module_inputs, working_dir) {
+        Err(reason) => return (RebuildResult::Rebuild(reason), None),
+        Ok(u) => u,
+    };
+
     // Output augmentation: when discovered_inputs is set, record_completion
     // appends the depfile as an implicit output. Augment current_outputs to
     // include the depfile path so the output count and content checks below
@@ -406,6 +477,7 @@ pub fn needs_rebuild_cook(
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
         seal_contribution: entry.seal_contribution,
+        module_inputs: updated_modules,
         observed: entry.observed.clone(),
     };
     (RebuildResult::Skip, Some(updated))
@@ -671,9 +743,43 @@ pub struct FetchOutcome {
     /// The discovered-input path set whose content hashes composed the winning
     /// full key. Empty for units without `discovered_inputs`.
     pub discovered_paths: Vec<String>,
+    /// CS-0204: the module path set whose content hashes composed the winning
+    /// full key. Recorded into `StepEntry::module_inputs` by the caller —
+    /// deliberately NOT merged into `discovered_paths`, because the two lists
+    /// are judged by different rules on the next check.
+    pub module_paths: Vec<String>,
     /// Scalar observation metadata carried by the determinant manifest.
     /// Older cache entries do not have it.
     pub observation: Option<cook_contracts::cache::observation::Observation>,
+}
+
+/// Read the candidate MODULE path sets recorded under a unit's
+/// DECLARED-inputs-only key, newest first (CS-0204).
+///
+/// Its own artifact rather than a widening of the discovered-input sets: the
+/// two lists land in different fields of the record on the way back and are
+/// judged by different rules, so one list carrying both would have to be
+/// re-split by guessing. Returns `[]` when absent or corrupt, which the caller
+/// reads as "this unit loaded no module" and probes the declared key — exactly
+/// the pre-CS-0204 behaviour, and a safe miss for a unit that did load one.
+pub fn read_module_input_sets(
+    backend: &dyn crate::cas_backend::CacheBackend,
+    declared_key: &crate::cas_backend::CloudKey,
+) -> Vec<Vec<String>> {
+    let k = crate::cas_backend::artifact_key(
+        declared_key,
+        crate::cas_backend::MODULE_INPUT_SETS_INDEX,
+        crate::cas_backend::MODULE_INPUT_SETS_PATH,
+    );
+    let Ok(Some(mut reader)) = backend.get(&k) else {
+        return Vec::new();
+    };
+    let mut buf = Vec::new();
+    // Drain fully so the VerifyingReader hashes on read (CS-0054).
+    if std::io::Read::read_to_end(&mut reader, &mut buf).is_err() {
+        return Vec::new();
+    }
+    cook_contracts::cache::cas::decode_path_sets(&buf)
 }
 
 /// Read the candidate discovered-input path sets recorded under a unit's
@@ -824,22 +930,23 @@ pub fn fetch_by_key(
     output_paths: &[&str],
     working_dir: &std::path::Path,
     discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
+    may_load_modules: bool,
 ) -> Option<FetchOutcome> {
     if output_paths.is_empty() {
         return None;
     }
+    let declared_key = crate::cas_backend::cloud_key(&crate::cas_backend::CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace: ctx.recipe_namespace,
+        command_hash,
+        env_contribution,
+        seal_contribution,
+        sorted_input_content_hashes, // declared-only, exactly as passed
+    });
     // Candidate discovered-input sets. A unit without discovered_inputs has
     // exactly one candidate: the empty set (full key == declared key).
     let candidates: Vec<Vec<String>> = match discovered_inputs {
         Some(_) => {
-            let declared_key = crate::cas_backend::cloud_key(&crate::cas_backend::CloudKeyInputs {
-                schema_version: CACHE_VERSION,
-                recipe_namespace: ctx.recipe_namespace,
-                command_hash,
-                env_contribution,
-                seal_contribution,
-                sorted_input_content_hashes, // declared-only, exactly as passed
-            });
             let sets = read_discovered_input_sets(ctx.backend, &declared_key);
             if sets.is_empty() {
                 return None; // no manifest => cannot reconstruct => safe cold miss
@@ -848,13 +955,35 @@ pub fn fetch_by_key(
         }
         None => vec![Vec::new()],
     };
-    for set in candidates {
+    // CS-0204: the same reconstruction for the modules the body loaded.
+    // Consulted only for a payload that can load one, so a shell unit pays no
+    // extra backend round-trip. An absent manifest yields the single empty
+    // candidate, which composes the declared key and is exactly the
+    // pre-CS-0204 probe.
+    let module_candidates: Vec<Vec<String>> = if may_load_modules {
+        cook_contracts::cache::cas::path_set_candidates(read_module_input_sets(
+            ctx.backend,
+            &declared_key,
+        ))
+    } else {
+        vec![Vec::new()]
+    };
+    // Both lists are capped and, in practice, one of them is always the single
+    // empty candidate: a depfile unit is a spawned compile, a module-loading
+    // unit is a Lua body. The product is therefore linear in the real world
+    // and bounded in the pathological one.
+    let pairs = candidates
+        .into_iter()
+        .flat_map(|d| module_candidates.iter().cloned().map(move |m| (d.clone(), m)));
+    for (set, module_set) in pairs {
         let mut full_hashes: Vec<u64> = sorted_input_content_hashes.to_vec();
-        if !set.is_empty() {
-            let refs: Vec<&str> = set.iter().map(|s| s.as_str()).collect();
+        if !set.is_empty() || !module_set.is_empty() {
+            let refs: Vec<&str> = set.iter().chain(module_set.iter()).map(|s| s.as_str()).collect();
             match hash_input_paths(&refs, working_dir) {
                 Some(mut h) => full_hashes.append(&mut h),
-                None => continue, // a listed discovered input is absent locally => try next set
+                // A listed discovered input or module is absent locally, so
+                // this candidate cannot describe this tree => try the next.
+                None => continue,
             }
             full_hashes.sort();
         }
@@ -888,6 +1017,7 @@ pub fn fetch_by_key(
             return Some(FetchOutcome {
                 restored_outputs: restore_list,
                 discovered_paths: set,
+                module_paths: module_set,
                 observation,
             });
         }
