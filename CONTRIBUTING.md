@@ -152,3 +152,20 @@ cd cli && ./scripts/check-test-layout.sh
 ````
 
 Wired as a `cook` test unit (`cook cli.test-layout`), so CI's `cook test` covers it. It flags inline `#[cfg(test)]` module bodies and integration test names carrying a dead affix, printing `path:line: reason` for each.
+
+## Where a decision lives
+
+`cli/crates/cook-contracts/README.md` is normative for the whole workspace, and its one enforceable rule is that **no decision is implemented twice**. Read it before adding a function that answers a question some other crate also answers; it defines the admission bar, the stratum rule, and the protocol for a copy that really is deliberate.
+
+### Enforcement
+
+````bash
+cook cli.constitution        # or: cd cli && cargo test -p cook-contracts --test constitution
+````
+
+`cargo test` already runs it, so CI covers it on every run; the chore is the targeted loop. Four of its rules hold outright — the shared kernel's effect budget and dependency allowlist, the stratum table, and re-export tunnels. Three read a tracked baseline under `cli/crates/cook-contracts/constitution/` and fail only on what is new: tunnels, string literals shared across crates, and runs of copied code.
+
+Two things to know before you hit it:
+
+- **A baseline entry needs a written justification**, and an entry that stops matching the tree fails too. Both are deliberate. A waiver is a decision somebody made, and a to-do list that only grows stops being read — deleting a line is how the work gets marked done.
+- **A finding is usually not waivable.** The rule's first run found five re-export tunnels; three were types that already lived in `cook-contracts`, reached the long way round, so they were rerouted rather than waived. Writing "deliberate" over undone work is the one failure mode that would make the whole mechanism worthless.

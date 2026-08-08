@@ -1,0 +1,15 @@
+# Crate paths reached through another crate's re-export, e.g. reading
+# `cook_engine::cook_cache::parse_size` because the direct edge is refused.
+#
+# Each line waives one (consumer -> courier::owner) pair that existed when the
+# rule landed. This file is a to-do list, not a settlement: the gate fails if a
+# waiver stops matching, so deleting an entry is how the work gets marked done.
+#
+# Two tunnels the rule found on its first run are absent from this file because
+# they were fixed instead of waived. `cook_plan::cook_register::RecipeKind` and
+# `RegisteredRecipePub` tunnelled three crates to reach types that already live
+# in cook-contracts, which cook-cli depends on directly, as did
+# `cook_engine::cook_contracts::RecipeUnits`. Waiving those would have recorded
+# a deliberate decision nobody made.
+{"key": "cook-cli -> cook_engine::cook_cache", "sites": ["crates/cook-cli/src/cache_budget.rs:35", "crates/cook-cli/src/cache_du.rs:15", "crates/cook-cli/src/cache_gc.rs:22", "crates/cook-cli/src/pipeline.rs:2028"], "why": "cook-cli needs the pure size parser, its help literal, and the eviction types, and refuses a direct cook-cache edge for them; the crate-charter audit already queued those to move into cook-contracts, where cook-cli reaches them without a courier. This waiver dies with that move, not with a new dependency edge."}
+{"key": "cook-cli -> cook_plan::cook_register", "sites": ["crates/cook-cli/src/pipeline.rs:47", "crates/cook-cli/src/pipeline.rs:50", "crates/cook-cli/src/pipeline.rs:53", "crates/cook-cli/src/pipeline.rs:56", "crates/cook-cli/src/pipeline.rs:64"], "why": "RegistrationSiteKind genuinely lives in cook-register: it names where a registration came from, which is that crate's own vocabulary, and cook-cli renders collision diagnostics with it. The re-export is deliberate and documented at cook-plan/src/lib.rs, where it moved when the engine dropped its register dependency. It stops being deliberate if the type ever becomes registration-summary data, in which case it belongs in cook-contracts with the rest of that family."}

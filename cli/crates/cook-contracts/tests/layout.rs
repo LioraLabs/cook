@@ -44,84 +44,13 @@ fn crate_root_is_only_an_index() {
     );
 }
 
-#[test]
-fn production_source_has_no_stateful_standard_library_access() {
-    fn grouped_std_use_contains(source: &str, forbidden: &str) -> bool {
-        let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact.split("usestd::{").skip(1).any(|tail| {
-            let members = tail.split_once('}').map_or(tail, |(members, _)| members);
-            members.split(',').any(|member| {
-                let member = member.split_once("as").map_or(member, |(path, _)| path);
-                member == forbidden || member.starts_with(&format!("{forbidden}::"))
-            })
-        })
-    }
-
-    fn visit(dir: &Path, violations: &mut Vec<String>) {
-        for entry in fs::read_dir(dir).expect("read production source directory") {
-            let path = entry.expect("read production source entry").path();
-            if path.is_dir() {
-                if path.file_name().is_none_or(|name| name != "tests") {
-                    visit(&path, violations);
-                }
-                continue;
-            }
-            if path.extension().is_none_or(|extension| extension != "rs") {
-                continue;
-            }
-            let source = fs::read_to_string(&path).expect("read production source file");
-            for (index, line) in source.lines().enumerate() {
-                let code = line.split("//").next().unwrap_or_default();
-                let compact: String = code.chars().filter(|ch| !ch.is_whitespace()).collect();
-                for forbidden in ["std::fs", "std::env", "std::process"] {
-                    if compact.contains(forbidden) {
-                        violations.push(format!(
-                            "{}:{} uses {forbidden}",
-                            path.display(),
-                            index + 1
-                        ));
-                    }
-                }
-                for forbidden in [
-                    ".canonicalize()",
-                    ".exists()",
-                    ".is_dir()",
-                    ".is_file()",
-                    ".metadata()",
-                    ".read_dir()",
-                    ".symlink_metadata()",
-                    ".try_exists()",
-                ] {
-                    if compact.contains(forbidden) {
-                        violations.push(format!(
-                            "{}:{} reaches the filesystem via `{forbidden}` — this crate's \
-                             admission bar is purity; canonicalise or stat in the shell \
-                             and pass the result in",
-                            path.display(),
-                            index + 1
-                        ));
-                    }
-                }
-            }
-            for forbidden in ["fs", "env", "process"] {
-                if grouped_std_use_contains(&source, forbidden) {
-                    violations.push(format!("{} uses grouped std::{forbidden}", path.display()));
-                }
-            }
-        }
-    }
-
-    let mut violations = Vec::new();
-    visit(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut violations,
-    );
-    assert!(
-        violations.is_empty(),
-        "cook-contracts production source must remain state-free:\n{}",
-        violations.join("\n")
-    );
-}
+// The purity budget used to live here, as
+// `production_source_has_no_stateful_standard_library_access`. It moved to
+// `tests/constitution.rs`, whole, when that file gave the crate's rules one
+// home — and it was widened on the way: it now expands `use` trees instead of
+// matching their spelling, so `use std::time::{Duration, Instant}` is read as
+// two distinct reaches. Leaving a copy here would have been the exact thing
+// the constitution refuses.
 
 #[test]
 fn command_failure_contracts_use_concept_directories_and_nested_tests() {

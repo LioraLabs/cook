@@ -1,0 +1,72 @@
+# String literals written in two or more crates.
+#
+# The constitution names this class outright — "an emitter and a consumer of
+# the same literal" — and it is the class that produced COOK_CMD_FAILED and
+# REGISTER_SURFACE_NAME before anyone was looking for it. A shared literal is a
+# wire format whether or not anybody called it one, and the two ends agree only
+# by luck until one of them is edited.
+#
+# This file is a to-do list, not a settlement. Most entries below are debt, not
+# deliberate copies, and each says which. Deleting an entry is how the work
+# gets marked done: the gate fails if a waiver stops matching anything.
+#
+# One finding from the rule's first run is absent because it was fixed rather
+# than waived. cook-cli re-typed "set -e\n" to strip it, next to a
+# cook-contracts constant whose own doc says callers must derive the prefix
+# from it rather than re-type it — a rule already written down and already
+# broken. It now reads SET_E_PREFIX.
+
+# --- The two Lua VMs' door names -------------------------------------------
+# The register VM (cook-register) installs a function; the worker VM
+# (cook-luaotp) installs its counterpart for execute phase. Both spell the name
+# the Lua code calls. This is the exact shape the module-binding law was pulled
+# into cook-contracts to fix, and these doors have not been through that yet:
+# drift between them does not fail the build, it changes what a Cookfile can
+# call in one phase and not the other.
+{"key": "add_unit", "sites": ["crates/cook-luaotp/src/pool.rs:835", "crates/cook-register/src/unit_api.rs:1169"], "why": "Debt, not deliberate: a door name spelled by both VMs with no shared definition. Belongs beside the module-binding door names in cook-contracts."}
+{"key": "dep_output", "sites": ["crates/cook-luaotp/src/pool.rs:1132", "crates/cook-register/src/dep_output_api.rs:96"], "why": "Debt: a both-phase door name spelled twice. The spec says this API exists in both phases, which is precisely why one definition has to name it."}
+{"key": "dep_output_list", "sites": ["crates/cook-luaotp/src/pool.rs:1156", "crates/cook-register/src/dep_output_api.rs:135"], "why": "Debt: the plural half of the same both-phase door, spelled twice."}
+{"key": "member_to_string", "sites": ["crates/cook-luaotp/src/pool.rs:769", "crates/cook-register/src/capture.rs:614"], "why": "Debt: a both-phase door name spelled twice."}
+{"key": "cook.member_to_string: {e}", "sites": ["crates/cook-luaotp/src/pool.rs:766", "crates/cook-register/src/capture.rs:611"], "why": "Debt: the diagnostic for the door above, duplicated with it. A user hitting this in register phase and in execute phase must not get two different sentences."}
+{"key": "prior_outputs", "sites": ["crates/cook-luaotp/src/pool.rs:875", "crates/cook-register/src/unit_api.rs:1340"], "why": "Debt: a door name spelled by both VMs with no shared definition."}
+{"key": "interactive", "sites": ["crates/cook-luaotp/src/pool.rs:825", "crates/cook-register/src/capture.rs:553"], "why": "Debt: a unit-kind name crossing the VM boundary as a bare string."}
+{"key": "step_group", "sites": ["crates/cook-graph/src/dag_data.rs:370", "crates/cook-luaotp/src/pool.rs:845", "crates/cook-register/src/unit_api.rs:1288"], "why": "Debt, and the widest of this group: a field name shared by both VMs AND by the graph renderer that reads it back. Three ends, no definition."}
+{"key": "__metatable", "sites": ["crates/cook-luaotp/src/pool.rs:708", "crates/cook-register/src/var_api.rs:207"], "why": "Deliberate, weakly: this is Lua's own metamethod name, fixed by the language rather than chosen by us, so the two spellings cannot drift apart without Lua changing. It stays listed because both sites are sealing a table against writes, and THAT policy is a decision with two implementations."}
+{"key": "__newindex", "sites": ["crates/cook-luaotp/src/pool.rs:702", "crates/cook-register/src/var_api.rs:193"], "why": "Deliberate, weakly: Lua's own metamethod name, as above, guarding the same table-sealing policy in two places."}
+
+# --- Cache and log wire formats --------------------------------------------
+# A field name written by one crate and read by another is a wire format. These
+# cross the on-disk boundary, so a rename on one side does not fail to compile:
+# it silently stops matching, and a cache that stops matching is the worst
+# failure this build system has.
+{"key": "discovered_inputs", "sites": ["crates/cook-contracts/src/evict/mod.rs:77", "crates/cook-engine/src/executor.rs:3558", "crates/cook-register/src/unit_api.rs:589"], "why": "Debt: an on-disk field name written by the executor, read by eviction, and named again by registration. cook-contracts already owns the surrounding record types; this key belongs with them as a constant."}
+{"key": "discovered_input_sets", "sites": ["crates/cook-contracts/src/evict/mod.rs:76", "crates/cook-engine/src/executor.rs:3607"], "why": "Debt: same on-disk record, same split between the writer and the reader."}
+{"key": "module_input_sets", "sites": ["crates/cook-contracts/src/evict/mod.rs:81", "crates/cook-engine/src/executor.rs:3680", "crates/cook-probe/src/eval/mod.rs:467"], "why": "Debt: three ends of one on-disk key — probe evaluation writes it, the executor writes it, eviction reads it."}
+{"key": "observation", "sites": ["crates/cook-cache/src/check.rs:880", "crates/cook-contracts/src/evict/mod.rs:179", "crates/cook-engine/src/executor.rs:3379"], "why": "Debt: an on-disk record name spelled by its writer, its checker and its evictor."}
+{"key": "dep_order", "sites": ["crates/cook-graph/src/dag_data.rs:115", "crates/cook-register/src/context.rs:342"], "why": "Debt: a registration field name spelled by the producer and by the graph that renders it."}
+{"key": "exit_code", "sites": ["crates/cook-cli/src/test_reporter/mod.rs:284", "crates/cook-progress/src/log_reader.rs:92"], "why": "Debt: a JSON field written by the test reporter and parsed by the log reader. The two ends are a serializer and its inverse, which the admission bar names as qualifying on its own."}
+{"key": "should_fail", "sites": ["crates/cook-cli/src/test_reporter/mod.rs:278", "crates/cook-lang/src/disposition.rs:202"], "why": "Debt: the disposition name the parser produces and the reporter serialises."}
+{"key": "schema_version", "sites": ["crates/cook-cli/src/test_reporter/mod.rs:255", "crates/cook-graph/src/emit.rs:673"], "why": "Deliberate: two unrelated JSON schemas each version themselves, and the field name is a convention rather than an agreement between them. Listed because if the two ever describe one document, this is where that mistake will show first."}
+
+# --- Diagnostics with two authors ------------------------------------------
+# A message written in two places is one message until somebody improves one of
+# them. These are user-visible text, so the drift is silent and public.
+{"key": "cook: warning: {warning}", "sites": ["crates/cook-cli/src/pipeline.rs:843", "crates/cook-register/src/engine.rs:2040"], "why": "Debt: the warning prefix — the shape of every warning cook prints — with two authors. This is a rendering rule, which the admission bar admits by name."}
+{"key": "cycle among recipes: {unresolved:?}", "sites": ["crates/cook-contracts/src/unit_graph/mod.rs:153", "crates/cook-engine/src/dag_builder.rs:37"], "why": "Debt, and a signal: the same cycle diagnostic in the unit-graph law and in the engine's DAG builder means the cycle CHECK is also implemented twice. The message is the visible half."}
+{"key": "unknown recipe: {0}", "sites": ["crates/cook-engine/src/lib.rs:484", "crates/cook-plan/src/analyzer.rs:20"], "why": "Debt: one error a user can reach down two code paths, worded identically today by luck."}
+{"key": "invalid .cook/cloud.toml: {e}", "sites": ["crates/cook-cli/src/cache_du.rs:29", "crates/cook-engine/src/run.rs:677"], "why": "Debt: one config file, one failure, two authors — and the path inside the message is itself a layout fact that cook-contracts already owns elsewhere."}
+{"key": "terminal_outputs mutex poisoned", "sites": ["crates/cook-plan/src/registers.rs:336", "crates/cook-register/src/dep_output_api.rs:72"], "why": "Debt: an expect() message duplicated across the two crates that lock the same map. Low stakes for a reader, but it marks one lock invariant owned in two places."}
+{"key": "probe '{}': {}", "sites": ["crates/cook-luaotp/src/pool.rs:1475", "crates/cook-probe/src/eval/mod.rs:95"], "why": "Debt: the probe-error prefix, written by the evaluator and again by the worker VM that surfaces it."}
+{"key": "env changed", "sites": ["crates/cook-cache/src/check.rs:133", "crates/cook-engine/src/executor.rs:823"], "why": "Debt: a cache-miss cause string produced in two crates. Miss causes are what `cook why` renders, so this is a vocabulary with two authors."}
+{"key": "working_dir lock", "sites": ["crates/cook-lua-stdlib/src/lib.rs:91", "crates/cook-luaotp/src/pool.rs:350"], "why": "Debt: an expect() message on the same lock, held in two crates."}
+
+# --- Surface vocabulary -----------------------------------------------------
+{"key": "ingredients", "sites": ["crates/cook-lang/src/cook_line.rs:255", "crates/cook-luagen/src/cook_step.rs:246", "crates/cook-register/src/capture.rs:97"], "why": "Debt, and the highest-stakes entry here: a Cookfile keyword spelled by the parser, by codegen and by registration. The Standard defines it; the grammar qualifies for cook-contracts by name; three crates spelling it is three chances to disagree with the spec."}
+{"key": "Cookfile", "sites": ["crates/cook-cli/src/cli.rs:36", "crates/cook-plan/src/entry.rs:59", "crates/cook-register/src/engine.rs:232"], "why": "Debt: the entry-file name, which is a layout fact. cook-contracts already owns a layout module; this belongs in it."}
+{"key": "cook.{}(\\\"{}\\\")", "sites": ["crates/cook-contracts/src/module_binding/mod.rs:138", "crates/cook-luagen/src/template.rs:344"], "why": "Debt, and it hides a second one. Both compose a qualified call to a cook door with a double-quoted Lua argument, but they escape that argument with DIFFERENT functions — escape_double_quoted in cook-contracts, escape_lua_string in cook-luagen. Consolidating the format string without first settling which escaper is correct would paper over the real divergence, so this waiver stands until the escaping law is one function."}
+{"key": "function", "sites": ["crates/cook-lang/src/recipe.rs:90", "crates/cook-register/src/probe_api.rs:265"], "why": "Deliberate: two unrelated uses of an English word — the parser naming a Lua construct, the probe API describing an expected value type. Nothing agrees with anything here; the rule cannot tell an English word from a wire format, and this is the cost of that."}
+{"key": "probe:{key}", "sites": ["crates/cook-cli/src/pipeline.rs:2555", "crates/cook-probe/src/eval/mod.rs:530"], "why": "Debt: a cache-key prefix composed by the evaluator and reconstructed by the CLI. A key format with two authors is a cross-machine cache hazard, which is the worst failure mode this repo has."}
+
+# --- Formatting coincidences ------------------------------------------------
+{"key": "    {}\\n", "sites": ["crates/cook-cli/src/pipeline.rs:2274", "crates/cook-luagen/src/recipe.rs:968"], "why": "Deliberate: two unrelated indent-and-newline format strings. Four spaces is not a shared decision, and merging them would couple a diagnostic renderer to a code generator for no reason."}
+{"key": "exit {c}", "sites": ["crates/cook-cli/src/test_reporter/failures.rs:59", "crates/cook-logs/src/render/picker.rs:20"], "why": "Debt, mild: two renderers spelling how a non-zero exit is shown to a user. Rendering rules are admissible law by the bar's own list, and these two are already one sentence apart from disagreeing."}

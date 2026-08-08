@@ -42,6 +42,13 @@ chore conformance
 chore e2e
     cargo test --manifest-path Cargo.toml -p cook-cli --test surface_conformance
 
+# The cook-contracts constitution as a gate: the purity budget, the stratum
+# table, and the rule that no decision is implemented twice. A chore rather
+# than a test unit because `recipe test` above already runs it — the same
+# reason `conformance` and `e2e` are chores — and this is the targeted loop.
+chore constitution
+    cargo test --manifest-path Cargo.toml -p cook-contracts --test constitution
+
 # Enforces the Rust test-layout convention (COOK-312, CONTRIBUTING.md): unit
 # tests live in <dir>/tests/<name>_tests.rs attached via #[path], never inline,
 # and integration tests use bare names. A `test {}` step rather than a chore so

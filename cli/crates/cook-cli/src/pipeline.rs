@@ -1100,7 +1100,7 @@ pub fn cmd_test(
     let chore_names: std::collections::BTreeSet<String> = registered
         .names
         .iter()
-        .filter(|n| matches!(n.kind, cook_plan::cook_register::RecipeKind::Chore))
+        .filter(|n| matches!(n.kind, cook_contracts::registration::RecipeKind::Chore))
         .map(|n| n.name.clone())
         .collect();
 
@@ -1425,7 +1425,7 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|r| matches!(r.kind, cook_plan::cook_register::RecipeKind::Recipe))
+            .filter(|r| matches!(r.kind, cook_contracts::registration::RecipeKind::Recipe))
             .map(|r| r.name)
             .collect(),
     )
@@ -1438,13 +1438,13 @@ pub fn set_invoked_builtin(name: &'static str) {
 }
 
 fn warn_if_invoked_builtin_is_registered<'a>(
-    names: impl IntoIterator<Item = (&'a str, &'a cook_plan::cook_register::RecipeKind)>,
+    names: impl IntoIterator<Item = (&'a str, &'a cook_contracts::registration::RecipeKind)>,
 ) {
     let Some(name) = INVOKED_BUILTIN.get().copied() else {
         return;
     };
     if names.into_iter().any(|(candidate, kind)| {
-        candidate == name && matches!(kind, cook_plan::cook_register::RecipeKind::Recipe)
+        candidate == name && matches!(kind, cook_contracts::registration::RecipeKind::Recipe)
     }) {
         eprintln!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
     }
@@ -1495,7 +1495,7 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
     // Pass 1: render `{name}{suffix}` per entry.
-    let rendered: Vec<(String, &cook_plan::cook_register::RegisteredRecipePub)> = names
+    let rendered: Vec<(String, &cook_contracts::registration::RegisteredRecipePub)> = names
         .iter()
         .map(|r| {
             let suffix = if r.params.is_empty() {
@@ -1533,8 +1533,8 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     // Pass 3: print.
     for (name_and_suffix, r) in &rendered {
         let label = match r.kind {
-            cook_plan::cook_register::RecipeKind::Recipe => "recipe ",
-            cook_plan::cook_register::RecipeKind::Chore => "chore  ",
+            cook_contracts::registration::RecipeKind::Recipe => "recipe ",
+            cook_contracts::registration::RecipeKind::Chore => "chore  ",
         };
         match (&r.origin, annotated_width) {
             (Some(origin), Some(width)) => {
@@ -1994,7 +1994,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
 
     let annotations = annotations_from(&report, &timings);
 
-    let all_units: Vec<(String, cook_engine::cook_contracts::RecipeUnits)> = reachable
+    let all_units: Vec<(String, cook_contracts::RecipeUnits)> = reachable
         .iter()
         .map(|name| {
             let units = registered
@@ -2003,7 +2003,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
                 .cloned()
                 // A zero-unit meta-target still belongs in the graph as a node,
                 // so it gets an empty stub rather than being dropped.
-                .unwrap_or_else(|| cook_engine::cook_contracts::RecipeUnits {
+                .unwrap_or_else(|| cook_contracts::RecipeUnits {
                     recipe_name: name.clone(),
                     deps: edges.get(name).cloned().unwrap_or_default(),
                     units: Vec::new(),
