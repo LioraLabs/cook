@@ -2,7 +2,7 @@ Invocation-time error: chore declares a required parameter but argv supplies non
 
 The conformance harness check is parse-only (the Cookfile lexes and registers cleanly
 so this is a positive/parse-success fixture). The integration test in
-`cli/crates/cook-cli/tests/chore_params_test.rs` (`chore_missing_required_argv_errors`)
+`cli/crates/cook-cli/tests/chore_params.rs` (`chore_missing_required_argv_errors`)
 asserts the runtime diagnostic.
 
 Implementations MUST surface a diagnostic of the form:

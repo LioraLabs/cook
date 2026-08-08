@@ -132,7 +132,8 @@ pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResul
         return Ok(());
     }
     let globals = lua.globals();
-    let original: LuaFunction = match globals.get::<LuaValue>("require")? {
+    let require_fn = cook_contracts::module_binding::REQUIRE_FN;
+    let original: LuaFunction = match globals.get::<LuaValue>(require_fn)? {
         LuaValue::Function(f) => f,
         // No `require` in this VM: nothing to wrap, and nothing can arrive
         // through the door that does not exist.
@@ -166,7 +167,7 @@ pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResul
         Ok(result)
     })?;
 
-    globals.set("require", wrapper)?;
+    globals.set(require_fn, wrapper)?;
     lua.set_named_registry_value(INSTALLED_FLAG, true)?;
     Ok(())
 }

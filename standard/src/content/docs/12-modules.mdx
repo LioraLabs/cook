@@ -15,7 +15,7 @@ A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_
 
 A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
 
-The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile.
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `cook_step` body, `test_step` body, chore body, `probe` `produce` body, top-level `module_call` (§{toplevel.module-call}), recipe-body `module_call` (§{steps.dispatch}), and `register_block` body (§{decl.register}) in the same Cookfile. [amended CS-0205]
 
 A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered. The full lifecycle contract for `init()` and for module loading is in §{mods.lifecycle}.
 
@@ -32,6 +32,12 @@ The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua envir
 ### Note 12.1.1
 
 The hyphen-to-underscore rewrite exists because `BARE_IDENTIFIER` permits internal hyphens (App. A.5) whereas Lua identifiers do not. Thus `use my-mod` binds the Lua global `my_mod`, but the on-disk lookup searches for `cook_modules/my-mod.lua` verbatim: the disk name is not rewritten.
+
+### Note 12.1.2
+
+The list above names the execute-phase bodies individually because an implementation that generates code per body kind will bind the alias per body kind, and one omitted kind is a silent hole: for a year the reference implementation bound the alias in a chore body and in no other execute-phase body, so `use greet` followed by `test >{ greet.say() }` failed with `attempt to index a nil value (global 'greet')` (CS-0205). "Visible" is a property of each body, not of the Cookfile.
+
+Visibility binds per body, but it is not a requirement to *evaluate* the module for every body. An implementation binds the alias as a Lua local, which only code that names the alias lexically can reach, so a body that names no alias cannot observe whether one was bound and an implementation MAY skip it there. §{lua.cook-load-module} states that option and the conditions on it.
 
 ## 12.2. `use` scope is lexical per Cookfile [#mods.use-scope]
 A `use` declaration's alias is scoped to its **declaring Cookfile** and is not visible across `import` boundaries. Each Cookfile in a workspace defines its own `use`-resolution scope. The aliases established by `use foo` in Cookfile A are not in scope for any Lua evaluated from Cookfile B's recipes, and vice versa, regardless of import direction.

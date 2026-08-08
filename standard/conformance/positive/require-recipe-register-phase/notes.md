@@ -13,7 +13,7 @@ classification, nothing more.
 Runtime semantics — the register-order guarantee (forcing `producer`'s body to
 completion before the call returns), the dep-list-equivalent edge merged into
 `requires`, bare-name resolution, and the error contract — are pinned by the
-cook-register tests (`cli/crates/cook-register/src/tests.rs`) and by the
+cook-register tests (`cli/crates/cook-register/src/tests/register_tests.rs`) and by the
 engine's cross-recipe edge tests
 (`cli/crates/cook-engine/tests/module_declared_cross_recipe_edge.rs`). The
 outside-a-recipe-body rejection is additionally pinned as an executable

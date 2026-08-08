@@ -343,3 +343,78 @@ fn refresh_is_idempotent() {
     assert_eq!(first_path, second_path, "path must not grow on repeated refresh");
     assert_eq!(first_cpath, second_cpath, "cpath must not grow on repeated refresh");
 }
+
+// ---------------------------------------------------------------------------
+// The door agreement (CS-0205)
+// ---------------------------------------------------------------------------
+//
+// `cook-luagen` composes the text of a `use` binding; this crate installs the
+// function that text calls. Neither crate can see the other, and the only
+// consequence of a rename is that the alias starts binding through a door the
+// CS-0204 observer does not watch — a silently unkeyed module, which is a wrong
+// shared-cache answer rather than a failure. These tests execute the composed
+// text against the installed door, so changing one side alone goes red.
+
+#[test]
+fn the_composed_use_binding_executes_against_the_installed_loader() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_module(tmp.path(), "greet", "return { value = function() return \"bound\" end }");
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    // Byte-for-byte what codegen puts at the top of a register chunk and in
+    // front of every execute-phase body that names the alias.
+    let chunk = format!(
+        "{}\nreturn greet.value()",
+        cook_contracts::module_binding::binding("greet")
+    );
+    let got: String = lua.load(&chunk).eval().unwrap();
+    assert_eq!(got, "bound");
+}
+
+#[test]
+fn a_hyphenated_module_binds_its_underscore_alias_through_the_same_door() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_module(tmp.path(), "my-mod", "return { value = 7 }");
+    let lua = vm_with_loader(tmp.path().to_path_buf());
+
+    // §12.1 both ways at once: the composed alias must be a legal Lua local
+    // AND the composed lookup must be the un-rewritten disk name.
+    let chunk = format!(
+        "{}\nreturn my_mod.value",
+        cook_contracts::module_binding::binding("my-mod")
+    );
+    let got: i64 = lua.load(&chunk).eval().unwrap();
+    assert_eq!(got, 7);
+}
+
+#[test]
+fn the_binding_goes_through_the_observed_door() {
+    // The CS-0204 point, stated as a test: a unit whose alias was bound by the
+    // composed prelude must end up keyed on the module file. If the binding
+    // ever stops routing through `cook.load_module`, this records nothing.
+    let tmp = tempfile::tempdir().unwrap();
+    write_module(tmp.path(), "greet", "return { value = 1 }");
+    let observer = ModuleObserver::new();
+    let lua = Lua::new();
+    let cook = lua.create_table().unwrap();
+    install_module_loader(
+        &lua,
+        &cook,
+        WorkingDirSource::Static(tmp.path().to_path_buf()),
+        NoHooks,
+        observer.clone(),
+    )
+    .unwrap();
+    lua.globals().set("cook", cook).unwrap();
+
+    lua.load(&format!(
+        "{}\nreturn greet.value",
+        cook_contracts::module_binding::binding("greet")
+    ))
+    .eval::<i64>()
+    .unwrap();
+
+    let seen = observer.take();
+    assert_eq!(seen.len(), 1, "the composed binding must be observed: {seen:?}");
+    assert!(seen[0].ends_with("greet.lua"), "{seen:?}");
+}

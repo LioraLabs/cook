@@ -1,0 +1,89 @@
+# CS-0205. §24.2 has said since CS-0017 that `use foo` binds the alias for
+# BOTH phases. Only the chore body ever did it; `cook "out" >{ }`, `test >{ }`
+# and a probe's `produce >{ }` all died with `attempt to index a nil value
+# (global 'greet')`. Two green suites hid that for a year: the conformance
+# corpus pins the PARSE of this exact shape (`positive/017-use-from-execute`)
+# and the codegen corpus only asserts that lowering does not error. This
+# fixture is the executed half — the one that would have been red.
+#
+# Runs 5-7 are also the CS-0204 interaction proof: the ONLY path from the unit
+# to greet.lua is the `use` alias, so if the binding were ever re-routed
+# through a Rust path that does not call `cook.load_module`, the module would
+# stop being a determinant and run 7 would silently serve ORIGINAL.
+
+# 1. cook-step Lua body resolves the alias.
+[[run]]
+args = ["build"]
+[run.assert]
+equals = { "build/out.txt" = "ORIGINAL" }
+
+# 2. test-step Lua body resolves the alias.
+[[run]]
+args = ["checks"]
+[run.assert]
+output_contains = ["test sees ORIGINAL"]
+
+# 3. A probe's produce body is execute-phase Lua too.
+[[run]]
+args = ["motto_check"]
+[run.assert]
+output_contains = ["probe produced ORIGINAL"]
+
+# 4. Chore Lua body — the one surface that already worked, pinned so the
+#    shared prelude cannot regress it.
+[[run]]
+args = ["say"]
+[run.assert]
+output_contains = ["chore sees ORIGINAL"]
+
+# 5. Nothing edited: the cook step is served from cache. Without this bar,
+#    run 7 is satisfied just as well by a unit that rebuilds forever, which
+#    is not a fix.
+[[run]]
+args = ["build"]
+[run.assert]
+output_contains = ["1 cached"]
+unchanged = ["build/out.txt"]
+
+# 6. Edit the module. It is reached ONLY through the `use` alias — the body
+#    never names cook.load_module.
+[[run]]
+args = ["build"]
+write = { "cook_modules/greet.lua" = "local m = {}\n\nfunction m.value()\n  return \"UPDATED\"\nend\n\nreturn m\n" }
+[run.assert]
+output_not_contains = ["1 cached"]
+changed = ["build/out.txt"]
+equals = { "build/out.txt" = "UPDATED" }
+
+# 7. The other three body kinds see the edit too — the probe through its own
+#    fingerprint, which folds module source since CS-0204.
+[[run]]
+args = ["checks"]
+[run.assert]
+output_contains = ["test sees UPDATED"]
+
+[[run]]
+args = ["motto_check"]
+[run.assert]
+output_contains = ["probe produced UPDATED"]
+
+[[run]]
+args = ["say"]
+[run.assert]
+output_contains = ["chore sees UPDATED"]
+
+# 8. The reference gate is about references, not about the name appearing. A
+#    body whose only `regonly` is a table field must not load the module — it is
+#    register-oriented and raises on a worker VM. Found by review: the first
+#    scanner had no field-access rule and turned this green Cookfile red.
+[[run]]
+args = ["field_access"]
+[run.assert]
+output_contains = ["field access ok: a field, not the module"]
+
+# 9. And the mirror: `..greet` is concatenation, not a field access, so the
+#    alias IS free there and must bind. Over-refining the gate breaks this.
+[[run]]
+args = ["concat_reference"]
+[run.assert]
+output_contains = ["concat sees UPDATED"]

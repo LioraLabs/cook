@@ -1,0 +1,50 @@
+# §24.2 / CS-0205: `use greet` binds the alias in BOTH phases. Every
+# execute-phase body kind that can hold Lua is represented here, because the
+# defect was per-emission-site: the chore body worked while the cook-step,
+# test-step and probe bodies all died with `attempt to index a nil value
+# (global 'greet')`.
+use greet
+use regonly
+
+# A probe's `produce` body is execute-phase Lua too.
+probe motto
+    >{ return greet.value() }
+
+recipe build
+    # cook-step Lua body: the cacheable one, so it doubles as the CS-0204
+    # proof — editing greet.lua must rebuild it.
+    cook "build/out.txt" >{
+        local f = io.open(outputs[1], "w")
+        f:write(greet.value())
+        f:close()
+    }
+
+recipe checks
+    # test-step Lua body.
+    test >{ print("test sees " .. greet.value()) }
+
+recipe motto_check
+    seal motto
+    test >{ print("probe produced " .. cook.probes.get("motto")) }
+
+chore say
+    # Chore Lua body — the surface that was already carrying the contract.
+    > print("chore sees " .. greet.value())
+
+recipe field_access
+    # CS-0205's gate is about REFERENCES, not about the alias name appearing.
+    # `opts.regonly` is a table field, so nothing here can see the local the
+    # prelude would bind — and binding it anyway would load a register-oriented
+    # module on a worker VM and fail this recipe. A scanner without the
+    # field-access rule turns this green Cookfile red.
+    test >{
+        local opts = {}
+        opts.regonly = "a field, not the module"
+        print("field access ok: " .. opts.regonly)
+    }
+
+recipe concat_reference
+    # The mirror case, and the one that must NOT be over-refined away: the dot
+    # before `greet` here is the second half of `..`, so this IS a free
+    # reference and the alias must be bound.
+    test >{ print("concat sees "..greet.value()) }
