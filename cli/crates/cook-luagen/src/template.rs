@@ -609,46 +609,13 @@ fn body_text_has_in_placeholder_sigil(text: &str) -> bool {
 
 /// Scan a Lua source text for a free-identifier reference to `name`.
 ///
-/// Skips:
-/// - text inside `"…"` and `'…'` short strings (with `\` escape rules);
-/// - text inside `[[…]]` long strings (any `=` count between brackets);
-/// - text inside `--` line comments and `--[[…]]` block comments;
-/// - identifier-name positions immediately preceded by `.` or `:` (these
-///   are property/method accesses, not free identifiers).
-///
-/// The scan recognises `name` only as a whole-word identifier, bordered
-/// by Lua identifier-character boundaries.
+/// One walk, shared with the CS-0205 `use`-alias gate: both callers are asking
+/// the same question of the same kind of source, and an answer that differs
+/// between them is a bug in one of them. The rules — non-code regions, whole
+/// tokens, `.`/`:` field access, and the `..` exception — live in
+/// [`crate::lua_scan::free_identifier_occurs`].
 fn lua_has_free_identifier(code: &str, name: &str) -> bool {
-    let bytes = code.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // Strings and comments are not code (see `crate::lua_scan`). An
-        // unterminated one makes the rest unscannable; report "not found"
-        // rather than guessing where it ends.
-        match crate::lua_scan::skip_non_code(code, bytes, i) {
-            crate::lua_scan::Skip::Ended(next) => {
-                i = next;
-                continue;
-            }
-            crate::lua_scan::Skip::Unterminated => return false,
-            crate::lua_scan::Skip::Code => {}
-        }
-
-        if crate::lua_scan::is_ident_start(bytes[i]) {
-            let start = i;
-            i = crate::lua_scan::ident_end(bytes, i);
-            // `x.name` / `x:name` is a property or method, not a free read.
-            let is_field_access =
-                start > 0 && (bytes[start - 1] == b'.' || bytes[start - 1] == b':');
-            if !is_field_access && &code[start..i] == name {
-                return true;
-            }
-            continue;
-        }
-
-        i += 1;
-    }
-    false
+    crate::lua_scan::free_identifier_occurs(code, name)
 }
 
 // ─── CS-0024: placeholder validator ─────────────────────────────────────────

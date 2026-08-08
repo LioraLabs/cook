@@ -377,7 +377,7 @@ fn a_hyphenated_module_binds_its_underscore_alias_through_the_same_door() {
     write_module(tmp.path(), "my-mod", "return { value = 7 }");
     let lua = vm_with_loader(tmp.path().to_path_buf());
 
-    // §12.2 both ways at once: the composed alias must be a legal Lua local
+    // §12.1 both ways at once: the composed alias must be a legal Lua local
     // AND the composed lookup must be the un-rewritten disk name.
     let chunk = format!(
         "{}\nreturn my_mod.value",

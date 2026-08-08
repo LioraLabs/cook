@@ -1,4 +1,4 @@
-//! What `use foo` binds, and which door it binds through (§12.1, §12.2, §24.2).
+//! What `use foo` binds, and which door it binds through (§12.1, §24.2).
 //!
 //! A `use` declaration is answered by two crates that never call each other.
 //! `cook-luagen` COMPOSES the binding — `local foo = cook.load_module("foo")` —
@@ -33,15 +33,30 @@ pub const LOAD_MODULE_FN: &str = "load_module";
 ///
 /// A multi-file rock reaches its own submodules through it, and a native
 /// `.so` can be reached NO other way, since [`crate::layout::module_candidates`]
-/// probes four `.lua` paths and nothing else. Named here so the observer that
-/// wraps it and any future emitter of it agree (CS-0204).
+/// probes four `.lua` paths and nothing else.
+///
+/// It sits beside [`LOAD_MODULE_FN`] because the decision CS-0204's soundness
+/// rests on is the PAIR: these two names are the complete set of doors module
+/// code can enter through, so a determinant set observed at both is complete.
+/// Naming one and inlining the other would leave that argument half-written
+/// down. Today it has a single consumer, the observer in `cook-lua-stdlib`
+/// that wraps it — a weaker claim on this crate than `LOAD_MODULE_FN`'s
+/// emitter/consumer pair, and recorded here rather than dressed up.
 pub const REQUIRE_FN: &str = "require";
 
-/// The Lua identifier `use <name>` binds (§12.2): each ASCII hyphen becomes an
-/// underscore, everything else `BARE_IDENTIFIER` admits passes through.
+/// The Lua identifier a module name binds (§12.1): each ASCII hyphen becomes an
+/// underscore, everything else `BARE_IDENTIFIER` admits passes through. The
+/// on-disk name is NOT rewritten (Note 12.1.1).
 ///
-/// The on-disk name is NOT rewritten (Note 12.1.1) — `use my-mod` binds
-/// `my_mod` and loads `cook_modules/my-mod.lua`.
+/// Note that today's `use` surface cannot reach the hyphen case: CS-0035 made
+/// `cook-lang`'s lexer reject a `use` name that is not already a Lua identifier
+/// (`check_use_name`), so §12.1's rewrite and Note 12.1.1's `use my-mod`
+/// example describe something no conforming Cookfile can currently express —
+/// a Standard/implementation divergence that predates this module and is not
+/// this module's to settle (COOK-436). The rule is spelled here anyway because
+/// it is the Standard's, because it is the derivation COOK-431's path-form
+/// `use` needs for a basename, and because a name reached from a path has not
+/// been through `check_use_name`.
 pub fn alias_of(module_name: &str) -> String {
     module_name.replace('-', "_")
 }

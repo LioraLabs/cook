@@ -71,3 +71,19 @@ output_contains = ["probe produced UPDATED"]
 args = ["say"]
 [run.assert]
 output_contains = ["chore sees UPDATED"]
+
+# 8. The reference gate is about references, not about the name appearing. A
+#    body whose only `regonly` is a table field must not load the module — it is
+#    register-oriented and raises on a worker VM. Found by review: the first
+#    scanner had no field-access rule and turned this green Cookfile red.
+[[run]]
+args = ["field_access"]
+[run.assert]
+output_contains = ["field access ok: a field, not the module"]
+
+# 9. And the mirror: `..greet` is concatenation, not a field access, so the
+#    alias IS free there and must bind. Over-refining the gate breaks this.
+[[run]]
+args = ["concat_reference"]
+[run.assert]
+output_contains = ["concat sees UPDATED"]

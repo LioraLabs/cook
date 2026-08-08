@@ -64,7 +64,10 @@ fn only_the_referenced_subset_binds() {
 
 #[test]
 fn a_hyphenated_module_binds_the_underscore_alias_and_the_disk_name() {
-    // Note 12.1.1: the alias is rewritten, the on-disk name is not.
+    // Note 12.1.1: the alias is rewritten, the on-disk name is not. Built from
+    // an AST value directly because CS-0035's `check_use_name` refuses this
+    // spelling at the `use` surface (COOK-436); the law is still the law, and
+    // COOK-431's path form reaches it without passing that check.
     assert_eq!(
         execute_prelude(&uses(&["my-mod"]), "my_mod.f()"),
         "local my_mod = cook.load_module(\"my-mod\"); "
@@ -80,11 +83,13 @@ fn a_repeated_use_binds_once() {
 }
 
 #[test]
-fn the_module_name_is_escaped() {
+fn an_alias_that_is_not_a_lua_identifier_binds_nothing() {
+    // Escaping of the module NAME is `module_binding`'s test; this pins the
+    // consequence here: a needle that cannot be an identifier token can never
+    // match one, so the prelude stays empty rather than emitting broken Lua.
     assert_eq!(
         execute_prelude(&uses(&["q\"x"]), "q_x.f()"),
-        String::new(),
-        "an alias that is not a Lua identifier cannot be referenced, so nothing binds"
+        String::new()
     );
 }
 
