@@ -132,8 +132,14 @@ fn format_stream(s: &str) -> String {
 }
 
 /// Reported commands carry codegen's `set -e` prelude; strip it for display.
+///
+/// The prefix comes from the constant that composes it rather than being
+/// re-typed here, which is what that constant's doc asks for: an inverse that
+/// spells the bytes itself keeps stripping the old prelude the day the
+/// composer emits a new one.
 fn strip_set_e(cmd: &str) -> &str {
-    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
+    cmd.strip_prefix(cook_contracts::shell_block::SET_E_PREFIX)
+        .unwrap_or(cmd)
 }
 
 fn single_line(s: &str) -> String {

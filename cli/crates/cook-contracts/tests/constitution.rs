@@ -956,6 +956,89 @@ fn no_item_is_reached_through_another_crates_re_export() {
     enforce("re-export-tunnels", &findings.into_values().collect::<Vec<_>>());
 }
 
+// ------------------------------------------ tier 2: cross-crate duplicates
+
+/// Below this, a shared literal is a coincidence rather than a contract.
+const SHARED_LITERAL_MIN: usize = 8;
+
+/// Every string literal in a source, with its line, comments already gone.
+pub fn string_literals(text: &str) -> Vec<(usize, String)> {
+    let scrubbed = scrub(text, Scrub::Comments);
+    let bytes = scrubbed.as_bytes();
+    let mut line_of = LineIndex::new(&scrubbed);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(end) = char_literal_end(bytes, i) {
+            i = end;
+            continue;
+        }
+        if let Some((content, end)) = string_span(bytes, i) {
+            out.push((line_of.line(i), scrubbed[content].to_string()));
+            i = end;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Literals that name a Rust item rather than state a decision.
+///
+/// Two of these are structural noise in every Rust workspace, and excluding
+/// them by construction is better than waiving them: a list padded with noise
+/// is a list nobody reads. `#[path = "tests/naming_tests.rs"]` collides
+/// whenever two crates have a module of the same name, which is a coincidence
+/// of naming. `skip_serializing_if = "Option::is_none"` is a function path
+/// that serde requires as a string; two crates writing it agree about nothing.
+fn names_an_item_not_a_decision(line: &str) -> bool {
+    line.contains("#[path") || line.contains("skip_serializing_if")
+}
+
+/// String literals of substance appearing in two or more crates.
+///
+/// This is the class the constitution names outright — "an emitter and a
+/// consumer of the same literal" — and the one that produced `COOK_CMD_FAILED`
+/// and `REGISTER_SURFACE_NAME` before anyone was looking for it. A shared
+/// literal is a wire format whether or not anybody called it one, and the two
+/// ends agree only by luck until one of them is edited.
+pub fn duplicate_literals(corpus: &[Source]) -> Vec<Finding> {
+    let mut seen: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for source in corpus {
+        let scrubbed = scrub(&source.text, Scrub::Comments);
+        let lines: Vec<&str> = scrubbed.lines().collect();
+        for (line, literal) in string_literals(&source.text) {
+            if literal.chars().count() < SHARED_LITERAL_MIN
+                || lines.get(line - 1).is_some_and(|text| names_an_item_not_a_decision(text))
+            {
+                continue;
+            }
+            seen.entry(literal)
+                .or_default()
+                .entry(source.krate.clone())
+                .or_insert_with(|| format!("{}:{line}", source.path));
+        }
+    }
+
+    seen.into_iter()
+        .filter(|(_, crates)| crates.len() > 1)
+        .map(|(literal, crates)| Finding {
+            key: literal.clone(),
+            sites: crates.values().cloned().collect(),
+            detail: format!(
+                "the literal {literal:?} is written in {} crates; whichever end is edited \
+                 first, the others keep the old bytes",
+                crates.len()
+            ),
+        })
+        .collect()
+}
+
+#[test]
+fn no_literal_is_written_in_two_crates() {
+    enforce("duplicate-literals", &duplicate_literals(&corpus()));
+}
+
 // ------------------------------------------------------- tracked-tree guard
 
 /// Paths `git` reports as tracked, relative to the workspace root, or `None`
@@ -1242,6 +1325,63 @@ fn a_re_export_tunnel_is_caught_and_a_direct_reach_is_not() {
         ..tunnel
     };
     assert!(re_export_tunnels(&direct, &members).is_empty());
+}
+
+fn source(krate: &str, text: &str) -> Source {
+    Source {
+        krate: krate.to_string(),
+        path: format!("crates/{krate}/src/lib.rs"),
+        text: text.to_string(),
+    }
+}
+
+#[test]
+fn a_literal_in_two_crates_is_caught_and_one_crate_is_not() {
+    let shared = |text: &str| {
+        duplicate_literals(&[source("cook-a", text), source("cook-b", text)])
+            .into_iter()
+            .map(|finding| finding.key)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(shared("let x = \"registration_v2\";\n"), ["registration_v2"]);
+    assert!(
+        duplicate_literals(&[
+            source("cook-a", "let x = \"registration_v2\";\n"),
+            source("cook-b", "let y = \"something_else\";\n"),
+        ])
+        .is_empty(),
+        "one literal per crate is not a shared decision"
+    );
+    assert!(
+        duplicate_literals(&[source("cook-a", "let x = \"a\";\n"), source("cook-b", "let y = \"a\";\n")])
+            .is_empty(),
+        "below the length floor a match is a coincidence"
+    );
+    // Twice in ONE crate is that crate's business.
+    assert!(
+        duplicate_literals(&[source("cook-a", "let x = \"registration_v2\"; let y = \"registration_v2\";\n")])
+            .is_empty()
+    );
+    // Comments and doc comments are not code.
+    assert!(shared("// let x = \"registration_v2\";\n").is_empty());
+    // The two exclusions, which must not need a waiver.
+    assert!(shared("#[path = \"tests/naming_tests.rs\"]\nmod naming;\n").is_empty());
+    assert!(shared("#[serde(skip_serializing_if = \"Option::is_none\")]\n").is_empty());
+}
+
+#[test]
+fn a_literal_is_read_as_written_including_its_escapes_and_raw_form() {
+    let literals = |text: &str| {
+        string_literals(text)
+            .into_iter()
+            .map(|(_, literal)| literal)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(literals("let x = \"a\\\"b\";\n"), ["a\\\"b"]);
+    assert_eq!(literals("let x = r#\"raw \"quoted\" text\"#;\n"), ["raw \"quoted\" text"]);
+    // A quote character must not open a literal and swallow the rest of the file.
+    assert_eq!(literals("let q = '\"'; let after = \"visible\";\n"), ["visible"]);
 }
 
 #[test]
