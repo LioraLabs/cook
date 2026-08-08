@@ -205,7 +205,15 @@ pub fn determinant_drift(
 /// removed test-result store carried its own, so two stores holding the same
 /// kind of thing were free to disagree about what shape it had, and a change
 /// to one could not invalidate the other. One store now, and one version.
-pub const RECORD_SCHEMA_VERSION: u32 = 9;
+///
+/// 9 → 10 (CS-0204). A step record gains a module-record slice
+/// (`StepEntry::module_inputs`) and the shared key folds the content of the
+/// modules a unit loaded. Both halves are exactly what a version exists to
+/// reject: an index written by 9 has no module slice to decode, and an entry
+/// published by 9 sits at a key composed from fewer terms, so a 10 reading
+/// either would be reading a record that means something else. Superseded
+/// indexes are swept, not migrated (CS-0166).
+pub const RECORD_SCHEMA_VERSION: u32 = 10;
 
 #[cfg(test)]
 #[path = "tests/record_tests.rs"]

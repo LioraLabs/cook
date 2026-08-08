@@ -103,6 +103,16 @@ A module MAY queue work to run once, after every recipe body of the registration
 
 A module's top-level chunk and its `init()` function (§{mods.lifecycle.load-order}) run before any recipe body in the enclosing Cookfile registers — they are this lifecycle's **start**. A callback queued via `cook.on_register_complete` runs after every recipe body of the pass has registered — it is the lifecycle's **end**, the finalize counterpart to `init()`'s start. Where `init()` lets a module establish state before any recipe body could depend on it, a queued callback lets a module act on state recipe bodies accumulated while registering — state that, by construction, is not complete until the last body of the pass has run.
 
+### 12.3.6. Module source is a determinant [#mods.lifecycle.determinant]
+
+> **Normative (CS-0204).** A module is source. Loading one is running its code, so its content decides what the loading body does, and a conforming implementation MUST treat it as a determinant of the work that loaded it. §{exec.cache.module-source} states the rule for work units and §{cat.probes.module-source} for probes; this subsection states where in the lifecycle the obligation falls, and where it does not.
+>
+> **Execute phase: observe the load.** For a body evaluated on an execute-phase VM, the obligation is to observe: a conforming implementation MUST record the resolved path of every module the body loaded, through every door it offers into module code, and MUST NOT substitute the module search directory for the loaded set.
+>
+> **Register phase: already covered, and why.** A module that runs at register phase reaches a work unit only through the unit's DECLARATION — the command text or Lua chunk it emits, the inputs and outputs it declares, the probes it seals on. Every one of those is already a determinant (§{exec.cache.single-key}), so a register-phase module change that changes what a unit does necessarily changes the unit's key, and one that changes nothing about the declaration changes nothing about the unit. A conforming implementation therefore need not observe register-phase loads on a work unit's behalf, and this is a consequence of the key's definition rather than an exemption granted here.
+>
+> The one register-phase evaluation NOT covered by that argument is a probe's `produce` body run during a member-source pre-pass (§{cat.probes.templates}): its result is a probe VALUE, addressed by a fingerprint rather than by a unit declaration. §{cat.probes.module-source} binds it wherever it runs, and a conforming implementation MUST observe those loads on whichever VM evaluates the body.
+
 ## 12.4. Built-in modules [#mods.builtin]
 A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§{rationale.modules}).
 

@@ -246,6 +246,19 @@ pub const DISCOVERED_INPUT_SETS_PATH: &str = "__cook_discovered_input_sets__";
 pub const OBSERVATION_INDEX: u32 = u32::MAX - 2;
 pub const OBSERVATION_PATH: &str = "__cook_observation__";
 
+/// CS-0204: reserved index for the multi-entry MODULE-path sets manifest,
+/// keyed under a unit's DECLARED-inputs-only cloud key.
+///
+/// Deliberately a separate artifact from the discovered-input sets above,
+/// rather than a widening of them. The two lists have different destinations
+/// on the way back: a depfile-discovered path is recorded into
+/// `StepEntry::inputs`, a module path into `StepEntry::module_inputs`, and the
+/// two are judged by different rules. Merging them into one list would save an
+/// artifact and lose the distinction the whole design rests on.
+pub const MODULE_INPUT_SETS_INDEX: u32 = u32::MAX - 3;
+/// Reserved output path for the module-path sets manifest artifact.
+pub const MODULE_INPUT_SETS_PATH: &str = "__cook_module_inputs__";
+
 /// Cap on retained discovered-path sets per declared key. Oldest sets fall
 /// off; a fallen-off set degrades to a safe re-execute, never a wrong hit.
 pub const DISCOVERED_INPUT_SETS_CAP: usize = 64;

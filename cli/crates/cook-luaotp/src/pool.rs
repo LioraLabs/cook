@@ -81,6 +81,13 @@ pub struct WorkResult {
     /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
     /// `None` for all non-probe units. Wired end-to-end by Task G.
     pub probe_output: Option<ProbeOutput>,
+    /// CS-0204: the module files this item's Lua body actually loaded, as
+    /// workspace-relative paths where they lie under the item's working
+    /// directory and absolute paths otherwise (both hash through the same
+    /// `working_dir.join`). Empty for every payload that runs no Lua, and for
+    /// a Lua body that loads nothing — in which case the unit is keyed exactly
+    /// as it was before CS-0204.
+    pub module_inputs: Vec<String>,
     /// Wall-clock span of the actual work-item execution, measured by the
     /// worker around the `execute_work_item` dispatch (queue wait
     /// excluded). Measured for every payload kind so a unit's completion
@@ -233,6 +240,11 @@ fn worker_loop(
     // `path.*` is pure string manipulation — install once.
     cook_lua_stdlib::register_path_api(&lua).expect("failed to register path API");
 
+    // CS-0204: the sink every module load on this VM reports into. Cleared
+    // before each item and drained after it, so a unit is keyed on the
+    // modules IT loaded and not on the ones the previous item did.
+    let module_observer = cook_lua_stdlib::ModuleObserver::new();
+
     // Shared mutable state for per-item context (single-threaded within
     // this worker, but needs interior mutability for closures).
     let current_recipe: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
@@ -269,7 +281,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &current_capture, &probe_store, &dep_outputs)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &current_capture, &probe_store, &dep_outputs, &module_observer)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -393,6 +405,12 @@ fn worker_loop(
                 // cook_modules/ relative to this unit's source Cookfile (CS-0062).
                 let _ = cook_lua_stdlib::refresh_package_search_paths(&lua, &work.working_dir);
 
+                // CS-0204: start this item's module set empty, for the same
+                // reason the output sink is cleared above — the VM outlives
+                // the item, and an inherited set would key this unit on a
+                // module it never loaded.
+                module_observer.clear();
+
                 // Run the work item under `catch_unwind`. A Rust panic
                 // anywhere in execute_work_item (e.g. an unexpected
                 // upstream invariant violation) is converted into a
@@ -430,11 +448,21 @@ fn worker_loop(
                             node_name,
                             output_lines: Vec::new(),
                             probe_output: None,
+                            module_inputs: Vec::new(),
                             duration: Duration::ZERO,
                         }
                     }
                 };
                 result.duration = exec_start.elapsed();
+                // CS-0204: what the body loaded, drained on every exit path —
+                // success, failure, and the panic recovery above alike. The
+                // engine discards it for a failed unit (nothing is recorded
+                // for one), but draining unconditionally is what guarantees
+                // the sink is empty when the next item starts.
+                result.module_inputs = cook_contracts::layout::relative_module_paths(
+                    &work.working_dir,
+                    &module_observer.take(),
+                );
                 // CS-0188: fold in whatever the body's `cook.sh` calls
                 // captured. A Lua-bodied unit produces all of its output this
                 // way and none directly; a Shell or Test unit is the reverse,
@@ -627,6 +655,7 @@ fn register_worker_cook_table(
     current_capture: &Arc<AtomicBool>,
     probe_store: &ProbeValueStore,
     dep_outputs: &WorkerDepOutputs,
+    module_observer: &cook_lua_stdlib::ModuleObserver,
 ) -> mlua::Result<()> {
     let cook = lua.create_table()?;
 
@@ -709,7 +738,14 @@ fn register_worker_cook_table(
         &cook,
         cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(current_working_dir)),
         cook_lua_stdlib::NoHooks,
+        module_observer.clone(),
     )?;
+
+    // CS-0204: the other door. A multi-file rock reaches its own submodules
+    // through Lua's `require`, and a native `.so` can be reached NO other way
+    // — `module_candidates` probes four `.lua` paths and nothing else. Both
+    // doors feed one sink, so what the unit is keyed on is what it loaded.
+    cook_lua_stdlib::install_require_observer(lua, module_observer.clone())?;
 
     // CS-0070 / CS-0074: cook.probes on the execute-phase VM (Standard §6.3.4).
     //
@@ -1277,6 +1313,7 @@ fn execute_work_item(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                module_inputs: Vec::new(),
                 duration: Duration::ZERO,
             }
         }
@@ -1295,6 +1332,7 @@ fn execute_work_item(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            module_inputs: Vec::new(),
             duration: Duration::ZERO,
         },
     }
@@ -1325,6 +1363,7 @@ fn execute_shell(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                module_inputs: Vec::new(),
                 duration: Duration::ZERO,
             }
         }
@@ -1353,6 +1392,7 @@ fn execute_shell(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                module_inputs: Vec::new(),
                 duration: Duration::ZERO,
             }
         }
@@ -1374,6 +1414,7 @@ fn execute_shell(
         node_name,
         output_lines: outcome.into_chunks(),
         probe_output: None,
+        module_inputs: Vec::new(),
         duration: Duration::ZERO,
     }
 }
@@ -1419,6 +1460,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                module_inputs: Vec::new(),
                 duration: Duration::ZERO,
             };
         }
@@ -1435,6 +1477,7 @@ fn execute_probe(
                 node_name,
                 output_lines: Vec::new(),
                 probe_output: None,
+                module_inputs: Vec::new(),
                 duration: Duration::ZERO,
             };
         }
@@ -1453,6 +1496,7 @@ fn execute_probe(
             key: key.to_string(),
             bytes,
         }),
+        module_inputs: Vec::new(),
         duration: Duration::ZERO,
     }
 }
@@ -1542,6 +1586,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            module_inputs: Vec::new(),
             duration: Duration::ZERO,
         },
         Err(e) => WorkResult {
@@ -1558,6 +1603,7 @@ fn execute_lua_chunk(
             node_name,
             output_lines: Vec::new(),
             probe_output: None,
+            module_inputs: Vec::new(),
             duration: Duration::ZERO,
         },
     }

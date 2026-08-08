@@ -32,6 +32,7 @@ fn make_populated_cache() -> RecipeCache {
         env_contribution: 0x2222222222222222,
         seal_contribution: 0,
         observed: None,
+        module_inputs: Vec::new(),
     };
     cache.steps.insert("compile_main".to_string(), step);
 
@@ -61,6 +62,7 @@ fn no_output_step_entry_round_trips() {
             command_hash: 0xdeadbeefcafe,
             env_contribution: 0xe0e0e0e0,
             seal_contribution: 0,
+            module_inputs: Vec::new(),
             observed: None,
         },
     );

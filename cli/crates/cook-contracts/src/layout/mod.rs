@@ -93,6 +93,35 @@ pub fn module_memo_key(working_dir: &Path, name: &str) -> String {
     format!("{}::{}", working_dir.display(), name)
 }
 
+/// Render observed module paths for recording (§17.4.4, CS-0204).
+///
+/// A recorded module path is re-hashed later — on the next run, and on
+/// another machine that fetches the entry — by joining it onto that reader's
+/// working directory. So the recorded form must be relative wherever it can
+/// be: an absolute `/home/alice/proj/cook_modules/x.lua` re-hashes to nothing
+/// on Bob's machine, which would turn every shared entry into a cold miss.
+///
+/// A path that does NOT lie under `working_dir` is kept absolute rather than
+/// dropped. Dropping it would silently un-key the unit on a module it really
+/// loaded, which is the exact defect CS-0204 exists to close; keeping it
+/// absolute is honest — `Path::join` returns an absolute argument unchanged,
+/// so it hashes correctly here and safely misses elsewhere.
+///
+/// Output is sorted and deduplicated: it is folded into a cache key, and a
+/// key that moved with load order would be a false rebuild.
+pub fn relative_module_paths(working_dir: &Path, loaded: &[std::path::PathBuf]) -> Vec<String> {
+    let mut out: Vec<String> = loaded
+        .iter()
+        .map(|p| match p.strip_prefix(working_dir) {
+            Ok(rel) => rel.to_string_lossy().into_owned(),
+            Err(_) => p.to_string_lossy().into_owned(),
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The §12.3.3 cycle diagnostic: `module cycle detected:` followed by the
 /// in-flight module names joined by ` -> `, with the re-entered name
 /// appended.

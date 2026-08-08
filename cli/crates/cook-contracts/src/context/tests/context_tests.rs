@@ -82,3 +82,70 @@ fn probe_fingerprint_changes_on_upstream_probe_change() {
     a.produce_source = "return 2".into();
     assert_ne!(h1, compute_probe_fingerprint(&a));
 }
+
+// ---------------------------------------------------------------------------
+// CS-0204: module-source folding
+// ---------------------------------------------------------------------------
+
+/// The identity that keeps every pre-CS-0204 probe addressable. A probe that
+/// loads no module must fingerprint exactly as it did before this rule existed.
+#[test]
+fn folding_an_empty_module_set_is_the_identity() {
+    let declared = [7u8; 32];
+    assert_eq!(fold_module_sources(&declared, &[]), declared);
+}
+
+#[test]
+fn folding_module_content_moves_the_fingerprint() {
+    let declared = [7u8; 32];
+    let a = fold_module_sources(&declared, &[("m.lua".into(), [1u8; 32])]);
+    let b = fold_module_sources(&declared, &[("m.lua".into(), [2u8; 32])]);
+    assert_ne!(a, declared);
+    assert_ne!(a, b);
+}
+
+/// Order must not matter: the set is drained from a sink two doors write into,
+/// and a fingerprint that moved with load order would be a false miss.
+#[test]
+fn folding_is_order_independent() {
+    let declared = [7u8; 32];
+    let one = [("a.lua".to_string(), [1u8; 32]), ("b.lua".to_string(), [2u8; 32])];
+    let other = [("b.lua".to_string(), [2u8; 32]), ("a.lua".to_string(), [1u8; 32])];
+    assert_eq!(fold_module_sources(&declared, &one), fold_module_sources(&declared, &other));
+}
+
+/// A path is part of the fold, not just its bytes: two modules swapping
+/// contents must not compose the same fingerprint.
+#[test]
+fn folding_distinguishes_paths() {
+    let declared = [7u8; 32];
+    let one = [("a.lua".to_string(), [1u8; 32])];
+    let other = [("b.lua".to_string(), [1u8; 32])];
+    assert_ne!(fold_module_sources(&declared, &one), fold_module_sources(&declared, &other));
+}
+
+#[test]
+fn manifest_key_is_derived_and_distinct_from_the_declared_fingerprint() {
+    let declared = [7u8; 32];
+    assert_ne!(probe_module_manifest_key(&declared), declared);
+    assert_eq!(probe_module_manifest_key(&declared), probe_module_manifest_key(&declared));
+}
+
+/// Newest first, deduplicated, capped. The dedup is what stops a settled
+/// project from rewriting a growing manifest on every run.
+#[test]
+fn merging_a_path_set_puts_it_first_and_deduplicates() {
+    let old = vec![vec!["a.lua".to_string()], vec!["b.lua".to_string()]];
+    let merged = merge_path_set(&old, &["b.lua".to_string()]);
+    assert_eq!(merged, vec![vec!["b.lua".to_string()], vec!["a.lua".to_string()]]);
+}
+
+#[test]
+fn merging_caps_the_retained_sets() {
+    let mut existing: Vec<Vec<String>> = Vec::new();
+    for i in 0..(MODULE_SET_CAP + 5) {
+        existing = merge_path_set(&existing, &[format!("m{i}.lua")]);
+    }
+    assert_eq!(existing.len(), MODULE_SET_CAP);
+    assert_eq!(existing[0], vec![format!("m{}.lua", MODULE_SET_CAP + 4)]);
+}

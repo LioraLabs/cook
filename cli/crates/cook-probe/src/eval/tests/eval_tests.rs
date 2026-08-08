@@ -9,7 +9,8 @@ use std::path::Path;
 use cook_contracts::{ProbeInputs, ProbeUnit};
 
 use crate::eval::{
-    evaluate, probe_artifact_meta, CacheAccess, EvalCtx, Evaluated, ProbeError, ProduceRunner,
+    evaluate, probe_artifact_meta, CacheAccess, EvalCtx, Evaluated, ProbeError, Produced,
+    ProduceRunner,
 };
 
 /// Counts executions so a test can assert that `produce` did NOT run, which is
@@ -30,16 +31,16 @@ impl CountingRunner {
 }
 
 impl ProduceRunner for CountingRunner {
-    fn run(&self, _key: &str, _source: &str) -> Result<Vec<u8>, String> {
+    fn run(&self, _key: &str, _source: &str) -> Result<Produced, String> {
         *self.runs.borrow_mut() += 1;
-        Ok(self.value.clone())
+        Ok(Produced { bytes: self.value.clone(), module_paths: Vec::new() })
     }
 }
 
 struct FailingRunner;
 
 impl ProduceRunner for FailingRunner {
-    fn run(&self, _key: &str, _source: &str) -> Result<Vec<u8>, String> {
+    fn run(&self, _key: &str, _source: &str) -> Result<Produced, String> {
         Err("boom".to_string())
     }
 }
@@ -48,7 +49,7 @@ impl ProduceRunner for FailingRunner {
 struct PoisonRunner;
 
 impl ProduceRunner for PoisonRunner {
-    fn run(&self, key: &str, _source: &str) -> Result<Vec<u8>, String> {
+    fn run(&self, key: &str, _source: &str) -> Result<Produced, String> {
         panic!("produce ran for '{key}' when the value should have been served from cache");
     }
 }

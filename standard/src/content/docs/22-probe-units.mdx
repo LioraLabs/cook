@@ -273,6 +273,20 @@ The marker was bumped from `COOK_PROBE_FP_V1` by CS-0102 when the probe-value en
 
 The implementation MAY include a non-cryptographic hash (e.g. xxh3_64) as an internal optimisation provided the final 32-byte fingerprint matches what a direct SHA-256 over the canonical bytes would produce.
 
+The seven sections above are the probe's **declared** fingerprint. A probe whose `produce` body loads a module has a second determinant that no declaration can carry, and §{cat.probes.module-source} says how it folds.
+
+### 22.5.4.1. Module source [#cat.probes.module-source]
+
+> **Normative (CS-0204).** A `produce` body that loads a module runs that module's code, so the module's content decides the probe's value. A conforming implementation MUST NOT serve a stored value for a probe whose loaded module source has changed. The subject is the resolved path of every module the body actually loaded, on the terms §{exec.cache.module-source} sets out in full: observed rather than predicted, both doors, memo hits included, and never a directory.
+>
+> The seven declared sections cannot carry it. Sections 4 through 7 are resolved *before* the body runs, and which modules the body will load is knowable only by having run it. A conforming implementation MUST therefore address a probe's stored value by a **full fingerprint** that composes the declared fingerprint of §{cat.probes.inputs} with the current content of the loaded module set, and MUST make the empty set compose the declared fingerprint unchanged — so a probe that loads no module is addressed exactly as it was before this rule existed.
+>
+> **Reconstruction.** A reader must be able to compute the full fingerprint before running the body, or a keyed probe could never hit its own cache again. A conforming implementation MUST therefore retain the loaded path sets of prior successful productions, retrievable by the **declared** fingerprint, and MUST, on lookup, re-hash each candidate set against its own working tree and probe the composed full fingerprint. The rules of §{exec.cache.discovered-candidates} govern the retention and the validation: recorded hashes MUST NOT substitute for current content, so a candidate that no longer describes the reader's tree composes a fingerprint nothing is stored under and misses. The retained collection MAY be bounded; evicting a set degrades to a re-production, never a wrong value.
+>
+> **Propagation.** The fingerprint a probe contributes to a downstream `requires` (section 7 above) MUST be the FULL one. A module edit must invalidate the whole chain that depends on the value it changed, not only the probe that loaded it.
+>
+> **Keyless probes.** CS-0178 keylessness is decided from the declaration and is unchanged: a probe that declares nothing has no key, stores nothing, and so has nothing for this rule to address.
+
 ## 22.5.5. Value types [#cat.probes.values]
 
 The function produced by wrapping the `produce` source string (§{cat.probes.api}) MUST return one of:

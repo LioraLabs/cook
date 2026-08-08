@@ -33,7 +33,7 @@ A cacheable work unit — one whose register-phase record enables caching (§{ex
 
 where:
 
-- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
+- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its depfile-discovered inputs (§{exec.cache.discovered-inputs}), and the module sources its body loaded (§{exec.cache.module-source}), content-hashed;
 - **command text / Lua chunk** is observable 1 of §17.1;
 - **declared output paths** is observable 3 of §17.1;
 - **consulted variable values** are the string forms (§{decl.config}) of the declared variables the unit reads — `$<NAME>` sigils and the `var.NAME` static reads of §{exec.cache.lua-variable-reads};
@@ -78,6 +78,26 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 > - it MUST NOT present a replayed unit's captured output as though the unit had produced it in this run.
 >
 > These are the same two constraints CS-0186 stated, and they are not withdrawn by an observation existing. What changes is that they now bound a thing implementations have, rather than standing in for one they do not.
+
+#### 17.1.1.3. Module source [#exec.cache.module-source]
+
+> **Normative (CS-0204).** A module a unit's body loads is **source the unit runs**. Its content is therefore a determinant of that unit, exactly as the unit's own command text is (observable 1 of §17.1), and a conforming implementation MUST NOT serve a cached result for a unit whose loaded module source has changed.
+>
+> The rule binds every body that can reach module code: an execute-phase `cook`/`test`/`chore` Lua body (§{lua.cook-load-module}), and a probe's `produce` body, whose own form of this rule is §{cat.probes.module-source}.
+>
+> **Keyed on resolved paths.** The determinant is the content of **each module file the unit actually loaded**, identified by the path §{mods.local} resolution selected. A conforming implementation MUST NOT substitute a coarser subject — the `cook_modules/` directory, the set of installed rocks, a lockfile — for the loaded set. Two reasons, and each alone is sufficient. A directory-wide subject makes every unit in a project depend on every module in it, so one edit to one module invalidates a build that never loaded it, which is a cache that stops being worth having on any project large enough to have modules. And the directory is not the contract: §{mods.local} names a lookup, implementations MAY relocate what it searches, and a rule written over a location has to be rewritten every time the location moves, while a rule written over resolved paths does not.
+>
+> **Observed, not predicted.** Which modules a body loads is a fact about the RUN, not about the declaration: the name may be computed, the load may sit behind a branch, and a multi-file module pulls in submodules its caller never names. A conforming implementation MUST therefore obtain the set by observing the load, and MUST observe **every** door into module code that it offers — `cook.load_module` (§{lua.cook-load-module}) and, where the implementation exposes Lua's own `require` (§{mods.use-scope}), that too. Observing only the door the Standard names would leave a multi-file module's submodules and every native module outside the key, since `require` is the only way to reach either.
+>
+> Memoisation (§{mods.lifecycle.caching}) suppresses re-evaluation, not the dependency. A second unit served by a VM that already holds the module MUST record the module all the same; otherwise the first unit to load it pays for a determinant the second one is silently missing.
+>
+> **How the set is judged.** The observed set is recorded with the unit's cache record, and on a later check it MUST be judged **against itself** — each recorded path re-read at its current content — and NOT against any predicted set. This is the same absorb-and-forget rule §{exec.cache.discovered-inputs} rule 3 applies to depfile discoveries, for the same reason, and it is sound for the same reason: every way the loaded set can change traces back to a determinant that is already keyed. A recorded module that no longer exists MUST count as changed.
+>
+> A conforming implementation MUST NOT judge a recorded module path as though it were a declared input. A declared input is judged by comparing the record against the declaration, and a module appears in no declaration; judged that way, every module-loading unit would report an input-set change against its own record on every run.
+>
+> **Sharing.** Because the local and shared stores are addressed by the one key (§{exec.cache.single-key}), the module contents MUST be folded into that key and not merely checked locally. A unit keyed without them is one whose stale result **escapes the machine that produced it**: two machines whose modules differ compose the same key, and each is served the other's answer.
+>
+> An implementation MAY recover the loaded set for a cold consumer by the candidate-key mechanism of §{exec.cache.discovered-candidates}, whose rules apply verbatim with the module set in place of the discovered set. It is a SHOULD there and a SHOULD here: without it a module-loading unit simply never hits the shared store until it has run locally once, which is a loss of reuse and never a wrong answer.
 
 #### 17.1.1.2. Declared inputs: paths and patterns [#exec.cache.declared-inputs]
 

@@ -34,6 +34,7 @@ pub mod cookfile_api;
 pub mod json_codec;
 pub mod fs_api;
 pub mod module_loader;
+pub mod module_observer;
 pub mod path_api;
 pub mod platform_api;
 pub mod sandbox;
@@ -48,6 +49,7 @@ pub use module_loader::{
     install_module_loader, install_renamed_cache_stub, refresh_package_search_paths,
     ModuleLoadHooks, NoHooks,
 };
+pub use module_observer::{install_require_observer, ModuleObserver};
 pub use json_codec::{json_to_lua, lua_to_json};
 pub use cookfile_api::register_cookfile_api;
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
