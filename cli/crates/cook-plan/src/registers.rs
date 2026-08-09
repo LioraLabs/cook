@@ -549,6 +549,59 @@ pub fn codegen_with_module_recipes(
     super::workspace::regenerate_lua_sources(workspace, &discovered)
 }
 
+/// One Cookfile-local registered name → its workspace-global key.
+///
+/// The root's prefix is empty and its names ARE the global keys; an import's
+/// names all wear its canonical workspace prefix.
+fn qualify_name(name: &str, prefix: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}.{name}")
+    }
+}
+
+/// One dep name, as written inside a Cookfile, → its workspace-global key.
+///
+/// Three cases, in this order:
+///
+/// - A dotted reference whose first segment is one of THIS Cookfile's import
+///   aliases resolves to the importee's canonical prefix — which is not the
+///   alias. Without this the analyzer sees the local alias (`proto.proto_lib`)
+///   and errors `UnknownRecipe` when the canonical key is, say,
+///   `server.queue.proto.proto_lib`: a diamond or transitive importee whose
+///   canonical prefix differs from the alias that reached it (CS-0147).
+/// - A name this Cookfile registers itself takes this Cookfile's prefix.
+/// - Anything else passes through untouched: already-global, or unknown and
+///   rejected downstream with a better diagnostic than this could give.
+///
+/// This is one decision with several askers — `merge_into` rewrites `names`
+/// and `units_by_recipe` with it, `workspace_requires_graph` builds the
+/// reachability graph with it — and the askers must agree about what a dep
+/// name means or the graph one walks is not the graph another built
+/// (COOK-352, CS-0218).
+fn qualify_dep(
+    req: &str,
+    prefix: &str,
+    alias_qualified_prefixes: &BTreeMap<String, String>,
+    local_names: &BTreeSet<String>,
+) -> String {
+    if let Some((alias, sub)) = req.split_once('.') {
+        if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
+            return if importee_prefix.is_empty() {
+                sub.to_string()
+            } else {
+                format!("{importee_prefix}.{sub}")
+            };
+        }
+    }
+    if local_names.contains(req) {
+        qualify_name(req, prefix)
+    } else {
+        req.to_string()
+    }
+}
+
 /// The workspace's `requires` graph in canonical qualified names, together
 /// with which of those names each member owns and which are not chores.
 ///
@@ -567,12 +620,21 @@ struct WorkspaceGraph {
 
 /// Build [`WorkspaceGraph`].
 ///
-/// The qualification rules are `merge_into`'s, deliberately: this graph and
-/// the merged `RegisteredWorkspace` must agree about what a dep name means,
-/// and they would drift the moment either grew its own answer. A dep whose
-/// first segment is one of the member's import aliases resolves to the
-/// importee's canonical prefix; a dep naming one of the member's own
-/// registrations takes the member's prefix; anything else passes through.
+/// Names and deps are qualified by [`qualify_name`] / [`qualify_dep`] — the
+/// same two `merge_into` uses, called rather than mirrored, because this graph
+/// and the merged `RegisteredWorkspace` must agree about what a dep name means.
+///
+/// **The assumption this rests on.** `list_names` evaluates each member's
+/// top-level chunk with no pre-pass probe values and never drains the
+/// `cook.on_register_complete` queue, so it is not bit-for-bit the same
+/// evaluation a build performs. It is the same assumption `cook menu` makes
+/// when it claims to list what a build would register, and the same one
+/// [`codegen_with_module_recipes`] makes when it classifies `$<NAME>` against
+/// the discovered set — both would be wrong together, and a Cookfile whose
+/// top-level chunk registers a DIFFERENT set of names depending on a probe
+/// value is already outside what those two surfaces can serve. Finalizers are
+/// safe by rule: §22.10 rejects recipe and probe registration from a callback,
+/// so draining the queue could not grow the set.
 fn workspace_requires_graph(
     workspace: &Workspace,
     config: Option<&str>,
@@ -590,34 +652,12 @@ fn workspace_requires_graph(
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
         let local_names: BTreeSet<String> =
             names.iter().map(|n| n.name.clone()).collect();
-        let qualify = |name: &str| -> String {
-            if prefix.is_empty() {
-                name.to_string()
-            } else {
-                format!("{prefix}.{name}")
-            }
-        };
         for n in &names {
-            let qname = qualify(&n.name);
+            let qname = qualify_name(&n.name, &prefix);
             let requires: Vec<String> = n
                 .requires
                 .iter()
-                .map(|req| {
-                    if let Some((alias, sub)) = req.split_once('.') {
-                        if let Some(importee_prefix) = alias_qp.get(alias) {
-                            return if importee_prefix.is_empty() {
-                                sub.to_string()
-                            } else {
-                                format!("{importee_prefix}.{sub}")
-                            };
-                        }
-                    }
-                    if local_names.contains(req) {
-                        qualify(req)
-                    } else {
-                        req.clone()
-                    }
-                })
+                .map(|req| qualify_dep(req, &prefix, &alias_qp, &local_names))
                 .collect();
             if n.kind != cook_register::RecipeKind::Chore {
                 graph.non_chores.insert(qname.clone());
@@ -639,22 +679,9 @@ fn reachable_local_names_by_prefix(
     graph: &WorkspaceGraph,
     seeds: impl IntoIterator<Item = String>,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut stack: Vec<String> = seeds.into_iter().collect();
-    while let Some(node) = stack.pop() {
-        if !graph.requires.contains_key(&node) || !seen.insert(node.clone()) {
-            continue;
-        }
-        if let Some(children) = graph.requires.get(&node) {
-            for child in children {
-                if !seen.contains(child) {
-                    stack.push(child.clone());
-                }
-            }
-        }
-    }
+    let reachable = cook_contracts::recipe::reachable_from(&graph.requires, seeds);
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for qname in &seen {
+    for qname in &reachable {
         if let Some((prefix, local)) = graph.owner.get(qname) {
             out.entry(prefix.clone()).or_default().insert(local.clone());
         }
@@ -681,48 +708,22 @@ fn merge_into(
     rc: cook_register::RegisteredCookfile,
 ) {
     ws.warnings.extend(rc.warnings.iter().cloned());
-    let qualify = |name: &str| {
-        if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}.{name}")
-        }
-    };
+    let qualify = |name: &str| qualify_name(name, prefix);
     // Local recipe names registered by this Cookfile — used to distinguish
     // intra-Cookfile dep references (`requires=["generate"]` resolving inside
     // `tree-sitter-cook/Cookfile`) from already-qualified cross-Cookfile
     // references that callers may have produced explicitly. Intra-Cookfile
     // requires get the prefix; cross-Cookfile or already-qualified ones pass
     // through untouched.
-    let local_names: std::collections::BTreeSet<String> =
+    let local_names: BTreeSet<String> =
         rc.names.iter().map(|n| n.name.clone()).collect();
     // Resolve one dep name to its workspace-global key. Shared by the `names`
     // requires-rewrite and the `units_by_recipe` deps-rewrite below so the two
-    // views cannot disagree about what a dep name means (COOK-352).
+    // views cannot disagree about what a dep name means (COOK-352) — and
+    // shared with `workspace_requires_graph`, so the graph reachability is
+    // computed over is keyed the same way as the workspace it describes.
     let qualify_dep = |req: &String| -> String {
-        // Cross-Cookfile `alias.recipe` requires → the importee's canonical
-        // global key (mirrors `resolve_global_key` and the inferred-deps
-        // analyzer). Without this the analyzer sees the local alias name (e.g.
-        // `proto.proto_lib`) and errors `UnknownRecipe` when the canonical key
-        // is, say, `server.queue.proto.proto_lib` (a diamond / transitive
-        // importee whose prefix differs from the local alias).
-        if let Some((alias, sub)) = req.split_once('.') {
-            if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
-                return if importee_prefix.is_empty() {
-                    sub.to_string()
-                } else {
-                    format!("{importee_prefix}.{sub}")
-                };
-            }
-        }
-        // Intra-Cookfile local name → prefix it with this Cookfile's qualified
-        // prefix. Anything else (already-global, or unknown — rejected
-        // downstream) passes through untouched.
-        if local_names.contains(req) {
-            qualify(req)
-        } else {
-            req.clone()
-        }
+        qualify_dep(req, prefix, alias_qualified_prefixes, &local_names)
     };
     for n in rc.names {
         let mut qn = n.clone();

@@ -361,7 +361,9 @@ fn cross_cookfile_chore_workspace(dir: &Path) -> Workspace {
     .unwrap();
     std::fs::write(
         member.join("Cookfile"),
-        "chore b\n    echo B-RAN\n\nchore standalone\n    echo STANDALONE-RAN\n",
+        "chore b\n    echo B-RAN\n\n\
+         recipe helper\n    cook \"h.txt\" { echo h > $<out> }\n\n\
+         chore standalone: helper\n    echo STANDALONE-RAN\n",
     )
     .unwrap();
     Workspace::load(&dir.join("Cookfile"), dir, &[]).expect("workspace loads")
@@ -470,7 +472,13 @@ fn a_speculatively_skipped_chore_keeps_its_registration() {
         .names
         .iter()
         .find(|r| r.name == "sub.standalone")
-        .expect("a skipped chore is still registered");
+        .expect("a skipped chore is still registered — a listing surface reads this set");
     assert_eq!(entry.kind, cook_register::RecipeKind::Chore);
-    assert!(entry.requires.is_empty());
+    assert_eq!(
+        entry.requires,
+        vec!["sub.helper".to_string()],
+        "a skipped chore's declared `requires` must still participate in the graph, \
+         qualified like every other edge; asserting on a chore that declares none \
+         would pass on a registration that dropped them"
+    );
 }

@@ -417,17 +417,22 @@ pub fn register_cookfile(
     //      `chore a: sub.b` is invisible to `sub`'s pass; closing over the
     //      local graph from each supplied seed is what turns "`b` is
     //      reachable" into "`b` and everything `b` requires are reachable".
-    let reachable_from_target: std::collections::BTreeSet<String> = {
-        let mut set = builder
-            .target_recipe
-            .as_deref()
-            .map(|t| local_reachable_set(t, &names_to_requires))
-            .unwrap_or_default();
-        for seed in &builder.reachable_names {
-            set.extend(local_reachable_set(seed, &names_to_requires));
-        }
-        set
-    };
+    //
+    //      The closure itself is `cook_contracts::recipe::reachable_from` —
+    //      the same function `cook-plan` runs over the composed workspace.
+    //      Two implementations of "reachable" would let a chore be reachable
+    //      to the layer that supplies the seeds and unreachable to the layer
+    //      that acts on them, which is a chore registering zero units while
+    //      the build waits for it.
+    let reachable_from_target: std::collections::BTreeSet<String> =
+        cook_contracts::recipe::reachable_from(
+            &names_to_requires,
+            builder
+                .target_recipe
+                .iter()
+                .cloned()
+                .chain(builder.reachable_names.iter().cloned()),
+        );
 
     // 11c. (COOK-64 §22.5.10) The member-source register pre-pass. Every recipe
     //      body runs during register to discover its units, and a
@@ -1786,45 +1791,6 @@ fn local_topological_sort(
         visit(name, deps, &mut state, &mut order, &mut path)?;
     }
     Ok(order)
-}
-
-/// Set of names reachable from `target` via the local `requires` graph,
-/// including `target` itself when it is present in `deps`. Returns an empty
-/// set when `target` is not a key of `deps` (e.g. cross-Cookfile target or
-/// unknown name — handled by the engine's analyzer downstream).
-///
-/// Mirrors `local_topological_sort`'s policy of skipping refs the local set
-/// doesn't know about: cross-Cookfile `requires` edges are resolved later by
-/// the engine's cross-cookfile dep analyzer.
-///
-/// Used by `register_cookfile` (COOK-61, CS-0218) to distinguish chores that
-/// are actual deps of the dispatch target — whose bodies run, with empty argv
-/// per §7.5.1 — from unrelated siblings, whose bodies are not invoked at all
-/// (Standard §7.6). Called once per dispatch target and once per
-/// `RegisterSessionBuilder::reachable_names` seed, so the result covers the
-/// local closure of every entry point into this Cookfile.
-fn local_reachable_set(
-    target: &str,
-    deps: &BTreeMap<String, Vec<String>>,
-) -> std::collections::BTreeSet<String> {
-    let mut reachable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    if !deps.contains_key(target) {
-        return reachable;
-    }
-    let mut stack: Vec<String> = vec![target.to_string()];
-    while let Some(node) = stack.pop() {
-        if !reachable.insert(node.clone()) {
-            continue;
-        }
-        if let Some(children) = deps.get(&node) {
-            for child in children {
-                if deps.contains_key(child) && !reachable.contains(child) {
-                    stack.push(child.clone());
-                }
-            }
-        }
-    }
-    reachable
 }
 
 /// COOK-64 §22.5.10: the member-source register pre-pass.
