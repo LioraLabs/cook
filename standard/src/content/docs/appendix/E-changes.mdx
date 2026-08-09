@@ -3070,6 +3070,24 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0212 — a memo may skip a read, not answer for bytes that are gone [#changes.cs-0212]
+
+**Date:** 2026-08-08
+**Version:** v0.18
+**Sections affected:** §{lua.cook-tools-id} (the memoization permission qualified so it cannot swallow the call-time requirement above it; Note 24.9.1's description of the reference implementation corrected). Reference implementation: `cli/crates/cook-cache/src/statmemo.rs` (the memo and its revalidation), `cli/crates/cook-cache/src/probe.rs` (`tool_identity`, `resolve_tool_hash`), `cli/crates/cook-lua-stdlib/src/tools_api.rs` (the door). COOK-414.
+
+**Summary.** §{lua.cook-tools-id} required the call to "resolve and hash the binary as it exists at call time" and then, in the same breath, permitted an implementation to "memoize the hash per resolved path within a single run". Read together the second clause repealed the first, and the reference implementation took the reading the sentence allowed: a process-wide map from resolved path to hash, populated on first read and never invalidated, justified in its own comment by "one run = one process, so a process-wide memo cannot go stale across builds".
+
+That justification answers the wrong question. The hazard was never staleness ACROSS runs; it is a binary the run itself rebuilds. Probe units are scheduled work, so a `tools` input can name a binary an earlier unit produced, and an execute-phase `produce` body can call `cook.tools.id` on one. In both cases the memo answered with the identity the binary had before it was rebuilt, and that identity was folded into a probe fingerprint (§{cat.probes.inputs}) and into whatever value the body sealed. On a content-addressed store meant to be shared (§{exec.cache.single-key}), an identity that describes a file nobody has is not a slow answer, it is a wrong one: two machines whose toolchains genuinely differ can compose the same key.
+
+**What changes.** The permission is qualified rather than withdrawn. Memoizing is the right thing to do (the same tool is hashed once per probe node, and a toolchain binary is tens of megabytes), so the rule is now about what a memo may ANSWER, not about whether one may exist: it may skip a read of content it has already seen, and it may not answer for content the path no longer has. The normative call-time requirement is unchanged; this entry stops the next clause from taking it back.
+
+**Revalidation is the discipline, not invalidation-on-write.** The reference implementation's other per-run memo (COOK-306, over `mtime`) is armed at the start of a run and permanently disarmed by cook's first write, which is correct there and would be wrong here: a memo over `stat` cannot revalidate itself, because the `stat` IS the check it is avoiding, while a memo over a file's CONTENT can, for one `metadata` call against a multi-megabyte read. Arm/disarm would also have killed the memo in the workloads it exists for, since the first executed command disarms and the register phase, where module code calls this API, runs entirely disarmed. This is informative; the Standard requires only that the memo not answer for content that is gone.
+
+**Backward compatibility.** No `CACHE_VERSION` bump, and the reason is worth stating precisely rather than as "no digest changed". The hash function, the fingerprint composition and the recorded shape are untouched, and a run in a fresh process computes exactly what it always did. What does change is the VALUE some fingerprints take within a run that rebuilds a tool it also hashes — and those values were wrong. A wrong key going right is a miss against whatever it was wrongly stored under, which is a rebuild; the entries it wrongly composed are unreachable rather than dangerous, because nothing composes them again. There is no reader that must reject an older writer's record, which is the only thing the version exists to do.
+
+**Conformance.** No grammar change and no parse fixture: this is neither parse-visible nor register-visible, and the surface of `cook.tools.id` is unchanged in shape, signature, phase and return value. It is pinned where the behaviour lives, against a memo instance: a file rewritten between two lookups must hash to its new content, including when the rewrite reproduces both the modification time and the length, and a read counter proves the unchanged case is still read once rather than proving it by asserting a stale digest.
+
 ## CS-0210 — the dependency edges are the resolution's edges [#changes.cs-0210]
 
 **Date:** 2026-08-08
