@@ -54,16 +54,32 @@ pub enum RegisterMode<'a> {
     /// This used to bind only on the root, on the premise that chores are
     /// always defined in and dispatched from the root. They are not, and a
     /// parametric chore in an import was silently skipped as a result
-    /// (COOK-349).
+    /// (COOK-349). Binding the target is only half of what a member needs;
+    /// the other half is which of its names the target REACHES, which no
+    /// single-Cookfile pass can compute (see `reachable_by_prefix` in
+    /// [`register_workspace`], CS-0218).
     Dispatch { name: &'a str, argv: &'a [String] },
     /// Register with a target that matches nothing: the register pass behaves
-    /// as targeted (the member-source pre-pass and parametric chore bodies
-    /// are pruned to the — empty — target-reachable set) but no body receives
-    /// argv. Used by read-only introspection such as `cook affected`.
+    /// as targeted (the member-source pre-pass is pruned to the — empty —
+    /// target-reachable set) but no body receives argv. Used by read-only
+    /// introspection such as `cook affected`. Nothing is reachable, so no
+    /// chore body is invoked (Standard §{chores.speculative}, CS-0218).
     Introspect,
-    /// No dispatch target at all: chore bodies are invoked normally for
-    /// enumeration (listing, DAG assembly). This is a different register-time
-    /// behavior than [`RegisterMode::Introspect`].
+    /// No single dispatch target: every recipe is a potential one. Recipe
+    /// bodies are invoked normally, and the member-source pre-pass is NOT
+    /// pruned — that is the difference from [`RegisterMode::Introspect`].
+    ///
+    /// For chore bodies this mode seeds reachability with every NON-chore name
+    /// in the workspace, which is what its callers mean: `cook test` builds
+    /// each test-bearing recipe's closure and `cook serve` builds a recipe's,
+    /// so a chore either of them reaches through `requires` must register its
+    /// units. A chore reachable from no recipe — a module's project-management
+    /// verb, say — is reachable from nothing here and is not invoked.
+    ///
+    /// This doc used to say chore bodies were "invoked normally for
+    /// enumeration", full stop, and that was the `cook test` / `cook serve`
+    /// leg of COOK-344: a module verb registered as a paramless chore ran its
+    /// body on every such command.
     Enumerate,
 }
 
@@ -241,6 +257,40 @@ pub fn register_workspace(
         terminal_outputs: BTreeMap::new(),
     };
 
+    // Which chore bodies this pass may invoke (Standard §7.6, CS-0218).
+    //
+    // A chore body runs only when the chore is the dispatch target or is
+    // reachable from it, and a per-Cookfile register pass cannot answer the
+    // reachability question for an edge that crosses a Cookfile boundary: the
+    // root's `chore a: sub.b` is invisible to `sub`'s pass, which is the pass
+    // that decides whether `b`'s body runs. So the answer is computed HERE,
+    // over the whole workspace, and handed to each member.
+    //
+    // The graph comes from the body-free `list_names` pass. It is skipped
+    // where it cannot change any answer, because it is not free — it evaluates
+    // every member's top-level chunk, module loads included:
+    //
+    //   - `Dispatch` in a single-Cookfile workspace: no boundary to cross, so
+    //     the member's own local closure is already the whole truth.
+    //   - `Introspect`: the target deliberately matches nothing, so nothing is
+    //     reachable and there is nothing to seed.
+    //
+    // `Enumerate` needs it even for one Cookfile: nothing is dispatched, so
+    // the seeds are every non-chore name and the register pass has no way to
+    // know that is what was meant.
+    let reachable_by_prefix: BTreeMap<String, BTreeSet<String>> = match mode {
+        RegisterMode::Dispatch { name, .. } if !workspace.imports.is_empty() => {
+            let graph = workspace_requires_graph(workspace, config, env_overrides)?;
+            reachable_local_names_by_prefix(&graph, [name.to_string()])
+        }
+        RegisterMode::Enumerate => {
+            let graph = workspace_requires_graph(workspace, config, env_overrides)?;
+            let seeds: Vec<String> = graph.non_chores.iter().cloned().collect();
+            reachable_local_names_by_prefix(&graph, seeds)
+        }
+        RegisterMode::Dispatch { .. } | RegisterMode::Introspect => BTreeMap::new(),
+    };
+
     // Register Cookfiles importees-first / root-last so every cross-Cookfile
     // `cook.dep_output` call sees its producer's terminal outputs already
     // populated in the shared map (see `cookfile_registration_order`).
@@ -271,7 +321,10 @@ pub fn register_workspace(
                 .with_cookfile_label(root_anchored_cookfile_label(
                     &workspace.workspace_root,
                     &member.dir,
-                ));
+                ))
+                .with_reachable_names(
+                    reachable_by_prefix.get(&prefix).cloned().unwrap_or_default(),
+                );
         // Bind the dispatch target to whichever member OWNS the targeted name.
         //
         // This used to bind only on the root Cookfile, on the premise that
@@ -280,12 +333,18 @@ pub fn register_workspace(
         // its qualified name (`cook standard.against-tag 0.18`).
         //
         // A member's register pass therefore saw `target_recipe: None`, so
-        // `is_target` was false for every name in it. A PARAMLESS chore
-        // survived that — engine.rs invokes it unconditionally — but a
-        // PARAMETRIC one fell through to the skip arm, whose whole job is to
-        // avoid calling a body that would nil-index `__cook_params`. The result
-        // was a chore that registered zero units, reported `0 nodes`, exited 0,
-        // and never ran its body (COOK-349). Silent and success-coded.
+        // `is_target` was false for every name in it, and the chore fell
+        // through to the skip arm: a chore that registered zero units,
+        // reported `0 nodes`, exited 0, and never ran its body (COOK-349).
+        // Silent and success-coded.
+        //
+        // Binding here fixes the chore that IS the target. It does not fix a
+        // chore some OTHER Cookfile requires — the member still sees no target
+        // and cannot see the edge — which is what `reachable_by_prefix` above
+        // carries (CS-0218). At the time COOK-349 was fixed, a paramless chore
+        // survived the second hole because the engine invoked such a body
+        // unconditionally; that arm is gone, so both holes are now closed by
+        // information rather than by an accident of parameter declarations.
         //
         // `prefix` carries no trailing dot (qualification is `{prefix}.{name}`),
         // so a member owns the target when the name starts with `{prefix}.`;
@@ -488,6 +547,119 @@ pub fn codegen_with_module_recipes(
         discovered.insert(canon, names.into_iter().map(|n| n.name).collect());
     }
     super::workspace::regenerate_lua_sources(workspace, &discovered)
+}
+
+/// The workspace's `requires` graph in canonical qualified names, together
+/// with which of those names each member owns and which are not chores.
+///
+/// Derived from the body-free [`cook_register::list_names`] pass — the same
+/// one [`list_workspace_names`] and [`codegen_with_module_recipes`] use, which
+/// evaluates each member's top-level chunk (so module-registered recipes and
+/// chores are present with their `requires`) and invokes no body and no probe.
+struct WorkspaceGraph {
+    /// Qualified name → its `requires`, also qualified.
+    requires: BTreeMap<String, Vec<String>>,
+    /// Qualified name → `(prefix, local name)` of the member that registered it.
+    owner: BTreeMap<String, (String, String)>,
+    /// The qualified names that are NOT chores.
+    non_chores: BTreeSet<String>,
+}
+
+/// Build [`WorkspaceGraph`].
+///
+/// The qualification rules are `merge_into`'s, deliberately: this graph and
+/// the merged `RegisteredWorkspace` must agree about what a dep name means,
+/// and they would drift the moment either grew its own answer. A dep whose
+/// first segment is one of the member's import aliases resolves to the
+/// importee's canonical prefix; a dep naming one of the member's own
+/// registrations takes the member's prefix; anything else passes through.
+fn workspace_requires_graph(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+) -> Result<WorkspaceGraph, PipelineError> {
+    let mut graph = WorkspaceGraph {
+        requires: BTreeMap::new(),
+        owner: BTreeMap::new(),
+        non_chores: BTreeSet::new(),
+    };
+    for (member, _canon, prefix, is_root) in members_root_first(workspace) {
+        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
+        let names = cook_register::list_names(builder, &member.lua_source)
+            .map_err(map_register_error)?;
+        let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
+        let local_names: BTreeSet<String> =
+            names.iter().map(|n| n.name.clone()).collect();
+        let qualify = |name: &str| -> String {
+            if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}.{name}")
+            }
+        };
+        for n in &names {
+            let qname = qualify(&n.name);
+            let requires: Vec<String> = n
+                .requires
+                .iter()
+                .map(|req| {
+                    if let Some((alias, sub)) = req.split_once('.') {
+                        if let Some(importee_prefix) = alias_qp.get(alias) {
+                            return if importee_prefix.is_empty() {
+                                sub.to_string()
+                            } else {
+                                format!("{importee_prefix}.{sub}")
+                            };
+                        }
+                    }
+                    if local_names.contains(req) {
+                        qualify(req)
+                    } else {
+                        req.clone()
+                    }
+                })
+                .collect();
+            if n.kind != cook_register::RecipeKind::Chore {
+                graph.non_chores.insert(qname.clone());
+            }
+            graph.owner.insert(qname.clone(), (prefix.clone(), n.name.clone()));
+            graph.requires.insert(qname, requires);
+        }
+    }
+    Ok(graph)
+}
+
+/// Close `seeds` over `graph` and project the result back onto each member:
+/// `prefix` → the LOCAL names in that member that are reachable.
+///
+/// This is what [`cook_register::RegisterSessionBuilder::with_reachable_names`]
+/// consumes. The projection is by prefix rather than by directory because that
+/// is the key a member's own pass registers under.
+fn reachable_local_names_by_prefix(
+    graph: &WorkspaceGraph,
+    seeds: impl IntoIterator<Item = String>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<String> = seeds.into_iter().collect();
+    while let Some(node) = stack.pop() {
+        if !graph.requires.contains_key(&node) || !seen.insert(node.clone()) {
+            continue;
+        }
+        if let Some(children) = graph.requires.get(&node) {
+            for child in children {
+                if !seen.contains(child) {
+                    stack.push(child.clone());
+                }
+            }
+        }
+    }
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for qname in &seen {
+        if let Some((prefix, local)) = graph.owner.get(qname) {
+            out.entry(prefix.clone()).or_default().insert(local.clone());
+        }
+    }
+    out
 }
 
 /// Merge a per-Cookfile [`cook_register::RegisteredCookfile`] into the

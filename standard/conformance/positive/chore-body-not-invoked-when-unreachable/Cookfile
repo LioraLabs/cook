@@ -1,0 +1,4 @@
+use ./lua/cook_verb.lua
+
+recipe app
+    cook_verb.bin({ sources = { "src/main.cpp" } })

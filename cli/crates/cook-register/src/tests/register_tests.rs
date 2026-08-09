@@ -784,7 +784,10 @@ fn test_chore_registers_as_recipe_with_interactive_and_no_cache() {
     // A chore compiled by cook-luagen must register units with
     // interactive = true and cache = false.
     let tmp = TempDir::new().unwrap();
-    let rt = make_registry(tmp.path());
+    // Targeted: since CS-0218 a chore body runs only when the chore is the
+    // dispatch target or reachable from it, and the subject here is what a
+    // chore body's units look like once it HAS run.
+    let rt = make_registry(tmp.path()).with_target_argv("clean".to_string(), vec![]);
 
     // What compile_chore emits post-COOK-386: a surface-chore registration
     // with no marker calls; the engine's ChoreActiveGuard brackets the body.
@@ -811,7 +814,9 @@ fn test_chore_cache_true_rejected_while_chore_active() {
     // §{chores.no-caching}: cook.add_unit({cache = true}) MUST raise a Lua
     // error while cook._enter_chore() is active.
     let tmp = TempDir::new().unwrap();
-    let rt = make_registry(tmp.path());
+    // Targeted (CS-0218): an un-targeted chore body is not invoked at all, so
+    // an un-targeted fixture would "pass" by never reaching the check.
+    let rt = make_registry(tmp.path()).with_target_argv("evil".to_string(), vec![]);
 
     let lua_src = r#"
 cook.__register_surface_chore("evil", {requires = {}, __line = 1}, function()
@@ -834,7 +839,9 @@ end)
 fn test_chore_cache_true_allowed_outside_chore() {
     // After _exit_chore(), cache = true must be allowed again.
     let tmp = TempDir::new().unwrap();
-    let rt = make_registry(tmp.path());
+    // Target the chore (CS-0218) so its body runs; the recipe beside it runs
+    // either way, because the speculative rule is about chore bodies only.
+    let rt = make_registry(tmp.path()).with_target_argv("cleanup".to_string(), vec![]);
 
     // COOK-386: the guard restores the flag when the chore body returns, so an
     // ordinary recipe registered beside the chore may cache. (Two declarations
@@ -880,7 +887,9 @@ fn test_compile_chore_and_register_integration() {
     use cook_luagen::compile_chore;
 
     let tmp = TempDir::new().unwrap();
-    let rt = make_registry(tmp.path());
+    // Targeted (CS-0218): the subject is the parse → compile_chore → register
+    // pipeline's output for a chore that runs.
+    let rt = make_registry(tmp.path()).with_target_argv("clean".to_string(), vec![]);
 
     // Note: no trailing `end` — chore uses implicit termination (next top-level
     // keyword or EOF closes the body). `end` at column-0 is just Content("end")
@@ -3099,6 +3108,163 @@ cook.__register_surface_chore("{chore_name}",
     end)
 "#
     )
+}
+
+// -----------------------------------------------------------------------
+// Speculative chore bodies (Standard §7.6, CS-0218 / COOK-344)
+//
+// A chore body is invoked when the chore is the dispatch target, is forced,
+// or is reachable from the target — and never otherwise. Parameter
+// declarations do not enter into it. Before CS-0218 a PARAMLESS chore body
+// was invoked on every register pass, which is how a module verb that writes
+// (CS-0179 gave chore bodies `cook.cookfile.*`) came to fire on builds of
+// unrelated recipes.
+// -----------------------------------------------------------------------
+
+/// A Cookfile with an unrelated recipe and a paramless chore whose body
+/// captures one observable unit. `chore_name` is a parameter for the same
+/// reason `parametric_chore_fixture`'s is: the seed loop's order is
+/// lexicographic, so a fixture that only ever names the chore `gen` cannot
+/// exercise the seeded-before-its-requirer case.
+fn paramless_chore_fixture(chore_name: &str) -> String {
+    format!(
+        r#"
+cook.recipe("app", {{}}, function() end)
+cook.__register_surface_chore("{chore_name}",
+    {{requires = {{}}, __line = 5, __params = {{}}}},
+    function(__cook_params)
+        cook.exec("paramless ran", 1)
+    end)
+"#
+    )
+}
+
+/// Assert `name` registered but captured nothing — the shape a skipped body
+/// leaves behind. Distinguished from "not registered at all", which is what a
+/// listing surface would lose.
+fn assert_registered_with_no_units(registered: &RegisteredCookfile, name: &str) {
+    assert!(
+        registered.names.iter().any(|r| r.name == name),
+        "{name:?} must still be registered (listable and invocable), got: {:?}",
+        registered.names.iter().map(|r| &r.name).collect::<Vec<_>>()
+    );
+    let units = &registered
+        .units_by_recipe
+        .get(name)
+        .unwrap_or_else(|| panic!("recipe {name:?} has no units entry"))
+        .units;
+    assert!(
+        units.is_empty(),
+        "{name:?}'s body must not have been invoked, but it captured: {units:?}"
+    );
+}
+
+/// THE bug. A dispatch target is requested, the paramless chore is neither it
+/// nor reachable from it, and its body ran anyway — on every `cook build`,
+/// whatever was being built. Harmless while a chore body could only call
+/// `cook.add_unit`; not harmless since CS-0179 put `cook.cookfile.*` in reach.
+#[test]
+fn paramless_chore_body_not_invoked_when_target_is_elsewhere() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let registered = register_cookfile(rt, &paramless_chore_fixture("gen"), None).unwrap();
+    assert_registered_with_no_units(&registered, "gen");
+}
+
+/// The same rule with NO dispatch target — the pass `cook test`, `cook serve`
+/// and most of this file take. Nothing is asked for, so nothing is reachable,
+/// so no chore body is speculative-invoked. Gating the fix on
+/// `target_recipe.is_some()` would leave this leg of the bug open, and it is
+/// the leg an LSP register-on-change pass would take (COOK-376).
+#[test]
+fn paramless_chore_body_not_invoked_with_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let registered = register_cookfile(rt, &paramless_chore_fixture("gen"), None).unwrap();
+    assert_registered_with_no_units(&registered, "gen");
+}
+
+/// The arm that must survive: a targeted paramless chore runs. `__cook_params`
+/// is bound as an empty table rather than left nil, because codegen emits
+/// `function(__cook_params)` even for a paramless chore.
+#[test]
+fn paramless_chore_body_invoked_when_targeted() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("gen".to_string(), vec![]);
+    let registered = register_cookfile(rt, &paramless_chore_fixture("gen"), None).unwrap();
+    assert_eq!(only_shell_cmd(&registered, "gen"), "paramless ran");
+}
+
+/// The other arm that must survive: a paramless chore a targeted recipe
+/// depends on is reachable, so it runs — §{chores.cross-form-deps}'s
+/// `recipe install: play`. Before CS-0218 this case rode the unconditional
+/// paramless arm and so was never actually exercised by reachability.
+#[test]
+fn paramless_chore_body_invoked_when_reachable_from_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("app", {requires = {"gen"}}, function() end)
+cook.__register_surface_chore("gen",
+    {requires = {}, __line = 5, __params = {}},
+    function(__cook_params)
+        cook.exec("paramless ran", 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(only_shell_cmd(&registered, "gen"), "paramless ran");
+}
+
+/// A forced paramless chore runs. `cook.require_recipe` is a dynamic edge, so
+/// the chore is not in `reachable_from_target` when the seed loop reaches it;
+/// dropping the `forced` disjunct would leave the requiring recipe's body
+/// looking at a chore that registered nothing (Standard §22.8, CS-0144).
+#[test]
+fn paramless_chore_body_invoked_when_forced() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("gen")
+end)
+cook.__register_surface_chore("gen",
+    {requires = {}, __line = 5, __params = {}},
+    function(__cook_params)
+        cook.exec("paramless ran", 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(only_shell_cmd(&registered, "gen"), "paramless ran");
+}
+
+/// The seeded-before-its-requirer twin, on the no-target path. `agen` sorts
+/// before `app`, so the seed loop reaches the chore first and takes the
+/// speculative arm; the later force must RE-invoke the body rather than find
+/// it `Visited` and short-circuit. This is the paramless mirror of
+/// `require_recipe_forces_parametric_chore_seeded_before_its_requirer`, and
+/// the case that turns the new skip into a silent zero-unit registration if
+/// the rescue path is not shared.
+#[test]
+fn paramless_chore_body_forced_after_being_seeded_first() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("app", {}, function()
+    cook.require_recipe("agen")
+end)
+cook.__register_surface_chore("agen",
+    {requires = {}, __line = 5, __params = {}},
+    function(__cook_params)
+        cook.exec("paramless ran", 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "agen"),
+        "paramless ran",
+        "a speculative skip must not satisfy a later force: the seed loop reaches `agen` \
+         first (it sorts before `app`), so the force has to RE-invoke the skipped body"
+    );
 }
 
 /// Skip arm 3 — a probe-sourced member-fanout recipe that isn't statically

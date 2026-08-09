@@ -68,6 +68,21 @@ pub struct RegisterSessionBuilder {
     /// Positional argv to bind as chore parameters for `target_recipe`.
     /// Empty for normal recipes (which don't accept parameters).
     pub(crate) target_argv: Vec<String>,
+    /// LOCAL names this Cookfile registers that the CALLER has determined are
+    /// reachable from the dispatch target, seeded into `reachable_from_target`
+    /// alongside this pass's own local closure (Standard §7.6, CS-0218).
+    ///
+    /// A register pass sees one Cookfile, so its `requires` graph stops at the
+    /// Cookfile boundary: `chore a: sub.b` is an edge the ROOT knows about and
+    /// `sub`'s own pass cannot see, and `sub`'s pass is the one that decides
+    /// whether `b`'s body runs. Left to itself it would decide "not reachable"
+    /// and register `b` with zero units while `b` sits in the build closure —
+    /// the register/execute disagreement §22.8 declares non-conforming.
+    ///
+    /// So the workspace layer, which holds the whole graph, supplies the
+    /// answer. Empty for a single-Cookfile pass, where the local closure is
+    /// already the whole truth, and for tests.
+    pub(crate) reachable_names: std::collections::BTreeSet<String>,
 }
 
 impl RegisterSessionBuilder {
@@ -91,6 +106,7 @@ impl RegisterSessionBuilder {
             shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
             target_recipe: None,
             target_argv: Vec::new(),
+            reachable_names: std::collections::BTreeSet::new(),
         }
     }
     pub fn with_workspace_root(mut self, root: PathBuf) -> Self { self.workspace_root = root; self }
@@ -160,6 +176,21 @@ impl RegisterSessionBuilder {
     pub fn with_target_argv(mut self, target: String, argv: Vec<String>) -> Self {
         self.target_recipe = Some(target);
         self.target_argv = argv;
+        self
+    }
+
+    /// Seed `reachable_from_target` with LOCAL names the caller has determined
+    /// are reachable from the dispatch target across Cookfile boundaries.
+    ///
+    /// See the field's own documentation for why a per-Cookfile pass cannot
+    /// answer this for itself. The names are seeds, not the whole answer: this
+    /// pass still closes over its own `requires` graph from each of them, so a
+    /// caller supplies the boundary-crossing entry points and nothing more.
+    pub fn with_reachable_names(
+        mut self,
+        names: std::collections::BTreeSet<String>,
+    ) -> Self {
+        self.reachable_names = names;
         self
     }
 }
@@ -373,18 +404,30 @@ pub fn register_cookfile(
         .collect();
     let topo = local_topological_sort(&names_to_requires)?;
 
-    // 11b. (COOK-61) Set of names reachable from `target_recipe` via the
-    //      local `requires` graph. The body-invocation loop uses this to
-    //      distinguish dep-of-target parametric chores (run with empty argv
-    //      per §7.5.1; required-no-default surfaces a legitimate register-time
-    //      error) from unrelated parametric siblings (skipped, same as the
-    //      no-target case). Empty when `target_recipe` is `None` or the
-    //      target isn't in the local set.
-    let reachable_from_target: std::collections::BTreeSet<String> = builder
-        .target_recipe
-        .as_deref()
-        .map(|t| local_reachable_set(t, &names_to_requires))
-        .unwrap_or_default();
+    // 11b. (COOK-61) Set of names reachable from the dispatch target via the
+    //      `requires` graph. The body-invocation loop uses it to decide
+    //      whether a chore body runs at all (Standard §7.6, CS-0218) and
+    //      whether a dep-of-target parametric chore binds empty argv (§7.5.1).
+    //
+    //      Two sources, unioned. This pass's own local closure from
+    //      `target_recipe` — empty when there is no target or the target is
+    //      not registered here — and the workspace layer's
+    //      `reachable_names`, which are the entry points a cross-Cookfile
+    //      edge lands on (CS-0218). A register pass sees ONE Cookfile, so
+    //      `chore a: sub.b` is invisible to `sub`'s pass; closing over the
+    //      local graph from each supplied seed is what turns "`b` is
+    //      reachable" into "`b` and everything `b` requires are reachable".
+    let reachable_from_target: std::collections::BTreeSet<String> = {
+        let mut set = builder
+            .target_recipe
+            .as_deref()
+            .map(|t| local_reachable_set(t, &names_to_requires))
+            .unwrap_or_default();
+        for seed in &builder.reachable_names {
+            set.extend(local_reachable_set(seed, &names_to_requires));
+        }
+        set
+    };
 
     // 11c. (COOK-64 §22.5.10) The member-source register pre-pass. Every recipe
     //      body runs during register to discover its units, and a
@@ -640,7 +683,7 @@ enum VisitState {
     /// about forcing.
     ///
     /// `Skipped` carries no such flag because it cannot need one: a skip arm
-    /// only declines when `!forced` (the parametric-chore arms stand down when
+    /// only declines when `!forced` (the speculative-chore arm stands down when
     /// forced; the member-fanout arm raises), so `Skipped` always implies
     /// un-forced, and a forced visit to it re-invokes unconditionally.
     Visited { forced: bool },
@@ -829,7 +872,7 @@ impl BodyDriver {
             }
             // A completed body is a no-op for a repeat visit; a SKIPPED one is
             // not. Fall through to re-invoke — `forced` is now true, so the
-            // arm that skipped it either stands down (the parametric-chore
+            // arm that skipped it either stands down (the speculative-chore
             // arms) or raises its designed error (the member-fanout arm). Only
             // the seed loop can reach a skipped name with `forced = false`,
             // and it visits each name once, so the re-invoke is bounded.
@@ -1035,7 +1078,7 @@ impl BodyDriver {
             // recipe that is NOT reachable from the build target had its probe
             // skipped by the pre-pass, so its body's `cook.probes.get` would
             // error. Skip the body — the recipe is not being built — registering
-            // it with no units, mirroring the parametric-sibling skip below.
+            // it with no units, mirroring the speculative-chore skip below.
             skip_member_fanout_body = builder.target_recipe.is_some()
                 && !self.reachable_from_target.contains(name)
                 && matches!(
@@ -1072,7 +1115,7 @@ impl BodyDriver {
         // reachable from the target.
         if skip_member_fanout_body {
             if forced {
-                // Unlike the parametric-chore arms, forcing cannot rescue this
+                // Unlike the speculative-chore arm, forcing cannot rescue this
                 // one: the body needs a probe value the pre-pass never
                 // computed. Evaluating the probe lazily here IS feasible —
                 // `run_member_source_prepass` is a free function, and calling it
@@ -1121,13 +1164,17 @@ impl BodyDriver {
         //
         // COOK-36 Task 4: argv binding for chores.
         //
-        // Only the *targeted* chore body gets invoked with a bound
-        // `__cook_params` table. Non-targeted chore bodies are skipped
-        // entirely: chores produce no cacheable units, so there is nothing
-        // useful to capture from a non-targeted chore invocation, and the
-        // body would fail with a Lua error if called with nil `__cook_params`
-        // while referencing its parameters. Non-targeted recipe bodies are
-        // invoked normally (they don't take __cook_params).
+        // A chore body is invoked when the chore is the dispatch target (with
+        // argv bound into `__cook_params`), or when it is reachable from that
+        // target — statically or through `cook.require_recipe` — in which case
+        // it runs with no argv supplied. In every other case the invocation
+        // would be speculative and the body is not invoked at all (Standard
+        // §7.6, CS-0218). Parameter declarations do not enter into that
+        // decision: reachability does, and only reachability.
+        //
+        // Recipe bodies are unaffected — they take no `__cook_params` and are
+        // invoked normally, because a recipe's units are the build graph the
+        // register pass exists to discover.
         let func: LuaFunction = lua.registry_value(&func_key_clone)?;
         let is_target = builder
             .target_recipe
@@ -1168,28 +1215,23 @@ impl BodyDriver {
                 self.set_chore_prelude(prelude);
                 func.call::<()>((bound,))
                     .map_err(RegisterError::Lua)?;
-            } else if params_meta.is_empty() {
-                // Paramless chore: cheap to invoke, captures units for dep
-                // linkage when reachable and for enumeration tools when not.
-                // Either way the body is safe to call with no argument — no
-                // `__cook_params` references. Covers both the targeted-but-
-                // not-this-one and the no-target cases.
-                func.call::<()>(()).map_err(RegisterError::Lua)?;
             } else if forced || self.reachable_from_target.contains(name) {
-                // Skip arms 1 and 2, rescued. §7.5.1: a parametric chore that
-                // is a dep of the target runs with no argv supplied
-                // (required-no-default surfaces a legitimate register-time
-                // error here); an unrelated parametric sibling gets skipped by
-                // the arm below, which is also what the no-target path used to
-                // do unconditionally — `reachable_from_target` is empty when
-                // `target_recipe` is `None` (COOK-61, a52063d).
+                // Reachable, so asked for: run the body with no argv supplied.
+                // §7.5.1 — a chore that is a dep of the target runs as if
+                // invoked with no positional arguments (a required-no-default
+                // parameter surfaces a legitimate register-time error here).
+                // For an EMPTY `params_meta` this builds an empty table and an
+                // empty prelude, which is what a paramless chore body wants:
+                // codegen emits `function(__cook_params)` even then, and a
+                // `cook.chore` body declared `function()` ignores the extra
+                // argument.
                 //
                 // A FORCED chore is a dep of the requiring recipe, hence
                 // reachable by definition, so it takes this same path on both
                 // the target and the no-target branch. Without the `forced`
-                // disjunct, `cook.require_recipe` on a parametric chore would
-                // silently register zero units — and the no-target branch is
-                // the one `cook list` and most tests take.
+                // disjunct, `cook.require_recipe` on a chore would silently
+                // register zero units — and the no-target branch is the one
+                // `cook list` and most tests take.
                 let (bound, prelude) = build_chore_params_table(
                     lua,
                     &params_meta,
@@ -1201,11 +1243,34 @@ impl BodyDriver {
                 self.set_chore_prelude(prelude);
                 func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
             } else {
-                // Parametric chore, neither targeted, reachable, nor forced —
-                // skip body invocation: the body would raise a nil-index Lua
-                // error on its first `local NAME = __cook_params.NAME` prelude
-                // line. Record an empty units entry so downstream stages still
-                // see the recipe in the registered set.
+                // SPECULATIVE: a chore that is neither the dispatch target,
+                // nor reachable from it, nor forced. Its body is not invoked
+                // (Standard §7.6, CS-0218). An empty units entry is recorded
+                // so every downstream stage still sees the chore in the
+                // registered set — it stays listable and invocable, it just
+                // did not run.
+                //
+                // This arm used to cover only the PARAMETRIC case, on the
+                // narrow grounds that such a body would nil-index
+                // `__cook_params` on its first prelude line. A paramless body
+                // has no such line, so it was invoked unconditionally: "cheap
+                // to invoke, captures units for dep linkage when reachable and
+                // for enumeration tools when not." Both halves were wrong.
+                // Dep linkage when reachable is the arm above. Enumeration
+                // never came through here at all — `list_names` invokes no
+                // body, which is what `cook menu` and `cook list` run — so the
+                // captured units were built and then dropped by the planner, for
+                // every non-target chore of every invocation.
+                //
+                // What made that stop being harmless is CS-0179: a chore body
+                // can now rewrite the author's Cookfile, and a module verb
+                // that happened to take no arguments would splice or scaffold
+                // on every `cook build` of anything. Gating the surfaces
+                // instead of the invocation was considered and declined — the
+                // VM is `Lua::unsafe_new()`, so a body can reach `os.execute`
+                // whatever `cook.cookfile.*` and `fs.*` do about it. Declining
+                // to run a body nobody asked for is the only form of this that
+                // is a guarantee rather than a fence.
                 lua.remove_registry_value(func_key_clone)?;
                 let _ = self.body_slot.borrow_mut().take();
                 self.register_skipped(name, source, kind, static_requires, params_meta, origin);
@@ -1446,7 +1511,7 @@ impl BodyDriver {
 /// function that codegen never wrapped, so nothing else would set it.
 ///
 /// Restores the previous value rather than clearing to `false`, and tolerates
-/// a `None` body slot on drop: the parametric-skip arm of the chore branch
+/// a `None` body slot on drop: the speculative-skip arm of the chore branch
 /// takes the slot and returns while this guard is still alive, so drop must
 /// not assume a body is still there to restore.
 ///
@@ -1732,10 +1797,12 @@ fn local_topological_sort(
 /// doesn't know about: cross-Cookfile `requires` edges are resolved later by
 /// the engine's cross-cookfile dep analyzer.
 ///
-/// Used by `register_cookfile` (COOK-61) to distinguish parametric chores
-/// that are actual deps of the dispatch target (run with empty argv per
-/// §7.5.1) from unrelated parametric siblings (skipped, same as the
-/// no-target case).
+/// Used by `register_cookfile` (COOK-61, CS-0218) to distinguish chores that
+/// are actual deps of the dispatch target — whose bodies run, with empty argv
+/// per §7.5.1 — from unrelated siblings, whose bodies are not invoked at all
+/// (Standard §7.6). Called once per dispatch target and once per
+/// `RegisterSessionBuilder::reachable_names` seed, so the result covers the
+/// local closure of every entry point into this Cookfile.
 fn local_reachable_set(
     target: &str,
     deps: &BTreeMap<String, Vec<String>>,

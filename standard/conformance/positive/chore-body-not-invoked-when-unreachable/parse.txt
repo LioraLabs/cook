@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement path="lua/cook_verb.lua" alias="cook_verb" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="app" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_verb.bin({ sources = { \"src/main.cpp\" } })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

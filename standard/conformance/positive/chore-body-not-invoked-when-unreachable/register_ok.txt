@@ -1,0 +1,1 @@
+CS-0218: a chore that is neither the dispatch target nor reachable from it does not have its body invoked, so a body that raises unconditionally does not fail the pass.

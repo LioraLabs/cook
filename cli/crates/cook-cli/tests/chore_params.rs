@@ -1006,8 +1006,15 @@ fn parametric_shell_chore_in_imported_member_runs_its_body() {
     );
 }
 
-/// A paramless member chore always worked (engine.rs invokes it unconditionally)
-/// and must keep working — the fix must not regress the arm that was fine.
+/// A paramless member chore always worked and must keep working — COOK-349's
+/// fix must not regress the arm that was fine.
+///
+/// It worked for the wrong reason: the engine invoked a paramless chore body
+/// unconditionally, so the member pass's missing target binding could not be
+/// observed here. CS-0218 removed that arm, so this test now exercises the
+/// binding it was written to protect — `sub.noparam` runs because the member's
+/// pass sees the local name `noparam` as its dispatch target, and for no other
+/// reason.
 #[test]
 fn paramless_chore_in_imported_member_still_runs() {
     let tmp = TempDir::new().unwrap();

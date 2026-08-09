@@ -339,3 +339,138 @@ fn register_workspace_qualifies_recipe_units_deps() {
         use_units.deps
     );
 }
+
+// -----------------------------------------------------------------------
+// Speculative chore bodies across a Cookfile boundary
+// (Standard §{chores.speculative}, CS-0218 / COOK-344)
+//
+// A register pass sees one Cookfile, so its `requires` graph stops at the
+// boundary. The rule is stated over the WORKSPACE graph, which makes this
+// layer — the only one holding that graph — responsible for the answer.
+// -----------------------------------------------------------------------
+
+/// Root, one import, and a chore in each: `root.a` depends on the member's
+/// `b`, and `standalone` depends on nothing.
+fn cross_cookfile_chore_workspace(dir: &Path) -> Workspace {
+    let member = dir.join("sub");
+    std::fs::create_dir_all(&member).unwrap();
+    std::fs::write(
+        dir.join("Cookfile"),
+        "import sub ./sub\n\nchore a: sub.b\n    echo A-RAN\n",
+    )
+    .unwrap();
+    std::fs::write(
+        member.join("Cookfile"),
+        "chore b\n    echo B-RAN\n\nchore standalone\n    echo STANDALONE-RAN\n",
+    )
+    .unwrap();
+    Workspace::load(&dir.join("Cookfile"), dir, &[]).expect("workspace loads")
+}
+
+/// Assert `name` registered and captured exactly `count` units.
+fn assert_unit_count(registered: &RegisteredWorkspace, name: &str, count: usize) {
+    let units = &registered
+        .units_by_recipe
+        .get(name)
+        .unwrap_or_else(|| {
+            panic!(
+                "{name:?} must be registered; got {:?}",
+                registered.units_by_recipe.keys().collect::<Vec<_>>()
+            )
+        })
+        .units;
+    assert_eq!(
+        units.len(),
+        count,
+        "{name:?} expected {count} unit(s), got {}: {units:?}",
+        units.len()
+    );
+}
+
+/// The member's chore is in the build closure and its units must exist. The
+/// member's OWN pass cannot know that — `register_workspace` binds the
+/// dispatch target only on the Cookfile that owns the target name, so the
+/// member registers with no target and an empty local reachable set. Without
+/// the workspace-wide graph it registers `b` with zero units while `sub.b`
+/// sits in `a`'s closure, and `cook a` reports success having run half of
+/// what it was asked for.
+#[test]
+fn chore_reachable_across_a_cookfile_boundary_registers_its_units() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = cross_cookfile_chore_workspace(dir.path());
+    let registered = register_workspace(
+        &workspace,
+        None,
+        &[],
+        RegisterMode::Dispatch { name: "a", argv: &[] },
+        None,
+    )
+    .expect("register");
+    assert_unit_count(&registered, "a", 1);
+    assert_unit_count(&registered, "sub.b", 1);
+}
+
+/// The other half of the same rule: a chore in the same member that nothing
+/// reaches stays speculative. A fix that simply invoked every chore body in a
+/// member without the dispatch target would pass the test above and leave the
+/// defect exactly where it was.
+#[test]
+fn chore_unreachable_across_a_cookfile_boundary_stays_speculative() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = cross_cookfile_chore_workspace(dir.path());
+    let registered = register_workspace(
+        &workspace,
+        None,
+        &[],
+        RegisterMode::Dispatch { name: "a", argv: &[] },
+        None,
+    )
+    .expect("register");
+    assert_unit_count(&registered, "sub.standalone", 0);
+}
+
+/// `Enumerate` has no dispatch target and every recipe is a potential one, so
+/// its seeds are the workspace's non-chore names: a chore a recipe requires
+/// registers its units (this is what `cook test` and `cook serve` build), and
+/// a chore no recipe reaches does not.
+#[test]
+fn enumerate_invokes_chore_bodies_recipes_require_and_no_others() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Cookfile"),
+        "chore gen\n    echo GEN-RAN\n\n\
+         chore verb\n    echo VERB-RAN\n\n\
+         recipe app: gen\n    cook \"out.txt\" { echo hi > $<out> }\n",
+    )
+    .unwrap();
+    let workspace =
+        Workspace::load(&dir.path().join("Cookfile"), dir.path(), &[]).expect("workspace loads");
+    let registered =
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None).expect("register");
+    assert_unit_count(&registered, "gen", 1);
+    assert_unit_count(&registered, "verb", 0);
+}
+
+/// A skipped chore keeps its registration: name, kind and declared `requires`
+/// all survive, so listing surfaces and the analyzer's graph walk see exactly
+/// what they saw before. Only the body did not run.
+#[test]
+fn a_speculatively_skipped_chore_keeps_its_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = cross_cookfile_chore_workspace(dir.path());
+    let registered = register_workspace(
+        &workspace,
+        None,
+        &[],
+        RegisterMode::Dispatch { name: "a", argv: &[] },
+        None,
+    )
+    .expect("register");
+    let entry = registered
+        .names
+        .iter()
+        .find(|r| r.name == "sub.standalone")
+        .expect("a skipped chore is still registered");
+    assert_eq!(entry.kind, cook_register::RecipeKind::Chore);
+    assert!(entry.requires.is_empty());
+}
