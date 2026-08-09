@@ -676,26 +676,53 @@ fn cook_probe_from_execute_phase_raises_register_only_diagnostic() {
     assert!(err.contains("execute-phase Lua"), "got: {err}");
 }
 
-/// SHI-216 / CS-0072: every register-only guard message MUST include
-/// a `>>` migration hint so users know how to move the call to register
-/// phase.  We spot-check `cook.add_unit` (representative of all five).
+/// Standard §6.3.2 / SHI-216 / CS-0072: every register-only name raises on
+/// the execute-phase VM, and every one of those diagnostics names itself,
+/// says what it is, and carries the `>>` migration hint.
+///
+/// Over ALL of them, not a representative. Until COOK-422 this test
+/// spot-checked `cook.add_unit` and described it as "representative of all
+/// five" — there are seven guards, and the description had been wrong since
+/// the sixth was added, which is exactly the drift a spot-check cannot
+/// report. A guard installed with a message missing a clause now fails on
+/// its own row.
 #[test]
-fn register_only_guard_includes_double_arrow_migration_hint() {
-    let result =
-        run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
-    assert!(
-        !result.success,
-        "expected register-only-API call to fail; got success"
-    );
-    let err = result.error.as_deref().unwrap_or("");
-    assert!(
-        err.contains(">>"),
-        "diagnostic must include `>>` migration hint; got: {err}"
-    );
-    assert!(
-        err.contains("register"),
-            "diagnostic must mention `register` block; got: {err}"
-    );
+fn every_register_only_guard_raises_and_says_how_to_fix_it() {
+    // (Lua call, `cook.<field>` the diagnostic must name.)
+    let calls = [
+        (r#"cook.exec("echo hi")"#, "cook.exec"),
+        (r#"cook.interactive("echo hi")"#, "cook.interactive"),
+        (r#"cook.add_unit({command = "echo hi"})"#, "cook.add_unit"),
+        (r#"cook.step_group("g")"#, "cook.step_group"),
+        (r#"cook.recipe("r", {}, function() end)"#, "cook.recipe"),
+        (
+            r#"cook.probe("cc:x", { inputs = {}, produce = "return 1" })"#,
+            "cook.probe",
+        ),
+        (r#"cook.prior_outputs()"#, "cook.prior_outputs"),
+    ];
+
+    for (call, door) in calls {
+        let result = run_lua_chunk_in_worker(call);
+        assert!(!result.success, "{door} must fail on the worker VM; got success");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains(&format!("{door}: register-only API")),
+            "{door}: diagnostic must open by naming itself; got: {err}"
+        );
+        assert!(
+            err.contains("execute-phase Lua"),
+            "{door}: diagnostic must say which phase called it; got: {err}"
+        );
+        assert!(
+            err.contains(">>"),
+            "{door}: diagnostic must carry the `>>` migration hint; got: {err}"
+        );
+        assert!(
+            err.contains("register"),
+            "{door}: diagnostic must point at the `register` block; got: {err}"
+        );
+    }
 }
 
 /// `cook.sh` is the both-phase shell-out helper (§6.3.1) and MUST
