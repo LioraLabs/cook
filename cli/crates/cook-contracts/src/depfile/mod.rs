@@ -1,5 +1,15 @@
-//! The Make depfile grammar: what a compiler's `-MMD` output names as the
-//! prerequisites of the thing it just built.
+//! The Make depfile grammar: the prerequisites named by the FIRST rule of a
+//! compiler's `-MMD` output.
+//!
+//! "First rule" is load-bearing and is a limitation, not a design. Only the
+//! text up to the first `:` is treated as a target, so a `-MP` phony stanza
+//! (`include/a.h:` on its own line) and a second rule in the same file
+//! contribute their target text as a token with the colon still attached. Cook
+//! has never emitted such a depfile from `discovered_inputs`, and the reader in
+//! `cook-cache` drops those tokens anyway because no file is named `foo.h:`.
+//! Pinned by test rather than fixed, because fixing it would change which paths
+//! a real project records and that is a cache-invalidating decision with no
+//! bug behind it.
 //!
 //! COOK-425 split this out of `cook_cache::depfile`, which read the file and
 //! decided its meaning in one function. The reading stays there — it needs the
@@ -14,19 +24,16 @@
 ///
 /// The grammar can only see syntax, so this is the only failure it can report.
 /// A missing or unreadable file is the reader's problem, not the grammar's.
+///
+/// Deliberately plain data with no `Display`: the one sentence a user ever sees
+/// for this is `cook_cache::DepfileError::Malformed`'s, and a `Display` here
+/// would be a second spelling of that sentence in a second crate, invisible to
+/// the duplicate-literal gate because the interpolation differs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepfileSyntax {
     pub byte_offset: usize,
     pub reason: String,
 }
-
-impl std::fmt::Display for DepfileSyntax {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "depfile malformed at byte {}: {}", self.byte_offset, self.reason)
-    }
-}
-
-impl std::error::Error for DepfileSyntax {}
 
 /// Read the prerequisite list out of Make depfile text.
 ///
@@ -40,11 +47,14 @@ impl std::error::Error for DepfileSyntax {}
 ///
 /// `source_path` may be the empty string, which disables the self-skip.
 ///
-/// Whether a named path EXISTS is not a question this function can ask. The
-/// caller applies that filter (see `cook_cache::parse_make_depfile`), and it
-/// commutes with the dedupe here: existence is a pure function of the token
-/// within a run, so filtering before or after deduping yields the same list in
-/// the same order.
+/// Whether a named path EXISTS is not a question this function can ask; the
+/// caller applies that filter (see `cook_cache::parse_make_depfile`). Over any
+/// FIXED tree the filter commutes with the dedupe here — it is order-preserving,
+/// and a token it rejects is rejected at every occurrence — so it does not
+/// matter that the reader now dedupes first and filters second. Over a tree
+/// being written concurrently it is not a function at all, and neither order is
+/// more correct than the other; a build racing its own generated headers has no
+/// defined input set to be right about.
 pub fn parse_prerequisites(
     content: &str,
     source_path: &str,
@@ -74,10 +84,10 @@ pub fn parse_prerequisites(
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
 
+    // `split_whitespace` never yields an empty token, so there is no
+    // empty-token guard here. The version this moved from had one; it was
+    // unreachable there too.
     for token in joined.split_whitespace() {
-        if token.is_empty() {
-            continue;
-        }
         // Filter: skip absolute paths.
         if token.starts_with('/') {
             continue;

@@ -112,3 +112,29 @@ fn a_target_with_no_prerequisites_is_an_empty_list() {
     let got = parse_prerequisites("build/a.o:\n", "").expect("parses");
     assert!(got.is_empty(), "got {got:?}");
 }
+
+/// Only the FIRST colon is a target separator, so `-MP`'s phony stanzas come
+/// back as tokens with their colon still attached. This pins the limitation
+/// rather than endorsing it: cook has never emitted `-MP` from
+/// `discovered_inputs`, and `cook_cache::parse_make_depfile` drops
+/// `"include/a.h:"` because no file is named that. Written down because the
+/// grammar's correctness here is currently supplied by a filter that is not
+/// its business, and a reader who deletes that filter should find this first.
+#[test]
+fn a_phony_target_stanza_comes_back_with_its_colon_attached() {
+    let got = parse_prerequisites(
+        "build/a.o: src/a.c include/a.h\ninclude/a.h:\n",
+        "src/a.c",
+    )
+    .expect("parses");
+    assert_eq!(got, vec!["include/a.h", "include/a.h:"]);
+}
+
+/// The same limitation for a depfile carrying two rules: the second rule's
+/// target is not recognised as a target, only as a token.
+#[test]
+fn a_second_rules_target_is_not_recognised_as_a_target() {
+    let got = parse_prerequisites("build/a.o: src/a.c\nbuild/b.o: src/b.c\n", "")
+        .expect("parses");
+    assert_eq!(got, vec!["src/a.c", "build/b.o:", "src/b.c"]);
+}

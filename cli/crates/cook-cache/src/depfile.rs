@@ -54,9 +54,16 @@ impl std::error::Error for DepfileError {
 /// `source_path` may be the empty string (no self-skip).
 ///
 /// The existence filter runs AFTER the dedupe rather than interleaved with it,
-/// which is where it used to sit. The list is identical either way: existence
-/// is a pure function of the token within a run, so it cannot promote a later
-/// duplicate into a slot the first occurrence would not have taken.
+/// which is where it used to sit. Over any fixed tree the list is identical:
+/// the filter is order-preserving and rejects a token at every occurrence or at
+/// none, so it cannot promote a later duplicate into a slot the first would not
+/// have taken. Note what that does NOT claim: the stat memo is permanently
+/// disarmed by the first command cook runs (`statmemo`), and this parse happens
+/// after execution, so under a parallel build every check is a live syscall
+/// against a tree other workers are writing. A prerequisite created between two
+/// of its own occurrences could be ordered differently by the two versions —
+/// and a build racing its own generated headers has no defined input set for
+/// either to be right about.
 pub fn parse_make_depfile(
     depfile_path: &Path,
     source_path: &str,
@@ -76,8 +83,9 @@ pub fn parse_make_depfile(
 
     // Filter: skip non-existent paths (relative to working_dir).
     //
-    // COOK-306: this runs for every prerequisite of every depfile on every
-    // run, and C++ prerequisite lists are overwhelmingly the same headers
+    // COOK-306: this runs for every DISTINCT prerequisite of every depfile on
+    // every run (distinct since COOK-425 moved the dedupe ahead of it; it used
+    // to run for every occurrence), and C++ prerequisite lists are the same headers
     // over and over — on DuckDB, 1,687 depfiles named ~320k prerequisites
     // resolving to 6,730 distinct paths. Answered through the per-run stat
     // memo, which shares its entries with the input check below and is

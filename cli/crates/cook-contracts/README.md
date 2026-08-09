@@ -84,6 +84,16 @@ Worked examples from this repo's history:
   them but a second, worse answer to a question already settled next door);
   `lua_string` (COOK-398 / COOK-440 — how arbitrary text becomes a Lua literal,
   and the `cook.<door>("…")` call it usually appears inside, `registration::door_call`);
+  `depfile` (COOK-425 — the Make depfile grammar, split out of a cook-cache
+  function that read the file and decided its meaning at once. Two ends: the
+  executor folds the prerequisite list into a unit's cache key and `cook why`
+  renders it as the graph's discovered edges, so disagreement would explain a
+  rebuild by a reason that did not cause it. Worth noting what did NOT move: the
+  reading and the does-this-path-exist filter stayed in cook-cache, because the
+  filter needs the per-run stat memo. That is the seam being real rather than
+  reasoned to — text in, list out on one side; `read_to_string` and a syscall on
+  the other. The ticket that asked for this had also recorded that the parser had
+  one consumer; it had two, and the second is half the reason it is law);
   the COOK-421 sweep, below.
 - **Moved here by COOK-421**, the first sweep run against the gate rather than
   by hand. Seven, and what each was doing before is more useful than what it is

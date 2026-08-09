@@ -5,8 +5,11 @@
 //! COOK-418 deleted, which is why nothing pointed a reader looking for
 //! `resolve_declared_inputs` at it. Eight tests over `hash_str` and
 //! `pathlaw::*` went with the name: that law lives in `cook-contracts` and is
-//! tested there, case for case, so asserting it again from here was a second
-//! opinion about somebody else's function.
+//! tested there, predicate for predicate, so asserting it again from here was a
+//! second opinion about somebody else's function. Twelve literal spellings went
+//! with them (`"*"`, `"file?.txt"`, `"a/b/c/d.txt"` and the like); each is
+//! redundant against a `matches!` over three bytes, and none can fail while its
+//! predicate's own case passes.
 
 use super::*;
 use cook_contracts::cache::DeclaredInput;

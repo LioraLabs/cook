@@ -26,9 +26,9 @@ fn returns_not_found_for_missing_file() {
 }
 
 /// The grammar's one syntax failure reaches callers as `Malformed` with its
-/// offset and reason intact. `cook-graph` turns any error into an empty edge
-/// set and the executor logs the text, so both ends depend on this mapping
-/// surviving the read.
+/// offset and reason intact. The executor logs that text, so the mapping is
+/// what a user sees; `cook-graph` discards the error wholesale and depends only
+/// on this being an `Err` at all.
 #[test]
 fn a_syntax_failure_surfaces_as_malformed() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -79,11 +79,14 @@ fn skips_nonexistent_paths() {
 }
 
 /// COOK-425 moved the dedupe into the grammar, so it now runs BEFORE the
-/// existence filter instead of after it. This pins that the observable list is
-/// unchanged: a repeated missing path contributes nothing and does not displace
-/// or reorder the existing ones around it. Recorded input sets are compared
-/// element-wise, so a reordering here reads as an input change on every
-/// compiled unit in a project.
+/// existence filter instead of after it. A regression guard for that
+/// reordering, and honest about its own limits: it passes under BOTH versions,
+/// because the two can only be separated by a path that is absent at one stat
+/// and present at another, which a static tree cannot stage. What it does hold
+/// is the property the reordering had to preserve — a repeated missing path
+/// contributes nothing and does not displace or reorder the paths around it.
+/// Recorded input sets are compared element-wise, so a reordering here reads as
+/// an input change on every compiled unit in a project.
 #[test]
 fn a_repeated_missing_path_neither_appears_nor_reorders_the_rest() {
     let dir = tempfile::tempdir().expect("tempdir");
