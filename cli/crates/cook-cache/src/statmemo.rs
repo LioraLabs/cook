@@ -178,12 +178,12 @@ pub fn stat_mtime_memo(working_dir: &Path, rel: &str) -> Option<u64> {
 /// say about which bytes a path names.
 ///
 /// Modification time and length are the obvious two and they are not enough.
-/// `touch_forward`, twelve lines into this module's own tests, exists because a
-/// filesystem with coarse timestamp granularity reports the same mtime for a
-/// fast rewrite; pair that with a rebuild that happens to produce a binary of
-/// the same length (a relink after a comment-only edit) and mtime plus length
-/// cannot tell the two apart. A `chmod +r` on a binary `which` selected on
-/// `X_OK` but that could not be READ moves neither.
+/// `touch_forward`, in this module's own tests, exists because a filesystem
+/// with coarse timestamp granularity reports the same mtime for a fast rewrite;
+/// pair that with a rebuild that happens to produce a binary of the same length
+/// (a relink after a comment-only edit) and mtime plus length cannot tell the
+/// two apart. A `chmod +r` on a binary `which` selected on `X_OK` but that
+/// could not be READ moves neither.
 ///
 /// On unix, `ctime` moves for every one of those, `ino` catches an
 /// atomic-rename install that reuses the timestamps, and `dev` keeps an inode
@@ -256,19 +256,24 @@ impl FileIdentity {
 ///
 /// Stated rather than asserted away, because this sits on a false-hit path. A
 /// memoised digest is served whenever every field [`FileIdentity`] holds still
-/// reads the same, so the memo is exactly as discriminating as `metadata` is.
-/// On unix that leaves a rewrite that reproduces mtime, ctime, length, inode
+/// reads the same, so the memo is exactly as discriminating as the fields it
+/// keeps. On unix a rewrite would have to reproduce mtime, ctime, length, inode
 /// and device, which cook cannot do to itself and an attacker with write access
 /// to the toolchain does not need. On a platform with no ctime or inode the
 /// window is wider: a same-length rebuild inside one mtime tick. Both are
 /// narrower than the predecessor's window, which was the whole run.
 ///
-/// A path whose `metadata` call fails is not memoised at all. A path that stats
-/// but cannot be READ is memoised, at the all-zero digest that
-/// [`crate::probe::hash_file_sha256`] returns for it, and that entry is
-/// correctly invalidated when the permission changes, because `chmod` moves
-/// ctime. This matters because `which` selects on `X_OK`, not `R_OK`, so an
-/// execute-only binary does reach here.
+/// A path whose `metadata` call fails is not memoised at all, though an entry
+/// made earlier is not deleted either; it simply cannot be served while the
+/// stat keeps failing.
+///
+/// A path that stats but cannot be READ is memoised, at the all-zero digest
+/// [`crate::probe::hash_file_sha256`] returns for it. This is reachable because
+/// `which` selects on `X_OK`, not `R_OK`, so an execute-only binary gets here.
+/// On unix that entry is invalidated when the permission changes, because
+/// `chmod` moves ctime. Off unix it is not: mode is in none of the two portable
+/// fields, so an unreadable tool that becomes readable keeps its all-zero
+/// digest for the rest of the run.
 pub struct ToolHashMemo {
     entries: Mutex<HashMap<PathBuf, (FileIdentity, [u8; 32])>>,
     reads: std::sync::atomic::AtomicUsize,
@@ -315,7 +320,9 @@ impl ToolHashMemo {
         hash
     }
 
-    /// How many times this memo has actually read a file's bytes.
+    /// How many times this memo has gone to the file rather than answering
+    /// from its map. A read that fails (a vanished or unreadable path) counts:
+    /// the point of the number is the work not avoided.
     ///
     /// The memo's whole purpose is a read it does NOT perform, and that is not
     /// observable in its return value: a correct memo and a memo that re-reads

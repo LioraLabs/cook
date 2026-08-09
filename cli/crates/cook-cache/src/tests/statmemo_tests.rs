@@ -214,6 +214,11 @@ fn a_rewrite_costs_exactly_one_further_read() {
 /// granularity supplies the first (`touch_forward`, above, exists for exactly
 /// that) and a relink after a comment-only edit supplies the second. On unix
 /// ctime moves anyway, so the memo still re-reads.
+///
+/// The file is rewritten in place, so inode and device do not move and the
+/// discrimination comes from ctime alone. On a filesystem with second-grained
+/// ctime this could therefore report a false pass; the tempdir is tmpfs
+/// everywhere cook's suite runs, which stamps nanoseconds.
 #[cfg(unix)]
 #[test]
 fn a_rewrite_that_reproduces_mtime_and_length_is_still_caught() {
@@ -254,8 +259,11 @@ fn a_tool_that_becomes_readable_stops_being_served_the_all_zero_digest() {
 }
 
 /// Concurrent lookups of the same path may duplicate work, but must never
-/// duplicate answers: an entry is only ever served to a caller whose file still
-/// has the identity the entry was written against.
+/// duplicate answers. Deliberately weak: it asserts agreement and NOT
+/// `reads() == 1`, because racing threads are allowed to both read a cold path
+/// and asserting otherwise is how this test would flake. So it proves no
+/// deadlock and no torn answer, and the argument that a racing insert can only
+/// cost a redundant read is made where the lock is dropped, not here.
 #[test]
 fn concurrent_lookups_agree() {
     let dir = tempfile::tempdir().unwrap();

@@ -153,8 +153,8 @@ Said plainly rather than stretched to fit, per the crate-charter convention.
 cost 0.88s of `stat` where 0.01s would do). The second memoises a resolved tool
 binary's SHA-256, and revalidates on every lookup against everything one
 `metadata` call says about the inode a path names (COOK-414). They sit together
-and each doc states the
-other's rule, because the two disciplines look arbitrary apart and are forced
+and each doc states the other's rule, because the two disciplines look arbitrary
+apart and are forced
 apart on inspection: **a stat memo cannot revalidate itself**, because the
 `stat` IS the cheap check it exists to avoid, **and a hash memo can**, for one
 `metadata` call against a 60 MB read. Arm/disarm on the hash memo would be
@@ -166,9 +166,10 @@ The hash memo's residual window is named rather than asserted away, because it
 sits on a false-hit path: it is exactly as discriminating as `metadata` is. On
 unix that means a rewrite would have to reproduce mtime, ctime, length, inode
 and device, which cook cannot do to itself. Mtime and length alone would NOT
-have been enough, and neither would `stat_mtime`'s millisecond clamp: coarse
-filesystem timestamp granularity plus a same-length relink is a real pair, which
-is why `touch_forward` exists in this module's tests.
+have been enough: coarse filesystem timestamp granularity plus a same-length
+relink is a real pair, which is why `touch_forward` exists in this module's
+tests. Off unix only those two fields are available, and the README says so
+rather than letting the unix case stand for both.
 
 Both are correctly located here rather than in `cook-contracts`, because global
 mutable state is not law however effect-free the grep looks. The stat memo's
