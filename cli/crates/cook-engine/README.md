@@ -88,10 +88,18 @@ cache backend or store layout (`cook-cache`), or a process spawn
 are `cook-contracts` (with the store-side half in `cook-cache` since
 COOK-418 dissolved `cook-fingerprint`).
 
-It does not render. It emits `EngineEvent` and the CLI translates. `NodeKind`
-and `RecipeKind` are deliberate engine-side mirrors of the `cook-progress`
-enums so that this crate does not depend on the renderer: a progress bar is one
-possible consumer of the event stream, not the consumer.
+It does not render. It emits `EngineEvent`, and this crate does not depend on
+the renderer: a progress bar is one possible consumer of the event stream, not
+the consumer.
+
+That used to be stated as "`NodeKind` and `RecipeKind` are deliberate
+engine-side mirrors of the `cook-progress` enums", with a hand-written
+translation in the CLI joining them. COOK-421 deleted the mirrors: the stratum
+rule gets renderer-independence without a copy, because both crates already
+depend on `cook-contracts`, and a law lives as low as its dependencies allow.
+Both kinds are re-exported from `cook_contracts::{unit, registration}`, so
+`cook_engine::NodeKind` still names what it always named — it is now the same
+type the renderer sees, and nothing translates.
 
 It does not decide what the user asked for. Target selection, exit codes, and
 diagnostics wording belong to `cook-cli`.
