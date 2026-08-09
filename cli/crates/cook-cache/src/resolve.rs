@@ -313,5 +313,5 @@ pub fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
 }
 
 #[cfg(test)]
-#[path = "tests/fingerprint_tests.rs"]
+#[path = "tests/resolve_tests.rs"]
 mod tests;

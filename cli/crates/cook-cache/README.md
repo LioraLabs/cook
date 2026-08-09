@@ -134,9 +134,14 @@ than none:
   are now pinned to golden vectors computed outside this codebase, because the
   suite's determinism tests pass under any hash function and changing what
   either computes orphans every cache in existence.
-- `depfile.rs` parses Make-format `.d` files. It is the one module here that
-  neither writes nor reads cache state; it lives here because its output feeds
-  the records that do.
+- `depfile.rs` READS Make-format `.d` files. What one MEANS is
+  `cook_contracts::depfile` (COOK-425): a function of text alone, shared by the
+  executor that folds the result into a cache key and the `cook why` renderer
+  that draws it as a discovered edge. What is left here is the half that needs
+  the world — `read_to_string`, and dropping prerequisites that do not exist on
+  disk through the per-run stat memo. It is the one module here that neither
+  writes nor reads cache state; it lives here because the existence filter needs
+  `statmemo` and because both consumers already depend on this crate.
 - `parse_size` and `SIZE_LITERAL_HELP` used to be listed here as pure and
   shared with `cook-cli`'s `cache gc --max-size`, which by the `cook-contracts`
   admission bar put their home upstream. COOK-421 moved them to
@@ -179,8 +184,14 @@ commands that write the files, depends on `cook-contracts` alone and refuses the
 edge. A known hole, not a design, and the reason the hash memo was given a rule
 that needs no call sites to keep it.
 
-`depfile` parses Make `.d` files. It neither reads nor writes cache state and
-its only consumer is `cook-engine` (COOK-425).
+`depfile` READS Make `.d` files; `cook_contracts::depfile` decides what one
+says. It neither reads nor writes cache state, and it has two consumers, not
+one: `cook-engine`'s executor keys on the answer and `cook-graph`'s `dag_data`
+renders it. COOK-425's ticket claimed a single consumer, and this paragraph
+repeated the claim; `cook-graph` had been the second since CS-0171, which is
+older than the claim. The half that stayed here needs `statmemo`, and cook-cache
+is the lowest crate both consumers already share for effects, so this IS its
+home rather than a waiting room.
 
 ## Lineage
 
