@@ -22,4 +22,11 @@ pub mod dep_ref;
 #[path = "tests/luagen_tests.rs"]
 mod tests;
 
+// The agreement test standing in for the edge this crate's emission templates
+// cannot take: every `cook.<door>` name written here is a cook-contracts
+// constant or a listed exception (COOK-439).
+#[cfg(test)]
+#[path = "tests/door_names_tests.rs"]
+mod door_names_tests;
+
 pub use recipe::{compile_chore, generate_checked, CodegenError};

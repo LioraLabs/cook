@@ -550,7 +550,7 @@ pub fn install_cook_api(
         body.units.push(unit);
         Ok("".to_string())
     })?;
-    cook.set("interactive", interactive_capture_fn)?;
+    cook.set(cook_contracts::registration::INTERACTIVE_NAME, interactive_capture_fn)?;
 
     // cook.sh(cmd) — capture mode: inside a layer it captures like exec;
     // outside a layer it actually executes (user-facing utility that returns stdout).
@@ -623,12 +623,12 @@ pub fn install_cook_api(
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Bound on the register VM so the fan-out
     // codegen's `member = cook.member_to_string(item)` and `$<in>` resolve.
-    let member_fn = lua.create_function(|_, value: mlua::Value| {
-        let jv = crate::probe_value::lua_to_json(&value)
-            .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
-        Ok(cook_contracts::member::member_to_string(&jv))
-    })?;
-    cook.set("member_to_string", member_fn)?;
+    //
+    // COOK-439: the shared installer, so the worker VM answers this byte for
+    // byte the same way. The member string names the unit a fan-out member
+    // registers, so two renderers that stopped agreeing would file one member
+    // under two identities and look like a cache that stopped hitting.
+    cook_lua_stdlib::install_member_to_string(lua, &cook)?;
 
     // cook.__quote_param(value, name, ctx) — runtime helper for chore parameter
     // placeholders. Luagen's normal sigil resolver decides which `$<NAME>`

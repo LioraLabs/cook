@@ -256,10 +256,23 @@ pub fn register_unit_api(
             Ok(other) => return Err(type_err("lua_code", "a string", other.type_name())),
         };
         // CS-0127: `interactive` must be a boolean — never coerced.
-        let interactive: bool = match tbl.get::<LuaValue>("interactive") {
+        //
+        // The field name is the shared constant, not the identically-spelled
+        // `cook.interactive` DOOR: the two are different decisions that happen
+        // to read the same, and COOK-439 named them apart so a rename of one
+        // does not silently look like a rename of the other.
+        let interactive: bool = match tbl
+            .get::<LuaValue>(cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD)
+        {
             Ok(LuaValue::Nil) | Err(_) => false,
             Ok(LuaValue::Boolean(b)) => b,
-            Ok(other) => return Err(type_err("interactive", "a boolean", other.type_name())),
+            Ok(other) => {
+                return Err(type_err(
+                    cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+                    "a boolean",
+                    other.type_name(),
+                ))
+            }
         };
         // CS-0127: `line` must be a non-negative integer — never coerced.
         let line: usize = match tbl.get::<LuaValue>("line") {
@@ -586,7 +599,7 @@ pub fn register_unit_api(
 
         // Read optional discovered_inputs table.
         let discovered_inputs: Option<cook_contracts::DiscoveredInputs> =
-            match tbl.get::<LuaValue>("discovered_inputs") {
+            match tbl.get::<LuaValue>(cook_contracts::registration::ADD_UNIT_DISCOVERED_INPUTS_FIELD) {
                 Ok(LuaValue::Table(di_tbl)) => {
                     let from: String = di_tbl.get::<String>("from").map_err(|_| {
                         LuaError::RuntimeError(
@@ -1166,7 +1179,7 @@ pub fn register_unit_api(
         }
         Ok(())
     })?;
-    cook.set("add_unit", add_unit_fn)?;
+    cook.set(cook_contracts::registration::ADD_UNIT_NAME, add_unit_fn)?;
 
     // cook.passthrough(list) — declare the current step's "outputs" as a
     // copy of the given input list, without recording an emitting unit.
@@ -1285,7 +1298,7 @@ pub fn register_unit_api(
         }
         result
     })?;
-    cook.set("step_group", step_group_fn)?;
+    cook.set(cook_contracts::registration::STEP_GROUP_NAME, step_group_fn)?;
 
     // CS-0186 §8.6.1: the outputs of the preceding output-producing step in
     // the enclosing recipe body — the iteration source a `test` step falls back
@@ -1337,7 +1350,7 @@ pub fn register_unit_api(
         }
         lua.create_sequence_from(body.last_cook_step_outputs.clone())
     })?;
-    cook.set("prior_outputs", prior_outputs_fn)?;
+    cook.set(cook_contracts::registration::PRIOR_OUTPUTS_NAME, prior_outputs_fn)?;
 
     Ok(())
 }

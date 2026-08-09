@@ -1056,9 +1056,16 @@ pub fn generate_with_names(
                             // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                             // units that are never cached. The cacheable cook-step path in
                             // cook_step.rs is the only emission site that includes it.
+                            // COOK-439: the `interactive` FIELD name is the
+                            // shared constant, because this is its only
+                            // emitter and `cook-register`'s add_unit unpack is
+                            // its only reader. It is deliberately NOT the
+                            // identically-spelled `cook.interactive` DOOR.
                             out.push_str(&format!(
-                                "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                                cmd_expr, line
+                                "    cook.add_unit({{command = {}, {} = true, line = {}, cache = false}})\n",
+                                cmd_expr,
+                                cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+                                line
                             ));
                             i += 1;
                         }
@@ -1373,9 +1380,14 @@ fn compile_chore_checked(
                 let env_field = chore_param_env_table(&chore.params)
                     .map(|t| format!(", env = {}", t))
                     .unwrap_or_default();
+                // COOK-439: shared field name, as above. Every chore shell
+                // step is interactive by construction (§{chores}).
                 out.push_str(&format!(
-                    "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false{}}})\n",
-                    cmd_expr, line, env_field
+                    "    cook.add_unit({{command = {}, {} = true, line = {}, cache = false{}}})\n",
+                    cmd_expr,
+                    cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+                    line,
+                    env_field
                 ));
                 i += 1;
             }
@@ -1459,9 +1471,13 @@ fn emit_chore_body_unit(
     let env_field = chore_param_env_table(params)
         .map(|t| format!(", env = {}", t))
         .unwrap_or_default();
+    // COOK-439: shared field name, as above.
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}{}}})\n",
-        wrapped, line, env_field
+        "    cook.add_unit({{lua_code = {}, {} = true, cache = false, line = {}{}}})\n",
+        wrapped,
+        cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+        line,
+        env_field
     ));
 }
 

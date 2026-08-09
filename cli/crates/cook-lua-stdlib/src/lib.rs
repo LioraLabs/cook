@@ -33,14 +33,17 @@ pub mod codec_api;
 pub mod cookfile_api;
 pub mod json_codec;
 pub mod fs_api;
+pub mod member_api;
 pub mod module_loader;
 pub mod module_observer;
 pub mod path_api;
 pub mod platform_api;
+pub mod probes_api;
 pub mod sandbox;
 pub mod shell_guard;
 pub mod source_line;
 pub mod tools_api;
+pub mod var_proxy;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -52,6 +55,9 @@ pub use module_loader::{
 };
 pub use module_observer::{install_require_observer, ModuleObserver};
 pub use json_codec::{json_to_lua, lua_to_json};
+pub use member_api::install_member_to_string;
+pub use probes_api::install_probes_api;
+pub use var_proxy::install_var_proxy;
 pub use cookfile_api::register_cookfile_api;
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;

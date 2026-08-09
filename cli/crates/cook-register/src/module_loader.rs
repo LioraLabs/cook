@@ -222,14 +222,6 @@ pub fn register_cache_api(
     prepass: SharedPrepassStore,
 ) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
-    let cache_tbl = lua.create_table()?;
-
-    // cook.probes.get(key)
-    let s = state.clone();
-    let prepass_get = prepass.clone();
-    let get_fn =
-        lua.create_function(move |lua, key: String| probes_get(lua, &s, &prepass_get, &key))?;
-    cache_tbl.set("get", get_fn)?;
 
     // cook.__probe_subst(ident) — CS-0195: the register-time rendering of a
     // `$<key:...>` reference in a position that must resolve before execute
@@ -258,47 +250,29 @@ pub fn register_cache_api(
     })?;
     cook.set(cook_contracts::registration::PROBE_SUBST_NAME, subst_fn)?;
 
-    // cook.probes.set(key, value)
-    let s2 = state.clone();
-    let set_fn = lua
-        .create_function(move |_, (key, value): (String, LuaValue)| probes_set(&s2, &key, &value))?;
-    cache_tbl.set("set", set_fn)?;
-
-    // cook.probes.scope(label) — §24.4.3: a view whose get/set are the
-    // `label:key`-prefixed operations on the same store. Until COOK-412 the
-    // register VM never installed this, so the scoped pattern raised a
-    // nil-index error at register phase while working at execute phase.
-    let s3 = state.clone();
-    let prepass_scope = prepass.clone();
-    let scope_fn = lua.create_function(move |lua, label: String| {
-        if let Some(msg) = cook_contracts::probe_key::scope_label_error(&label) {
-            return Err(LuaError::runtime(msg));
-        }
-        let scoped = lua.create_table()?;
-
-        let s_get = s3.clone();
-        let prepass_get = prepass_scope.clone();
-        let label_get = label.clone();
-        let scoped_get = lua.create_function(move |lua, key: String| {
-            let full = cook_contracts::probe_key::scoped_key(&label_get, &key);
-            probes_get(lua, &s_get, &prepass_get, &full)
-        })?;
-        scoped.set("get", scoped_get)?;
-
-        let s_set = s3.clone();
-        let label_set = label.clone();
-        let scoped_set = lua.create_function(move |_, (key, value): (String, LuaValue)| {
-            let full = cook_contracts::probe_key::scoped_key(&label_set, &key);
-            probes_set(&s_set, &full, &value)
-        })?;
-        scoped.set("set", scoped_set)?;
-
-        Ok(scoped)
-    })?;
-    cache_tbl.set("scope", scope_fn)?;
-
-    cook.set("probes", cache_tbl)?;
-    cook_lua_stdlib::install_renamed_cache_stub(lua, &cook)?;
+    // cook.probes.{get,set,scope} — §6.3.4, §24.4.3. The table, the scope view
+    // and the `label:key` prefixing are `cook_lua_stdlib::install_probes_api`,
+    // one implementation with the worker VM (COOK-439); the two operations
+    // below are what this phase means by a probe read and a probe write.
+    //
+    // The register phase's `set` WRITES, into the active module's persistent
+    // cache. The execute phase's raises (CS-0074). That difference is
+    // specified, and passing both in as arguments is what makes it visible
+    // instead of buried in a copy of the scaffolding: before this, the scope
+    // view was built twice and only its innermost setter differed.
+    //
+    // Until COOK-412 the register VM never installed `scope` at all, so the
+    // scoped pattern raised a nil-index error at register phase while working
+    // at execute phase — the same class of failure, from the same cause.
+    let s_get = state.clone();
+    let prepass_get = prepass.clone();
+    let s_set = state.clone();
+    cook_lua_stdlib::install_probes_api(
+        lua,
+        &cook,
+        move |lua, key: &str| probes_get(lua, &s_get, &prepass_get, key),
+        move |_lua, key: &str, value: &LuaValue| probes_set(&s_set, key, value),
+    )?;
     Ok(())
 }
 
