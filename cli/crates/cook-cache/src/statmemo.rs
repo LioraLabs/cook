@@ -1,12 +1,12 @@
 //! The crate's per-run memos: input `mtime` lookups (COOK-306) and tool-binary
 //! content hashes (COOK-414).
 //!
-//! Both exist for the same reason — a build asks the filesystem the same
-//! question thousands of times per run — and they live together so that the
-//! rule each one keeps is readable against the other's. They do NOT keep the
-//! same rule, and the reason is worth stating once, at the top, because two
-//! memos with two disciplines and no acknowledgement between them is what this
-//! module was reorganised to stop being:
+//! Both exist for the same reason (a build asks the filesystem the same
+//! question thousands of times per run) and they live together so that the rule
+//! each one keeps is readable against the other's. They do NOT keep the same
+//! rule, and the reason is worth stating once, at the top, because two memos
+//! with two disciplines and no acknowledgement between them is what this module
+//! was reorganised to stop being:
 //!
 //! > A `stat` memo cannot revalidate itself. The `stat` IS the cheap check it
 //! > exists to avoid, so re-checking costs exactly what it saves, and the only
@@ -17,9 +17,9 @@
 //!
 //! Arm/disarm is therefore deliberately NOT extended to the hash memo, and the
 //! attempt would be worse than the status quo: [`disarm`] fires on the first
-//! executed command, and the register phase — where module code calls
-//! `cook.tools.id` — runs entirely disarmed, so a gated hash memo would be dead
-//! in exactly the workloads it was written for.
+//! executed command, and the register phase, where module code calls
+//! `cook.tools.id`, runs entirely disarmed. A gated hash memo would be dead in
+//! exactly the workloads it was written for.
 //!
 //! # The mtime memo (COOK-306)
 //!
@@ -174,21 +174,63 @@ pub fn stat_mtime_memo(working_dir: &Path, rel: &str) -> Option<u64> {
 // The tool-hash memo (COOK-414)
 // ---------------------------------------------------------------------------
 
-/// What makes a memoised digest still true: the file's modification time and
-/// its length, as one value. Cheap to re-read (`metadata`), and moved by every
-/// write cook performs.
-type FileIdentity = (std::time::SystemTime, u64);
+/// What makes a memoised digest still true: everything one `metadata` call can
+/// say about which bytes a path names.
+///
+/// Modification time and length are the obvious two and they are not enough.
+/// `touch_forward`, twelve lines into this module's own tests, exists because a
+/// filesystem with coarse timestamp granularity reports the same mtime for a
+/// fast rewrite; pair that with a rebuild that happens to produce a binary of
+/// the same length (a relink after a comment-only edit) and mtime plus length
+/// cannot tell the two apart. A `chmod +r` on a binary `which` selected on
+/// `X_OK` but that could not be READ moves neither.
+///
+/// On unix, `ctime` moves for every one of those, `ino` catches an
+/// atomic-rename install that reuses the timestamps, and `dev` keeps an inode
+/// number meaningful across a remount. On a platform without them the identity
+/// degrades to the two portable fields, which is the discrimination the memo
+/// had before and no worse.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    mtime: std::time::SystemTime,
+    len: u64,
+    #[cfg(unix)]
+    ctime: (i64, i64),
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    dev: u64,
+}
+
+impl FileIdentity {
+    fn of(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        Some(Self {
+            mtime: meta.modified().ok()?,
+            len: meta.len(),
+            #[cfg(unix)]
+            ctime: {
+                use std::os::unix::fs::MetadataExt;
+                (meta.ctime(), meta.ctime_nsec())
+            },
+            #[cfg(unix)]
+            ino: std::os::unix::fs::MetadataExt::ino(&meta),
+            #[cfg(unix)]
+            dev: std::os::unix::fs::MetadataExt::dev(&meta),
+        })
+    }
+}
 
 /// A per-run memo for the SHA-256 of a resolved tool binary, revalidated on
 /// every lookup.
 ///
 /// # Why it exists
 ///
-/// The same tool is fingerprinted once per probe NODE — five recipes sealing
-/// one `web:tools` probe hash its binaries five times — and a binary like
-/// `node` is ~60 MB. Without a memo, an all-cached workspace build spends
-/// seconds re-hashing the same toolchain, and a module calling `cook.tools.id`
-/// re-reads a binary the fingerprint pass already read.
+/// The same tool is fingerprinted once per probe NODE (five recipes sealing one
+/// `web:tools` probe hash its binaries five times) and a binary like `node` is
+/// ~60 MB. Without a memo, an all-cached workspace build spends seconds
+/// re-hashing the same toolchain, and a module calling `cook.tools.id` re-reads
+/// a binary the fingerprint pass already read.
 ///
 /// # Why it revalidates rather than arms and disarms
 ///
@@ -198,26 +240,45 @@ type FileIdentity = (std::time::SystemTime, u64);
 /// upstream node rebuilt earlier in the same run, and an execute-phase module
 /// can call `cook.tools.id` on one. Serving the pre-build hash there folds a
 /// tool that no longer exists into a probe fingerprint, and into any sealed
-/// probe value derived from it — a false hit on a store that crosses machines,
-/// which is the worst failure this codebase has.
+/// probe value derived from it: a false hit on a store that crosses machines,
+/// which is the worst failure this codebase has. §24.9 of the Standard says as
+/// much normatively (CS-0212), and the predecessor did not meet it.
 ///
 /// So a lookup re-reads the file's [`FileIdentity`] and serves the memoised
 /// digest only while it is unchanged. Order matters: identity is read BEFORE
 /// the bytes. A write that lands between the two stores the OLD identity
 /// against the new digest, so the next lookup sees a moved identity and
 /// re-reads; reading identity afterwards would store the new identity against
-/// possibly-old bytes and pin the mistake for the rest of the run.
+/// possibly-old bytes and pin the mistake for the rest of the run. That is also
+/// why the insert reuses the identity read at the top rather than re-statting.
 ///
-/// An unreadable path is not memoised at all: it hashes to all-zero, and a
-/// tool that reappears must be read rather than remembered as missing.
+/// # What it still cannot see
+///
+/// Stated rather than asserted away, because this sits on a false-hit path. A
+/// memoised digest is served whenever every field [`FileIdentity`] holds still
+/// reads the same, so the memo is exactly as discriminating as `metadata` is.
+/// On unix that leaves a rewrite that reproduces mtime, ctime, length, inode
+/// and device, which cook cannot do to itself and an attacker with write access
+/// to the toolchain does not need. On a platform with no ctime or inode the
+/// window is wider: a same-length rebuild inside one mtime tick. Both are
+/// narrower than the predecessor's window, which was the whole run.
+///
+/// A path whose `metadata` call fails is not memoised at all. A path that stats
+/// but cannot be READ is memoised, at the all-zero digest that
+/// [`crate::probe::hash_file_sha256`] returns for it, and that entry is
+/// correctly invalidated when the permission changes, because `chmod` moves
+/// ctime. This matters because `which` selects on `X_OK`, not `R_OK`, so an
+/// execute-only binary does reach here.
 pub struct ToolHashMemo {
     entries: Mutex<HashMap<PathBuf, (FileIdentity, [u8; 32])>>,
+    reads: std::sync::atomic::AtomicUsize,
 }
 
 impl ToolHashMemo {
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            reads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -226,7 +287,7 @@ impl ToolHashMemo {
     /// [`crate::probe::hash_file_sha256`], including all-zero when the path
     /// cannot be read.
     pub fn hash(&self, path: &Path) -> [u8; 32] {
-        let identity = file_identity(path);
+        let identity = FileIdentity::of(path);
         if let Some(current) = identity {
             if let Some((seen, hash)) = self.entries.lock().unwrap().get(path) {
                 if *seen == current {
@@ -236,7 +297,14 @@ impl ToolHashMemo {
         }
         // The lock is not held across the read: hashing a large binary is the
         // expensive thing this memo exists to avoid, and holding it would
-        // serialise every other tool lookup behind this one.
+        // serialise every other tool lookup behind this one. Two threads can
+        // therefore race the same cold path and both read; and a slow thread
+        // can overwrite a fresher entry with the identity it observed before
+        // reading. Neither can produce a wrong ANSWER: an entry is only served
+        // when the file's identity still equals the one its writer observed,
+        // so the worst case is a redundant re-read, and it self-heals on the
+        // next insert.
+        self.reads.fetch_add(1, Ordering::Relaxed);
         let hash = crate::probe::hash_file_sha256(path);
         if let Some(current) = identity {
             self.entries
@@ -246,17 +314,23 @@ impl ToolHashMemo {
         }
         hash
     }
+
+    /// How many times this memo has actually read a file's bytes.
+    ///
+    /// The memo's whole purpose is a read it does NOT perform, and that is not
+    /// observable in its return value: a correct memo and a memo that re-reads
+    /// every time answer identically. Counting the reads is how a test proves
+    /// the memoisation without pinning a stale digest as if it were a
+    /// requirement.
+    pub fn reads(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
+    }
 }
 
 impl Default for ToolHashMemo {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn file_identity(path: &Path) -> Option<FileIdentity> {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
 }
 
 /// The one instance the tool-hashing paths share. Needs no arming: unlike

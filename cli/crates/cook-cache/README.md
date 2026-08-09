@@ -108,7 +108,8 @@ fingerprint fold, determinant drift, and what a declared path IS are
 `cook-contracts`; this crate calls them with what the filesystem says. What it
 DOES own, since COOK-418, is asking: `needs_rebuild_cook`, the restore step, and
 the probe input resolution that reads env, PATH and files. It does not own
-eviction *policy*, only candidate enumeration and plan application. It does not own the meaning of what it stores: `Observation`,
+eviction *policy*, only candidate enumeration and plan application. It does not
+own the meaning of what it stores: `Observation`,
 `CacheMeta`, and the index-basename encoding are `cook-contracts`. It does not
 schedule, print, or emit progress; a lookup returns a value and the caller
 decides what to say about it.
@@ -125,8 +126,8 @@ than none:
   softer than it is, and five of the integration tests under `tests/` exercise
   `needs_rebuild_cook` through them.
 - Two file hashes live here and they are not interchangeable (COOK-414):
-  `check::hash_file` is xxh3 over a path and answers LOCAL content identity —
-  what a `FileRecord` carries, what the local key folds — while
+  `check::hash_file` is xxh3 over a path and answers LOCAL content identity:
+  what a `FileRecord` carries, what the local key folds. Meanwhile
   `probe::hash_file_sha256` is the SHA-256 identity that LEAVES the machine in a
   probe fingerprint or a cloud key. They were both spelled `hash_file` until
   COOK-414, one publicly and one privately in the module that shadowed it. Both
@@ -150,22 +151,31 @@ Said plainly rather than stretched to fit, per the crate-charter convention.
 `mtime` under an arm/disarm discipline (COOK-306: a large C++ graph resolved
 648,153 input records to 8,350 distinct paths, so validating a settled build
 cost 0.88s of `stat` where 0.01s would do). The second memoises a resolved tool
-binary's SHA-256, and revalidates on every lookup against the file's
-`(mtime, len)` instead (COOK-414). They sit together and each doc states the
+binary's SHA-256, and revalidates on every lookup against everything one
+`metadata` call says about the inode a path names (COOK-414). They sit together
+and each doc states the
 other's rule, because the two disciplines look arbitrary apart and are forced
-apart on inspection: **a stat memo cannot revalidate itself** — the `stat` IS
-the cheap check it exists to avoid — **and a hash memo can**, for one
+apart on inspection: **a stat memo cannot revalidate itself**, because the
+`stat` IS the cheap check it exists to avoid, **and a hash memo can**, for one
 `metadata` call against a 60 MB read. Arm/disarm on the hash memo would be
 strictly worse, since `disarm` fires on the first executed command and the
 register phase, where module code calls `cook.tools.id`, runs entirely
 disarmed.
+
+The hash memo's residual window is named rather than asserted away, because it
+sits on a false-hit path: it is exactly as discriminating as `metadata` is. On
+unix that means a rewrite would have to reproduce mtime, ctime, length, inode
+and device, which cook cannot do to itself. Mtime and length alone would NOT
+have been enough, and neither would `stat_mtime`'s millisecond clamp: coarse
+filesystem timestamp granularity plus a same-length relink is a real pair, which
+is why `touch_forward` exists in this module's tests.
 
 Both are correctly located here rather than in `cook-contracts`, because global
 mutable state is not law however effect-free the grep looks. The stat memo's
 invariant is still owned by convention at eight call sites across four crates,
 and it cannot be enforced at the write site: `cook-shell`, which spawns the
 commands that write the files, depends on `cook-contracts` alone and refuses the
-edge. A known hole, not a design — and the reason the hash memo was given a rule
+edge. A known hole, not a design, and the reason the hash memo was given a rule
 that needs no call sites to keep it.
 
 `depfile` parses Make `.d` files. It neither reads nor writes cache state and

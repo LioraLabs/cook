@@ -8,13 +8,13 @@
 //!
 //! The effect-free half is `cook-contracts`: cache-key composition, the env
 //! denylist, the rebuild decision, eviction planning. The split is the one the
-//! constitution draws — a decision that can be made from values alone lives
-//! there; what needs a syscall to make it lives here — and this crate re-exports
-//! the most-used of those items so existing `cook_cache::*` call sites keep
-//! working.
+//! constitution draws. A decision that can be made from values alone lives
+//! there; what needs a syscall to make it lives here. This crate re-exports the
+//! most-used of those items so existing `cook_cache::*` call sites keep working.
 //!
 //! COOK-418 dissolved `cook-fingerprint` along exactly that line and gave this
-//! crate its IO half; nothing named `cook-fingerprint` survives.
+//! crate its IO half. The crate is gone from the workspace manifest; prose
+//! elsewhere still names it, which is stale rather than a second home.
 
 pub mod backend;
 pub mod cap;

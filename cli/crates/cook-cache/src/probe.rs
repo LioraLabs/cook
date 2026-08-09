@@ -80,7 +80,7 @@ pub fn resolve_tool_path(name: &str) -> Option<String> {
 /// invocation. `None` when the name does not resolve. Hashing goes through
 /// the same per-run memo as the fingerprint fold ([`crate::statmemo`]), so a
 /// module calling this never re-hashes a binary the fingerprint pass already
-/// read — and, since COOK-414, never sees a binary cook rebuilt mid-run at its
+/// read, and, since COOK-414, never sees a binary cook rebuilt mid-run at its
 /// pre-build bytes either.
 pub fn tool_identity(name: &str) -> Option<(String, String)> {
     let path = which::which(name).ok()?;
@@ -105,7 +105,7 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
 /// the same question is how two halves of one key come to disagree.
 ///
 /// COOK-414: cook-cache has two file hashes and they answer different
-/// questions. This one is IDENTITY THAT LEAVES THE MACHINE — the §22.5.3 probe
+/// questions. This one is IDENTITY THAT LEAVES THE MACHINE: the §22.5.3 probe
 /// fingerprint, the CS-0204 module-source fold, the cloud key underneath both.
 /// [`crate::check::hash_file`] is the other: xxh3 local content identity for
 /// `FileRecord` and the local cache key. The algorithm is part of each name
