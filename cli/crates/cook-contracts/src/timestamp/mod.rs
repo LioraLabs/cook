@@ -22,6 +22,11 @@
 /// Howard Hinnant's `days_from_civil` (public domain). The exact inverse of
 /// [`civil_from_days`], and they are stated together so a change to one is
 /// visibly a change to the pair.
+///
+/// Public although only [`parse_rfc3339_ms`] calls it today. A calendar module
+/// that exposes one direction and hides the other is how the next caller ends
+/// up writing the missing half somewhere else, which is the whole of what this
+/// module was created to undo.
 pub fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     let y = if month <= 2 { year as i64 - 1 } else { year as i64 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
