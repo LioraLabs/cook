@@ -292,6 +292,12 @@ fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
 // `serde_json::Map` is BTreeMap-backed and serialises keys sorted regardless of
 // insertion order. The determinant maps themselves are already `BTreeMap` in the
 // engine; this note covers the per-unit object keys assembled here.
+//
+// CS-0217: the version is `cook_graph::DAG_SCHEMA_VERSION`, the same number the
+// whole-closure document carries, because this IS that document at reduced
+// scope — same `units` array, built by the same `why_unit_json`. A second
+// constant would be a second thing to remember to bump, and the payload they
+// both describe is one payload.
 fn render_why_json(
     report: &cook_engine::why::WhyReport,
     timings: &cook_engine::observations::Observations,
@@ -299,6 +305,7 @@ fn render_why_json(
     let units: Vec<serde_json::Value> =
         report.units.iter().map(|u| why_unit_json(u, timings)).collect();
     serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": cook_graph::DAG_SCHEMA_VERSION,
         "recipe": report.recipe,
         "units": units,
     }))

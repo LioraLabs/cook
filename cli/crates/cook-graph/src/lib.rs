@@ -30,6 +30,14 @@ pub use dag_data::{build_dag_data, DagData, EdgeData, EdgeKind, NodeData};
 /// `unclassified` tallies plus `forces` and the timing pair, and the former
 /// `cook why --json` `units` array joined the same object. Two incompatible
 /// structural changes at once, and one bump covers both.
+///
+/// It versions EVERY machine-readable document the query emits, not only the
+/// one assembled here: since CS-0217 the `--unit` selector's document carries
+/// this same number. That document is this one at reduced scope — the same
+/// `units` array, per-unit objects built by the same encoder — so a change
+/// that breaks a consumer of one breaks a consumer of the other, and one
+/// number is the only way to say so. The name is historical; the payload it
+/// describes has not been only a DAG since 4.
 pub const DAG_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]

@@ -264,6 +264,43 @@ fn unit_selector_reports_determinants_for_one_unit() {
     assert_eq!(s.matches("command_hash").count(), 1, "selector should narrow: {s}");
 }
 
+/// §17.1.6.6 / CS-0217: `cook why` emits its machine-readable answer as two
+/// documents — the whole closure, and the subset a `--unit` selector names —
+/// and a consumer must be able to migrate BOTH. The selector-scoped document
+/// carried no version at all until CS-0217, so a tool reading it had no way to
+/// tell a payload change from a payload it had misparsed.
+///
+/// The two versions are asserted equal, not merely present: they are the same
+/// wire format at two scopes, and two numbers would be free to drift the
+/// moment one of them mattered.
+#[test]
+fn both_machine_readable_documents_carry_the_same_schema_version() {
+    let tmp = TempDir::new().unwrap();
+    chain_workspace(tmp.path());
+
+    let whole = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    assert_ok(&whole);
+    let whole: serde_json::Value = serde_json::from_str(&stdout(&whole)).expect("valid json");
+    let version = whole["schema_version"].clone();
+    assert!(version.is_number(), "the closure document must carry a version: {whole}");
+
+    let selected = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "out.txt", "--format", "json"],
+    );
+    assert_ok(&selected);
+    let selected: serde_json::Value =
+        serde_json::from_str(&stdout(&selected)).expect("valid json");
+    assert_eq!(
+        selected["schema_version"], version,
+        "the selector document must carry the same wire-format version as the closure \
+         document it is a subset of: {selected}"
+    );
+    // And it is still the document it was: a version is added, nothing moves.
+    assert_eq!(selected["recipe"], "build", "{selected}");
+    assert_eq!(selected["units"].as_array().map(Vec::len), Some(1), "{selected}");
+}
+
 /// A selector matching nothing is a user error worth naming, not an empty
 /// report that reads as "nothing to explain".
 #[test]
