@@ -146,3 +146,91 @@ fn verify_json_survives_a_multiline_error_detail() {
     assert_eq!(parsed["units"][1]["unit"], r#"we"ird\path"#);
     assert_eq!(parsed["units"][1]["detail"], "bytes differ\r\nat offset 12");
 }
+
+// ---------------------------------------------------------------------------
+// The mirrored node/recipe vocabularies (COOK-421)
+// ---------------------------------------------------------------------------
+//
+// `cook_engine::NodeKind` and `cook_progress::NodeKind` are two declarations
+// of one vocabulary, joined by `translate_kind`; `RecipeKind` is the same
+// shape a third time. This crate is the only place all of them are visible,
+// so per the deliberate-copy protocol the agreement test lives here.
+//
+// Nothing asserted that the translation was the identity, and nothing
+// asserted the wire spelling `cook-logs` reads back out of `.cook/logs`.
+
+/// Every engine node kind reaches the same-named renderer kind.
+///
+/// The `match` is exhaustive on purpose: a variant added to one side and not
+/// the other stops this test compiling, which is the check the two mirrors
+/// never had.
+#[test]
+fn every_node_kind_translates_to_the_same_name() {
+    use cook_engine::NodeKind as E;
+    use cook_progress::NodeKind as P;
+    for engine in [E::Compile, E::Link, E::Resolve, E::Generate, E::Write, E::Test, E::Cooked] {
+        let expected = match engine {
+            E::Compile => P::Compile,
+            E::Link => P::Link,
+            E::Resolve => P::Resolve,
+            E::Generate => P::Generate,
+            E::Write => P::Write,
+            E::Test => P::Test,
+            E::Cooked => P::Cooked,
+        };
+        assert_eq!(translate_kind(engine), expected, "{engine:?} translated to the wrong kind");
+    }
+}
+
+/// The kind a node carries when nobody annotated it must be the same default
+/// on both sides, or an unannotated node changes verb across the bridge.
+#[test]
+fn the_unannotated_default_agrees_on_both_sides() {
+    assert_eq!(
+        translate_kind(cook_engine::NodeKind::default()),
+        cook_progress::NodeKind::default()
+    );
+    assert_eq!(cook_progress::NodeKind::default(), cook_progress::NodeKind::Cooked);
+}
+
+/// The renderer's kind is serialised into `.cook/logs` and read back by
+/// `cook-logs`, so its spelling is a wire format, not a rendering detail.
+#[test]
+fn the_node_kind_wire_spelling_is_kebab_case() {
+    use cook_progress::NodeKind as P;
+    for (kind, spelled) in [
+        (P::Compile, "compile"),
+        (P::Link, "link"),
+        (P::Resolve, "resolve"),
+        (P::Generate, "generate"),
+        (P::Write, "write"),
+        (P::Test, "test"),
+        (P::Cooked, "cooked"),
+    ] {
+        assert_eq!(serde_json::to_string(&kind).expect("serialise"), format!("\"{spelled}\""));
+    }
+}
+
+/// `RecipeKind` is the same vocabulary declared a THIRD time: the author's
+/// declaration (`cook_contracts::registration::RecipeKind`), the engine's
+/// mirror (mapped from it in `cook-engine/src/run.rs`), and the renderer's
+/// (mapped from that here). Two translations, one fact.
+///
+/// This asserts the wire spelling and the variant NAMES, not the mapping.
+/// Re-deriving the mapping the way the code does would pass by construction —
+/// the transposed arm that made the node-kind test above go red left such a
+/// version of this one green.
+#[test]
+fn the_recipe_kind_vocabulary_is_one_vocabulary() {
+    use cook_progress::event::RecipeKind as Rendered;
+    for (rendered, spelled) in [(Rendered::Recipe, "recipe"), (Rendered::Chore, "chore")] {
+        assert_eq!(serde_json::to_string(&rendered).expect("serialise"), format!("\"{spelled}\""));
+    }
+    // The three declarations name their variants identically, which is the
+    // whole reason two hand-written translations have been able to look
+    // right. Compared as text so nothing here re-implements the mapping.
+    let names = |debug: String| debug;
+    assert_eq!(names(format!("{:?}", cook_contracts::registration::RecipeKind::Chore)), "Chore");
+    assert_eq!(names(format!("{:?}", cook_engine::RecipeKind::Chore)), "Chore");
+    assert_eq!(names(format!("{:?}", Rendered::Chore)), "Chore");
+}
