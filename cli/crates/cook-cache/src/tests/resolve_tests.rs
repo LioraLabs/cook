@@ -1,8 +1,14 @@
+//! `resolve.rs`'s tests: what a declaration resolves to on a real tree, and
+//! what a directory output looks like after reconciliation.
+//!
+//! This file was `fingerprint_tests.rs` until COOK-425, named for a crate
+//! COOK-418 deleted, which is why nothing pointed a reader looking for
+//! `resolve_declared_inputs` at it. Eight tests over `hash_str` and
+//! `pathlaw::*` went with the name: that law lives in `cook-contracts` and is
+//! tested there, case for case, so asserting it again from here was a second
+//! opinion about somebody else's function.
+
 use super::*;
-// COOK-418: these moved to cook-contracts with the rules they test; the
-// resolving half stayed here, so this file reaches for both.
-use cook_contracts::hash_str;
-use cook_contracts::pathlaw::{has_glob_meta, is_dir_output, is_terminal_output};
 use cook_contracts::cache::DeclaredInput;
 
 #[test]
@@ -17,68 +23,12 @@ fn empty_dirs_under_reports_only_empty_dirs() {
     assert_eq!(got, vec!["out/empty".to_string()]);
 }
 
-#[test]
-fn test_hash_str_deterministic() {
-    let h1 = hash_str("hello");
-    let h2 = hash_str("hello");
-    assert_eq!(h1, h2);
-}
-
-#[test]
-fn test_hash_str_differs() {
-    let h1 = hash_str("hello");
-    let h2 = hash_str("world");
-    assert_ne!(h1, h2);
-}
-
 // CS-0186: the `compute_test_fingerprint` tests stood here — ten of them, over
 // a hash function and an input struct that existed for the one unit kind with
 // its own store. The store is gone and so is the function; a test unit is
 // judged by `needs_rebuild_cook` over its `CacheMeta`, which the cook-engine
 // and cook-register suites cover on the one path every unit shares. Nothing
 // here was worth keeping alive by keeping its subject alive.
-
-#[test]
-fn glob_meta_literal_paths_return_false() {
-    assert!(!has_glob_meta(""));
-    assert!(!has_glob_meta("main.c"));
-    assert!(!has_glob_meta("build/main.o"));
-    assert!(!has_glob_meta("apps/web/.next/BUILD_ID"));
-    assert!(!has_glob_meta("a/b/c/d.txt"));
-}
-
-#[test]
-fn glob_meta_star_returns_true() {
-    assert!(has_glob_meta("*"));
-    assert!(has_glob_meta("*.c"));
-    assert!(has_glob_meta("src/**"));
-    assert!(has_glob_meta("src/**/*"));
-    assert!(has_glob_meta("apps/web/.next/**"));
-}
-
-#[test]
-fn glob_meta_question_returns_true() {
-    assert!(has_glob_meta("?"));
-    assert!(has_glob_meta("file?.txt"));
-}
-
-#[test]
-fn glob_meta_bracket_returns_true() {
-    assert!(has_glob_meta("[abc].txt"));
-    assert!(has_glob_meta("src/[ab]/main.c"));
-}
-
-#[test]
-fn glob_meta_brace_returns_false() {
-    // The reference engine's `glob = "0.3"` crate does NOT support
-    // brace alternation; `{` is treated as a literal. Per CS-0085
-    // the spec excludes `{` from the metacharacter set so that a
-    // string like "out/{a,b}.txt" is treated as a LITERAL PATH,
-    // not as a glob pattern. Brace expansion may be added in a
-    // future CS once the reference engine supports it.
-    assert!(!has_glob_meta("{a,b}.txt"));
-    assert!(!has_glob_meta("src/{lib,app}/main.c"));
-}
 
 #[test]
 fn reconcile_dir_output_deletes_strays_keeps_set_prunes_empty() {
@@ -141,18 +91,6 @@ fn reconcile_dir_output_trailing_slash_root_works_identically() {
     assert!(!wd.join("pkg/sub/old.wasm").exists());
     assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
     assert!(wd.join("pkg").exists());        // root dir preserved
-}
-
-#[test]
-fn terminal_output_covers_globs_and_dir_outputs() {
-    assert!(is_dir_output("pkg/"));
-    assert!(!is_dir_output("pkg"));
-    assert!(!is_dir_output("pkg/file.js"));
-
-    assert!(is_terminal_output("pkg/"));        // directory output (CS-0119)
-    assert!(is_terminal_output("out/*.o"));     // glob (CS-0085)
-    assert!(is_terminal_output("a/**"));        // glob
-    assert!(!is_terminal_output("build/app"));  // literal
 }
 
 // ===========================================================================
