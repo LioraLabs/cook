@@ -89,13 +89,14 @@ pub struct WorkResult {
     /// as it was before CS-0204.
     pub module_inputs: Vec<String>,
     /// Wall-clock span of the actual work-item execution, measured by the
-    /// worker around the `execute_work_item` dispatch (queue wait
-    /// excluded). Measured for every payload kind so a unit's completion
-    /// line reports real elapsed time instead of a hardcoded zero. Individual `execute_*` helpers set this to
-    /// `Duration::ZERO` in their returned literals; `worker_loop`
-    /// overwrites it with the measured span for every outcome (success,
-    /// failure, and the worker-panic recovery path) before sending the
-    /// result, so the placeholder value never reaches the engine.
+    /// worker around the `execute_work_item` dispatch (queue wait excluded)
+    /// for every payload kind, so a unit's completion line reports real
+    /// elapsed time.
+    ///
+    /// The `Duration::ZERO` each `execute_*` helper puts in its returned
+    /// literal is a placeholder: `worker_loop` overwrites it with the
+    /// measured span on every path out, the panic-recovery path included,
+    /// so it can never reach the engine.
     pub duration: Duration,
 }
 
@@ -1505,11 +1506,16 @@ fn execute_lua_chunk(
 
     let result = setup();
 
-    // Flush this worker VM's stdout so recipe output (io.write/print) reaches
-    // fd 1 now, before the completion event. Otherwise libc block-buffers it
-    // when stdout isn't a TTY and it prints AFTER the `cook done` summary.
-    // Runs on both the success and chunk-error paths so partial output isn't
-    // stranded in the C stdio buffer.
+    // Flush this VM's C stdio buffer. The rationale it used to carry —
+    // "recipe output (io.write/print) reaches fd 1" — expired with CS-0188,
+    // which routes both of those into the active unit's sink and never
+    // through libc at all. What is left is the narrower case the flush still
+    // earns its place on: a body that writes to the descriptor DIRECTLY
+    // (`io.stdout:write(...)`), which no wrapper intercepts. Without this,
+    // libc block-buffers those bytes when stdout is not a TTY and they
+    // appear after the `cook done` summary, attributed to nothing. Runs on
+    // both the success and chunk-error paths, so partial output from a body
+    // that then failed is not stranded in the buffer.
     let _ = lua.load("io.stdout:flush()").exec();
 
     match result {
