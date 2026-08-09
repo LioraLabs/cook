@@ -613,9 +613,9 @@ fn body_text_has_in_placeholder_sigil(text: &str) -> bool {
 /// the same question of the same kind of source, and an answer that differs
 /// between them is a bug in one of them. The rules — non-code regions, whole
 /// tokens, `.`/`:` field access, and the `..` exception — live in
-/// [`crate::lua_scan::free_identifier_occurs`].
+/// [`cook_contracts::lua_scan::free_identifier_occurs`].
 fn lua_has_free_identifier(code: &str, name: &str) -> bool {
-    crate::lua_scan::free_identifier_occurs(code, name)
+    cook_contracts::lua_scan::free_identifier_occurs(code, name)
 }
 
 // ─── CS-0024: placeholder validator ─────────────────────────────────────────

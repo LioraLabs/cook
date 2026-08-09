@@ -10,7 +10,7 @@
 //! scanner in `crate::sigil`", which implied a sync obligation that does not
 //! exist: the two read different languages for different shapes and share
 //! nothing but a purpose. What they DID share was the walk that skips strings
-//! and comments, copied three ways; that now lives in [`crate::lua_scan`]
+//! and comments, copied three ways; that now lives in [`super::scan`]
 //! (COOK-357).
 //!
 //! # Matching rules
@@ -57,7 +57,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::lua_scan;
+use super::scan;
 
 /// Scan `source` for static reads of `var.<NAME>` and return the set of
 /// keys found (sorted, deduplicated).
@@ -71,14 +71,14 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
     while i < bytes.len() {
         let b = bytes[i];
 
-        // Strings and comments are not code (see `crate::lua_scan`).
-        match lua_scan::skip_non_code(source, bytes, i) {
-            lua_scan::Skip::Ended(next) => {
+        // Strings and comments are not code (see `super::scan`).
+        match scan::skip_non_code(source, bytes, i) {
+            scan::Skip::Ended(next) => {
                 i = next;
                 continue;
             }
-            lua_scan::Skip::Unterminated => return keys,
-            lua_scan::Skip::Code => {}
+            scan::Skip::Unterminated => return keys,
+            scan::Skip::Code => {}
         }
 
         // ── Try to match `var` here.
@@ -91,7 +91,7 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
             // Dot access: `var.IDENT`
             if after < bytes.len() && bytes[after] == b'.' {
                 let id_start = after + 1;
-                let id_end = lua_scan::ident_end(bytes, id_start);
+                let id_end = scan::ident_end(bytes, id_start);
                 if id_end > id_start {
                     let key = &source[id_start..id_end];
                     // CS-0172: any Lua identifier counts. The pre-CS-0172
@@ -160,8 +160,8 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
 
         // ── Skip any identifier we encounter so we don't re-test for the
         // `var` prefix inside an identifier (e.g. `variadic`).
-        if lua_scan::is_ident_start(b) {
-            i = lua_scan::ident_end(bytes, i);
+        if scan::is_ident_start(b) {
+            i = scan::ident_end(bytes, i);
             continue;
         }
 
@@ -182,11 +182,11 @@ fn bytes_starts_with(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
 /// embedded in a larger identifier (e.g. `variadic` is not the `var` prefix
 /// we're after; nor is `myvar`).
 fn is_part_of_larger_identifier(bytes: &[u8], i: usize, prefix_len: usize) -> bool {
-    if i > 0 && lua_scan::is_ident_cont(bytes[i - 1]) {
+    if i > 0 && scan::is_ident_cont(bytes[i - 1]) {
         return true;
     }
     let after = i + prefix_len;
-    after < bytes.len() && lua_scan::is_ident_cont(bytes[after]) && bytes[after] != b'.'
+    after < bytes.len() && scan::is_ident_cont(bytes[after]) && bytes[after] != b'.'
 }
 
 /// True if the byte position `pos` is immediately followed by an assignment
@@ -307,14 +307,14 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
     while i < bytes.len() {
         let b = bytes[i];
 
-        // Strings and comments are not code (see `crate::lua_scan`).
-        match lua_scan::skip_non_code(source, bytes, i) {
-            lua_scan::Skip::Ended(next) => {
+        // Strings and comments are not code (see `super::scan`).
+        match scan::skip_non_code(source, bytes, i) {
+            scan::Skip::Ended(next) => {
                 i = next;
                 continue;
             }
-            lua_scan::Skip::Unterminated => return keys,
-            lua_scan::Skip::Code => {}
+            scan::Skip::Unterminated => return keys,
+            scan::Skip::Code => {}
         }
 
         // ── Try to match `cook.probes.get` here.
@@ -390,8 +390,8 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
 
         // ── Skip any identifier we encounter so we don't re-test for the
         // `cook.probes.get` prefix inside an identifier.
-        if lua_scan::is_ident_start(b) {
-            i = lua_scan::ident_end(bytes, i);
+        if scan::is_ident_start(b) {
+            i = scan::ident_end(bytes, i);
             continue;
         }
 
@@ -409,5 +409,5 @@ fn is_lua_space(b: u8) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/lua_var_tests.rs"]
+#[path = "tests/reads_tests.rs"]
 mod tests;

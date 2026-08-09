@@ -863,7 +863,7 @@ pub fn register_unit_api(
         // gap for the common literal-key case; non-literal reads still fall
         // through to the execute-phase hard error.
         if let Some(code) = &lua_code {
-            for k in cook_luagen::lua_var::scan_probe_reads(code) {
+            for k in cook_contracts::lua_scan::scan_probe_reads(code) {
                 if !probes.contains(&k) {
                     probes.push(k);
                 }

@@ -10,7 +10,6 @@ cook-shell = { path = "../cook-shell" }
 cook-probe = { path = "../cook-probe" }
 cook-cache = { path = "../cook-cache" }
 cook-lua-stdlib = { path = "../cook-lua-stdlib" }
-cook-luagen = { path = "../cook-luagen" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 glob = "0.3"
 serde = { version = "1", features = ["derive"] }

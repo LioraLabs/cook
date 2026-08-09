@@ -1,16 +1,17 @@
 //! Skipping the non-code regions of Lua source.
 //!
-//! Three scanners in this crate walk a Lua body looking for one shape and must
+//! Three scanners walk a Lua body looking for one shape and must
 //! ignore everything written inside strings and comments: `var.X` reads and
-//! `cook.probes.get("k")` calls in [`crate::lua_var`], and the free `input` /
+//! `cook.probes.get("k")` calls in [`super::reads`], and the free `input` /
 //! `inputs` identifiers that pick a plate/test body's iteration mode in
-//! [`crate::template`]. Each carried its own copy of the same walk (COOK-357).
+//! `cook_luagen::template`. Each carried its own copy of the same walk (COOK-357).
 //!
 //! This is not sigil meaning and does not belong beside the resolver: it is a
-//! lexical fact about Lua, owned by the crate that reads Lua source.
+//! lexical fact about Lua, and both phases that read Lua source must read it
+//! the same way.
 
 /// What [`skip_non_code`] found at a position.
-pub(crate) enum Skip {
+pub enum Skip {
     /// A comment or string ended at this index; resume scanning there.
     Ended(usize),
     /// A comment or string opened and never closed. The source cannot be
@@ -26,7 +27,7 @@ pub(crate) enum Skip {
 /// Recognises `--` line comments, `--[[ … ]]` / `--[==[ … ]==]` long comments,
 /// `"…"` and `'…'` short strings (with backslash escapes), and `[[ … ]]` /
 /// `[==[ … ]==]` long strings.
-pub(crate) fn skip_non_code(src: &str, bytes: &[u8], i: usize) -> Skip {
+pub fn skip_non_code(src: &str, bytes: &[u8], i: usize) -> Skip {
     let b = bytes[i];
 
     // Line and long comments both open with `--`.
@@ -91,17 +92,17 @@ fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
     }
 }
 
-pub(crate) fn is_ident_start(b: u8) -> bool {
+pub fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_'
 }
 
-pub(crate) fn is_ident_cont(b: u8) -> bool {
+pub fn is_ident_cont(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// Advance from `start` while identifier-continuation bytes match. Returns
 /// `start` unchanged when `start` is not an identifier-start byte.
-pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
+pub fn ident_end(bytes: &[u8], start: usize) -> usize {
     if start >= bytes.len() || !is_ident_start(bytes[start]) {
         return start;
     }
@@ -118,7 +119,7 @@ pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
 /// This is the crate's one free-identifier walk. Two callers ask the same
 /// question of a Lua body and must get the same answer:
 ///
-/// - [`crate::template`] asks whether a plate/test body reads `input` or
+/// - `cook_luagen::template` asks whether a plate/test body reads `input` or
 ///   `inputs`, which picks the body's iteration mode;
 /// - [`crate::use_prelude`] asks whether a body names a `use` alias, which
 ///   decides whether the CS-0205 binding is prepended.
@@ -143,7 +144,7 @@ pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
 ///
 /// `load`ed chunks and `_ENV` lookups are deliberately not considered: neither
 /// can see a `local`, so neither can observe the binding.
-pub(crate) fn free_identifier_occurs(src: &str, ident: &str) -> bool {
+pub fn free_identifier_occurs(src: &str, ident: &str) -> bool {
     if ident.is_empty() {
         return false;
     }
@@ -189,5 +190,5 @@ fn is_field_access_at(bytes: &[u8], start: usize) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/lua_scan_tests.rs"]
+#[path = "tests/scan_tests.rs"]
 mod tests;

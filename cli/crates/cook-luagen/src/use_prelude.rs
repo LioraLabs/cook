@@ -22,7 +22,7 @@
 use cook_lang::ast::UseStatement;
 use cook_contracts::module_binding;
 
-use crate::lua_scan::free_identifier_occurs;
+use cook_contracts::lua_scan::free_identifier_occurs;
 
 /// The execute-phase prelude for `body`: one `local <alias> =
 /// cook.load_module("<target>")` statement per `use` the body names, in
