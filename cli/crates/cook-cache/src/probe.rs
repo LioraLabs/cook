@@ -35,7 +35,7 @@ pub fn resolve_probe_inputs(
         .inputs
         .files
         .iter()
-        .map(|path| (path.clone(), hash_file(&working_dir.join(path))))
+        .map(|path| (path.clone(), hash_file_sha256(&working_dir.join(path))))
         .collect();
 
     let upstream_probes: Vec<(String, [u8; 32])> = probe
@@ -110,7 +110,7 @@ fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
     if let Some(h) = memo.lock().unwrap().get(path) {
         return *h;
     }
-    let h = hash_file(path);
+    let h = hash_file_sha256(path);
     memo.lock().unwrap().insert(path.to_path_buf(), h);
     h
 }
@@ -120,11 +120,16 @@ fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
 /// Public because CS-0204 hashes module source with it: the probe fingerprint
 /// folds every other file through the same function, and a second hasher over
 /// the same question is how two halves of one key come to disagree.
+///
+/// COOK-414: cook-cache has two file hashes and they answer different
+/// questions. This one is IDENTITY THAT LEAVES THE MACHINE — the §22.5.3 probe
+/// fingerprint, the CS-0204 module-source fold, the cloud key underneath both.
+/// [`crate::check::hash_file`] is the other: xxh3 local content identity for
+/// `FileRecord` and the local cache key. The algorithm is part of each name
+/// because this function was once ALSO called `hash_file`, privately, in this
+/// module, which meant the crate's most-used verb named two different hashes
+/// depending on which file you were reading.
 pub fn hash_file_sha256(path: &Path) -> [u8; 32] {
-    hash_file(path)
-}
-
-fn hash_file(path: &Path) -> [u8; 32] {
     let Ok(bytes) = std::fs::read(path) else {
         return [0u8; 32];
     };
