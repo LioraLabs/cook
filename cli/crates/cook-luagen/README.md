@@ -86,8 +86,19 @@ pre-pass for probe key-versus-field resolution, COOK-190).
 
 ## Boundary debt
 
-None outstanding. One entry stood here and is recorded because the shape
-recurs, not because it remains:
+One entry, narrowed from what stood here:
+
+- **`probe::lower_produce`'s `envs { }` arm still decides a value.** It emits
+  `os.getenv(NAME)` reads, while the probe's fingerprint reads the same
+  variables independently in Rust (`env_lookup`). That is the same shape as the
+  `tools { }` arm below, and it is left standing rather than defended because
+  the severity is genuinely not the same: both halves read one process's
+  environment through one mechanism, with no external utility, no second
+  resolver, and nothing platform-dependent between them. It is named so that
+  "none outstanding" is not claimed on this crate's behalf while a second
+  producer kind is still authored as program text.
+
+The entry that closed, recorded because the shape recurs:
 
 - **`probe::lower_produce` used to author probe semantics as program text.**
   Its `tools { }` arm emitted Lua that shelled out to `command -v` and

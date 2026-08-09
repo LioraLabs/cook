@@ -280,11 +280,23 @@ fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
 
     // §22.5.2 requires the failure. The old lowering raised it from inside the
-    // produce body, which meant a cached value could serve the probe without
-    // the tool existing at all; synthesis raises it before the cache is
-    // consulted, so the rule holds on hit and miss alike.
+    // produce body, which put it BEHIND the cache: a stored value served the
+    // probe without the tool existing at all. So the interesting half of this
+    // rule is the cache HIT, and a test against an empty store would pass just
+    // as well with the check back below the GET. This one plants a value at the
+    // exact fingerprint the probe will compute, so the store answers, and the
+    // failure has to come from ahead of it.
     let store = tempfile::tempdir().unwrap();
     let be = backend(store.path());
+    let inputs = cook_cache::probe::resolve_probe_inputs(
+        &unit, tmp.path(), &no_env, &BTreeMap::new(),
+    )
+    .unwrap();
+    let fingerprint = cook_cache::compute_probe_fingerprint(&inputs);
+    let value = br#"{"cook-no-such-tool-COOK-416":{"hash":"00"}}"#;
+    let mut meta = probe_artifact_meta("ns:tc", value.len());
+    cook_cache::backend::put_bytes(&be, &fingerprint, value, &mut meta).unwrap();
+
     let err = eval_cached(
         &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
     )
@@ -295,6 +307,52 @@ fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
         "the diagnostic must name the tool; got: {err}",
     );
     assert!(err.message().contains("not found on PATH"), "got: {err}");
+}
+
+#[test]
+#[cfg(unix)]
+fn cs0214_a_tools_probe_whose_binary_cannot_be_read_fails_rather_than_recording_zeros() {
+    // `which` selects on X_OK, not R_OK, so a name can RESOLVE to a binary
+    // whose bytes cannot be read — and the probe-side file hash answers the
+    // all-zero digest for anything it cannot read. Rendering that into the
+    // value would put the same 64 zeros in every such value, so two hosts each
+    // failing to read a DIFFERENT toolchain would compose identical value bytes
+    // and identical fingerprints, and one could be served the other's sealed
+    // artifact. The deleted Lua producer could not reach this state: `sha256sum`
+    // exited non-zero and failed the probe.
+    // The declared name is an absolute path rather than a bare one, so `which`
+    // resolves it directly and the test never touches the process PATH — a
+    // process-global mutation that would race every other test in this binary.
+    // A Cookfile can only spell a bare name, but `ProbeInputs.tools` at this
+    // seam is a list of strings and the resolver is the same one either way.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let tool = tmp.path().join("cook-unreadable-416");
+    std::fs::write(&tool, b"#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o111)).unwrap();
+
+    let mut unit = declares_tools("ns:tc", &tool.to_string_lossy());
+    unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let result = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
+
+    // Root can read a mode-0111 file, so the unreadable state is not
+    // constructible when the suite runs as root. The rule still holds there:
+    // whichever way this lands, an all-zero digest must not reach the value.
+    match result {
+        Err(err) => {
+            assert!(err.message().contains("cook-unreadable-416"), "got: {err}");
+            assert!(err.message().contains("could not be read"), "got: {err}");
+        }
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.bytes).into_owned();
+            assert!(
+                !text.contains(&"0".repeat(64)),
+                "an all-zero digest must never stand for an identity: {text}",
+            );
+        }
+    }
 }
 
 #[test]

@@ -1795,8 +1795,8 @@ pub fn execute_dag(
 
                             // A value already in hand: the cache served it, or
                             // the producer kind is synthesised (CS-0148
-                            // `files { }`). Either way no worker is involved,
-                            // so the node completes here.
+                            // `files { }`, CS-0214 `tools { }`). Either way no
+                            // worker is involved, so the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
                                 let recorded = cook_probe::eval::record(
@@ -1809,8 +1809,9 @@ pub fn execute_dag(
                                     // CS-0204: no VM ran on either arm of this
                                     // branch. A cache hit's identity is already
                                     // the folded one `lookup` settled on; a
-                                    // `files { }` value is synthesised from the
-                                    // declared FILES section and loads nothing.
+                                    // synthesised value (`files { }`,
+                                    // `tools { }`) comes from the declared
+                                    // FILES / TOOLS section and loads nothing.
                                     &[],
                                 );
                                 for w in &recorded.warnings {

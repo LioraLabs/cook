@@ -181,7 +181,8 @@ pub struct Lookup {
     pub warnings: Vec<String>,
     /// `Some` when the value is already determined without running a VM:
     /// either the cache served it, or the producer kind is synthesised
-    /// (CS-0148 `files { }`). `None` means the caller must produce.
+    /// (CS-0148 `files { }`, CS-0214 `tools { }`). `None` means the caller
+    /// must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
 
@@ -235,21 +236,44 @@ pub fn lookup(
         }
     }
 
-    // 4b. CS-0214 §22.5.2: a `tools { }` name that does not resolve on PATH
-    //     fails the probe, by name. The rule used to live inside the emitted
-    //     produce body, which put it behind the cache: a stored value could
-    //     serve a probe whose tool had since been uninstalled. It is checked
-    //     here, ahead of the GET, so it holds on hit and miss alike.
+    // 4b. CS-0214 §22.5.2: a `tools { }` producer fails, by name, when it
+    //     cannot obtain a declared tool's identity. The rule used to live
+    //     inside the emitted produce body, which put it behind the cache: a
+    //     stored value could serve a probe whose tool had since been
+    //     uninstalled. It is checked here, ahead of the GET, so it holds on hit
+    //     and miss alike.
     //
-    //     Only the synthesised producer is subject to it. A hand-written body
-    //     that happens to declare `inputs.tools` keeps folding a missing tool
-    //     as the all-zero digest, which is what §22.5.4 says it does.
+    //     Two ways to have no identity, and the second is the one that bites.
+    //     A name that does not resolve is the obvious case. A name that
+    //     RESOLVES but whose bytes cannot be read is the dangerous one:
+    //     `which` selects on `X_OK`, not `R_OK`, so an execute-only binary
+    //     gets past it, and `hash_file_sha256` answers the all-zero digest for
+    //     anything it cannot read. Rendering that into the value would put the
+    //     same 64 zeros in every such value, so two hosts each failing to read
+    //     a DIFFERENT toolchain would compose identical bytes and one could be
+    //     served the other's sealed artifact. The deleted Lua producer could
+    //     not reach this state — `sha256sum` exited non-zero and failed the
+    //     probe — and neither may this one.
+    //
+    //     Only the synthesised producer is subject to either check. A
+    //     hand-written body that happens to declare `inputs.tools` keeps
+    //     folding an absent tool as the all-zero digest, which is what §22.5.4
+    //     says it does; that probe's value is the author's to compute.
     if is_tools_identity(probe) {
-        for (name, _) in &inputs.tools {
-            if !tool_paths.contains_key(name) {
+        for (name, digest) in &inputs.tools {
+            let Some(path) = tool_paths.get(name) else {
                 return Err(ProbeError::Produce {
                     key: key.to_string(),
                     message: format!("tools probe: '{name}' not found on PATH"),
+                });
+            };
+            if digest == &[0u8; 32] {
+                return Err(ProbeError::Produce {
+                    key: key.to_string(),
+                    message: format!(
+                        "tools probe: '{name}' resolved to {path} but its bytes \
+                         could not be read, so it has no identity to record"
+                    ),
                 });
             }
         }

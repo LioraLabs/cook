@@ -146,7 +146,9 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
             // resulting JSON object (§22.5.2).
             let mut out = String::from("local _e = {}\n");
             for name in names {
-                // Quoted-string key (see Tools arm); `name` is a bare IDENT.
+                // `name` is a validated bare IDENT, so a quoted-string key is
+                // safe. A long-bracket `[[name]]` would be ambiguous as a table
+                // index — `_e[[[name]]]`.
                 out.push_str(&format!(
                     "_e[\"{}\"] = os.getenv(\"{}\")\n",
                     lua_string::escape_double_quoted(name),
