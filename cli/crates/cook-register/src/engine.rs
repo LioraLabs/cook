@@ -323,6 +323,16 @@ pub fn register_cookfile(
     // `cook.probes.get` binding (installed below) reads it first.
     let prepass_store: crate::module_loader::SharedPrepassStore =
         Rc::new(RefCell::new(BTreeMap::new()));
+    // CS-0219: one owner for register-phase probe resolution. The pre-pass
+    // below fills it for `ingredients <probe>` drivers; a register-phase
+    // `cook.probes.get` read fills it on demand for whatever a body asks for.
+    let probe_resolver = Rc::new(RegisterProbeResolver::new(
+        probe_registry.clone(),
+        prepass_store.clone(),
+        builder.working_dir.clone(),
+        cache_ctx.clone(),
+        body_slot.clone(),
+    ));
     // The forcer cell `cook.require_recipe` reads at call time. Created here,
     // filled at step 12 once the driver exists: the top-level chunk (step 6)
     // runs long before that, and a Cookfile aliasing the function there
@@ -342,7 +352,7 @@ pub fn register_cookfile(
         &builder,
         body_slot.clone(),
         cache_ctx.as_ref(),
-        prepass_store.clone(),
+        probe_resolver.clone(),
         recipe_forcer.clone(),
         finalizer_queue.clone(),
         module_state.clone(),
@@ -444,13 +454,19 @@ pub fn register_cookfile(
     //      before the body loop, stashing each value in `prepass_store` keyed
     //      by probe key. `$(cmd)` and the reserved `(lua)` sources need no
     //      pre-pass (the former materialises through `cook.sh` at body time).
+    //      The driver list is COPIED out of `recipes` first. The pre-pass runs
+    //      `produce` bodies on this VM, and that Lua reaches `cook.recipe` and
+    //      `cook.load_module`, both of which borrow `recipes` — holding the
+    //      borrow across it turned an authoring mistake into a RefCell panic.
+    let member_source_drivers: Vec<(String, crate::capture::MemberSourceDescriptor)> = recipes
+        .borrow()
+        .iter()
+        .filter_map(|r| r.member_source.clone().map(|ms| (r.name.clone(), ms)))
+        .collect();
     run_member_source_prepass(
         &lua,
-        &recipes.borrow(),
-        &probe_registry.borrow(),
-        &builder.working_dir,
-        cache_ctx.as_ref(),
-        &prepass_store,
+        &member_source_drivers,
+        &probe_resolver,
         &reachable_from_target,
         builder.target_recipe.is_some(),
     )?;
@@ -525,15 +541,21 @@ pub fn register_cookfile(
         local_topological_sort(&merged)?;
     }
 
-    // 12b. (COOK-64 §22.5.10) Static-input rule for member sources. Now
-    //      that every body has run and `units_by_recipe` holds the full set of
-    //      recipe outputs, reject any member-source probe that declares a
-    //      file input which is produced by a recipe in this Cookfile — a
-    //      build artifact is not statically evaluable (the pre-pass resolved
-    //      the probe before any recipe ran, so it could only have seen a
-    //      stale or absent file).
-    check_member_source_static_inputs(
-        &recipes.borrow(),
+    // 12b. (COOK-64 §22.5.10, generalised by CS-0219) The static-input rule.
+    //      Now that every body has run and `units_by_recipe` holds the full
+    //      set of recipe outputs, reject any probe THE REGISTER PHASE
+    //      RESOLVED that declares a file input produced by a recipe in this
+    //      Cookfile. A build artifact is not statically evaluable: the value
+    //      was read before any recipe ran, so it could only have seen a stale
+    //      or absent file.
+    //
+    //      The set checked is `resolver.resolved_keys()`, not the member-source
+    //      drivers alone. Since CS-0219 a register-phase `cook.probes.get`
+    //      resolves whatever a body asks for, and checking only the fan-out
+    //      drivers would leave that read as an unchecked route to exactly the
+    //      dependence this rule exists to forbid.
+    check_register_resolved_static_inputs(
+        &probe_resolver.resolved_keys(),
         &probe_registry.borrow(),
         &units_by_recipe,
     )?;
@@ -616,6 +638,20 @@ pub fn register_cookfile(
             }
         }
     }
+
+    // 12d. (§22.5.10, CS-0219) The static-input rule again, over whatever the
+    //      finalizer drain resolved. A `cook.on_register_complete` callback is
+    //      register-phase Lua like any other and may read a probe, so the 12b
+    //      check — which runs before the drain — cannot be the last word: a
+    //      probe first resolved by a callback would otherwise slip past the
+    //      rule entirely, which is precisely the "by whichever route" the
+    //      section requires. Idempotent and cheap: the resolved set is
+    //      normally unchanged by the drain, and the check is a set walk.
+    check_register_resolved_static_inputs(
+        &probe_resolver.resolved_keys(),
+        &probe_registry.borrow(),
+        &units_by_recipe,
+    )?;
 
     // Flush module caches once at the end of the pass.
     module_state.borrow().flush_all();
@@ -1368,6 +1404,22 @@ impl BodyDriver {
             }
         }
 
+        // CS-0219 §22.1.3: resolve every `after` entry now that the body has
+        // closed and the recipe's whole unit list is known. Deferring it to
+        // here rather than checking inside `cook.add_unit` is what lets the
+        // diagnostic tell "no unit declares this output" apart from "a unit
+        // does, but it is registered later" — inside the call the later unit
+        // does not exist yet, so both look identical. The resolution itself is
+        // `cook_contracts::unit_graph::resolve_after`, the same function
+        // `unit_graph::plan` uses to draw the edge; this call is here for the
+        // register-phase diagnostic, not for a second answer.
+        cook_contracts::unit_graph::resolve_after(&body.units).map_err(|source| {
+            RegisterError::AfterUnresolved {
+                recipe: qualified_name.clone(),
+                message: source.to_string(),
+            }
+        })?;
+
         // Record terminal outputs for cross-recipe dep_output lookups.
         let terminal_outputs_list = body.last_cook_step_outputs.clone();
         builder
@@ -1817,17 +1869,16 @@ fn local_topological_sort(
 ///
 /// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
 /// were removed in COOK-97.
-#[allow(clippy::too_many_arguments)]
 fn run_member_source_prepass(
     lua: &Lua,
-    recipes: &[crate::capture::RegisteredRecipe],
-    probe_registry: &ProbeRegistry,
-    working_dir: &Path,
-    cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
-    prepass_store: &crate::module_loader::SharedPrepassStore,
+    member_source_drivers: &[(String, crate::capture::MemberSourceDescriptor)],
+    resolver: &RegisterProbeResolver,
     reachable_from_target: &std::collections::BTreeSet<String>,
     has_target: bool,
 ) -> Result<(), RegisterError> {
+    let probe_registry_guard = resolver.registry.borrow();
+    let probe_registry = &*probe_registry_guard;
+    let prepass_store = resolver.store();
     use crate::capture::MemberSourceDescriptor;
 
     // (recipe, verbatim source ref) per probe-sourced driver.
@@ -1839,14 +1890,11 @@ fn run_member_source_prepass(
     // driver's body — which would call `cook.probes.get` on an unevaluated probe
     // — is skipped rather than erroring.
     let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
-    let drivers: Vec<(&str, &str)> = recipes
+    let drivers: Vec<(&str, &str)> = member_source_drivers
         .iter()
-        .filter(|r| driver_reachable(&r.name))
-        .filter_map(|r| match &r.member_source {
-            Some(MemberSourceDescriptor::Probe { source_ref }) => {
-                Some((r.name.as_str(), source_ref.as_str()))
-            }
-            _ => None,
+        .filter(|(name, _)| driver_reachable(name))
+        .map(|(name, MemberSourceDescriptor::Probe { source_ref })| {
+            (name.as_str(), source_ref.as_str())
         })
         .collect();
     if drivers.is_empty() {
@@ -1869,34 +1917,18 @@ fn run_member_source_prepass(
         }
     }
 
-    // CS-0172: `envs { }` probe determinants are ambient process environment
-    // values (§22.5.2), not declared variables — see the matching lookup in
-    // `cook-engine`'s executor.
-    let env_lookup = |name: &str| std::env::var(name).ok();
-    let mut upstream_fps: BTreeMap<String, [u8; 32]> = BTreeMap::new();
-    let mut done: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // CS-0178 keylessness, accumulated across the whole pre-pass so it can
-    // propagate along `requires` chains.
-    let mut keyless: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-
     // Evaluate each driver probe (and its transitive `requires`) in
     // dependency order. Probe cycles are already rejected (step 9 above), so
-    // the recursion terminates; `in_progress` is a defensive belt-and-braces.
-    for (_, key, _) in &resolved {
-        evaluate_prepass_probe(
-            key,
-            lua,
-            probe_registry,
-            &env_lookup,
-            working_dir,
-            cache_ctx,
-            prepass_store,
-            &mut upstream_fps,
-            &mut done,
-            &mut keyless,
-            &mut Vec::new(),
-        )?;
+    // the recursion terminates.
+    //
+    // The registry borrow above is released for the duration: a `produce` body
+    // runs author Lua on this VM, and that Lua may declare or read probes.
+    let keys: Vec<String> = resolved.iter().map(|(_, k, _)| (*k).to_string()).collect();
+    drop(probe_registry_guard);
+    for key in &keys {
+        resolver.resolve(lua, key)?;
     }
+    let probe_registry = &*resolver.registry.borrow();
 
     // §22.5.10 non-array diagnostic: a driver's resolved source must be a
     // sequence. With a `:field` selector, the named field must be the array.
@@ -1976,111 +2008,287 @@ fn resolve_probe_ref<'a>(
         .then_some((key, Some(field)))
 }
 
-/// Evaluate a single probe for the pre-pass, recursing through its declared
-/// probe `requires` first so their fingerprints feed this one's (§22.5.3).
-/// Idempotent via `done`; `in_progress` guards against (already-rejected)
-/// cycles. Stores the decoded value in `prepass_store` and records the
-/// fingerprint in `upstream_fps`.
-#[allow(clippy::too_many_arguments)]
-fn evaluate_prepass_probe(
-    key: &str,
-    lua: &Lua,
-    probe_registry: &ProbeRegistry,
-    env_lookup: &dyn Fn(&str) -> Option<String>,
-    working_dir: &Path,
-    cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
-    prepass_store: &crate::module_loader::SharedPrepassStore,
-    upstream_fps: &mut BTreeMap<String, [u8; 32]>,
-    done: &mut std::collections::BTreeSet<String>,
-    // CS-0178: keys already found to have no cache key. A probe reaching one
-    // is itself keyless, so this must be populated in `requires` order — which
-    // the recursion below already guarantees.
-    keyless: &mut std::collections::BTreeSet<String>,
-    in_progress: &mut Vec<String>,
-) -> Result<(), RegisterError> {
-    if done.contains(key) {
-        return Ok(());
-    }
-    let Some(reg) = probe_registry.probes.get(key) else {
-        return Err(RegisterError::MemberSourceProbeProduceFailed {
-            key: key.to_string(),
-            message: format!("requires upstream probe '{key}' which was not declared"),
-        });
-    };
-    let probe = &reg.probe;
+/// Everything the register phase needs to turn a declared probe key into a
+/// materialised value, and the record of which keys it has (CS-0219).
+///
+/// One owner for two callers that used to be one. The `ingredients <probe>`
+/// pre-pass resolves the probes a reachable recipe's fan-out cardinality
+/// depends on, before any body runs; a register-phase `cook.probes.get` read
+/// resolves whichever probe a body actually asks for, at the moment it asks.
+/// They are the same operation at different times, so they share the
+/// evaluation state — the `requires` fingerprint chain, the CS-0178 keyless
+/// set, the memo of what is already done — rather than keeping two, which
+/// would let one path fingerprint an upstream the other had already resolved
+/// and disagree with it.
+///
+/// It also keeps [`Self::resolved_keys`], the set of keys the register phase
+/// evaluated at all. That set is what §22.5.10's static-input rule is checked
+/// against once the body loop closes: a probe resolved before any recipe runs
+/// cannot depend on a file a recipe is going to write, however it was reached.
+pub struct RegisterProbeResolver {
+    registry: Rc<RefCell<ProbeRegistry>>,
+    store: crate::module_loader::SharedPrepassStore,
+    working_dir: PathBuf,
+    cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    /// The recipe-body capture slot, emptied for the duration of a `produce`
+    /// run. A produce body evaluates author Lua on this VM, and since CS-0219
+    /// it can fire in the middle of a recipe body — where the slot is `Some`,
+    /// so a `cook.add_unit` or `cook.exec` inside `produce` would capture into
+    /// whichever recipe happened to be registering. That makes the recipe's
+    /// unit set depend on whether the probe was a cache hit, which is
+    /// registration output as a function of something other than registration
+    /// input. Emptied here, those calls raise their ordinary
+    /// outside-a-recipe-body error, which is what they did when the only
+    /// producer was the pre-pass.
+    body_slot: SharedBodySlot,
+    /// Does a `cook.probes.get` naming a declared probe resolve it?
+    ///
+    /// False on a discovery pass (`list_names` / `cook menu`), which registers
+    /// no units and executes nothing: running a `produce` body there would put
+    /// the cost of every probe a module reads on every menu listing and on
+    /// every workspace member scan, uncached, for an answer nothing consults.
+    /// A read there falls through to the module store, which is what it did
+    /// before CS-0219. §22.9's "discovery surfaces MAY skip the queue" is the
+    /// same judgement about the same kind of pass.
+    resolution_enabled: bool,
+    state: RefCell<ResolverState>,
+}
 
-    if in_progress.iter().any(|k| k == key) {
-        return Ok(()); // defensive — step 9 already rejects probe cycles
-    }
-    in_progress.push(key.to_string());
-    for req in &probe.inputs.requires {
-        evaluate_prepass_probe(
-            req,
-            lua,
-            probe_registry,
-            env_lookup,
+/// One `produce` body currently running, and the upstream keys it is allowed
+/// to read.
+struct ProducingFrame {
+    key: String,
+    requires: std::collections::BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct ResolverState {
+    upstream_fps: BTreeMap<String, [u8; 32]>,
+    done: std::collections::BTreeSet<String>,
+    /// CS-0178: keys already found to have no cache key. A probe reaching one
+    /// is itself keyless, so this is populated in `requires` order — which the
+    /// recursion in [`RegisterProbeResolver::resolve`] guarantees.
+    keyless: std::collections::BTreeSet<String>,
+    in_progress: Vec<String>,
+    resolved: std::collections::BTreeSet<String>,
+    /// The stack of `produce` bodies running on this VM right now (§22.5.4).
+    producing: Vec<ProducingFrame>,
+}
+
+impl RegisterProbeResolver {
+    pub fn new(
+        registry: Rc<RefCell<ProbeRegistry>>,
+        store: crate::module_loader::SharedPrepassStore,
+        working_dir: PathBuf,
+        cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+        body_slot: SharedBodySlot,
+    ) -> Self {
+        Self {
+            registry,
+            store,
             working_dir,
             cache_ctx,
-            prepass_store,
-            upstream_fps,
-            done,
-            keyless,
-            in_progress,
-        )?;
-    }
-    in_progress.pop();
-
-    // Everything from resolving the declared inputs to materialising the
-    // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
-    // call the executor makes, so the two phases cannot drift again: the
-    // fingerprint, the CS-0178 keylessness rule, the cache lookup and publish,
-    // the CS-0148 `files { }` interception, and the CS-0102 local copy all have
-    // one implementation. The register VM is the only phase-specific part, and
-    // it is the parameter.
-    let eval_ctx = cook_probe::eval::EvalCtx {
-        working_dir,
-        cache: cache_ctx.map(|ctx| cook_probe::eval::CacheAccess {
-            backend: ctx.backend.as_ref(),
-            project_root: &ctx.project_root,
-            publish_enabled: ctx.publish_enabled,
-        }),
-    };
-    let evaluated = cook_probe::eval::evaluate(
-        probe,
-        &eval_ctx,
-        &RegisterVmRunner { lua, working_dir },
-        env_lookup,
-        upstream_fps,
-        keyless,
-    )
-    .map_err(|e| RegisterError::MemberSourceProbeProduceFailed {
-        key: key.to_string(),
-        message: e.message().to_string(),
-    })?;
-    for warning in &evaluated.warnings {
-        eprintln!("cook: warning: {warning}");
-    }
-    // CS-0178 keylessness propagates along `requires`, so a probe that reaches
-    // this one must see that it had no key.
-    if evaluated.keyless {
-        keyless.insert(key.to_string());
-    }
-    // `evaluated.tool_paths` is deliberately dropped here. CS-0157's resolved
-    // locations are a read view for execute-phase Lua consumers, served from
-    // the per-run ProbeValueStore; the pre-pass store holds decoded values for
-    // fan-out and has no such channel. If one is ever added, this is where it
-    // gets populated.
-
-    let jv = cook_contracts::probe_value::decode_json(&evaluated.bytes).map_err(|e| {
-        RegisterError::MemberSourceProbeProduceFailed {
-            key: key.to_string(),
-            message: format!("decode cached value: {e}"),
+            body_slot,
+            resolution_enabled: true,
+            state: RefCell::new(ResolverState::default()),
         }
-    })?;
-    prepass_store.borrow_mut().insert(key.to_string(), jv);
-    upstream_fps.insert(key.to_string(), evaluated.fingerprint);
-    done.insert(key.to_string());
-    Ok(())
+    }
+
+    /// A resolver for a discovery pass: reads fall through, `produce` never
+    /// runs. See [`Self::resolution_enabled`].
+    pub fn for_discovery(
+        registry: Rc<RefCell<ProbeRegistry>>,
+        working_dir: PathBuf,
+        body_slot: SharedBodySlot,
+    ) -> Self {
+        let mut r = Self::new(
+            registry,
+            Rc::new(RefCell::new(BTreeMap::new())),
+            working_dir,
+            None,
+            body_slot,
+        );
+        r.resolution_enabled = false;
+        r
+    }
+
+    /// Would a `cook.probes.get` on this key resolve a probe?
+    ///
+    /// False for a key no probe declares, and false on a discovery pass.
+    pub fn resolves(&self, key: &str) -> bool {
+        self.resolution_enabled && self.registry.borrow().probes.contains_key(key)
+    }
+
+    /// §22.5.4: a read made from inside a `produce` body may only name a key
+    /// the running probe declared in `inputs.requires`. `Ok(())` when the read
+    /// is permitted (including when no produce body is running).
+    ///
+    /// Without this rule the read is silently outside the fingerprint chain.
+    /// `cook_probe::eval` folds an upstream's fingerprint only for keys in
+    /// `inputs.requires`, so an undeclared read returns real data keyed on
+    /// nothing — the upstream moves and the reader is served its old value
+    /// forever. It is also what makes a `produce` source mean the same thing in
+    /// both phases: on a worker VM the same undeclared read raises §22.5.8's
+    /// unmaterialised error, because nothing scheduled the upstream.
+    ///
+    /// It is the cycle guard too. A `produce` body naming its own key, or two
+    /// bodies naming each other, is not a `requires` edge, so §22.5.9's
+    /// end-of-pass cycle check never sees it; before this rule such a body
+    /// re-entered resolution with a clean slate and recursed until the Lua
+    /// stack gave out.
+    pub fn check_produce_read(&self, key: &str) -> Result<(), RegisterError> {
+        let state = self.state.borrow();
+        let Some(frame) = state.producing.last() else {
+            return Ok(());
+        };
+        if frame.requires.contains(key) {
+            return Ok(());
+        }
+        Err(RegisterError::ProbeReadOutsideRequires {
+            reader: frame.key.clone(),
+            key: key.to_string(),
+        })
+    }
+
+    /// The pre-pass value store this resolver publishes into.
+    pub fn store(&self) -> &crate::module_loader::SharedPrepassStore {
+        &self.store
+    }
+
+    /// Is `key` a probe someone declared in this pass?
+    pub fn is_declared(&self, key: &str) -> bool {
+        self.registry.borrow().probes.contains_key(key)
+    }
+
+    /// Every probe key the register phase resolved, in key order.
+    pub fn resolved_keys(&self) -> Vec<String> {
+        self.state.borrow().resolved.iter().cloned().collect()
+    }
+
+    /// Materialise `key`'s value into the store, recursing through its declared
+    /// probe `requires` first so their fingerprints feed this one's (§22.5.3).
+    ///
+    /// Idempotent; `in_progress` guards against (already-rejected) `requires`
+    /// cycles, and [`Self::check_produce_read`] guards the produce-body route
+    /// §22.5.9's check cannot see.
+    ///
+    /// **No `RefCell` borrow may be held across the produce call.** Producing
+    /// runs author Lua on the register VM, and that Lua re-enters this crate's
+    /// APIs, so the state is read into locals, released, and merged back
+    /// afterwards. The one thing deliberately held across it is the
+    /// `producing` frame, which is the guard.
+    pub fn resolve(&self, lua: &Lua, key: &str) -> Result<(), RegisterError> {
+        if self.state.borrow().done.contains(key) {
+            return Ok(());
+        }
+        let probe = {
+            let registry = self.registry.borrow();
+            let Some(reg) = registry.probes.get(key) else {
+                return Err(RegisterError::ProbeProduceFailed {
+                    key: key.to_string(),
+                    message: format!("requires upstream probe '{key}' which was not declared"),
+                });
+            };
+            reg.probe.clone()
+        };
+
+        {
+            let mut state = self.state.borrow_mut();
+            if state.in_progress.iter().any(|k| k == key) {
+                return Ok(()); // defensive — step 9 already rejects probe cycles
+            }
+            state.in_progress.push(key.to_string());
+        }
+        let recursed = (|| -> Result<(), RegisterError> {
+            for req in &probe.inputs.requires {
+                self.resolve(lua, req)?;
+            }
+            Ok(())
+        })();
+        self.state.borrow_mut().in_progress.pop();
+        recursed?;
+
+        // CS-0172: `envs { }` probe determinants are ambient process
+        // environment values (§22.5.2), not declared variables — see the
+        // matching lookup in `cook-engine`'s executor.
+        let env_lookup = |name: &str| std::env::var(name).ok();
+
+        // Everything from resolving the declared inputs to materialising the
+        // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
+        // call the executor makes, so the two phases cannot drift again: the
+        // fingerprint, the CS-0178 keylessness rule, the cache lookup and
+        // publish, the CS-0148 `files { }` interception, and the CS-0102 local
+        // copy all have one implementation. The register VM is the only
+        // phase-specific part, and it is the parameter.
+        let eval_ctx = cook_probe::eval::EvalCtx {
+            working_dir: &self.working_dir,
+            cache: self
+                .cache_ctx
+                .as_ref()
+                .map(|ctx| cook_probe::eval::CacheAccess {
+                    backend: ctx.backend.as_ref(),
+                    project_root: &ctx.project_root,
+                    publish_enabled: ctx.publish_enabled,
+                }),
+        };
+        let (upstream_fps, keyless) = {
+            let state = self.state.borrow();
+            (state.upstream_fps.clone(), state.keyless.clone())
+        };
+        // The produce window. Two things are true only inside it, and both are
+        // restored unconditionally below: reads are confined to this probe's
+        // declared `requires`, and the recipe-body capture slot is empty.
+        self.state.borrow_mut().producing.push(ProducingFrame {
+            key: key.to_string(),
+            requires: probe.inputs.requires.iter().cloned().collect(),
+        });
+        let saved_body = self.body_slot.borrow_mut().take();
+        let produced = cook_probe::eval::evaluate(
+            &probe,
+            &eval_ctx,
+            &RegisterVmRunner {
+                lua,
+                working_dir: &self.working_dir,
+            },
+            &env_lookup,
+            &upstream_fps,
+            &keyless,
+        );
+        *self.body_slot.borrow_mut() = saved_body;
+        self.state.borrow_mut().producing.pop();
+        let evaluated = produced.map_err(|e| RegisterError::ProbeProduceFailed {
+            key: key.to_string(),
+            message: e.message().to_string(),
+        })?;
+        for warning in &evaluated.warnings {
+            eprintln!("cook: warning: {warning}");
+        }
+        // `evaluated.tool_paths` is deliberately dropped here. CS-0157's
+        // resolved locations are a read view for execute-phase Lua consumers,
+        // served from the per-run ProbeValueStore; the register-phase store
+        // holds decoded values and has no such channel. If one is ever added,
+        // this is where it gets populated.
+
+        let jv = cook_contracts::probe_value::decode_json(&evaluated.bytes).map_err(|e| {
+            RegisterError::ProbeProduceFailed {
+                key: key.to_string(),
+                message: format!("decode cached value: {e}"),
+            }
+        })?;
+        self.store.borrow_mut().insert(key.to_string(), jv);
+        let mut state = self.state.borrow_mut();
+        // CS-0178 keylessness propagates along `requires`, so a probe that
+        // reaches this one must see that it had no key.
+        if evaluated.keyless {
+            state.keyless.insert(key.to_string());
+        }
+        state
+            .upstream_fps
+            .insert(key.to_string(), evaluated.fingerprint);
+        state.done.insert(key.to_string());
+        state.resolved.insert(key.to_string());
+        Ok(())
+    }
 }
 
 /// The register phase's half of the `cook_probe::eval` seam: run a probe's
@@ -2147,20 +2355,28 @@ fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_j
     v.as_object().and_then(|m| m.get(field))
 }
 
-/// COOK-64 §22.5.10 static-input rule: reject a member-source probe whose
-/// declared file inputs include a build artifact (an output produced by a
-/// recipe in this Cookfile). member sources are resolved by the pre-pass
-/// before any recipe runs, so depending on a not-yet-built file is incoherent.
+/// §22.5.10 static-input rule: reject a probe THE REGISTER PHASE RESOLVED
+/// whose declared file inputs include a build artifact (an output produced by
+/// a recipe in this Cookfile). Register-phase resolution happens before any
+/// recipe runs, so depending on a not-yet-built file is incoherent — the value
+/// could only ever have observed a stale or absent file.
+///
+/// `resolved` is every key the register phase materialised, whether reached as
+/// an `ingredients <probe>` fan-out driver, as a transitive `inputs.requires`
+/// of one, or by a register-phase `cook.probes.get` read (CS-0219). Checking
+/// the drivers alone would leave the read as a hole in the rule, and the rule
+/// is what lets cook resolve the whole graph before the first command runs.
 ///
 /// Runs after the body loop, when `units_by_recipe` carries every recipe's
 /// output paths. Paths are compared in normalised relative form.
-fn check_member_source_static_inputs(
-    recipes: &[crate::capture::RegisteredRecipe],
+fn check_register_resolved_static_inputs(
+    resolved: &[String],
     probe_registry: &ProbeRegistry,
     units_by_recipe: &BTreeMap<String, RecipeUnits>,
 ) -> Result<(), RegisterError> {
-    use crate::capture::MemberSourceDescriptor;
-
+    if resolved.is_empty() {
+        return Ok(());
+    }
     // Union of every recipe output path (normalised).
     let outputs: std::collections::BTreeSet<String> = units_by_recipe
         .values()
@@ -2173,21 +2389,14 @@ fn check_member_source_static_inputs(
         return Ok(());
     }
 
-    for recipe in recipes {
-        let Some(MemberSourceDescriptor::Probe { source_ref }) = &recipe.member_source else {
-            continue;
-        };
-        let Some((key, _)) = resolve_probe_ref(source_ref, probe_registry) else {
-            continue; // unresolvable ref already rejected by the pre-pass
-        };
+    for key in resolved {
         let Some(reg) = probe_registry.probes.get(key) else {
-            // unreachable in practice: resolve_probe_ref just proved the key is declared
-            continue;
+            continue; // resolved implies declared; nothing to check otherwise
         };
         for file in &reg.probe.inputs.files {
             if outputs.contains(&normalise_rel(file)) {
                 return Err(RegisterError::MemberSourceProbeArtifactDep {
-                    key: key.to_string(),
+                    key: key.clone(),
                     path: file.clone(),
                 });
             }
@@ -2199,8 +2408,13 @@ fn check_member_source_static_inputs(
 /// Normalise a relative path for comparison: drop a leading `./`. Both
 /// member-source probe file inputs and recipe output paths are relative to the
 /// project working directory, so a textual normalise suffices.
+///
+/// The rule itself is `cook_contracts::pathlaw::strip_dot_slash` (COOK-414's
+/// point, applied): §22.1.3's `after` resolution compares declared paths by
+/// exactly this equivalence, and one rule with two spellings is a rule that
+/// drifts.
 fn normalise_rel(p: &str) -> String {
-    p.strip_prefix("./").unwrap_or(p).to_string()
+    cook_contracts::pathlaw::strip_dot_slash(p).to_string()
 }
 
 /// Human-readable JSON value-kind, for the §22.5.10 non-array diagnostic.
@@ -2342,7 +2556,11 @@ pub fn list_names(
         &builder,
         body_slot.clone(),
         None,
-        Rc::new(RefCell::new(BTreeMap::new())),
+        Rc::new(RegisterProbeResolver::for_discovery(
+            probe_registry.clone(),
+            builder.working_dir.clone(),
+            body_slot.clone(),
+        )),
         // Forcer cell left empty for good: `list_names` invokes no recipe
         // body, so every `cook.require_recipe` call it can reach is outside
         // one and stops at the guard rail before the cell is consulted.
@@ -2427,7 +2645,7 @@ fn install_all_apis(
     builder: &RegisterSessionBuilder,
     body_slot: SharedBodySlot,
     cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
-    prepass: crate::module_loader::SharedPrepassStore,
+    probe_resolver: Rc<RegisterProbeResolver>,
     recipe_forcer: crate::context::SharedRecipeForcer,
     finalizer_queue: crate::on_register_api::SharedFinalizerQueue,
     // CS-0176: created by the caller, before `install_cook_api`, because
@@ -2500,7 +2718,7 @@ fn install_all_apis(
         module_state.clone(),
         cook_lua_stdlib::ModuleObserver::new(),
     )?;
-    crate::module_loader::register_cache_api(lua, module_state.clone(), prepass)?;
+    crate::module_loader::register_cache_api(lua, module_state.clone(), probe_resolver)?;
     crate::unit_api::register_unit_api(
         lua,
         body_slot.clone(),

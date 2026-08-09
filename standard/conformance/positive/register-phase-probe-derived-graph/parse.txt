@@ -1,0 +1,20 @@
+Cookfile
+  uses: [UseStatement path="lua/cook_modgraph.lua" alias="cook_modgraph" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="mods" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_modgraph.compile_all(\"scan:mods\")"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="scan:mods" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Lines commands=["cat imports.txt"]

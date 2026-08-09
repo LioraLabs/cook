@@ -32,6 +32,7 @@ sidebar:
 | `env`               | table of string→string | `{}` | Per-unit environment overrides exported to a shell unit (used by chore shell units to surface bound parameter values, §{chores.params}). Keys and values MUST both be strings. |
 | `consumes`          | array of string | `{}`   | Glob allowlist narrowing which **pattern-derived** input paths fold into this unit's cache key (§{exec.cache.declared-inputs}). Empty — the default — admits every path a declared pattern expands to. A declared path is never narrowed by it. Matching follows the gitignore convention against the candidate path *as the unit declares it*, relative to the unit's working directory: a pattern containing no `/` matches the candidate's basename at any depth (`*.d.ts`); one containing `/` matches the working-directory-relative path (`dist/**/*.mjs`). A conforming implementation MUST reject an unparseable pattern with a register-phase error naming the offending entry, and MUST NOT let a filter matching nothing narrow the key. |
 | `member`            | string         | absent  | A fan-out unit's data member, canonical-rendered, folded into the command hash so each member gets a distinct fingerprint (§{steps.ingredients}). Codegen-populated for `ingredients <probe>` fan-out; not hand-authored. It is also what a unit declaring no file is keyed on (§{exec.cache.test-unit} rule 1). |
+| `after`             | array of string | `{}`   | Declared output paths of units **earlier in the same recipe** that this unit must run after (§{lua.add-unit-after}, CS-0219). Contributes a per-unit execution edge and nothing else: no entry here folds into the unit's cache key. An entry naming no such output, or one whose producer is registered later, is a register-phase error. |
 | `step_kind`         | string (`"cook"`, `"test"`, `"chore"`) | `"cook"` | The originating step kind. It drives the execute-phase sandbox policy on the resulting unit (§{lua.fs-sandbox}) and, for `"test"`, selects the test reporter and makes the unit a target of `cook test`. `"test"` was rejected here between CS-0153 and CS-0185, when a test unit was registrable only through a separate `cook.add_test`; it is now accepted, and that function no longer exists. A conforming implementation MUST reject any other string with a register-phase diagnostic naming `step_kind`, the received value, and the accepted set. |
 
 **Field typing (CS-0127).** Every field listed in the table above has exactly one accepted Lua type. A conforming implementation MUST reject a value of any other type with a register-phase Lua error that names the field, the received Lua type, and the accepted type. A wrong-typed field MUST NOT be coerced to its default — coercion silently discards author intent (a mistyped `cache = "false"` string, a mistakenly Lua-quoted `line`, an `inputs` list containing a non-string element) and the resulting unit runs with a default the author never asked for. Absence (a `nil`/missing field) is not a type error and MUST resolve to the field's documented default.
@@ -144,6 +145,52 @@ cook.add_unit({
 ```
 
 Records one shell unit whose declared output set is resolved by globbing `apps/web/.next/**` against the unit's working directory after `pnpm --filter web run build` completes. The cache record holds a literal file list, hashed in the usual way; a subsequent run with unchanged inputs is a cache hit, and a subsequent run after `rm -rf apps/web/.next` restores the recorded files from the backend without rerunning the command.
+
+### 22.1.3. The `after` field: per-unit ordering within one recipe [#lua.add-unit-after]
+
+A `cook.add_unit` call MAY declare an `after` field: an array of strings, each naming a **declared output path of an earlier unit of the same recipe**. Each entry contributes one **per-unit execution edge** from the declaring unit to the unit that declares that output. A conforming implementation MUST reject a non-array value, and MUST reject a non-string or empty-string element, naming the field, under §{lua.add-unit}'s field-typing discipline (CS-0127). The default is the empty array, and a unit declaring none is unaffected by this section in every respect.
+
+**Ordering only.** The edge is execution ordering and nothing else. A conforming implementation MUST NOT fold an `after` entry — or the identity, outputs, or key of the unit it names — into the declaring unit's cache key. This is the rule §{lua.cook-dep-order} already states for `cook.dep_order`, of which this is the intra-recipe counterpart, and it is not merely a symmetry: a unit whose ordering moved while its command, its declared inputs, its declared outputs and its `member` held still reads the same bytes and writes the same bytes, so re-running it would be waste. What a unit reads it declares in `inputs[]`, and that is what its key folds. An author who wants a whole probe value in a unit's key has `seal` (§{steps.cook-disposition}).
+
+**Backward references only.** An entry MUST name an output declared by a unit registered **strictly earlier** in the same recipe body. A conforming implementation MUST reject, with a register-phase diagnostic, an entry that names:
+
+- no output declared by any unit of the recipe — the diagnostic MUST name the offending path and MUST state that an entry names an output of an earlier unit of the same recipe;
+- an output declared by a unit registered at or after the declaring unit — the diagnostic MUST name the offending path and MUST distinguish this case from the one above, because the two are different mistakes: the first is a typo, the second is an emission order the author's own data does not admit;
+- an output declared by **more than one** unit of the recipe — the diagnostic MUST name the offending path and the units declaring it. An implementation MUST NOT resolve such a reference to one of them. The output-uniqueness rule of §{lua.add-unit} binds *literal* paths only, so two units MAY legitimately declare one glob or directory output; a reference to it names no single producer, and choosing one would leave the declaring unit racing the other with nothing said.
+
+A unit that declares no output is therefore **unnameable** by this field, and that follows from the identifier rather than limiting it: a `cook.exec` unit, an interactive unit and a test unit declare no output, so there is no string that would name one. Within a recipe such units are already ordered by the barrier rules of §{exec.step-groups}.
+
+Acyclicity is therefore **structural**: an edge set expressible under this rule cannot contain a cycle, and the forward-reference diagnostic is what enforces it. This is deliberate. A module deriving units from scanned data holds the graph and can report a cycle in the vocabulary the author wrote it in ("circular import `foo` -> `bar` -> `foo`"), where an implementation detecting one here could only report it in unit positions. It also preserves the property that every dependency of a work unit is already registered when that unit is, which is what lets an implementation materialise the graph in one forward pass with no cycle search at all.
+
+Validation MUST be performed once the recipe body has closed, not at the moment of the `cook.add_unit` call: inside the call the later-registered producer does not yet exist, so the two diagnoses above are indistinguishable.
+
+**This is a declaration, not an inference.** §{xref.dep-implications} forbids an implementation from inferring an edge from path-string equality, and names the `inputs[]` / `outputs[]` entries of `cook.add_unit` among the surfaces the prohibition binds. That prohibition **stands, unchanged in force**. It constrains the *evidence* from which an edge may be inferred, not the *mechanism* by which one is declared — exactly the distinction §{lua.cook-require-recipe} draws for `cook.require_recipe`. An `inputs[]` entry that happens to equal some other unit's `outputs[]` entry is a coincidence of spelling about which the implementation would be guessing; an `after` entry is a reference whose entire content is the reference, written by the author (or by a module acting on data the author supplied). Nothing that established no edge before establishes one now.
+
+**Why the output path is the identifier.** A unit has no name. §{lua.add-unit}'s output-uniqueness rule (CS-0169) already guarantees that at most one unit in a run declares any given literal output path, so the declared output is an identifier the model keeps unique without inventing a second namespace to keep unique alongside it. It is also the string the consuming author already holds: the unit that must wait is, in the ordinary case, the one that reads the file. Matching is textual, after normalising a leading `./`; a glob-pattern or directory `outputs[]` entry (§{lua.add-unit-output-globs}) is nameable only by its verbatim spelling, since its expansion is not known at registration — and, being outside CS-0169's literal-path scope, is subject to the ambiguity rejection above rather than to a guess.
+
+**The field is `after`, and `deps` is not a field.** A conforming implementation MUST reject a non-nil `deps` on the argument table with a register-phase diagnostic naming both real ordering channels: `after` for a unit of the same recipe, `cook.dep_order` / `cook.dep_output` (§{lua.cook-dep-order}, §{lua.cook-dep-output}) for another recipe. `deps` is the name an author reaches for and is ambiguous between the two; accepting it silently would leave the ordering they asked for simply absent.
+
+### Example 22.1.4
+
+```lua
+local graph = cook.probes.get("scan:mods")   -- §{cat.probes.member-source}
+cook.step_group(function()
+    for _, m in ipairs(graph) do             -- emitted in dependency order
+        local after = {}
+        for _, imported in ipairs(m.imports) do
+            after[#after + 1] = "build/" .. imported .. ".bmi"
+        end
+        cook.add_unit({
+            outputs = { "build/" .. m.name .. ".bmi" },
+            inputs  = m.sources,
+            command = "compile " .. m.name,
+            after   = after,
+        })
+    end
+end)
+```
+
+Registers one unit per scanned module. All of them are siblings in one step group, so they share an entry barrier and MAY run in parallel (§{lua.step-group}); the `after` edges are **additive** with that barrier and narrow the parallelism to exactly what the scanned data requires. The graph is a function of the probe value and is complete before any command runs.
 
 ## 22.2. `cook.exec` and `cook.interactive` [#lua.cook-exec]
 **Signatures.**

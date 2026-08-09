@@ -45,6 +45,11 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
+  // CS-0219: `after` is a `cook.add_unit` Lua field, not surface syntax. The
+  // Cookfile is a `use` and a module call; the rejection is the register
+  // phase resolving the entry against the recipe's unit list.
+  ['after-unit-registered-later',
+   'CS-0219: `after` names a later-registered unit — register-phase rejection, not syntactic'],
   // CS-0206: the `use` path form. SIX of its eight negatives ARE syntactic and
   // are deliberately absent from this list — `..`, a leading `/`, the `//`
   // sigil and a third argument are all shapes the token cannot take, and

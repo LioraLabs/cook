@@ -33,6 +33,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         unit_env_vars: BTreeMap::new(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let mut units_by_recipe = BTreeMap::new();
@@ -83,6 +84,8 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
             member: None,
             output_paths: Vec::new(),
                     test_name: None,
+
+            after: Vec::new(),
         };
         units_by_recipe.insert(
             name.to_string(),

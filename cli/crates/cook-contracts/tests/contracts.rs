@@ -153,6 +153,7 @@ fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: vec![],
+        after: Vec::new(),
         test_name: Some("build_test10".into()),
     };
     // Test-ness is the name's presence, and nothing about the payload.
@@ -181,6 +182,8 @@ fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
         member: None,
         output_paths: vec![],
         test_name: Some("build_test12".into()),
+
+        after: Vec::new(),
     };
     assert!(matches!(lua_test.payload, WorkPayload::LuaChunk { .. }));
     assert_eq!(lua_test.payload.line(), 12);
@@ -374,6 +377,8 @@ fn captured_unit_construction() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+
+        after: Vec::new(),
     };
     assert!(unit.cache_meta.is_none());
     assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -411,6 +416,8 @@ fn recipe_units_construction() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
+
+                after: Vec::new(),
             },
             CapturedUnit {
                 payload: WorkPayload::Shell {
@@ -424,6 +431,8 @@ fn recipe_units_construction() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
+
+                after: Vec::new(),
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -530,6 +539,7 @@ fn captured_unit_probes_defaults_to_empty() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     assert!(cu.probes.is_empty());
@@ -587,6 +597,8 @@ fn captured_unit_with_cache() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+
+        after: Vec::new(),
     };
     assert!(unit.cache_meta.is_some());
     assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

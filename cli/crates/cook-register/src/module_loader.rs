@@ -172,16 +172,49 @@ pub fn register_module_loader(
 pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 
 /// The register-phase `cook.probes.get` path for a full (possibly
-/// `label:`-prefixed) key: the pre-pass store first (COOK-64 member-source
-/// values — probe keys, which do not collide with module-cache keys), then
-/// the active module's persistent cache.
+/// `label:`-prefixed) key. Three steps, in order (CS-0219):
+///
+/// 1. The register-phase probe-value store, if the key is already there —
+///    put there by the `ingredients <probe>` pre-pass, or by an earlier read
+///    through step 2.
+/// 2. Otherwise, if the key names a probe DECLARED in this pass, resolve it
+///    now: run the same `cook_probe::eval` sequence the pre-pass and the
+///    executor run, publish the value into the same store, and answer from it.
+///    Resolving lazily, at the moment of the read, is what keeps §22.5.7's
+///    demand-driven rule intact without a second reachability analysis — a
+///    body only runs because its recipe is reachable, and a key is only
+///    resolved because a body asked for it. Evaluating every declared probe up
+///    front would be simpler and would put the cost of every probe on every
+///    run (COOK-295).
+/// 3. Otherwise the active module's persistent cache, which is what this name
+///    meant before probes existed and still means for a key no probe declares.
+///    A miss there is `nil`, unchanged: that store's whole contract is that a
+///    missing key reads as absent.
 fn probes_get(
     lua: &Lua,
     state: &SharedModuleLoaderState,
-    prepass: &SharedPrepassStore,
+    resolver: &crate::engine::RegisterProbeResolver,
     key: &str,
 ) -> LuaResult<LuaValue> {
-    if let Some(val) = prepass.borrow().get(key) {
+    if resolver.resolves(key) {
+        // §22.5.4: a read made from inside a `produce` body may only name a key
+        // that body declared in `inputs.requires`. Checked before the store
+        // hit, not only before resolution — a key some earlier body already
+        // resolved is just as far outside this probe's fingerprint chain as an
+        // unresolved one.
+        resolver.check_produce_read(key).map_err(|e| LuaError::runtime(e.to_string()))?;
+        if let Some(val) = resolver.store().borrow().get(key) {
+            return crate::probe_value::json_to_lua(lua, val);
+        }
+        resolver
+            .resolve(lua, key)
+            .map_err(|e| LuaError::runtime(e.to_string()))?;
+        if let Some(val) = resolver.store().borrow().get(key) {
+            return crate::probe_value::json_to_lua(lua, val);
+        }
+    } else if let Some(val) = resolver.store().borrow().get(key) {
+        // A `key:field` selector alias the pre-pass stashed under its verbatim
+        // ref, which is not itself a declared probe key.
         return crate::probe_value::json_to_lua(lua, val);
     }
     let state = state.borrow();
@@ -219,8 +252,9 @@ fn probes_set(state: &SharedModuleLoaderState, key: &str, value: &LuaValue) -> L
 pub fn register_cache_api(
     lua: &Lua,
     state: SharedModuleLoaderState,
-    prepass: SharedPrepassStore,
+    resolver: Rc<crate::engine::RegisterProbeResolver>,
 ) -> LuaResult<()> {
+    let prepass = resolver.store().clone();
     let cook: LuaTable = lua.globals().get("cook")?;
 
     // cook.__probe_subst(ident) — CS-0195: the register-time rendering of a
@@ -232,10 +266,21 @@ pub fn register_cache_api(
     // register-phase diagnostic — the old lowering interpolated Lua's
     // `tostring` of a table, a heap address, into a declared output path.
     let prepass_subst = prepass.clone();
-    let subst_fn = lua.create_function(move |_, ident: String| {
+    let resolver_subst = resolver.clone();
+    let subst_fn = lua.create_function(move |lua, ident: String| {
         let r = cook_contracts::sigil::probe_ref(&ident).ok_or_else(|| {
             LuaError::runtime(format!("$<{ident}>: not a probe-value reference"))
         })?;
+        // CS-0219: resolve on demand, exactly as a `cook.probes.get` read does.
+        // Reading the store alone made this succeed or fail on whether some
+        // unrelated recipe registered earlier and happened to have read the
+        // same probe — an output path that registers or does not depending on
+        // a neighbour's body order.
+        if resolver_subst.resolves(r.key()) && !prepass_subst.borrow().contains_key(r.key()) {
+            resolver_subst
+                .resolve(lua, r.key())
+                .map_err(|e| LuaError::runtime(e.to_string()))?;
+        }
         let store = prepass_subst.borrow();
         let value = store.get(r.key()).ok_or_else(|| {
             LuaError::runtime(format!(
@@ -265,12 +310,12 @@ pub fn register_cache_api(
     // scoped pattern raised a nil-index error at register phase while working
     // at execute phase — the same class of failure, from the same cause.
     let s_get = state.clone();
-    let prepass_get = prepass.clone();
+    let resolver_get = resolver.clone();
     let s_set = state.clone();
     cook_lua_stdlib::install_probes_api(
         lua,
         &cook,
-        move |lua, key: &str| probes_get(lua, &s_get, &prepass_get, key),
+        move |lua, key: &str| probes_get(lua, &s_get, &resolver_get, key),
         move |_lua, key: &str, value: &LuaValue| probes_set(&s_set, key, value),
     )?;
     Ok(())

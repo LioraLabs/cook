@@ -35,6 +35,24 @@ pub fn is_terminal_output(s: &str) -> bool {
     has_glob_meta(s) || is_dir_output(s)
 }
 
+/// Strip a leading `./` from a declared path string, so two spellings of one
+/// path compare equal.
+///
+/// Deliberately weaker than [`normalize`], and string-shaped rather than
+/// `Path`-shaped, because the declarations this compares include directory
+/// outputs (CS-0119) and glob patterns, and `normalize` would drop the trailing
+/// slash that IS the directory-output declaration and would rewrite a `..`
+/// inside a pattern. The only equivalence it claims is the one every one of
+/// those spellings shares.
+///
+/// It is here, rather than private to a caller, for the reason recorded in this
+/// module's doc: the register phase's member-source check and the `after`
+/// resolution of §22.1.3 are two readers of one rule, and a rule with two homes
+/// is a rule that drifts.
+pub fn strip_dot_slash(s: &str) -> &str {
+    s.strip_prefix("./").unwrap_or(s)
+}
+
 /// Resolve `.` and `..` lexically, without touching the filesystem.
 ///
 /// Lexical rather than canonical on purpose: a declared input may not exist

@@ -166,6 +166,7 @@ pub fn install_cook_probe(
                 member: None,
                 test_name: None,
                 output_paths: Vec::new(),
+                after: Vec::new(),
             });
         }
 

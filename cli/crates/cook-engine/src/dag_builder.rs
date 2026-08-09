@@ -36,6 +36,15 @@ impl From<UnitGraphError> for EngineError {
             UnitGraphError::Cycle { unresolved } => {
                 EngineError::CycleDetected(format!("cycle among recipes: {unresolved:?}"))
             }
+            // CS-0219: registration rejects an unresolvable `after` entry with
+            // a register-phase diagnostic, so this arm is the belt to that
+            // brace — reachable only if a `RecipeUnits` producer skipped the
+            // check. It carries the same message rather than inventing a
+            // second wording for one law.
+            UnitGraphError::After { recipe, source } => EngineError::RegistrationFailed {
+                recipe,
+                message: source.to_string(),
+            },
         }
     }
 }
