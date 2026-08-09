@@ -295,9 +295,9 @@ fn after_distinguishes_a_forward_reference_from_an_unknown_path() {
     assert_eq!(
         resolve_after(&forward).expect_err("forward reference"),
         AfterError::RegisteredLater {
-            unit_idx: 0,
+            unit: "unit 'build/bar.o'".to_string(),
             path: "build/foo.bmi".to_string(),
-            producer_idx: 1,
+            producer: "unit 'build/foo.bmi'".to_string(),
         }
     );
 
@@ -305,7 +305,7 @@ fn after_distinguishes_a_forward_reference_from_an_unknown_path() {
     assert_eq!(
         resolve_after(&unknown).expect_err("unknown path"),
         AfterError::NotDeclared {
-            unit_idx: 0,
+            unit: "unit 'build/bar.o'".to_string(),
             path: "nope.bmi".to_string(),
         }
     );
@@ -374,4 +374,45 @@ fn plan_reports_an_unresolvable_after_entry_naming_the_recipe() {
     let msg = err.to_string();
     assert!(msg.contains("recipe 'gen'"), "{msg}");
     assert!(msg.contains("missing.bmi"), "{msg}");
+}
+
+/// A path two units declare names no single producer. CS-0169's uniqueness
+/// rule binds LITERAL paths only, and duplicate-output rejection exempts glob
+/// and directory entries, so this is reachable — and guessing one of the two
+/// would leave the declaring unit racing the other with nothing said.
+#[test]
+fn after_rejects_a_path_declared_by_more_than_one_unit() {
+    let units = vec![
+        group_unit_with("a", 0, &["dist/"], &[]),
+        group_unit_with("b", 0, &["dist/"], &[]),
+        group_unit_with("c", 0, &["c.o"], &["dist/"]),
+    ];
+    let err = resolve_after(&units).expect_err("ambiguous");
+    let msg = err.to_string();
+    assert!(msg.contains("more than one unit"), "{msg}");
+    assert!(msg.contains("dist/"), "{msg}");
+}
+
+/// `./a.o` and `a.o` are one path here even though CS-0169's raw-string
+/// duplicate check treats them as two, so the collision surfaces as the
+/// ambiguity diagnostic rather than as a silently-chosen producer.
+#[test]
+fn after_treats_dot_slash_spellings_as_one_path() {
+    let units = vec![
+        group_unit_with("a", 0, &["./a.o"], &[]),
+        group_unit_with("b", 0, &["a.o"], &[]),
+        group_unit_with("c", 0, &["c.o"], &["a.o"]),
+    ];
+    let msg = resolve_after(&units).expect_err("ambiguous").to_string();
+    assert!(msg.contains("more than one unit"), "{msg}");
+}
+
+/// A unit declaring no output is unnameable: the identifier IS the output.
+#[test]
+fn a_unit_declaring_no_output_cannot_be_named_by_after() {
+    let mut consumer = group_unit_with("c", 0, &["c.o"], &[]);
+    consumer.after = vec!["whatever".to_string()];
+    let units = vec![seq_unit("no outputs here"), consumer];
+    let msg = resolve_after(&units).expect_err("not declared").to_string();
+    assert!(msg.contains("declares no output cannot be named"), "{msg}");
 }

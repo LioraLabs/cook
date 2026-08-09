@@ -861,31 +861,12 @@ pub fn register_unit_api(
         let after: Vec<String> = match tbl.get::<LuaValue>("after") {
             Ok(LuaValue::Nil) | Err(_) => Vec::new(),
             Ok(LuaValue::Table(t)) => {
-                let mut out: Vec<String> = Vec::new();
-                for v in t.sequence_values::<LuaValue>() {
-                    let v = v.map_err(|e| {
-                        LuaError::runtime(format!("cook.add_unit: reading `after`: {e}"))
-                    })?;
-                    match v {
-                        LuaValue::String(s) => {
-                            let s = s.to_str()?.to_string();
-                            if s.is_empty() {
-                                return Err(LuaError::runtime(
-                                    "cook.add_unit: `after` entries must be non-empty output \
-                                     paths"
-                                        .to_string(),
-                                ));
-                            }
-                            out.push(s);
-                        }
-                        other => {
-                            return Err(type_err(
-                                "after",
-                                "a table of output-path strings",
-                                other.type_name(),
-                            ))
-                        }
-                    }
+                let out = collect_string_list(&t, "after")?;
+                if out.iter().any(|s| s.is_empty()) {
+                    return Err(LuaError::runtime(
+                        "cook.add_unit: `after` entries must be non-empty output paths"
+                            .to_string(),
+                    ));
                 }
                 out
             }

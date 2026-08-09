@@ -2252,8 +2252,13 @@ fn check_register_resolved_static_inputs(
 /// Normalise a relative path for comparison: drop a leading `./`. Both
 /// member-source probe file inputs and recipe output paths are relative to the
 /// project working directory, so a textual normalise suffices.
+///
+/// The rule itself is `cook_contracts::pathlaw::strip_dot_slash` (COOK-414's
+/// point, applied): §22.1.3's `after` resolution compares declared paths by
+/// exactly this equivalence, and one rule with two spellings is a rule that
+/// drifts.
 fn normalise_rel(p: &str) -> String {
-    p.strip_prefix("./").unwrap_or(p).to_string()
+    cook_contracts::pathlaw::strip_dot_slash(p).to_string()
 }
 
 /// Human-readable JSON value-kind, for the §22.5.10 non-array diagnostic.

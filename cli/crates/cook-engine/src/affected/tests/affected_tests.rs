@@ -84,7 +84,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
             member: None,
             output_paths: Vec::new(),
                     test_name: None,
-        
+
             after: Vec::new(),
         };
         units_by_recipe.insert(

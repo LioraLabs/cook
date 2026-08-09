@@ -182,7 +182,7 @@ fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
         member: None,
         output_paths: vec![],
         test_name: Some("build_test12".into()),
-    
+
         after: Vec::new(),
     };
     assert!(matches!(lua_test.payload, WorkPayload::LuaChunk { .. }));
@@ -377,7 +377,7 @@ fn captured_unit_construction() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     assert!(unit.cache_meta.is_none());
@@ -416,7 +416,7 @@ fn recipe_units_construction() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
-            
+
                 after: Vec::new(),
             },
             CapturedUnit {
@@ -431,7 +431,7 @@ fn recipe_units_construction() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
-            
+
                 after: Vec::new(),
             },
         ],
@@ -597,7 +597,7 @@ fn captured_unit_with_cache() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     assert!(unit.cache_meta.is_some());

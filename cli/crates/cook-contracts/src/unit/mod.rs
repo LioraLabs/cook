@@ -195,14 +195,14 @@ pub struct CapturedUnit {
     /// [`crate::unit_graph::resolve_after`], and it contributes a per-unit
     /// ordering edge and nothing else.
     ///
-    /// It is a declaration, not an inference. §22.8 forbids reading an edge out
+    /// It is a declaration, not an inference. §10.6 forbids reading an edge out
     /// of equality between an `inputs[]` entry and some other unit's
     /// `outputs[]` entry, because a coincidence of spelling is not evidence the
     /// author meant an ordering; an entry here IS that evidence, and carries no
     /// other content. Nothing here folds into a cache key: ordering is not an
     /// input, so a unit whose edge set moved while its command, inputs, outputs
     /// and member held still cannot produce different bytes (the same rule
-    /// §22.10 states for `cook.dep_order`).
+    /// §22.11 states for `cook.dep_order`).
     pub after: Vec<String>,
     /// CS-0191: a test unit's reporting name, and the fact that it IS one.
     ///

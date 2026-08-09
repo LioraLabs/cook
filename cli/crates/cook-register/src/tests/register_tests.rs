@@ -4452,11 +4452,12 @@ end)
     // units differ by command, so compare the consumer against itself with
     // and without the edge instead of against its sibling.
     let rt2 = make_registry(dir.path());
-    let without = register_one(
-        rt2,
-        &lua_src.replace("            after   = {\"build/foo.bmi\"},\n", ""),
-        "mods",
+    let stripped = lua_src.replace("            after   = {\"build/foo.bmi\"},\n", "");
+    assert_ne!(
+        stripped, lua_src,
+        "the `after` line must actually be removed, or this asserts nothing"
     );
+    let without = register_one(rt2, &stripped, "mods");
     assert_eq!(
         result.units[1]
             .cache_meta

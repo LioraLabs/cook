@@ -47,7 +47,7 @@ fn recipe_with_depfile(
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     let ru = RecipeUnits {
@@ -104,7 +104,7 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     let probe_b = CapturedUnit {
@@ -120,7 +120,7 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     let consumer = CapturedUnit {
@@ -559,7 +559,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     let ru = RecipeUnits {

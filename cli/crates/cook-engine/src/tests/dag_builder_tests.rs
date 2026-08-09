@@ -906,7 +906,7 @@ fn test_build_presatisfied_units() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
-            
+
                 after: Vec::new(),
             },
             CapturedUnit {
@@ -1106,7 +1106,7 @@ fn unreached_probe_is_pruned_from_dag() {
                 member: None,
                 output_paths: Vec::new(),
                             test_name: None,
-            
+
                 after: Vec::new(),
             },
         ],
@@ -1411,7 +1411,7 @@ fn body_scope_probe_chain_not_pruned() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     // Body-scope consumer probe (e.g. `cc:find:SDL3`) requiring the
@@ -1429,7 +1429,7 @@ fn body_scope_probe_chain_not_pruned() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
-    
+
         after: Vec::new(),
     };
     // Non-probe consumer (the link unit) listing only the downstream
@@ -1734,7 +1734,7 @@ fn multi_recipe_wave_prunes_independently() {
             member: None,
             output_paths: Vec::new(),
                     test_name: None,
-        
+
             after: Vec::new(),
         }];
         units.push(CapturedUnit {
