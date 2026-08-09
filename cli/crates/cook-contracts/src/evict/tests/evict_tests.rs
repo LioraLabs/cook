@@ -367,31 +367,48 @@ fn neither_knob_set_frees_nothing_even_with_real_candidates_present() {
 // renamed constant cannot fail them -- that is
 // `the_artifact_kind_wire_spellings_are_these_exact_strings`'s job, and
 // `size_sweep_drops_observations_before_file_artifacts` above catches it too,
-// because it still types the literal. What these catch is a kind quietly
-// entering or leaving the exempt list, which no spelling test can see.
+// because it still types the literal. What these catch is a kind entering or
+// leaving the exempt list, which no spelling test can see.
 
-/// Every kind the size sweep must never evict. Removing one from
-/// `SIZE_SWEEP_EXEMPT_KINDS` strands the artifacts it points at; this is the
-/// only thing that says so.
+/// Every artifact kind is classified, and the classification is stated here
+/// rather than derived from the list under test.
+///
+/// This is what makes `artifact_kind::ALL` more than documentation: an eighth
+/// kind fails this test until somebody decides which side it is on. Getting
+/// that wrong in the exempt direction strands the artifacts a manifest points
+/// at; getting it wrong the other way keeps bytes a sweep should have freed.
 #[test]
-fn every_exempt_kind_is_named_by_its_constant() {
+fn every_artifact_kind_is_either_sweep_exempt_or_deliberately_not() {
     use crate::cache::cas::artifact_kind as k;
-    for kind in [
+
+    // Exempt: evicting one of these strands something that points at it.
+    let exempt = [
         k::DISCOVERED_INPUT_SETS,
         k::DISCOVERED_INPUTS,
         k::MODULE_INPUT_SETS,
         k::PROBE_VALUE,
         k::SYMLINK,
         k::DIR,
-    ] {
+    ];
+    // Not exempt: an observation is what a size sweep drops FIRST, so adding
+    // it to the exempt list would make the priority branch in
+    // `size_eviction_order` unreachable.
+    let sweepable = [k::OBSERVATION];
+
+    for kind in exempt {
         assert!(is_size_sweep_exempt(Some(kind)), "{kind} must survive a size sweep");
     }
-}
-
-/// `observation` is deliberately NOT exempt -- it is the kind the size sweep
-/// drops FIRST. Adding it to the exempt list would make the priority branch in
-/// `size_eviction_order` unreachable, and nothing else would say so.
-#[test]
-fn an_observation_is_not_exempt_because_it_is_swept_first() {
-    assert!(!is_size_sweep_exempt(Some(crate::cache::cas::artifact_kind::OBSERVATION)));
+    for kind in sweepable {
+        assert!(!is_size_sweep_exempt(Some(kind)), "{kind} must be sweepable");
+    }
+    assert_eq!(
+        exempt.len() + sweepable.len(),
+        k::ALL.len(),
+        "a kind was added to artifact_kind::ALL without being classified here"
+    );
+    assert_eq!(
+        exempt.len(),
+        SIZE_SWEEP_EXEMPT_KINDS.len(),
+        "a kind entered SIZE_SWEEP_EXEMPT_KINDS without being listed here"
+    );
 }

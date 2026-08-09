@@ -131,29 +131,32 @@ fn manifest_key_is_derived_and_distinct_from_the_declared_fingerprint() {
     assert_eq!(probe_module_manifest_key(&declared), probe_module_manifest_key(&declared));
 }
 
-
 // ---------------------------------------------------------------------------
 // Golden vectors (COOK-421)
 // ---------------------------------------------------------------------------
+//
+// Every other test in this file is relational — same inputs hash alike,
+// different inputs do not — so all three folds could have moved together and
+// stayed green. These pin the actual bytes.
+//
+// That mattered when the finding that brought them here was the digest step
+// being written twice: a probe fingerprint IS a cross-machine cache key, so a
+// change to it does not fail a build, it silently orphans every artifact in
+// every store that has one. If one of these fails, the question is not "which
+// assertion do I update" but "did I mean to invalidate the world".
+//
+// Every vector below was derived from the spec text with an independent
+// SHA-256 (Python's `hashlib`), not read off a passing run, so they pin this
+// code to the algorithm rather than to itself. Each test states the exact
+// input its vector was computed from.
 
-/// Every other test in this file is relational — same inputs hash alike,
-/// different inputs do not — so all three folds could have moved together and
-/// stayed green. These pin the actual bytes.
-///
-/// That mattered when the finding that brought them here was the digest step
-/// being written twice: a probe fingerprint IS a cross-machine cache key, so a
-/// change to it does not fail a build, it silently orphans every artifact in
-/// every store that has one. If one of these fails, the question is not "which
-/// assertion do I update" but "did I mean to invalidate the world".
-///
-/// The two vectors below were derived from the spec text with an independent
-/// SHA-256 (Python's `hashlib`), not read off a passing run, so they pin this
-/// code to the algorithm rather than to itself:
-///
 /// ```text
-/// sha256(b"COOK_PROBE_MODULE_MANIFEST_V1\n" + bytes([7]*32))
-/// sha256(b"COOK_PROBE_FP_MODULES_V1\n" + bytes([7]*32) + b"\nMODULES\n"
-///        + b"m.lua=" + bytes([4]*32).hex().encode() + b"\n")
+/// sha256(b"COOK_PROBE_FP_V2\n"
+///        + b"cc:zlib\n" + b"return 1\n"
+///        + b"ENV\nCC=gcc\nLD=<unset>\n"
+///        + b"TOOLS\npkg-config=" + bytes([1]*32).hex().encode() + b"\n"
+///        + b"FILES\nzlib.h="     + bytes([2]*32).hex().encode() + b"\n"
+///        + b"UPSTREAM\ncc:compiler=" + bytes([3]*32).hex().encode() + b"\n")
 /// ```
 #[test]
 fn the_probe_fingerprint_is_this_exact_sha256() {
@@ -171,6 +174,11 @@ fn the_probe_fingerprint_is_this_exact_sha256() {
     );
 }
 
+/// ```text
+/// sha256(b"COOK_PROBE_FP_MODULES_V1\n" + bytes([7]*32) + b"\nMODULES\n"
+///        + b"m.lua=" + bytes([4]*32).hex().encode() + b"\n")
+/// sha256(b"COOK_PROBE_MODULE_MANIFEST_V1\n" + bytes([7]*32))
+/// ```
 #[test]
 fn the_module_source_fold_and_its_manifest_key_are_these_exact_sha256s() {
     let declared = [7u8; 32];

@@ -47,4 +47,4 @@ pub use probe::{ProbeInputs, ProbeUnit};
 pub use recipe::RecipeUnits;
 pub use registration::{REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 pub use step::StepKind;
-pub use unit::{CapturedUnit, DepKind, NodeKind, WorkPayload};
+pub use unit::{CapturedUnit, DepKind, WorkPayload};

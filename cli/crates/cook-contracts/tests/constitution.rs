@@ -996,8 +996,21 @@ pub fn string_literals(text: &str) -> Vec<(usize, String)> {
 /// agree by being ONE derive on ONE type, which is what moving a shared enum
 /// into this crate achieves; two crates naming the convention separately for
 /// unrelated types is the coincidence, not the agreement (COOK-421).
-fn names_an_item_not_a_decision(line: &str) -> bool {
-    line.contains("#[path") || line.contains("skip_serializing_if") || line.contains("rename_all")
+///
+/// The `rename_all` case takes the LITERAL as well as the line, and that is
+/// the point: `#[serde(rename_all = "kebab-case", rename = "some-wire-name")]`
+/// must lose the convention and keep the wire name. A line-scoped exclusion
+/// would silence both, which is how a noise filter starts hiding findings.
+fn names_an_item_not_a_decision(line: &str, literal: &str) -> bool {
+    if line.contains("#[path") || line.contains("skip_serializing_if") {
+        return true;
+    }
+    // The value of a `rename_all = "..."`, and nothing else on the line.
+    line.split("rename_all")
+        .skip(1)
+        .filter_map(|after| after.split_once('"'))
+        .filter_map(|(before, rest)| before.trim().starts_with('=').then_some(rest))
+        .any(|rest| rest.split('"').next() == Some(literal))
 }
 
 /// String literals of substance appearing in two or more crates.
@@ -1014,7 +1027,9 @@ pub fn duplicate_literals(corpus: &[Source]) -> Vec<Finding> {
         let lines: Vec<&str> = scrubbed.lines().collect();
         for (line, literal) in string_literals(&source.text) {
             if literal.chars().count() < SHARED_LITERAL_MIN
-                || lines.get(line - 1).is_some_and(|text| names_an_item_not_a_decision(text))
+                || lines
+                    .get(line - 1)
+                    .is_some_and(|text| names_an_item_not_a_decision(text, &literal))
             {
                 continue;
             }
@@ -1507,6 +1522,13 @@ fn a_literal_in_two_crates_is_caught_and_one_crate_is_not() {
     // The exclusion is the attribute, not the word: a case convention named
     // in ordinary code is still a literal two crates share.
     assert_eq!(shared("let style = \"kebab-case\";\n"), ["kebab-case"]);
+    // ...and it is the rename_all VALUE, not the line. A wire name sharing a
+    // line with the convention must still be caught, or the filter that keeps
+    // the list readable starts deleting entries from it.
+    assert_eq!(
+        shared("#[serde(rename_all = \"kebab-case\", rename = \"some-wire-name\")]\n"),
+        ["some-wire-name"]
+    );
 }
 
 #[test]

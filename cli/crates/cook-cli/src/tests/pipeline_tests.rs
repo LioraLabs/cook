@@ -160,7 +160,8 @@ fn verify_json_survives_a_multiline_error_detail() {
 // These landed against the mirrors, each proved to bite by mutation, and are
 // kept now that the mirrors are gone: an agreement test that has become
 // trivially true is a unified path, and it is the guard against re-forking.
-// This crate remains the only place all three names are visible.
+// This crate remains the only place both aliases of the unified type are
+// visible alongside the registration name they came from.
 
 /// The engine's kind and the renderer's kind are the SAME TYPE, so no
 /// translation can be wrong. A re-fork does not fail this assertion, it fails
@@ -189,8 +190,13 @@ fn the_unannotated_default_is_cooked() {
 /// its spelling is a wire format, not a rendering detail. Unifying the enums
 /// moved which crate owns that spelling; these literals say it did not change
 /// it.
+///
+/// It pins the nine spellings, not the convention: every variant of both
+/// enums is a single word, so `kebab-case`, `lowercase` and `snake_case` would
+/// all produce this output. The spellings are what is on disk, so they are
+/// what is asserted.
 #[test]
-fn the_wire_spelling_is_kebab_case() {
+fn the_wire_spelling_is_what_is_already_on_disk() {
     use cook_progress::event::RecipeKind as R;
     use cook_progress::NodeKind as P;
     for (kind, spelled) in [

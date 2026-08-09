@@ -125,7 +125,6 @@ pub enum CloudConfigError {
     BadMaxSize(String),
 }
 
-
 impl std::fmt::Display for CloudConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

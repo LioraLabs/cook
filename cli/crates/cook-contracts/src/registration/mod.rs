@@ -107,7 +107,10 @@ pub enum MemberSourceDescriptor {
 /// translations that nothing checked. One vocabulary, one declaration.
 ///
 /// The serde spelling is a wire format: `cook-progress` writes this into
-/// `.cook/logs` and `cook-logs` reads it back.
+/// `.cook/logs` and `cook-logs` reads it back. The coupling runs both ways and
+/// is the price of one definition — adding a third recipe flavour here is a
+/// change to the on-disk log format, and `cook-progress`'s `wire.rs` schema
+/// rules (additive only, or bump `PROGRESS_SCHEMA_VERSION`) apply to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecipeKind {

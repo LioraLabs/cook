@@ -307,20 +307,15 @@ where
         let recipes_in_dag: BTreeSet<String> = (0..dag.len())
             .map(|i| dag.node(i).payload().recipe_name.clone())
             .collect();
-        // Map qualified-recipe-name → cook_engine::RecipeKind (Recipe/Chore).
-        // The kind on `RegisteredRecipePub` is the register-phase
-        // `cook_contracts::registration::RecipeKind`, which has the same
-        // variants but is a distinct type (Task 4.1).
+        // Map qualified-recipe-name → RecipeKind (Recipe/Chore). This used to
+        // translate `cook_contracts::registration::RecipeKind` into an
+        // engine-side mirror "which has the same variants but is a distinct
+        // type"; COOK-421 made them one type, so what an event carries IS what
+        // registration declared, with nothing in between to get wrong.
         let kind_by_name: BTreeMap<&str, RecipeKind> = registered_workspace
             .names
             .iter()
-            .map(|r| {
-                let kind = match r.kind {
-                    cook_contracts::registration::RecipeKind::Recipe => RecipeKind::Recipe,
-                    cook_contracts::registration::RecipeKind::Chore => RecipeKind::Chore,
-                };
-                (r.name.as_str(), kind)
-            })
+            .map(|r| (r.name.as_str(), r.kind))
             .collect();
         for name in &topo_order {
             if !recipes_in_dag.contains(name) {

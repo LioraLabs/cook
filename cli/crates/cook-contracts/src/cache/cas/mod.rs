@@ -60,12 +60,8 @@ pub struct ArtifactMeta {
     #[serde(default = "ArtifactMeta::zero_content_hash")]
     pub content_hash: [u8; 32],
     /// Disambiguates the artifact body kind. `None` (or the default) is the
-    /// legacy "file artifact" case. `Some("probe_value")` is the
-    /// canonical-JSON probe-output artifact (CS-0074, encoding revised by
-    /// CS-0102). `Some("symlink")` — target carried in `target`, no body.
-    /// `Some("dir")` — empty directory, no body. `Some("discovered_inputs")`
-    /// — discovered-inputs manifest artifact whose body is a JSON path list,
-    /// keyed by the unit's declared-inputs-only cloud key (cold cc sharing).
+    /// legacy "file artifact" case; every other value is one of
+    /// [`artifact_kind`], which is where they are described.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// Unix file mode of the stored output (e.g. `0o755`). Defaults to
@@ -73,7 +69,8 @@ pub struct ArtifactMeta {
     /// at restore). Applies to `File` and `Dir` kinds.
     #[serde(default = "ArtifactMeta::default_mode")]
     pub mode: u32,
-    /// Symlink target (workspace-relative), set only when `kind == "symlink"`.
+    /// Symlink target (workspace-relative), set only when
+    /// `kind == Some(artifact_kind::SYMLINK)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
 }
@@ -109,10 +106,11 @@ impl ArtifactMeta {
 /// rename on one side does not fail to compile; it stops matching, and the
 /// artifact it named becomes unreachable or, worse, evictable.
 ///
-/// The list above this module's doc used to live in a doc comment on the
-/// `kind` field, which is rank-4 enforcement doing nothing. Adding a kind means
-/// adding it here, deciding whether it belongs in
-/// [`crate::evict::SIZE_SWEEP_EXEMPT_KINDS`], and saying so in a test.
+/// This list used to live in a doc comment on the `kind` field, where it was
+/// four of the seven values and could not fail a build. A new kind must be
+/// added to [`ALL`], and `evict`'s tests then fail until it has been
+/// classified as sweep-exempt or not — the decision the doc comment used to
+/// ask for and could not enforce.
 pub mod artifact_kind {
     /// The canonical-JSON probe-output artifact (CS-0074, encoding revised by
     /// CS-0102).
@@ -132,6 +130,22 @@ pub mod artifact_kind {
     /// A recorded unit observation. Deliberately NOT sweep-exempt: it is the
     /// kind a size sweep drops first.
     pub const OBSERVATION: &str = "observation";
+
+    /// Every kind, so a new one cannot be added without a decision about it.
+    ///
+    /// A module of bare constants has no exhaustiveness — nothing would notice
+    /// an eighth kind that no reader classifies. `evict`'s tests partition
+    /// this list into sweep-exempt and deliberately-not, and a member that is
+    /// in neither fails them.
+    pub const ALL: &[&str] = &[
+        PROBE_VALUE,
+        SYMLINK,
+        DIR,
+        DISCOVERED_INPUTS,
+        DISCOVERED_INPUT_SETS,
+        MODULE_INPUT_SETS,
+        OBSERVATION,
+    ];
 }
 
 /// One blob discovered by `LocalBackend::enumerate()` (COOK-232): everything
