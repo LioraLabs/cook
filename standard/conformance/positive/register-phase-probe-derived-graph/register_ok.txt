@@ -1,0 +1,1 @@
+CS-0219: a register-phase body reads a declared probe with cook.probes.get and registers units whose `after` edges are derived from the value.

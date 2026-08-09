@@ -47,6 +47,8 @@ fn recipe_with_depfile(
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+    
+        after: Vec::new(),
     };
     let ru = RecipeUnits {
         recipe_name: recipe_name.into(),
@@ -102,6 +104,8 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+    
+        after: Vec::new(),
     };
     let probe_b = CapturedUnit {
         payload: WorkPayload::Probe {
@@ -116,6 +120,8 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+    
+        after: Vec::new(),
     };
     let consumer = CapturedUnit {
         payload: WorkPayload::Shell { cmd: "link".into(), line: 3 },
@@ -125,6 +131,7 @@ fn independent_probes_have_no_edges_between_them() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let ru = RecipeUnits {
@@ -253,6 +260,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let ru_a = RecipeUnits {
@@ -292,6 +300,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let ru_b = RecipeUnits {
@@ -416,6 +425,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let ru_compile = RecipeUnits {
@@ -458,6 +468,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
             test_name: None,
     };
     let ru_archive = RecipeUnits {
@@ -548,6 +559,8 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
         member: None,
         output_paths: Vec::new(),
             test_name: None,
+    
+        after: Vec::new(),
     };
     let ru = RecipeUnits {
         // Qualified workspace key (import-aliased), used both as the
@@ -623,6 +636,7 @@ fn bare_unit(cmd: &str) -> CapturedUnit {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
         test_name: None,
     }
 }

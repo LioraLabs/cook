@@ -509,7 +509,7 @@ fn safe_id(id: &str) -> String {
 fn mermaid_arrow(kind: EdgeKind) -> &'static str {
     match kind {
         EdgeKind::Barrier => "==>",
-        EdgeKind::DepOrder | EdgeKind::Serial => "-->",
+        EdgeKind::DepOrder | EdgeKind::Serial | EdgeKind::UnitOrder => "-->",
         EdgeKind::Group => "-->",
         EdgeKind::Data | EdgeKind::Discovered | EdgeKind::Probe => "-.->",
     }

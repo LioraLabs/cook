@@ -4418,3 +4418,256 @@ fn a_test_with_its_own_ingredients_behind_a_dep_still_keys() {
         "keyed on what it declares, and on nothing the barrier produced"
     );
 }
+
+// -----------------------------------------------------------------------
+// CS-0219 — `after`: per-unit ordering within one recipe
+// -----------------------------------------------------------------------
+
+/// The motivating shape, with the data hard-coded: a body registers units in
+/// dependency order and names the earlier one's declared output. The field
+/// survives onto the captured unit verbatim.
+#[test]
+fn after_is_captured_verbatim_on_the_unit_that_declares_it() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("mods", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ outputs = {"build/foo.bmi"}, command = "gen foo" })
+        cook.add_unit({
+            outputs = {"build/bar.o"},
+            inputs  = {"build/foo.bmi"},
+            command = "gen bar",
+            after   = {"build/foo.bmi"},
+        })
+    end)
+end)
+"#;
+    let result = register_one(rt, lua_src, "mods");
+    assert_eq!(result.units.len(), 2);
+    assert!(result.units[0].after.is_empty());
+    assert_eq!(result.units[1].after, vec!["build/foo.bmi".to_string()]);
+
+    // Ordering only: nothing about `after` reaches the cache key. The two
+    // units differ by command, so compare the consumer against itself with
+    // and without the edge instead of against its sibling.
+    let rt2 = make_registry(dir.path());
+    let without = register_one(
+        rt2,
+        &lua_src.replace("            after   = {\"build/foo.bmi\"},\n", ""),
+        "mods",
+    );
+    assert_eq!(
+        result.units[1]
+            .cache_meta
+            .as_ref()
+            .map(|m| m.cache_key.clone()),
+        without.units[1]
+            .cache_meta
+            .as_ref()
+            .map(|m| m.cache_key.clone()),
+        "an `after` entry must not move a cache key (it is ordering, not an input)"
+    );
+}
+
+/// Naming a producer registered LATER is a register-phase error, and it says
+/// so in those words rather than reporting an unknown path. This is the
+/// diagnostic that stands in for unit-level cycle detection.
+#[test]
+fn after_naming_a_later_unit_is_a_register_phase_error() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("mods", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ outputs = {"build/bar.o"}, command = "gen bar", after = {"build/foo.bmi"} })
+        cook.add_unit({ outputs = {"build/foo.bmi"}, command = "gen foo" })
+    end)
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("forward reference rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("registered LATER"), "{msg}");
+    assert!(msg.contains("build/foo.bmi"), "{msg}");
+    assert!(msg.contains("mods"), "{msg}");
+}
+
+/// A path no unit declares is the other error, worded differently.
+#[test]
+fn after_naming_no_declared_output_is_a_register_phase_error() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("mods", {}, function()
+    cook.add_unit({ outputs = {"build/bar.o"}, command = "gen bar", after = {"build/nope.bmi"} })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("unknown output rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("names no output declared"), "{msg}");
+    assert!(msg.contains("build/nope.bmi"), "{msg}");
+}
+
+/// `deps` is the name an author reaches for and is not a field; refusing it
+/// silently would leave the ordering they asked for simply absent.
+#[test]
+fn deps_on_add_unit_is_refused_and_names_both_real_channels() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("mods", {}, function()
+    cook.add_unit({ outputs = {"a.o"}, command = "gen", deps = {"other"} })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("deps refused");
+    let msg = format!("{err}");
+    assert!(msg.contains("`deps` is not a field"), "{msg}");
+    assert!(msg.contains("after"), "{msg}");
+    assert!(msg.contains("cook.dep_order"), "{msg}");
+}
+
+/// Field typing (CS-0127) reaches the new field too.
+#[test]
+fn after_rejects_a_wrong_typed_value_naming_the_field() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("mods", {}, function()
+    cook.add_unit({ outputs = {"a.o"}, command = "gen", after = "build/foo.bmi" })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("wrong type refused");
+    let msg = format!("{err}");
+    assert!(msg.contains("`after` must be a table of output-path strings"), "{msg}");
+}
+
+// -----------------------------------------------------------------------
+// CS-0219 — register-phase `cook.probes.get` resolves a declared probe
+// -----------------------------------------------------------------------
+
+/// The whole point: a register-phase body reads a declared probe's value and
+/// shapes the units it registers from it — including the ordering edges.
+#[test]
+fn a_register_body_reads_a_declared_probe_and_generates_the_graph_from_it() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("scan:mods", {
+    inputs = { env = {"COOK_319_SCAN_SALT"} },
+    produce = [[
+        return {
+            { name = "foo", imports = {} },
+            { name = "bar", imports = {"foo"} },
+        }
+    ]],
+})
+cook.recipe("mods", {}, function()
+    local graph = cook.probes.get("scan:mods")
+    cook.step_group(function()
+        for _, m in ipairs(graph) do
+            local after = {}
+            for _, dep in ipairs(m.imports) do
+                after[#after + 1] = "build/" .. dep .. ".bmi"
+            end
+            cook.add_unit({
+                outputs = { "build/" .. m.name .. ".bmi" },
+                command = "compile " .. m.name,
+                after   = after,
+            })
+        end
+    end)
+end)
+"#;
+    let result = register_one(rt, lua_src, "mods");
+    assert_eq!(result.units.len(), 2, "one unit per scanned module");
+    assert!(result.units[0].after.is_empty());
+    assert_eq!(result.units[1].after, vec!["build/foo.bmi".to_string()]);
+
+    // And the ordering the data implies is the ordering the graph plans.
+    let graph = cook_contracts::unit_graph::plan(&[result]).expect("plans");
+    let foo = graph
+        .nodes
+        .iter()
+        .position(|n| matches!(&n.origin,
+            cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 0, .. }))
+        .expect("foo node");
+    let bar = graph
+        .nodes
+        .iter()
+        .position(|n| matches!(&n.origin,
+            cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 1, .. }))
+        .expect("bar node");
+    assert!(
+        graph.nodes[bar].deps.iter().any(|&(d, k)| d == foo
+            && k == cook_contracts::unit_graph::EdgeProvenance::UnitOrder),
+        "bar must be ordered after foo: {:?}",
+        graph.nodes[bar].deps
+    );
+}
+
+/// A key naming no declared probe still reads through to the module-scoped
+/// store, and still answers `nil` outside a module context rather than
+/// erroring. Existing module code depends on that; CS-0219 adds a step to the
+/// lookup, it does not replace one.
+#[test]
+fn an_undeclared_key_still_falls_through_to_the_module_store() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("r", {}, function()
+    local v = cook.probes.get("nothing:declared")
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. tostring(v) })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("module-context error");
+    assert!(
+        format!("{err}").contains("outside of a module context"),
+        "{err}"
+    );
+}
+
+/// §22.5.10's static-input rule binds the on-demand read too. Without this the
+/// register-phase read would be an unchecked route to a probe that depends on
+/// a file a recipe in this build is going to write.
+#[test]
+fn a_register_resolved_probe_may_not_depend_on_a_build_artifact() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("gen.json"), "[]").unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("scan:gen", {
+    inputs = { files = {"build/generated.txt"} },
+    produce = [[ return { "a" } ]],
+})
+cook.recipe("maker", {}, function()
+    cook.add_unit({ outputs = {"build/generated.txt"}, command = "gen" })
+end)
+cook.recipe("reader", {}, function()
+    local v = cook.probes.get("scan:gen")
+    cook.add_unit({ outputs = {"out.txt"}, command = "echo " .. #v })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("artifact dependence rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("scan:gen"), "{msg}");
+    assert!(msg.contains("build/generated.txt"), "{msg}");
+}
+
+/// Demand-driven: a probe no reached body reads is never produced. The probe
+/// here would raise if it ran, so reaching the end proves it did not.
+#[test]
+fn a_probe_no_body_reads_is_never_resolved_at_register_phase() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("scan:never", {
+    inputs = {},
+    produce = [[ error("this probe must not run at register phase") ]],
+})
+cook.recipe("quiet", {}, function()
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo hi" })
+end)
+"#;
+    let result = register_one(rt, lua_src, "quiet");
+    assert_eq!(result.units.len(), 1);
+}

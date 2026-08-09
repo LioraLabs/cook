@@ -25,6 +25,7 @@ fn unit(payload: WorkPayload, dep_kind: DepKind, probes: Vec<String>) -> Capture
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
+        after: Vec::new(),
         test_name: None,
     }
 }
@@ -248,4 +249,129 @@ fn toposort_orders_deps_first_and_names_cycles() {
     let err = toposort_recipes(&cyclic, &two).expect_err("cycle");
     assert!(matches!(err, UnitGraphError::Cycle { ref unresolved }
         if unresolved.contains(&"a".to_string()) && unresolved.contains(&"b".to_string())));
+}
+
+// ── CS-0219: `after`, the intra-recipe per-unit ordering edge ───────────────
+
+fn group_unit_with(cmd: &str, gi: usize, outputs: &[&str], after: &[&str]) -> CapturedUnit {
+    let mut u = unit(shell(cmd), DepKind::StepGroup(gi), vec![]);
+    u.output_paths = outputs.iter().map(|s| s.to_string()).collect();
+    u.after = after.iter().map(|s| s.to_string()).collect();
+    u
+}
+
+/// A backward reference resolves to the producing unit's index; the `./`
+/// spelling of a path is the same path.
+#[test]
+fn after_resolves_backward_references_and_normalises_leading_dot_slash() {
+    let units = vec![
+        group_unit_with("build foo", 0, &["build/foo.bmi"], &[]),
+        group_unit_with("build bar", 0, &["build/bar.o"], &["./build/foo.bmi"]),
+        group_unit_with("build baz", 0, &["build/baz.o"], &["build/foo.bmi", "build/bar.o"]),
+    ];
+    assert_eq!(
+        resolve_after(&units).expect("resolves"),
+        vec![Vec::<usize>::new(), vec![0], vec![0, 1]]
+    );
+}
+
+/// A unit with no `after` entries anywhere costs nothing and resolves to
+/// empty lists, one per unit.
+#[test]
+fn after_is_a_no_op_when_nothing_declares_one() {
+    let units = vec![seq_unit("a"), seq_unit("b")];
+    assert_eq!(resolve_after(&units).expect("resolves"), vec![Vec::<usize>::new(), Vec::<usize>::new()]);
+}
+
+/// The two failures are distinct, and the forward-reference one names the
+/// later producer. This is the diagnostic that enforces acyclicity: with only
+/// backward references admitted, a cycle cannot be represented at all.
+#[test]
+fn after_distinguishes_a_forward_reference_from_an_unknown_path() {
+    let forward = vec![
+        group_unit_with("build bar", 0, &["build/bar.o"], &["build/foo.bmi"]),
+        group_unit_with("build foo", 0, &["build/foo.bmi"], &[]),
+    ];
+    assert_eq!(
+        resolve_after(&forward).expect_err("forward reference"),
+        AfterError::RegisteredLater {
+            unit_idx: 0,
+            path: "build/foo.bmi".to_string(),
+            producer_idx: 1,
+        }
+    );
+
+    let unknown = vec![group_unit_with("build bar", 0, &["build/bar.o"], &["nope.bmi"])];
+    assert_eq!(
+        resolve_after(&unknown).expect_err("unknown path"),
+        AfterError::NotDeclared {
+            unit_idx: 0,
+            path: "nope.bmi".to_string(),
+        }
+    );
+
+    // Distinct messages, so an author is told which mistake they made.
+    let a = resolve_after(&forward).unwrap_err().to_string();
+    let b = resolve_after(&unknown).unwrap_err().to_string();
+    assert!(a.contains("registered LATER"), "{a}");
+    assert!(b.contains("names no output declared"), "{b}");
+}
+
+/// Naming your own output is its own message, not "registered later".
+#[test]
+fn after_rejects_a_self_reference_in_its_own_words() {
+    let units = vec![group_unit_with("x", 0, &["out.o"], &["out.o"])];
+    let msg = resolve_after(&units).unwrap_err().to_string();
+    assert!(msg.contains("cannot run after itself"), "{msg}");
+}
+
+/// The planned edge is `UnitOrder`, points at the producer's node, and is
+/// ADDITIVE with the step-group barrier the member already carries. A group
+/// member that gains an `after` edge does not lose its entry barrier.
+#[test]
+fn after_plans_a_unit_order_edge_additive_with_the_group_barrier() {
+    let mut ru = recipe(
+        "gen",
+        &[],
+        vec![
+            seq_unit("prepare"),
+            group_unit_with("build foo", 0, &["build/foo.bmi"], &[]),
+            group_unit_with("build bar", 0, &["build/bar.o"], &["build/foo.bmi"]),
+        ],
+    );
+    ru.step_groups = vec![vec![1, 2]];
+
+    let g = plan(&[ru]).expect("plans");
+    let prepare = unit_id(&g, "gen", 0);
+    let foo = unit_id(&g, "gen", 1);
+    let bar = unit_id(&g, "gen", 2);
+
+    assert!(has_edge(&g, foo, bar, EdgeProvenance::UnitOrder), "{}", edge_list(&g));
+    // The group entry barrier survives alongside it.
+    assert!(has_edge(&g, prepare, bar, EdgeProvenance::Group), "{}", edge_list(&g));
+    assert!(has_edge(&g, prepare, foo, EdgeProvenance::Group), "{}", edge_list(&g));
+    // And `foo` gains nothing from `bar`.
+    assert!(!has_edge(&g, bar, foo, EdgeProvenance::UnitOrder), "{}", edge_list(&g));
+    // Every dep points at an already-materialised node — the invariant
+    // `cook-dag` deleted its cycle checker on (COOK-400).
+    for (id, node) in g.nodes.iter().enumerate() {
+        for &(dep, _) in &node.deps {
+            assert!(dep < id, "node {id} depends on later node {dep}");
+        }
+    }
+}
+
+/// `plan` surfaces an unresolvable `after` naming the recipe, rather than
+/// silently dropping the ordering the author asked for.
+#[test]
+fn plan_reports_an_unresolvable_after_entry_naming_the_recipe() {
+    let ru = recipe(
+        "gen",
+        &[],
+        vec![group_unit_with("build bar", 0, &["build/bar.o"], &["missing.bmi"])],
+    );
+    let err = plan(&[ru]).expect_err("unresolvable after");
+    let msg = err.to_string();
+    assert!(msg.contains("recipe 'gen'"), "{msg}");
+    assert!(msg.contains("missing.bmi"), "{msg}");
 }

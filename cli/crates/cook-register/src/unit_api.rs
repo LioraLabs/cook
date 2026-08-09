@@ -835,6 +835,69 @@ pub fn register_unit_api(
             }
         }
 
+        // Reject `deps`, which is not a field here and never was (CS-0219).
+        // The name is the one an author reaches for, and it is ambiguous
+        // between the two ordering channels this unit actually has, so it
+        // names both rather than merely refusing.
+        match tbl.get::<LuaValue>("deps") {
+            Ok(LuaValue::Nil) | Err(_) => {}
+            Ok(_) => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: `deps` is not a field. For ordering against an earlier \
+                     unit of the SAME recipe use `after = { \"<that unit's output path>\" }` \
+                     (Cook Standard \u{00a7}22.1.3); for ordering against another recipe use \
+                     cook.dep_order(\"<recipe>\") or cook.dep_output(\"<recipe>\")"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // CS-0219 §22.1.3: `after` — declared output paths of EARLIER units in
+        // this recipe that this unit must run after. Ordering only; nothing
+        // here reaches a cache key. Stored verbatim and resolved to unit
+        // indices at the end of the body, by the one law in
+        // `cook_contracts::unit_graph::resolve_after`, so that a forward
+        // reference can be told apart from a typo.
+        let after: Vec<String> = match tbl.get::<LuaValue>("after") {
+            Ok(LuaValue::Nil) | Err(_) => Vec::new(),
+            Ok(LuaValue::Table(t)) => {
+                let mut out: Vec<String> = Vec::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    let v = v.map_err(|e| {
+                        LuaError::runtime(format!("cook.add_unit: reading `after`: {e}"))
+                    })?;
+                    match v {
+                        LuaValue::String(s) => {
+                            let s = s.to_str()?.to_string();
+                            if s.is_empty() {
+                                return Err(LuaError::runtime(
+                                    "cook.add_unit: `after` entries must be non-empty output \
+                                     paths"
+                                        .to_string(),
+                                ));
+                            }
+                            out.push(s);
+                        }
+                        other => {
+                            return Err(type_err(
+                                "after",
+                                "a table of output-path strings",
+                                other.type_name(),
+                            ))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => {
+                return Err(type_err(
+                    "after",
+                    "a table of output-path strings",
+                    other.type_name(),
+                ))
+            }
+        };
+
         // Parse opts.probes: optional list of probe-key strings (§{cat.probes.consumer}).
         let mut probes: Vec<String> = match tbl.get::<LuaValue>("probes") {
             Ok(LuaValue::Nil) => vec![],
@@ -1151,6 +1214,7 @@ pub fn register_unit_api(
             member: member.clone(),
             test_name,
             output_paths: output_paths.clone(),
+            after,
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             body.step_groups[*gi].push(unit_idx);

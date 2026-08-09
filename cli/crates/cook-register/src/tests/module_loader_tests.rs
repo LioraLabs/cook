@@ -25,7 +25,17 @@ fn setup_with_module(
 
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
     register_module_loader(&lua, state.clone(), cook_lua_stdlib::ModuleObserver::new()).unwrap();
-    register_cache_api(&lua, state.clone(), Rc::new(RefCell::new(BTreeMap::new()))).unwrap();
+    register_cache_api(
+        &lua,
+        state.clone(),
+        Rc::new(crate::engine::RegisterProbeResolver::new(
+            Rc::new(RefCell::new(Default::default())),
+            Rc::new(RefCell::new(BTreeMap::new())),
+            dir.path().to_path_buf(),
+            None,
+        )),
+    )
+    .unwrap();
     (lua, dir, state)
 }
 

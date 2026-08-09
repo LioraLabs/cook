@@ -519,6 +519,7 @@ pub fn install_cook_api(
                 member: None,
                 test_name: None,
                 output_paths: Vec::new(),
+                after: Vec::new(),
             };
             body.units.push(unit);
         }
@@ -546,6 +547,7 @@ pub fn install_cook_api(
             member: None,
             test_name: None,
             output_paths: Vec::new(),
+            after: Vec::new(),
         };
         body.units.push(unit);
         Ok("".to_string())

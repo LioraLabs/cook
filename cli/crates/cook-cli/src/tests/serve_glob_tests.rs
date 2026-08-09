@@ -43,6 +43,7 @@ fn watch_set_comes_from_registered_units_including_module_and_imported_ones() {
             member: None,
             output_paths: vec![],
             test_name: None,
+            after: Vec::new(),
         }
     }
 

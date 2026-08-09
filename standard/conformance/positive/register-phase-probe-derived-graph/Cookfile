@@ -1,0 +1,7 @@
+use ./lua/cook_modgraph.lua
+
+probe scan:mods
+    lines { cat imports.txt }
+
+recipe mods
+    cook_modgraph.compile_all("scan:mods")

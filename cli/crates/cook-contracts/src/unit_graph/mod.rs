@@ -99,6 +99,13 @@ pub enum EdgeProvenance {
     /// leaves. Strictly additive with [`EdgeProvenance::DepOrder`]
     /// (CS-0161): a fine ref never subtracts a declared coarse edge.
     Barrier,
+    /// Per-unit ordering WITHIN one recipe — a `cook.add_unit` `after` entry
+    /// naming an earlier sibling's declared output (§22.1.3, CS-0219). The
+    /// intra-recipe counterpart of [`EdgeProvenance::DepOrder`]: ordering
+    /// only, no data, nothing folded into a key. This is the edge a module
+    /// that derived its graph from scan data draws between two units it
+    /// registered itself.
+    UnitOrder,
 }
 
 /// One planned node: its origin and its dependencies, each carrying the
@@ -136,6 +143,145 @@ pub enum UnitGraphError {
     /// The recipe-level edge map has a cycle; `unresolved` names the recipes
     /// with unresolved in-degree (part of, or downstream of, the cycle).
     Cycle { unresolved: Vec<String> },
+    /// An `after` entry did not resolve (CS-0219). Carries the recipe so the
+    /// message can name it; the inner error says which of the two ways it
+    /// failed. Registration diagnoses this first — see [`resolve_after`] — so
+    /// reaching it here means a producer of `RecipeUnits` skipped that check.
+    After {
+        recipe: String,
+        source: AfterError,
+    },
+}
+
+/// The two ways a `cook.add_unit` `after` entry (§22.1.3, CS-0219) can fail to
+/// name an earlier sibling's declared output.
+///
+/// They are distinct on purpose. "Not declared anywhere" is a typo; "declared,
+/// but by a unit registered later" is a topology mistake, and telling the
+/// author which one they made is the difference between a two-second fix and a
+/// hunt. The second case is also the diagnostic that enforces acyclicity:
+/// because an entry may only name an EARLIER unit, a cyclic edge set cannot be
+/// represented, and an author who emits units in an order their own data does
+/// not admit is told so by name rather than by a deadlock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AfterError {
+    /// No unit in the recipe declares this output path.
+    NotDeclared { unit_idx: usize, path: String },
+    /// A unit does declare it, but it is registered at or after the unit that
+    /// named it. `producer_idx` is that unit's index; when it equals
+    /// `unit_idx` the unit named its own output.
+    RegisteredLater {
+        unit_idx: usize,
+        path: String,
+        producer_idx: usize,
+    },
+}
+
+impl std::fmt::Display for AfterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AfterError::NotDeclared { unit_idx, path } => write!(
+                f,
+                "cook.add_unit: `after` entry '{path}' on unit #{unit_idx} names no output \
+                 declared by any unit of this recipe; an `after` entry names a declared \
+                 output path of an earlier unit in the SAME recipe (for a cross-recipe \
+                 edge use cook.dep_order)"
+            ),
+            AfterError::RegisteredLater {
+                unit_idx,
+                path,
+                producer_idx,
+            } if unit_idx == producer_idx => write!(
+                f,
+                "cook.add_unit: `after` entry '{path}' on unit #{unit_idx} names that same \
+                 unit's own output; a unit cannot run after itself"
+            ),
+            AfterError::RegisteredLater {
+                unit_idx,
+                path,
+                producer_idx,
+            } => write!(
+                f,
+                "cook.add_unit: `after` entry '{path}' on unit #{unit_idx} names an output of \
+                 unit #{producer_idx}, which is registered LATER in the same recipe; register \
+                 the producer before the unit that names it (an `after` entry may only point \
+                 backwards, which is what makes the generated graph acyclic by construction)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AfterError {}
+
+/// Resolve every unit's `after` entries to the indices of the units that
+/// declare those outputs (§22.1.3, CS-0219).
+///
+/// Returns one index list per unit, positionally aligned with `units`. Pure:
+/// no filesystem, no environment, a function of the slice alone. Two readers
+/// share it — `cook-register` calls it at the end of a recipe body so the
+/// failure is a register-phase diagnostic, and [`plan`] calls it to draw the
+/// edge — so the answer to "which unit does this path name" is given once
+/// rather than mirrored.
+///
+/// Only BACKWARD references resolve. An entry may name a unit with a strictly
+/// smaller index and nothing else, which is what keeps every graph edge
+/// pointing at an already-materialised node: `cook-dag` deleted its cycle
+/// checker (COOK-400) on exactly that invariant, and this surface is not the
+/// one to hand it back. The cost is that a module generating units from scan
+/// data emits them in dependency order, which is work it was doing anyway to
+/// know the order at all; the benefit is that it reports a cycle in its own
+/// vocabulary ("circular import foo -> bar -> foo") where the engine could
+/// only ever report one in unit indices.
+///
+/// Paths are compared after stripping a leading `./`, matching how every other
+/// declared-path comparison in the model normalises. Matching is textual and
+/// exact otherwise: a glob-shaped `outputs[]` entry is nameable only by its
+/// verbatim spelling, because a pattern's expansion is not known here.
+pub fn resolve_after(units: &[CapturedUnit]) -> Result<Vec<Vec<usize>>, AfterError> {
+    if units.iter().all(|u| u.after.is_empty()) {
+        return Ok(vec![Vec::new(); units.len()]);
+    }
+    // First declarer wins. CS-0169 makes duplicate literal outputs a rejected
+    // registration, so on any pass that gets this far there is at most one.
+    let mut producer_by_output: BTreeMap<String, usize> = BTreeMap::new();
+    for (idx, unit) in units.iter().enumerate() {
+        for out in &unit.output_paths {
+            producer_by_output
+                .entry(normalise_declared_path(out))
+                .or_insert(idx);
+        }
+    }
+    let mut resolved: Vec<Vec<usize>> = Vec::with_capacity(units.len());
+    for (unit_idx, unit) in units.iter().enumerate() {
+        let mut here: Vec<usize> = Vec::with_capacity(unit.after.len());
+        for path in &unit.after {
+            let key = normalise_declared_path(path);
+            match producer_by_output.get(&key) {
+                Some(&producer_idx) if producer_idx < unit_idx => here.push(producer_idx),
+                Some(&producer_idx) => {
+                    return Err(AfterError::RegisteredLater {
+                        unit_idx,
+                        path: path.clone(),
+                        producer_idx,
+                    })
+                }
+                None => {
+                    return Err(AfterError::NotDeclared {
+                        unit_idx,
+                        path: path.clone(),
+                    })
+                }
+            }
+        }
+        resolved.push(here);
+    }
+    Ok(resolved)
+}
+
+/// Drop a leading `./` from a declared path so two spellings of one path
+/// compare equal.
+fn normalise_declared_path(p: &str) -> String {
+    p.strip_prefix("./").unwrap_or(p).to_string()
 }
 
 impl std::fmt::Display for UnitGraphError {
@@ -151,6 +297,9 @@ impl std::fmt::Display for UnitGraphError {
             ),
             UnitGraphError::Cycle { unresolved } => {
                 write!(f, "cycle among recipes: {unresolved:?}")
+            }
+            UnitGraphError::After { recipe, source } => {
+                write!(f, "recipe '{recipe}': {source}")
             }
         }
     }
@@ -359,6 +508,17 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
     let mut recipe_leaves: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for ru in recipe_units {
+        // §22.1.3 / CS-0219: resolve this recipe's `after` entries to unit
+        // indices up front, through the shared law. Registration already
+        // rejected an unresolvable entry with a register-phase diagnostic, so
+        // an error here means a producer of `RecipeUnits` bypassed that check;
+        // it is reported rather than ignored, because the alternative is an
+        // ordering edge the author asked for that silently is not there.
+        let after_by_unit = resolve_after(&ru.units).map_err(|source| UnitGraphError::After {
+            recipe: ru.recipe_name.clone(),
+            source,
+        })?;
+
         // Per-recipe index of probe key → unit index, to wire probe→consumer
         // edges from CapturedUnit.probes (CS-0074 Bug 2).
         let probe_unit_index_by_key: BTreeMap<String, usize> = ru
@@ -584,6 +744,18 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                     if let Some(leaves) = recipe_leaves.get(dep_recipe_name) {
                         deps.extend(leaves.iter().map(|&d| (d, EdgeProvenance::DepOrder)));
                     }
+                }
+            }
+
+            // Intra-recipe per-unit ordering from `after` (§22.1.3, CS-0219).
+            // Additive with the barrier above, never a replacement — the same
+            // rule CS-0161 states for the cross-recipe fine channel. The
+            // producer's index is strictly smaller, so its node id is already
+            // in `node_by_unit_idx` and the "deps point backwards" invariant
+            // holds without a second pass.
+            for &producer_idx in &after_by_unit[unit_idx] {
+                if let Some(&producer_id) = node_by_unit_idx.get(&producer_idx) {
+                    deps.push((producer_id, EdgeProvenance::UnitOrder));
                 }
             }
 

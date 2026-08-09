@@ -1,0 +1,4 @@
+use ./lua/cook_badorder.lua
+
+recipe mods
+    cook_badorder.emit()

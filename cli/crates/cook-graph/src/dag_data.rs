@@ -101,6 +101,11 @@ pub enum EdgeKind {
     /// referent. The most expensive edge in the model, and the one most often
     /// reached for when `DepOrder` would do.
     Barrier,
+    /// Per-unit ordering within one recipe — a `cook.add_unit` `after` entry
+    /// naming an earlier sibling's declared output (§22.1.3, CS-0219). The
+    /// intra-recipe counterpart of [`EdgeKind::DepOrder`], and the edge a
+    /// module that derived its graph from scan data draws for itself.
+    UnitOrder,
 }
 
 impl EdgeKind {
@@ -114,6 +119,7 @@ impl EdgeKind {
             EdgeKind::Serial => "serial",
             EdgeKind::DepOrder => "dep_order",
             EdgeKind::Barrier => "barrier",
+            EdgeKind::UnitOrder => "unit_order",
         }
     }
 
@@ -265,6 +271,7 @@ fn edge_kind(kind: unit_graph::EdgeProvenance) -> EdgeKind {
         EdgeProvenance::Probe => EdgeKind::Probe,
         EdgeProvenance::DepOrder => EdgeKind::DepOrder,
         EdgeProvenance::Barrier => EdgeKind::Barrier,
+        EdgeProvenance::UnitOrder => EdgeKind::UnitOrder,
     }
 }
 

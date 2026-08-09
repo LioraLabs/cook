@@ -34,7 +34,15 @@ The `cook` table carries recipe registration, work-unit registration, shell help
 
 ### cook.probes.get (cross-phase note)
 
-`cook.probes.get(key)` on the execute-phase VM MUST read from the per-run probe-value store (§{cat.probes.exec}). On the register-phase VM, `cook.probes.get(key)` continues to read from the module-scoped persistent kv store. The two surfaces share a function name but back different stores; this is intentional and transitional — the register-phase store is slated for removal alongside `cook.probes.set` in a later 1.x revision.
+`cook.probes.get(key)` on the execute-phase VM MUST read from the per-run probe-value store (§{cat.probes.exec}).
+
+On the register-phase VM the lookup has three steps, in order (CS-0219):
+
+1. The register-phase probe-value store, when `key` is already resolved there — put there by the `ingredients <probe>` pre-pass (§{cat.probes.member-source}) or by an earlier read through step 2.
+2. Otherwise, when `key` names a probe **declared in this pass**, the probe is resolved now and the read answers with its value (§{cat.probes.member-source}, "Register-phase reads"). Resolving at the moment of the read, rather than ahead of the bodies, is what preserves §{cat.probes.exec}'s demand-driven rule without a second reachability analysis: a body runs only because its recipe is reachable, and a key is resolved only because a body asked for it.
+3. Otherwise the module-scoped persistent kv store, which is what this name meant before probes existed and still means for a key no probe declares. A miss there reads as `nil`, unchanged.
+
+Step 3 is intentional and transitional — that store is slated for removal alongside `cook.probes.set` in a later 1.x revision, and steps 1 and 2 are the destination: one name, meaning the probe's value, on both VMs. The two phases still differ in where a resolved value comes from, and in what a miss means: on the execute VM an unmaterialised probe is an error (§{cat.probes.exec}), because there the DAG was supposed to have scheduled it.
 
 ### cook.probe
 

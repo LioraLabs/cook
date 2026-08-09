@@ -224,6 +224,16 @@ pub enum RegisterError {
          sources must be statically evaluable"
     )]
     MemberSourceProbeArtifactDep { key: String, path: String },
+
+    /// CS-0219 §22.1.3: a `cook.add_unit` `after` entry does not name a
+    /// declared output of an EARLIER unit in the same recipe. The inner
+    /// message is
+    /// [`cook_contracts::unit_graph::AfterError`]'s, which distinguishes an
+    /// unknown path from one whose producer is registered later — the second
+    /// being how a cyclic edge set announces itself, since a backward-only
+    /// reference cannot express a cycle at all.
+    #[error("recipe '{recipe}': {message}")]
+    AfterUnresolved { recipe: String, message: String },
 }
 
 /// Render the declaration site of a chore parameter for a diagnostic.
