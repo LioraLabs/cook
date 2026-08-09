@@ -3070,6 +3070,37 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0210 — the dependency edges are the resolution's edges [#changes.cs-0210]
+
+**Date:** 2026-08-08
+**Version:** v0.18
+**Sections affected:** §{xref.position-independence} (independence extended from positions to analyses), §{xref.dep-implications} (a new bullet beside the existing prohibition on inventing edges from path equality: every name reference creates its edge). Reference implementation: `cli/crates/cook-luagen/src/resolver.rs` (`accessor_ref` — the `NAME.ACCESSOR` split of §{xref.dotted-names} — and `recipe_ref`), `cli/crates/cook-luagen/src/dep_ref.rs`; consumed unchanged by `cli/crates/cook-plan/src/inferred_deps.rs`. COOK-415.
+
+**Summary.** CS-0184 stated that a token means the same thing in every *position*. It said nothing about the other way a token gets examined: an implementation also reads a step's placeholders to work out which recipes that step depends on, and that reading was never held to the resolution it is supposedly reading.
+
+In the reference implementation the two had been written twice, and they disagreed. Resolution walks §{xref.resolution} in order, so a dotted token is a builtin only when its suffix is a path accessor: `$<in.stem>` is an own-input accessor, and `$<in.foo>` — `foo` is not in the closed set — falls through to step 2 and resolves as the recipe `in.foo`, which is a reachable name, because `import in ./other` is legal (§{xref.reserved-segment} binds recipe *declarations*, and an import alias declares no recipe). The dependency analyser instead skipped any token beginning `in.`, `out.` or `env.` on a prefix test of its own.
+
+**What that actually cost, measured rather than predicted.** The two halves of the divergence behave differently, and the difference is instructive enough to record:
+
+- In a body or a chore, ordering *survived*. The reference implementation lowers `$<in.foo>` to a `cook.dep_output` call, and that call independently establishes the per-unit edge §{xref.dep-implications} permits as a refinement of the coarse one. What was lost is the whole-recipe barrier the name reference is supposed to grant — visible in `cook why` as `dep_order` where the rule says `barrier`. A second mechanism was quietly covering for the first, which is exactly why nobody found this by using it.
+- In a `cook` output pattern, nothing covered for it. `$<in.foo.stem>` lowers to a path accessor on the iteration item, not to a `cook.dep_output` call, so the analyser's answer is the only thing that puts the producer in the build closure. Against the pre-fix implementation, `cook app` on such a recipe planned **zero nodes**, ran nothing, and exited successfully.
+
+The first case is the one that argues for the rule. A build that is correct only because a different mechanism happened to answer is not a build anyone can reason about, and the mechanism that was silent gave no sign of it.
+
+**Why this direction is the dangerous one.** The neighbouring bullet has long forbidden *inventing* an edge from path-string equality, and that prohibition is the easier one to live with: an implementation that infers too much produces a build that is over-ordered and slow, and the excess is visible in `cook why`. An implementation that recognises too little produces a build that is under-ordered, or does nothing at all and says so in a success message. The two bullets now sit together so that neither reads as the whole rule.
+
+**A pre-existing non-conformance this entry makes nameable, and does not fix.** §{xref.reserved-segment} reserves only the four accessors plus `in` and `out` as a recipe's final segment, so `out_1` is a legal recipe name — and `$<out_1.stem>` resolves at step 2 in a `cook` output pattern (where the reference implementation tries the accessor split before the builtin match, so that dep-driven iteration keeps working) and at step 1 everywhere else. That is a CS-0184 violation older than this entry, and under this entry's rule it also splits the edge set from the output pattern's own reading. Reordering the two tests does not fix it; the fix is at the declaration site, in the reserved-segment rule, and it is a language change of its own. Recorded here rather than left for the next audit to rediscover.
+
+**Backward compatibility.** Almost entirely additive at the graph level: edges appear where a reference already resolved to a recipe and no edge was recorded. Nothing that ordered correctly reorders, and a build that was silently racing becomes correctly ordered — which can change observed timing and can surface a genuine cycle the missing edge was hiding. That cycle is the defect being reported, not introduced.
+
+One class of edge is withdrawn rather than added, and it is the same rule working in the other direction. An import alias is unconstrained text, so `import a:b ./other.cook` puts `a:b.recipe` in scope — but §{xref.resolution} dispatches a colon-bearing token to the probe-value path (§{cat.probes.templates}) before it reaches step 2, so that token never substituted the recipe's output; it reported an undeclared probe key. The old edge pointed at a producer nothing referenced. Deriving the edges from the resolution drops it, which is what "the same answer" means when the resolution's answer is *not* a recipe.
+
+No `CACHE_VERSION` bump. Edges are ordering, not key material: a unit's key is composed from its command, inputs and determinants, none of which this entry changes, so a newly-ordered build hits the same cache entries in a different order.
+
+**Conformance.** No corpus fixture. A positive case would have to declare an import alias named `in` to exhibit the divergence, which pins an incidental permission — that aliases are unreserved — as though it were the rule, and the rule is about where an answer comes from rather than which spellings it covers. What is pinned instead is the agreement itself, at the level where both halves are visible: a test runs the dependency analyser and the resolver over one corpus of idents spanning every step of §{xref.resolution} and asserts they name the same referent, and a second pins that the resolver's answer to "what recipe does this name" does not vary with iteration mode or declared output count — the property that lets an analyser ask the question without inventing a step context. Both were verified to bite by mutation (restoring the prefix tests fails them).
+
+The behavioural claims in this entry were checked against two builds of the reference implementation — one with the fix, one with the prefix tests restored — over the same project, rather than reasoned from the source. That is what corrected them: this entry's first draft asserted an unordered build in the body case, and the run showed the build ordered correctly for a reason the draft had not accounted for.
+
 ## CS-0207 — installed modules move to `.cook/modules/`, and the package directory stops being two things [#changes.cs-0207]
 
 **Date:** 2026-08-08

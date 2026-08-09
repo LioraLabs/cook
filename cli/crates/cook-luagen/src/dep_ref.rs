@@ -1,13 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use cook_contracts::ACCESSORS;
 use cook_lang::ast::*;
 
 use crate::sigil;
-
-/// Built-in placeholders that are never recipe references.
-/// Note: "out_N" forms are handled structurally in parse_dep_token.
-const BUILTINS: &[&str] = &["in", "out"];
 
 /// A reference to another recipe found in a step template.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -120,73 +115,27 @@ fn extract_body_tokens(body: &cook_lang::ast::Body) -> Vec<String> {
     }
 }
 
-/// Parse a single $<FOO> token into a DepRef if it matches a recipe name.
+/// Parse a single `$<TOKEN>` into a `DepRef` if it names a recipe.
 ///
-/// Rules (CS-0033 updated):
-/// 1. Skip builtins: `in`, `out`
-/// 2. Skip CS-0022 dotted own-input/output forms: `in.X`, `out.X`, `out_N.X`
-/// 3. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
-/// 4. If token has a dot, split on LAST dot: if suffix is a known accessor AND prefix
-///    is a recipe name → DepRef with accessor
-/// 5. Otherwise → None (it's an env var)
+/// CS-0210: this asks the resolver and adapts the answer; it does not classify.
+/// §{xref.dep-implications}'s edges are the edges §{xref.resolution} implies, so
+/// the shapes that are NOT recipe references — the builtins, the retired `env.`
+/// and `file:` prefixes, probe-value references, declared variables, the
+/// malformed bracket indices — are excluded here by [`resolver::recipe_ref`]
+/// answering `None`, at the same moment and for the same reason that
+/// substitution excludes them.
+///
+/// It used to re-derive all of that: a private builtin table, a hand-rolled
+/// `out_N` number parse, and prefix tests on `in.` / `out.` / `env.`. Those
+/// tests were coarser than the resolver's — `in.` matched `$<in.foo>` even when
+/// `in` was an import alias and `in.foo` a recipe in scope — so codegen emitted
+/// `cook.dep_output("in.foo")` for a producer the DAG had no edge to.
 fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRef> {
-    // Rule 1: skip builtins
-    if BUILTINS.contains(&token) {
-        return None;
-    }
-
-    // Rule 1b: skip env. prefix (always env var, never recipe)
-    if token.starts_with("env.") {
-        return None;
-    }
-
-    // Rule 2: skip CS-0022 own-input/output accessor forms.
-    if token.starts_with("in.") {
-        return None;
-    }
-    if token.starts_with("out.") {
-        return None;
-    }
-    if token.starts_with("out_") {
-        let rest = &token[4..];
-        let num_part = rest.split('.').next().unwrap_or(rest);
-        if num_part.parse::<usize>().is_ok() {
-            return None;
-        }
-    }
-
-    // COOK-221 / CS-0137: `$<recipe[in]>` — per-member ref (formerly `$<recipe[]>`,
-    // COOK-96). Strip the `[in]` index and treat as a recipe-level edge (the
-    // producer must build first).
-    if let Some(base) = token.strip_suffix("[in]") {
-        if recipe_names.contains(base) {
-            return Some(DepRef { recipe_name: base.to_string(), accessor: None });
-        }
-    }
-
-    // Rule 3: whole token is a recipe name
-    if recipe_names.contains(token) {
-        return Some(DepRef {
-            recipe_name: token.to_string(),
-            accessor: None,
-        });
-    }
-
-    // Rule 4: split on LAST dot, check if suffix is accessor and prefix is recipe name
-    if let Some(dot_pos) = token.rfind('.') {
-        let prefix = &token[..dot_pos];
-        let suffix = &token[dot_pos + 1..];
-
-        if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
-            return Some(DepRef {
-                recipe_name: prefix.to_string(),
-                accessor: Some(suffix.to_string()),
-            });
-        }
-    }
-
-    // Rule 5: env var or unknown — skip
-    None
+    let r = crate::resolver::recipe_ref(token, recipe_names)?;
+    Some(DepRef {
+        recipe_name: r.name,
+        accessor: r.accessor,
+    })
 }
 
 #[cfg(test)]

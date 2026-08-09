@@ -6,7 +6,7 @@ use cook_lang::ast::Body;
 use crate::cook_step::{cook_mode_to_iter_mode, count_to_output_shape, CookMode};
 use crate::lua_string::escape_lua_string;
 use crate::resolver::{
-    BuiltinKind, IterMode, OutputShape, ResolveCtx, ResolveError, Resolved,
+    accessor_ref, BuiltinKind, IterMode, OutputShape, ResolveCtx, ResolveError, Resolved,
 };
 use crate::sigil;
 
@@ -33,15 +33,8 @@ pub(crate) fn expand_command_template(
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
-    let spans = sigil::scan(cmd);
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
-    let mut parts: Vec<String> = vec![];
-    let mut cursor = 0usize;
-
-    for span in &spans {
-        if span.range.start > cursor {
-            parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..span.range.start])));
-        }
+    let concat_expr = join_spans(cmd, |span| {
         let resolved = crate::resolver::resolve(&span.ident, ctx);
         if let Resolved::ProbeRef { key, .. } = &resolved {
             // COOK-187 / CS-0122: probe-value refs stay LITERAL `$<key:...>`
@@ -51,25 +44,56 @@ pub(crate) fn expand_command_template(
             // `function() ... end` here is forbidden — cook.add_unit
             // rejects non-string commands.
             probe_keys.insert(key.clone());
-            parts.push(format!("\"{}\"", escape_lua_string(&cmd[span.range.clone()])));
+            Ok(lua_literal(&cmd[span.range.clone()]))
         } else {
-            let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env)?;
-            parts.push(lua_expr);
+            resolved_to_lua(resolved, &span.ident, consulted_env)
         }
-        cursor = span.range.end;
-    }
-    if cursor < cmd.len() {
-        parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..])));
-    }
-    if parts.is_empty() {
-        parts.push("\"\"".to_string());
-    }
-    let concat_expr = if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    };
+    })?;
     Ok((concat_expr, probe_keys))
+}
+
+/// A Lua string literal holding `text`.
+fn lua_literal(text: &str) -> String {
+    format!("\"{}\"", escape_lua_string(text))
+}
+
+/// Walk `template`'s `$<…>` spans and compose the Lua concatenation expression:
+/// the text between spans as string literals, each span lowered by `lower`,
+/// joined with `" .. "`, collapsed to the single part when there is one, and
+/// `""` when the template is empty.
+///
+/// Every expander in this module differs in how it LOWERS a span — that is
+/// where a chore parameter, a member binding, an iteration variable or a
+/// probe-lowering policy legitimately changes the answer. None of them differs
+/// in how it WALKS one, and five hand-rolled copies of the walk is what let the
+/// five dispatch chains CS-0184 collapsed drift apart in the first place: the
+/// copies looked different enough that nobody read them as the same code
+/// (COOK-415).
+fn join_spans(
+    template: &str,
+    mut lower: impl FnMut(&sigil::PlaceholderSpan) -> Result<String, ResolveError>,
+) -> Result<String, ResolveError> {
+    let spans = sigil::scan(template);
+    let mut parts: Vec<String> = Vec::new();
+    let mut last_end = 0usize;
+
+    for span in &spans {
+        if span.range.start > last_end {
+            parts.push(lua_literal(&template[last_end..span.range.start]));
+        }
+        parts.push(lower(span)?);
+        last_end = span.range.end;
+    }
+
+    if last_end < template.len() {
+        parts.push(lua_literal(&template[last_end..]));
+    }
+
+    Ok(match parts.len() {
+        0 => "\"\"".to_string(),
+        1 => parts.pop().expect("one part"),
+        _ => parts.join(" .. "),
+    })
 }
 
 /// How a probe-value reference (`$<key:...>`) lowers during template
@@ -110,63 +134,38 @@ pub(crate) fn expand_member_fanout_template(
     consulted_env: &mut ConsultedEnv,
     probe_lowering: ProbeLowering,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
-    let spans = sigil::scan(template);
-    let mut parts: Vec<String> = Vec::new();
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
-    let mut last_end = 0usize;
-
-    for span in &spans {
-        if span.range.start > last_end {
-            parts.push(format!(
-                "\"{}\"",
-                escape_lua_string(&template[last_end..span.range.start])
-            ));
-        }
+    let concat = join_spans(template, |span| {
         // §9.3 member binding takes precedence; everything else is the normal
         // closed-set resolution.
-        let lua = if let Some(b) = crate::resolver::match_member_sigil(&span.ident) {
-            builtin_to_lua(b)
-        } else {
-            let resolved = crate::resolver::resolve(&span.ident, ctx);
-            if let Resolved::ProbeRef { key, .. } = &resolved {
-                probe_keys.insert(key.clone());
-            }
-            // COOK-96 / COOK-221 / CS-0137: $<recipe[in]> inside a fan-out body
-            // lowers to a per-member output lookup. `item` is the loop-local Lua
-            // variable bound by the fan-out harness (BuiltinKind::Item →
-            // cook.member_to_string(item)).
-            if let Resolved::ProbeRef { .. } = &resolved {
-                if probe_lowering == ProbeLowering::LiteralSigil {
-                    // COOK-187 / CS-0122: literal sigil text for register-time
-                    // capture — see expand_command_template's doc comment.
-                    format!("\"{}\"", escape_lua_string(&template[span.range.clone()]))
-                } else {
-                    resolved_to_lua(resolved, &span.ident, consulted_env)?
-                }
-            } else if let Resolved::RecipeMember { ref name } = resolved {
-                format!(
-                    "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
-                    escape_lua_string(name)
-                )
+        if let Some(b) = crate::resolver::match_member_sigil(&span.ident) {
+            return Ok(builtin_to_lua(b));
+        }
+        let resolved = crate::resolver::resolve(&span.ident, ctx);
+        if let Resolved::ProbeRef { key, .. } = &resolved {
+            probe_keys.insert(key.clone());
+        }
+        // COOK-96 / COOK-221 / CS-0137: $<recipe[in]> inside a fan-out body
+        // lowers to a per-member output lookup. `item` is the loop-local Lua
+        // variable bound by the fan-out harness (BuiltinKind::Item →
+        // cook.member_to_string(item)).
+        if let Resolved::ProbeRef { .. } = &resolved {
+            if probe_lowering == ProbeLowering::LiteralSigil {
+                // COOK-187 / CS-0122: literal sigil text for register-time
+                // capture — see expand_command_template's doc comment.
+                Ok(lua_literal(&template[span.range.clone()]))
             } else {
-                resolved_to_lua(resolved, &span.ident, consulted_env)?
+                resolved_to_lua(resolved, &span.ident, consulted_env)
             }
-        };
-        parts.push(lua);
-        last_end = span.range.end;
-    }
-
-    if last_end < template.len() {
-        parts.push(format!("\"{}\"", escape_lua_string(&template[last_end..])));
-    }
-
-    let concat = if parts.is_empty() {
-        "\"\"".to_string()
-    } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    };
+        } else if let Resolved::RecipeMember { ref name } = resolved {
+            Ok(format!(
+                "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
+                escape_lua_string(name)
+            ))
+        } else {
+            resolved_to_lua(resolved, &span.ident, consulted_env)
+        }
+    })?;
     Ok((concat, probe_keys))
 }
 
@@ -241,74 +240,40 @@ pub(crate) fn expand_sigil_template_with_chore_params(
     chore_params: Option<&BTreeSet<String>>,
     probe_lowering: ProbeLowering,
 ) -> Result<String, ResolveError> {
-    let spans = sigil::scan(template);
-    if spans.is_empty() {
-        // No placeholders — entire string is literal.
-        return Ok(format!("\"{}\"", escape_lua_string(template)));
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-    let mut last_end = 0usize;
-
-    for span in &spans {
-        // Emit literal text before this placeholder.
-        if span.range.start > last_end {
-            let literal = &template[last_end..span.range.start];
-            parts.push(format!("\"{}\"", escape_lua_string(literal)));
-        }
-
+    join_spans(template, |span| {
         // Chore parameters are an innermost binding layer for chore shell
         // steps. Anything not declared as a parameter falls through to the
         // ordinary closed-set resolver, so env and recipe refs behave exactly
         // as they do in recipe bodies.
-        let lua_expr = if chore_params.is_some_and(|params| params.contains(&span.ident)) {
+        if chore_params.is_some_and(|params| params.contains(&span.ident)) {
             // CS-0128: the sigil expands per its shell quoting context. Scan the
             // command prefix up to this span to classify bare / double / single
             // and thread it into the runtime quoter.
-            let ctx =
-                cook_contracts::quoting::quote_context(&template[..span.range.start]).tag();
-            format!(
+            let qctx = cook_contracts::quoting::quote_context(&template[..span.range.start]).tag();
+            return Ok(format!(
                 "cook.{}({}[\"{}\"], \"{}\", \"{}\")",
                 cook_contracts::registration::QUOTE_PARAM_NAME,
                 crate::COOK_PARAMS_LOCAL,
                 escape_lua_string(&span.ident),
                 escape_lua_string(&span.ident),
-                ctx
-            )
+                qctx
+            ));
+        }
+        let resolved = crate::resolver::resolve(&span.ident, ctx);
+        if matches!(resolved, Resolved::ProbeRef { .. })
+            && probe_lowering == ProbeLowering::LiteralSigil
+        {
+            // CS-0193: a chore step's probe ref stays literal `$<...>`
+            // text in the captured command — cook.add_unit's scan wires
+            // the edge and demand scheduling, and the drain-thread spawn
+            // substitutes through the CS-0192 renderer. The old lowering
+            // read `cook.probes.get` on the register VM, which raises
+            // outside module context and created no edge.
+            Ok(lua_literal(&template[span.range.clone()]))
         } else {
-            let resolved = crate::resolver::resolve(&span.ident, ctx);
-            if matches!(resolved, Resolved::ProbeRef { .. })
-                && probe_lowering == ProbeLowering::LiteralSigil
-            {
-                // CS-0193: a chore step's probe ref stays literal `$<...>`
-                // text in the captured command — cook.add_unit's scan wires
-                // the edge and demand scheduling, and the drain-thread spawn
-                // substitutes through the CS-0192 renderer. The old lowering
-                // read `cook.probes.get` on the register VM, which raises
-                // outside module context and created no edge.
-                format!("\"{}\"", escape_lua_string(&template[span.range.clone()]))
-            } else {
-                resolved_to_lua(resolved, &span.ident, consulted_env)?
-            }
-        };
-        parts.push(lua_expr);
-
-        last_end = span.range.end;
-    }
-
-    // Emit any trailing literal text.
-    if last_end < template.len() {
-        let literal = &template[last_end..];
-        parts.push(format!("\"{}\"", escape_lua_string(literal)));
-    }
-
-    if parts.is_empty() {
-        Ok("\"\"".to_string())
-    } else if parts.len() == 1 {
-        Ok(parts.into_iter().next().unwrap())
-    } else {
-        Ok(parts.join(" .. "))
-    }
+            resolved_to_lua(resolved, &span.ident, consulted_env)
+        }
+    })
 }
 
 /// Convert a `Resolved` value to a Lua expression string.
@@ -434,10 +399,9 @@ pub(crate) fn output_pattern_kind_with_recipes(
 /// Walk a pattern's `$<TOKEN.SUFFIX>` placeholders and return the first TOKEN
 /// that is a recipe in scope carrying a known path accessor.
 fn first_dep_accessor_sigil(pattern: &str, recipe_names: &BTreeSet<String>) -> Option<String> {
-    sigil::scan(pattern).into_iter().find_map(|span| {
-        let (prefix, suffix) = span.ident.rsplit_once('.')?;
-        (ACCESSORS.contains(&suffix) && recipe_names.contains(prefix)).then(|| prefix.to_string())
-    })
+    sigil::scan(pattern)
+        .into_iter()
+        .find_map(|span| Some(accessor_ref(&span.ident, recipe_names)?.name.to_string()))
 }
 
 /// Expand an output pattern using sigil-based substitution.
@@ -461,36 +425,8 @@ pub(crate) fn expand_output_pattern(
         recipes_in_scope: recipe_names,
     };
 
-    let spans = sigil::scan(pattern);
-    if spans.is_empty() {
-        return Ok(format!("\"{}\"", escape_lua_string(pattern)));
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-    let mut last_end = 0usize;
-
-    for span in &spans {
-        if span.range.start > last_end {
-            let literal = &pattern[last_end..span.range.start];
-            parts.push(format!("\"{}\"", escape_lua_string(literal)));
-        }
-
-        parts.push(output_pattern_ident_to_lua(&span.ident, &ctx, out)?);
-
-        last_end = span.range.end;
-    }
-
-    if last_end < pattern.len() {
-        let literal = &pattern[last_end..];
-        parts.push(format!("\"{}\"", escape_lua_string(literal)));
-    }
-
-    Ok(if parts.is_empty() {
-        "\"\"".to_string()
-    } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
+    join_spans(pattern, |span| {
+        output_pattern_ident_to_lua(&span.ident, &ctx, out)
     })
 }
 
@@ -503,13 +439,24 @@ fn output_pattern_ident_to_lua(
     out: &mut ConsultedEnv,
 ) -> Result<String, ResolveError> {
     // Check if this is a recipe accessor that should normalize to path.X(_cook_in).
-    if let Some(dot_pos) = ident.rfind('.') {
-        let prefix = &ident[..dot_pos];
-        let suffix = &ident[dot_pos + 1..];
-        if ACCESSORS.contains(&suffix) && ctx.recipes_in_scope.contains(prefix) {
-            // dep.accessor → path.accessor(_cook_in) (dep-driven normalization)
-            return Ok(format!("path.{}(_cook_in)", suffix));
-        }
+    //
+    // Ahead of `resolve`, which is where this position departs from
+    // §{xref.position-independence} — kept, not endorsed. For almost every
+    // ident the order is unobservable, because no name that can reach here also
+    // has builtin shape. The exception is a recipe named `out_N`:
+    // §{xref.reserved-segment} reserves only the accessors plus `in` and `out`,
+    // so `out_1` is a legal recipe name, and `$<out_1.stem>` reads as that
+    // recipe here and as `$<out_1>.stem` in a body. `collect_drivers` and
+    // `first_dep_accessor_sigil` agree with this position; `recipe_ref` — and
+    // therefore the edge set — agrees with the body. That is a real
+    // position-dependence, it predates CS-0210, and CS-0210 is what makes it
+    // nameable. Reordering it here would not fix it: the classification sites
+    // above would still disagree, and the sigil would go from "dep-driven" to
+    // "wrong output count" for anyone using it. The fix belongs with the
+    // reserved-segment rule; COOK-441 carries it.
+    if let Some(r) = accessor_ref(ident, ctx.recipes_in_scope) {
+        // dep.accessor → path.accessor(_cook_in) (dep-driven normalization)
+        return Ok(format!("path.{}(_cook_in)", r.accessor));
     }
 
     // Otherwise use normal resolution.
@@ -732,11 +679,6 @@ pub(crate) fn expand_plate_test_body(
     iter_var: &str,
     out: &mut ConsultedEnv,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
-    let spans = sigil::scan(template);
-    if spans.is_empty() {
-        return Ok((format!("\"{}\"", escape_lua_string(template)), BTreeSet::new()));
-    }
-
     // A plate/test body iterates one-to-one over its source and declares no
     // outputs. `OneShot` bodies bind `iter_var` to `""` at the call site rather
     // than changing the mode, so `$<in>` keeps one meaning here.
@@ -746,22 +688,14 @@ pub(crate) fn expand_plate_test_body(
         recipes_in_scope: recipe_names,
     };
 
-    let mut parts: Vec<String> = Vec::new();
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
-    let mut last_end = 0usize;
-
-    for span in &spans {
-        if span.range.start > last_end {
-            let literal = &template[last_end..span.range.start];
-            parts.push(format!("\"{}\"", escape_lua_string(literal)));
-        }
-
-        let lua = match crate::resolver::resolve(&span.ident, &ctx) {
+    let concat = join_spans(template, |span| {
+        match crate::resolver::resolve(&span.ident, &ctx) {
             // The one substitution that is genuinely plate/test-specific: the
             // iteration variable is the caller's, not `_cook_in`.
-            Resolved::Builtin(BuiltinKind::In) => iter_var.to_string(),
+            Resolved::Builtin(BuiltinKind::In) => Ok(iter_var.to_string()),
             Resolved::Builtin(BuiltinKind::InAccessor(acc)) => {
-                format!("path.{}({})", acc, iter_var)
+                Ok(format!("path.{}({})", acc, iter_var))
             }
             // Collected, not lowered on the caller's behalf: a test command has
             // no execute-phase probe substitution, so the caller rejects the
@@ -770,31 +704,15 @@ pub(crate) fn expand_plate_test_body(
                 probe_keys.insert(key.clone());
                 // CS-0195: same helper; the caller rejects test-position probe
                 // refs before this string is ever used.
-                format!(
+                Ok(format!(
                     "cook.{}(\"{}\")",
                     cook_contracts::registration::PROBE_SUBST_NAME,
                     escape_lua_string(&span.ident)
-                )
+                ))
             }
-            other => resolved_to_lua(other, &span.ident, out)?,
-        };
-        parts.push(lua);
-
-        last_end = span.range.end;
-    }
-
-    if last_end < template.len() {
-        let literal = &template[last_end..];
-        parts.push(format!("\"{}\"", escape_lua_string(literal)));
-    }
-
-    let concat = if parts.is_empty() {
-        "\"\"".to_string()
-    } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    };
+            other => resolved_to_lua(other, &span.ident, out),
+        }
+    })?;
     Ok((concat, probe_keys))
 }
 
@@ -840,16 +758,12 @@ pub(crate) fn validate_placeholders(
             continue;
         }
         // Additionally check lib.accessor in a cook-step body (rejected by CS-0022 §6.7).
-        if let Some(dot) = span.ident.rfind('.') {
-            let prefix = &span.ident[..dot];
-            let suffix = &span.ident[dot + 1..];
-            if ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
-                return Err(format!(
-                    "$<{}.{}> is rejected inside a cook-step body; \
-                     use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
-                    prefix, suffix, suffix, prefix
-                ));
-            }
+        if let Some(r) = accessor_ref(&span.ident, ctx.recipe_names) {
+            return Err(format!(
+                "$<{}.{}> is rejected inside a cook-step body; \
+                 use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
+                r.name, r.accessor, r.accessor, r.name
+            ));
         }
     }
     Ok(())

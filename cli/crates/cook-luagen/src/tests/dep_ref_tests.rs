@@ -228,6 +228,74 @@ fn parse_dep_token_strips_bracket_index_for_recipe_member() {
     assert_eq!(parse_dep_token("notarecipe[in]", &names), None);
 }
 
+// ── CS-0210: the edge set is derived from the resolution, not beside it ──────
+
+/// An `import` alias is not checked against the reserved recipe segments
+/// (§{xref.reserved-segment} binds declaration sites, and `import in ./x.cook`
+/// declares nothing), so `in.foo` is a reachable qualified name. The resolver
+/// reads it as a recipe reference and codegen emits `cook.dep_output("in.foo")`;
+/// before CS-0210 the dep analyser skipped it on a `starts_with("in.")` prefix
+/// test of its own and recorded no edge, so the substituted output was read
+/// with no ordering guarantee that it had been produced.
+#[test]
+fn cs_0210_a_qualified_name_under_a_builtin_looking_alias_is_a_dep() {
+    for alias in ["in", "out", "env", "out_1"] {
+        let qualified = format!("{alias}.foo");
+        let mut names = BTreeSet::new();
+        names.insert(qualified.clone());
+
+        assert_eq!(
+            parse_dep_token(&qualified, &names),
+            Some(DepRef { recipe_name: qualified.clone(), accessor: None }),
+            "$<{qualified}> names a recipe in scope, so it establishes an edge"
+        );
+    }
+}
+
+/// The standing agreement test for CS-0210: over a corpus that exercises every
+/// resolution step, the dependency analyser and the resolver name the same
+/// referent. They are one call now; this fails the build if they re-fork.
+#[test]
+fn cs_0210_dep_extraction_agrees_with_the_resolver() {
+    let names: BTreeSet<String> = [
+        "libmath",
+        "protos",
+        "backend.build",
+        "in.foo",
+        "out.foo",
+        "env.foo",
+        "out_1",
+        // An `import` alias is unconstrained text, so a colon-bearing qualified
+        // name is reachable — and §{xref.resolution} sends it to the probe-value
+        // path before step 2, so it is NOT a recipe reference and carries no
+        // edge. The old analyser recorded one, pointing at a producer the
+        // substitution never read (CS-0210 withdraws it).
+        "a:b.foo",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    let idents = [
+        "in", "out", "in.stem", "out.dir", "out_1", "out_0", "out_1.stem", "out_1.bogus",
+        "libmath", "libmath.stem", "libmath.bogus", "protos.name", "backend.build",
+        "backend.build.stem", "in.foo", "out.foo", "env.foo", "env.HOME", "CC", "var.CC",
+        "libmath[in]", "libmath[]", "libmath[x]", "notarecipe[in]", "sys:os", "file:a.txt",
+        "stem", "libmath.", ".stem", "a:b.foo", "a:b.stem",
+    ];
+
+    for ident in idents {
+        let from_deps = parse_dep_token(ident, &names)
+            .map(|d| (d.recipe_name, d.accessor));
+        let from_resolver =
+            crate::resolver::recipe_ref(ident, &names).map(|r| (r.name, r.accessor));
+        assert_eq!(
+            from_deps, from_resolver,
+            "$<{ident}>: the dependency edge and the substitution must name the same referent"
+        );
+    }
+}
+
 #[test]
 fn cs_0022_shell_block_dep_ref_extraction() {
     // Shell block with $<NAME> references must be extracted.
