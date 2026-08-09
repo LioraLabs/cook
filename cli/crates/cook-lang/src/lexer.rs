@@ -157,11 +157,15 @@ fn is_probe_seg_char(c: char) -> bool {
 /// (`UnusableDerivedAlias`): the author did not write `9lives`, the basename of
 /// the file they named did, so the remedy is the explicit-alias form and the
 /// diagnostic has to say so rather than complaining about a name nobody typed.
+///
+/// The character rule itself moved to `cook_contracts::module_binding` under
+/// CS-0220, when `cook modules install` became a second consumer: it must know
+/// what this lexer will accept BEFORE it writes a `use` line, and an installer
+/// that disagreed with this check by one character would write a Cookfile this
+/// crate refuses to read. What stays here is the part that is genuinely this
+/// crate's — which diagnostic a violation earns, and at which line.
 fn check_use_name(name: &str, position: UseNamePosition, line: usize) -> Result<(), LexError> {
-    let mut chars = name.chars();
-    let ok_start = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
-    let ok_rest = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if !ok_start || !ok_rest || name.is_empty() {
+    if !cook_contracts::module_binding::is_use_name(name) {
         return Err(LexError::InvalidUseName {
             name: name.to_string(),
             position,

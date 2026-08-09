@@ -79,9 +79,13 @@ invocation and renders what happened, as terminal output and an exit code.
 
 ## What it does not do
 
-It parses nothing, registers nothing, executes nothing, and caches nothing:
-`cook-engine` owns all four, and this crate's job at each command is to choose
-the entry point and the register mode. It does not render the progress stream
+It registers nothing, executes nothing, and caches nothing: `cook-engine` owns
+all three, and this crate's job at each command is to choose the entry point
+and the register mode. It parses nothing of what it builds, with one exception
+that is not about building: `cook modules install` reaches `cook-cookfile` to
+add a `use` declaration (CS-0220), and locating where a declaration goes needs
+a grammar. That is an edit to the author's file, not a reading of it — nothing
+here decides what a Cookfile MEANS, which stays `cook-lang`'s. It does not render the progress stream
 (`cook-progress` owns the renderers; this crate only selects one from
 `--output`, TTY, and CI), store build logs (`cook-logs`), collapse a DAG to a
 level (`cook-graph`), or define anything two crates must agree on
@@ -89,10 +93,19 @@ level (`cook-graph`), or define anything two crates must agree on
 
 It does not manage packages. `cook modules` is a LuaRocks front end —
 manifest, lockfile, subprocess driver — that lived here until COOK-420 and
-never once touched `cook-engine`; it is `cook-modules` now, and this crate's
-whole involvement is one `Cmd::Modules` variant and one call. Five direct
+never once touched `cook-engine`; it is `cook-modules` now, and five direct
 dependencies left with it (see the note in `Cargo.toml`), which is the honest
 measure of how little of it was ever CLI work.
+
+What stayed is the part that was never package management: writing the
+author's project files. `cook init` creates a Cookfile and merges the managed
+`.gitignore` section, and since CS-0220 a named `cook modules install` does the
+same when the project has no Cookfile yet, plus the `use` declaration that
+makes the installed module reachable (`wire_use.rs`). The dispatch arm is
+therefore three calls rather than one — which rocks were named, the install,
+and the declaration — and the split is where the stratum table put it:
+`cook-cookfile` sits in `cook-modules`' own stratum, so the crate that installs
+the rock cannot be the crate that edits the Cookfile.
 
 It does not run a shell command either, which is why a `CommandFailure` reaches
 `engine_error_to_cook_error` as wire text and is rendered here rather than

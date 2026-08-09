@@ -22,4 +22,4 @@ pub mod driver;
 pub mod lockfile;
 pub mod manifest;
 
-pub use cli::{run, ModulesArgs};
+pub use cli::{installed_names, run, ModulesArgs, ModulesCmd};

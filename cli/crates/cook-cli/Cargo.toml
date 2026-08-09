@@ -29,6 +29,12 @@ cook-graph = { path = "../cook-graph" }
 # `cook modules` is a package manager whose only workspace contact is
 # cook-contracts; cook-cli dispatches to it and renders nothing of its own.
 cook-modules = { path = "../cook-modules" }
+# The structure-preserving Cookfile editor (§22.13). Reached for one edit this
+# crate owns: the `use` declaration a named `cook modules install` writes
+# (§27.1.1, CS-0220). It lands here rather than in cook-modules because both of
+# those crates are `mechanism` in the stratum table, and the edge would be
+# sideways.
+cook-cookfile = { path = "../cook-cookfile" }
 
 # `string` lets runtime-discovered recipe names be injected as clap
 # subcommands for completion; without it a subcommand name must be &'static str.

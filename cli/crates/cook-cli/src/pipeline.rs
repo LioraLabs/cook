@@ -1628,15 +1628,22 @@ chore clean
     Ok(())
 }
 
-/// Marker line that identifies a Cook-managed `.gitignore` section. Used to
-/// keep `cook init` idempotent across re-runs.
-const COOK_GITIGNORE_MARKER: &str = "# Cook artifacts (added by cook init)";
+/// Prefix of the marker line that identifies a Cook-managed `.gitignore`
+/// section. Used to keep the section idempotent across re-runs.
+///
+/// A PREFIX rather than the whole line, because the line used to name the verb
+/// that wrote it (`added by cook init`) and two verbs write it now: `cook init`
+/// and, since CS-0220, a `cook modules install` that creates the Cookfile. A
+/// `.gitignore` written by an older `cook init` still carries the old wording
+/// and must be recognised as the same section, or the next run appends a
+/// second copy of it.
+pub(crate) const COOK_GITIGNORE_MARKER: &str = "# Cook artifacts (added by cook";
 
 /// The Cook-managed `.gitignore` block. Only entries that are unambiguously
 /// Cook-specific go here — language/toolchain ignores (target/, node_modules/)
 /// are the user's call.
 const COOK_GITIGNORE_SECTION: &str = "\
-# Cook artifacts (added by cook init)
+# Cook artifacts (added by cook)
 # .cook/ holds caches, per-project state, and the luarocks tree that
 # `cook modules install` populates (.cook/modules/). cloud.toml is the one
 # tracked file. Everything cook generates is under here, so one rule covers it.
@@ -1649,16 +1656,23 @@ const COOK_GITIGNORE_SECTION: &str = "\
 ";
 
 #[derive(Debug, PartialEq, Eq)]
-enum GitignoreMerge {
+pub(crate) enum GitignoreMerge {
     Unchanged,
     Created(String),
     Appended(String),
 }
 
 /// Pure helper: given the current contents of `.gitignore` (or `None` if
-/// missing), decide what the file should look like after `cook init`. The
-/// result is a [`GitignoreMerge`] the caller can act on.
-fn merge_cook_gitignore_section(existing: Option<&str>) -> GitignoreMerge {
+/// missing), decide what the file should look like after a verb that writes
+/// the managed section. The result is a [`GitignoreMerge`] the caller can act
+/// on.
+///
+/// Two callers: `cmd_init` below, and `wire_use` when a named
+/// `cook modules install` creates the project's first Cookfile (CS-0220). Both
+/// are in this crate, so the decision stays here rather than descending to
+/// `cook-contracts` — that crate's bar is a law more than one CRATE must
+/// agree on, and a second call site is not a second crate.
+pub(crate) fn merge_cook_gitignore_section(existing: Option<&str>) -> GitignoreMerge {
     match existing {
         None => GitignoreMerge::Created(COOK_GITIGNORE_SECTION.to_string()),
         Some(s) if s.contains(COOK_GITIGNORE_MARKER) => GitignoreMerge::Unchanged,

@@ -397,6 +397,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "cook-contracts",
+ "cook-cookfile",
  "cook-engine",
  "cook-graph",
  "cook-lang",

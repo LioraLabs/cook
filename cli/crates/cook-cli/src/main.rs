@@ -13,6 +13,7 @@ mod test_reporter;
 mod test_state;
 mod watcher;
 mod why_render;
+mod wire_use;
 
 use clap::CommandFactory;
 use cook_cli::diagnostics;
@@ -110,7 +111,21 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
         Some(Cmd::List) => cmd_menu(&globals),
-        Some(Cmd::Modules(args)) => std::process::exit(cook_modules::run(args)),
+        Some(Cmd::Modules(args)) => {
+            // §27.1.1 (CS-0220): a named install also declares what it
+            // installed. Asked before the run because `run` consumes the args,
+            // and acted on only after it succeeds — a module that failed to
+            // install is not a module to `use`.
+            let declared = cook_modules::installed_names(&args.cmd);
+            let code = cook_modules::run(args);
+            if code != 0 || declared.is_empty() {
+                std::process::exit(code);
+            }
+            let project_dir =
+                std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+            wire_use::wire_use_declarations(&project_dir, &declared)?;
+            std::process::exit(0)
+        }
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Logs(args)) => {
             let selector = if args.last_failed {
