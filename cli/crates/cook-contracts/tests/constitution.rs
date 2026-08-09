@@ -807,6 +807,11 @@ const STRATA: [(&str, &[&str]); 6] = [
             "cook-lang",
             "cook-cookfile",
             "cook-progress",
+            // A package manager: filesystem, subprocess, and one workspace
+            // edge. It reaches nothing above it and nothing above it reaches
+            // it except the surface that dispatches `cook modules`, which is
+            // the whole reason it could leave cook-cli (COOK-420).
+            "cook-modules",
         ],
     ),
     (

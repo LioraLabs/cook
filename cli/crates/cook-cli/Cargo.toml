@@ -26,6 +26,9 @@ cook-plan = { path = "../cook-plan" }
 cook-engine = { path = "../cook-engine" }
 cook-logs = { path = "../cook-logs" }
 cook-graph = { path = "../cook-graph" }
+# `cook modules` is a package manager whose only workspace contact is
+# cook-contracts; cook-cli dispatches to it and renders nothing of its own.
+cook-modules = { path = "../cook-modules" }
 
 # `string` lets runtime-discovered recipe names be injected as clap
 # subcommands for completion; without it a subcommand name must be &'static str.
@@ -37,18 +40,19 @@ clap_complete = { version = "~4.6", features = ["unstable-dynamic"] }
 notify = "7"
 glob = "0.3"
 globset = "0.4"
-dirs = "5"
-anyhow = "1"
-toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 humantime = "2"
-base64 = "0.22"
-sha2 = "0.10"
 
 [features]
 default = []
 
+# Five entries left this list with `cook modules` (COOK-420): `anyhow` and
+# `base64` outright, and `dirs`, `toml` and `sha2` down to dev-dependencies,
+# where the tests that read a cache directory, parse a dumped index or hash a
+# fixture still want them. What is left is what a CLI shell needs — argument
+# parsing, completion, file watching, globbing, and JSON — which is the
+# preamble above finally being true of the manifest under it.
 [dev-dependencies]
 tempfile = "3"
 cargo_metadata = "0.18"
@@ -56,3 +60,6 @@ walkdir = "2"
 serial_test = "3"
 serde_json = "1"
 regex = "1"
+dirs = "5"
+toml = "0.8"
+sha2 = "0.10"

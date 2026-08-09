@@ -18,7 +18,7 @@ use std::process::{Command, Output};
 use anyhow::{anyhow, Context, Result};
 use cook_contracts::CapturedStream;
 
-use crate::modules::lockfile::LockedModule;
+use crate::lockfile::LockedModule;
 
 #[derive(Debug, Clone)]
 pub struct RocksDriver {

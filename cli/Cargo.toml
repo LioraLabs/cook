@@ -16,6 +16,7 @@ members = [
     "crates/cook-plan",
     "crates/cook-graph",
     "crates/cook-logs",
+    "crates/cook-modules",
     "crates/cook-cli",
 ]
 resolver = "2"

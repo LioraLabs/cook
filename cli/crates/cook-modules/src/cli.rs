@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::modules::driver::RocksDriver;
-use crate::modules::lockfile::{self, Lockfile};
-use crate::modules::manifest::{self, ManifestModules, ManifestRegistry};
+use crate::driver::RocksDriver;
+use crate::lockfile::{self, Lockfile};
+use crate::manifest::{self, ManifestModules, ManifestRegistry};
 
 #[derive(Args, Debug, Clone)]
 pub struct ModulesArgs {

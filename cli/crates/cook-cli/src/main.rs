@@ -16,7 +16,6 @@ mod why_render;
 
 use clap::CommandFactory;
 use cook_cli::diagnostics;
-use cook_cli::modules;
 
 use cli::{Cli, Cmd};
 use error::CookError;
@@ -111,7 +110,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
         Some(Cmd::List) => cmd_menu(&globals),
-        Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
+        Some(Cmd::Modules(args)) => std::process::exit(cook_modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Logs(args)) => {
             let selector = if args.last_failed {

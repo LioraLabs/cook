@@ -393,8 +393,6 @@ dependencies = [
 name = "cook-cli"
 version = "0.14.0"
 dependencies = [
- "anyhow",
- "base64",
  "cargo_metadata",
  "clap",
  "clap_complete",
@@ -403,6 +401,7 @@ dependencies = [
  "cook-graph",
  "cook-lang",
  "cook-logs",
+ "cook-modules",
  "cook-plan",
  "cook-progress",
  "dirs",
@@ -542,6 +541,22 @@ dependencies = [
  "cook-contracts",
  "cook-lang",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "cook-modules"
+version = "0.14.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "cook-contracts",
+ "dirs",
+ "serde",
+ "serial_test",
+ "sha2",
+ "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]

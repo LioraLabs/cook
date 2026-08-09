@@ -14,7 +14,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::modules::manifest::ManifestModules;
+use crate::manifest::ManifestModules;
 
 const SCHEMA_VERSION: u32 = 1;
 
