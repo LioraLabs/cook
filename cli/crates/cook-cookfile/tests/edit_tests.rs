@@ -4,7 +4,7 @@
 //! and changes nothing else. Most assertions therefore check what did NOT
 //! move, which is the half a decode/re-encode implementation would fail.
 
-use cook_cookfile::{append_declaration, find_call, splice_into_field, EditError};
+use cook_cookfile::{append_declaration, ensure_use, find_call, splice_into_field, EditError, UseEdit};
 
 const APP: &str = "\
 use cook_cc
@@ -325,4 +325,247 @@ fn a_subtraction_expression_is_not_read_as_a_comment() {
     let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
     assert!(out.contains("{ n-1 }"), "expression untouched: {out}");
     assert!(out.contains("links = { \"a\", \"b\" }"), "got: {out}");
+}
+
+// ---------------------------------------------------------------------------
+// `ensure_use`. Two properties carry every case below. Presence is structural,
+// so text that merely spells `use cook_cc` does not count as the declaration;
+// and the insert is one run of bytes at one offset, so the assertions are on
+// the WHOLE result rather than on a substring of it — a `contains` cannot tell
+// an insertion from a rewrite that happens to still contain the line.
+// ---------------------------------------------------------------------------
+
+/// Unwrap an insertion, naming the other variant when it comes back instead.
+fn inserted(edit: UseEdit) -> String {
+    match edit {
+        UseEdit::Inserted(out) => out,
+        UseEdit::AlreadyPresent => panic!("expected an insertion, got AlreadyPresent"),
+    }
+}
+
+#[test]
+fn an_empty_file_gets_the_declaration_and_no_trailing_blank_line() {
+    // Nothing follows, so the blank line separating the run from the first
+    // declaration would be trailing whitespace nobody asked for.
+    assert_eq!(
+        ensure_use("", "cook_cc").unwrap(),
+        UseEdit::Inserted("use cook_cc\n".into())
+    );
+}
+
+#[test]
+fn the_declaration_lands_after_a_leading_comment_block() {
+    // A file's opening comment block is its header — licence, provenance, what
+    // this Cookfile builds. Inserting above it buries that under machinery, so
+    // the run starts on the first line the block does not own. The blank line
+    // that already separates the block from the recipe is left to do its job:
+    // no second one is added.
+    let src = "\
+# Build the app.
+# Two lines of it.
+
+recipe app
+    cook_cc.bin({})
+";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "\
+# Build the app.
+# Two lines of it.
+use cook_cc
+
+recipe app
+    cook_cc.bin({})
+"
+    );
+}
+
+#[test]
+fn a_blank_line_ends_the_header_so_a_comment_keeps_the_declaration_it_describes() {
+    // The second comment here is not part of the header; it introduces the
+    // recipe under it. Continuing the run through it would insert the
+    // declaration BETWEEN a comment and the thing it describes, which is the
+    // damage §22.13 exists to prevent, arrived at from the other side.
+    let src = "\
+# Build the app.
+
+# The release binary.
+recipe app
+    cook_cc.bin({})
+";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "\
+# Build the app.
+use cook_cc
+
+# The release binary.
+recipe app
+    cook_cc.bin({})
+"
+    );
+}
+
+#[test]
+fn a_use_group_is_joined_across_the_blank_line_below_the_header() {
+    // A blank line between `use` lines separates nothing: they are one group
+    // however the author spaced them. Stopping at it would put the second
+    // install's declaration above the first's, in argv order reversed.
+    let src = "\
+# Build the app.
+
+use cook_pnpm
+
+recipe app
+    cook_cc.bin({})
+";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "\
+# Build the app.
+
+use cook_pnpm
+use cook_cc
+
+recipe app
+    cook_cc.bin({})
+"
+    );
+}
+
+#[test]
+fn a_file_opening_on_a_declaration_gets_the_use_at_byte_zero() {
+    // Offset 0 with a blank line after it, because `use cook_cc` sitting flush
+    // against `recipe app` is not how anyone writes a Cookfile.
+    let src = "recipe app\n    cook_cc.bin({})\n";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "use cook_cc\n\nrecipe app\n    cook_cc.bin({})\n"
+    );
+}
+
+#[test]
+fn an_existing_bare_declaration_is_already_present() {
+    assert_eq!(ensure_use(APP, "cook_cc").unwrap(), UseEdit::AlreadyPresent);
+}
+
+#[test]
+fn an_existing_quoted_declaration_is_already_present() {
+    // `use "cook_cc"` is the same declaration spelled the other legal way. A
+    // presence check that missed it would write a second `use` for a module
+    // already bound.
+    let src = "use \"cook_cc\"\n\nrecipe app\n    cook_cc.bin({})\n";
+    assert_eq!(ensure_use(src, "cook_cc").unwrap(), UseEdit::AlreadyPresent);
+}
+
+#[test]
+fn a_declaration_below_the_leading_run_still_counts_as_present() {
+    // Presence is asked of every top-level `use`, not of the run the insert
+    // would have joined. The author is allowed to have put it further down.
+    let src = "recipe app\n    cook_cc.bin({})\n\nuse cook_cc\n";
+    assert_eq!(ensure_use(src, "cook_cc").unwrap(), UseEdit::AlreadyPresent);
+}
+
+#[test]
+fn the_path_form_does_not_satisfy_a_module_name() {
+    // `use cook_cc "./vendor/cook_cc.lua"` binds the name to a file, and the
+    // grammar records `cook_cc` there as the ALIAS, not the module. Reading it
+    // as the module would report a module that was never named.
+    let src = "use cook_cc \"./vendor/cc.lua\"\n\nrecipe app\n    cook_cc.bin({})\n";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "use cook_cc \"./vendor/cc.lua\"\nuse cook_cc\n\nrecipe app\n    cook_cc.bin({})\n"
+    );
+}
+
+#[test]
+fn a_use_line_inside_a_recipe_body_is_not_a_declaration() {
+    // The reason presence is decided over nodes and not over `src.contains`.
+    // Inside a step body this is shell text — a comment, a shell function, an
+    // `echo` argument — and the grammar agrees: it produces `shell_content`,
+    // never a `use_declaration`. A substring check reports the module bound
+    // and the Cookfile then fails to load.
+    let src = "\
+recipe app
+    cook \"out\" {
+        use cook_cc
+        echo hi
+    }
+";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "\
+use cook_cc
+
+recipe app
+    cook \"out\" {
+        use cook_cc
+        echo hi
+    }
+"
+    );
+}
+
+#[test]
+fn a_second_module_joins_the_existing_run_in_order() {
+    let src = "use cook_cc\n\nrecipe app\n    cook_cc.bin({})\n";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_pnpm").unwrap()),
+        "use cook_cc\nuse cook_pnpm\n\nrecipe app\n    cook_cc.bin({})\n"
+    );
+}
+
+#[test]
+fn the_edit_is_exactly_the_inserted_bytes_and_nothing_else() {
+    // The preservation property of §22.13, stated as bytes rather than as a
+    // list of things that happened to survive: removing the inserted run from
+    // the output must give the input back, character for character. The
+    // fixture carries a comment, column alignment and a bare identifier value,
+    // each of which a decode/re-encode implementation destroys differently.
+    let out = inserted(ensure_use(APP, "cook_pnpm").unwrap());
+    let insertion = "use cook_pnpm\n";
+    assert_eq!(out.len(), APP.len() + insertion.len());
+    assert_eq!(out.replacen(insertion, "", 1), APP);
+    assert_eq!(out, "use cook_cc\nuse cook_pnpm\n".to_string() + &APP["use cook_cc\n".len()..]);
+}
+
+#[test]
+fn applying_the_edit_to_its_own_output_changes_nothing() {
+    // A chore that runs twice must not write twice. Idempotency is what makes
+    // `ensure_` the right name for the verb.
+    for src in [
+        "",
+        "recipe app\n    cook_cc.bin({})\n",
+        "# header\n\nrecipe app\n    cook_cc.bin({})\n",
+        "use cook_pnpm\n\nrecipe app\n    cook_cc.bin({})\n",
+    ] {
+        let once = inserted(ensure_use(src, "cook_cc").unwrap());
+        assert_eq!(
+            ensure_use(&once, "cook_cc").unwrap(),
+            UseEdit::AlreadyPresent,
+            "second pass over {once:?} must be a no-op"
+        );
+    }
+}
+
+#[test]
+fn a_file_without_a_final_newline_is_not_run_together_with_the_insert() {
+    // The one place the insert is not simply `use NAME\n`. Anchoring after a
+    // last line the author never terminated would produce `# no newlineuse
+    // cook_cc`, which is a comment swallowing the declaration: the file still
+    // parses and the module is still unbound.
+    let src = "# no trailing newline";
+    assert_eq!(
+        inserted(ensure_use(src, "cook_cc").unwrap()),
+        "# no trailing newline\nuse cook_cc\n"
+    );
+}
+
+#[test]
+fn an_unparseable_cookfile_is_refused_before_any_use_is_added() {
+    // Same posture as `splice_into_field`: a syntax error the author already
+    // has is never compounded by an insertion landing somewhere arbitrary,
+    // and an offset derived from a tree full of ERROR nodes is arbitrary.
+    let src = "recipe app\n    cook_cc.bin({ links = { \"a\" }\n";
+    assert_eq!(ensure_use(src, "cook_cc").unwrap_err(), EditError::Unparseable);
 }

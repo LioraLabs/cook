@@ -514,6 +514,179 @@ pub fn append_declaration(source: &str, text: &str) -> String {
     format!("{trimmed}\n\n{body}\n")
 }
 
+/// What [`ensure_use`] did.
+///
+/// The two are distinguished rather than collapsed into a `String` because the
+/// caller writes the file. Handing back the source unchanged would leave it
+/// with no way to tell "already correct" from "edited", so it would write
+/// either way: an mtime bump, a rebuild of everything downstream of the
+/// Cookfile, and a line in `git status` for an edit nobody made. `ensure_` is
+/// only honestly named if the second run is free.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UseEdit {
+    /// The declaration is already there; the file is not rewritten.
+    AlreadyPresent,
+    /// The edited source, with exactly the inserted bytes added.
+    Inserted(String),
+}
+
+/// The module a `use_declaration` binds by name, unquoted.
+///
+/// `None` for the path form `use ALIAS "./x.lua"`, whose identifier the
+/// grammar records as `alias` and not as `module` (`grammar.js`,
+/// `use_declaration`). The distinction matters: the path form binds that name
+/// to a file the author chose, so treating it as `use cook_cc` would report a
+/// module nobody named and skip the declaration that actually loads it.
+fn declared_module<'s>(node: Node<'_>, source: &'s str) -> Option<&'s str> {
+    let field = node.child_by_field_name("module")?;
+    // Bare or double-quoted, exactly as recipe names are; the quoted form is
+    // an exact equivalent, so compare on the unquoted text.
+    Some(source[field.byte_range()].trim().trim_matches('"'))
+}
+
+/// Offset just past the newline terminating the line that `end` closes.
+///
+/// Node spans disagree about the newline and both spellings occur among the
+/// nodes the `use` run walks: a `use_declaration` swallows its terminator (the
+/// grammar requires one), while a `comment` stops at the last byte of its
+/// text. Scanning forward unconditionally would step over an entire extra line
+/// in the first case, which is how an insert lands below the recipe header it
+/// was meant to precede.
+fn past_line_end(source: &str, end: usize) -> usize {
+    if end > 0 && source.as_bytes()[end - 1] == b'\n' {
+        return end;
+    }
+    match source[end..].find('\n') {
+        Some(i) => end + i + 1,
+        None => source.len(),
+    }
+}
+
+/// Whether a blank line separates `from` — always the start of a line — from
+/// the node beginning at `to`.
+///
+/// `from` is `past_line_end`'s output, so it sits immediately after a newline
+/// or at offset 0; any newline in the gap is therefore a line with nothing on
+/// it. Blank lines are the hidden `_newline` rule and never appear among named
+/// children, so a walk over the tree alone cannot see the one thing that tells
+/// a file's header apart from a comment introducing the next declaration.
+fn opens_a_new_block(source: &str, from: usize, to: usize) -> bool {
+    source[from..to].contains('\n')
+}
+
+/// Add `use <module>` to the file unless a top-level `use` already binds it.
+///
+/// Returns [`UseEdit::AlreadyPresent`] when it does, and otherwise the edited
+/// source: everything outside the inserted run is byte-identical, per §22.13.
+///
+/// # Presence is structural
+///
+/// A match is a top-level `use_declaration` node whose `module` field names
+/// `module`, so `use cook_cc` and `use "cook_cc"` both count and the path form
+/// `use cook_cc "./vendor/cc.lua"` does not. `source.contains("use cook_cc")`
+/// would agree with all three and would also agree with a `use cook_cc` line
+/// written inside a step body, where the text is shell content and binds
+/// nothing. That last one is the case worth the parser: the chore reports the
+/// module available, writes a call to it, and the Cookfile fails to load.
+///
+/// # Where the line goes
+///
+/// After the file's leading comment block, then after any `use` declarations
+/// following it; at offset 0 when there are neither. The opening comment block
+/// of a Cookfile is its header — what this file builds, who owns it, what it
+/// is licensed under — and burying that under machinery is a worse edit than
+/// the one being asked for. Only a *contiguous* leading run is skipped, so a
+/// `use` the author put below a recipe is not joined; it is still found by the
+/// presence check above, which reads the whole file.
+///
+/// A blank line ends the header and does not end the `use` run, which is not
+/// an inconsistency: it is what a blank line means in each position. A comment
+/// under one is attached to what follows it —
+///
+/// ```text
+/// # the project
+///
+/// # build the game
+/// recipe game
+/// ```
+///
+/// — so continuing the header through it would put the declaration between
+/// that comment and the recipe it describes, which is the same class of damage
+/// as splicing into a comment (§22.13). A blank line between `use` lines
+/// separates nothing in the same way: they are one group however the author
+/// spaced them, and joining the group is what keeps a second install from
+/// landing above the first.
+///
+/// The inserted text is `use <module>\n`, plus a blank line when the line it
+/// lands above is neither empty nor absent — `use cook_cc` flush against
+/// `recipe app` is not how anyone writes a Cookfile, and a blank line at end
+/// of file is trailing whitespace nobody asked for. The one other adjustment
+/// is a leading newline when the file does not end in one and the insert goes
+/// at its end: without it the author's unterminated last line swallows the
+/// declaration.
+///
+/// # What it does not check
+///
+/// `module` is inserted verbatim and is NOT validated as a LUA_IDENT. The
+/// grammar constrains a `use` name to a strict Lua identifier (CS-0035)
+/// because the name is bound as a Lua local under that spelling, but the
+/// refusal belongs to the caller that knows what it is naming and can say so
+/// in its own terms. This layer stays a pure editor, as it does for `entry`
+/// and `text` (§22.13, "entries are rendered by the caller").
+pub fn ensure_use(source: &str, module: &str) -> Result<UseEdit, EditError> {
+    let tree = parse(source)?;
+    let root = tree.root_node();
+
+    let mut uses = Vec::new();
+    nodes_of_kind(root, "use_declaration", &mut uses);
+    if uses
+        .iter()
+        .any(|node| declared_module(*node, source) == Some(module))
+    {
+        return Ok(UseEdit::AlreadyPresent);
+    }
+
+    // The leading run: the header comment block, then the `use` declarations
+    // after it. A blank line closes the header (`opens_a_new_block`) and does
+    // not close the `use` group, per the rule argued above.
+    let mut at = 0usize;
+    let mut in_header = true;
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        match child.kind() {
+            "comment" if in_header && !opens_a_new_block(source, at, child.start_byte()) => {
+                at = past_line_end(source, child.end_byte());
+            }
+            "use_declaration" => {
+                in_header = false;
+                at = past_line_end(source, child.end_byte());
+            }
+            _ => break,
+        }
+    }
+
+    let mut insertion = format!("use {module}\n");
+    match source.as_bytes().get(at) {
+        // A blank line already separates the run from what follows.
+        Some(b'\n') => {}
+        Some(_) => insertion.push('\n'),
+        // End of file. `past_line_end` returns an offset that either follows a
+        // newline or is the file's end, so an unterminated final line can only
+        // show up here, and only here does the insert need to open one.
+        None => {
+            if !source.is_empty() && !source.ends_with('\n') {
+                insertion.insert(0, '\n');
+            }
+        }
+    }
+
+    let mut edited = String::with_capacity(source.len() + insertion.len());
+    edited.push_str(&source[..at]);
+    edited.push_str(&insertion);
+    edited.push_str(&source[at..]);
+    Ok(UseEdit::Inserted(edited))
+}
+
 /// Locate the module call in `recipe`, for a caller that wants to inspect
 /// before editing.
 pub fn find_call(source: &str, recipe: &str) -> Result<ModuleCall, EditError> {

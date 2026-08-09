@@ -61,6 +61,26 @@ fn merge_normalizes_missing_trailing_newline_before_appending() {
     }
 }
 
+/// The marker line stopped naming a subcommand when a named
+/// `cook modules install` became the second writer (CS-0220).
+#[test]
+fn the_marker_line_names_no_verb() {
+    assert!(COOK_GITIGNORE_SECTION.starts_with("# Cook artifacts (added by cook)\n"));
+    assert!(!COOK_GITIGNORE_SECTION.contains("added by cook init"));
+}
+
+/// The compatibility claim, pinned: a `.gitignore` written by an older
+/// `cook init` carries the old marker line and must NOT collect a second copy
+/// of the block.
+#[test]
+fn a_section_written_by_an_older_init_is_still_recognised() {
+    let legacy = "target/\n\n# Cook artifacts (added by cook init)\n.cook/**\n";
+    assert_eq!(
+        merge_cook_gitignore_section(Some(legacy)),
+        GitignoreMerge::Unchanged,
+    );
+}
+
 #[test]
 fn merge_treats_empty_file_like_creation() {
     match merge_cook_gitignore_section(Some("")) {

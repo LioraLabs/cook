@@ -16,6 +16,24 @@ A conforming project obtains a blessed module by listing it under `[modules]` in
 
 Nothing an author writes belongs in that tree. It is a child of the build-output root (`.cook/`), it is regenerable from `cook.toml` and `cook.lock`, and it is covered wholesale by the ignore rules an implementation's project-initialisation writes. A module the project itself authors is addressed by path instead (§{mods.local}, §{decl.use}).
 
+**A named install wires the `use` declaration.** [added CS-0220] An install that names its modules (`cook modules install cook_cc`) MUST, after the install succeeds, ensure the Cookfile at the project directory carries a `use` declaration (§{decl.use}) naming each module it installed. A module the author has not `use`d is inert: its makers are unreachable and the chores it registers under §{lua.cook-chore} cannot be dispatched, so an install that stops at the manifest has delivered a rock and not a capability. The author naming the module IS the request to use it, and no second request adds information.
+
+Three cases, each idempotent:
+
+1. Where no Cookfile exists, an implementation MUST create one, and its entire content MUST be the `use` declarations. An implementation MUST NOT seed it with a recipe, a chore, or any other declaration. What a new project's first recipe should be is not this command's question, and a starter target written here is a name the next scaffolding step has to collide with or work around.
+2. Where a Cookfile exists and carries no such declaration, an implementation MUST insert one and MUST report the insertion. The insert is subject to §{lua.cook-cookfile} in full: every byte outside the inserted range unchanged, and no evaluate-and-re-render.
+3. Where the declaration is already present, an implementation MUST leave the file byte-identical and MUST report nothing. A second install of a module a project already uses is a no-op on the Cookfile, however the author spelled the declaration.
+
+Where it creates the Cookfile, an implementation MUST also write the ignore rules its project-initialisation writes, by the merge that initialisation uses. This install has just populated `.cook/`, so creating the project's first tracked file without them leaves generated content the author is about to commit.
+
+**A name that cannot be spelled is refused, not approximated.** A rock name is drawn from the package manager's character set and a `use_name` is a `LUA_IDENT` (§{decl.use}), so the two are not the same alphabet: `foo-bar` and `foo.bar` are installable and cannot be written as a name-form `use`. An implementation MUST NOT write a declaration for such a module, MUST NOT substitute a rewritten spelling, and MUST report the module, the reason, and that the declaration was not written. The install itself still succeeds — the rock is on disk and the manifest records it — because refusing to install a module over a spelling defect in a convenience would be the larger failure.
+
+**An unparseable Cookfile is not edited.** Where the existing Cookfile does not parse, an implementation MUST leave it byte-identical, MUST report that the declaration was not written and name the module it would have written, and the command MUST fail. §{lua.cook-cookfile}'s "failure is explicit and total" is the same rule reached from the same place: an implementation that cannot locate where the declaration goes has no honest second choice, and inserting at a guessed offset compounds a syntax error the author is already holding.
+
+**An install naming nothing modifies nothing.** `cook modules install` with no arguments realises the manifest and the lockfile, and MUST NOT modify the Cookfile. It names no module, so it carries no request; and the closure it installs contains transitive modules the author never asked for and MUST NOT be made to `use`.
+
+**Removal is deliberately not symmetric.** `cook modules remove` MUST NOT delete a `use` declaration. The verbs know different things. An install knows the author wants the module usable; a removal knows only that a manifest entry is going away, and not whether recipe bodies still reach through the local that declaration binds. A left-behind `use` fails at load, naming the module that is missing. A deleted one fails later and deeper, inside a body that calls a maker on a value that is now `nil`, and it fails after destroying something the author may have annotated. The asymmetry is the refuse-rather-than-clobber posture of §{lua.cook-cookfile} applied to the one edit that cannot be an insertion.
+
 ### 27.1.2. Patching a blessed module [#cat.bootstrap.vendor]
 
 > **Removed by CS-0207.** This subsection defined a *vendoring escape hatch*: a project MAY hand-vendor a copy of a blessed module at the top of `cook_modules/`, where §{mods.use-scope}'s search order gave it precedence over the installed copy, and `cook modules install` MUST NOT overwrite it.

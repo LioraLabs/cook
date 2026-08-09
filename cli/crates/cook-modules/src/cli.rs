@@ -56,6 +56,25 @@ pub enum ModulesCmd {
     Search { query: String },
 }
 
+/// The rock names this invocation asks to install BY NAME, with any
+/// `@version` constraint stripped — empty for every other form.
+///
+/// The surface calls this to decide what a successful run should declare in
+/// the Cookfile (§27.1.1, CS-0220), and asks here rather than reading `names`
+/// itself so that `name@version` is split by the one function that owns that
+/// spelling. The argument-free `install` answers empty on purpose: it names no
+/// module, so it carries no request, and the closure it realises contains
+/// transitive modules the author never asked for.
+pub fn installed_names(cmd: &ModulesCmd) -> Vec<String> {
+    match cmd {
+        ModulesCmd::Install { names } => names
+            .iter()
+            .map(|spec| parse_name_at_version(spec).0)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Public entry. Returns the process exit code.
 pub fn run(args: ModulesArgs) -> i32 {
     match run_inner(args) {

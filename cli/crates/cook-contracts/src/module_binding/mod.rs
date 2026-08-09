@@ -66,6 +66,32 @@ pub fn is_path_target(target: &str) -> bool {
     target.ends_with(PATH_TARGET_SUFFIX)
 }
 
+/// Whether `name` can be written as a name-form `use` argument: §5.1's
+/// `LUA_IDENT`, which is `[A-Za-z_][A-Za-z0-9_]*` and admits neither `-` nor
+/// `.` nor emptiness.
+///
+/// This is NOT [`crate::naming::is_bare_name`]. That production admits `-` and
+/// `.` because a recipe name is dotted by workspace composition; this one
+/// cannot, because the name is bound as a Lua local under the same spelling
+/// and a hyphen there is a subtraction (Note 12.1.1).
+///
+/// It came down here when it acquired a second consumer (CS-0220). `cook-lang`
+/// enforces it at the declaration site, where a violation is a lex error naming
+/// the line; `cook-modules` asks it BEFORE writing a declaration, because a
+/// rock name is drawn from the package manager's wider alphabet and
+/// `cook modules install foo-bar` must refuse to write a `use` it knows the
+/// lexer will reject. The two answers have to be the same answer: an installer
+/// more permissive than the lexer writes a Cookfile that no longer parses, and
+/// one more restrictive silently declines a module the language would have
+/// accepted. Note what is deliberately absent — the rewrite. [`alias_of`]
+/// would map `foo-bar` to `foo_bar`, and applying it here would let an
+/// installer write a declaration naming a module that was never installed.
+pub fn is_use_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let ok_start = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+    ok_start && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// The Lua identifier a module name binds (§12.1): each ASCII hyphen becomes an
 /// underscore, everything else passes through. The on-disk name is NOT
 /// rewritten (Note 12.1.1).

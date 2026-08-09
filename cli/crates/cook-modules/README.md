@@ -57,11 +57,24 @@ a Lua VM, and it never loads a module — it only puts one on disk where the
 loader will find it. It renders no progress and owns no exit-code taxonomy
 beyond its own.
 
-Its entire reach into the workspace is `cook-contracts`, for two items:
+**It does not edit the Cookfile**, though the verb it implements now does.
+§27.1.1 (CS-0220) requires a named `cook modules install` to declare what it
+installed, and that edit lives in `cook-cli`, next to the `cook init` that
+writes the same two files. Two reasons, and the second is the one that
+decided it: the editor is `cook-cookfile`, which sits in this crate's own
+stratum, so the dependency would be sideways; and a package manager that could
+rewrite the author's build description would be a wider thing than the one this
+charter opens by describing. What this crate contributes is the question it can
+answer and the surface cannot — `installed_names`, which rocks an invocation
+named, with `name@version` split by the function that owns that spelling.
+
+Its entire reach into the workspace is still `cook-contracts`, for two items:
 `layout::modules_dir` and `CapturedStream`. That disjointness is the evidence
 this boundary is real rather than argued for — it is what let 1,392 lines leave
-`cook-cli` for one `Cargo.toml` edge (COOK-420). The day this crate needs
-`cook-engine` is the day to re-open where the line was drawn.
+`cook-cli` for one `Cargo.toml` edge (COOK-420), and CS-0220 is the first
+feature to test it: the obvious implementation wanted a second edge, the
+stratum table refused it, and the work went where it belonged instead. The day
+this crate needs `cook-engine` is the day to re-open where the line was drawn.
 
 ## Two things kept on purpose
 

@@ -103,8 +103,17 @@ This is the workspace's only Rust consumer of `tree-sitter-cook`. It sits in
 the *mechanism* stratum: what it needs a grammar for stays here, and the one
 rule it does not own — where a Lua string or comment begins and ends — went
 down to `cook_contracts::lua_scan`, where `cook-luagen` already needed the same
-answer. Nothing depends back on it; its one consumer is the `cook.cookfile.*`
-binding in `cook-lua-stdlib`.
+answer. Nothing depends back on it from its own stratum or below; its consumers
+are the `cook.cookfile.*` binding in `cook-lua-stdlib` and, since CS-0220,
+`cook-cli`, which calls `ensure_use` when a named `cook modules install` has to
+declare what it installed.
+
+That second consumer is in the *surface* crate for a reason worth recording,
+because the obvious home for it is `cook-modules`. Both that crate and this one
+are *mechanism*, so the edge would be sideways and the constitution refuses it.
+The refusal turns out to name the seam correctly: `cook-modules` knows what a
+rock is, and writing the author's project files is a job `cook-cli` already
+owns for `cook init`.
 
 Its dependency on the grammar is closer than the module boundary suggests, and
 in one direction only: the call span it splices within is a `module_call_text`
@@ -115,10 +124,12 @@ crate reported a syntax error in files `cook-lang` accepts (fixed under
 CS-0208). `cook-lang` remains the authority on what a Cookfile means, so a
 disagreement between the two parsers is always the grammar's bug.
 
-The surface it backs has no shipped module consumer yet. CS-0179 was written
-for the `cc.add` / `cc.link` / `cc.need` verbs of CS-0176, and none of those
-exist in `cook-modules` today; the only callers outside this crate's own tests
-are the synthetic `cook_edit` modules in
+The splicing half of the surface still has no shipped module consumer. CS-0179
+was written for the `cc.add` / `cc.link` / `cc.need` verbs of CS-0176, and none
+of those exist yet; the only callers of `splice_into_field` outside this
+crate's own tests are the synthetic `cook_edit` modules in
 `standard/conformance/positive/cookfile-splice-preserves-comments/` and
-`.../cookfile-splice-skips-strings-and-comments/`. The editing algebra is
-finished and the verbs that would use it are not.
+`.../cookfile-splice-skips-strings-and-comments/`. `ensure_use` is the first
+piece of the algebra with a caller in a shipped verb (CS-0220), which is also
+the first time the preservation claim is made against a file a user did not opt
+in to having edited.
