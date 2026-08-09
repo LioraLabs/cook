@@ -21,8 +21,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-// THE duration rendering (COOK-392) — straight from the law, not through
-// cook-engine's legacy `observations::render_ms` shim.
+// THE duration rendering (COOK-392), straight from the law. This crate used to
+// reach it through `cook-engine`'s forwarding `observations::render_ms`; that
+// shim's last caller went when this import changed, and it is deleted
+// (COOK-423).
 use cook_contracts::render::duration_ms as render_ms;
 
 use crate::annotate::Annotations;

@@ -68,7 +68,7 @@ The "two-phase" model (register → execute) still exists, but it is now scoped 
 
 `pipeline.rs` is intentionally thin: it does not consume any `cook_lang::ast::Cookfile` directly. Its job is
 
-1. forward to `cook_engine::pipeline::*` for parse / workspace / env / registry / inferred-dep work;
+1. forward to `cook_engine::pipeline::*` for parse / workspace / env / registry work;
 2. spin up a `cook-progress` renderer thread plus a bridge thread that translates `cook_engine::EngineEvent`s into `cook_progress::ProgressEvent`s (`bridge_engine_to_progress_events`, line 84);
 3. drive `cook_engine::run::run`;
 4. map `PipelineError` → `CookError` (`pipeline_error_to_cook_error`, line 31) and `EngineError` → `CookError` (`engine_error_to_cook_error`, line 344) for exit-code classification.
@@ -133,7 +133,7 @@ pub struct RecipeInfo {
 }
 ```
 
-`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` (explicit `: dep`) and inferred-dep edges (next step) create edges.
+`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` creates edges, and `{NAME}` body references have already been merged into `requires` by codegen (next step).
 
 ### 4.2 `RegistryEntry` map — `cli/crates/cook-engine/src/pipeline/registries.rs`
 
@@ -144,9 +144,9 @@ pub struct RecipeInfo {
 
 ### 4.3 Inferred deps — removed
 
-There is no inferred-dep pass. `{NAME}` body references (Cook Standard § 5.3 / App. E.10) are resolved by codegen: `cook_luagen`'s unified `requires` field merges a recipe's explicit deps and its body references into one deduplicated edge list, so both kinds arrive as ordinary edges on `RecipeUnits.dep_edges` and the engine never sees the distinction.
+There is no inferred-dep pass. `{NAME}` body references (Cook Standard § 5.3 / App. E.10) are resolved by codegen: `cook_luagen::recipe::unified_requires_field` merges a recipe's explicit deps and its body references into one deduplicated `requires` list at emission time. They therefore reach the engine as ordinary recipe-level `requires` entries, walked by `build_adjacency` alongside explicit `: dep` entries and indistinguishable from them by the time the engine sees them. (This is a different channel from `RecipeUnits.dep_edges`, which carries only the unit-level edges `cook.dep_output` / `cook.add_unit` record directly.)
 
-That is why the conflict warning this stage used to emit ("recipe X has both explicit ': dep' and inferred '{dep}' dependency") is gone rather than lost: the two no longer mean different scheduling, so there is nothing left to conflict. The `cook-plan::inferred_deps` module survived its last caller by three months and was deleted at COOK-423.
+That merge is also why the conflict warning this stage used to emit ("recipe X has both explicit ': dep' and inferred '{dep}' dependency") is gone rather than lost. It existed because the two kinds meant different scheduling, an explicit dep being a boundary and a body reference a same-stage merge; they are now one deduplicated `requires` list, so there is no longer a pair that can disagree. The `cook-plan::inferred_deps` module survived its last caller by three months and was deleted at COOK-423.
 
 ---
 
@@ -218,7 +218,7 @@ The output of the wave registration is a `Vec<RecipeUnits>`. Each `RecipeUnits` 
 
 - intra-recipe ordering (the `Sequential` / `StepGroup` / explicit-dep relations the capture API recorded),
 - cross-recipe edges (the `deps` field copied from `edges`),
-- inferred-dep edges (`{NAME}` refs, threaded through during workspace recipe-info assembly).
+- `{NAME}` body references, which are not a separate edge kind: codegen merged them into `requires` before registration.
 
 The builder cannot introduce cycles by construction (deps only point to already-emitted node ids); a defensive `dag.validate()` in `execute_dag` catches any future regression with `EngineError::CycleDetected`.
 

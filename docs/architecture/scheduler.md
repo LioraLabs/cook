@@ -67,7 +67,6 @@ Two architectural points are worth keeping in mind throughout:
 |---|---|---|
 | `Dag::new()` | Empty DAG | `cook-dag/src/lib.rs:147` |
 | `add_node(payload: T, depends_on: &[usize]) -> Result<usize, DagError>` | Append a node, dedupe duplicate deps via `BTreeSet`, wire forward edges, return its id | `cook-dag/src/lib.rs:159` |
-| `validate() -> Result<(), CycleError>` | Kahn's algorithm; on cycle, walks unconsumed predecessors to surface one concrete cycle path | `cook-dag/src/lib.rs:201` |
 | `initial_ready() -> Vec<usize>` | All nodes where `remaining_deps == 0` (the roots) | `cook-dag/src/lib.rs:302` |
 | `complete(id) -> Vec<usize>` | Atomic `fetch_sub(1, SeqCst)` on each dependent's `remaining_deps`; returns dependents whose previous value was 1 (i.e. just became ready) | `cook-dag/src/lib.rs:315` |
 | `node(id) -> &Node<T>` | Read-only access | `cook-dag/src/lib.rs:334` |
@@ -78,19 +77,25 @@ Two architectural points are worth keeping in mind throughout:
 - `complete()` uses `Ordering::SeqCst` so multiple worker threads can call it concurrently on different node ids without external locking. The thread that observes `prev == 1` is the unique unlocker of that dependent.
 - `add_node()` returns `DagError::DependencyOutOfRange` when a dep id has not yet been inserted; on error the DAG is left unchanged. Self-references and forward references are both caught by the same range check.
 
-### Cycle reporting
+### Cycle reporting: there is none, and there cannot be a cycle
 
-`CycleError` (`cook-dag/src/lib.rs:80`) carries:
-- `cycle_path: Vec<usize>` — a concrete `[v_0, …, v_k]` with the implicit closing edge `v_k → v_0`, in dependency order (`v_i` depends on `v_{i+1}`).
-- `blocked: usize` — number of nodes part of, or transitively downstream of, the cycle.
+`Dag<T>` carried `validate()`, Kahn's pass, `extract_cycle` and a `CycleError`
+with a concrete cycle path. All of it is deleted (COOK-423). `add_node` is the
+only mutator and it rejects any `dep_id >= id`, so every edge points to a
+strictly smaller id, insertion order IS a topological order, and no DAG built
+through the public API can contain a cycle. The two tests that exercised the
+cycle machinery had to reach into the crate-private `deps` and `nodes` vectors
+to forge one, which is the tell.
 
-The engine calls `dag.validate()` defensively at the top of `execute_dag` (`cli/crates/cook-engine/src/executor.rs:312`); the work-DAG builder cannot construct a cycle today (every dep id was emitted earlier in the same pass), but the validation is cheap insurance against a future builder bug.
+`add_node`'s doc comment now carries that reasoning next to the range check
+that enforces it, and states what has to come back if the check ever relaxes to
+admit forward references. See `cook-dag/README.md`.
 
 ---
 
 ## 3. Recipe DAG and waves (`cook-engine`)
 
-The recipe-level scheduling layer sits above the work-unit DAG. Two structures cooperate:
+The recipe-level scheduling layer sits above the work-unit DAG. One of the two structures this section described is gone:
 
 ### `RecipeDag` — deleted
 

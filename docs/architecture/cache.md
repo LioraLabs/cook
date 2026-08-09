@@ -502,7 +502,8 @@ Key methods (`cli/crates/cook-cache/src/manager.rs`):
 
 There isn't one. `CacheState` / `SharedCacheState`, an `Rc<RefCell<…>>` twin of
 the manager for non-parallel execution, had no caller anywhere in the workspace
-and was deleted at COOK-423, along with the unused `load_recipe` loader above.
+and was deleted at COOK-423, along with the unused `load_recipe` loader whose row
+this table used to carry.
 `ThreadSafeCacheManager` serves both cases; a single-job run pays an uncontended
 mutex for it.
 

@@ -388,8 +388,8 @@ fn json_carries_the_cache_and_timing_tallies() {
 /// CS-0216. `observed_max_age` was a permanent zero on the published payload:
 /// the only producer of the fact behind it hardcoded `0`, so the key asserted
 /// "every contributing unit was timed in the most recent build" on every node
-/// of every run. That is absence rendered as zero, which §17.1.6.5 forbids in
-/// the same breath as it permits the reporting.
+/// of every run. That is absence rendered as zero, which §17.1.6.5's second
+/// constraint on this reporting forbids.
 ///
 /// Asserted as an absent key rather than a changed value, because the point is
 /// that a consumer no longer has a field to believe. The version bump rides in

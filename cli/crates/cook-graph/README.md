@@ -118,6 +118,6 @@ observations live in the step index now and may be served to a machine with no
 history of its own, where "three builds ago" names nothing. The sole producer
 passed `0`, so the JSON payload told every reader that every contributing unit
 was timed in the most recent build. That is absence rendered as zero, which
-§17.1.6.5 forbids in the same paragraph that permits the reporting, and it is
+§17.1.6.5's second constraint on this reporting forbids, and it is
 why the field was removed rather than left as harmless: it was not reporting
 nothing, it was reporting something false.
