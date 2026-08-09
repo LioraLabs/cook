@@ -349,7 +349,7 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
-**`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile may declare is a name some other surface refuses.
+**`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile declares is a name some other surface refuses.
 
 The reference implementation reads the class from one place, `cook_contracts::naming`, at every site that needs it: the lexer that parses `recipe NAME` / `chore NAME` / `config NAME`, the `tools { … }` validator that enforces `TOOL_NAME`, and the CLI's `@PRESET` argv recognition. It was written out at five sites until COOK-421, and the pair that mattered was the lexer's and the CLI's — a preset is declared in a Cookfile and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use, in either direction.
 
