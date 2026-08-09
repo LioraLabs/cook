@@ -19,6 +19,27 @@
 //! move, cook-engine cannot name `register_cookfile` at all, which holds the
 //! two-phase law (registration is closed before execute starts)
 //! structurally rather than by convention.
+//!
+//! # The residual, named here rather than left to expire
+//!
+//! `cook-luagen` reads these constants wherever the emission is a call it
+//! COMPOSES ([`door_call`]). It does NOT read them inside its multi-line
+//! `format!` templates — `cook.add_unit{…}`, `cook.step_group(function() …`,
+//! `cook.member_to_string(item)`, `cook.prior_outputs(…)`,
+//! `cook.passthrough(…)` — where the door's argument is a Lua EXPRESSION
+//! rather than a string, so `door_call` would quote it, and where
+//! interpolating a constant into a five-line literal costs more legibility
+//! than it buys. The constitution's duplicate-literal rule cannot see a name
+//! buried in a literal that size either, so nothing mechanical was going to
+//! notice.
+//!
+//! That is a deliberate copy, and the deliberate-copy protocol requires an
+//! agreement test in place of the missing edge:
+//! `cook-luagen/src/tests/door_names_tests.rs` collects every `cook.<door>`
+//! spelling in that crate and fails unless each is a constant declared here or
+//! an exception listed there with a reason. A door renamed here while a
+//! template keeps the old spelling fails that test instead of failing a user's
+//! build at run time, as a call to a nil value.
 
 /// Register-phase helper that records a surface `recipe NAME` block.
 pub const REGISTER_SURFACE_NAME: &str = "__register_surface";
@@ -107,19 +128,6 @@ pub const QUOTE_PARAM_NAME: &str = "__quote_param";
 // what it may call in the other. That is the same silent-drift argument this
 // module's header makes for the emitter/installer constants above, applied to
 // the second pair of ends.
-//
-// **The residual, named rather than left to expire.** `cook-luagen` is a THIRD
-// end for several of these: it EMITS `cook.add_unit{…}`, `cook.step_group(…)`,
-// `cook.member_to_string(item)`, `cook.prior_outputs(…)` and
-// `cook.passthrough(…)` inside emission templates. Where the argument is a
-// string, that composition is [`door_call`] and luagen uses it. Where the
-// argument is a Lua EXPRESSION (`item`, a local, a table constructor),
-// `door_call` does not fit — it would quote the expression — and the templates
-// keep their own text, so the door name is spelled there a third time inside a
-// literal too long for the constitution's duplicate-literal rule to see. An
-// arity-general composer for those is the abstraction COOK-440 declined for
-// want of a second caller; when one arrives, this is the note that says where
-// the other end is.
 
 /// `cook.add_unit(tbl)` — the register-phase declaration of one work unit
 /// (§{lua.add-unit}). `cook-register` installs the recorder; `cook-execute`
@@ -181,6 +189,24 @@ pub const DEP_OUTPUT_MEMBER_NAME: &str = "dep_output_member";
 /// installs it on both VMs, so the name, the body and the diagnostic have one
 /// author. The constant stays here because `cook-luagen` emits the call.
 pub const MEMBER_TO_STRING_NAME: &str = "member_to_string";
+
+/// The Lua global the declared-variable surface is reachable under
+/// (§{decl.config}, §{lua.var}): `var.NAME`.
+///
+/// Three ends, and the third is why this is here rather than in
+/// `cook-lua-stdlib` with the seal that installs it. Both VMs install the
+/// read-only proxy under this name. `cook-register`'s config sandbox exposes
+/// the WRITE sink under it, because a `config` body declares values by
+/// assigning to `var.NAME`. And [`crate::lua_scan`] scans Lua source for
+/// `var.X` reads to compute which declared variables a unit consumed — a
+/// determinant of that unit's cache key.
+///
+/// The scanner is the dangerous end. A rename that reached the two VMs and
+/// not the scanner does not fail: it silently records no reads, so a unit
+/// stops being keyed on a variable it depends on, and a value change no
+/// longer invalidates it. The scanner is pure and lives here, which is as low
+/// as the law goes, so this is where the name goes with it.
+pub const VAR_GLOBAL_NAME: &str = "var";
 
 /// The optional `discovered_inputs` table on a [`ADD_UNIT_NAME`] argument
 /// (§{lua.add-unit-discovered-inputs}): a maker declaring that a unit's real input

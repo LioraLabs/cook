@@ -96,29 +96,41 @@ worker VMs in `cook-execute` install byte-identical closures (CS-0044, CS-0123,
 CS-0158). A surface that behaves differently in the two phases is the failure
 this arrangement exists to make impossible.
 
-## Decisions still implemented twice
+## Decisions this crate no longer implements twice
 
-Findable, per the deliberate-copy protocol, and none of these has an agreement
-test. They are recorded here so the next audit's grep lands on them:
+This heading used to read "Decisions still implemented twice" and list three,
+"recorded here so the next audit's grep lands on them". The audit came, and all
+three had already been fixed. Recording that is more useful than deleting it,
+because a list of known copies is exactly the kind of prose that goes on being
+believed after it stops being true — the same failure the constitution names
+about waivers, in the file that holds the waivers.
 
-- **The probe-produce lowering.** `engine.rs:2094` and
-  `cook-execute/src/pool.rs:1537` each build `@probe:{key}` as the chunk name and
-  wrap the body in `return (function()\n…\nend)()`. Both ends must agree or a
-  produce body's reported error lines shift between phases. It is pure string
-  law and `cook-contracts` would take it.
-- **The `cook.load_module` sequence.** `module_loader.rs:92` and
-  `pool.rs:719` each memoize, detect cycles, evaluate, and call `init()`.
-  COOK-393 unified the candidate list and the search-path composition, not the
-  loader around them; the register side memoizes by module name and the worker
-  side by `<cwd>::<name>`.
-- **The `cook.cache` renamed-namespace stub**, verbatim in `module_loader.rs:377`
-  and `pool.rs:1079`.
+- **The probe-produce lowering** — two builders of the `@probe:{key}` chunk
+  name and the `return (function()\n…\nend)()` wrapper, which had to agree or a
+  produce body's error lines would shift between phases. It is
+  `cook_contracts::probe::lower_produce`, called from `engine.rs:2101` and
+  `cook-execute/src/pool.rs:1346`.
+- **The `cook.load_module` sequence** — two loaders each memoizing, detecting
+  cycles, evaluating and calling `init()`. COOK-412 collapsed them into
+  `cook_lua_stdlib::install_module_loader`, which both phases call over their
+  own hooks.
+- **The `cook.cache` renamed-namespace stub** — `install_renamed_cache_stub` in
+  `cook-lua-stdlib`, and since COOK-439 this crate does not call it at all: it
+  comes with `install_probes_api`, so a caller cannot build the probes table
+  and forget the stub that guards its old name.
+
+COOK-439 put three more doors into that state. `cook.member_to_string`
+is now one door end to end (`cook_lua_stdlib::install_member_to_string`); the
+`cook.probes` table and the read-only `var` seal are shared installers taking
+this phase's one differing operation as an argument; and every door name this
+crate installs comes from `cook_contracts::registration`, so the execute
+phase's §6.3.2 guards refuse the names registration actually installs.
 
 One smaller exception to a rule this crate otherwise keeps: `engine.rs:2050`
 and `engine.rs:2696` print warnings with `eprintln!` although
 `RegisteredCookfile` already carries a `warnings` field for exactly that.
 
-This list used to carry a second: `observing_identity` in `unit_api.rs`,
+It used to carry one more still: `observing_identity` in `unit_api.rs`,
 "cache-identity law hashed against a direct `xxhash-rust` dependency, where the
 stratum rule puts hashing law in `cook-fingerprint`. It has one caller today,
 so it is not yet a twin." Both halves of that reasoning expired.

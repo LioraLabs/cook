@@ -654,22 +654,34 @@ fn register_worker_cook_table(
     // an execute-phase Lua body precisely so this surface never has to coerce
     // one. Writes are refused, as at register phase — a step cannot redefine a
     // determinant it was keyed on.
-    let var_table = lua.create_table()?;
+    // COOK-439: the seal itself — reads routed through `__index`, writes
+    // refused, metatable hidden so neither guard can be lifted off — is
+    // `cook_lua_stdlib::install_var_proxy`, one implementation with the
+    // register VM. Only the two things that genuinely differ by phase stay
+    // here: where a read comes from, and what a refused write is told.
+    //
+    // The sentence is deliberately not the register phase's. There the author
+    // can still set the variable, in a `config` block or with `--set`, and the
+    // message says so; by the time execute-phase Lua runs, config blocks have
+    // run and recipes are already registered against the value, so that advice
+    // would be wrong here.
     let vars_for_index = Arc::clone(current_env_vars);
-    let meta = lua.create_table()?;
-    meta.set("__index", lua.create_function(move |_, (_tbl, key): (mlua::Value, String)| {
-        let vars = vars_for_index.lock().expect("var store lock");
-        Ok(vars.get(&key).cloned())
-    })?)?;
-    meta.set("__newindex", lua.create_function(|_, (_tbl, key, _v): (mlua::Value, String, mlua::Value)| -> mlua::Result<()> {
-        Err(mlua::Error::RuntimeError(format!(
-            "var.{key} is read-only: a declared variable is a cache determinant \
-             of the unit reading it (Standard §5.3.1)"
-        )))
-    })?)?;
-    meta.set("__metatable", false)?;
-    var_table.set_metatable(Some(meta));
-    lua.globals().set("var", var_table)?;
+    cook_lua_stdlib::install_var_proxy(
+        lua,
+        move |lua, key: String| {
+            let vars = vars_for_index.lock().expect("var store lock");
+            Ok(match vars.get(&key) {
+                Some(value) => mlua::Value::String(lua.create_string(value)?),
+                None => mlua::Value::Nil,
+            })
+        },
+        |key| {
+            format!(
+                "var.{key} is read-only: a declared variable is a cache determinant \
+                 of the unit reading it (Standard §5.3.1)"
+            )
+        },
+    )?;
 
     // cook.platform — installed via the shared cook-lua-stdlib so the
     // execute-phase string values are byte-identical to the
@@ -720,15 +732,15 @@ fn register_worker_cook_table(
     // modules that use the scoped sub-table pattern.
     install_execute_phase_cook_probes(lua, &cook, probe_store)?;
 
-    // COOK-64 §9.3: cook.member_to_string(value) renders a data
-    // member to its canonical string form (key-sorted JSON for a table, the
-    // scalar's bare string otherwise). Used by the `$<in>` placeholder.
-    let member_fn = lua.create_function(|_, value: mlua::Value| {
-        let jv = crate::probe_value::lua_to_json(&value)
-            .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
-        Ok(cook_contracts::member::member_to_string(&jv))
-    })?;
-    cook.set("member_to_string", member_fn)?;
+    // COOK-64 §9.3: cook.member_to_string(value) renders a data member to its
+    // canonical string form (key-sorted JSON for a table, the scalar's bare
+    // string otherwise). Used by the `$<in>` placeholder.
+    //
+    // COOK-439: one implementation with the register VM. The pure renderer was
+    // already shared, but the mlua wrapper around it — and with it the door's
+    // name and its diagnostic — was written once per phase, so this was a door
+    // with two implementations rather than one shared definition.
+    cook_lua_stdlib::install_member_to_string(lua, &cook)?;
 
     // CS-0071: cook.export / cook.import on the execute-phase VM
     // (Standard §6.3.4). Per-worker in-memory store; no cross-invocation
@@ -784,7 +796,7 @@ fn register_worker_cook_table(
     install_register_only_guard(
         lua,
         &cook,
-        "interactive",
+        cook_contracts::registration::INTERACTIVE_NAME,
         "cook.interactive: register-only API called from execute-phase Lua. \
          Interactive steps must be recorded during the register phase; they cannot be \
          scheduled from a lua_line / lua_block / cook-body >{ … } payload. \
@@ -794,7 +806,7 @@ fn register_worker_cook_table(
     install_register_only_guard(
         lua,
         &cook,
-        "add_unit",
+        cook_contracts::registration::ADD_UNIT_NAME,
         "cook.add_unit: register-only API called from execute-phase Lua. \
          Work units are recorded during the register phase; the DAG is closed before \
          execute-phase Lua runs. \
@@ -804,7 +816,7 @@ fn register_worker_cook_table(
     install_register_only_guard(
         lua,
         &cook,
-        "step_group",
+        cook_contracts::registration::STEP_GROUP_NAME,
         "cook.step_group: register-only API called from execute-phase Lua. \
          Step groups are recorded during the register phase; they cannot be opened from a \
          lua_line / lua_block / cook-body >{ … } payload. \
@@ -834,7 +846,7 @@ fn register_worker_cook_table(
     install_register_only_guard(
         lua,
         &cook,
-        "prior_outputs",
+        cook_contracts::registration::PRIOR_OUTPUTS_NAME,
         "cook.prior_outputs: register-only API called from execute-phase Lua. \
          It answers about the recipe body currently being registered, and no body is \
          being registered once execute-phase Lua runs. \
@@ -887,73 +899,32 @@ fn install_execute_phase_cook_probes(
     cook: &mlua::Table,
     probe_store: &ProbeValueStore,
 ) -> mlua::Result<()> {
-    let cache_tbl = lua.create_table()?;
-
-    // cook.probes.get(key) → value | hard error on unmaterialised key (CS-0152)
+    // The table, the `scope(label)` view, its §24.4.3 label check and its
+    // `label:key` prefixing are `cook_lua_stdlib::install_probes_api`, one
+    // implementation with the register VM (COOK-439). What is passed in is
+    // what this phase MEANS by a read and a write, which is the only part
+    // §6.3.4 and CS-0074 make phase-specific.
+    //
+    // The two used to be built separately, and the constitution's clone rule
+    // caught them as one copied run of code — reported as "already divergent"
+    // because one setter writes and this one raises. The divergence is
+    // CS-0074 and it is correct; what was wrong is that the nine tenths which
+    // must agree were the copied part.
     let store_for_get = probe_store.clone();
-    let get_fn = lua.create_function(move |lua, key: String| {
-        match store_for_get.get(&key) {
+    cook_lua_stdlib::install_probes_api(
+        lua,
+        cook,
+        move |lua, key: &str| match store_for_get.get(key) {
             Some(bytes) => {
-                let jv = store_for_get.read_view(&key, &bytes)
-                    .map_err(|e| mlua::Error::runtime(format!(
-                        "cook.probes.get('{}'): decode failed: {}", key, e
-                    )))?;
+                let jv = store_for_get.read_view(key, &bytes).map_err(|e| {
+                    mlua::Error::runtime(format!("cook.probes.get('{}'): decode failed: {}", key, e))
+                })?;
                 crate::probe_value::json_to_lua(lua, &jv)
             }
-            None => Err(probe_not_materialised_error(&key)),
-        }
-    })?;
-    cache_tbl.set("get", get_fn)?;
-
-    // cook.probes.set — deprecated and disabled on the execute-phase VM (CS-0074).
-    let set_fn = lua.create_function(|_, (_key, _val): (String, mlua::Value)| -> mlua::Result<()> {
-        Err(probes_set_deprecated_error())
-    })?;
-    cache_tbl.set("set", set_fn)?;
-
-    // cook.probes.scope(label) → { get, set } — §24.4.3, on this VM with
-    // execute-phase semantics: scoped get reads the per-run store, scoped
-    // set raises like the unscoped form. Label validation is the shared
-    // §24.4.3 law (CS-0203) — the same diagnostic the register VM raises.
-    let store_for_scope = probe_store.clone();
-    let scope_fn = lua.create_function(move |lua, label: String| {
-        if let Some(msg) = cook_contracts::probe_key::scope_label_error(&label) {
-            return Err(mlua::Error::runtime(msg));
-        }
-        let scoped = lua.create_table()?;
-
-        let store_for_scoped_get = store_for_scope.clone();
-        let label_for_get = label.clone();
-        let scoped_get = lua.create_function(move |lua, key: String| {
-            let full = cook_contracts::probe_key::scoped_key(&label_for_get, &key);
-            match store_for_scoped_get.get(&full) {
-                Some(bytes) => {
-                    let jv = store_for_scoped_get.read_view(&full, &bytes)
-                        .map_err(|e| mlua::Error::runtime(format!(
-                            "cook.probes.get('{}'): decode failed: {}", full, e
-                        )))?;
-                    crate::probe_value::json_to_lua(lua, &jv)
-                }
-                None => Err(probe_not_materialised_error(&full)),
-            }
-        })?;
-        scoped.set("get", scoped_get)?;
-
-        let scoped_set = lua.create_function(|_, (_k, _v): (String, mlua::Value)| -> mlua::Result<()> {
-            Err(probes_set_deprecated_error())
-        })?;
-        scoped.set("set", scoped_set)?;
-
-        Ok(scoped)
-    })?;
-    cache_tbl.set("scope", scope_fn)?;
-
-    cook.set("probes", cache_tbl)?;
-
-    // `cook.cache.*` renamed to `cook.probes.*` in v1.0 (CS-0136); the one
-    // shared stub (the literal used to be spelled once per phase).
-    cook_lua_stdlib::install_renamed_cache_stub(lua, cook)?;
-    Ok(())
+            None => Err(probe_not_materialised_error(key)),
+        },
+        |_lua, _key: &str, _value: &mlua::Value| Err(probes_set_deprecated_error()),
+    )
 }
 
 /// Refuse `cook.export` / `cook.import` on the execute-phase VM (CS-0200).
@@ -1060,12 +1031,12 @@ fn install_worker_dep_output_api(
                 Ok(String::new())
             }
             Some(paths) => Ok(paths.join(" ")),
-            None => Err(mlua::Error::RuntimeError(format!(
-                "recipe '{name}' has no terminal output (not registered or has no cook steps)"
-            ))),
+            None => Err(mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )),
         }
     })?;
-    cook.set("dep_output", f)?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_NAME, f)?;
 
     let deps2 = Arc::clone(&dep_outputs);
     let recipe2 = Arc::clone(current_recipe);
@@ -1084,12 +1055,12 @@ fn install_worker_dep_output_api(
                 }
                 Ok(t)
             }
-            None => Err(mlua::Error::RuntimeError(format!(
-                "recipe '{name}' has no terminal output (not registered or has no cook steps)"
-            ))),
+            None => Err(mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )),
         }
     })?;
-    cook.set("dep_output_list", g)?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_LIST_NAME, g)?;
     Ok(())
 }
 

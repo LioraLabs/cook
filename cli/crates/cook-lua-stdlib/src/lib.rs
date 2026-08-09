@@ -57,7 +57,7 @@ pub use module_observer::{install_require_observer, ModuleObserver};
 pub use json_codec::{json_to_lua, lua_to_json};
 pub use member_api::install_member_to_string;
 pub use probes_api::install_probes_api;
-pub use var_proxy::{install_var_proxy, VAR_GLOBAL_NAME};
+pub use var_proxy::install_var_proxy;
 pub use cookfile_api::register_cookfile_api;
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;

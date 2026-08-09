@@ -75,18 +75,30 @@ fn the_metatable_cannot_be_read_or_replaced() {
     assert!(err.contains("protected metatable"), "got: {err}");
 }
 
-/// The global's name comes from one constant. `cook-luagen` lowers a
-/// `$<NAME>` read into `var.NAME`, so a rename that reached one VM and not
-/// the emitter is a generated program indexing a nil global.
+/// The global's name comes from one constant, and the end that matters is not
+/// either VM: `cook_contracts::lua_scan` scans Lua source for reads of this
+/// name to decide which declared variables a unit consumed, and that answer is
+/// a cache determinant. A rename here that missed the scanner would leave the
+/// scanner finding nothing — no error, just units no longer keyed on a
+/// variable they read.
 #[test]
-fn the_proxy_is_installed_under_the_shared_global_name() {
+fn the_proxy_is_installed_under_the_name_the_read_scanner_looks_for() {
     let lua = vm();
     let present: bool = lua
         .load(format!(
             "return type(_G[{:?}]) == 'table'",
-            super::VAR_GLOBAL_NAME
+            cook_contracts::registration::VAR_GLOBAL_NAME
         ))
         .eval()
         .unwrap();
     assert!(present);
+
+    let reads = cook_contracts::lua_scan::scan_var_reads(&format!(
+        "local x = {}.TARGET",
+        cook_contracts::registration::VAR_GLOBAL_NAME
+    ));
+    assert!(
+        reads.contains("TARGET"),
+        "the scanner must find a read of the global the proxy installs, got {reads:?}"
+    );
 }

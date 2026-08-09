@@ -173,18 +173,38 @@ is zero, so every execute-phase `cook.sh` failure was reported without one.
 CS-0211 makes the phase symmetry normative and the line comes from the walk
 the register phase already had, shared from `cook-lua-stdlib`.
 
-## What COOK-439 inherits
+## What this VM shares with the register VM, and what it keeps
 
-The doors this VM installs — `member_to_string`, `dep_output`,
-`dep_output_list`, `add_unit`, `step_group`, `prior_outputs`, `interactive`,
-the `cache.scope` table — are each spelled and implemented twice, once here
-and once in `cook-register`, and the constitution's waiver files list them by
-name. Two things about that got easier rather than harder in COOK-422. The
-crate pair is now named for the two phases, which is the frame the work needs
-to state its own goal in. And `caller_line_in_source` is a worked example of
-the move: a Lua-touching law with a consumer in each phase belongs in
-`cook-lua-stdlib`, parameterised over the one thing that genuinely differs,
-with the phase-specific spelling left at the call site.
+The doors here — `member_to_string`, `dep_output`, `dep_output_list`,
+`add_unit`, `step_group`, `prior_outputs`, `interactive`, the `cook.probes`
+table, the read-only `var` global — were each spelled and implemented twice,
+once here and once in `cook-register`, and the constitution's waiver files
+listed nine of them by name. COOK-439 / CS-0213 closed that, and the split it
+settled on is worth stating because every future door faces the same choice.
+
+The NAMES are pure law and live in `cook_contracts::registration`. Nothing
+about a door name needs mlua, both crates already depend on contracts, and the
+gate can see a name in two crates — which is how these were found.
+
+The doors whose whole behaviour is identical live in `cook-lua-stdlib`:
+`install_member_to_string` is the entire door, name and body and diagnostic.
+The doors whose behaviour is *mostly* identical live there too, with the
+difference passed in — `install_probes_api` takes this phase's read and its
+CS-0074 refusal as two arguments, `install_var_proxy` takes this phase's
+lookup and its refusal sentence. That is `caller_line_in_source`'s shape
+(COOK-422) applied at scale: parameterise over the one thing that genuinely
+differs, and leave the phase-specific spelling at the call site.
+
+What stays here is what execute phase actually means: the §6.3.2 guards that
+refuse the register-only doors (they refuse them by the shared constant, so a
+guard cannot come to name something nothing installs), the read-only
+resolution of `dep_output` against the registration snapshot, and the
+per-run probe-value store the shared `cook.probes` table reads through.
+
+`cook-engine/tests/both_phase_door_agreement.rs` is the guard on all of it: it
+drives one Lua fragment through both VMs and asserts they answer identically.
+It is trivially true today, which is the goal state — it exists to notice a
+re-fork, not to report a bug.
 
 ## Relationship to `cook-contracts`
 

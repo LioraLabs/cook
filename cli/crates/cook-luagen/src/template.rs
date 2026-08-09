@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use cook_contracts::lua_string;
+use cook_contracts::registration::{door_call, DEP_OUTPUT_MEMBER_NAME, DEP_OUTPUT_NAME, MEMBER_TO_STRING_NAME};
 use cook_contracts::ACCESSORS;
 use cook_lang::ast::Body;
 
@@ -153,9 +154,19 @@ pub(crate) fn expand_member_fanout_template(
                 resolved_to_lua(resolved, &span.ident, consulted_env)
             }
         } else if let Resolved::RecipeMember { ref name } = resolved {
+            // COOK-439: both door names come from the constants. This emitter is
+            // a third end for them — `cook-register` installs
+            // `dep_output_member` and `cook_lua_stdlib` installs
+            // `member_to_string` on both VMs — and drift between the ends is
+            // silent, since a renamed door resolves to nil and the generated
+            // call errors at runtime with no hint of why. `door_call` does not
+            // fit here: the second argument is a Lua expression (the loop-local
+            // `item`), not a string it would be right to quote.
             Ok(format!(
-                "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
-                lua_string::escape_double_quoted(name)
+                "cook.{}(\"{}\", cook.{}(item))",
+                DEP_OUTPUT_MEMBER_NAME,
+                lua_string::escape_double_quoted(name),
+                MEMBER_TO_STRING_NAME
             ))
         } else {
             resolved_to_lua(resolved, &span.ident, consulted_env)
@@ -284,11 +295,17 @@ fn resolved_to_lua(
     match resolved {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
         Resolved::Recipe { name, accessor } => {
-            let escaped = lua_string::escape_double_quoted(&name);
+            // COOK-439: `door_call` composes the receiver, the name and the
+            // escaped argument, and the name is the constant both VMs install
+            // `dep_output` under (§24.7: two implementations of one door, one
+            // spelling). A rename that misses this emitter does not fail to
+            // compile — the call resolves to nil and the generated program dies
+            // at runtime with nothing naming the cause.
+            let call = door_call(DEP_OUTPUT_NAME, &name);
             if let Some(acc) = accessor {
-                Ok(format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped))
+                Ok(format!("path.{}({})", acc, call))
             } else {
-                Ok(format!("cook.dep_output(\"{}\")", escaped))
+                Ok(call)
             }
         }
         Resolved::EnvRuntime(key) => {
@@ -454,10 +471,14 @@ fn output_pattern_ident_to_lua(
     match crate::resolver::resolve(ident, ctx) {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
         Resolved::Recipe { name, accessor } => {
-            let escaped = lua_string::escape_double_quoted(&name);
+            // COOK-439: the output-pattern half of the same lowering, and the
+            // same reason — the door name is the shared constant so this
+            // emitter cannot drift away from the two VMs that install it,
+            // silently, into a nil call at runtime.
+            let call = door_call(DEP_OUTPUT_NAME, &name);
             Ok(match accessor {
-                Some(acc) => format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped),
-                None => format!("cook.dep_output(\"{}\")", escaped),
+                Some(acc) => format!("path.{}({})", acc, call),
+                None => call,
             })
         }
         Resolved::EnvRuntime(key) => {

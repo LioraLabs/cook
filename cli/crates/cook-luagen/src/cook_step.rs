@@ -5,6 +5,7 @@ use cook_lang::ast::*;
 use cook_contracts::lua_scan;
 use crate::long_bracket::wrap_lua_string;
 use cook_contracts::lua_string;
+use cook_contracts::registration::{door_call, DEP_OUTPUT_LIST_NAME};
 use crate::resolver::{IterMode, OutputShape};
 use crate::use_prelude::with_execute_prelude;
 use crate::template::{
@@ -322,7 +323,14 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToOne => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", lua_string::escape_double_quoted(dep_name))
+                    // COOK-439: the door name comes from the constant, because
+                    // this emitter is a third end for it — the register VM and
+                    // the execute VM each install a `dep_output_list` of their
+                    // own (§24.7 asks for two implementations, not two
+                    // spellings). Drift is silent: rename the installed door and
+                    // this call resolves to nil, so the generated Lua dies at
+                    // runtime with nothing pointing back at the rename.
+                    door_call(DEP_OUTPUT_LIST_NAME, dep_name)
                 }
                 OutputPatternKind::OwnInputAccessor => input_source.clone(),
                 OutputPatternKind::Literal => input_source.clone(),
@@ -418,7 +426,10 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToMany => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", lua_string::escape_double_quoted(dep_name))
+                    // COOK-439: same door, same reason as the OneToOne arm — the
+                    // name is spelled by both VMs' installers, and a rename that
+                    // misses this emitter fails only at runtime, as a nil call.
+                    door_call(DEP_OUTPUT_LIST_NAME, dep_name)
                 }
                 _ => input_source.clone(),
             };

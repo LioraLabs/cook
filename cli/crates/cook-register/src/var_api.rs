@@ -175,38 +175,36 @@ pub fn install_var_api(lua: &Lua, cook_table: &LuaTable, keyset: VarKeyset) -> m
     // `var` is a proxy: an empty table whose metatable routes reads to the
     // store and refuses writes. Reading through `__index` (rather than handing
     // out the store) is what keeps the declared-name check on every access.
-    let proxy = lua.create_table()?;
-    let meta = lua.create_table()?;
+    //
+    // COOK-439: the proxy's SHAPE — routed reads, refused writes, hidden
+    // metatable — is `cook_lua_stdlib::install_var_proxy`, one implementation
+    // with the worker VM. It was built twice, and the constitution reported the
+    // pair as `__metatable` and `__newindex` written in two crates while
+    // conceding those are Lua's own names; the policy underneath them is what
+    // had two implementations.
+    //
+    // The refusal sentence stays here because register phase has advice
+    // execute phase does not: a config block has not run yet, so the author
+    // really can still set this.
     let ks_read = keyset.clone();
-    meta.set(
-        "__index",
-        lua.create_function(
-            move |lua, (_proxy, name): (LuaValue, String)| -> mlua::Result<LuaValue> {
-                if !ks_read.contains(&name) {
-                    return Err(undeclared(&name, &ks_read, false));
-                }
-                var_store(lua)?.get::<LuaValue>(name)
-            },
-        )?,
+    cook_lua_stdlib::install_var_proxy(
+        lua,
+        move |lua, name: String| -> mlua::Result<LuaValue> {
+            if !ks_read.contains(&name) {
+                return Err(undeclared(&name, &ks_read, false));
+            }
+            var_store(lua)?.get::<LuaValue>(name)
+        },
+        |name| {
+            format!(
+                "var.{name} is read-only outside a config block: a declared \
+                 variable's value is a cache determinant, so it cannot be \
+                 reassigned once recipes have been registered against it \
+                 (Standard §5.3.1). Set it in a `config` block, or pass \
+                 `--set {name}=...`."
+            )
+        },
     )?;
-    meta.set(
-        "__newindex",
-        lua.create_function(
-            move |_, (_proxy, name, _value): (LuaValue, String, LuaValue)| -> mlua::Result<()> {
-                Err(mlua::Error::RuntimeError(format!(
-                    "var.{name} is read-only outside a config block: a declared \
-                     variable's value is a cache determinant, so it cannot be \
-                     reassigned once recipes have been registered against it \
-                     (Standard §5.3.1). Set it in a `config` block, or pass \
-                     `--set {name}=...`."
-                )))
-            },
-        )?,
-    )?;
-    // Hide the metatable so the guards cannot be lifted off with setmetatable.
-    meta.set("__metatable", false)?;
-    proxy.set_metatable(Some(meta));
-    lua.globals().set("var", proxy)?;
 
     Ok(())
 }

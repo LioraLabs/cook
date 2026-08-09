@@ -32,13 +32,6 @@
 //! parameterise over the one thing that genuinely differs, and leave the
 //! phase-specific spelling with the phase.
 
-/// The Lua global the declared-variable surface is reachable under (§5.3.1).
-///
-/// Spelled by both VMs and by `cook-luagen`, which lowers a `$<NAME>` read
-/// into a `var.NAME` access. A rename here without a rename there is a
-/// generated program reading a global that does not exist.
-pub const VAR_GLOBAL_NAME: &str = "var";
-
 /// Install the read-only `var` global.
 ///
 /// `index` answers a read: the register VM checks the declared keyset and
@@ -74,7 +67,13 @@ where
     meta.set("__metatable", false)?;
 
     proxy.set_metatable(Some(meta));
-    lua.globals().set(VAR_GLOBAL_NAME, proxy)?;
+    // The global's name is `cook_contracts::registration::VAR_GLOBAL_NAME`,
+    // not a spelling of our own: the config sandbox exposes the WRITE sink
+    // under it and `cook_contracts::lua_scan` scans for reads of it to compute
+    // a unit's declared-variable determinants. A rename that reached the two
+    // VMs and not the scanner would leave units keyed on nothing.
+    lua.globals()
+        .set(cook_contracts::registration::VAR_GLOBAL_NAME, proxy)?;
     Ok(())
 }
 

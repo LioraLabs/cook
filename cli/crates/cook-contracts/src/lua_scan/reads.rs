@@ -81,8 +81,12 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
             Skip::Code => {}
         }
 
-        // ── Try to match `var` here.
-        const PREFIX: &[u8] = b"var";
+        // ── Try to match `var` here. The name is the one constant every end
+        // reads (COOK-439): the two VMs install the global under it, the
+        // config sandbox exposes the write sink under it, and this scan is
+        // what turns a read of it into a cache determinant. A scanner looking
+        // for a name nothing installs records nothing and fails silently.
+        const PREFIX: &[u8] = crate::registration::VAR_GLOBAL_NAME.as_bytes();
         if bytes_starts_with(bytes, i, PREFIX)
             && !is_part_of_larger_identifier(bytes, i, PREFIX.len())
         {

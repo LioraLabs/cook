@@ -366,13 +366,15 @@ fn build_nodes(
                 command.chars().take(40).collect()
             };
 
-            let (dep_kind_str, group_index) = match &unit.dep_kind {
-                DepKind::StepGroup(idx) => ("step_group".to_string(), Some(*idx)),
-                DepKind::Sequential => ("sequential".to_string(), None),
-                // `DepKind` is `#[non_exhaustive]`; surface unknown future
-                // variants to the viewer as a generic label so the UI doesn't
-                // silently drop them.
-                _ => ("unknown".to_string(), None),
+            // The label is `DepKind`'s own (COOK-439): a step-group unit is
+            // labelled with the door that grouped it, and the vocabulary has
+            // one declaration rather than a mirror here that a new variant
+            // would silently leave saying "unknown". The group INDEX is this
+            // renderer's business, so it stays.
+            let dep_kind_str = unit.dep_kind.wire_name().to_string();
+            let group_index = match &unit.dep_kind {
+                DepKind::StepGroup(idx) => Some(*idx),
+                _ => None,
             };
 
             // --- Unit node ---

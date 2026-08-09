@@ -128,7 +128,10 @@ pub fn build_config_sandbox_env(
     // values by assignment onto this `var` table; `$<NAME>` later resolves
     // `var.NAME`. `env` is deliberately NOT a sink — reading it raises the
     // did-you-mean diagnostic in the metatable below.
-    sandbox.set("var", output_env.clone())?;
+    sandbox.set(
+        cook_contracts::registration::VAR_GLOBAL_NAME,
+        output_env.clone(),
+    )?;
 
     // The one external-input surface.
     sandbox.set("host", build_host_table(lua, working_dir, reads)?)?;
