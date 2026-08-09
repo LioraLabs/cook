@@ -11,7 +11,7 @@
 //! the same way.
 
 /// What [`skip_non_code`] found at a position.
-pub enum Skip {
+pub(crate) enum Skip {
     /// A comment or string ended at this index; resume scanning there.
     Ended(usize),
     /// A comment or string opened and never closed. The source cannot be
@@ -27,7 +27,7 @@ pub enum Skip {
 /// Recognises `--` line comments, `--[[ … ]]` / `--[==[ … ]==]` long comments,
 /// `"…"` and `'…'` short strings (with backslash escapes), and `[[ … ]]` /
 /// `[==[ … ]==]` long strings.
-pub fn skip_non_code(src: &str, bytes: &[u8], i: usize) -> Skip {
+pub(crate) fn skip_non_code(src: &str, bytes: &[u8], i: usize) -> Skip {
     let b = bytes[i];
 
     // Line and long comments both open with `--`.
@@ -92,17 +92,17 @@ fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
     }
 }
 
-pub fn is_ident_start(b: u8) -> bool {
+pub(crate) fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_'
 }
 
-pub fn is_ident_cont(b: u8) -> bool {
+pub(crate) fn is_ident_cont(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// Advance from `start` while identifier-continuation bytes match. Returns
 /// `start` unchanged when `start` is not an identifier-start byte.
-pub fn ident_end(bytes: &[u8], start: usize) -> usize {
+pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
     if start >= bytes.len() || !is_ident_start(bytes[start]) {
         return start;
     }

@@ -20,5 +20,11 @@
 mod reads;
 mod scan;
 
+// Only what a consumer outside this crate actually asks. The walk itself
+// (`skip_non_code`, `Skip`, the identifier helpers) stays crate-private: it
+// was `pub(crate)` in cook-luagen and moving a thing is not a reason to widen
+// it. `free_identifier_occurs` is public because the move put a crate boundary
+// between it and cook-luagen's two callers, which is the one widening the move
+// actually forces.
 pub use reads::{scan_probe_reads, scan_var_reads};
-pub use scan::{free_identifier_occurs, ident_end, is_ident_cont, is_ident_start, skip_non_code, Skip};
+pub use scan::free_identifier_occurs;
