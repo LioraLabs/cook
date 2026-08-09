@@ -20,16 +20,31 @@ re-rendering it.
   leaf (`grammar.js:161`, `:480`), so a field is found by a scan bounded by the
   call's span. That scan is sound only because its boundaries came from the
   parser.
-- The brace matcher counts depth through quotes and `--` comments instead of
-  calling `find('}')`. `sources = { "src/a}b.cpp" }` is rare but legal, and a
-  comment mentioning a brace inside a multi-line list is not rare at all. This
-  layer exists to preserve comments, which makes miscounting on one a
+- Every question it asks of the call's bytes is asked of one lexical reading of
+  them. "Where does a Lua string or comment begin and end" is decided once, by
+  `cook_contracts::lua_scan`, and the three things this crate needs to know —
+  which `}` closes the list, which `links` is the field, where the last byte of
+  code is — are consumers of that reading rather than three scanners of their
+  own. They were three, at three fidelities, which is how the field-key scan
+  came to splice into a commented-out field while the two scanners beside it
+  would have refused to (COOK-403).
+- The brace matcher counts depth through strings and comments instead of
+  calling `find('}')`, and "string" means all four of Lua's spellings.
+  `sources = { "src/a}b.cpp" }` is rare but legal, `[[src/a}b.cpp]]` no less
+  so, and a comment mentioning a brace inside a multi-line list is not rare at
+  all. This layer exists to preserve comments, which makes miscounting on one a
   particularly poor way to be wrong.
+- A field is a table key at the top level of the call's argument. `links` does
+  not match inside `"mathlinks.cpp"`, inside a `-- links = { "old" }` the
+  author commented out, or as the key of a table nested in the call. The last
+  of those is the one worth the check on its own: editing it leaves a file that
+  parses, reads correctly, and links against a list nobody edited.
 - The insert anchors on the last byte of *code*, not the last non-whitespace
   byte. In a list ending `"mathlib",   -- see docs/build.md {section 2}` the
   last non-whitespace byte sits inside the author's comment. A single `-` still
-  counts as code until a second one proves it opened a comment, so `{ n-1 }` is
-  not mistaken for one; the retraction is exact rather than recomputed.
+  counts as code — `{ n-1 }` is not a comment — while a `--` inside a string
+  literal is not one either, so a list ending `[[note -- x]]` anchors after the
+  bracket rather than inside the literal.
 - Every failure names what it looked for and leaves the file byte-identical:
   `RecipeNotFound`, `NoModuleCall`, `FieldNotFound`, `FieldNotAList`,
   `Unparseable`. This is the property the splice is bought with. A re-rendering
@@ -42,7 +57,7 @@ re-rendering it.
 - It is pure: `&str` in, `String` out. No filesystem, no environment, no VM.
   Reading, writing, and the CS-0045 sandbox gate stay in the caller
   (`cook-lua-stdlib/src/cookfile_api.rs`), which is what lets the whole editing
-  algebra be pinned by 18 string-in/string-out tests with no Lua VM and no
+  algebra be pinned by 27 string-in/string-out tests with no Lua VM and no
   tempdir.
 - The selector is the recipe name, which is exact rather than convenient. A
   target maker is a step contributor deriving its identity from
@@ -66,40 +81,44 @@ It does not choose among several module calls in one recipe. The first wins,
 on the ground that a recipe holding several is not a target recipe; a caller
 that cares reads the returned `callee` first.
 
-## Known defects
+## Known limits
 
-Recorded here rather than in a comment nobody greps. Both are cases where this
-crate does the exact thing it exists to prevent.
+Recorded here rather than in a comment nobody greps.
 
-- **Long-bracket literals are not understood.** `links = { [[a}b]], "c" }`
-  splices *inside* the string, yielding `[[a, "d"}b]]`. §22.13 states that a
-  `}` inside a string literal MUST NOT close the list, so this is a normative
-  violation, not a boundary. `locate_field_interior` (`src/lib.rs:201`) and
-  `last_code_end` (`src/lib.rs:302`) both track `"` and `'` and neither tracks
-  `[[`.
-- **The field-key scan is neither quote- nor comment-aware**, although the two
-  scanners beside it are. `find_field_key` (`src/lib.rs:254`) checks only for a
-  delimiter before and an `=` after, so a commented-out `-- links = { "old" }`
-  above the real field is matched as the key and spliced into, and
-  `defines = { "links=1" }` earlier in the same call yields a spurious
-  `FieldNotAList`. It is also nesting-blind: given
-  `{ opts = { links = {…} }, links = {…} }` it edits the nested list.
+- **A recipe with several module calls edits its first**, by the rule above. A
+  caller that cares reads the returned `callee` before writing.
+- **`["links"] = { … }` is not matched.** A bracketed key is a table key and
+  the scan looks for the bare identifier form, so the edit is refused by name
+  rather than mis-aimed. Failing is the correct half of the bargain; the
+  spelling is simply not supported yet.
 
-The shared root cause is that "where does a Lua string or comment begin and
-end" is answered three times in this one file, at three different fidelity
-levels. One answer, used by all three scanners, closes all of the above.
+The defects this file used to list — long-bracket literals spliced into, the
+field-key scan matching inside a comment or a nested table — are fixed
+(COOK-403, CS-0208), and the tests that pin them are named after the shape they
+refuse rather than after the bug.
 
 ## Relationship to the rest of the workspace
 
-This is the workspace's only Rust consumer of `tree-sitter-cook`. It occupies
-the stratum `cook-contracts` cannot reach: the rules here are pure, and would
-belong there on that count alone, but the crate's dependency budget is serde
-and this needs a grammar. Nothing depends back on it; its one consumer is the
-`cook.cookfile.*` binding in `cook-lua-stdlib`.
+This is the workspace's only Rust consumer of `tree-sitter-cook`. It sits in
+the *mechanism* stratum: what it needs a grammar for stays here, and the one
+rule it does not own — where a Lua string or comment begins and ends — went
+down to `cook_contracts::lua_scan`, where `cook-luagen` already needed the same
+answer. Nothing depends back on it; its one consumer is the `cook.cookfile.*`
+binding in `cook-lua-stdlib`.
+
+Its dependency on the grammar is closer than the module boundary suggests, and
+in one direction only: the call span it splices within is a `module_call_text`
+token produced by `tree-sitter-cook`'s external scanner, so a construct that
+scanner cannot span is a construct this crate cannot edit. That coupling has
+already produced one defect — the scanner read a long bracket as code, and this
+crate reported a syntax error in files `cook-lang` accepts (fixed under
+CS-0208). `cook-lang` remains the authority on what a Cookfile means, so a
+disagreement between the two parsers is always the grammar's bug.
 
 The surface it backs has no shipped module consumer yet. CS-0179 was written
 for the `cc.add` / `cc.link` / `cc.need` verbs of CS-0176, and none of those
-exist in `cook-modules` today; the only caller outside this crate's own tests
-is the synthetic `cook_edit` module in
-`standard/conformance/positive/cookfile-splice-preserves-comments/`. The
-editing algebra is finished and the verbs that would use it are not.
+exist in `cook-modules` today; the only callers outside this crate's own tests
+are the synthetic `cook_edit` modules in
+`standard/conformance/positive/cookfile-splice-preserves-comments/` and
+`.../cookfile-splice-skips-strings-and-comments/`. The editing algebra is
+finished and the verbs that would use it are not.

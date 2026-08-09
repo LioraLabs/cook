@@ -15,6 +15,7 @@ pub mod layout;
 pub mod captured_stream;
 pub mod command_failure;
 pub mod lua_error;
+pub mod lua_scan;
 pub mod lua_string;
 pub mod member;
 pub mod module_binding;

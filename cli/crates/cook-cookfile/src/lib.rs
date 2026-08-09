@@ -35,6 +35,7 @@
 
 use std::ops::Range;
 
+use cook_contracts::lua_scan::{is_ident_cont, opens_comment, skip_non_code, Skip};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -166,111 +167,224 @@ fn locate_call_within<'t>(tree: &'t Tree, source: &str, within: Range<usize>) ->
     None
 }
 
+/// What a byte range of a Lua fragment is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Region {
+    /// Ordinary code. A brace here nests the table and an `=` here binds a key.
+    Code,
+    /// One whole string literal, in any of Lua's four spellings.
+    Str,
+    /// One whole comment, `-- …` to end of line or `--[==[ … ]==]` across them.
+    Comment,
+}
+
+/// Split `src` into lexical regions, in order and covering every byte.
+///
+/// This is the crate's one answer to "where does a Lua string or comment begin
+/// and end", and it is not answered here: [`cook_contracts::lua_scan`] owns it,
+/// because `cook-luagen` asks the same question of the Lua it lowers. Three
+/// questions below consume this — which `}` closes the list, which `links` is
+/// the field, and where the last byte of code is — and they used to be three
+/// state machines at three fidelities, which is how a `[[a}b]]` entry came to
+/// be spliced into (COOK-403, CS-0208).
+fn regions(src: &str) -> Vec<(Region, Range<usize>)> {
+    let bytes = src.as_bytes();
+    let mut out: Vec<(Region, Range<usize>)> = Vec::new();
+    let mut code_from = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let kind = if opens_comment(bytes, i) {
+            Region::Comment
+        } else {
+            Region::Str
+        };
+        let end = match skip_non_code(src, i) {
+            Skip::Code => {
+                i += 1;
+                continue;
+            }
+            Skip::Ended(end) => end.max(i + 1),
+            // Past a literal nobody closed there is no honest reading, so the
+            // rest of the fragment is that literal. Every caller then fails to
+            // find what it was looking for and the edit is refused, which is
+            // the correct answer to a file the author has already broken.
+            Skip::Unterminated => bytes.len(),
+        };
+        if code_from < i {
+            out.push((Region::Code, code_from..i));
+        }
+        out.push((kind, i..end));
+        i = end;
+        code_from = end;
+    }
+    if code_from < bytes.len() {
+        out.push((Region::Code, code_from..bytes.len()));
+    }
+    out
+}
+
+/// A string that stands in for a whole literal, and a space that stands in for
+/// a whole comment.
+///
+/// Both are bytes that can neither continue an identifier nor nest a table, so
+/// a name written across one — `link--x\ns` — cannot join up into `links`.
+const STRING_ATOM: u8 = b'"';
+const COMMENT_ATOM: u8 = b' ';
+
+/// The call text as the grammar-relevant bytes alone: comments removed, string
+/// literals collapsed to one opaque byte, and every remaining byte paired with
+/// the offset it came from.
+///
+/// Nesting depth, key positions and the `=` that binds a key are all decided
+/// over this view, which is what makes each of them blind by construction to a
+/// brace, a field name or an `=` the author wrote inside a literal or a
+/// comment. The offsets are the original ones, so anything found here can be
+/// spliced without translating back.
+struct CodeView {
+    bytes: Vec<u8>,
+    at: Vec<usize>,
+}
+
+impl CodeView {
+    fn of(src: &str) -> Self {
+        let raw = src.as_bytes();
+        let mut view = CodeView {
+            bytes: Vec::new(),
+            at: Vec::new(),
+        };
+        for (kind, range) in regions(src) {
+            match kind {
+                Region::Code => {
+                    for i in range {
+                        view.bytes.push(raw[i]);
+                        view.at.push(i);
+                    }
+                }
+                Region::Str => {
+                    view.bytes.push(STRING_ATOM);
+                    view.at.push(range.start);
+                }
+                Region::Comment => {
+                    view.bytes.push(COMMENT_ATOM);
+                    view.at.push(range.start);
+                }
+            }
+        }
+        view
+    }
+
+    /// Index of the next non-whitespace byte at or after `from`.
+    fn significant_from(&self, from: usize) -> Option<usize> {
+        (from..self.bytes.len()).find(|&i| !self.bytes[i].is_ascii_whitespace())
+    }
+
+    /// Index of the last non-whitespace byte before `before`.
+    fn significant_before(&self, before: usize) -> Option<usize> {
+        (0..before).rev().find(|&i| !self.bytes[i].is_ascii_whitespace())
+    }
+}
+
 /// Find `field`'s `{ ... }` value inside an already-located call span.
 ///
 /// Returns the byte range of the braces' interior, exclusive of both braces.
 /// Scoped to the call span by the caller, so the scan cannot run off into a
 /// neighbouring construct.
 ///
-/// Brace matching is quote- and comment-aware: a `}` inside a Lua string
-/// literal or a `--` comment does not close the list. It is the reason this is
-/// a scan rather than a `find('}')`. `sources = { "a}b.c" }` is rare but
-/// legal, and a comment mentioning a brace inside a multi-line list is not
-/// rare at all — this layer exists to preserve comments, so miscounting on one
-/// would be a particularly poor failure.
+/// `field` is matched as a table KEY at the top level of the call's argument,
+/// never as a substring. `call.find("links")` would match inside
+/// `"mathlinks.cpp"`, inside a commented-out `-- links = { "old" }`, or inside
+/// the nested `opts = { links = … }` of a different table, and splice into
+/// whichever came first. Each is a way of editing bytes the author never
+/// pointed at, and the nested one is the worst, because the file still looks
+/// right afterwards (§22.13, CS-0208).
+///
+/// Brace matching is blind to strings and comments for the same reason: a `}`
+/// inside `"src/a}b.cpp"` or `[[a}b]]` or a comment does not close the list.
 fn locate_field_interior(call: &str, field: &str) -> Option<Result<Range<usize>, ()>> {
-    let at = find_field_key(call, field)?;
+    let view = CodeView::of(call);
+    let eq = find_field_key(&view, field)?;
 
-    // Step past `field` and its `=`.
-    let rest = &call[at + field.len()..];
-    let eq = rest.find('=')?;
-    let after_eq = at + field.len() + eq + 1;
+    // The value is whatever follows the `=`. It must open with `{` to be a
+    // list an entry can be added to.
+    let after_eq = view.significant_from(eq + 1);
+    let open = match after_eq {
+        Some(i) if view.bytes[i] == b'{' => i,
+        _ => return Some(Err(())),
+    };
 
-    // The value must open with `{` to be a list we can append to.
-    let value_start = after_eq + call[after_eq..].len() - call[after_eq..].trim_start().len();
-    if !call[value_start..].starts_with('{') {
-        return Some(Err(()));
-    }
-
-    let open = value_start;
     let mut depth = 0usize;
-    let mut in_string: Option<char> = None;
-    let mut escaped = false;
-    let mut in_comment = false;
-    let mut prev_dash = false;
-    for (i, ch) in call[open..].char_indices() {
-        if in_comment {
-            // A `--` comment runs to end of line. Long-bracket comments
-            // (`--[[ ... ]]`) are not handled: they cannot appear in a
-            // single-line field value, and a multi-line one would have to sit
-            // inside the list to matter. If that ever shows up, the depth
-            // count fails closed — the field reads as unterminated and the
-            // caller gets FieldNotAList rather than a bad splice.
-            if ch == '\n' {
-                in_comment = false;
-            }
-            continue;
-        }
-        if let Some(quote) = in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = None;
-            }
-            continue;
-        }
-        if ch == '-' {
-            if prev_dash {
-                in_comment = true;
-                prev_dash = false;
-                continue;
-            }
-            prev_dash = true;
-            continue;
-        }
-        prev_dash = false;
-        match ch {
-            '"' | '\'' => in_string = Some(ch),
-            '{' => depth += 1,
-            '}' => {
+    for i in open..view.bytes.len() {
+        match view.bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(Ok(open + 1..open + i));
+                    return Some(Ok(view.at[open] + 1..view.at[i]));
                 }
             }
             _ => {}
         }
     }
+    // Unterminated: the author's file, or a literal this scan could not close.
+    // Either way the honest answer is that no list was found here.
     Some(Err(()))
 }
 
-/// Locate `field` as a table KEY, not as a substring.
+/// Locate `field` as a table key at the top level of the call's argument, and
+/// return the [`CodeView`] index of the `=` that binds it.
 ///
-/// `call.find("links")` would match the `links` inside `"mathlinks"` or a
-/// comment, and splice into it. A key is preceded by a delimiter and followed
-/// by optional whitespace then `=`.
-fn find_field_key(call: &str, field: &str) -> Option<usize> {
-    let bytes = call.as_bytes();
-    let mut from = 0usize;
-    while let Some(rel) = call[from..].find(field) {
-        let at = from + rel;
-        from = at + field.len();
-
-        let before_ok = at == 0
-            || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
-        let after = &call[at + field.len()..];
-        let after_ok = after.trim_start().starts_with('=');
-        if before_ok && after_ok {
-            return Some(at);
+/// A key qualifies when all four hold: it is whole (no identifier byte on
+/// either side), it sits at brace depth 1 — inside the call's own table and
+/// not a table nested in it — the previous significant byte opens or separates
+/// a table entry, and the next one is a lone `=` rather than the `==` of a
+/// comparison.
+fn find_field_key(view: &CodeView, field: &str) -> Option<usize> {
+    // An empty name matches at every position, which is a way of editing an
+    // arbitrary field rather than of finding none.
+    if field.is_empty() {
+        return None;
+    }
+    let needle = field.as_bytes();
+    let mut depth = 0usize;
+    for i in 0..view.bytes.len() {
+        match view.bytes[i] {
+            b'{' => {
+                depth += 1;
+                continue;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
         }
+        if depth != 1 || !view.bytes[i..].starts_with(needle) {
+            continue;
+        }
+        let after = i + needle.len();
+        if after < view.bytes.len() && is_ident_cont(view.bytes[after]) {
+            continue;
+        }
+        let opens_entry = match view.significant_before(i) {
+            Some(p) => matches!(view.bytes[p], b'{' | b',' | b';'),
+            None => false,
+        };
+        if !opens_entry {
+            continue;
+        }
+        let Some(eq) = view.significant_from(after) else {
+            continue;
+        };
+        if view.bytes[eq] != b'=' || view.bytes.get(eq + 1) == Some(&b'=') {
+            continue;
+        }
+        return Some(eq);
     }
     None
 }
 
 /// Offset just past the last byte of code in a list's interior, skipping
-/// trailing whitespace and any `--` comments.
+/// trailing whitespace and any comment.
 ///
 /// `str::trim_end` is not enough. In
 ///
@@ -285,56 +399,25 @@ fn find_field_key(call: &str, field: &str) -> Option<usize> {
 /// comment is exactly what this layer exists to preserve, which makes that a
 /// particularly bad way to be wrong.
 ///
+/// A string literal counts as code, and counts to its last byte: a list ending
+/// `[[note -- x]]` anchors after the closing bracket, not at the `--` inside
+/// it, where a comment-aware scan that cannot see long brackets would put it.
+///
 /// Returns `None` for an interior holding no code at all (empty, or only
 /// comments).
 fn last_code_end(inner: &str) -> Option<usize> {
     let mut last: Option<usize> = None;
-    let mut in_string: Option<char> = None;
-    let mut escaped = false;
-    let mut in_comment = false;
-    let mut prev_dash = false;
-    // `last` as it stood before the first `-` of a possible `--` was
-    // provisionally counted as code. A single `-` is legal Lua (`n-1`), so it
-    // has to count until a second one proves it was a comment opener; this is
-    // what makes that retraction exact rather than recomputed.
-    let mut last_before_dash: Option<usize> = None;
-
-    for (i, ch) in inner.char_indices() {
-        if in_comment {
-            if ch == '\n' {
-                in_comment = false;
+    for (kind, range) in regions(inner) {
+        match kind {
+            Region::Comment => {}
+            Region::Str => last = Some(range.end),
+            Region::Code => {
+                for (i, ch) in inner[range.clone()].char_indices() {
+                    if !ch.is_whitespace() {
+                        last = Some(range.start + i + ch.len_utf8());
+                    }
+                }
             }
-            continue;
-        }
-        if let Some(quote) = in_string {
-            last = Some(i + ch.len_utf8());
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = None;
-            }
-            continue;
-        }
-        if ch == '-' {
-            if prev_dash {
-                in_comment = true;
-                prev_dash = false;
-                last = last_before_dash;
-                continue;
-            }
-            prev_dash = true;
-            last_before_dash = last;
-            last = Some(i + 1);
-            continue;
-        }
-        prev_dash = false;
-        if ch == '"' || ch == '\'' {
-            in_string = Some(ch);
-        }
-        if !ch.is_whitespace() {
-            last = Some(i + ch.len_utf8());
         }
     }
     last

@@ -78,6 +78,25 @@ static bool match_placeholder_lookahead(TSLexer *lexer) {
 }
 
 // ── Lua block scanner ──────────────────────────────────────────
+//
+// TWIN: the same lexical fact — where a Lua string or comment begins
+// and ends — is implemented in Rust at
+// `cli/crates/cook-contracts/src/lua_scan/mod.rs`, which is the single
+// home for it on that side of the wall (`cook-luagen` and
+// `cook-cookfile` both consume it). This copy exists because a
+// tree-sitter external scanner is C and can reach no Rust crate; there
+// is no eligible shared home, not merely an inconvenient one.
+//
+// What replaces the missing edge is the conformance corpus: every
+// `standard/conformance/**/Cookfile` is graded by BOTH parsers — by
+// `cook-lang` through `cli/crates/cook-lang/tests/conformance.rs` and by
+// this grammar through `tree-sitter-cook/scripts/conformance.mjs` — so a
+// construct one accepts and the other rejects fails a gate. That is how
+// CS-0208 was found: these arms were missing, `cook-lang` accepted the
+// files, and `cook.cookfile.*` reported a syntax error in a file that
+// has none. A new spelling handled here belongs in the corpus, or the
+// agreement stops being checked.
+//
 // Scans brace-balanced content after `>{`, stopping before the
 // closing `}` that balances the opening one. Per CS-0035 / App. A.5,
 // braces are inert inside:
@@ -824,10 +843,20 @@ static bool peek_top_level_module_call_shape(TSLexer *lexer) {
 // Consumes a column-zero `LUA_IDENT . IDENT_START …` statement, ending
 // at a newline encountered with brace_depth == 0. Multi-line forms
 // (App. A.4 + § 2.9) brace-balance using the same opaque-span rules
-// as `scan_lua_block_content`: strings, single-line comments, and
-// (TODO: issue COOK-53) leveled long-strings / block comments are
-// inert. Parentheses are NOT balanced — only braces matter for
+// as `scan_lua_block_content`: strings, comments and leveled
+// long-strings / block comments are inert, at any `=`-level and across
+// newlines. Parentheses are NOT balanced — only braces matter for
 // statement extent.
+//
+// The long-bracket arms are CS-0208. They were absent, and the two
+// spellings failed in opposite directions: a `}` inside `[[ … ]]`
+// closed the call early, and a `--` inside one — or a `--[[ … ]]`
+// comment on a line with real code after it — ran to end of line and
+// swallowed the braces that would have closed it, so the whole
+// Cookfile failed to parse. `cook-lang`, which is the authority on
+// what a Cookfile means, accepted all of those files; this scanner
+// refusing them made `cook.cookfile.*` report a syntax error in a file
+// that has none (§22.13).
 //
 // Activation conditions:
 //   • valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT] is set, AND
@@ -884,9 +913,31 @@ static bool scan_module_call_tail(TSLexer *lexer) {
     }
     if (c == '"') { in_dq = true; lexer->advance(lexer, false); continue; }
     if (c == '\'') { in_sq = true; lexer->advance(lexer, false); continue; }
+    if (c == '[') {
+      // Leveled long-string `[==[ … ]==]`, which may span newlines and in
+      // which braces, quotes and dashes are all inert.
+      int level = try_long_string_opener(lexer);
+      if (level >= 0) {
+        skip_long_string_body(lexer, level);
+      }
+      // On no match the probe consumed the `[` (and any `=` run); those
+      // bytes are ordinary content, exactly as in scan_lua_block_content.
+      continue;
+    }
     if (c == '-') {
       lexer->advance(lexer, false);
       if (lexer->lookahead == '-') {
+        lexer->advance(lexer, false);
+        // A leveled block comment ends at its closer, NOT at the newline.
+        if (lexer->lookahead == '[') {
+          int level = try_long_string_opener(lexer);
+          if (level >= 0) {
+            skip_long_string_body(lexer, level);
+            continue;
+          }
+          // Fall through: `--[` without a balanced opener is a line
+          // comment (the `[` is part of the comment text).
+        }
         // Lua line comment to end of line — but a comment outside braces
         // means we're past the statement at the next newline anyway, so
         // just skip to EOL.

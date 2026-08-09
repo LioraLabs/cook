@@ -74,7 +74,14 @@ Worked examples from this repo's history:
   `cook-luagen` composes `local foo = cook.load_module("foo")` and
   `cook-lua-stdlib` installs the function it names, and drift between them does
   not break the build, it routes the binding past the door CS-0204 observes and
-  quietly drops the module from a shared cache key).
+  quietly drops the module from a shared cache key); `lua_scan` (COOK-403 /
+  CS-0208 — where a Lua string or comment begins and ends, all four string
+  spellings and both comment forms; `cook-luagen` scans for `var.X` reads and
+  free identifiers, `cook-cookfile` scans for the field it is about to splice
+  into, and the crate that knew fewer of the spellings inserted the author's
+  new entry into the middle of their string literal. Note what "shared" meant
+  here: one crate's copy was *correct* and the finding was not drift between
+  them but a second, worse answer to a question already settled next door).
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
   their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
   `CacheBackend` trait and its implementations (mechanism, not law).
