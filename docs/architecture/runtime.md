@@ -7,11 +7,11 @@ There is no single "runtime" any more. The Lua VM layer is split across two crat
 | Crate | Phase | What it does |
 |---|---|---|
 | `cli/crates/cook-register` | **Register (capture)** | One short-lived `mlua::Lua` per recipe. Runs the generated Cookfile Lua with capture-mode `cook.*` so it records `CapturedUnit`s instead of doing the work. |
-| `cli/crates/cook-luaotp` | **Execute** | Long-lived pool of N worker threads. Each thread owns one `mlua::Lua` and pulls `WorkItem`s off a shared queue: `Shell`, `Interactive` (rejected — never dispatched), `LuaChunk`, and `Test`. |
-| `cli/crates/cook-lua-stdlib` | **Both** | The shared `fs.*`, `path.*`, and `cook.platform.*` tables, plus the CS-0045 sandbox policy and `os.execute` / `io.popen` escape-hatch guards. Installed into the register-phase VM by `cook-register` and into every worker VM by `cook-luaotp` so both phases see byte-identical behavior (CS-0044). |
+| `cli/crates/cook-execute` | **Execute** | Long-lived pool of N worker threads. Each thread owns one `mlua::Lua` and pulls `WorkItem`s off a shared queue: `Shell`, `Interactive` (rejected — never dispatched), `LuaChunk`, and `Test`. |
+| `cli/crates/cook-lua-stdlib` | **Both** | The shared `fs.*`, `path.*`, and `cook.platform.*` tables, plus the CS-0045 sandbox policy and `os.execute` / `io.popen` escape-hatch guards. Installed into the register-phase VM by `cook-register` and into every worker VM by `cook-execute` so both phases see byte-identical behavior (CS-0044). |
 | `cli/crates/cook-contracts` | (types) | Behavior-free shared types: `WorkPayload`, `CapturedUnit`, `CacheMeta`, `DepKind`, `StepKind`, `RecipeUnits`, `OutputStream`. Zero deps on other Cook crates. |
 
-`cook-engine` (not described here) orchestrates: it calls `cook-register` once per recipe to obtain a `RecipeUnits`, assembles all units into a global DAG, then dispatches `WorkItem`s to the `cook-luaotp` pool and consumes `WorkResult`s off the result channel. The old monolithic `Runtime` struct and the legacy single-threaded `execute_recipe()` path are gone — every execution now flows through capture → DAG → worker pool.
+`cook-engine` (not described here) orchestrates: it calls `cook-register` once per recipe to obtain a `RecipeUnits`, assembles all units into a global DAG, then dispatches `WorkItem`s to the `cook-execute` pool and consumes `WorkResult`s off the result channel. The old monolithic `Runtime` struct and the legacy single-threaded `execute_recipe()` path are gone — every execution now flows through capture → DAG → worker pool.
 
 ---
 
@@ -35,7 +35,7 @@ For each call the registry:
 
 | API | Register-phase behavior | Execute-phase behavior |
 |---|---|---|
-| `cook.recipe(name, meta, fn)` | Records `(name, ingredients, excludes, requires, fn)` in the registry (`capture.rs:39`). Body not called until the target recipe is selected. | Register-only — guarded with a §6.3.2 diagnostic in worker VMs (`cli/crates/cook-luaotp/src/pool.rs:535`). |
+| `cook.recipe(name, meta, fn)` | Records `(name, ingredients, excludes, requires, fn)` in the registry (`capture.rs:39`). Body not called until the target recipe is selected. | Register-only — guarded with a §6.3.2 diagnostic in worker VMs (`cli/crates/cook-execute/src/pool.rs:535`). |
 | `cook.exec(cmd, line)` | Pushes a `CapturedUnit { payload: WorkPayload::Shell, dep_kind }` onto `CaptureState.units` (`capture.rs:85`). Returns `""`. No subprocess. | Register-only — guarded with a §6.3.2 diagnostic (`pool.rs:504`). |
 | `cook.interactive(cmd, line)` | Pushes a `CapturedUnit { payload: WorkPayload::Interactive, ... }` (`capture.rs:106`). Always sequential. | Register-only — guarded (`pool.rs:511`). The engine routes captured `Interactive` units through a dedicated foreground window before dispatch; the worker pool will surface a "BUG: interactive step dispatched" error if one ever reaches it (`pool.rs:776`). |
 | `cook.sh(cmd)` | **Executes immediately** (`capture.rs:138`). `cook.sh` is the both-phase shell-out helper: its return value drives Lua control flow during capture (e.g. computing a version string used in subsequent `cook.add_unit` calls). | Executes via `run_shell_in_worker` in the worker VM (`pool.rs:341`). Phase: **Both** (Standard §6.3.1). |
@@ -56,9 +56,9 @@ The register-only diagnostics on the worker VM cite Standard §6.3.2 and name th
 
 ---
 
-## Execute phase (`cook-luaotp`)
+## Execute phase (`cook-execute`)
 
-Entry point: `WorkerPool::spawn(n)` at `cli/crates/cook-luaotp/src/pool.rs:81`. Returns the pool and a single `mpsc::Receiver<WorkResult>` shared by all workers.
+Entry point: `WorkerPool::spawn(n)` at `cli/crates/cook-execute/src/pool.rs:81`. Returns the pool and a single `mpsc::Receiver<WorkResult>` shared by all workers.
 
 Each worker thread is a `worker_loop` (`pool.rs:153`) that:
 
@@ -98,14 +98,14 @@ The original suffixes are stashed exactly once so per-unit refresh is idempotent
 
 ## Shared APIs (`cook-lua-stdlib`)
 
-The Standard tags `fs.*`, `path.*`, and `cook.platform.*` as **Phase: Both**. CS-0044 realizes that contract by giving each table a single implementation that both VMs install. Bug fixes to these surfaces MUST land here, not in `cook-register` or `cook-luaotp`.
+The Standard tags `fs.*`, `path.*`, and `cook.platform.*` as **Phase: Both**. CS-0044 realizes that contract by giving each table a single implementation that both VMs install. Bug fixes to these surfaces MUST land here, not in `cook-register` or `cook-execute`.
 
 ### `WorkingDirSource`
 
 `cli/crates/cook-lua-stdlib/src/lib.rs:55`. Abstracts how `fs.*` learns the cwd at call time:
 
 - `Static(PathBuf)` — captured once at registration. Used by `cook-register` (one VM per recipe, cwd never changes).
-- `Live(Arc<Mutex<PathBuf>>)` — resolved on every call. Used by `cook-luaotp`'s reusable workers, which serve items from possibly many Cookfiles within a single build.
+- `Live(Arc<Mutex<PathBuf>>)` — resolved on every call. Used by `cook-execute`'s reusable workers, which serve items from possibly many Cookfiles within a single build.
 
 ### `SandboxSource` / `SandboxPolicy`
 

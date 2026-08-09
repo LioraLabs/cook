@@ -3,7 +3,7 @@
 **Source crates:**
 - `cli/crates/cook-dag/src/lib.rs` — generic `Dag<T>` (~636 lines incl. tests)
 - `cli/crates/cook-engine/src/` — Cook-specific orchestration (~6.6k lines across 9 files)
-- `cli/crates/cook-luaotp/src/pool.rs` — `WorkerPool` and worker threads (~1.7k lines)
+- `cli/crates/cook-execute/src/pool.rs` — `WorkerPool` and worker threads (~1.7k lines)
 - `cli/crates/cook-contracts/src/lib.rs` — shared `WorkPayload`, `DepKind`, `CacheMeta`, `RecipeUnits`, `OutputStream`
 
 ---
@@ -44,7 +44,7 @@ There is no single "scheduler" module any more. Scheduling is split across four 
             ▼              │
    ┌──────────────────────┐
    │ WorkerPool           │  N threads, each owns a !Send mlua::Lua VM
-   │   (cook-luaotp)      │     executes Shell / LuaChunk / Test payloads
+   │   (cook-execute)      │     executes Shell / LuaChunk / Test payloads
    └──────────────────────┘
 ```
 
@@ -67,7 +67,6 @@ Two architectural points are worth keeping in mind throughout:
 |---|---|---|
 | `Dag::new()` | Empty DAG | `cook-dag/src/lib.rs:147` |
 | `add_node(payload: T, depends_on: &[usize]) -> Result<usize, DagError>` | Append a node, dedupe duplicate deps via `BTreeSet`, wire forward edges, return its id | `cook-dag/src/lib.rs:159` |
-| `validate() -> Result<(), CycleError>` | Kahn's algorithm; on cycle, walks unconsumed predecessors to surface one concrete cycle path | `cook-dag/src/lib.rs:201` |
 | `initial_ready() -> Vec<usize>` | All nodes where `remaining_deps == 0` (the roots) | `cook-dag/src/lib.rs:302` |
 | `complete(id) -> Vec<usize>` | Atomic `fetch_sub(1, SeqCst)` on each dependent's `remaining_deps`; returns dependents whose previous value was 1 (i.e. just became ready) | `cook-dag/src/lib.rs:315` |
 | `node(id) -> &Node<T>` | Read-only access | `cook-dag/src/lib.rs:334` |
@@ -78,29 +77,34 @@ Two architectural points are worth keeping in mind throughout:
 - `complete()` uses `Ordering::SeqCst` so multiple worker threads can call it concurrently on different node ids without external locking. The thread that observes `prev == 1` is the unique unlocker of that dependent.
 - `add_node()` returns `DagError::DependencyOutOfRange` when a dep id has not yet been inserted; on error the DAG is left unchanged. Self-references and forward references are both caught by the same range check.
 
-### Cycle reporting
+### Cycle reporting: there is none, and there cannot be a cycle
 
-`CycleError` (`cook-dag/src/lib.rs:80`) carries:
-- `cycle_path: Vec<usize>` — a concrete `[v_0, …, v_k]` with the implicit closing edge `v_k → v_0`, in dependency order (`v_i` depends on `v_{i+1}`).
-- `blocked: usize` — number of nodes part of, or transitively downstream of, the cycle.
+`Dag<T>` carried `validate()`, Kahn's pass, `extract_cycle` and a `CycleError`
+with a concrete cycle path. All of it is deleted (COOK-423). `add_node` is the
+only mutator and it rejects any `dep_id >= id`, so every edge points to a
+strictly smaller id, insertion order IS a topological order, and no DAG built
+through the public API can contain a cycle. The two tests that exercised the
+cycle machinery had to reach into the crate-private `deps` and `nodes` vectors
+to forge one, which is the tell.
 
-The engine calls `dag.validate()` defensively at the top of `execute_dag` (`cli/crates/cook-engine/src/executor.rs:312`); the work-DAG builder cannot construct a cycle today (every dep id was emitted earlier in the same pass), but the validation is cheap insurance against a future builder bug.
+`add_node`'s doc comment now carries that reasoning next to the range check
+that enforces it, and states what has to come back if the check ever relaxes to
+admit forward references. See `cook-dag/README.md`.
 
 ---
 
 ## 3. Recipe DAG and waves (`cook-engine`)
 
-The recipe-level scheduling layer sits above the work-unit DAG. Two structures cooperate:
+The recipe-level scheduling layer sits above the work-unit DAG. One of the two structures this section described is gone:
 
-### `RecipeDag` — wave-by-wave readiness tracking
+### `RecipeDag` — deleted
 
-`cli/crates/cook-engine/src/recipe_dag.rs:22` — a much simpler structure than the work DAG. Each recipe is a node; nodes track `remaining_deps`, `in_flight`, and `done` flags. The API is:
-
-- `RecipeDag::new(dep_edges: &BTreeMap<String, Vec<String>>)`
-- `pop_ready() -> Vec<String>` — returns all recipes whose deps are satisfied and which are not yet in-flight or done, and flips them to `in_flight`.
-- `mark_done(names: &[String])` — flips `in_flight → done` and decrements `remaining_deps` on dependents.
-
-This struct is the abstract pattern; in practice the unified entry point in `run.rs` does not use `RecipeDag` directly because it pre-computes the full wave list up front via `wave_grouper`.
+`cook-engine` carried a `recipe_dag` module tracking per-recipe readiness
+(`remaining_deps`, `in_flight`, `done`) as a simpler twin of the work DAG. The
+unified entry point in `run.rs` never used it, since it pre-computes the whole
+wave list up front, and its only references were its own tests. It was a
+hand-rolled second implementation of `cook-dag`'s readiness law, and it is
+deleted (COOK-423).
 
 ### `wave_grouper::compute_waves` — two-tier wave assignment
 
@@ -213,9 +217,9 @@ Before returning the DAG, `build_dag` calls `detect_output_collisions` (`dag_bui
 
 ---
 
-## 5. Worker pool (`cook-luaotp`)
+## 5. Worker pool (`cook-execute`)
 
-`cli/crates/cook-luaotp/src/pool.rs:77`:
+`cli/crates/cook-execute/src/pool.rs:77`:
 
 ```rust
 pub fn WorkerPool::spawn(n: usize) -> (WorkerPool, mpsc::Receiver<WorkResult>);

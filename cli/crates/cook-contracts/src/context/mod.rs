@@ -89,10 +89,7 @@ pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
         h.update(b"\n");
     }
 
-    let result = h.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
-    out
+    h.finalize().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -137,10 +134,7 @@ pub fn fold_module_sources(declared: &[u8; 32], modules: &[(String, [u8; 32])]) 
         h.update(crate::render::lower_hex(hash).as_bytes());
         h.update(b"\n");
     }
-    let result = h.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
-    out
+    h.finalize().into()
 }
 
 /// Where the module-path manifest for a probe lives: a key derived from the
@@ -158,10 +152,7 @@ pub fn probe_module_manifest_key(declared: &[u8; 32]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(b"COOK_PROBE_MODULE_MANIFEST_V1\n");
     h.update(declared);
-    let result = h.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
-    out
+    h.finalize().into()
 }
 
 #[cfg(test)]

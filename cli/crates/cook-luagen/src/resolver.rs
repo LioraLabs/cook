@@ -192,6 +192,104 @@ pub fn is_output_ref(ident: &str) -> bool {
     )
 }
 
+/// The `NAME.ACCESSOR` reading of an IDENT: the name being referenced, and the
+/// path accessor applied to its output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessorRef<'a> {
+    /// The referenced name — a recipe, or a qualified `alias.recipe`.
+    pub name: &'a str,
+    /// The path accessor, always a member of [`ACCESSORS`].
+    pub accessor: &'a str,
+}
+
+/// Read `ident` as `NAME.ACCESSOR`, per Standard §{xref.dotted-names}: split at
+/// the RIGHTMOST `.`, admit the suffix only if it is a path accessor, and admit
+/// the prefix only if it names something in scope.
+///
+/// The third of this module's classification predicates, beside
+/// [`is_own_input_ref`] and [`is_output_ref`], and here for the same reason
+/// they are: whether `$<lib.stem>` is a cross-recipe accessor reference decides,
+/// at different call sites, what the substitution emits, which recipe drives a
+/// step's iteration, whether the placeholder is diagnosed, and — through
+/// `cook-plan`'s inferred-deps pass — whether the build closure contains the
+/// producer at all. Six sites across `resolver`, `template` and `recipe` used to
+/// spell the rule inline (`rfind('.')`, [`ACCESSORS`], scope lookup), which is
+/// six chances for one of them to answer differently from the rest (COOK-415).
+///
+/// It stays in this crate rather than descending to `cook-contracts`: every
+/// consumer is in `cook-luagen`, and a law with one crate's worth of consumers
+/// does not meet that crate's admission bar. [`ACCESSORS`] itself is different
+/// and does live there — the closed set is language surface (§{xref.path-accessors}),
+/// and `cook-lang` reserves recipe segments against it.
+///
+/// The prefix is checked against a caller-supplied name set rather than parsed,
+/// because "in scope" is the caller's knowledge: the register-phase recipe set
+/// of §{xref.resolution} step 2 for a resolver, the §7.3 import union for
+/// dependency extraction. The split is the law; the scope is the input.
+///
+/// Note what this deliberately does NOT decide: whether a builtin shape
+/// (`$<in.stem>`, `$<out_2.dir>`) takes precedence over the accessor reading.
+/// That ordering belongs to §{xref.resolution}'s numbered steps and stays with
+/// each caller — see [`recipe_ref`] and `template::output_pattern_ident_to_lua`,
+/// which order it differently and are documented as doing so.
+pub fn accessor_ref<'a>(
+    ident: &'a str,
+    names_in_scope: &BTreeSet<String>,
+) -> Option<AccessorRef<'a>> {
+    let (name, accessor) = ident.rsplit_once('.')?;
+    if ACCESSORS.contains(&accessor) && names_in_scope.contains(name) {
+        Some(AccessorRef { name, accessor })
+    } else {
+        None
+    }
+}
+
+/// A name reference an IDENT carries: the recipe it names, and the path
+/// accessor applied to that recipe's output, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecipeRef {
+    pub name: String,
+    pub accessor: Option<String>,
+}
+
+/// The recipe an IDENT names, if any — §{xref.name-references} read off
+/// §{xref.resolution}.
+///
+/// This is the entry point for §{xref.dep-implications}: the dependency edges
+/// the engine executes are derived from the same resolution that decides what
+/// the placeholder substitutes to, not from a second classification standing
+/// beside it (CS-0210). `dep_ref::parse_dep_token` used to be that second
+/// classification — its own builtin table, its own `env.`/`in.`/`out.`/`out_N`
+/// prefix tests — and where the two disagreed the result was not a bad
+/// diagnostic but a missing DAG edge, which reads a recipe's output with no
+/// guarantee it was produced first.
+///
+/// **Context-free by construction.** [`resolve`] takes an iteration mode and an
+/// output shape; this function supplies fixed ones, and that is sound rather
+/// than convenient: [`match_builtin`] never consults the context, and
+/// [`validate_builtin`] can only narrow an already-matched builtin into an
+/// error. No context turns a builtin into a recipe reference or the reverse, so
+/// no caller has to know the step it is analysing. `resolver_tests` pins it.
+pub fn recipe_ref(ident: &str, recipes_in_scope: &BTreeSet<String>) -> Option<RecipeRef> {
+    let ctx = ResolveCtx {
+        mode: IterMode::OneToOne,
+        outputs: OutputShape::Single,
+        recipes_in_scope,
+    };
+    match resolve(ident, &ctx) {
+        Resolved::Recipe { name, accessor } => Some(RecipeRef { name, accessor }),
+        // CS-0137: `$<recipe[in]>` reads one member of the producer's output,
+        // and the edge it implies is still recipe-level — the producer builds
+        // first. §{xref.dep-implications} permits a finer per-unit refinement;
+        // it does not permit no edge.
+        Resolved::RecipeMember { name } => Some(RecipeRef { name, accessor: None }),
+        Resolved::Builtin(_)
+        | Resolved::EnvRuntime(_)
+        | Resolved::ProbeRef { .. }
+        | Resolved::Error(_) => None,
+    }
+}
+
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // CS-0187: the retired `file:` prefix, refused ahead of the probe colon
     // dispatch — the position the removed namespace occupied — so the
@@ -251,15 +349,11 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     if ctx.recipes_in_scope.contains(ident) {
         return Resolved::Recipe { name: ident.to_string(), accessor: None };
     }
-    if let Some(dot) = ident.rfind('.') {
-        let prefix = &ident[..dot];
-        let suffix = &ident[dot + 1..];
-        if ACCESSORS.contains(&suffix) && ctx.recipes_in_scope.contains(prefix) {
-            return Resolved::Recipe {
-                name: prefix.to_string(),
-                accessor: Some(suffix.to_string()),
-            };
-        }
+    if let Some(r) = accessor_ref(ident, ctx.recipes_in_scope) {
+        return Resolved::Recipe {
+            name: r.name.to_string(),
+            accessor: Some(r.accessor.to_string()),
+        };
     }
     // Otherwise a declared variable. CS-0172: `var.` is the explicit prefix
     // that disambiguates a variable from a same-named recipe; the pre-CS-0172

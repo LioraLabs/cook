@@ -69,12 +69,6 @@ impl ThreadSafeCacheManager {
         }
     }
 
-    pub fn load_recipe(&self, recipe_name: &str) {
-        let cache = RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default();
-        let mut caches = self.caches.lock().unwrap();
-        caches.insert(recipe_name.to_string(), Arc::new(cache));
-    }
-
     /// Resolve `recipe_name` to its in-memory index, loading it from disk on
     /// first touch. Caller must already hold the `caches` lock.
     fn resolve<'a>(

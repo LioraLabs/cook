@@ -131,3 +131,66 @@ fn manifest_key_is_derived_and_distinct_from_the_declared_fingerprint() {
     assert_eq!(probe_module_manifest_key(&declared), probe_module_manifest_key(&declared));
 }
 
+// ---------------------------------------------------------------------------
+// Golden vectors (COOK-421)
+// ---------------------------------------------------------------------------
+//
+// Every other test in this file is relational — same inputs hash alike,
+// different inputs do not — so all three folds could have moved together and
+// stayed green. These pin the actual bytes.
+//
+// That mattered when the finding that brought them here was the digest step
+// being written twice: a probe fingerprint IS a cross-machine cache key, so a
+// change to it does not fail a build, it silently orphans every artifact in
+// every store that has one. If one of these fails, the question is not "which
+// assertion do I update" but "did I mean to invalidate the world".
+//
+// Every vector below was derived from the spec text with an independent
+// SHA-256 (Python's `hashlib`), not read off a passing run, so they pin this
+// code to the algorithm rather than to itself. Each test states the exact
+// input its vector was computed from.
+
+/// ```text
+/// sha256(b"COOK_PROBE_FP_V2\n"
+///        + b"cc:zlib\n" + b"return 1\n"
+///        + b"ENV\nCC=gcc\nLD=<unset>\n"
+///        + b"TOOLS\npkg-config=" + bytes([1]*32).hex().encode() + b"\n"
+///        + b"FILES\nzlib.h="     + bytes([2]*32).hex().encode() + b"\n"
+///        + b"UPSTREAM\ncc:compiler=" + bytes([3]*32).hex().encode() + b"\n")
+/// ```
+#[test]
+fn the_probe_fingerprint_is_this_exact_sha256() {
+    let inputs = ProbeFingerprintInputs {
+        key: "cc:zlib".into(),
+        produce_source: "return 1".into(),
+        env: vec![("CC".into(), Some("gcc".into())), ("LD".into(), None)],
+        tools: vec![("pkg-config".into(), [1u8; 32])],
+        files: vec![("zlib.h".into(), [2u8; 32])],
+        upstream_probes: vec![("cc:compiler".into(), [3u8; 32])],
+    };
+    assert_eq!(
+        crate::render::lower_hex(&compute_probe_fingerprint(&inputs)),
+        "a1fb65c2038cfdf8e5fb447d1089c58b30dc521233e19c8cd50740043b449d60"
+    );
+}
+
+/// ```text
+/// sha256(b"COOK_PROBE_FP_MODULES_V1\n" + bytes([7]*32) + b"\nMODULES\n"
+///        + b"m.lua=" + bytes([4]*32).hex().encode() + b"\n")
+/// sha256(b"COOK_PROBE_MODULE_MANIFEST_V1\n" + bytes([7]*32))
+/// ```
+#[test]
+fn the_module_source_fold_and_its_manifest_key_are_these_exact_sha256s() {
+    let declared = [7u8; 32];
+    assert_eq!(
+        crate::render::lower_hex(&fold_module_sources(
+            &declared,
+            &[("m.lua".to_string(), [4u8; 32])]
+        )),
+        "b93d441060b1c17f2101c6181e8b5c4b9a4da6c5f3aaae022dbd57700aae9c47"
+    );
+    assert_eq!(
+        crate::render::lower_hex(&probe_module_manifest_key(&declared)),
+        "a067c11acedb14bc555ecdd1c0c79fbfd419d4c62076d4078a7e6309d954d9e3"
+    );
+}

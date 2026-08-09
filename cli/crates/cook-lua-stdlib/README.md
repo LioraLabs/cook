@@ -2,22 +2,29 @@
 
 `cook-lua-stdlib` is the one implementation of everything Cook's two Lua VMs do
 identically: the register-phase VM (`cook-register`) and the execute-phase
-worker VMs (`cook-luaotp`) install the same surface from here, so behaviour the
+worker VMs (`cook-execute`) install the same surface from here, so behaviour the
 Standard marks **Phase: Both** cannot be taught to one phase and not the other.
 
 ## How it does that well
 
 - It abstracts the *only* real difference between the two callers instead of
   forking on it. `cook-register` knows its working directory at VM creation and
-  never changes it; a `cook-luaotp` worker is reused across items from different
+  never changes it; a `cook-execute` worker is reused across items from different
   Cookfiles (CS-0017 imports), so its cwd moves per item. [`WorkingDirSource`]
   is `Static` or `Live`, `Live` resolves on every call, and one `fs_api` serves
   both. [`SandboxSource`] mirrors the split so the policy is per work item too.
+- It parameterises over the difference rather than forking on it, wherever the
+  difference is one function. [`install_member_to_string`] is a whole door with
+  nothing left over; [`install_probes_api`] and [`install_var_proxy`] are doors
+  with exactly one phase-specific operation each, passed in. Both shapes make
+  the agreement structural: a fix to the shared part lands in both phases by
+  construction, and the part that is meant to differ is legible at the call site
+  instead of buried in a copy (COOK-439, CS-0213).
 - It holds THE Lua↔JSON codec (`json_codec.rs`, CS-0198/COOK-388). Both phases
   serialize probe values into the same store and the same `seal_contribution`
   fingerprint, so they must agree byte-for-byte; they used to be
   manually-synchronized twins in `cook_register::probe_value` and
-  `cook_luaotp::probe_value`, plus a third weaker walker on the module-export
+  `cook_execute::probe_value`, plus a third weaker walker on the module-export
   path that turned a number outside i64/f64 range into `0.0` where the twins
   raised. The twins are now re-export shims and the agreement test runs two
   independently-created VMs to identical canonical bytes.
@@ -58,12 +65,22 @@ It does not create or own a Lua VM. Every entry point takes a `&Lua` (and, where
 the surface hangs off `cook`, the `cook` table itself) so the phase crate keeps
 control of construction, `package.path`, module loading, and globals layout.
 
-It does not host phase-specific surfaces. `cook.sh`, `cook.probes`,
-`cook.export`/`cook.import`, `cook.add_unit`, and the registration verbs differ
-in mechanism between phases (a register-phase pre-pass store versus a worker's
-`SharedProbeValueStore`), so they stay in `cook-register` and `cook-luaotp`.
-The line is mechanism, not spelling: when only the spelling differs, it belongs
-here.
+It does not host phase-specific MECHANISM. `cook.sh`, `cook.export` /
+`cook.import`, `cook.add_unit` and the registration verbs do different work in
+each phase, and that work stays in `cook-register` and `cook-execute`. The line
+is mechanism, not spelling: when only the spelling differs, it belongs here.
+
+COOK-439 moved that line and it is worth saying where it now sits, because
+"phase-specific" was doing too much work. A door whose SCAFFOLDING agrees and
+whose one operation differs is not a phase-specific surface; it is a shared
+surface with a parameter. `cook.probes` was the case that showed it — the
+table, the `scope(label)` view, the §24.4.3 label rule and the `label:key`
+prefixing were copied verbatim into both VMs so that the CS-0074 difference in
+one setter could live in each copy. [`install_probes_api`] takes that setter as
+an argument, and [`install_var_proxy`] does the same for the `var` seal's
+refusal sentence. The rule the crate now follows: if the phases agree on
+everything but one function, the one function is the argument, not the reason
+to fork.
 
 It does not own the canonical JSON encoding. `encode_canonical_json` and
 `decode_json` are pure and live in `cook_contracts::probe_value`; this crate
@@ -81,10 +98,24 @@ Two things here are honest exceptions rather than design:
   reuses is the *sandbox gate*, not the phase: `check_path`, `WorkingDirSource`,
   and `SandboxSource`. That is a defensible reason and it is still the one entry
   that would not be re-derived from this crate's charter.
-- `register_fs_api` (the no-sandbox wrapper) has no production caller. Since
-  CS-0135 retired `plate`, no step kind selects `SandboxPolicy::Off`; it survives
-  as the worker's initial slot value and in this crate's tests. A permissive
-  constructor with no caller is a default waiting to be picked up by accident.
+- It carries one test for a law it does not own: `tests/lua_string_law_tests.rs`
+  round-trips `cook_contracts::lua_string::literal` through a real VM (COOK-440).
+  The escaping law is pure and lives a stratum down, where the purity budget
+  bars mlua — so it cannot be checked against Lua where it is written, and a
+  table of hand-written expectations only proves the escaper agrees with its
+  author, which both of its historical defects did. This crate is the lowest
+  one holding the law and an interpreter, so the oracle lives here even though
+  the subject does not.
+- `register_fs_api` (the no-sandbox wrapper) is deleted (COOK-423). It had no
+  production caller: CS-0135 retired `plate`, after which no step kind selects
+  `SandboxPolicy::Off`, and a permissive constructor with no caller is a default
+  waiting to be picked up by accident, since the shorter of two constructors is
+  what an unfamiliar caller reaches for. `register_fs_api_with_sandbox` is now the
+  only way to install `fs.*`, so a call site states its confinement or does not
+  compile, and §25's "no exempted step kind" holds by shape rather than by
+  everyone remembering. `SandboxPolicy::Off` itself stays: it is still the
+  worker's initial slot value, and a test that wants no sandbox now says
+  `SandboxSource::off()` out loud.
 
 ## Relationship to `cook-contracts`
 

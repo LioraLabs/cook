@@ -21,14 +21,14 @@ Cookfile (text)
               → Workspace load + Registry assembly (cook-engine::pipeline)
                 → Per-wave Registration in capture mode (cook-register)
                   → RecipeUnits (cook-contracts::{CapturedUnit, WorkPayload})
-                    → DAG Builder (cook-engine::dag_builder, recipe_dag, wave_grouper)
+                    → DAG Builder (cook-engine::dag_builder)
                       → Cache check (cook-fingerprint + cook-cache)
                         → Wave-parallel execution (cook-engine::executor)
-                          → Worker pool with Lua VMs (cook-luaotp)
+                          → Worker pool with Lua VMs (cook-execute)
                             → Shell processes / Lua chunks
 ```
 
-Every `cook` invocation follows this path from left to right. The split between the **register phase** (capture, single-threaded, no side effects) and the **execute phase** (parallel, real I/O) is the key architectural seam: the engine registers each wave of recipes through `cook-register` to discover what work exists, then feeds the captured units to the executor which dispatches them through `cook-luaotp`'s worker pool.
+Every `cook` invocation follows this path from left to right. The split between the **register phase** (capture, single-threaded, no side effects) and the **execute phase** (parallel, real I/O) is the key architectural seam: the engine registers each wave of recipes through `cook-register` to discover what work exists, then feeds the captured units to the executor which dispatches them through `cook-execute`'s worker pool.
 
 ---
 
@@ -43,7 +43,7 @@ cli/crates/
 ├── cook-lang             # Cookfile lexer + parser → AST (cook-contracts-free)
 ├── cook-luagen           # AST → Lua source string (codegen)
 ├── cook-register         # capture-mode Lua VM that runs generated source to discover units
-├── cook-luaotp           # worker pool: N threads, one Lua VM per thread, executes WorkPayloads
+├── cook-execute           # worker pool: N threads, one Lua VM per thread, executes WorkPayloads
 ├── cook-lua-stdlib       # shared fs.*/path.*/cook.platform.* APIs (used by register + workers)
 ├── cook-cache            # filesystem cache backend, RecipeCache file format, cloud backend
 ├── cook-fingerprint      # pure hashing, env contribution, machine identity, rebuild logic
@@ -61,13 +61,13 @@ cli/crates/
 |---|---|---|
 | `cook-cli` | Binary: clap parsing, dispatches each subcommand to engine entry points, bridges `EngineEvent` → `cook_progress::ProgressEvent`, owns `cook serve` watcher | `cook-engine`, `cook-progress`, `cook-lang`, `cook-cli` (lib) |
 | `cook-engine::pipeline` | Parse Cookfile, walk imports (`Workspace`), assemble `RegistryEntry` map, compute name-reference deps | `cook-lang`, `cook-luagen`, `cook-register` |
-| `cook-engine::{run,executor,...}` | Wave-parallel orchestration: registers each wave through `cook-register`, builds work-unit DAG, runs cache lookups, schedules through `cook-luaotp` | all other engine submodules, `cook-cache`, `cook-fingerprint`, `cook-luaotp` |
+| `cook-engine::{run,executor,...}` | Wave-parallel orchestration: registers each wave through `cook-register`, builds work-unit DAG, runs cache lookups, schedules through `cook-execute` | all other engine submodules, `cook-cache`, `cook-fingerprint`, `cook-execute` |
 | `cook-engine::analyzer` | Recipe-graph adjacency build and topological sort over `BTreeMap<String, RecipeInfo>` | (none) |
 | `cook-engine::dag_builder` | Converts `RecipeUnits` → work-unit DAG nodes; wires barriers and step-group parallelism | `cook-contracts`, `cook-dag` |
 | `cook-lang` | Lexer + parser → `Cookfile` AST (`ast`, `lexer`, `recipe`, `cook_line`, `lua_block`, `shell_block`, `brace_scan`) | (none) |
 | `cook-luagen` | Walks AST, emits Lua source; resolver, template/sigil expansion, `dep_ref` validation | `cook-lang`, `cook-contracts` |
 | `cook-register` | Capture-mode Lua VM: `cook.*`, `fs.*`, `path.*`, module loader, `add_unit`/`add_test`/`dep_output`/`export` APIs; produces `RecipeUnits` | `cook-contracts`, `cook-lua-stdlib`, `mlua` |
-| `cook-luaotp` | Worker pool (`WorkerPool`, `WorkItem`, `WorkResult`); each thread owns one Lua VM and executes Shell/Interactive/LuaChunk/Test payloads | `cook-contracts`, `cook-lua-stdlib`, `mlua` |
+| `cook-execute` | Worker pool (`WorkerPool`, `WorkItem`, `WorkResult`); each thread owns one Lua VM and executes Shell/Interactive/LuaChunk/Test payloads | `cook-contracts`, `cook-lua-stdlib`, `mlua` |
 | `cook-cache` | `LocalBackend` (v3 filesystem CAS), `RecipeCache` on-disk format, `ThreadSafeCacheManager`, `CacheContext`, cloud backend, `.cook/cloud.toml`, `TestCache` | `cook-fingerprint`, `cook-contracts` |
 | `cook-fingerprint` | Pure: `hash_file`/`hash_env`/`stat_mtime`, `EnvDenylist`, `ExecutionContext`, `MachineIdentity`, `compute_test_fingerprint`, `needs_rebuild_*`, `CacheBackend` trait, `CloudKey` derivation | `cook-contracts` |
 | `cook-contracts` | `WorkPayload`, `CapturedUnit`, `CacheMeta`, `DepKind`, `StepKind`, `RecipeUnits`, `OutputStream`, `ACCESSORS` | (none) |
@@ -105,7 +105,7 @@ If you are new to the codebase, the following order lets each document build on 
 2. [**execution-flow.md**](execution-flow.md) — end-to-end trace of what happens when you run `cook build`.
 3. [**parser.md**](parser.md) — the Cookfile lexer, parser, and AST (`cook-lang`); everything else consumes these types.
 4. [**codegen.md**](codegen.md) — how the AST becomes Lua (`cook-luagen`); short but central to understanding what the runtime executes.
-5. [**runtime.md**](runtime.md) — the register-phase Lua VM (`cook-register`) and the worker-pool Lua VMs (`cook-luaotp`); the two-phase model in detail.
+5. [**runtime.md**](runtime.md) — the register-phase Lua VM (`cook-register`) and the worker-pool Lua VMs (`cook-execute`); the two-phase model in detail.
 6. [**scheduler.md**](scheduler.md) — recipe DAG, wave grouping, work-unit DAG, executor, interactive/chore handling.
 7. [**cache.md**](cache.md) — incremental rebuild: what gets hashed, how the fast-path works, when cache entries are invalidated; local + cloud backends.
 8. [**supporting-modules.md**](supporting-modules.md) — analyzer, watcher (`cook serve`), env resolution, workspace/imports, progress renderer.

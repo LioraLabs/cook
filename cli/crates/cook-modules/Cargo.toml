@@ -1,0 +1,30 @@
+[package]
+name = "cook-modules"
+version.workspace = true
+edition = "2021"
+description = "Installs the Lua modules a project declares, and records exactly what it installed"
+
+[dependencies]
+# The whole of this crate's workspace contact, and the reason it is a crate:
+# `layout::modules_dir` (§27.1.1 / CS-0207 — where an installed rock lands) and
+# `CapturedStream` (SHI-188's truncation, so a luarocks failure reads the same
+# as any other captured command's). Nothing here knows about recipes, units,
+# the DAG, the cache, or a Lua VM.
+cook-contracts = { path = "../cook-contracts" }
+
+# The `cook modules` subcommand's flags live with their meaning. Splitting the
+# clap types into cook-cli and the behaviour into here would be one decision
+# with two homes, which is the shape this workspace's constitution refuses.
+clap = { version = "4", features = ["derive"] }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
+# The driver's tests set PATH and cwd, which are process-global.
+serial_test = "3"

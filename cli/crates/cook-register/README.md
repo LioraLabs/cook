@@ -14,7 +14,7 @@ variables the config blocks resolved.
   exception is `cook.sh`, whose return value drives author control flow, and it
   goes through `cook-shell`'s one primitive so its failure text is built by the
   same code the execute phase's `cook.sh` uses (CS-0188, COOK-377). It also
-  does not disarm `cook-fingerprint`'s stat memo, and says why: capture mode has
+  does not disarm `cook_cache::statmemo`, and says why: capture mode has
   nothing for the memo to have gone stale against.
 - **One installation of the API surface, for both passes.** `install_all_apis`
   is what `register_cookfile` and `list_names` both call, so `cook menu` cannot
@@ -34,17 +34,22 @@ variables the config blocks resolved.
   keylessness, cache lookup and publish, and the CS-0102 local copy have one
   implementation. Before COOK-359 that sequence existed twice here, and this
   side's cache block turned out never to have run at all.
-- **A unit's identity is blind to where it was declared, on purpose.**
-  `build_local_cache_key` takes `_cookfile_path` and `_recipe` and has never
-  used either, so moving a test within a recipe or a recipe between Cookfiles
-  does not bust its cache (§17.4, CS-0186). The effective seal key set *is*
-  folded in, because without it `test { ./run } seal toolchain` and a bare
-  `test { ./run }` are one identity, and they then invalidate each other on
-  every run: the permanent churn CS-0169 exists to refuse.
+- **A unit's identity is composed elsewhere, and is blind to where it was
+  declared.** `cook_contracts::cache::local_key::build_local_cache_key` takes
+  `_cookfile_path` and `_recipe` and has never used either, so moving a test
+  within a recipe or a recipe between Cookfiles does not bust its cache (§17.4,
+  CS-0186). The effective seal key set *is* folded in, because without it
+  `test { ./run } seal toolchain` and a bare `test { ./run }` are one identity,
+  and they then invalidate each other on every run: the permanent churn
+  CS-0169 exists to refuse. That composition lived in this crate until
+  COOK-421 moved it to the crate that owns contract data; this crate calls it.
 - **The one hash both sides of the cache use is the one function.**
-  `command_hash` is `cook_fingerprint::hash_str`, which is what
-  `cook-fingerprint`'s `check.rs` compares with. The local twin that used to
-  live here was drifted by construction (COOK-396).
+  `command_hash` is `cook_contracts::hash_str`, which is what `cook-cache`'s
+  `check.rs` compares with. The local twin that used to live here was drifted
+  by construction (COOK-396). This bullet said `cook_fingerprint::hash_str`
+  and `cook-fingerprint`'s `check.rs` until COOK-421 noticed — a crate COOK-418
+  deleted, named twice in the same README that carries the branch's own worked
+  example of a justification outliving its premises.
 - **Nothing is coerced, and nothing removed goes quietly nil.** Every
   `cook.add_unit` field is type-checked and a wrong type is a diagnostic naming
   the API, the expected type, and what arrived (CS-0127). A removed name raises
@@ -87,39 +92,64 @@ first and reads the rest.
 
 It does not own the both-phase Lua surface. `fs.*`, `path.*`, `cook.platform`,
 the codecs, and `cook.tools.id` are installed from `cook-lua-stdlib` so the
-worker VMs in `cook-luaotp` install byte-identical closures (CS-0044, CS-0123,
+worker VMs in `cook-execute` install byte-identical closures (CS-0044, CS-0123,
 CS-0158). A surface that behaves differently in the two phases is the failure
 this arrangement exists to make impossible.
 
-## Decisions still implemented twice
+## Decisions this crate no longer implements twice
 
-Findable, per the deliberate-copy protocol, and none of these has an agreement
-test. They are recorded here so the next audit's grep lands on them:
+This heading used to read "Decisions still implemented twice" and list three,
+"recorded here so the next audit's grep lands on them". The audit came, and all
+three had already been fixed. Recording that is more useful than deleting it,
+because a list of known copies is exactly the kind of prose that goes on being
+believed after it stops being true — the same failure the constitution names
+about waivers, in the file that holds the waivers.
 
-- **The probe-produce lowering.** `engine.rs:2094` and
-  `cook-luaotp/src/pool.rs:1537` each build `@probe:{key}` as the chunk name and
-  wrap the body in `return (function()\n…\nend)()`. Both ends must agree or a
-  produce body's reported error lines shift between phases. It is pure string
-  law and `cook-contracts` would take it.
-- **Escaping a Rust string into a Lua literal**, and it has already drifted.
-  `engine.rs:1667` escapes `\`, `"`, `\n`, `\r`, and NUL; the twin at
-  `cook-luagen/src/lua_string.rs:1` escapes only `\`, `"`, and `\n`. A value
-  carrying a carriage return is a chore-parameter prelude that loads and a
-  generated command that does not.
-- **The `cook.load_module` sequence.** `module_loader.rs:92` and
-  `pool.rs:719` each memoize, detect cycles, evaluate, and call `init()`.
-  COOK-393 unified the candidate list and the search-path composition, not the
-  loader around them; the register side memoizes by module name and the worker
-  side by `<cwd>::<name>`.
-- **The `cook.cache` renamed-namespace stub**, verbatim in `module_loader.rs:377`
-  and `pool.rs:1079`.
+- **The probe-produce lowering** — two builders of the `@probe:{key}` chunk
+  name and the `return (function()\n…\nend)()` wrapper, which had to agree or a
+  produce body's error lines would shift between phases. It is
+  `cook_contracts::probe::lower_produce`, called from `engine.rs:2101` and
+  `cook-execute/src/pool.rs:1346`.
+- **The `cook.load_module` sequence** — two loaders each memoizing, detecting
+  cycles, evaluating and calling `init()`. COOK-412 collapsed them into
+  `cook_lua_stdlib::install_module_loader`, which both phases call over their
+  own hooks.
+- **The `cook.cache` renamed-namespace stub** — `install_renamed_cache_stub` in
+  `cook-lua-stdlib`, and since COOK-439 this crate does not call it at all: it
+  comes with `install_probes_api`, so a caller cannot build the probes table
+  and forget the stub that guards its old name.
 
-Two smaller exceptions to rules this crate otherwise keeps: `engine.rs:2050` and
-`engine.rs:2696` print warnings with `eprintln!` although `RegisteredCookfile`
-already carries a `warnings` field for exactly that; and `observing_identity`
-(`unit_api.rs:1435`) is cache-identity law hashed against a direct
-`xxhash-rust` dependency, where the stratum rule puts hashing law in
-`cook-fingerprint`. It has one caller today, so it is not yet a twin.
+COOK-439 put three more doors into that state. `cook.member_to_string`
+is now one door end to end (`cook_lua_stdlib::install_member_to_string`); the
+`cook.probes` table and the read-only `var` seal are shared installers taking
+this phase's one differing operation as an argument; and every door name this
+crate installs comes from `cook_contracts::registration`, so the execute
+phase's §6.3.2 guards refuse the names registration actually installs.
+
+One smaller exception to a rule this crate otherwise keeps: `engine.rs:2050`
+and `engine.rs:2696` print warnings with `eprintln!` although
+`RegisteredCookfile` already carries a `warnings` field for exactly that.
+
+It used to carry one more still: `observing_identity` in `unit_api.rs`,
+"cache-identity law hashed against a direct `xxhash-rust` dependency, where the
+stratum rule puts hashing law in `cook-fingerprint`. It has one caller today,
+so it is not yet a twin." Both halves of that reasoning expired.
+`cook-fingerprint` no longer exists (COOK-418), and waiting for a second caller
+is the wrong test — the composition and every reader of the composed key must
+already agree. COOK-421 moved it, with `build_local_cache_key` and
+`OBSERVING_KEY_MARKER`, to `cook_contracts::cache::local_key`. It was this
+crate's only use of `xxhash-rust`, so the dependency went with it.
+
+It also used to carry a third: **escaping a Rust string into a Lua literal**,
+noted as already drifted — this crate escaped `\`, `"`, `\n`, `\r` and NUL
+where `cook-luagen` escaped only the first three, so a value carrying a
+carriage return was a chore-parameter prelude that loads and a generated
+command that does not. COOK-398 made it one function in
+`cook_contracts::lua_string`; COOK-440 deleted the crate-local name this crate
+still reached it under, because a rename hides shared law from the grep that
+finds its consumers. The chore-param prelude now calls `lua_string::literal`
+directly, and §7.1.2's value-fidelity rule (CS-0209) is what that call has to
+satisfy.
 
 ## Relationship to `cook-contracts`
 

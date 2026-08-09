@@ -1,6 +1,6 @@
 //! cook-lua-stdlib — the shared Cook Lua API surface installed in both
 //! the register-phase VM (`cook-register`) and the execute-phase worker
-//! VMs (`cook-luaotp`).
+//! VMs (`cook-execute`).
 //!
 //! Exposes:
 //!
@@ -22,7 +22,7 @@
 //!
 //! - `cook-register` knows the cwd at registration time and never
 //!   changes it for the lifetime of the VM (one VM per recipe).
-//! - `cook-luaotp` reuses one VM across many work items from
+//! - `cook-execute` reuses one VM across many work items from
 //!   potentially different Cookfiles (CS-0017 multi-Cookfile imports),
 //!   so the cwd is updated per-item via a shared `Arc<Mutex<PathBuf>>`.
 //!
@@ -33,13 +33,17 @@ pub mod codec_api;
 pub mod cookfile_api;
 pub mod json_codec;
 pub mod fs_api;
+pub mod member_api;
 pub mod module_loader;
 pub mod module_observer;
 pub mod path_api;
 pub mod platform_api;
+pub mod probes_api;
 pub mod sandbox;
 pub mod shell_guard;
+pub mod source_line;
 pub mod tools_api;
+pub mod var_proxy;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -51,19 +55,23 @@ pub use module_loader::{
 };
 pub use module_observer::{install_require_observer, ModuleObserver};
 pub use json_codec::{json_to_lua, lua_to_json};
+pub use member_api::install_member_to_string;
+pub use probes_api::install_probes_api;
+pub use var_proxy::install_var_proxy;
 pub use cookfile_api::register_cookfile_api;
-pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
+pub use fs_api::register_fs_api_with_sandbox;
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
 pub use tools_api::register_tools_api;
 pub use sandbox::{SandboxPolicy, SandboxSource};
 pub use shell_guard::install_shell_escape_guards;
+pub use source_line::caller_line_in_source;
 
 /// Source of the working directory used to resolve relative paths in
 /// `fs.*` calls.
 ///
 /// `cook-register` constructs `Static` with the Cookfile's directory at
-/// VM creation time. `cook-luaotp` constructs `Live` with the
+/// VM creation time. `cook-execute` constructs `Live` with the
 /// `Arc<Mutex<PathBuf>>` it updates per work item.
 ///
 /// `Live` resolves the cwd on every call so a worker VM that processes
@@ -73,7 +81,7 @@ pub use shell_guard::install_shell_escape_guards;
 pub enum WorkingDirSource {
     /// Captured once at registration; used by `cook-register`.
     Static(PathBuf),
-    /// Resolved live per call; used by `cook-luaotp`'s reusable workers.
+    /// Resolved live per call; used by `cook-execute`'s reusable workers.
     Live(Arc<Mutex<PathBuf>>),
 }
 
@@ -82,7 +90,7 @@ impl WorkingDirSource {
     ///
     /// `Live`'s mutex lock is held only for the duration of the clone.
     /// Lock poisoning is treated as a hard error consistent with the
-    /// pre-extraction `cook-luaotp` behavior — the slot is shared
+    /// pre-extraction `cook-execute` behavior — the slot is shared
     /// per-VM, and a poisoned slot means the worker is in an
     /// unrecoverable state.
     pub fn resolve(&self) -> PathBuf {
@@ -96,3 +104,10 @@ impl WorkingDirSource {
 #[cfg(test)]
 #[path = "tests/lua_stdlib_tests.rs"]
 mod tests;
+
+// The pure Lua string-literal law lives in `cook-contracts` and may not depend
+// on mlua, so it cannot check itself against Lua. This is the lowest crate
+// that holds both (COOK-440).
+#[cfg(test)]
+#[path = "tests/lua_string_law_tests.rs"]
+mod lua_string_law_tests;

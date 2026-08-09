@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
-use crate::lua_var;
+use cook_contracts::lua_scan;
+use crate::long_bracket::wrap_lua_string;
+use cook_contracts::lua_string;
+use cook_contracts::registration::{door_call, DEP_OUTPUT_LIST_NAME};
 use crate::resolver::{IterMode, OutputShape};
 use crate::use_prelude::with_execute_prelude;
 use crate::template::{
@@ -16,11 +19,11 @@ use crate::template::{
 ///
 /// Per Standard §17.1, a Lua using-block's cache fingerprint MUST include
 /// the values of every env key the body statically reads from `cook.env`.
-/// The scanner is in [`lua_var::scan_var_reads`]; this helper threads the
+/// The scanner is in [`cook_contracts::lua_scan::scan_var_reads`]; this helper threads the
 /// scanned keys through the shared [`ConsultedEnv`] accumulator so the
 /// rendering path matches the shell-template emission exactly.
 fn lua_body_consulted_env_keys(code: &str) -> String {
-    let scanned = lua_var::scan_var_reads(code);
+    let scanned = lua_scan::scan_var_reads(code);
     let mut consulted = ConsultedEnv::new();
     for key in &scanned {
         consulted.record(key);
@@ -57,7 +60,7 @@ pub(crate) fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
     }
     let parts: Vec<String> = keys
         .iter()
-        .map(|k| format!("\"{}\"", crate::lua_string::escape_lua_string(k)))
+        .map(|k| lua_string::literal(k))
         .collect();
     format!("{{{}}}", parts.join(", "))
 }
@@ -201,7 +204,7 @@ fn one_to_one_add_unit_line(
         }
         Some(Body::LuaBlock(code)) => {
             let code_literal =
-                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
+                wrap_lua_string(&with_execute_prelude(uses, code));
             let ing_groups = format_ingredient_groups(ingredients_len);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
@@ -263,7 +266,7 @@ pub(crate) fn generate_cook_step(
             out.push_str(&format!(
                 "    _cook_outputs_{}[1] = \"{}\"\n",
                 index,
-                crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str())
+                lua_string::escape_double_quoted(cook_step.outputs[0].as_str())
             ));
         }
         CookMode::LuaExprOneToOne => {
@@ -320,7 +323,14 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToOne => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                    // COOK-439: the door name comes from the constant, because
+                    // this emitter is a third end for it — the register VM and
+                    // the execute VM each install a `dep_output_list` of their
+                    // own (§24.7 asks for two implementations, not two
+                    // spellings). Drift is silent: rename the installed door and
+                    // this call resolves to nil, so the generated Lua dies at
+                    // runtime with nothing pointing back at the rename.
+                    door_call(DEP_OUTPUT_LIST_NAME, dep_name)
                 }
                 OutputPatternKind::OwnInputAccessor => input_source.clone(),
                 OutputPatternKind::Literal => input_source.clone(),
@@ -395,7 +405,7 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -416,7 +426,10 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToMany => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                    // COOK-439: same door, same reason as the OneToOne arm — the
+                    // name is spelled by both VMs' installers, and a rename that
+                    // misses this emitter fails only at runtime, as a nil call.
+                    door_call(DEP_OUTPUT_LIST_NAME, dep_name)
                 }
                 _ => input_source.clone(),
             };
@@ -450,7 +463,7 @@ pub(crate) fn generate_cook_step(
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -483,7 +496,7 @@ pub(crate) fn generate_cook_step(
                     outs_lua.push_str(", ");
                 }
                 outs_lua.push('"');
-                outs_lua.push_str(&crate::lua_string::escape_lua_string(out_name.as_str()));
+                outs_lua.push_str(&lua_string::escape_double_quoted(out_name.as_str()));
                 outs_lua.push('"');
             }
             outs_lua.push('}');
@@ -516,7 +529,7 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -606,7 +619,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     } else {
         let pats = extra_ingredients
             .iter()
-            .map(|p| format!("\"{}\"", crate::lua_string::escape_lua_string(p)))
+            .map(|p| lua_string::literal(p))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
@@ -638,7 +651,7 @@ pub(crate) fn generate_member_fanout_cook_step(
             // §8.2: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             let code_literal =
-                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
+                wrap_lua_string(&with_execute_prelude(uses, code));
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
                 "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}, line = {}}})\n",

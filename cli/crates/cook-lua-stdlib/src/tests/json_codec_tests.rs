@@ -1,5 +1,5 @@
 //! The one codec's test suite — the union of the two suites that guarded
-//! the former per-crate copies (cook-register and cook-luaotp,
+//! the former per-crate copies (cook-register and cook-execute,
 //! `probe_value_tests.rs` both), plus the COOK-388 agreement pin.
 
 use super::*;

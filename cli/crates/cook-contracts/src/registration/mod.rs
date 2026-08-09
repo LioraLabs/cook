@@ -19,6 +19,27 @@
 //! move, cook-engine cannot name `register_cookfile` at all, which holds the
 //! two-phase law (registration is closed before execute starts)
 //! structurally rather than by convention.
+//!
+//! # The residual, named here rather than left to expire
+//!
+//! `cook-luagen` reads these constants wherever the emission is a call it
+//! COMPOSES ([`door_call`]). It does NOT read them inside its multi-line
+//! `format!` templates — `cook.add_unit{…}`, `cook.step_group(function() …`,
+//! `cook.member_to_string(item)`, `cook.prior_outputs(…)`,
+//! `cook.passthrough(…)` — where the door's argument is a Lua EXPRESSION
+//! rather than a string, so `door_call` would quote it, and where
+//! interpolating a constant into a five-line literal costs more legibility
+//! than it buys. The constitution's duplicate-literal rule cannot see a name
+//! buried in a literal that size either, so nothing mechanical was going to
+//! notice.
+//!
+//! That is a deliberate copy, and the deliberate-copy protocol requires an
+//! agreement test in place of the missing edge:
+//! `cook-luagen/src/tests/door_names_tests.rs` collects every `cook.<door>`
+//! spelling in that crate and fails unless each is a constant declared here or
+//! an exception listed there with a reason. A door renamed here while a
+//! template keeps the old spelling fails that test instead of failing a user's
+//! build at run time, as a call to a nil value.
 
 /// Register-phase helper that records a surface `recipe NAME` block.
 pub const REGISTER_SURFACE_NAME: &str = "__register_surface";
@@ -42,11 +63,179 @@ pub const CONFIG_DISPATCH_NAME: &str = "__cook_run_config_blocks";
 /// table; emitted with the `cook.` receiver by luagen.
 pub const PROBE_SUBST_NAME: &str = "__probe_subst";
 
+/// A call to a door on the `cook` table with one string argument, qualified
+/// and escaped: `door_call(PROBE_SUBST_NAME, ident)` is
+/// `cook.__probe_subst("…")`.
+///
+/// A door name is shared because drift in it is silent (see this module's
+/// header, and [`crate::module_binding::LOAD_MODULE_FN`], which is a door of
+/// the same kind kept next to the `use` rules that name it). The CALL around a
+/// name was not shared: `cook-luagen` composed `format!("cook.{}(\"{}\")", …)`
+/// at three sites and `module_binding` at a fourth, each pairing a shared
+/// constant with a privately spelled receiver, argument list and escape. The
+/// gate that flagged it saw only the repeated format string (COOK-437);
+/// COOK-440 is the finding that it was one decision written four times.
+///
+/// Two crates compose door calls — this one and `cook-luagen` — which is why
+/// the composer is here rather than in the emitter. Be clear about what that
+/// buys and what it does not: it makes the four *emissions* agree with each
+/// other, and it puts the escape on the path so a `"` or a carriage return in
+/// an ident cannot end the literal and fail the whole program's load. It does
+/// NOT yet make the emitter agree with the installer, which sets the field
+/// from its own `set(NAME, …)` on the register VM and is bound to this only by
+/// the constant. Closing that half is COOK-439's, and it will find the emitting
+/// half already in one place.
+///
+/// Doors taking more than one argument keep their own `format!`: the arity is
+/// part of what each door means, `__quote_param`'s third argument is a quoting
+/// context rather than a Lua string, and a composer generalised over arity
+/// before a second caller needs it would be an abstraction invented for a need
+/// nothing has.
+pub fn door_call(name: &str, arg: &str) -> String {
+    format!("cook.{}({})", name, crate::lua_string::literal(arg))
+}
+
+/// `cook.__probe_subst(ident)` for the CS-0195 register-time rendering of a
+/// probe-value reference, composed once.
+///
+/// `cook-luagen` emits this from three places — a command body, an output
+/// pattern, and a fan-out test command — each carrying a comment claiming one
+/// renderer per ident. This is that renderer.
+pub fn probe_subst_call(ident: &str) -> String {
+    door_call(PROBE_SUBST_NAME, ident)
+}
+
 /// `cook.__quote_param(value, name, ctx)` — the CS-0128 chore-parameter
 /// quoting helper. Installed on the `cook` table; emitted with the `cook.`
 /// receiver by luagen (which also encodes the 3-arg arity at its one
 /// emission site).
 pub const QUOTE_PARAM_NAME: &str = "__quote_param";
+
+// ---------------------------------------------------------------------------
+// The two VMs' door names (COOK-439 / CS-0213)
+// ---------------------------------------------------------------------------
+//
+// Cook runs two Lua VMs, one per phase: `cook-register` hosts the register
+// VM, `cook-execute` hosts the execute-phase worker VMs. The Standard says
+// which doors exist in which phase (§6.3.2, §13.2, §24.7), and BOTH VMs have
+// to spell every name it mentions — the one that implements the door, and the
+// one that installs the §6.3.2 guard refusing it. Until COOK-439 each spelled
+// its own.
+//
+// Drift here does not fail to compile and does not fail to link. A renamed
+// door is simply a different door: the guard stops guarding, the call resolves
+// to nil, and what a Cookfile may call in one phase silently stops matching
+// what it may call in the other. That is the same silent-drift argument this
+// module's header makes for the emitter/installer constants above, applied to
+// the second pair of ends.
+
+/// `cook.add_unit(tbl)` — the register-phase declaration of one work unit
+/// (§{lua.add-unit}). `cook-register` installs the recorder; `cook-execute`
+/// installs the §6.3.2 register-only guard under the same name.
+pub const ADD_UNIT_NAME: &str = "add_unit";
+
+/// `cook.step_group(fn, opts?)` — the register-phase step-group opener
+/// (§{lua.step-group}). Installed as the recorder by `cook-register`, as the
+/// §6.3.2 guard by `cook-execute`, and rendered by `cook-graph` as the wire
+/// label of [`crate::DepKind::StepGroup`] — see [`crate::DepKind::wire_name`],
+/// which is what keeps the third end from being a third spelling.
+pub const STEP_GROUP_NAME: &str = "step_group";
+
+/// `cook.prior_outputs(member?)` — the outputs of the preceding
+/// output-producing step in the enclosing body (§{lua.prior-outputs},
+/// CS-0186). Recorder in `cook-register`, §6.3.2 guard in `cook-execute`.
+pub const PRIOR_OUTPUTS_NAME: &str = "prior_outputs";
+
+/// `cook.interactive(cmd, line)` — the register-phase declaration of an
+/// interactive unit (§6.3.2). Recorder in `cook-register`, guard in
+/// `cook-execute`.
+///
+/// Deliberately NOT [`ADD_UNIT_INTERACTIVE_FIELD`], which is spelled the same
+/// and means something else. The two are a door and a field on a different
+/// door's argument; one constant standing for both would tie a rename of
+/// either to the other, and the constitution's literal rule cannot tell them
+/// apart because a rule that reads text never can.
+pub const INTERACTIVE_NAME: &str = "interactive";
+
+/// The `interactive = true` field on a [`ADD_UNIT_NAME`] argument table
+/// (§{lua.add-unit}): the legacy single-line interactive shell step, as
+/// opposed to a unit declared through [`INTERACTIVE_NAME`].
+///
+/// A door-FIELD name, written by the Lua that passes the table and read by
+/// the Rust that unpacks it — the emitter/consumer pair this module exists
+/// for, on a boolean rather than a call.
+pub const ADD_UNIT_INTERACTIVE_FIELD: &str = "interactive";
+
+/// `cook.dep_output(name)` — a referenced recipe's terminal outputs as a
+/// space-joined string. Phase: Both (§24.7). The register VM resolves and
+/// records a DAG edge; the execute VM resolves read-only against the
+/// registration snapshot. Two implementations of one door is what §24.7
+/// asks for; two spellings of its name is not.
+pub const DEP_OUTPUT_NAME: &str = "dep_output";
+
+/// `cook.dep_output_list(name)` — the [`DEP_OUTPUT_NAME`] answer as a Lua
+/// sequence. Phase: Both (§24.7).
+pub const DEP_OUTPUT_LIST_NAME: &str = "dep_output_list";
+
+/// `cook.dep_output_member(name, member)` — the per-member terminal outputs
+/// of a fan-out producer (COOK-96, §22.6). Register-phase only today; named
+/// here because `cook-luagen` emits the call and `cook-register` installs it,
+/// which is this module's emitter/installer pair.
+pub const DEP_OUTPUT_MEMBER_NAME: &str = "dep_output_member";
+
+/// `cook.member_to_string(value)` — a data member's canonical string form
+/// (§9.3, COOK-64). Phase: Both, and the ONE door of this group whose whole
+/// implementation is shared: `cook_lua_stdlib::install_member_to_string`
+/// installs it on both VMs, so the name, the body and the diagnostic have one
+/// author. The constant stays here because `cook-luagen` emits the call.
+pub const MEMBER_TO_STRING_NAME: &str = "member_to_string";
+
+/// The Lua global the declared-variable surface is reachable under
+/// (§{decl.config}, §{lua.var}): `var.NAME`.
+///
+/// Three ends, and the third is why this is here rather than in
+/// `cook-lua-stdlib` with the seal that installs it. Both VMs install the
+/// read-only proxy under this name. `cook-register`'s config sandbox exposes
+/// the WRITE sink under it, because a `config` body declares values by
+/// assigning to `var.NAME`. And [`crate::lua_scan`] scans Lua source for
+/// `var.X` reads to compute which declared variables a unit consumed — a
+/// determinant of that unit's cache key.
+///
+/// The scanner is the dangerous end. A rename that reached the two VMs and
+/// not the scanner does not fail: it silently records no reads, so a unit
+/// stops being keyed on a variable it depends on, and a value change no
+/// longer invalidates it. The scanner is pure and lives here, which is as low
+/// as the law goes, so this is where the name goes with it.
+pub const VAR_GLOBAL_NAME: &str = "var";
+
+/// The optional `discovered_inputs` table on a [`ADD_UNIT_NAME`] argument
+/// (§{lua.add-unit-discovered-inputs}): a maker declaring that a unit's real input
+/// set is read back from a file the command writes.
+///
+/// A door-FIELD name, spelled by the Lua that writes it and by the Rust that
+/// reads it. Unrelated to the identically-spelled
+/// [`crate::cache::cas::artifact_kind::DISCOVERED_INPUTS`], which is an
+/// on-disk artifact kind: the two describe different things at different
+/// boundaries and are free to diverge. COOK-421 narrowed the constitution's
+/// waiver to exactly this half before handing it over, and the point of
+/// naming them apart is that the next reader does not have to re-derive that.
+pub const ADD_UNIT_DISCOVERED_INPUTS_FIELD: &str = "discovered_inputs";
+
+/// The §24.7 diagnostic for a `cook.dep_output` / `cook.dep_output_list`
+/// reference to a name that has no terminal output — either it was never
+/// registered, or it registered no `cook` steps.
+///
+/// One condition, one sentence, both phases. It was written twice before
+/// COOK-439 — positionally in `cook-register`, inline in `cook-execute` — and
+/// the constitution's duplicate-literal rule could not see the pair, because
+/// `"recipe '{}' has …"` and `"recipe '{name}' has …"` are different literals.
+/// That is the blind spot the constitution's own gate section warns about,
+/// firing on a user-visible sentence: a reader improving one phase's wording
+/// would have left the other phase saying something else, and nothing would
+/// have failed.
+pub fn no_terminal_output_message(name: &str) -> String {
+    format!("recipe '{name}' has no terminal output (not registered or has no cook steps)")
+}
 
 // ---------------------------------------------------------------------------
 // __member_source — one shape, one set of key spellings (COOK-390)
@@ -97,12 +286,26 @@ pub enum MemberSourceDescriptor {
 /// diagnostics) can branch on it without reaching into cook-register's
 /// internal `RegisteredRecipe` shape.
 ///
-/// This is the register-phase kind. It is deliberately distinct from
-/// `cook_engine::RecipeKind`, the progress-event mirror enum: that one
-/// answers "how should a completed recipe be labelled", this one answers
-/// "what did the author declare".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// This used to say it was "deliberately distinct from
+/// `cook_engine::RecipeKind`, the progress-event mirror enum: that one answers
+/// 'how should a completed recipe be labelled', this one answers 'what did the
+/// author declare'". COOK-421 retired that distinction, because the code never
+/// held it: the engine derived its mirror from THIS value
+/// (`cook-engine/src/run.rs`) and cook-cli derived the renderer's from that,
+/// so the label was the declaration, twice removed, through two hand-written
+/// translations that nothing checked. One vocabulary, one declaration.
+///
+/// The serde spelling is a wire format: `cook-progress` writes this into
+/// `.cook/logs` and `cook-logs` reads it back. The coupling runs both ways and
+/// is the price of one definition — adding a third recipe flavour here is a
+/// change to the on-disk log format, and `cook-progress`'s `wire.rs` schema
+/// rules (additive only, or bump `PROGRESS_SCHEMA_VERSION`) apply to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RecipeKind {
+    /// Defaulted so an older reader round-trips a log written without the
+    /// field, which is what the renderer's copy of this enum did.
+    #[default]
     Recipe,
     Chore,
 }
@@ -236,3 +439,7 @@ pub struct RegisteredWorkspace {
     /// taken at the end of `register_workspace` is sound.
     pub terminal_outputs: std::collections::BTreeMap<String, Vec<String>>,
 }
+
+#[cfg(test)]
+#[path = "tests/registration_tests.rs"]
+mod tests;

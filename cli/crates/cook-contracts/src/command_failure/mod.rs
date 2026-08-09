@@ -43,12 +43,47 @@ impl CommandFailure {
         self.line
     }
 
+    /// The line, when there is one.
+    ///
+    /// Zero is not a line: it is what a producer stores when it could not
+    /// determine one. §{lua.cook-sh} (CS-0211) requires a failure it cannot
+    /// locate to be reported WITHOUT a location rather than with a
+    /// substitute, and "0" printed into a diagnostic is exactly the
+    /// substitute — a reader cannot tell it from a real line 0 that does not
+    /// exist. Every renderer asks this rather than testing `line() == 0`
+    /// itself, because that test is one decision and it had two answers:
+    /// cook-cli omitted the location and cook-engine's progress line printed
+    /// `command at line 0`.
+    pub fn located(&self) -> Option<usize> {
+        (self.line != 0).then_some(self.line)
+    }
+
     pub fn exit_code(&self) -> i32 {
         self.exit_code
     }
 
     pub fn command(&self) -> &str {
         &self.command
+    }
+
+    /// The command as a reader is shown it: the author's body, without the
+    /// prelude [`crate::shell_block::compose`] put in front of it.
+    ///
+    /// `set -e` is the implementation's line, not the author's, and §{lua.cook-sh}
+    /// (CS-0215) forbids showing it. A renderer holding a `CommandFailure`
+    /// asks this rather than calling `strip_set_e` on `command()` itself, for
+    /// the reason `located` gives one paragraph up: that was one decision with
+    /// four implementations, and they disagreed. `cook-cli`'s final diagnostic
+    /// stripped; `cook-engine`'s progress line printed the prelude as the
+    /// first line of the failing command; `cook-cli`'s test report and
+    /// `cook-plan`'s duplicate-output diagnostic each kept a private stripper,
+    /// one missing the empty-block case and the other dropping the prefix
+    /// without its newline, so `set -euo pipefail` rendered as `uo pipefail`.
+    /// The two sites that hold a shell payload rather than a failure call
+    /// [`crate::shell_block::strip_set_e`] directly; this is the same law one
+    /// level up, for callers that have the failure.
+    pub fn displayed_command(&self) -> &str {
+        crate::shell_block::strip_set_e(&self.command)
     }
 
     pub fn stdout(&self) -> &CapturedStream {

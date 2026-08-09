@@ -1,12 +1,14 @@
 //! On-disk recipe-cache file format. The fingerprint state types
-//! (`StepEntry`, `FileRecord`, `CACHE_VERSION`) live in `cook-fingerprint`
-//! and are re-exported here for callers that already use `cook_cache::store::*`.
+//! (`StepEntry`, `FileRecord`, `CACHE_VERSION`) live in
+//! `cook_contracts::cache::step` and are re-exported here for callers that
+//! already use `cook_cache::store::*`.
 //!
 //! ## Wire-format schema versioning (CS-0048)
 //!
 //! The on-disk `RecipeCache` carries a top-level `schema_version: u32` field.
 //! Its value is sourced from [`CACHE_VERSION`] — the same constant used as a
-//! fingerprint input by `cook-fingerprint`. The dual role is intentional:
+//! fingerprint input by the key composition upstream. The dual role is
+//! intentional:
 //! a fingerprint-side bump (anything that changes how `StepEntry` /
 //! `FileRecord` / per-step keys are computed) is by definition an incompatible
 //! on-disk-format change, so the two move together.

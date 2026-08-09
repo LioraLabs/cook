@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use cook_engine::cook_cache::backend::EvictCandidate;
+use cook_contracts::cache::cas::EvictCandidate;
 use cook_engine::cook_cache::CloudConfig;
 
 use crate::cli::Globals;
@@ -186,10 +186,10 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
 
     out.push('\n');
     if let Some(oldest) = report.oldest {
-        out.push_str(&format!("Oldest: {}\n", format_ts(oldest)));
+        out.push_str(&format!("Oldest: {}\n", cook_contracts::timestamp::format_rfc3339_secs(oldest)));
     }
     if let Some(newest) = report.newest {
-        out.push_str(&format!("Newest: {}\n", format_ts(newest)));
+        out.push_str(&format!("Newest: {}\n", cook_contracts::timestamp::format_rfc3339_secs(newest)));
     }
 
     if let Some(budget) = budget {
@@ -261,17 +261,6 @@ pub(crate) fn human_size(bytes: u64) -> String {
     }
 }
 
-/// Render a Unix-seconds timestamp as `YYYY-MM-DDTHH:MM:SSZ`, reusing
-/// `crate::iso8601::days_to_ymd` rather than pulling in `chrono`.
-fn format_ts(secs: u64) -> String {
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let hour = rem / 3600;
-    let min = (rem % 3600) / 60;
-    let sec = rem % 60;
-    let (year, month, day) = crate::iso8601::days_to_ymd(days as i64);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
-}
 
 #[cfg(test)]
 #[path = "tests/cache_du_tests.rs"]

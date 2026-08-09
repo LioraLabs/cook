@@ -10,9 +10,12 @@
 //! stream → `Stdout`) — drift was silent misattribution in `cook logs`
 //! replay and `--output=json` consumers.
 //!
-//! [`WireEvent`] is that schema. The derives on `NodeKind` / `SkipReason` /
-//! `Stream` / `RecipeKind` do the enum spelling (they were dead for the
-//! wire before); the writer serializes it, both readers deserialize it.
+//! [`WireEvent`] is that schema. The derives on `SkipReason` / `Stream` here,
+//! and on `NodeKind` / `RecipeKind` in `cook-contracts` (COOK-421 made those
+//! two one definition shared with cook-engine), do the enum spelling; the
+//! writer serializes it, both readers deserialize it. Two of the four
+//! spellings therefore now live outside this crate, which is a coupling worth
+//! knowing about: a variant added to either is a change to this wire format.
 //!
 //! **Envelope and evolution.** Each line is [`WireLine`]: `ts` + `v` +
 //! the flattened event. `v` is `PROGRESS_SCHEMA_VERSION` (CS-0048): readers

@@ -81,17 +81,37 @@ dependency closure, so an engine that cannot even name `register_cookfile`
 is uncompilable into re-opening registration mid-walk — the two-phase law
 held by the crate graph, not by convention. Consequently it never parses a
 Cookfile or generates its Lua: `cook-lang` and `cook-luagen` are not in its
-closure at all. It does not own a worker VM (`cook-luaotp`), a
+closure at all. It does not own a worker VM (`cook-execute`), a
 cache backend or store layout (`cook-cache`), or a process spawn
 (`cook-shell`). It defines no contracts; `CacheMeta`, `WorkPayload`,
 `Sharing`, the cacheability classification, and the fingerprint and key law
 are `cook-contracts` (with the store-side half in `cook-cache` since
 COOK-418 dissolved `cook-fingerprint`).
 
-It does not render. It emits `EngineEvent` and the CLI translates. `NodeKind`
-and `RecipeKind` are deliberate engine-side mirrors of the `cook-progress`
-enums so that this crate does not depend on the renderer: a progress bar is one
-possible consumer of the event stream, not the consumer.
+**It does not run a unit, and `executor.rs` is not an exception.** The name is
+a near-collision with `cook-execute`, so the line is worth stating rather than
+inferring: **this crate decides, per unit, whether the cache already holds the
+answer; `cook-execute` runs the unit that survives that decision.** Everything
+`executor.rs` does is on the deciding side of that — readiness, the cache
+verdict, dispatch, and what to record when a result comes back. The one thing
+it never does is evaluate the work: it hands a `WorkItem` across the phase
+boundary and reads a `WorkResult` back, and it has no VM, no thread pool and no
+spawn of its own to do otherwise with. A change to *what running a unit means*
+belongs in `cook-execute`; a change to *whether a unit runs at all* belongs
+here.
+
+It does not render. It emits `EngineEvent`, and this crate does not depend on
+the renderer: a progress bar is one possible consumer of the event stream, not
+the consumer.
+
+That used to be stated as "`NodeKind` and `RecipeKind` are deliberate
+engine-side mirrors of the `cook-progress` enums", with a hand-written
+translation in the CLI joining them. COOK-421 deleted the mirrors: the stratum
+rule gets renderer-independence without a copy, because both crates already
+depend on `cook-contracts`, and a law lives as low as its dependencies allow.
+Both kinds are re-exported from `cook_contracts::{unit, registration}`, so
+`cook_engine::NodeKind` still names what it always named — it is now the same
+type the renderer sees, and nothing translates.
 
 It does not decide what the user asked for. Target selection, exit codes, and
 diagnostics wording belong to `cook-cli`.

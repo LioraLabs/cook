@@ -1,7 +1,7 @@
 //! The shared `cook.load_module` mechanics (§12.3, §24.2).
 //!
 //! Until COOK-412 this sequence existed twice: `cook-register`'s loader
-//! memoized by module name with Rust-side state, `cook-luaotp`'s worker
+//! memoized by module name with Rust-side state, `cook-execute`'s worker
 //! loader memoized by `<cwd>::<name>` in Lua globals, and the two carried
 //! independent cycle detection sharing only a string. COOK-393 had already
 //! unified the candidate list and search-path composition around them; this

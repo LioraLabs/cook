@@ -1,7 +1,7 @@
 //! `cook.json_decode` / `cook.yaml_decode` — both-phase codecs (§24.8, CS-0123).
 //!
 //! Lives in cook-lua-stdlib so the register-phase VM (cook-register) and the
-//! execute-phase worker VMs (cook-luaotp) install byte-identical behaviour.
+//! execute-phase worker VMs (cook-execute) install byte-identical behaviour.
 use mlua::prelude::*;
 
 /// Convert a serde_json::Value into a Lua value. JSON null maps to nil,

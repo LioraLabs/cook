@@ -1,0 +1,1530 @@
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use cook_contracts::{StepKind, WorkPayload};
+use cook_probe::store::ProbeValueStore;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// Read-only snapshot of the register session's terminal-outputs map
+/// (recipe qualified-name → terminal output paths), shared across all worker
+/// VMs so execute-phase `cook.dep_output` / `cook.dep_output_list` (§24.7)
+/// resolve without re-entering the register session. `Arc` because every
+/// worker thread's VM captures the same immutable map.
+pub type WorkerDepOutputs = Arc<BTreeMap<String, Vec<String>>>;
+
+pub struct WorkItem {
+    pub id: usize,
+    pub payload: WorkPayload,
+    pub recipe_name: String,
+    pub working_dir: PathBuf,
+    /// Full env lookup map: seeds `cook.env` and backs `$<NAME>` /
+    /// consulted-value resolution. NOT the child-process environment — a
+    /// config `var.*` value here is `$<NAME>`-only (R1 / CS-0164).
+    pub env_vars: HashMap<String, String>,
+    /// The subset of `env_vars` actually placed in a spawned step's process
+    /// environment: per-unit exports only (chore parameters). Config `var.*`
+    /// values are excluded so a shell `$NAME` read sees them unset (R1).
+    pub process_env_vars: HashMap<String, String>,
+    /// Project root for the CS-0045 sandbox. The worker installs the
+    /// per-item sandbox policy by combining this root with the
+    /// payload's `step_kind` (Cook/Test/Chore → Confined; there is no
+    /// unsandboxed step kind — CS-0135 retired `plate`, the prior
+    /// exception). One worker VM may serve items from multiple projects in
+    /// the cross-Cookfile-import case (CS-0017), so the root must
+    /// travel with the item rather than being captured at pool spawn.
+    pub project_root: PathBuf,
+}
+
+
+/// Payload returned by a completed probe unit (§22.5). `bytes` contains the
+/// canonical-JSON-serialised return value of the `produce` Lua function
+/// (§22.5.5, CS-0102).
+/// Handled by Task G; present as `None` on all non-probe WorkResults.
+#[derive(Clone, Debug)]
+pub struct ProbeOutput {
+    pub key: String,
+    pub bytes: Vec<u8>,
+}
+
+pub struct WorkResult {
+    pub id: usize,
+    pub success: bool,
+    pub error: Option<String>,
+    /// The command's exit status, or `None` when it was killed by a signal or
+    /// never ran. On the payload kinds that evaluate Lua rather than spawn,
+    /// `None`: there is no process to have one.
+    pub exit_code: Option<i32>,
+    pub node_name: String,
+    /// Captured child output, in the order the spawns that produced it ran.
+    ///
+    /// Each chunk carries the file descriptor it came from so downstream
+    /// observers preserve stdout/stderr provenance (CS-0035). Pre-CS-0035 this
+    /// was `Vec<String>` and the engine attributed every line to stdout;
+    /// CS-0188 made it chunks of bytes rather than decoded lines, because the
+    /// decode belongs at the render and because a line-level sequence would
+    /// imply an interleaving between the two streams that separate pipe
+    /// buffers cannot supply.
+    ///
+    /// A unit whose body calls `cook.sh` more than once contributes one chunk
+    /// per stream per call, in call order: that is the ordering guarantee
+    /// §{lua.cook-sh} states.
+    pub output_lines: Vec<cook_contracts::OutputChunk>,
+    /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
+    /// `None` for all non-probe units. Wired end-to-end by Task G.
+    pub probe_output: Option<ProbeOutput>,
+    /// CS-0204: the module files this item's Lua body actually loaded, as
+    /// workspace-relative paths where they lie under the item's working
+    /// directory and absolute paths otherwise (both hash through the same
+    /// `working_dir.join`). Empty for every payload that runs no Lua, and for
+    /// a Lua body that loads nothing — in which case the unit is keyed exactly
+    /// as it was before CS-0204.
+    pub module_inputs: Vec<String>,
+    /// Wall-clock span of the actual work-item execution, measured by the
+    /// worker around the `execute_work_item` dispatch (queue wait excluded)
+    /// for every payload kind, so a unit's completion line reports real
+    /// elapsed time.
+    ///
+    /// The `Duration::ZERO` each `execute_*` helper puts in its returned
+    /// literal is a placeholder: `worker_loop` overwrites it with the
+    /// measured span on every path out, the panic-recovery path included,
+    /// so it can never reach the engine.
+    pub duration: Duration,
+}
+
+pub struct WorkerPool {
+    threads: Vec<std::thread::JoinHandle<()>>,
+    queue: Arc<SharedQueue>,
+    /// Per-run probe-value store. Owned here so `probe_value_store()` returns
+    /// a clone that the engine scheduler can write probe outputs into after
+    /// workers complete their `WorkPayload::Probe` units (§22.5.7).
+    probe_store: ProbeValueStore,
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+enum QueueItem {
+    Work(WorkItem),
+    Shutdown,
+}
+
+struct SharedQueue {
+    queue: Mutex<VecDeque<QueueItem>>,
+    condvar: Condvar,
+}
+
+// ---------------------------------------------------------------------------
+// WorkerPool implementation
+// ---------------------------------------------------------------------------
+
+impl WorkerPool {
+    /// Spawn `n` worker threads with no dep-output snapshot (empty map).
+    /// Convenience wrapper preserved for the crate's unit tests, which never
+    /// exercise `cook.dep_output`.
+    pub fn spawn(n: usize) -> (Self, mpsc::Receiver<WorkResult>) {
+        Self::spawn_with_dep_outputs(n, Arc::new(BTreeMap::new()))
+    }
+
+    /// Spawn `n` worker threads, threading a read-only terminal-outputs
+    /// snapshot into every worker VM so execute-phase `cook.dep_output` /
+    /// `cook.dep_output_list` (§24.7) resolve. Each thread creates its own
+    /// `mlua::Lua` VM and pulls work items from the shared queue.  Results
+    /// are sent back through the returned `mpsc::Receiver`.
+    pub fn spawn_with_dep_outputs(
+        n: usize,
+        dep_outputs: WorkerDepOutputs,
+    ) -> (Self, mpsc::Receiver<WorkResult>) {
+        let shared = Arc::new(SharedQueue {
+            queue: Mutex::new(VecDeque::new()),
+            condvar: Condvar::new(),
+        });
+
+        // Per-run probe-value store: shared across all workers so that
+        // `cook.probes.get` on any worker VM sees the same store (§22.5.7).
+        let probe_store = ProbeValueStore::new();
+
+        let (tx, rx) = mpsc::channel();
+
+        let mut threads = Vec::with_capacity(n);
+
+        for _ in 0..n {
+            let q = Arc::clone(&shared);
+            let tx = tx.clone();
+            let store = probe_store.clone();
+            let deps = Arc::clone(&dep_outputs);
+
+            let handle = std::thread::spawn(move || {
+                worker_loop(q, tx, store, deps);
+            });
+            threads.push(handle);
+        }
+
+        (WorkerPool { threads, queue: shared, probe_store }, rx)
+    }
+
+    /// Return a clone of the `ProbeValueStore` so the engine scheduler
+    /// can write probe outputs into it after each `WorkPayload::Probe` unit
+    /// completes (§22.5.7).
+    pub fn probe_value_store(&self) -> ProbeValueStore {
+        self.probe_store.clone()
+    }
+
+    /// Push a work item into the shared queue.
+    pub fn submit(&self, item: WorkItem) {
+        let mut q = self.queue.queue.lock().expect("queue lock poisoned");
+        q.push_back(QueueItem::Work(item));
+        self.queue.condvar.notify_one();
+    }
+
+    /// Send a shutdown sentinel for every worker and join all threads.
+    pub fn shutdown(mut self) {
+        self.signal_and_join();
+    }
+
+    /// Idempotent shutdown used by both explicit `shutdown()` and `Drop`.
+    /// Recovers a poisoned queue mutex so a panicking worker can't strand
+    /// the rest of the pool.
+    fn signal_and_join(&mut self) {
+        if self.threads.is_empty() {
+            return;
+        }
+        {
+            let mut q = match self.queue.queue.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            for _ in &self.threads {
+                q.push_back(QueueItem::Shutdown);
+            }
+            self.queue.condvar.notify_all();
+        }
+        for handle in self.threads.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for WorkerPool {
+    /// Implicit shutdown: if a `WorkerPool` is dropped without an explicit
+    /// `shutdown()` call, signal the workers and join them. Without this,
+    /// the workers' `Arc<SharedQueue>` clones keep the queue alive forever
+    /// and the threads leak, blocked on the condvar.
+    fn drop(&mut self) {
+        self.signal_and_join();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worker loop (runs on each thread)
+// ---------------------------------------------------------------------------
+
+fn worker_loop(
+    queue: Arc<SharedQueue>,
+    tx: mpsc::Sender<WorkResult>,
+    probe_store: ProbeValueStore,
+    dep_outputs: WorkerDepOutputs,
+) {
+    // Each worker creates its own Lua VM.  The VM is `!Send` but never
+    // leaves this thread, so this is safe.
+    let lua = unsafe { mlua::Lua::unsafe_new() };
+
+    // `path.*` is pure string manipulation — install once.
+    cook_lua_stdlib::register_path_api(&lua).expect("failed to register path API");
+
+    // CS-0204: the sink every module load on this VM reports into. Cleared
+    // before each item and drained after it, so a unit is keyed on the
+    // modules IT loaded and not on the ones the previous item did.
+    let module_observer = cook_lua_stdlib::ModuleObserver::new();
+
+    // Shared mutable state for per-item context (single-threaded within
+    // this worker, but needs interior mutability for closures).
+    let current_recipe: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let current_working_dir: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(PathBuf::new()));
+    let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    // R1 (CS-0164): the child-process env subset (chore-param exports). Kept
+    // separate from `current_env_vars` (the full `cook.env` lookup map) so a
+    // config `var.*` value never reaches a spawned step's environment.
+    let current_process_env_vars: Arc<Mutex<HashMap<String, String>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    // CS-0188: the active unit's output accumulator. A Lua body's `cook.sh`
+    // calls push into this, in call order, so what the body printed is
+    // attributable to the unit that printed it. Cleared per item below; a unit
+    // that inherited the previous unit's output would be reporting someone
+    // else's work.
+    let current_output: Arc<Mutex<Vec<cook_contracts::OutputChunk>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    // Whether this item's `print` / `io.write` is captured or passed straight
+    // through to the real stdout. A CHORE is not captured: it owns the
+    // controlling terminal under the single-drain model (§{chores}) and its
+    // output is the product the user asked for, not a build log to attribute.
+    // This is the same distinction the interactive path draws by spawning with
+    // `Stdio::Inherited`.
+    let current_capture: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+
+    // CS-0045 sandbox slot. Updated per work item before the body
+    // runs: Cook/Test/Chore → Confined { project_root }. There is no
+    // unsandboxed step kind (CS-0135 retired `plate`, the prior
+    // exception). Default is `Off` — the slot is overwritten before
+    // the first body executes, but if a future code path somehow
+    // runs Lua before the first slot update, `Off` is the safe
+    // fallback (no false positives on legitimate I/O).
+    let current_sandbox: Arc<Mutex<cook_lua_stdlib::SandboxPolicy>> =
+        Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
+
+    // Register the `cook` table once with closures that capture shared state.
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &current_capture, &probe_store, &dep_outputs, &module_observer)
+        .expect("failed to register cook table");
+
+    // Register the `fs` table once at startup with the Live cwd source
+    // so each call sees the *current* work item's working_dir, not the
+    // one in effect at registration time. This is the CS-0017
+    // multi-Cookfile imports contract: one worker VM may serve items
+    // from many Cookfiles (cwds), and `fs.*` resolves against the
+    // active item's cwd at call time.
+    //
+    // CS-0045: pair the live cwd source with a live sandbox source so
+    // each call also sees the active item's policy (cook = confined,
+    // plate = off).
+    cook_lua_stdlib::register_fs_api_with_sandbox(
+        &lua,
+        cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(&current_working_dir)),
+        cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
+    )
+    .expect("failed to register fs API");
+
+    // CS-0045: install Lua-side shell escape-hatch guards on
+    // `os.execute` and `io.popen`. Same Live source so the per-item
+    // policy applies.
+    cook_lua_stdlib::install_shell_escape_guards(
+        &lua,
+        cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
+    )
+    .expect("failed to install shell escape guards");
+
+    // CS-0188: route `print` and `io.write` into the active unit's sink.
+    //
+    // They went to the worker process's own fd 1 — one descriptor shared by
+    // every worker in the pool — so two units printing concurrently interleaved
+    // their bytes with nothing marking whose were whose, and the engine could
+    // not attribute a line to the unit that wrote it. That is why the flush
+    // below had to exist at all: output was escaping through libc rather than
+    // through Cook.
+    install_output_capture(&lua, &current_output, &current_capture)
+        .expect("failed to install output capture");
+
+    loop {
+        let item = {
+            let mut q = match queue.queue.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            loop {
+                if let Some(front) = q.pop_front() {
+                    break front;
+                }
+                q = match queue.condvar.wait(q) {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+            }
+        };
+
+        match item {
+            QueueItem::Shutdown => break,
+            QueueItem::Work(work) => {
+                // Update per-item context before executing
+                {
+                    let mut name = current_recipe.lock().expect("recipe name lock");
+                    *name = work.recipe_name.clone();
+                }
+                {
+                    let mut wd = current_working_dir.lock().expect("working_dir lock");
+                    *wd = work.working_dir.clone();
+                }
+                {
+                    let mut env = current_env_vars.lock().expect("env_vars lock");
+                    *env = work.env_vars.clone();
+                }
+                {
+                    let mut penv =
+                        current_process_env_vars.lock().expect("process_env_vars lock");
+                    *penv = work.process_env_vars.clone();
+                }
+                // CS-0188: start this unit's output empty. The worker VM is
+                // reused across items, so a sink left holding the previous
+                // unit's chunks would attribute them to this one.
+                {
+                    let mut out = current_output.lock().expect("output sink lock");
+                    out.clear();
+                }
+                current_capture.store(
+                    !matches!(&work.payload, WorkPayload::LuaChunk { is_chore: true, .. }),
+                    Ordering::Relaxed,
+                );
+                // CS-0045: pick the per-item sandbox policy. Cook, Test,
+                // Chore, and any non-LuaChunk payload all run confined to
+                // `project_root` — there is no unsandboxed step kind
+                // (CS-0135 retired `plate`, the prior exception). For
+                // Shell/Test/Interactive payloads the policy is
+                // irrelevant — the worker doesn't run user Lua for
+                // those — but setting it consistently means a stray
+                // `lua.load()` in a future code path can't accidentally
+                // land Off.
+                {
+                    let kind = match &work.payload {
+                        WorkPayload::LuaChunk { step_kind, .. } => *step_kind,
+                        _ => StepKind::Cook,
+                    };
+                    let policy = match kind {
+                        StepKind::Cook | StepKind::Test | StepKind::Chore => {
+                            cook_lua_stdlib::SandboxPolicy::Confined {
+                                project_root: work.project_root.clone(),
+                            }
+                        }
+                        // CS-0049: `StepKind` is `#[non_exhaustive]`. Future
+                        // variants default to the strictest policy (Confined)
+                        // until a CS classifies them explicitly.
+                        _ => cook_lua_stdlib::SandboxPolicy::Confined {
+                            project_root: work.project_root.clone(),
+                        },
+                    };
+                    let mut sb = current_sandbox.lock().expect("sandbox slot lock");
+                    *sb = policy;
+                }
+
+                // Refresh package.path and package.cpath so `require` resolves
+                // .cook/modules/ relative to this unit's source Cookfile (CS-0062).
+                let _ = cook_lua_stdlib::refresh_package_search_paths(&lua, &work.working_dir);
+
+                // CS-0204: start this item's module set empty, for the same
+                // reason the output sink is cleared above — the VM outlives
+                // the item, and an inherited set would key this unit on a
+                // module it never loaded.
+                module_observer.clear();
+
+                // Run the work item under `catch_unwind`. A Rust panic
+                // anywhere in execute_work_item (e.g. an unexpected
+                // upstream invariant violation) is converted into a
+                // failure `WorkResult` so the engine never hangs on
+                // `rx.recv()`. The Lua VM is reused — mlua wraps panics
+                // raised from inside Lua callbacks and converts them to
+                // Lua errors, so the VM state stays sane.
+                let work_id = work.id;
+                let recipe_name = work.recipe_name.clone();
+                let node_name = work.payload.display_name();
+                // Measured span = actual execution only. The queue wait
+                // already ended when this item was popped above, and the
+                // per-item context setup just above (recipe/cwd/env/sandbox,
+                // package-path refresh) is worker bookkeeping, not queued
+                // idle time, so starting the clock here — immediately
+                // around the dispatch — is the honest per-unit number
+                let exec_start = Instant::now();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // R1: shell/test steps spawn with the process-env subset,
+                    // NOT the full config lookup map. `cook.env` reads (Lua
+                    // bodies) still see the full map via `current_env_vars`.
+                    execute_work_item(&lua, &probe_store, &work, &work.working_dir, &work.process_env_vars)
+                }));
+                let mut result = match result {
+                    Ok(r) => r,
+                    Err(panic_payload) => {
+                        let msg = panic_payload_to_string(&panic_payload);
+                        WorkResult {
+                            id: work_id,
+                            success: false,
+                            error: Some(format!(
+                                "[{recipe_name}] worker panic: {msg}"
+                            )),
+                            exit_code: None,
+                            node_name,
+                            output_lines: Vec::new(),
+                            probe_output: None,
+                            module_inputs: Vec::new(),
+                            duration: Duration::ZERO,
+                        }
+                    }
+                };
+                result.duration = exec_start.elapsed();
+                // CS-0204: what the body loaded, drained on every exit path —
+                // success, failure, and the panic recovery above alike. The
+                // engine discards it for a failed unit (nothing is recorded
+                // for one), but draining unconditionally is what guarantees
+                // the sink is empty when the next item starts.
+                result.module_inputs = cook_contracts::layout::relative_module_paths(
+                    &work.working_dir,
+                    &module_observer.take(),
+                );
+                // CS-0188: fold in whatever the body's `cook.sh` calls
+                // captured. A Lua-bodied unit produces all of its output this
+                // way and none directly; a Shell or Test unit is the reverse,
+                // because its one spawn is the whole unit and never routes
+                // through `cook.sh`. The two are therefore never both
+                // non-empty, and sink-first is a concatenation rather than a
+                // choice about precedence.
+                {
+                    let mut sunk = current_output.lock().expect("output sink lock");
+                    if !sunk.is_empty() {
+                        let mut chunks = std::mem::take(&mut *sunk);
+                        // A unit that turned its stdout into a VALUE does not
+                        // also log it. A probe's shell producer lowers to
+                        // `cook.sh("…")` whose stdout *is* the probe's value
+                        // (§22.5.2), so echoing it would print every finder's
+                        // answer into the build log on each cold run, and print
+                        // it twice for anything that also reports the value.
+                        // Stderr is not the value and has never had anywhere to
+                        // go, which is the half worth keeping: a `pkg-config`
+                        // warning during discovery is exactly the diagnostic an
+                        // author needs.
+                        //
+                        // Keyed on the result rather than on the payload kind:
+                        // a probe that FAILED produced no value, so nothing
+                        // consumed its stdout and all of it is diagnostic.
+                        if result.probe_output.is_some() {
+                            chunks.retain(|c| {
+                                c.stream() == cook_contracts::OutputStream::Stderr
+                            });
+                        }
+                        let direct = std::mem::take(&mut result.output_lines);
+                        result.output_lines = chunks;
+                        result.output_lines.extend(direct);
+                    }
+                }
+                let _ = tx.send(result);
+            }
+        }
+    }
+}
+
+/// Replace `print` and `io.write` on a worker VM so what a Lua body prints
+/// reaches the active unit's sink instead of the process's fd 1 (CS-0188).
+///
+/// The wrappers are written in Lua rather than Rust so that argument handling
+/// stays exactly Lua's: `print` renders each argument with `tostring`, joins
+/// with tabs and appends a newline; `io.write` renders without separators, adds
+/// nothing, and returns the file handle so `io.write(a):write(b)` still chains.
+/// Reimplementing either in Rust would mean reimplementing `tostring`, including
+/// `__tostring` metamethods, and getting it subtly wrong somewhere.
+fn install_output_capture(
+    lua: &mlua::Lua,
+    sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    capture: &Arc<AtomicBool>,
+) -> mlua::Result<()> {
+    let sink = Arc::clone(sink);
+    let capture = Arc::clone(capture);
+    let emit = lua.create_function(move |_, text: mlua::String| {
+        // A chore's body owns the terminal, so its output is the product and
+        // goes straight out, unframed and on stdout, exactly as it did before
+        // CS-0188. Capturing it would move it to the progress stream (stderr)
+        // and wrap it in a unit label, which is the opposite of what someone
+        // running `cook greet` asked for.
+        if !capture.load(Ordering::Relaxed) {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(&text.as_bytes());
+            let _ = out.flush();
+            return Ok(());
+        }
+        if let Some(chunk) = cook_contracts::OutputChunk::new(
+            cook_contracts::OutputStream::Stdout,
+            text.as_bytes().to_vec(),
+        ) {
+            sink.lock().expect("output sink lock").push(chunk);
+        }
+        Ok(())
+    })?;
+    lua.globals().set("__cook_emit_output", emit)?;
+
+    lua.load(
+        r#"
+        local _emit = __cook_emit_output
+        function print(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts, '\t') .. '\n')
+        end
+        io.write = function(...)
+            local n = select('#', ...)
+            local parts = {}
+            for i = 1, n do parts[i] = tostring((select(i, ...))) end
+            _emit(table.concat(parts))
+            return io.stdout
+        end
+        "#,
+    )
+    .set_name("@cook:output-capture")
+    .exec()?;
+
+    // The trampoline is an implementation detail of the two wrappers above and
+    // is not part of the execute-phase Lua surface; leaving it reachable would
+    // let a recipe body write arbitrary bytes into another unit's attribution.
+    lua.globals().set("__cook_emit_output", mlua::Value::Nil)?;
+    Ok(())
+}
+
+/// Best-effort extraction of a panic payload's message. Panics raised via
+/// `panic!("…")` carry either a `&'static str` or `String`; anything else
+/// gets a generic placeholder.
+fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-worker cook table registration
+// ---------------------------------------------------------------------------
+
+/// The chunk name every execute-phase Lua body is loaded under (CS-0126).
+/// `execute_lua_chunk` newline-pads a body to its step's Cookfile line and
+/// names it this, so a Lua error reads `Cookfile:LINE:` instead of the
+/// opaque `[string "…"]:1:` — and so a stack walk looking for this name
+/// finds the body's real Cookfile line. Spelled once because the padding and
+/// the walk have to agree.
+const COOKFILE_CHUNK_NAME: &str = "@Cookfile";
+
+fn register_worker_cook_table(
+    lua: &mlua::Lua,
+    current_working_dir: &Arc<Mutex<PathBuf>>,
+    current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
+    current_process_env_vars: &Arc<Mutex<HashMap<String, String>>>,
+    current_recipe: &Arc<Mutex<String>>,
+    current_output: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    current_capture: &Arc<AtomicBool>,
+    probe_store: &ProbeValueStore,
+    dep_outputs: &WorkerDepOutputs,
+    module_observer: &cook_lua_stdlib::ModuleObserver,
+) -> mlua::Result<()> {
+    let cook = lua.create_table()?;
+
+    // cook.sh(cmd) -> stdout string. R1 (CS-0164): a `cook.sh` child spawns
+    // with the process-env subset (chore-param exports), not the full config
+    // lookup map, so a config `var.*` value is never in its environment.
+    //
+    // CS-0194: when this worker is drain-designated (capture off — a chore
+    // body), the call's streams go to the controlling terminal in call order
+    // with the body's print/io.write, not into the sink. The return value
+    // stays §{lua.cook-sh}'s stdout either way.
+    let wd = Arc::clone(current_working_dir);
+    let penv = Arc::clone(current_process_env_vars);
+    let sink = Arc::clone(current_output);
+    let capture = Arc::clone(current_capture);
+    let sh_fn = lua.create_function(move |lua, cmd: String| {
+        let working_dir = wd.lock().expect("working_dir lock").clone();
+        let env_vars = penv.lock().expect("process_env_vars lock").clone();
+        let to_terminal = !capture.load(Ordering::Relaxed);
+        // COOK-422: which Cookfile line this call is on. A failure carrying
+        // a line renders `Cookfile:LINE: command failed …`; one carrying 0
+        // renders with no location, which is what every execute-phase
+        // `cook.sh` failure did while this argument was a literal `0`. The
+        // walk is the register phase's, shared rather than copied; the only
+        // execute-phase part is the chunk name to look for, which is the one
+        // `execute_lua_chunk` pads and loads bodies under. A body the worker
+        // cannot line-map (a probe `produce`, named for its probe) yields
+        // `None` and the location-free rendering, which is the honest answer.
+        let line = cook_lua_stdlib::caller_line_in_source(lua, COOKFILE_CHUNK_NAME).unwrap_or(0);
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal)
+    })?;
+    cook.set("sh", sh_fn)?;
+
+    // Note: `cook.exec`, `cook.interactive`, `cook.add_unit`,
+    // `cook.step_group`, and `cook.recipe` are register-only API
+    // (Standard §6.3.2). On the worker (execute-phase) VM they are
+    // installed as error-raising guards near the bottom of this
+    // function — see `install_register_only_guard`.
+
+    // CS-0172: the read-only `var` global — the execute-phase half of the
+    // declared-variable surface (§5.3.1). A `__index` metamethod so reads
+    // always reflect the current unit's resolved variables. Values arrive in
+    // string form: the register phase rejects a non-string variable read from
+    // an execute-phase Lua body precisely so this surface never has to coerce
+    // one. Writes are refused, as at register phase — a step cannot redefine a
+    // determinant it was keyed on.
+    // COOK-439: the seal itself — reads routed through `__index`, writes
+    // refused, metatable hidden so neither guard can be lifted off — is
+    // `cook_lua_stdlib::install_var_proxy`, one implementation with the
+    // register VM. Only the two things that genuinely differ by phase stay
+    // here: where a read comes from, and what a refused write is told.
+    //
+    // The sentence is deliberately not the register phase's. There the author
+    // can still set the variable, in a `config` block or with `--set`, and the
+    // message says so; by the time execute-phase Lua runs, config blocks have
+    // run and recipes are already registered against the value, so that advice
+    // would be wrong here.
+    let vars_for_index = Arc::clone(current_env_vars);
+    cook_lua_stdlib::install_var_proxy(
+        lua,
+        move |lua, key: String| {
+            let vars = vars_for_index.lock().expect("var store lock");
+            Ok(match vars.get(&key) {
+                Some(value) => mlua::Value::String(lua.create_string(value)?),
+                None => mlua::Value::Nil,
+            })
+        },
+        |key| {
+            format!(
+                "var.{key} is read-only: a declared variable is a cache determinant \
+                 of the unit reading it (Standard §5.3.1)"
+            )
+        },
+    )?;
+
+    // cook.platform — installed via the shared cook-lua-stdlib so the
+    // execute-phase string values are byte-identical to the
+    // register-phase ones (CS-0044).
+    cook_lua_stdlib::register_platform_api(lua, &cook)?;
+
+    // CS-0123: cook.json_decode / cook.yaml_decode are both-phase (§24.8).
+    // Same shared implementation as the register VM so a probe produce
+    // body behaves identically on the pre-pass and demand-driven paths.
+    cook_lua_stdlib::register_codec_api(lua, &cook)?;
+
+    // CS-0158: cook.tools.id — canonical tool identity (content hash +
+    // fresh path). Both-phase; shared implementation, same rationale.
+    cook_lua_stdlib::register_tools_api(lua, &cook)?;
+
+    // cook.load_module(name) — the shared loader sequence from
+    // cook-lua-stdlib (§{lua.cook-load-module}, §12.3; one implementation
+    // with the register VM since COOK-412). Lookup resolves the unit's
+    // current_working_dir per call via WorkingDirSource::Live, so an
+    // imported Cookfile's body unit resolves against its own .cook/modules/
+    // (lexical per Cookfile, §{modules.use-scope}), and memoisation/cycle
+    // detection key by (working_dir, name) — one worker VM serving many
+    // Cookfiles keeps same-named modules distinct. Module top-level and
+    // `init()` run once per (cwd, name, worker VM); no register-phase
+    // obligations here, hence NoHooks.
+    cook_lua_stdlib::install_module_loader(
+        lua,
+        &cook,
+        cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(current_working_dir)),
+        cook_lua_stdlib::NoHooks,
+        module_observer.clone(),
+    )?;
+
+    // CS-0204: the other door. A multi-file rock reaches its own submodules
+    // through Lua's `require`, and a native `.so` can be reached NO other way
+    // — `module_candidates` probes four `.lua` paths and nothing else. Both
+    // doors feed one sink, so what the unit is keyed on is what it loaded.
+    cook_lua_stdlib::install_require_observer(lua, module_observer.clone())?;
+
+    // CS-0070 / CS-0074: cook.probes on the execute-phase VM (Standard §6.3.4).
+    //
+    // `cook.probes.get(key)` reads from the per-run SharedProbeValueStore so
+    // that consumer units see probe values produced by upstream probe units
+    // (§22.5.7). `cook.probes.set` is deprecated and raises an error on the
+    // execute-phase VM (CS-0074).
+    //
+    // `cook.probes.scope(label)` is still supported for backwards compat with
+    // modules that use the scoped sub-table pattern.
+    install_execute_phase_cook_probes(lua, &cook, probe_store)?;
+
+    // COOK-64 §9.3: cook.member_to_string(value) renders a data member to its
+    // canonical string form (key-sorted JSON for a table, the scalar's bare
+    // string otherwise). Used by the `$<in>` placeholder.
+    //
+    // COOK-439: one implementation with the register VM. The pure renderer was
+    // already shared, but the mlua wrapper around it — and with it the door's
+    // name and its diagnostic — was written once per phase, so this was a door
+    // with two implementations rather than one shared definition.
+    cook_lua_stdlib::install_member_to_string(lua, &cook)?;
+
+    // CS-0071: cook.export / cook.import on the execute-phase VM
+    // (Standard §6.3.4). Per-worker in-memory store; no cross-invocation
+    // persistence. The register-phase implementation
+    // (cook-register/src/export_api.rs `register_export_api`) backs a
+    // shared store the engine consumes for transitive-link recording.
+    // The execute-phase side only needs to satisfy the both-phase API
+    // surface so that target makers like cook_cc's `cc.bin` (whose
+    // recipe-body Lua calls `cook.export(name, {...})` to publish
+    // transitive info) do not raise `attempt to call a nil value
+    // (field 'export')` when their body runs on the worker VM.
+    //
+    // Cross-worker visibility is intentionally out of scope: each
+    // recipe is a self-contained producer/consumer pair within one
+    // worker, so a per-worker scratch table satisfies CS-0071.
+    install_execute_phase_cook_export(lua, &cook)?;
+
+    // cook.dep_output / cook.dep_output_list on the execute-phase VM
+    // (Standard §24.7, "Both"). Read-only resolution against the register
+    // session's terminal-outputs snapshot; no DAG-edge recording (the DAG is
+    // closed before execute phase).
+    install_worker_dep_output_api(lua, &cook, Arc::clone(dep_outputs), current_recipe)?;
+
+    // Register-only API guards (Standard §6.3.2).
+    //
+    // `cook.exec`, `cook.interactive`, `cook.add_unit`, `cook.step_group`,
+    // and `cook.recipe` are register-phase-only (§6.3.2, §6.3.3, §6.3.6,
+    // and §B.4.12 rationale). A conforming implementation MUST raise a Lua
+    // runtime error when any of them is called from execute-phase Lua (a
+    // `lua_line`, a `lua_block`, or a `using >{ … }` payload).
+    //
+    // The worker VM is the execute-phase VM, so we install error-raising
+    // stubs that supersede the partial-implementation `cook.exec` set
+    // above (which silently aliased to a shell-out — non-conformant with
+    // §6.3.2) and the entirely-absent `cook.interactive` / `cook.add_unit`
+    // / `cook.step_group` / `cook.recipe` (which previously surfaced as
+    // `attempt to call a nil value`, an incidentally-compliant but
+    // shape-wrong diagnostic).
+    //
+    // The register-phase VM is built separately by cook-register
+    // (`cook-register/src/{capture,unit_api}.rs`) — those call sites set
+    // up the real recording implementations on a different VM, so this
+    // guard does not affect them.
+    install_register_only_guard(
+        lua,
+        &cook,
+        "exec",
+        "cook.exec: register-only API called from execute-phase Lua. \
+         Use cook.sh(cmd) to shell out from a lua_line / lua_block / cook-body >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        cook_contracts::registration::INTERACTIVE_NAME,
+        "cook.interactive: register-only API called from execute-phase Lua. \
+         Interactive steps must be recorded during the register phase; they cannot be \
+         scheduled from a lua_line / lua_block / cook-body >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        cook_contracts::registration::ADD_UNIT_NAME,
+        "cook.add_unit: register-only API called from execute-phase Lua. \
+         Work units are recorded during the register phase; the DAG is closed before \
+         execute-phase Lua runs. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        cook_contracts::registration::STEP_GROUP_NAME,
+        "cook.step_group: register-only API called from execute-phase Lua. \
+         Step groups are recorded during the register phase; they cannot be opened from a \
+         lua_line / lua_block / cook-body >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "recipe",
+        "cook.recipe: register-only API called from execute-phase Lua. \
+         Recipes are registered during the register phase; they cannot be declared from a \
+         lua_line / lua_block / cook-body >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "probe",
+        "cook.probe: register-only API called from execute-phase Lua. \
+         Probe units are declared during the register phase; they cannot be created from a \
+         lua_line / lua_block / cook-body >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        cook_contracts::registration::PRIOR_OUTPUTS_NAME,
+        "cook.prior_outputs: register-only API called from execute-phase Lua. \
+         It answers about the recipe body currently being registered, and no body is \
+         being registered once execute-phase Lua runs. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
+
+    lua.globals().set("cook", cook)?;
+    Ok(())
+}
+
+/// CS-0152: the runtime error `cook.probes.get`/scoped `get` raise when
+/// `key` (already the full, scope-prefixed key if applicable) has never been
+/// materialised. Only the mlua wrapping is here — the sentence itself is
+/// `cook_probe::store::not_materialised_message`, which `$<key>`
+/// substitution raises for the same miss outside any VM.
+fn probe_not_materialised_error(key: &str) -> mlua::Error {
+    mlua::Error::runtime(cook_probe::store::not_materialised_message(key))
+}
+
+/// The CS-0074 rejection `cook.probes.set` and scoped `set` both raise on
+/// the execute-phase VM. Shared so the two diagnostics stay in lockstep
+/// (they were spelled twice, COOK-396).
+fn probes_set_deprecated_error() -> mlua::Error {
+    mlua::Error::runtime(
+        "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
+         Use cook.probe to declare memoised probe values.",
+    )
+}
+
+/// Install `cook.probes.{get,set,scope}` on the execute-phase VM
+/// (Standard §6.3.4, CS-0070, CS-0074, CS-0152).
+///
+/// `cook.probes.get(key)` reads from the `SharedProbeValueStore` — the same
+/// store the engine writes into when a probe unit completes (§22.5.8
+/// `[#cat.probes.exec]`). A key that was never materialised (the step never
+/// demanded the probe) is a hard error (CS-0152): silently returning `nil`
+/// let real misses masquerade as legitimate probe-absent results. A key that
+/// IS present whose canonical JSON payload is `null` still decodes to Lua
+/// `nil` with no error — that boundary is load-bearing for probe produce
+/// bodies (`cook.probes.get(KEY) or { ... }`).
+///
+/// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
+/// it raises a runtime error directing the author to use `cook.probe` instead.
+///
+/// `cook.probes.scope(label)` returns a sub-table whose `get` prefixes keys
+/// with `"<label>:"` for backwards compat with modules that use scoped cache.
+fn install_execute_phase_cook_probes(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+    probe_store: &ProbeValueStore,
+) -> mlua::Result<()> {
+    // The table, the `scope(label)` view, its §24.4.3 label check and its
+    // `label:key` prefixing are `cook_lua_stdlib::install_probes_api`, one
+    // implementation with the register VM (COOK-439). What is passed in is
+    // what this phase MEANS by a read and a write, which is the only part
+    // §6.3.4 and CS-0074 make phase-specific.
+    //
+    // The two used to be built separately, and the constitution's clone rule
+    // caught them as one copied run of code — reported as "already divergent"
+    // because one setter writes and this one raises. The divergence is
+    // CS-0074 and it is correct; what was wrong is that the nine tenths which
+    // must agree were the copied part.
+    let store_for_get = probe_store.clone();
+    cook_lua_stdlib::install_probes_api(
+        lua,
+        cook,
+        move |lua, key: &str| match store_for_get.get(key) {
+            Some(bytes) => {
+                let jv = store_for_get.read_view(key, &bytes).map_err(|e| {
+                    mlua::Error::runtime(format!("cook.probes.get('{}'): decode failed: {}", key, e))
+                })?;
+                crate::probe_value::json_to_lua(lua, &jv)
+            }
+            None => Err(probe_not_materialised_error(key)),
+        },
+        |_lua, _key: &str, _value: &mlua::Value| Err(probes_set_deprecated_error()),
+    )
+}
+
+/// Refuse `cook.export` / `cook.import` on the execute-phase VM (CS-0200).
+///
+/// This used to install a working pair backed by an in-memory Lua table in the
+/// worker's globals under `_cook_execute_exports`. Two things were wrong with
+/// it, and the Standard licensed both.
+///
+/// The table was never seeded from the register-phase store, so a register-time
+/// `cook.export` was invisible here: an execute-phase `cook.import` returned
+/// `nil` for every one of them. §12.3.4 required the opposite in a normative
+/// MUST citing CS-0071, and the conformance fixture that citation claimed did
+/// not exist.
+///
+/// The table was also per-VM, while units are dispatched from a shared queue to
+/// whichever worker is free, so two units of one recipe routinely land on
+/// different VMs. The doc comment here asserted that "recipe bodies pass Lua
+/// tables directly to each other within the worker"; whether they did depended
+/// on scheduling.
+///
+/// Nothing needed either half. The transitive-link walk that motivates the
+/// channel runs at register time, because its product is the compile and link
+/// command lines, which exist before any unit is captured, and reading an
+/// export forces the referent's recipe body, which is register-phase by
+/// definition. So CS-0200 withdrew the execute-phase surface rather than
+/// implementing it, and this refuses it by name — the same treatment CS-0074
+/// gave `cook.probes.set`, for the same reason.
+fn install_execute_phase_cook_export(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+) -> mlua::Result<()> {
+    let export_fn = lua.create_function(|_, (_name, _info): (String, mlua::Value)| -> mlua::Result<()> {
+        Err(export_register_only_error("cook.export"))
+    })?;
+    cook.set("export", export_fn)?;
+
+    let import_fn = lua.create_function(|_, _name: String| -> mlua::Result<mlua::Value> {
+        Err(export_register_only_error("cook.import"))
+    })?;
+    cook.set("import", import_fn)?;
+
+    Ok(())
+}
+
+fn export_register_only_error(func: &str) -> mlua::Error {
+    mlua::Error::runtime(format!(
+        "{func}: register-phase only, not available on the execute-phase VM \
+         (CS-0200). Transitive-link info is published and read while recipes \
+         register, because it produces the compile and link command lines. \
+         Move the call into the recipe body's register-phase target maker, or \
+         use a probe (cook.probe) for a value that must be produced at \
+         execute time."
+    ))
+}
+
+/// Resolve a `cook.dep_output(name)` reference against the worker's
+/// terminal-outputs snapshot (§24.7). `self_fqn` is the consumer recipe's
+/// fully-qualified name; its Cookfile prefix (everything up to the last `.`)
+/// qualifies a bare `name`. Looks up the single deterministic key
+/// `<prefix>.<name>` (or bare `<name>` for a root consumer with empty prefix),
+/// mirroring the register-phase `resolve_global_key`
+/// (`cook-register/src/dep_output_api.rs`): a bare name resolves against the
+/// consumer's *own* Cookfile and nowhere else. Returns `Some(paths)` on a hit
+/// (possibly empty), `None` when the key is absent. A nested consumer's bare
+/// ref does NOT fall back to a same-named root recipe — an absent local key is
+/// an unknown referent, raising a Lua error rather than mis-resolving.
+/// Cross-Cookfile `alias.recipe` refs are likewise not resolved here (that
+/// needs the register session's alias-qualified-prefix map) — they miss and
+/// raise a Lua error rather than mis-resolve.
+fn resolve_worker_dep_output<'a>(
+    dep_outputs: &'a BTreeMap<String, Vec<String>>,
+    self_fqn: &str,
+    name: &str,
+) -> Option<&'a Vec<String>> {
+    let self_prefix = self_fqn.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+    if self_prefix.is_empty() {
+        dep_outputs.get(name)
+    } else {
+        dep_outputs.get(&format!("{self_prefix}.{name}"))
+    }
+}
+
+/// Install read-only `cook.dep_output` / `cook.dep_output_list` on the
+/// execute-phase (worker) VM's `cook` table (Standard §24.7, "Both").
+/// Read-only: unlike the register-phase implementation
+/// (`cook-register/src/dep_output_api.rs`) it records no DAG edge — the DAG is
+/// closed before execute phase. Error model (§24.7): unknown name → Lua error;
+/// empty output list → empty string / empty table + a stderr warning.
+fn install_worker_dep_output_api(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+    dep_outputs: WorkerDepOutputs,
+    current_recipe: &Arc<Mutex<String>>,
+) -> mlua::Result<()> {
+    let deps = Arc::clone(&dep_outputs);
+    let recipe = Arc::clone(current_recipe);
+    let f = lua.create_function(move |_, name: String| {
+        let fqn = recipe.lock().expect("recipe name lock").clone();
+        match resolve_worker_dep_output(&deps, &fqn, &name) {
+            Some(paths) if paths.is_empty() => {
+                eprintln!(
+                    "cook: warning: [{fqn}] cook.dep_output(\"{name}\"): referent has an empty output list"
+                );
+                Ok(String::new())
+            }
+            Some(paths) => Ok(paths.join(" ")),
+            None => Err(mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )),
+        }
+    })?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_NAME, f)?;
+
+    let deps2 = Arc::clone(&dep_outputs);
+    let recipe2 = Arc::clone(current_recipe);
+    let g = lua.create_function(move |lua, name: String| {
+        let fqn = recipe2.lock().expect("recipe name lock").clone();
+        match resolve_worker_dep_output(&deps2, &fqn, &name) {
+            Some(paths) => {
+                if paths.is_empty() {
+                    eprintln!(
+                        "cook: warning: [{fqn}] cook.dep_output_list(\"{name}\"): referent has an empty output list"
+                    );
+                }
+                let t = lua.create_table()?;
+                for (i, p) in paths.iter().enumerate() {
+                    t.set(i + 1, p.as_str())?;
+                }
+                Ok(t)
+            }
+            None => Err(mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )),
+        }
+    })?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_LIST_NAME, g)?;
+    Ok(())
+}
+
+/// Install a Lua function under `cook.<field>` that raises
+/// `mlua::Error::RuntimeError(message)` when called. Used to surface
+/// register-only Cook Lua API helpers as Standard §6.3.2 diagnostics on
+/// the worker (execute-phase) VM.
+fn install_register_only_guard(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+    field: &'static str,
+    message: &'static str,
+) -> mlua::Result<()> {
+    let f = lua.create_function(move |_, _: mlua::MultiValue| -> mlua::Result<()> {
+        Err(mlua::Error::RuntimeError(message.to_string()))
+    })?;
+    cook.set(field, f)?;
+    Ok(())
+}
+
+// `refresh_package_search_paths` — the per-unit `package.path`/`cpath`
+// refresh so `require("foo")` finds rocks under `<cwd>/.cook/modules/` —
+// moved to `cook_lua_stdlib::refresh_package_search_paths` (COOK-412): the
+// stash-and-recompose idiom around the shared composer was spelled once
+// per phase. The worker loop still calls it per unit because `cwd` is
+// per-Cookfile; the shared loader also calls it inside `cook.load_module`.
+
+// ---------------------------------------------------------------------------
+// Shell execution (worker variant with prefixed output)
+// ---------------------------------------------------------------------------
+
+/// `cook.sh` on the worker VM (§{lua.cook-sh}).
+///
+/// `sink` is the calling unit's output accumulator. Both streams go into it, in
+/// call order, which is what makes a Lua body's output attributable to the unit
+/// that produced it. Before CS-0188 this function returned stdout and discarded
+/// stderr outright, so a command that succeeded with warnings reported none of
+/// them, and §{lua.cook-sh}'s promise that stderr reached the worker's stderr
+/// was not kept by anything.
+fn run_shell_in_worker(
+    cmd: &str,
+    wd: &std::path::Path,
+    env_vars: &HashMap<String, String>,
+    sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
+    line: usize,
+    to_terminal: bool,
+) -> mlua::Result<String> {
+    // COOK-306: an executed command may write anywhere in the tree. The memo is
+    // the execute phase's, so disarming it stays here rather than moving into
+    // `cook-shell` (the register-phase caller deliberately does not disarm).
+    cook_cache::statmemo::disarm();
+    let outcome = cook_shell::run(
+        &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
+        env_vars,
+    )
+    .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
+
+    let stdout = outcome.stdout_lossy();
+    // Recorded before the failure check: a command that failed still printed
+    // what it printed, and dropping it because the exit code was non-zero is
+    // the same mistake in a different direction.
+    //
+    // CS-0194: on a drain-designated worker (a chore body), the terminal owns
+    // the output. Both streams are written through at call completion, each to
+    // its own descriptor, in the order the command produced them — one
+    // destination for the whole body, ordered with print/io.write, instead of
+    // the sink-and-progress-channel detour that raced the tty. The spawn stays
+    // Captured so the §{lua.cook-sh} return contract (stdout as a string)
+    // holds; only the destination changes.
+    if to_terminal {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let mut err = std::io::stderr();
+        for chunk in outcome.chunks() {
+            match chunk.stream() {
+                cook_contracts::OutputStream::Stdout => {
+                    let _ = out.write_all(chunk.bytes());
+                }
+                cook_contracts::OutputStream::Stderr => {
+                    let _ = err.write_all(chunk.bytes());
+                }
+                // OutputStream is non_exhaustive; an unknown future stream
+                // degrades to stderr rather than being dropped.
+                _ => {
+                    let _ = err.write_all(chunk.bytes());
+                }
+            }
+        }
+        let _ = out.flush();
+        let _ = err.flush();
+    } else {
+        sink.lock()
+            .expect("output sink lock")
+            .extend(outcome.chunks().iter().cloned());
+    }
+
+    if let Some(failure) = outcome.failure(line, cmd) {
+        return Err(mlua::Error::runtime(failure.to_wire()));
+    }
+    Ok(stdout)
+}
+
+// ---------------------------------------------------------------------------
+// Execute a single WorkItem
+// ---------------------------------------------------------------------------
+
+fn execute_work_item(
+    lua: &mlua::Lua,
+    probe_store: &ProbeValueStore,
+    work: &WorkItem,
+    working_dir: &PathBuf,
+    env_vars: &HashMap<String, String>,
+) -> WorkResult {
+    // Test-only panic injection: lets `test_pool_recovers_from_worker_panic`
+    // exercise the `catch_unwind` boundary in worker_loop without depending
+    // on a panic path that's hard to trigger from the public API. mlua
+    // catches panics raised from inside Lua callbacks, so a Lua-side
+    // trigger would never reach `catch_unwind`.
+    #[cfg(test)]
+    if work.recipe_name == "__cook_test_panic__" {
+        panic!("forced test panic");
+    }
+
+    let node_name = work.payload.display_name();
+
+    match &work.payload {
+        WorkPayload::Shell { cmd, line } => {
+            execute_shell(probe_store, work.id, cmd, *line, working_dir, env_vars, node_name)
+        }
+        WorkPayload::LuaChunk {
+            code,
+            inputs,
+            outputs,
+            ingredient_groups,
+            step_kind: _,
+            // is_chore is consumed by the engine's chore-window dispatch
+            // before the item ever reaches the worker pool.
+            is_chore: _,
+            line,
+        } => execute_lua_chunk(
+            lua,
+            work.id,
+            code,
+            inputs,
+            outputs,
+            ingredient_groups,
+            &work.recipe_name,
+            node_name,
+            *line,
+        ),
+        WorkPayload::Interactive { .. } => {
+            WorkResult {
+                id: work.id,
+                success: false,
+                error: Some("BUG: interactive step dispatched to worker pool".to_string()),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                module_inputs: Vec::new(),
+                duration: Duration::ZERO,
+            }
+        }
+        WorkPayload::Probe { key, produce, line } => {
+            execute_probe(lua, work.id, key, produce, *line, node_name)
+        }
+        // `WorkPayload` is `#[non_exhaustive]` so the reference implementation
+        // can introduce new payload kinds without an immediate breaking change.
+        // Treat any unknown variant as a worker-side bug — the dispatcher
+        // upstream of this fn is responsible for routing only known kinds.
+        _ => WorkResult {
+            id: work.id,
+            success: false,
+            error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
+            exit_code: None,
+            node_name,
+            output_lines: Vec::new(),
+            probe_output: None,
+            module_inputs: Vec::new(),
+            duration: Duration::ZERO,
+        },
+    }
+}
+
+fn execute_shell(
+    probe_store: &ProbeValueStore,
+    id: usize,
+    cmd: &str,
+    line: usize,
+    working_dir: &PathBuf,
+    env_vars: &HashMap<String, String>,
+    node_name: String,
+) -> WorkResult {
+    // CS-0188: resolve any `$<key:field>` probe references against the values
+    // this unit's probes materialised. Register phase used to do this by
+    // rewriting the command into Lua; it does not, so it happens here, where
+    // the values exist. The rendering is CS-0192's, computed in Rust — no VM
+    // in the loop, so the error is already clean text, never a Lua traceback.
+    let cmd = match cook_probe::sigil::resolve_probe_sigils(probe_store, cmd) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(e),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                module_inputs: Vec::new(),
+                duration: Duration::ZERO,
+            }
+        }
+    };
+    let cmd = cmd.as_str();
+
+    // COOK-306: an executed command may write anywhere in the tree.
+    cook_cache::statmemo::disarm();
+    let outcome = match cook_shell::run(
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir,
+            stdio: cook_shell::Stdio::Captured,
+        },
+        env_vars,
+    ) {
+        Ok(o) => o,
+        // Never started, which is not the same as ran and failed: there is no
+        // exit status to report and no output to attribute.
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(e.message().to_string()),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                module_inputs: Vec::new(),
+                duration: Duration::ZERO,
+            }
+        }
+    };
+
+    // CS-0188: stdout precedes stderr, where this used to emit every stderr
+    // line ahead of every stdout line. Both orders are arbitrary — one spawn's
+    // two pipes are buffered separately, so neither reproduces what a terminal
+    // would have shown — but a fixed order means two runs of one command report
+    // the same sequence, and putting a command's errors *after* the output they
+    // followed reads less like a lie than putting them first.
+    let error = outcome.failure(line, cmd).map(|f| f.to_wire());
+    let exit_code = outcome.exit_code();
+    WorkResult {
+        id,
+        success: error.is_none(),
+        error,
+        exit_code,
+        node_name,
+        output_lines: outcome.into_chunks(),
+        probe_output: None,
+        module_inputs: Vec::new(),
+        duration: Duration::ZERO,
+    }
+}
+
+/// Execute a `WorkPayload::Probe` unit on the worker Lua VM (§22.5.6).
+///
+/// Wraps `produce` in `function() ... end` and invokes it, captures the return
+/// value, renders it to canonical JSON (§22.5.5, CS-0102), and returns a
+/// `WorkResult` with the `probe_output` field populated. Errors in the Lua
+/// source or in the JSON conversion propagate as a normal unit failure.
+fn execute_probe(
+    lua: &mlua::Lua,
+    id: usize,
+    key: &str,
+    produce: &str,
+    _line: usize,
+    node_name: String,
+) -> WorkResult {
+    // The lowering — chunk name and wrapper — is the one law both VMs
+    // evaluate under (cook_contracts::probe::lower_produce), so a produce
+    // body's error reports the same line numbers whichever phase ran it.
+    let lowered = cook_contracts::probe::lower_produce(key, produce);
+
+    let value: mlua::Value = match lua
+        .load(&lowered.source)
+        .set_name(&lowered.chunk_name)
+        .eval()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(format!(
+                    "probe '{}' produce raised: {}",
+                    key,
+                    cook_contracts::lua_error::sanitize(
+                        &e.to_string(),
+                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
+                    )
+                )),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                module_inputs: Vec::new(),
+                duration: Duration::ZERO,
+            };
+        }
+    };
+
+    let jv = match crate::probe_value::lua_to_json(&value) {
+        Ok(v) => v,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(format!("probe '{}': {}", key, e)),
+                exit_code: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+                module_inputs: Vec::new(),
+                duration: Duration::ZERO,
+            };
+        }
+    };
+
+    let bytes = cook_contracts::probe_value::encode_canonical_json(&jv);
+
+    WorkResult {
+        id,
+        success: true,
+        error: None,
+        exit_code: None,
+        node_name,
+        output_lines: Vec::new(),
+        probe_output: Some(ProbeOutput {
+            key: key.to_string(),
+            bytes,
+        }),
+        module_inputs: Vec::new(),
+        duration: Duration::ZERO,
+    }
+}
+
+fn execute_lua_chunk(
+    lua: &mlua::Lua,
+    id: usize,
+    code: &str,
+    inputs: &[String],
+    outputs: &[String],
+    ingredient_groups: &[Vec<String>],
+    recipe_name: &str,
+    node_name: String,
+    line: usize,
+) -> WorkResult {
+    let setup = || -> mlua::Result<()> {
+        let globals = lua.globals();
+
+        let inputs_tbl = lua.create_table()?;
+        for (i, s) in inputs.iter().enumerate() {
+            inputs_tbl.set(i + 1, s.as_str())?;
+        }
+        globals.set("inputs", inputs_tbl)?;
+
+        let outputs_tbl = lua.create_table()?;
+        for (i, s) in outputs.iter().enumerate() {
+            outputs_tbl.set(i + 1, s.as_str())?;
+        }
+        globals.set("outputs", outputs_tbl)?;
+
+        globals.set("input", inputs.first().map(|s| s.as_str()).unwrap_or(""))?;
+        globals.set("output", outputs.first().map(|s| s.as_str()).unwrap_or(""))?;
+
+        // Set input_1, input_2, ... for each ingredient group
+        for (i, group) in ingredient_groups.iter().enumerate() {
+            let table = lua.create_table()?;
+            for (j, path) in group.iter().enumerate() {
+                table.set(j + 1, path.as_str())?;
+            }
+            globals.set(format!("input_{}", i + 1), table)?;
+        }
+
+        // COOK-191/CS-0126: newline-pad the chunk so line 1 of `code` lands
+        // at the originating step's Cookfile line, then name the chunk
+        // `@Cookfile` so mlua treats it as a file source. Together these
+        // make an execute-phase Lua error read `Cookfile:LINE: msg`
+        // instead of the opaque `[string "..."]:1: msg` produced by an
+        // unnamed/unpadded `load`. A multi-line `>{ }` block's internal
+        // lines resolve correctly too, since `code` is spliced in verbatim
+        // after the padding — line k of the block reports as line+k-1.
+        //
+        // Known imprecision: in a multi-Cookfile workspace the worker has
+        // no way to know which imported Cookfile a step came from, so
+        // `@Cookfile` is only exactly right for the entry file. This is a
+        // follow-up concern, not addressed here.
+        let padded;
+        let src: &str = if line > 1 {
+            let mut s = String::with_capacity(code.len() + line);
+            for _ in 1..line {
+                s.push('\n');
+            }
+            s.push_str(code);
+            padded = s;
+            &padded
+        } else {
+            code
+        };
+        lua.load(src).set_name(COOKFILE_CHUNK_NAME).exec()?;
+        Ok(())
+    };
+
+    let result = setup();
+
+    // Flush this VM's C stdio buffer. The rationale it used to carry —
+    // "recipe output (io.write/print) reaches fd 1" — expired with CS-0188,
+    // which routes both of those into the active unit's sink and never
+    // through libc at all. What is left is the narrower case the flush still
+    // earns its place on: a body that writes to the descriptor DIRECTLY
+    // (`io.stdout:write(...)`), which no wrapper intercepts. Without this,
+    // libc block-buffers those bytes when stdout is not a TTY and they
+    // appear after the `cook done` summary, attributed to nothing. Runs on
+    // both the success and chunk-error paths, so partial output from a body
+    // that then failed is not stranded in the buffer.
+    let _ = lua.load("io.stdout:flush()").exec();
+
+    match result {
+        Ok(()) => WorkResult {
+            id,
+            success: true,
+            error: None,
+            exit_code: None,
+            node_name,
+            output_lines: Vec::new(),
+            probe_output: None,
+            module_inputs: Vec::new(),
+            duration: Duration::ZERO,
+        },
+        Err(e) => WorkResult {
+            id,
+            success: false,
+            error: Some(format!(
+                "[{recipe_name}] {}",
+                cook_contracts::lua_error::sanitize(
+                    &e.to_string(),
+                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
+                )
+            )),
+            exit_code: None,
+            node_name,
+            output_lines: Vec::new(),
+            probe_output: None,
+            module_inputs: Vec::new(),
+            duration: Duration::ZERO,
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[path = "tests/pool_tests.rs"]
+mod tests;

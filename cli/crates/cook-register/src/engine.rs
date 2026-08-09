@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use cook_contracts::lua_string;
 use cook_contracts::RecipeUnits;
 
 use crate::capture::install_cook_api;
@@ -1524,9 +1525,7 @@ fn build_chore_params_table(
                     origin: origin.clone(),
                 })?;
                 table.set(name.as_str(), value.as_str()).map_err(RegisterError::Lua)?;
-                // Escape the value for Lua string literal.
-                let escaped = lua_escape_string(value);
-                prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                prelude.push_str(&format!("local {} = {}\n", name, lua_string::literal(value)));
             }
             ChoreParamMeta::DefaultedString { name, default } => {
                 let value = argv_iter
@@ -1534,14 +1533,12 @@ fn build_chore_params_table(
                     .map(|s| s.as_str())
                     .unwrap_or(default.as_str());
                 table.set(name.as_str(), value).map_err(RegisterError::Lua)?;
-                let escaped = lua_escape_string(value);
-                prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                prelude.push_str(&format!("local {} = {}\n", name, lua_string::literal(value)));
             }
             ChoreParamMeta::DefaultedLua { name, default_key_name } => {
                 if let Some(arg) = argv_iter.next() {
                     table.set(name.as_str(), arg.as_str()).map_err(RegisterError::Lua)?;
-                    let escaped = lua_escape_string(arg);
-                    prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                    prelude.push_str(&format!("local {} = {}\n", name, lua_string::literal(arg)));
                 } else {
                     // Retrieve and call the default closure.
                     let func: LuaFunction = lua
@@ -1576,8 +1573,8 @@ fn build_chore_params_table(
                     match coerced {
                         Some(s_str) => {
                             table.set(name.as_str(), s_str.as_str()).map_err(RegisterError::Lua)?;
-                            let escaped = lua_escape_string(&s_str);
-                            prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                            prelude
+                                .push_str(&format!("local {} = {}\n", name, lua_string::literal(&s_str)));
                         }
                         None => {
                             return Err(RegisterError::ChoreParamDefaultLuaNonString {
@@ -1610,7 +1607,7 @@ fn build_chore_params_table(
                 // Build execute-phase prelude: `local NAME = {"a", "b", "c"}`
                 let items: Vec<String> = values
                     .iter()
-                    .map(|v| format!("\"{}\"", lua_escape_string(v)))
+                    .map(|v| lua_string::literal(v))
                     .collect();
                 prelude.push_str(&format!("local {} = {{{}}}\n", name, items.join(", ")));
                 variadic_consumed = true;
@@ -1628,7 +1625,7 @@ fn build_chore_params_table(
                 // Build execute-phase prelude (empty table or populated).
                 let items: Vec<String> = values
                     .iter()
-                    .map(|v| format!("\"{}\"", lua_escape_string(v)))
+                    .map(|v| lua_string::literal(v))
                     .collect();
                 prelude.push_str(&format!("local {} = {{{}}}\n", name, items.join(", ")));
                 variadic_consumed = true;
@@ -1659,15 +1656,6 @@ fn build_chore_params_table(
     Ok((table, prelude))
 }
 
-/// Escape a string value for inclusion in a Lua double-quoted string literal.
-///
-/// The rule lives in `cook_contracts::lua_string` (COOK-398): `cook-luagen`
-/// emits the program this prelude runs against and needs the identical law.
-/// The version that used to live here emitted `\0` rather than `\000`, which
-/// Lua reads as a different character whenever the next byte is a digit.
-fn lua_escape_string(s: &str) -> String {
-    cook_contracts::lua_string::escape_double_quoted(s)
-}
 
 /// Local DFS-based topological sort of recipe names by their declared
 /// `requires`. Returns names in dependency-first order (a recipe appears
@@ -2104,7 +2092,7 @@ impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
 }
 
 /// Run a probe's `produce` source on the register VM and return the
-/// canonical-JSON bytes (the execute-VM counterpart is `cook-luaotp`'s
+/// canonical-JSON bytes (the execute-VM counterpart is `cook-execute`'s
 /// `execute_probe`; CS-0102). The lowering — chunk name and wrapper — is
 /// `cook_contracts::probe::lower_produce`, the one law both VMs evaluate
 /// under, so a produce body's error reports the same line numbers
@@ -2531,7 +2519,7 @@ fn install_all_apis(
     crate::context::register_resolve_ingredients(lua, &builder.working_dir, &builder.workspace_root)?;
     // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
     // the shared implementation lives in cook-lua-stdlib so the worker VMs
-    // in cook-luaotp install byte-identical behaviour.
+    // in cook-execute install byte-identical behaviour.
     let cook_tbl: LuaTable = lua.globals().get("cook")?;
     cook_lua_stdlib::register_codec_api(lua, &cook_tbl)?;
     // CS-0158: cook.tools.id — canonical tool identity, both-phase (a probe

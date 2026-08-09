@@ -10,7 +10,7 @@ use mlua::prelude::*;
 ///
 /// The caller passes the `cook` table directly so this function does
 /// not assume any particular global-namespace layout. `cook-register`
-/// fetches `cook` from globals after its own setup; `cook-luaotp`
+/// fetches `cook` from globals after its own setup; `cook-execute`
 /// builds `cook` locally per worker and passes it in before assigning
 /// it to globals.
 pub fn register_platform_api(lua: &Lua, cook: &LuaTable) -> LuaResult<()> {

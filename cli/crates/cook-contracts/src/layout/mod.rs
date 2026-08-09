@@ -5,7 +5,7 @@
 //! §12 candidate probe order, the `package.path`/`package.cpath`
 //! templates, so/dll selection, and the stash keys — was spelled
 //! independently by the register phase (cook-register/module_loader), the
-//! execute phase (cook-luaotp/pool, twice), and the installer (cook-cli
+//! execute phase (cook-execute/pool, twice), and the installer (cook-cli
 //! modules/*). The two phases were byte-identical BY HAND, each carrying a
 //! comment admitting the mirror (one cross-reference already stale); drift
 //! = a module that resolves at register but not at execute — the classic

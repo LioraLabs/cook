@@ -23,10 +23,42 @@ use crate::cli::Globals;
 use crate::error::CookError;
 use crate::progress::spawn_new_renderer;
 use crate::watcher::CookWatcher;
+use crate::why_render;
 
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
+
+/// The CLI's consuming end of `COOK_CMD_FAILED`.
+///
+/// A Lua host that cannot return a structured value reports a failing command
+/// by encoding it into its error message (`CommandFailure::to_wire`), and this
+/// is where that encoding stops being the message and becomes one again. Every
+/// error whose text may have travelled through a Lua host passes through here,
+/// because the alternative — each catch-all deciding for itself — is how the
+/// register phase came to print `COOK_CMD_FAILED:{"line":0,…}` at users
+/// (COOK-426): the sentinel had two producers and one consumer, and the path
+/// without a consumer was the one a `register` block took.
+///
+/// A message carrying no wire is passed through untouched, so this is safe to
+/// apply to any diagnostic.
+///
+/// Decoding replaces the whole message, which is what the execute path has
+/// always done and is why the register path now matches it. The cost is worth
+/// naming: any text a Lua caller wrapped around the failure (a module's
+/// `pcall` + `error("cc: probing failed: " .. err)`) is dropped with the
+/// encoding it wrapped, and `COOK_BACKTRACE=1` has no traceback left to show
+/// for such a failure. Preserving the wrapper would mean splicing rendered
+/// text back into an arbitrary message, and the two phases would then differ
+/// in what they print for one failure — the defect this function exists to
+/// close. If a module's context needs to survive, the failure has to carry it
+/// as a field rather than as string decoration around a wire format.
+fn message_to_cook_error(message: String) -> CookError {
+    match CommandFailure::from_wire(&message) {
+        Some(failure) => CookError::CommandFailed(render_command_failure(&failure)),
+        None => CookError::Other(message),
+    }
+}
 
 /// Map `cook_plan::PipelineError` onto `CookError` for the CLI's
 /// exit-code classification.
@@ -77,10 +109,11 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
         PipelineError::DuplicateOutput { .. } => {
             CookError::RecipeCollision(format!("error: {e}"))
         }
+        // `Other` is where a register-phase Lua error lands, wire and all.
         PipelineError::UnknownConfig { .. }
         | PipelineError::Workspace(_)
         | PipelineError::InvalidSet(_)
-        | PipelineError::Other(_) => CookError::Other(e.to_string()),
+        | PipelineError::Other(_) => message_to_cook_error(e.to_string()),
     }
 }
 
@@ -99,21 +132,6 @@ fn read_and_parse(globals: &Globals) -> Result<ParsedCookfile, CookError> {
 // ---------------------------------------------------------------------------
 // EngineEvent → ProgressEvent bridge
 // ---------------------------------------------------------------------------
-
-/// Translate the engine's `NodeKind` mirror onto `cook_progress::NodeKind`.
-/// The two enums are isomorphic by design — keeping them separate lets
-/// `cook-engine` stay free of a `cook-progress` dependency.
-fn translate_kind(k: cook_engine::NodeKind) -> cook_progress::NodeKind {
-    match k {
-        cook_engine::NodeKind::Compile => cook_progress::NodeKind::Compile,
-        cook_engine::NodeKind::Link => cook_progress::NodeKind::Link,
-        cook_engine::NodeKind::Resolve => cook_progress::NodeKind::Resolve,
-        cook_engine::NodeKind::Generate => cook_progress::NodeKind::Generate,
-        cook_engine::NodeKind::Write => cook_progress::NodeKind::Write,
-        cook_engine::NodeKind::Test => cook_progress::NodeKind::Test,
-        cook_engine::NodeKind::Cooked => cook_progress::NodeKind::Cooked,
-    }
-}
 
 /// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
 /// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
@@ -240,10 +258,7 @@ fn bridge_engine_to_progress_events(
                         elapsed,
                         cached: cached_nodes,
                         total: total_nodes,
-                        kind: match kind {
-                            cook_engine::RecipeKind::Recipe => cook_progress::event::RecipeKind::Recipe,
-                            cook_engine::RecipeKind::Chore => cook_progress::event::RecipeKind::Chore,
-                        },
+                        kind,
                     }
                 }
                 cook_engine::EngineEvent::RecipeFailed {
@@ -294,7 +309,7 @@ fn bridge_engine_to_progress_events(
                         name: node_name,
                         artifact,
                         fallback_label,
-                        kind: translate_kind(kind),
+                        kind,
                         cause,
                         cache_key,
                     }
@@ -313,7 +328,7 @@ fn bridge_engine_to_progress_events(
                         recipe: rid,
                         node: nid,
                         elapsed,
-                        kind: translate_kind(kind),
+                        kind,
                         cache_key,
                     }
                 }
@@ -347,7 +362,7 @@ fn bridge_engine_to_progress_events(
                         node: nid,
                         name: node_name,
                         artifact,
-                        kind: translate_kind(kind),
+                        kind,
                     }
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {
@@ -461,20 +476,20 @@ fn bridge_engine_to_progress_events(
     })
 }
 
-/// Reported commands carry codegen's `set -e` prelude; strip it for display.
-/// The one inverse lives beside compose() (COOK-391).
-use cook_contracts::shell_block::strip_set_e;
-
 fn render_command_failure(failure: &CommandFailure) -> String {
-    let command = strip_set_e(failure.command());
-    let mut message = if failure.line() == 0 {
-        format!("command failed (exit {}): {command}", failure.exit_code())
-    } else {
-        format!(
-            "Cookfile:{}: command failed (exit {}): {command}",
-            failure.line(),
+    // CS-0215: what the reader is shown is `displayed_command`, not
+    // `command`. Stripping here was correct and was also the third site to
+    // decide it; the one that forgot printed `set -e` at every user.
+    let command = failure.displayed_command();
+    // CS-0211: the located/unlocated decision is `CommandFailure::located`,
+    // not a `== 0` test spelled here. It was spelled here and again in
+    // cook-engine's progress line, and the two disagreed.
+    let mut message = match failure.located() {
+        None => format!("command failed (exit {}): {command}", failure.exit_code()),
+        Some(line) => format!(
+            "Cookfile:{line}: command failed (exit {}): {command}",
             failure.exit_code()
-        )
+        ),
     };
     if !failure.stdout().is_empty() {
         message.push_str("\n--- stdout ---\n");
@@ -497,14 +512,9 @@ fn render_command_failure(failure: &CommandFailure) -> String {
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
         cook_engine::EngineError::TaskFailures { failures, .. } => {
-            if let Some((_, _recipe_name, msg)) = failures.first() {
-                if let Some(failure) = CommandFailure::from_wire(msg) {
-                    CookError::CommandFailed(render_command_failure(&failure))
-                } else {
-                    CookError::Other(msg.clone())
-                }
-            } else {
-                CookError::Other("unknown engine error".into())
+            match failures.first() {
+                Some((_, _recipe_name, msg)) => message_to_cook_error(msg.clone()),
+                None => CookError::Other("unknown engine error".into()),
             }
         }
         cook_engine::EngineError::CycleDetected(name) => {
@@ -979,10 +989,12 @@ pub fn cmd_run(
         RegisterMode::Dispatch { name: recipe_name, argv },
     )?;
 
-    // `inferred_deps` / `*_dep_conflicts` are obsolete in the unified-DAG
-    // model: cross-recipe edges come from `RecipeUnits.dep_edges` (recorded
-    // directly by `cook.dep_output` / `cook.add_unit` during the register
-    // pass), and recipe-level coarse deps come from `RegisteredRecipePub.requires`.
+    // No inferred-dep pass: cross-recipe edges come from `RecipeUnits.dep_edges`
+    // (recorded directly by `cook.dep_output` / `cook.add_unit` during the
+    // register pass), and recipe-level coarse deps come from
+    // `RegisteredRecipePub.requires`. The `cook-plan` module this comment used
+    // to point at outlived its callers by three months and is deleted
+    // (COOK-423).
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
     let run_result = run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
@@ -1940,8 +1952,8 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
 
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
     let config = args.config.as_deref();
-    let level = parse_level(&args.level)?;
-    let format = parse_format(&args.format)?;
+    let level = why_render::parse_level(&args.level)?;
+    let format = why_render::parse_format(&args.format)?;
 
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
@@ -1989,10 +2001,10 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     // has already found the unit and wants everything known about it. Answer it
     // directly rather than making them render the whole closure at unit level.
     if let Some(pattern) = &args.unit {
-        return render_selected_units(&report, pattern, format, &timings);
+        return why_render::render_selected_units(&report, pattern, format, &timings);
     }
 
-    let annotations = annotations_from(&report, &timings);
+    let annotations = why_render::annotations_from(&report, &timings);
 
     let all_units: Vec<(String, cook_contracts::RecipeUnits)> = reachable
         .iter()
@@ -2059,7 +2071,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     if format == cook_graph::emit::Format::Json {
         let mut doc = cook_graph::emit::json_value(&graph);
         doc["units"] = serde_json::Value::Array(
-            report.units.iter().map(|u| why_unit_json(u, &timings)).collect(),
+            report.units.iter().map(|u| why_render::why_unit_json(u, &timings)).collect(),
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
         return Ok(());
@@ -2071,498 +2083,11 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     // detail fits underneath the graph. This is what keeps CS-0112's fidelity
     // reachable after the merge: the graph is the index, this is the body.
     if level == cook_graph::emit::Level::Unit && format == cook_graph::emit::Format::Text {
-        print!("\n{}", render_why_plain(&report, &timings));
+        print!("\n{}", why_render::render_why_plain(&report, &timings));
     }
     Ok(())
 }
 
-fn parse_level(s: &str) -> Result<cook_graph::emit::Level, CookError> {
-    match s {
-        "recipe" => Ok(cook_graph::emit::Level::Recipe),
-        "group" => Ok(cook_graph::emit::Level::Group),
-        "unit" => Ok(cook_graph::emit::Level::Unit),
-        other => Err(CookError::Other(format!(
-            "unknown --level '{other}'; expected recipe, group, or unit"
-        ))),
-    }
-}
-
-fn parse_format(s: &str) -> Result<cook_graph::emit::Format, CookError> {
-    match s {
-        "text" => Ok(cook_graph::emit::Format::Text),
-        "mermaid" => Ok(cook_graph::emit::Format::Mermaid),
-        "dot" => Ok(cook_graph::emit::Format::Dot),
-        "json" => Ok(cook_graph::emit::Format::Json),
-        other => Err(CookError::Other(format!(
-            "unknown --format '{other}'; expected text, mermaid, dot, or json"
-        ))),
-    }
-}
-
-/// Fold the determinant report and recorded observations into the fact map the
-/// graph aggregates over.
-///
-/// "Served" is the union of both tiers, deliberately: a locally-warm unit does
-/// not rebuild merely because the shared store has never heard of it, and
-/// COOK-276 exists because conflating the two read as "this will rebuild".
-fn annotations_from(
-    report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::observations::Observations,
-) -> cook_graph::Annotations {
-    let mut a = cook_graph::Annotations::new();
-    for u in &report.units {
-        a.insert(
-            &u.recipe_name,
-            &u.cache_key,
-            cook_graph::UnitFacts {
-                served: u.local_hit || u.shared_present == Some(true),
-                observed_ms: timings
-                    .get(&u.recipe_name, &u.cache_key)
-                    .map(|o| o.elapsed_ms),
-                observed_builds_ago: 0,
-            },
-        );
-    }
-    a
-}
-
-/// `--unit <pattern>`: full determinants for the units whose recipe name,
-/// cache key, or output paths contain `pattern`.
-fn render_selected_units(
-    report: &cook_engine::why::WhyReport,
-    pattern: &str,
-    format: cook_graph::emit::Format,
-    timings: &cook_engine::observations::Observations,
-) -> Result<(), CookError> {
-    let matched: Vec<_> = report
-        .units
-        .iter()
-        .filter(|u| {
-            u.recipe_name.contains(pattern)
-                || u.cache_key.contains(pattern)
-                || u.determinants
-                    .output_paths
-                    .iter()
-                    .any(|p| p.contains(pattern))
-        })
-        .cloned()
-        .collect();
-    if matched.is_empty() {
-        // A selector that matches nothing is a user error worth naming, not an
-        // empty report that reads as "nothing to explain".
-        return Err(CookError::Other(format!(
-            "--unit '{pattern}' matched no unit in {}'s closure; \
-             run without --unit to see the units available",
-            report.recipe
-        )));
-    }
-    let selected = cook_engine::why::WhyReport {
-        recipe: report.recipe.clone(),
-        units: matched,
-    };
-    match format {
-        cook_graph::emit::Format::Json => print!("{}", render_why_json(&selected, timings)),
-        _ => print!("{}", render_why_plain(&selected, timings)),
-    }
-    Ok(())
-}
-
-fn render_why_plain(
-    report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::observations::Observations,
-) -> String {
-    use cook_engine::why::CacheStatus;
-    let mut s = String::new();
-    s.push_str(&format!("why {}\n", report.recipe));
-    for u in &report.units {
-        // COOK-276: label both tiers explicitly. A bare `MISS (shared)` on a
-        // locally-warm unit reads as "this will rebuild" when it only means
-        // "absent from the shared store tier".
-        let status = match &u.status {
-            CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
-            CacheStatus::PinnedColdMiss => "MISS (local), MISS (shared) — pinned, fetch-only".to_string(),
-            // CS-0173: name the upstream, not the symptom. This unit does not
-            // "miss" in any cache sense; it has no key yet to hit or miss with.
-            CacheStatus::ForcedByUpstream { producer, .. } => {
-                format!("REBUILD (forced by {producer})")
-            }
-            _ => {
-                let local = if u.local_hit { "HIT (local)" } else { "MISS (local)" };
-                match u.shared_present {
-                    None => local.to_string(),
-                    Some(true) => format!("{local}, HIT (shared)"),
-                    Some(false) => format!("{local}, MISS (shared)"),
-                }
-            }
-        };
-        // CS-0173: print no key for a forced unit. There is no honest number to
-        // put here, and printing one would suggest a lookup that never happened.
-        let key_field = if u.key_hex.is_empty() {
-            "key not computable until then".to_string()
-        } else {
-            format!("key {}", u.key_hex)
-        };
-        s.push_str(&format!(
-            "\n{} :: {} [{}]  {}\n",
-            u.recipe_name, u.cache_key, status, key_field
-        ));
-        s.push_str(&format!("  command_hash      {:016x}\n", u.determinants.command_hash));
-        s.push_str(&format!("  env_contribution  {:016x}\n", u.determinants.env_contribution));
-        s.push_str(&format!("  seal_contribution {:016x}\n", u.determinants.seal_contribution));
-        if !u.determinants.inputs.is_empty() {
-            s.push_str("  inputs:\n");
-            for (p, h) in &u.determinants.inputs {
-                s.push_str(&format!("    {p}  {h:016x}\n"));
-            }
-        }
-        // CS-0173: shown separately from `inputs` and without a hash, because
-        // there is no hash yet — the producing unit has not run.
-        if !u.determinants.pending_inputs.is_empty() {
-            s.push_str("  inputs (not determined yet):\n");
-            for (p, producer) in &u.determinants.pending_inputs {
-                s.push_str(&format!("    {p}  pending {producer}\n"));
-            }
-        }
-        if !u.determinants.output_paths.is_empty() {
-            s.push_str("  outputs:\n");
-            for p in &u.determinants.output_paths {
-                s.push_str(&format!("    {p}\n"));
-            }
-        }
-        if !u.determinants.consulted_env.is_empty() {
-            s.push_str("  env (consulted):\n");
-            for (k, v) in &u.determinants.consulted_env {
-                s.push_str(&format!("    {k} = {v}\n"));
-            }
-        }
-        if !u.determinants.sealed_probes.is_empty() {
-            s.push_str("  sealed probes:\n");
-            for (k, v) in &u.determinants.sealed_probes {
-                s.push_str(&format!("    {k} = {v}{}\n", tools_probe_paths(v)));
-            }
-        }
-        // CS-0174: the local tier's answer to the question the shared tier
-        // answers with a manifest diff. Printed before it, because a unit that
-        // misses locally is asking "what changed since I last ran this" and
-        // that is the nearer question.
-        if let Some(cause) = &u.local_cause {
-            s.push_str(&format!("  local-miss cause: {cause}\n"));
-        }
-        // CS-0174: history, kept plainly separate from the live verdict above.
-        // For a unit that is currently a hit this is the only causal answer
-        // available, and it is the one that answers "why did this rebuild
-        // overnight when I changed nothing".
-        if let Some(obs) = timings.get(&u.recipe_name, &u.cache_key) {
-            if let Some(cause) = &obs.cause {
-                s.push_str(&format!(
-                    "  last ran because: {cause} (recorded at Unix {})\n",
-                    obs.recorded_at
-                ));
-            }
-            s.push_str(&format!("  recorded output: {} bytes\n", obs.log_bytes));
-        }
-        match &u.manifest_diff {
-            Some(diffs) if diffs.is_empty() => {
-                s.push_str(
-                    "  shared-miss diff: producer manifest determinants are identical to ours \
-                     (artifact not published, or absent from this backend)\n",
-                );
-            }
-            Some(diffs) => {
-                s.push_str("  shared-miss diff vs producer manifest:\n");
-                for d in diffs {
-                    s.push_str(&format!("    {}\n", render_diff(d)));
-                }
-            }
-            None => {
-                if matches!(u.status, CacheStatus::SharedMiss | CacheStatus::PinnedColdMiss) {
-                    s.push_str(
-                        "  shared-miss diff: no producer manifest published for this key\n",
-                    );
-                }
-            }
-        }
-    }
-    s
-}
-
-/// Extract a " (cc→/usr/bin/cc, …)" suffix for a tools-probe JSON value
-/// ({"NAME":{"hash":...}}). Empty for non-tools probe values.
-///
-/// CS-0157: the sealed value carries identity only (content hash) — path is
-/// location metadata and is resolved FRESH at query time, so the display
-/// shows where each tool resolves now rather than where it lived when the
-/// value was produced. A tool no longer on PATH annotates as `<not found>`.
-fn tools_probe_paths(value: &str) -> String {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(value) else {
-        return String::new();
-    };
-    let Some(obj) = v.as_object() else {
-        return String::new();
-    };
-    let mut parts = Vec::new();
-    for (name, entry) in obj {
-        let tool_shaped = entry
-            .as_object()
-            .is_some_and(|e| e.get("hash").is_some_and(|h| h.is_string()));
-        if tool_shaped {
-            match cook_engine::why::resolve_tool_path(name) {
-                Some(p) => parts.push(format!("{name}→{p}")),
-                None => parts.push(format!("{name}→<not found>")),
-            }
-        }
-    }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("  ({})", parts.join(", "))
-    }
-}
-
-fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
-    use cook_engine::why::DeterminantDiff::*;
-    match d {
-        CommandHash { ours, theirs } => {
-            format!("command_hash: ours {ours:016x} != producer {theirs:016x}")
-        }
-        EnvContribution { ours, theirs } => {
-            format!("env_contribution: ours {ours:016x} != producer {theirs:016x}")
-        }
-        SealContribution { ours, theirs } => {
-            format!("seal_contribution: ours {ours:016x} != producer {theirs:016x}")
-        }
-        Input { path, ours, theirs } => {
-            format!("input {path}: ours {ours:?} != producer {theirs:?}")
-        }
-        Env { key, ours, theirs } => format!("env {key}: ours {ours:?} != producer {theirs:?}"),
-        Probe { key, ours, theirs } => {
-            format!("probe {key}: ours {ours:?} != producer {theirs:?}")
-        }
-        OutputPaths { ours, theirs } => format!("outputs: ours {ours:?} != producer {theirs:?}"),
-    }
-}
-
-// Deterministic JSON output (sorted object keys, §17.1.6 informative note)
-// relies on `serde_json` being built WITHOUT the `preserve_order` feature, so
-// `serde_json::Map` is BTreeMap-backed and serialises keys sorted regardless of
-// insertion order. The determinant maps themselves are already `BTreeMap` in the
-// engine; this note covers the per-unit object keys assembled here.
-fn render_why_json(
-    report: &cook_engine::why::WhyReport,
-    timings: &cook_engine::observations::Observations,
-) -> String {
-    let units: Vec<serde_json::Value> =
-        report.units.iter().map(|u| why_unit_json(u, timings)).collect();
-    serde_json::to_string_pretty(&serde_json::json!({
-        "recipe": report.recipe,
-        "units": units,
-    }))
-    .unwrap_or_default()
-        + "\n"
-}
-
-fn why_unit_json(
-    u: &cook_engine::why::WhyUnit,
-    timings: &cook_engine::observations::Observations,
-) -> serde_json::Value {
-    use cook_engine::why::CacheStatus;
-
-    let mut status_obj = serde_json::Map::new();
-    let status_str = match &u.status {
-        CacheStatus::LocalHit => "local_hit",
-        CacheStatus::SharedHit => "shared_hit",
-        CacheStatus::SharedMiss => "shared_miss",
-        CacheStatus::LocalOnlyMiss => "local_only_miss",
-        CacheStatus::PinnedColdMiss => "pinned_cold_miss",
-        CacheStatus::MissingInput { path } => {
-            status_obj.insert(
-                "missing_input_path".to_string(),
-                serde_json::Value::String(path.clone()),
-            );
-            "missing_input"
-        }
-        // CS-0173: no `key` field is emitted for this status (see below) — the
-        // unit's key is not computable, and a consumer must be able to tell that
-        // apart from a key that happens to miss.
-        CacheStatus::ForcedByUpstream { producer, path } => {
-            status_obj.insert(
-                "forced_by".to_string(),
-                serde_json::Value::String(producer.clone()),
-            );
-            status_obj.insert(
-                "pending_input_path".to_string(),
-                serde_json::Value::String(path.clone()),
-            );
-            "forced_by_upstream"
-        }
-    };
-
-    let disposition = match u.disposition {
-        cook_engine::why::Disposition::Unannotated => "unannotated",
-        cook_engine::why::Disposition::Local => "local",
-        cook_engine::why::Disposition::Pinned => "pinned",
-    };
-
-    let inputs: serde_json::Map<String, serde_json::Value> = u
-        .determinants
-        .inputs
-        .iter()
-        .map(|(p, h)| (p.clone(), serde_json::Value::String(format!("{h:016x}"))))
-        .collect();
-
-    let consulted_env: serde_json::Map<String, serde_json::Value> = u
-        .determinants
-        .consulted_env
-        .iter()
-        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-        .collect();
-
-    let sealed_probes: serde_json::Map<String, serde_json::Value> = u
-        .determinants
-        .sealed_probes
-        .iter()
-        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-        .collect();
-
-    let pending_inputs: serde_json::Map<String, serde_json::Value> = u
-        .determinants
-        .pending_inputs
-        .iter()
-        .map(|(p, producer)| (p.clone(), serde_json::Value::String(producer.clone())))
-        .collect();
-
-    let determinants = serde_json::json!({
-        "command_hash": format!("{:016x}", u.determinants.command_hash),
-        "env_contribution": format!("{:016x}", u.determinants.env_contribution),
-        "seal_contribution": format!("{:016x}", u.determinants.seal_contribution),
-        "inputs": serde_json::Value::Object(inputs),
-        // CS-0173: path → producing recipe, for inputs whose content is not
-        // determined yet. Disjoint from `inputs` by construction.
-        "pending_inputs": serde_json::Value::Object(pending_inputs),
-        "output_paths": u.determinants.output_paths.clone(),
-        "consulted_env": serde_json::Value::Object(consulted_env),
-        "sealed_probes": serde_json::Value::Object(sealed_probes),
-    });
-
-    let manifest_diff = match &u.manifest_diff {
-        None => serde_json::Value::Null,
-        Some(diffs) => serde_json::Value::Array(diffs.iter().map(determinant_diff_json).collect()),
-    };
-
-    let mut obj = serde_json::Map::new();
-    obj.insert("recipe".to_string(), serde_json::Value::String(u.recipe_name.clone()));
-    obj.insert("cache_key".to_string(), serde_json::Value::String(u.cache_key.clone()));
-    // CS-0173: a forced unit has no computable key, and the wire format says so
-    // with null rather than an empty string, so a consumer cannot mistake
-    // "not computable" for "computed, and it is the empty key".
-    obj.insert(
-        "key".to_string(),
-        if u.key_hex.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::String(u.key_hex.clone())
-        },
-    );
-    obj.insert("line".to_string(), serde_json::json!(u.line));
-    obj.insert("status".to_string(), serde_json::Value::String(status_str.to_string()));
-    for (k, v) in status_obj {
-        obj.insert(k, v);
-    }
-    // COOK-276: explicit per-tier answers alongside the legacy single status.
-    obj.insert("local_hit".to_string(), serde_json::Value::Bool(u.local_hit));
-    obj.insert(
-        "shared_present".to_string(),
-        match u.shared_present {
-            Some(b) => serde_json::Value::Bool(b),
-            None => serde_json::Value::Null,
-        },
-    );
-    obj.insert("disposition".to_string(), serde_json::Value::String(disposition.to_string()));
-    obj.insert("determinants".to_string(), determinants);
-    obj.insert("manifest_diff".to_string(), manifest_diff);
-    // CS-0174: local-tier attribution, the counterpart of `manifest_diff`.
-    obj.insert(
-        "local_cause".to_string(),
-        match &u.local_cause {
-            Some(c) => serde_json::Value::String(c.clone()),
-            None => serde_json::Value::Null,
-        },
-    );
-    // CS-0174: history, and labelled as history. `last_cause` says why the unit
-    // ran on a past build; `local_cause` says why it will run now. A consumer
-    // must not read one for the other, so they are separate keys and the age of
-    // the observation rides alongside.
-    let last = timings.get(&u.recipe_name, &u.cache_key);
-    obj.insert(
-        "last_cause".to_string(),
-        match last.and_then(|o| o.cause.as_ref()) {
-            Some(c) => serde_json::Value::String(c.clone()),
-            None => serde_json::Value::Null,
-        },
-    );
-    obj.insert(
-        "last_cause_recorded_at".to_string(),
-        match last.filter(|o| o.cause.is_some()) {
-            Some(o) => serde_json::json!(o.recorded_at),
-            None => serde_json::Value::Null,
-        },
-    );
-    obj.insert(
-        "recorded_log_bytes".to_string(),
-        last.map(|o| serde_json::json!(o.log_bytes))
-            .unwrap_or(serde_json::Value::Null),
-    );
-    serde_json::Value::Object(obj)
-}
-
-fn determinant_diff_json(d: &cook_engine::why::DeterminantDiff) -> serde_json::Value {
-    use cook_engine::why::DeterminantDiff::*;
-    let hexopt = |o: &Option<u64>| match o {
-        Some(h) => serde_json::Value::String(format!("{h:016x}")),
-        None => serde_json::Value::Null,
-    };
-    let stropt = |o: &Option<String>| match o {
-        Some(s) => serde_json::Value::String(s.clone()),
-        None => serde_json::Value::Null,
-    };
-    match d {
-        CommandHash { ours, theirs } => serde_json::json!({
-            "determinant": "command_hash",
-            "ours": format!("{ours:016x}"),
-            "producer": format!("{theirs:016x}"),
-        }),
-        EnvContribution { ours, theirs } => serde_json::json!({
-            "determinant": "env_contribution",
-            "ours": format!("{ours:016x}"),
-            "producer": format!("{theirs:016x}"),
-        }),
-        SealContribution { ours, theirs } => serde_json::json!({
-            "determinant": "seal_contribution",
-            "ours": format!("{ours:016x}"),
-            "producer": format!("{theirs:016x}"),
-        }),
-        Input { path, ours, theirs } => serde_json::json!({
-            "determinant": format!("input:{path}"),
-            "ours": hexopt(ours),
-            "producer": hexopt(theirs),
-        }),
-        Env { key, ours, theirs } => serde_json::json!({
-            "determinant": format!("env:{key}"),
-            "ours": stropt(ours),
-            "producer": stropt(theirs),
-        }),
-        Probe { key, ours, theirs } => serde_json::json!({
-            "determinant": format!("probe:{key}"),
-            "ours": stropt(ours),
-            "producer": stropt(theirs),
-        }),
-        OutputPaths { ours, theirs } => serde_json::json!({
-            "determinant": "output_paths",
-            "ours": ours.clone(),
-            "producer": theirs.clone(),
-        }),
-    }
-}
 
 /// `cook cache dump <recipe>` — print a recipe's cache index as readable TOML
 /// (CS-0166).

@@ -19,13 +19,12 @@ pub mod unit_api;
 pub mod var_api;
 
 // `fs.*`, `path.*`, and `cook.platform.*` are part of the shared Cook
-// Lua API surface (CS-0044). The implementation lives in
-// `cook-lua-stdlib` so the same closures register in both the
-// register-phase VM (here) and the execute-phase worker VMs in
-// `cook-luaotp`. Re-exports preserve the historical
-// `cook_register::register_{fs,path}_api` import paths used by the
-// engine module.
-pub use cook_lua_stdlib::{register_fs_api, register_path_api, register_platform_api};
+// Lua API surface (CS-0044). The implementation lives in `cook-lua-stdlib` so
+// the same closures register in both the register-phase VM (here) and the
+// execute-phase worker VMs in `cook-execute`. This crate used to re-export the
+// three factories to preserve historical `cook_register::register_*_api`
+// import paths; nothing imported them by that name any more, and a tunnel with
+// no traffic only makes `cook-lua-stdlib` look like two crates (COOK-423).
 
 #[cfg(test)]
 #[path = "tests/register_tests.rs"]

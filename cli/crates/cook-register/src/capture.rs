@@ -550,7 +550,7 @@ pub fn install_cook_api(
         body.units.push(unit);
         Ok("".to_string())
     })?;
-    cook.set("interactive", interactive_capture_fn)?;
+    cook.set(cook_contracts::registration::INTERACTIVE_NAME, interactive_capture_fn)?;
 
     // cook.sh(cmd) — capture mode: inside a layer it captures like exec;
     // outside a layer it actually executes (user-facing utility that returns stdout).
@@ -563,11 +563,16 @@ pub fn install_cook_api(
     let body_slot_sh = body_slot.clone();
     let wd_sh = working_dir.clone();
     let sh_recipe_name = recipe_name.to_string();
-    let sh_fn = lua.create_function(move |_, cmd: String| {
+    let sh_fn = lua.create_function(move |lua, cmd: String| {
         {
             let mut slot = body_slot_sh.borrow_mut();
             if let Some(body) = slot.as_mut() {
                 if body.inside_layer {
+                    // NOT the CS-0211 line: `inside_layer` is never set true
+                    // anywhere in the workspace, so this branch is dead and
+                    // the zero is a placeholder in a record nothing reads.
+                    // Do not copy it downward — the live path below walks the
+                    // stack, and a constant zero there is the COOK-426 defect.
                     body.layer_commands.push((cmd, 0));
                     return Ok("".to_string());
                 }
@@ -581,7 +586,19 @@ pub fn install_cook_api(
         // (§5.3.1) — injecting one here would make `$NAME` in a `cook.sh`
         // command silently resolve to a build variable, which is the
         // conflation this CS removes. `$<NAME>` interpolates one explicitly.
-        run_shell_command(&cmd, &wd_sh, &HashMap::new(), 0, &sh_recipe_name)
+        // CS-0211 requires a `cook.sh` failure to be located the SAME WAY in
+        // both phases, and this side supplied a constant zero — the reverse
+        // of what §{lua.cook-sh} recorded, and reachable from a plain
+        // `register` block (COOK-426). The walk is the shared one
+        // (`cook_lua_stdlib::caller_line_in_source`, via
+        // `caller_line_in_cookfile`), so both phases now ask one question of
+        // their own chunk name; it skips a module's own frames and answers
+        // with the Cookfile line that entered the module, which is the line
+        // a reader can act on. `None` — no Cookfile frame within the walk's
+        // depth bound — stays `0`, which `CommandFailure::located` reads as
+        // "no location" rather than as line zero.
+        let line = caller_line_in_cookfile(lua).unwrap_or(0);
+        run_shell_command(&cmd, &wd_sh, &HashMap::new(), line, &sh_recipe_name)
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -606,12 +623,12 @@ pub fn install_cook_api(
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Bound on the register VM so the fan-out
     // codegen's `member = cook.member_to_string(item)` and `$<in>` resolve.
-    let member_fn = lua.create_function(|_, value: mlua::Value| {
-        let jv = crate::probe_value::lua_to_json(&value)
-            .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
-        Ok(cook_contracts::member::member_to_string(&jv))
-    })?;
-    cook.set("member_to_string", member_fn)?;
+    //
+    // COOK-439: the shared installer, so the worker VM answers this byte for
+    // byte the same way. The member string names the unit a fan-out member
+    // registers, so two renderers that stopped agreeing would file one member
+    // under two identities and look like a cache that stopped hitting.
+    cook_lua_stdlib::install_member_to_string(lua, &cook)?;
 
     // cook.__quote_param(value, name, ctx) — runtime helper for chore parameter
     // placeholders. Luagen's normal sigil resolver decides which `$<NAME>`
@@ -673,12 +690,6 @@ pub fn install_cook_api(
 // the quoting law (COOK-389).
 use cook_contracts::quoting::quote_for_ctx;
 
-/// Upper bound on the Lua call-stack walk in `caller_line_in_cookfile`.
-/// A safety cap — 40 frames comfortably exceeds any realistic Cookfile
-/// call chain; the early `None` return on missing frames is the
-/// expected termination.
-const MAX_LUA_STACK_DEPTH: usize = 40;
-
 /// Walk the Lua call stack and return the line number of the topmost frame
 /// whose source string matches the Cookfile path label set by
 /// `__cook_cookfile_path` (or any module loaded via `module_loader` with a
@@ -689,32 +700,22 @@ const MAX_LUA_STACK_DEPTH: usize = 40;
 /// of the user-code site that registered it. When the registry value isn't
 /// populated (legacy/test call sites) or the matching frame can't be found,
 /// callers default to `line = 0`.
+///
+/// The walk itself is `cook_lua_stdlib::caller_line_in_source` (COOK-422):
+/// the execute phase asks the same question of its own chunk name, and a
+/// second copy of the answer is how one phase's `cook.sh` failure ends up
+/// located and the other's anonymous. What is register-specific — and stays
+/// here — is only which chunk name to look for.
 fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
     let target: String = lua
         .named_registry_value::<String>("__cook_cookfile_path")
         .ok()?;
-
-    // Lua call levels: 1 = the closure, 2 = the caller, 3+ = caller's caller, ...
-    for level in 1..MAX_LUA_STACK_DEPTH {
-        match lua.inspect_stack(level) {
-            None => return None,
-            Some(dbg) => {
-                let src_opt = dbg.source().source;
-                let source: &str = src_opt.as_deref().unwrap_or("");
-                // Module-loaded chunks have an "@" prefix (see module_loader.rs); the
-                // `__cook_cookfile_path` registry value does not. Match either form.
-                if source == target || source.ends_with(&target) {
-                    return Some(dbg.curr_line() as usize);
-                }
-            }
-        }
-    }
-    None
+    cook_lua_stdlib::caller_line_in_source(lua, &target)
 }
 
 /// `cook.sh` at register phase (§{lua.cook-sh}).
 ///
-/// The twin of `cook_luaotp::pool`'s worker-phase implementation, and this
+/// The twin of `cook_execute::pool`'s worker-phase implementation, and this
 /// milestone opened by naming them: "Command-failure formatting was fixed in
 /// one producer while its twin remained broken." They are no longer twins.
 /// Both call the one primitive, which builds the `CommandFailure` for both, so

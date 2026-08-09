@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::compile_chore;
-use crate::lua_string::escape_lua_string;
 
 // COOK-357 collapsed the four public codegen entry points into one,
 // `generate_checked`. These tests exercise the lowering below that validation
@@ -473,14 +472,6 @@ fn test_shell_with_double_brackets() {
     // the whole body unit's lua_code payload (which contains a nested cook.sh
     // call whose argument also long-brackets).
     assert!(output.contains("echo ]]"), "got:\n{output}");
-}
-
-#[test]
-fn test_escape_lua_string() {
-    assert_eq!(escape_lua_string("hello"), "hello");
-    assert_eq!(escape_lua_string("he\"llo"), "he\\\"llo");
-    assert_eq!(escape_lua_string("he\\llo"), "he\\\\llo");
-    assert_eq!(escape_lua_string("he\nllo"), "he\\nllo");
 }
 
 #[test]
@@ -3498,26 +3489,27 @@ fn probe_shell_lines_builds_array() {
 }
 
 #[test]
-fn probe_tools_lowers_with_command_v_and_sha256() {
+fn probe_tools_lowers_to_inputs_and_sentinel() {
     let cf = make_probe_cf(ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
     let lua = generate(&cf);
-    assert!(lua.contains("command -v cc"), "lua:\n{lua}");
-    assert!(lua.contains("command -v ld"), "lua:\n{lua}");
-    assert!(lua.contains("sha256sum"), "lua:\n{lua}");
-    // CS-0157: the canonical value carries IDENTITY only — the resolved path
-    // is machine-specific location and must never enter the value bytes that
-    // seal_contribution folds. Path reaches consumers via the engine's
-    // per-run read-view metadata channel instead.
-    assert!(!lua.contains("path = _p"), "path must NOT enter the value:\n{lua}");
-    assert!(lua.contains("hash = _h"), "lua:\n{lua}");
-    // Table keys must be quoted-string literals, NOT long-bracket `[[name]]`
-    // (which is ambiguous as a table index — `_t[[[name]]]`).
-    assert!(lua.contains(r#"_t["cc"]"#), "lua:\n{lua}");
-    assert!(lua.contains(r#"_t["ld"]"#), "lua:\n{lua}");
     // The re-run TRIGGER: the named tools must be declared as probe inputs so
     // the fingerprint folds each binary's hash (COOK-164). Without this the
     // probe is a permanent cache hit and never re-runs on a tool upgrade.
     assert!(lua.contains(r#"tools = {"cc", "ld"}"#), "lua:\n{lua}");
+    // The VALUE: the reserved sentinel (CS-0214) — never dispatched as Lua;
+    // the engine synthesises `{ NAME = { hash } }` from those same declared
+    // tools, so trigger and value are one computation.
+    assert!(lua.contains("@tools-identity"), "lua:\n{lua}");
+    // This lowering used to author the identity itself, in Lua, by shelling
+    // out. Two implementations of one decision — and one of them needed GNU
+    // coreutils, which stock macOS does not ship.
+    assert!(!lua.contains("sha256sum"), "the producer must not shell out to hash:\n{lua}");
+    assert!(!lua.contains("command -v"), "the producer must not shell out to resolve:\n{lua}");
+    // CS-0157: the canonical value carries IDENTITY only — the resolved path
+    // is machine-specific location and must never enter the value bytes that
+    // seal_contribution folds. Path reaches consumers via the engine's
+    // per-run read-view metadata channel instead.
+    assert!(!lua.contains("path ="), "path must NOT enter the value:\n{lua}");
 }
 
 #[test]

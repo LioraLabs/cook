@@ -18,7 +18,6 @@ cook-cli::main()              process entry, clap parse, exit-code mapping
             ├─ pipeline::validate_selected_config()
             ├─ (workspace? → pipeline::Workspace::load + workspace_* builders)
             │   (single?    → pipeline::resolve_env + single_* builders)
-            ├─ pipeline::compute_*_inferred_deps()  {NAME} body refs → edges
             └─ cook_engine::run::run()
                  ├─ cache bootstrap (CloudConfig, CacheContext)
                  ├─ analyzer::dependency_edges_multi() → recipe DAG
@@ -69,7 +68,7 @@ The "two-phase" model (register → execute) still exists, but it is now scoped 
 
 `pipeline.rs` is intentionally thin: it does not consume any `cook_lang::ast::Cookfile` directly. Its job is
 
-1. forward to `cook_engine::pipeline::*` for parse / workspace / env / registry / inferred-dep work;
+1. forward to `cook_engine::pipeline::*` for parse / workspace / env / registry work;
 2. spin up a `cook-progress` renderer thread plus a bridge thread that translates `cook_engine::EngineEvent`s into `cook_progress::ProgressEvent`s (`bridge_engine_to_progress_events`, line 84);
 3. drive `cook_engine::run::run`;
 4. map `PipelineError` → `CookError` (`pipeline_error_to_cook_error`, line 31) and `EngineError` → `CookError` (`engine_error_to_cook_error`, line 344) for exit-code classification.
@@ -134,7 +133,7 @@ pub struct RecipeInfo {
 }
 ```
 
-`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` (explicit `: dep`) and inferred-dep edges (next step) create edges.
+`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` creates edges, and `{NAME}` body references have already been merged into `requires` by codegen (next step).
 
 ### 4.2 `RegistryEntry` map — `cli/crates/cook-engine/src/pipeline/registries.rs`
 
@@ -143,16 +142,11 @@ pub struct RecipeInfo {
 **Data in:** parsed AST(s), env vars, named-config name, `--set` overrides
 **Data out:** `BTreeMap<String, RegistryEntry>` plus `BTreeMap<String, RecipeInfo>`
 
-### 4.3 Inferred deps — `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:29`
+### 4.3 Inferred deps — removed
 
-`compute_workspace_inferred_deps` walks every recipe body looking for `{NAME}` body references (Cook Standard § 5.3 / App. E.10), resolving them through any import aliases. The output is a `BTreeMap<String, Vec<String>>` from consumer recipe → referenced recipes. There is no separate single-Cookfile helper: a Cookfile with no imports loads as a workspace of one member (prefix `""`), so the workspace walk covers it (the former `compute_single_inferred_deps` twin is deleted).
+There is no inferred-dep pass. `{NAME}` body references (Cook Standard § 5.3 / App. E.10) are resolved by codegen: `cook_luagen::recipe::unified_requires_field` merges a recipe's explicit deps and its body references into one deduplicated `requires` list at emission time. They therefore reach the engine as ordinary recipe-level `requires` entries, walked by `build_adjacency` alongside explicit `: dep` entries and indistinguishable from them by the time the engine sees them. (This is a different channel from `RecipeUnits.dep_edges`, which carries only the unit-level edges `cook.dep_output` / `cook.add_unit` record directly.)
 
-These are **codegen-time** dependencies. Unlike explicit `requires` (which become wave boundaries), inferred deps cause **same-wave merging** in the wave grouper: a recipe and any recipe it body-references end up in the same wave so the referencing recipe sees the referent's outputs when it registers.
-
-`pipeline::workspace_dep_conflicts` reports the cases where a `{NAME}` reference conflicts with an explicit dep declaration (its former `single_dep_conflicts` twin is deleted with the single-Cookfile path).
-
-**Data in:** Cookfile AST(s)
-**Data out:** `BTreeMap<String, Vec<String>>` inferred edges, plus diagnostic warnings
+That merge is also why the conflict warning this stage used to emit ("recipe X has both explicit ': dep' and inferred '{dep}' dependency") is gone rather than lost. It existed because the two kinds meant different scheduling, an explicit dep being a boundary and a body reference a same-stage merge; they are now one deduplicated `requires` list, so there is no longer a pair that can disagree. The `cook-plan::inferred_deps` module survived its last caller by three months and was deleted at COOK-423.
 
 ---
 
@@ -224,7 +218,7 @@ The output of the wave registration is a `Vec<RecipeUnits>`. Each `RecipeUnits` 
 
 - intra-recipe ordering (the `Sequential` / `StepGroup` / explicit-dep relations the capture API recorded),
 - cross-recipe edges (the `deps` field copied from `edges`),
-- inferred-dep edges (`{NAME}` refs, threaded through during workspace recipe-info assembly).
+- `{NAME}` body references, which are not a separate edge kind: codegen merged them into `requires` before registration.
 
 The builder cannot introduce cycles by construction (deps only point to already-emitted node ids); a defensive `dag.validate()` in `execute_dag` catches any future regression with `EngineError::CycleDetected`.
 
@@ -240,7 +234,7 @@ Zero-work recipes (meta-targets whose body only declares `: dep` edges) never pr
 `execute_dag` drives the wave's work-unit DAG. Briefly:
 
 1. **Empty / cycle checks.** Empty DAG returns `Ok(vec![])`. `dag.validate()` defensively guards against cycles.
-2. **Worker pool.** `cook_luaotp::WorkerPool::spawn(num_workers)` starts `N` threads. Each worker owns its own `mlua::Lua` VM and pulls `WorkItem`s off a `(Mutex<VecDeque>, Condvar)` queue; results return on an mpsc channel.
+2. **Worker pool.** `cook_execute::WorkerPool::spawn(num_workers)` starts `N` threads. Each worker owns its own `mlua::Lua` VM and pulls `WorkItem`s off a `(Mutex<VecDeque>, Condvar)` queue; results return on an mpsc channel.
 3. **Seed.** `dag.initial_ready()` (`executor.rs:978`) returns every node with zero remaining deps; each goes through `process_ready` which dispatches by payload kind: `None` (presatisfied / cache hit) is completed inline; `Interactive` is queued for main-thread execution; anything else is submitted to the pool.
 4. **Main loop** (`executor.rs:1001`). The thread blocks on the result channel. On success it calls `dag.complete(id)` and dispatches newly-ready nodes; on failure it accumulates the failure and calls `cancel_subtree` to mark transitive dependents as cancelled (and synthesize `Blocked` test results for `cook test`).
 5. **Interactive / chore window.** When the pool is drained and the interactive queue is non-empty, the main thread runs the queued node directly with stdin attached. Chore bodies are emitted as a linear chain of interactive units bracketed by `_enter_chore` / `_exit_chore` and drain together as a single window with one `InteractiveStart` / `InteractiveEnd` pair (CS-0051).

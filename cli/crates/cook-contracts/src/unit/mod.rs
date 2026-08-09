@@ -3,6 +3,32 @@
 use crate::{CacheMeta, StepKind};
 use std::collections::BTreeMap;
 
+/// What kind of work a node is doing. Determines which verb a renderer prints
+/// (`Compiled`, `Linked`, `Tested`, …); unannotated nodes default to `Cooked`.
+///
+/// One definition, because two crates must agree on it and disagreement is a
+/// bug rather than a preference (COOK-421). The engine produces this on its
+/// event stream, `cook-progress` renders it and writes it into `.cook/logs`,
+/// and `cook-logs` reads it back — so the serde spelling below is a wire
+/// format, not a rendering detail.
+///
+/// It used to be declared once per crate with a hand-written translation in
+/// cook-cli joining them, justified by keeping cook-engine free of a
+/// cook-progress dependency. The stratum rule answers that without a mirror:
+/// both crates already depend on this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeKind {
+    Compile,
+    Link,
+    Resolve,
+    Generate,
+    Write,
+    Test,
+    #[default]
+    Cooked,
+}
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -39,7 +65,7 @@ pub enum WorkPayload {
         is_chore: bool,
         /// 1-indexed Cookfile line of the originating step; 0 = unknown.
         /// Purely a diagnostics aid (COOK-191/CS-0126): the execute-phase
-        /// worker (cook-luaotp/src/pool.rs) newline-pads `code` so that a
+        /// worker (cook-execute/src/pool.rs) newline-pads `code` so that a
         /// Lua error inside the chunk reports `Cookfile:LINE:` instead of
         /// the opaque `[string "..."]:1:` chunk name. This field MUST NOT
         /// be folded into any cache fingerprint — unit identity is hashed
@@ -194,3 +220,35 @@ pub enum DepKind {
     /// Sequential barrier (depends on all prior units in recipe).
     Sequential,
 }
+
+impl DepKind {
+    /// The name this relationship is rendered under in the graph JSON.
+    ///
+    /// It lives with the declaration for the reason COOK-421 gave when it
+    /// retired the `RecipeKind` mirror: the renderer's vocabulary was never its
+    /// own, it was the declaration's, copied. `cook-graph` used to spell these
+    /// strings itself in a `match` on this enum, and `#[non_exhaustive]` forced
+    /// that match to carry a `_ => "unknown"` arm — so a variant added here
+    /// left the renderer compiling and quietly labelling the new kind
+    /// `unknown`. Here the match is exhaustive, because `#[non_exhaustive]`
+    /// does not apply inside the defining crate: a new variant is a compile
+    /// error at the one site that has to name it, which is the whole reason to
+    /// keep the rendering next to the declaration.
+    ///
+    /// [`StepGroup`](Self::StepGroup) renders as the door that produced it:
+    /// a unit is in a step group because a recipe body called
+    /// `cook.step_group`, so the label is
+    /// [`crate::registration::STEP_GROUP_NAME`] rather than a second spelling
+    /// of it. That was the constitution's "three ends, no definition" finding
+    /// — both VMs and the renderer — and this is the definition.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            DepKind::StepGroup(_) => crate::registration::STEP_GROUP_NAME,
+            DepKind::Sequential => "sequential",
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/dep_kind_tests.rs"]
+mod dep_kind_tests;

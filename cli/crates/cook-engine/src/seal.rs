@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cook_luaotp::ProbeValueStore;
+use cook_probe::store::ProbeValueStore;
 
 /// Resolve the effective seal set to its canonical `key -> value` map, the form
 /// persisted on a `DeterminantManifest.sealed_probes` and recomputed on the

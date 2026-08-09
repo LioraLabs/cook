@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cook_contracts::cache::cas::artifact_kind;
 use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
 
 use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
@@ -39,6 +40,14 @@ pub fn stat_mtime(path: &Path) -> Option<u64> {
 }
 
 /// Hash file contents with xxh3_64. Returns None if file can't be read.
+///
+/// COOK-414: this is one of cook-cache's two file hashes, and the crate's
+/// most-used verb. It answers LOCAL CONTENT IDENTITY: what a `FileRecord`
+/// carries, what the local cache key folds, what `cook why` compares. The other
+/// is [`crate::probe::hash_file_sha256`], the SHA-256 identity that leaves the
+/// machine in a probe fingerprint (§22.5.3) or a cloud key. Both are pinned to
+/// golden vectors; changing what either computes is a cache-invalidating
+/// decision, not a refactor.
 pub fn hash_file(path: &Path) -> Option<u64> {
     let bytes = std::fs::read(path).ok()?;
     Some(xxhash_rust::xxh3::xxh3_64(&bytes))
@@ -625,13 +634,13 @@ fn restore_one(
         }
     }
     match meta.kind.as_deref() {
-        Some("dir") => {
+        Some(artifact_kind::DIR) => {
             if std::fs::create_dir_all(abs).is_err() {
                 return false;
             }
             set_mode(abs, meta.mode)
         }
-        Some("symlink") => {
+        Some(artifact_kind::SYMLINK) => {
             let target = match meta.target.as_deref() {
                 Some(t) => t,
                 None => return false,
@@ -877,7 +886,7 @@ pub fn fetch_observation(
         crate::cas_backend::OBSERVATION_PATH,
     );
     let (mut reader, meta) = backend.get_with_meta(&artifact_k).ok().flatten()?;
-    if meta.kind.as_deref() != Some("observation") {
+    if meta.kind.as_deref() != Some(artifact_kind::OBSERVATION) {
         return None;
     }
     let mut bytes = Vec::new();

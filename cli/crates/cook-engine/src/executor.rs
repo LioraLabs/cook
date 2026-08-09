@@ -2,7 +2,7 @@
 //!
 //! Executes all nodes in a `Dag<WorkNode>` respecting dependency order.
 //! Pre-satisfied (cached) nodes are completed immediately. Real work nodes
-//! are dispatched to the `cook_luaotp::WorkerPool`. Interactive nodes are
+//! are dispatched to the `cook_execute::WorkerPool`. Interactive nodes are
 //! queued and run on the main thread after the pool drains.
 
 use std::collections::BTreeMap;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
+use cook_contracts::cache::cas::artifact_kind;
 use cook_contracts::{CommandFailure, WorkPayload};
 use cook_cache::backend::DeterminantManifest;
 use cook_cache::{
@@ -19,7 +20,7 @@ use cook_cache::{
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
 use cook_dag::Dag;
-use cook_luaotp::{WorkItem, WorkerPool};
+use cook_execute::{WorkItem, WorkerPool};
 
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
@@ -329,14 +330,14 @@ fn run_interactive_on_main(
     line: usize,
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> Result<(), String> {
     // CS-0193: substitute `$<key:field>` probe references before the spawn,
     // through the same CS-0192 renderer the worker pool uses — a probe ref
     // means the same thing in a chore step as in a cook body, including the
     // composite-value diagnostics. The register-phase scan (unit_api) gave
     // the unit its probe edges, so the values are materialised by now.
-    let cmd = &cook_luaotp::resolve_probe_sigils(probe_store, cmd)?;
+    let cmd = &cook_probe::sigil::resolve_probe_sigils(probe_store, cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
     cook_cache::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
@@ -362,13 +363,25 @@ fn run_interactive_on_main(
 fn progress_error(error: &str) -> String {
     CommandFailure::from_wire(error).map_or_else(
         || error.to_owned(),
-        |failure| {
-            format!(
+        // CS-0215: `displayed_command`, not `command`. The progress line used
+        // to print the raw field, so every failing block opened with
+        // `compose`'s `set -e` while the final diagnostic one row below
+        // showed the author's body — two renderers, one question, two answers,
+        // exactly as with `located` before CS-0211.
+        |failure| match failure.located() {
+            // CS-0211: an unlocatable failure is reported without a
+            // location, not with `line 0`.
+            Some(line) => format!(
                 "command at line {} exited with code {}: {}",
-                failure.line(),
+                line,
                 failure.exit_code(),
-                failure.command()
-            )
+                failure.displayed_command()
+            ),
+            None => format!(
+                "command exited with code {}: {}",
+                failure.exit_code(),
+                failure.displayed_command()
+            ),
         },
     )
 }
@@ -440,7 +453,7 @@ pub fn execute_dag(
     cache_ctx: Arc<CacheContext>,
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
-    dep_outputs: cook_luaotp::WorkerDepOutputs,
+    dep_outputs: cook_execute::WorkerDepOutputs,
     published: &AtomicU64,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
@@ -744,7 +757,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
@@ -949,7 +962,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         use cook_contracts::cache::record::{cacheability, Cacheability};
         match cacheability(work_node.cache_meta.as_ref()) {
@@ -1787,8 +1800,8 @@ pub fn execute_dag(
 
                             // A value already in hand: the cache served it, or
                             // the producer kind is synthesised (CS-0148
-                            // `files { }`). Either way no worker is involved,
-                            // so the node completes here.
+                            // `files { }`, CS-0214 `tools { }`). Either way no
+                            // worker is involved, so the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
                                 let recorded = cook_probe::eval::record(
@@ -1801,8 +1814,9 @@ pub fn execute_dag(
                                     // CS-0204: no VM ran on either arm of this
                                     // branch. A cache hit's identity is already
                                     // the folded one `lookup` settled on; a
-                                    // `files { }` value is synthesised from the
-                                    // declared FILES section and loads nothing.
+                                    // synthesised value (`files { }`,
+                                    // `tools { }`) comes from the declared
+                                    // FILES / TOOLS section and loads nothing.
                                     &[],
                                 );
                                 for w in &recorded.warnings {
@@ -1912,11 +1926,18 @@ pub fn execute_dag(
                             );
                         }
                         Err(e) => {
-                            // Fingerprint resolution failed (e.g. missing upstream).
-                            // This is a hard error — the probe cannot be fingerprinted
-                            // so it cannot safely proceed.
-                            let err_msg =
-                                format!("probe '{}': fingerprint resolution failed: {}", probe_key, e.message());
+                            // A hard error: the probe cannot safely proceed. The
+                            // cause is `ProbeError`'s to name and `ProbeError`'s
+                            // to render — `Display` already writes
+                            // `probe '<key>': <message>`. This site used to
+                            // rebuild that prefix by hand and insert
+                            // "fingerprint resolution failed" into the middle of
+                            // it, which was true of the one error `lookup` could
+                            // return when it was written and false of the
+                            // CS-0214 one it can return now (a `tools { }` name
+                            // that does not resolve on PATH is a statement about
+                            // the host, not about a fingerprint).
+                            let err_msg = e.to_string();
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             emit(
                                 event_tx,
@@ -2819,7 +2840,7 @@ pub fn execute_dag(
                     node_name: result.node_name.clone(),
                     // Real per-unit wall time measured by the worker around
                     // execution (queue wait excluded) — see
-                    // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                    // `WorkResult::duration` in cook-execute/src/pool.rs.
                     elapsed: result.duration,
                     kind: node_kind_for_node(work_node),
                     cache_key: node_cache_key(work_node),
@@ -3056,7 +3077,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
@@ -3113,7 +3134,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
@@ -3193,7 +3214,7 @@ fn publish_completion(
     working_dir: &std::path::Path,
     duration: Duration,
     output_chunks: &[cook_contracts::OutputChunk],
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
     published: &AtomicU64,
     // CS-0204: the module files this unit's Lua body loaded, as reported by
@@ -3376,7 +3397,7 @@ fn publish_completion(
             output_index: cook_cache::OBSERVATION_INDEX,
             output_path: cook_cache::OBSERVATION_PATH.to_string(),
             content_hash: ArtifactMeta::zero_content_hash(),
-            kind: Some("observation".to_string()),
+            kind: Some(artifact_kind::OBSERVATION.to_string()),
             mode: ArtifactMeta::default_mode(),
             target: None,
         };
@@ -3417,11 +3438,11 @@ fn publish_completion(
                     .and_then(|p| p.to_str().map(String::from));
                 // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
                 match t {
-                    Some(t) => (Vec::new(), Some("symlink".to_string()), Some(t)),
+                    Some(t) => (Vec::new(), Some(artifact_kind::SYMLINK.to_string()), Some(t)),
                     None => continue,
                 }
             } else if ft.is_dir() {
-                (Vec::new(), Some("dir".to_string()), None)
+                (Vec::new(), Some(artifact_kind::DIR.to_string()), None)
             } else {
                 match std::fs::read(&abs_output) {
                     Ok(b) => (b, None, None),
@@ -3555,7 +3576,7 @@ fn publish_completion(
                         .to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
-                    kind: Some("discovered_inputs".to_string()),
+                    kind: Some(artifact_kind::DISCOVERED_INPUTS.to_string()),
                     mode: 0o644,
                     target: None,
                 };
@@ -3604,7 +3625,7 @@ fn publish_completion(
                     output_path: cook_cache::DISCOVERED_INPUT_SETS_PATH.to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
-                    kind: Some("discovered_input_sets".to_string()),
+                    kind: Some(artifact_kind::DISCOVERED_INPUT_SETS.to_string()),
                     mode: 0o644,
                     target: None,
                 };
@@ -3677,7 +3698,7 @@ fn publish_completion(
                 output_path: cook_cache::MODULE_INPUT_SETS_PATH.to_string(),
                 // CS-0054: stamped by the backend on put.
                 content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some("module_input_sets".to_string()),
+                kind: Some(artifact_kind::MODULE_INPUT_SETS.to_string()),
                 mode: 0o644,
                 target: None,
             };
@@ -3752,7 +3773,7 @@ fn publish_completion(
                 output_path: ed.clone(),
                 // CS-0054: stamped by the backend on put.
                 content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some("dir".to_string()),
+                kind: Some(artifact_kind::DIR.to_string()),
                 mode,
                 target: None,
             };
@@ -3817,7 +3838,7 @@ fn build_determinant_manifest(
     empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,
     seal_keys: &std::collections::BTreeSet<String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
         inputs.iter().map(|fr| (fr.path.to_string(), fr.hash)).collect();

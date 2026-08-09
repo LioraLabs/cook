@@ -140,17 +140,19 @@ fn parse_source_name_list(
         if tok.is_empty() {
             continue;
         }
-        // CS-0181: `tools` widens to PROBE_SEG; `envs` stays IDENT.
+        // CS-0181: `tools` widens to TOOL_NAME; `envs` stays LUA_IDENT. Two
+        // productions, and only the first is the class App. A shares with
+        // `BARE_IDENTIFIER` (COOK-421) -- so this is the live TOOL_NAME
+        // validator and asks for it by name rather than respelling it.
         let dashes_ok = kind == "tools";
-        let mut chars = tok.chars();
-        let head_ok = chars
-            .next()
-            .map(|c| c.is_ascii_alphabetic() || c == '_')
-            .unwrap_or(false);
-        let tail_ok = chars.all(|c| {
-            c.is_ascii_alphanumeric() || c == '_' || (dashes_ok && (c == '-' || c == '.'))
-        });
-        if !head_ok || !tail_ok {
+        let ok = if dashes_ok {
+            cook_contracts::probe_key::is_tool_name(tok)
+        } else {
+            let mut chars = tok.chars();
+            chars.next().is_some_and(cook_contracts::naming::is_bare_name_start)
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        };
+        if !ok {
             let charset = if dashes_ok {
                 "[A-Za-z_][A-Za-z0-9_.-]*"
             } else {

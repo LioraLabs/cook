@@ -1069,3 +1069,99 @@ fn parametric_chore_in_nested_member_runs_its_body() {
         "nested member chore body did not run\nstdout: {stdout}\nstderr: {stderr}"
     );
 }
+
+/// §7.1.2 value fidelity (CS-0209): a bound parameter value reaches the body's
+/// Lua local byte for byte, whatever it contains.
+///
+/// The value is not carried to the body as data — the implementation writes it
+/// into a generated Lua prelude as a double-quoted literal — so every character
+/// that can end or extend such a literal is a chance for the value to arrive as
+/// different text, or for the chore to die loading a program the author never
+/// wrote. Both happened before COOK-398: a carriage return reached the source
+/// raw and Lua refused the chunk, and a NUL was written `\0`, which Lua reads as
+/// a different character when a digit follows it.
+#[test]
+fn chore_param_value_reaches_the_body_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore emit msg\n    > print(\"[\" .. msg .. \"]\")\n",
+    )
+    .unwrap();
+
+    // Quote and backslash end or extend the literal; CR is forbidden raw
+    // inside one; \x01 followed by a digit is the escape-length trap.
+    let hostile = "a\"b\\c\rd\u{1}5e";
+    let out = run_cook_isolated(tmp.path(), &["emit", hostile]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook emit <hostile> failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("[{hostile}]")),
+        "value came back changed\nstdout: {stdout:?}\nstderr: {stderr}"
+    );
+}
+
+/// The same law for a variadic (§7.1.3): every element, not just the first.
+#[test]
+fn variadic_param_elements_reach_the_body_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore emit +msgs\n    > print(\"[\" .. table.concat(msgs, \"|\") .. \"]\")\n",
+    )
+    .unwrap();
+
+    let first = "say \"hi\"";
+    let second = "back\\slash\rcr";
+    let out = run_cook_isolated(tmp.path(), &["emit", first, second]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook emit <hostile...> failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("[{first}|{second}]")),
+        "variadic elements came back changed\nstdout: {stdout:?}\nstderr: {stderr}"
+    );
+}
+
+/// The same law at the other two surfaces §7.1.2 names: the environment export
+/// (§7.1.2.1) and the placeholder expansion (§7.1.2.2).
+///
+/// These reach the shell by a different route than the Lua local above — the
+/// value is set on a table and quoted at the placeholder, never written into
+/// generated source — so a fidelity rule that held for one would say nothing
+/// about the others. The value here omits the carriage return: a CR is intact
+/// in the variable, and asserting on it would be asserting about the terminal's
+/// rendering rather than the value.
+#[test]
+fn a_hostile_value_reaches_the_shell_by_env_and_by_placeholder() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore say msg\n    sh -c 'printf \"env=[%s]\\n\" \"$msg\"'\n    printf 'arg=[%s]\\n' $<msg>\n",
+    )
+    .unwrap();
+
+    let hostile = "a\"b\\c$d`e'f";
+    let out = run_cook_isolated(tmp.path(), &["say", hostile]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook say <hostile> failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("env=[{hostile}]")),
+        "env export changed the value\nstdout: {stdout:?}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("arg=[{hostile}]")),
+        "placeholder expansion changed the value\nstdout: {stdout:?}\nstderr: {stderr}"
+    );
+}

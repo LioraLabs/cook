@@ -13,7 +13,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::modules::cli::ModulesArgs;
+use cook_modules::ModulesArgs;
 
 #[derive(Parser, Debug)]
 #[command(

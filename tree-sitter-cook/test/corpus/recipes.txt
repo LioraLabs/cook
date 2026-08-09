@@ -764,3 +764,67 @@ recipe package
       body: (shell_block (shell_content))
       (cook_mods
         (seal_group (identifier) (identifier))))))
+
+================
+Module call: a long-bracket string is opaque (CS-0208)
+================
+
+recipe app
+    cook_cc.bin({ links = { [[a}b]], [=[it's -- fine]=] } })
+    cook "out" { : }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content)))))
+
+================
+Module call: a long-bracket comment ends at its closer (CS-0208)
+================
+
+recipe app
+    cook_cc.bin({ links = { "a" --[[ why } ]] } })
+    cook "out" { : }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content)))))
+
+================
+Module call: a multi-line long-bracket string spans newlines (CS-0208)
+================
+
+recipe app
+    cook_cc.bin({
+        note = [[line one
+} line two]],
+        links = { "a" },
+    })
+    cook "out" { : }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content)))))

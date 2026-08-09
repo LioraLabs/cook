@@ -1,8 +1,83 @@
 use super::{
-    decode_json, encode_canonical_json, encode_files_manifest, probe_file_name,
-    FILES_MANIFEST_PRODUCE,
+    decode_json, encode_canonical_json, encode_files_manifest, encode_tools_identity,
+    probe_file_name, FILES_MANIFEST_PRODUCE, TOOLS_IDENTITY_PRODUCE,
 };
 use serde_json::json;
+
+// ── tools-identity tests (CS-0214) ──────────────────────────────────────
+
+/// COOK-414's lesson, applied to the other value that crosses machines: a test
+/// asserting only determinism or key order would stay green through a change of
+/// wire format, and these bytes ARE the wire format — they are what
+/// `seal_contribution` folds into every consuming unit's cache key.
+///
+/// Both digests were computed outside this codebase, so the assertion is
+/// arithmetic rather than a recording of past behaviour. The preimages, so a
+/// reader can re-derive them without cook:
+///
+/// ```text
+/// printf 'cook COOK-416 tools golden\n' | sha256sum
+///   == 83bb31602279150fde5cd041b9528f6bec5883e83715c49ffa0e50af6f0cde44
+/// printf 'cook COOK-416 second tool\n'  | sha256sum
+///   == 536f2e281c493bb330aa3bab2ede4cc0fd550ee2c74de443d5b0889d457c1195
+/// ```
+///
+/// The expected byte string is also the exact content the PRE-CS-0214 Lua
+/// producer wrote to `.cook/probes/<key>.json` (captured from a live run before
+/// the interception landed), which is why CS-0214 moves no cache key.
+const GOLDEN_CC: [u8; 32] = [
+    0x83, 0xbb, 0x31, 0x60, 0x22, 0x79, 0x15, 0x0f, 0xde, 0x5c, 0xd0, 0x41, 0xb9, 0x52, 0x8f, 0x6b,
+    0xec, 0x58, 0x83, 0xe8, 0x37, 0x15, 0xc4, 0x9f, 0xfa, 0x0e, 0x50, 0xaf, 0x6f, 0x0c, 0xde, 0x44,
+];
+const GOLDEN_LD: [u8; 32] = [
+    0x53, 0x6f, 0x2e, 0x28, 0x1c, 0x49, 0x3b, 0xb3, 0x30, 0xaa, 0x3b, 0xab, 0x2e, 0xde, 0x4c, 0xc0,
+    0xfd, 0x55, 0x0e, 0xe2, 0xc7, 0x4d, 0xe4, 0x43, 0xd5, 0xb0, 0x88, 0x9d, 0x45, 0x7c, 0x11, 0x95,
+];
+
+#[test]
+fn the_tools_identity_encoding_is_these_exact_bytes() {
+    let tools = vec![("cc".to_string(), GOLDEN_CC)];
+    assert_eq!(
+        String::from_utf8(encode_tools_identity(&tools)).unwrap(),
+        "{\n  \"cc\": {\n    \"hash\": \
+         \"83bb31602279150fde5cd041b9528f6bec5883e83715c49ffa0e50af6f0cde44\"\n  }\n}\n",
+    );
+}
+
+#[test]
+fn tools_identity_sorts_keys_bytewise() {
+    // The fingerprint's TOOLS section sorts by name (§22.5.3); the value must
+    // agree, or two machines that declared the same tools in a different order
+    // would seal on different bytes.
+    let forward = encode_tools_identity(&[
+        ("cc".to_string(), GOLDEN_CC),
+        ("ld".to_string(), GOLDEN_LD),
+    ]);
+    let reversed = encode_tools_identity(&[
+        ("ld".to_string(), GOLDEN_LD),
+        ("cc".to_string(), GOLDEN_CC),
+    ]);
+    assert_eq!(forward, reversed);
+    let text = String::from_utf8(forward).unwrap();
+    assert!(text.find("\"cc\"").unwrap() < text.find("\"ld\"").unwrap(), "{text}");
+}
+
+#[test]
+fn tools_identity_carries_identity_only() {
+    // CS-0157: the resolved path is location, not identity, and a location in
+    // these bytes would key every sealing unit to a machine.
+    let text = String::from_utf8(encode_tools_identity(&[("cc".to_string(), GOLDEN_CC)])).unwrap();
+    assert!(!text.contains("path"), "path must never enter the value: {text}");
+}
+
+#[test]
+fn tools_sentinel_is_not_valid_lua_and_is_its_own_sentinel() {
+    // Same interception contract as `files`, and distinct from it: the two are
+    // compared by equality in `cook-probe`, and a shared spelling would route
+    // one producer kind's synthesis to the other's.
+    assert!(TOOLS_IDENTITY_PRODUCE.starts_with('@'));
+    assert_ne!(TOOLS_IDENTITY_PRODUCE, FILES_MANIFEST_PRODUCE);
+}
 
 // ── files-manifest tests (CS-0148) ──────────────────────────────────────
 

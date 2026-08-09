@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 
+use cook_contracts::lua_string;
 use cook_contracts::{ACCESSORS, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 use cook_lang::ast::*;
 
 use crate::cook_step::{generate_cook_step, generate_member_fanout_cook_step};
 use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
-use crate::lua_string::{escape_lua_string, wrap_lua_string};
-use crate::resolver::{IterMode, OutputShape, ResolveCtx};
+use crate::long_bracket::wrap_lua_string;
+use crate::resolver::{accessor_ref, IterMode, OutputShape, ResolveCtx};
 use crate::sigil;
 use crate::template::ConsultedEnv;
 use crate::test_step;
@@ -194,18 +195,15 @@ fn check_output_pattern_no_bare_accessors(
         let inner = span.ident.as_str();
 
 
-        match inner {
-            "stem" | "name" | "ext" | "dir" => {
-                return Err(CodegenError::PlaceholderViolation {
-                    recipe: recipe.to_string(),
-                    message: format!(
-                        "bare $<{inner}> in output pattern is not supported; \
-                         use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
-                    ),
-                    line,
-                });
-            }
-            _ => {}
+        if ACCESSORS.contains(&inner) {
+            return Err(CodegenError::PlaceholderViolation {
+                recipe: recipe.to_string(),
+                message: format!(
+                    "bare $<{inner}> in output pattern is not supported; \
+                     use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
+                ),
+                line,
+            });
         }
 
         // Standard §5.4: bare `$<lib>` (no accessor) referring to an
@@ -638,12 +636,8 @@ fn collect_drivers(
             continue;
         }
         for token in extract_sigil_tokens(pat.as_str()) {
-            if let Some(dot) = token.rfind('.') {
-                let prefix = &token[..dot];
-                let suffix = &token[dot + 1..];
-                if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
-                    drivers.insert(prefix.to_string());
-                }
+            if let Some(r) = accessor_ref(&token, recipe_names) {
+                drivers.insert(r.name.to_string());
             }
         }
     }
@@ -659,17 +653,12 @@ fn check_command(
     line: usize,
 ) -> Result<(), CodegenError> {
     for token in extract_sigil_tokens(command) {
-        if let Some(dot) = token.rfind('.') {
-            let prefix = &token[..dot];
-            let suffix = &token[dot + 1..];
-            if ACCESSORS.contains(&suffix)
-                && recipe_names.contains(prefix)
-                && !drivers.contains(prefix)
-            {
+        if let Some(r) = accessor_ref(&token, recipe_names) {
+            if !drivers.contains(r.name) {
                 return Err(CodegenError::AccessorWithoutDriver {
                     referrer: referrer.to_string(),
-                    referent: prefix.to_string(),
-                    accessor: suffix.to_string(),
+                    referent: r.name.to_string(),
+                    accessor: r.accessor.to_string(),
                     surface,
                     line,
                 });
@@ -806,7 +795,7 @@ pub fn generate_with_names(
                 pad_to_line(&mut out, block.line);
                 out.push_str(&format!(
                     "    if selected_name == \"{}\" then\n",
-                    escape_lua_string(name)
+                    lua_string::escape_double_quoted(name)
                 ));
                 pad_to_line(&mut out, block.line + 1);
                 emit_config_body(&mut out, &block.body, "        ");
@@ -880,7 +869,7 @@ pub fn generate_with_names(
                 out.push_str(&format!(
                     "cook.{}(\"{}\", {}, function()\n",
                     REGISTER_SURFACE_NAME,
-                    escape_lua_string(&recipe.name),
+                    lua_string::escape_double_quoted(&recipe.name),
                     generate_metadata_with_line(recipe, recipe_names)
                 ));
 
@@ -889,12 +878,12 @@ pub fn generate_with_names(
                     let includes: Vec<String> = recipe
                         .ingredients
                         .iter()
-                        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                        .map(|s| lua_string::literal(s))
                         .collect();
                     let excludes: Vec<String> = recipe
                         .excludes
                         .iter()
-                        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                        .map(|s| lua_string::literal(s))
                         .collect();
                     out.push_str(&format!(
                         "    local ingredients = cook.resolve_ingredients({{{}}}, {{{}}})\n",
@@ -947,7 +936,7 @@ pub fn generate_with_names(
                 if first_step_literal_gather {
                     out.push_str(&format!(
                         "    error(\"recipe '{}': a literal-output cook step in an ingredients <probe> recipe has nothing to gather — data members are records, not file paths; fan out first (accessor-bearing outputs), or read the probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
-                        escape_lua_string(&recipe.name)
+                        lua_string::escape_double_quoted(&recipe.name)
                     ));
                 }
                 if let Some((fe, _fe_line)) = member_source {
@@ -1067,9 +1056,16 @@ pub fn generate_with_names(
                             // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                             // units that are never cached. The cacheable cook-step path in
                             // cook_step.rs is the only emission site that includes it.
+                            // COOK-439: the `interactive` FIELD name is the
+                            // shared constant, because this is its only
+                            // emitter and `cook-register`'s add_unit unpack is
+                            // its only reader. It is deliberately NOT the
+                            // identically-spelled `cook.interactive` DOOR.
                             out.push_str(&format!(
-                                "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                                cmd_expr, line
+                                "    cook.add_unit({{command = {}, {} = true, line = {}, cache = false}})\n",
+                                cmd_expr,
+                                cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+                                line
                             ));
                             i += 1;
                         }
@@ -1149,7 +1145,7 @@ fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
         MemberSource::ProbeKey(k) => {
             out.push_str(&format!(
                 "    local _items = cook.probes.get(\"{}\")\n",
-                escape_lua_string(k)
+                lua_string::escape_double_quoted(k)
             ));
         }
     }
@@ -1255,7 +1251,7 @@ fn chore_param_env_table(params: &[cook_lang::ast::ChoreParam]) -> Option<String
             // special characters that would need escaping in a Lua string key.
             // We use ["name"] = expr (quoted bracket key) so the key is always
             // a string literal, never resolved as a Lua variable reference.
-            format!("[\"{}\"] = {}", escape_lua_string(n), value_expr)
+            format!("[\"{}\"] = {}", lua_string::escape_double_quoted(n), value_expr)
         })
         .collect();
     Some(format!("{{{}}}", entries.join(", ")))
@@ -1301,24 +1297,24 @@ fn compile_chore_checked(
         let entries: Vec<String> = chore.params.iter().filter_map(|p| match p {
             cook_lang::ast::ChoreParam::Required { name, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"required\"}}",
-                escape_lua_string(name),
+                lua_string::escape_double_quoted(name),
             )),
             cook_lang::ast::ChoreParam::DefaultedString { name, default, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"defaulted_string\", default = \"{}\"}}",
-                escape_lua_string(name),
-                escape_lua_string(default),
+                lua_string::escape_double_quoted(name),
+                lua_string::escape_double_quoted(default),
             )),
             cook_lang::ast::ChoreParam::VariadicPlus { name, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"variadic_plus\"}}",
-                escape_lua_string(name),
+                lua_string::escape_double_quoted(name),
             )),
             cook_lang::ast::ChoreParam::VariadicStar { name, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"variadic_star\"}}",
-                escape_lua_string(name),
+                lua_string::escape_double_quoted(name),
             )),
             cook_lang::ast::ChoreParam::DefaultedLua { name, default_lua, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"defaulted_lua\", default = function() return ({}) end}}",
-                escape_lua_string(name),
+                lua_string::escape_double_quoted(name),
                 default_lua,
             )),
         }).collect();
@@ -1332,7 +1328,7 @@ fn compile_chore_checked(
     out.push_str(&format!(
         "cook.{}(\"{}\", {}, function({})\n",
         REGISTER_SURFACE_CHORE_NAME,
-        escape_lua_string(&chore.name),
+        lua_string::escape_double_quoted(&chore.name),
         meta,
         crate::COOK_PARAMS_LOCAL,
     ));
@@ -1384,9 +1380,14 @@ fn compile_chore_checked(
                 let env_field = chore_param_env_table(&chore.params)
                     .map(|t| format!(", env = {}", t))
                     .unwrap_or_default();
+                // COOK-439: shared field name, as above. Every chore shell
+                // step is interactive by construction (§{chores}).
                 out.push_str(&format!(
-                    "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false{}}})\n",
-                    cmd_expr, line, env_field
+                    "    cook.add_unit({{command = {}, {} = true, line = {}, cache = false{}}})\n",
+                    cmd_expr,
+                    cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+                    line,
+                    env_field
                 ));
                 i += 1;
             }
@@ -1470,9 +1471,13 @@ fn emit_chore_body_unit(
     let env_field = chore_param_env_table(params)
         .map(|t| format!(", env = {}", t))
         .unwrap_or_default();
+    // COOK-439: shared field name, as above.
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}{}}})\n",
-        wrapped, line, env_field
+        "    cook.add_unit({{lua_code = {}, {} = true, cache = false, line = {}{}}})\n",
+        wrapped,
+        cook_contracts::registration::ADD_UNIT_INTERACTIVE_FIELD,
+        line,
+        env_field
     ));
 }
 
@@ -1528,7 +1533,7 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
             MEMBER_SOURCE_KIND_KEY,
             MEMBER_SOURCE_KIND_PROBE,
             MEMBER_SOURCE_REF_KEY,
-            escape_lua_string(source_ref)
+            lua_string::escape_double_quoted(source_ref)
         ),
     };
     Some(format!("{} = {{{}}}", MEMBER_SOURCE_FIELD, body))
@@ -1552,7 +1557,7 @@ fn recipe_metadata_fields(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> V
         let items: Vec<String> = recipe
             .ingredients
             .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .map(|s| lua_string::literal(s))
             .collect();
         fields.push(format!("ingredients = {{{}}}", items.join(", ")));
     }
@@ -1560,7 +1565,7 @@ fn recipe_metadata_fields(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> V
         let items: Vec<String> = recipe
             .excludes
             .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .map(|s| lua_string::literal(s))
             .collect();
         fields.push(format!("excludes = {{{}}}", items.join(", ")));
     }
@@ -1601,7 +1606,7 @@ fn unified_requires_field(
     }
     let items: Vec<String> = requires
         .iter()
-        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+        .map(|s| lua_string::literal(s))
         .collect();
     Some(format!("requires = {{{}}}", items.join(", ")))
 }

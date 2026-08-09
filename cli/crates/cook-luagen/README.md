@@ -31,11 +31,23 @@ means something other than what the author wrote.
   silently drops work (`CodegenError::UnknownStep`, recipe.rs:1078).
 - Every name in the generated program is a constant from `cook-contracts`, not
   a string literal spelled here: `REGISTER_SURFACE_NAME`,
-  `CONFIG_DISPATCH_NAME`, `MAIN_PROGRAM_NAME`, `PROBE_SUBST_NAME`,
-  `QUOTE_PARAM_NAME`, and the `MemberSourceDescriptor` shape plus its key
-  constants, which `cook-register`'s `parse_member_source_meta` reads back
-  (COOK-390). The emitter and the consumer of each literal are one declaration
-  apart.
+  `CONFIG_DISPATCH_NAME`, `MAIN_PROGRAM_NAME`, `QUOTE_PARAM_NAME`, and the
+  `MemberSourceDescriptor` shape plus its key constants, which
+  `cook-register`'s `parse_member_source_meta` reads back (COOK-390). The
+  emitter and the consumer of each literal are one declaration apart. For
+  `__probe_subst` the whole call comes from there too — `probe_subst_call`,
+  because pairing the shared name with a privately spelled receiver and escape
+  at three sites is the same drift one step out (COOK-440).
+- Text this crate embeds in the generated program is quoted and escaped by
+  `cook_contracts::lua_string`, called by its own name: `literal` where the
+  value IS the literal, `escape_double_quoted` where a larger template supplies
+  the quotes around it. There is no crate-local escaper and deliberately no
+  crate-local alias for the contract one — a rename would put shared law beyond
+  the reach of a grep for it, which is how this crate and `cook-register` came
+  to disagree about carriage returns (COOK-398, COOK-440). Long-bracket
+  wrapping (`long_bracket::wrap_lua_string`, `lua_chunk_literal`) stays here:
+  choosing a bracket level no inner close can match is a lowering choice, not a
+  rule two crates must agree on.
 - It composes a shell block through the law and classifies quoting without
   performing it. The hand-rolled `"set -e\n" + join` here was the copy that
   actually reached `/bin/sh`, so a change to `shell_block::compose` would not
@@ -74,25 +86,36 @@ pre-pass for probe key-versus-field resolution, COOK-190).
 
 ## Boundary debt
 
-Two things sit here that the crate name does not cover, and both are named
-rather than defended:
+One entry, narrowed from what stood here:
 
-- **`lua_var` + `lua_scan` are static analysis of Lua, not generation**
-  (~640 LoC). `scan_var_reads` finds the cache determinants a `>{ … }` body
-  reads; `scan_probe_reads` finds its literal `cook.probes.get("k")` calls.
-  The second has exactly one consumer, `cook-register`'s `unit_api.rs:866`, so
-  a runtime crate depends on the codegen crate for a text scanner. It answers
-  the same question the sigil scanner in `cook_contracts::sigil` answers for
-  the shell surface ("what does this body consume?"), and it is pure, so by
-  the admission bar its home is `cook-contracts`, beside its twin.
-- **`probe::lower_produce` authors probe semantics as program text**
-  (probe.rs:104). The `tools { }` arm emits Lua that shells out to
-  `command -v` and `sha256sum … | cut -d' ' -f1` to build
-  `{ NAME = { hash = … } }`. `cook.tools.id` computes the same identity in
-  Rust through `cook_fingerprint::tool_identity`
-  (`cook-lua-stdlib/src/tools_api.rs:20`). Two implementations of one
-  decision, agreeing today only because both happen to be lowercase-hex
-  sha256, with no agreement test and no comment on either naming the other.
+- **`probe::lower_produce`'s `envs { }` arm still decides a value.** It emits
+  `os.getenv(NAME)` reads, while the probe's fingerprint reads the same
+  variables independently in Rust (`env_lookup`). That is the same shape as the
+  `tools { }` arm below, and it is left standing rather than defended because
+  the severity is genuinely not the same: both halves read one process's
+  environment through one mechanism, with no external utility, no second
+  resolver, and nothing platform-dependent between them. It is named so that
+  "none outstanding" is not claimed on this crate's behalf while a second
+  producer kind is still authored as program text.
+
+The entry that closed, recorded because the shape recurs:
+
+- **`probe::lower_produce` used to author probe semantics as program text.**
+  Its `tools { }` arm emitted Lua that shelled out to `command -v` and
+  `sha256sum … | cut -d' ' -f1` to build `{ NAME = { hash = … } }` — a second
+  implementation of an identity the probe's own fingerprint already computed
+  in Rust, in a different language, with a different resolver, at a different
+  moment in the run, agreeing only because both happened to land on
+  lowercase-hex SHA-256. It also could not run on a host without GNU
+  coreutils. CS-0214 retired it: the arm now emits the reserved
+  `@tools-identity` sentinel and the engine synthesises the value from the
+  same `inputs.tools` pairs the fingerprint folds, exactly as CS-0148 did for
+  `files { }`.
+
+  The general lesson is the one the crate's charter already states: when this
+  crate would have to *decide* what a value is, the emission is a declaration
+  and the decision belongs to whoever owns the value. Emitting a program that
+  computes it is how the decision gets implemented twice.
 
 ## Relationship to `cook-contracts`
 

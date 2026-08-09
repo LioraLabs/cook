@@ -67,6 +67,15 @@ invocation and renders what happened, as terminal output and an exit code.
   and a failed sweep to one warning line each, and its `published_count == 0`
   short-circuit precedes both the config load and the store walk, so a settled
   no-op build pays nothing for it (COOK-235).
+- **A report is turned into bytes in one file, and that file decides nothing.**
+  `why_render.rs` holds `cook why`'s determinant rendering — the plain-text
+  report, the selector's JSON document, and the per-unit encoder both JSON
+  paths share — while `pipeline.rs` registers the workspace, asks the engine,
+  and assembles the whole-closure document by joining that encoder's output to
+  the graph `cook-graph` rendered. The split is what keeps a renderer from
+  growing a `match` that reaches its own cache verdict, which is the failure
+  `cook dag` shipped with: a private classification that could report a hit the
+  run then rebuilt (CS-0171).
 
 ## What it does not do
 
@@ -77,6 +86,13 @@ the entry point and the register mode. It does not render the progress stream
 `--output`, TTY, and CI), store build logs (`cook-logs`), collapse a DAG to a
 level (`cook-graph`), or define anything two crates must agree on
 (`cook-contracts`).
+
+It does not manage packages. `cook modules` is a LuaRocks front end —
+manifest, lockfile, subprocess driver — that lived here until COOK-420 and
+never once touched `cook-engine`; it is `cook-modules` now, and this crate's
+whole involvement is one `Cmd::Modules` variant and one call. Five direct
+dependencies left with it (see the note in `Cargo.toml`), which is the honest
+measure of how little of it was ever CLI work.
 
 It does not run a shell command either, which is why a `CommandFailure` reaches
 `engine_error_to_cook_error` as wire text and is rendered here rather than
@@ -94,14 +110,6 @@ question in this crate has a second answer anywhere else, the answer belongs
 below, not here.
 
 ## Where it falls short of that
-
-`cook modules` is a LuaRocks package manager living inside the build tool's
-front end: manifest parsing, a lockfile with integrity verification and TOFU
-consent, and a subprocess driver, roughly 1,400 lines that never touch
-`cook-engine`. It carries its own error type (`anyhow`) and its own exit path
-(`std::process::exit(modules::run(args))` straight out of `dispatch`), so it
-sits outside `CookError`'s exit-code classification entirely. It is the "and"
-in this crate's one-thing statement, and it wants to be its own crate.
 
 Three decisions are currently implemented twice, each across a dependency edge
 that already exists:

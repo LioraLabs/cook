@@ -30,7 +30,7 @@ fn build_determinant_manifest_captures_resolved_determinants() {
     consulted.insert("CC".to_string(), "clang".to_string());
     let mut seal_keys = BTreeSet::new();
     seal_keys.insert("host".to_string());
-    let store = cook_luaotp::ProbeValueStore::new();
+    let store = cook_probe::store::ProbeValueStore::new();
     store.insert("host", b"\"x86_64-linux\"".to_vec());
 
     let m = build_determinant_manifest(
@@ -357,7 +357,7 @@ fn interactive_command_failure_uses_shared_json_contract() {
         23,
         &wd,
         &BTreeMap::new(),
-        &cook_luaotp::ProbeValueStore::new(),
+        &cook_probe::store::ProbeValueStore::new(),
     )
     .expect_err("interactive command should fail");
     let failure =
@@ -1898,7 +1898,7 @@ fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
         wd,
         Duration::from_millis(12),
         &[],
-        &cook_luaotp::ProbeValueStore::new(),
+        &cook_probe::store::ProbeValueStore::new(),
         &ctx,
         &published,
         &[],
@@ -1940,7 +1940,7 @@ fn a_producing_unit_still_publishes() {
         wd,
         Duration::from_millis(12),
         &[],
-        &cook_luaotp::ProbeValueStore::new(),
+        &cook_probe::store::ProbeValueStore::new(),
         &ctx,
         &published,
         &[],

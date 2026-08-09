@@ -181,7 +181,8 @@ pub struct Lookup {
     pub warnings: Vec<String>,
     /// `Some` when the value is already determined without running a VM:
     /// either the cache served it, or the producer kind is synthesised
-    /// (CS-0148 `files { }`). `None` means the caller must produce.
+    /// (CS-0148 `files { }`, CS-0214 `tools { }`). `None` means the caller
+    /// must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
 
@@ -232,6 +233,49 @@ pub fn lookup(
     for (name, _identity) in &inputs.tools {
         if let Some(path) = cook_cache::resolve_tool_path(name) {
             tool_paths.insert(name.clone(), path);
+        }
+    }
+
+    // 4b. CS-0214 §22.5.2: a `tools { }` producer fails, by name, when it
+    //     cannot obtain a declared tool's identity. The rule used to live
+    //     inside the emitted produce body, which put it behind the cache: a
+    //     stored value could serve a probe whose tool had since been
+    //     uninstalled. It is checked here, ahead of the GET, so it holds on hit
+    //     and miss alike.
+    //
+    //     Two ways to have no identity, and the second is the one that bites.
+    //     A name that does not resolve is the obvious case. A name that
+    //     RESOLVES but whose bytes cannot be read is the dangerous one:
+    //     `which` selects on `X_OK`, not `R_OK`, so an execute-only binary
+    //     gets past it, and `hash_file_sha256` answers the all-zero digest for
+    //     anything it cannot read. Rendering that into the value would put the
+    //     same 64 zeros in every such value, so two hosts each failing to read
+    //     a DIFFERENT toolchain would compose identical bytes and one could be
+    //     served the other's sealed artifact. The deleted Lua producer could
+    //     not reach this state — `sha256sum` exited non-zero and failed the
+    //     probe — and neither may this one.
+    //
+    //     Only the synthesised producer is subject to either check. A
+    //     hand-written body that happens to declare `inputs.tools` keeps
+    //     folding an absent tool as the all-zero digest, which is what §22.5.4
+    //     says it does; that probe's value is the author's to compute.
+    if is_tools_identity(probe) {
+        for (name, digest) in &inputs.tools {
+            let Some(path) = tool_paths.get(name) else {
+                return Err(ProbeError::Produce {
+                    key: key.to_string(),
+                    message: format!("tools probe: '{name}' not found on PATH"),
+                });
+            };
+            if digest == &[0u8; 32] {
+                return Err(ProbeError::Produce {
+                    key: key.to_string(),
+                    message: format!(
+                        "tools probe: '{name}' resolved to {path} but its bytes \
+                         could not be read, so it has no identity to record"
+                    ),
+                });
+            }
         }
     }
 
@@ -289,16 +333,21 @@ pub fn lookup(
         }
     }
 
-    // 6. Decide whether a VM is needed at all. A `files { }` probe never
-    //    reaches one: its produce string is the reserved `@files-manifest`
-    //    sentinel, deliberately not valid Lua so that a path which tried to run
-    //    it would fail loudly. The value is synthesised from the same path→hash
-    //    pairs the fingerprint's FILES section just folded, so every phase
-    //    agrees on it byte for byte.
+    // 6. Decide whether a VM is needed at all. Two producer kinds never reach
+    //    one: their produce strings are the reserved `@files-manifest` and
+    //    `@tools-identity` sentinels, deliberately not valid Lua so that a path
+    //    which tried to run one would fail loudly. Each value is synthesised
+    //    from the same pairs the fingerprint's FILES / TOOLS section just
+    //    folded, so trigger and value are one computation and every phase
+    //    agrees on the bytes.
     let resolved = match cached {
         Some(bytes) => Some((bytes, ValueSource::Cache)),
         None if is_files_manifest(probe) => Some((
             cook_contracts::probe_value::encode_files_manifest(&inputs.files),
+            ValueSource::Produced,
+        )),
+        None if is_tools_identity(probe) => Some((
+            cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
         None => None,
@@ -464,7 +513,7 @@ fn publish_module_manifest(
     let sets = cook_cache::merge_path_set(&existing, observed);
     let json = cook_cache::encode_path_sets(&sets);
     let mut meta = probe_artifact_meta(cook_cache::MODULE_INPUT_SETS_PATH, json.len());
-    meta.kind = Some("module_input_sets".to_string());
+    meta.kind = Some(cook_contracts::cache::cas::artifact_kind::MODULE_INPUT_SETS.to_string());
     match cook_cache::backend::put_bytes(access.backend, &manifest_key, &json, &mut meta) {
         Ok(()) => Vec::new(),
         Err(e) => vec![format!(
@@ -521,6 +570,11 @@ pub fn evaluate(
 /// CS-0148: a `files { }` producer is intercepted, never run.
 fn is_files_manifest(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+}
+
+/// CS-0214: a `tools { }` producer is intercepted, never run.
+fn is_tools_identity(probe: &ProbeUnit) -> bool {
+    probe.produce_source == cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE
 }
 
 /// Cache metadata for a stored probe value. Identical in both phases; it was

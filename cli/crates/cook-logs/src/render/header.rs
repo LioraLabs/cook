@@ -47,37 +47,26 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
     f.render_widget(Paragraph::new(line), area);
 }
 
+/// `ended - started` over the RFC-3339 timestamps `cook-progress` wrote.
+///
+/// Both the parse and the rendering are law with more than one end
+/// (`cook_contracts::timestamp`, `cook_contracts::render`): this crate reads
+/// what cook-progress wrote, so a private parse here is half a wire format.
+/// It used to be exactly that, and it faked the calendar as
+/// `(y*365 + m*31 + d)`, which made a one-second build spanning 28 February
+/// read as 72 hours (COOK-421).
 fn duration_str(started: &str, ended: Option<&str>) -> String {
     let Some(end) = ended else { return "(running…)".into() };
-    let parse = |s: &str| -> Option<i64> {
-        let s = s.trim_end_matches('Z');
-        let (date, time) = s.split_once('T')?;
-        let (y, rest) = date.split_once('-')?;
-        let (mo, d) = rest.split_once('-')?;
-        let mut parts = time.splitn(3, ':');
-        let h: i64 = parts.next()?.parse().ok()?;
-        let mi: i64 = parts.next()?.parse().ok()?;
-        let s_str = parts.next()?;
-        let (secs, frac_ms) = match s_str.split_once('.') {
-            Some((s, f)) => {
-                let s: i64 = s.parse().ok()?;
-                let mut f = f.to_string();
-                f.truncate(3);
-                while f.len() < 3 { f.push('0'); }
-                let f: i64 = f.parse().ok()?;
-                (s, f)
-            }
-            None => (s_str.parse().ok()?, 0i64),
-        };
-        let y: i64 = y.parse().ok()?;
-        let mo: i64 = mo.parse().ok()?;
-        let d: i64 = d.parse().ok()?;
-        Some(((y*365 + mo*31 + d)*86400 + h*3600 + mi*60 + secs)*1000 + frac_ms)
-    };
-    let (Some(a), Some(b)) = (parse(started), parse(end)) else {
+    let (Some(a), Some(b)) = (
+        cook_contracts::timestamp::parse_rfc3339_ms(started),
+        cook_contracts::timestamp::parse_rfc3339_ms(end),
+    ) else {
         return "(unknown duration)".into();
     };
-    let ms = (b - a).max(0);
     // COOK-392: THE duration law.
-    cook_contracts::render::duration_ms(ms as u64)
+    cook_contracts::render::duration_ms((b - a).max(0) as u64)
 }
+
+#[cfg(test)]
+#[path = "../tests/header_tests.rs"]
+mod tests;

@@ -32,7 +32,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cook_engine::cook_cache::backend::{EvictCandidate, EvictOutcome, EvictPolicy};
+use cook_contracts::cache::cas::EvictCandidate;
+use cook_contracts::evict::EvictPolicy;
+use cook_engine::cook_cache::backend::EvictOutcome;
 use cook_engine::cook_cache::CloudConfig;
 
 use crate::cache_du::{human_size, percent_used};

@@ -2,6 +2,7 @@
 
 pub mod observation;
 pub mod cas;
+pub mod local_key;
 pub mod record;
 pub mod step;
 

@@ -79,6 +79,20 @@ fn blocked_renders_single_line_cause() {
     assert!(out.contains("\nblocked:\n    r:t\n"), "{out}");
 }
 
+/// COOK-426 / CS-0215: `compose(&[])` is the bare `set -e` with no trailing
+/// newline, and its inverse is the empty body. This report kept a private
+/// stripper that only knew the `set -e\n` spelling, so an empty upstream
+/// block was quoted back at the reader as `set -e` — the exact edge
+/// `shell_block::strip_set_e` was written to settle.
+#[test]
+fn blocked_by_an_empty_block_quotes_nothing() {
+    let s = Style::new(false);
+    let r = mk_blocked("r:t", &cook_contracts::shell_block::compose(&[]));
+    let out = render(&[r], &|id| id.into(), &s);
+    assert!(!out.contains("set -e"), "{out}");
+    assert!(out.contains("blocked by upstream cook step: ``"), "{out}");
+}
+
 #[test]
 fn failed_sorted_before_timeout_and_alphabetical_within() {
     let s = Style::new(false);

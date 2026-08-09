@@ -71,10 +71,9 @@ pub fn register_dep_output_api(
         let global_key = resolve_global_key(&name, &qp, &aqp);
         let store = to.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&global_key).ok_or_else(|| {
-            mlua::Error::RuntimeError(format!(
-                "recipe '{}' has no terminal output (not registered or has no cook steps)",
-                name
-            ))
+            mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad);
         {
@@ -93,7 +92,7 @@ pub fn register_dep_output_api(
         }
         Ok(rewritten.join(" "))
     })?;
-    cook.set("dep_output", dep_output_fn)?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_NAME, dep_output_fn)?;
 
     // cook.dep_output_list(name) → Lua table
     // Same accumulation pattern as dep_output.
@@ -106,10 +105,9 @@ pub fn register_dep_output_api(
         let global_key = resolve_global_key(&name, &qp2, &aqp2);
         let store = to2.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&global_key).ok_or_else(|| {
-            mlua::Error::RuntimeError(format!(
-                "recipe '{}' has no terminal output (not registered or has no cook steps)",
-                name
-            ))
+            mlua::Error::RuntimeError(
+                cook_contracts::registration::no_terminal_output_message(&name),
+            )
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad2);
         {
@@ -132,7 +130,7 @@ pub fn register_dep_output_api(
         }
         Ok(table)
     })?;
-    cook.set("dep_output_list", dep_output_list_fn)?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_LIST_NAME, dep_output_list_fn)?;
 
     // cook.dep_order(name) → nil
     // COOK-297: the ordering-only counterpart of cook.dep_output. Records
@@ -227,7 +225,7 @@ pub fn register_member_output_api(
         }
         Ok(paths.join(" "))
     })?;
-    cook.set("dep_output_member", f)?;
+    cook.set(cook_contracts::registration::DEP_OUTPUT_MEMBER_NAME, f)?;
     Ok(())
 }
 

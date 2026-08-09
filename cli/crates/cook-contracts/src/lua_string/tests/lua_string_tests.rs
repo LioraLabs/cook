@@ -1,4 +1,4 @@
-use super::escape_double_quoted;
+use super::{escape_double_quoted, literal};
 
 #[test]
 fn passes_ordinary_text_through() {
@@ -65,4 +65,35 @@ fn output_carries_no_raw_control_bytes_or_bare_quotes() {
 #[test]
 fn multibyte_text_is_untouched() {
     assert_eq!(escape_double_quoted("caf\u{e9} \u{1f600}"), "caf\u{e9} \u{1f600}");
+}
+
+// ---------------------------------------------------------------------------
+// `literal` — the whole literal, quotes included (COOK-440)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn literal_wraps_ordinary_text_in_two_quotes() {
+    assert_eq!(literal("cc -c main.c"), "\"cc -c main.c\"");
+    assert_eq!(literal(""), "\"\"");
+}
+
+/// The point of owning the quotes: the only unescaped `"` in the result are
+/// the two the function put there. A caller that wraps an escaped string by
+/// hand can get this wrong; this function cannot.
+#[test]
+fn literal_quotes_the_ends_and_escapes_the_middle() {
+    assert_eq!(literal(r#"say "hi""#), r#""say \"hi\"""#);
+    assert_eq!(literal(r"C:\tmp"), r#""C:\\tmp""#);
+}
+
+#[test]
+fn literal_carries_no_raw_line_break() {
+    assert_eq!(literal("build\r\nlink"), "\"build\\r\\nlink\"");
+}
+
+/// Lua's decimal escape consumes up to three digits, so the padding matters
+/// inside the literal exactly as it does outside it.
+#[test]
+fn literal_pads_numeric_escapes_to_three_digits() {
+    assert_eq!(literal("\u{0}5"), "\"\\0005\"");
 }
