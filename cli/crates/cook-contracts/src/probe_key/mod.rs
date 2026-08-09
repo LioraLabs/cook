@@ -69,9 +69,10 @@ pub fn is_valid_bare(key: &str) -> bool {
 /// admitted, because an executable name may carry one and a tool name is
 /// never member-accessed.
 pub fn is_tool_name(s: &str) -> bool {
-    let mut chars = s.chars();
-    chars.next().is_some_and(is_head)
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    // App. A gives `TOOL_NAME` and `BARE_IDENTIFIER` the same regex; they are
+    // separate productions because they are reached from different places, not
+    // because the class differs (COOK-421).
+    crate::naming::is_bare_name(s)
 }
 
 /// The diagnostic for a bare key that does not match the grammar. One wording,

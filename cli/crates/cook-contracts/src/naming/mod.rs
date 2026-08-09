@@ -45,3 +45,39 @@ fn last_segment(name: &str) -> &str {
 #[cfg(test)]
 #[path = "tests/naming_tests.rs"]
 mod tests;
+
+// ---------------------------------------------------------------------------
+// The bare-name character class (COOK-421)
+// ---------------------------------------------------------------------------
+
+/// True when `c` may START a bare name: App. A's
+/// `BARE_IDENTIFIER ::= /[A-Za-z_][A-Za-z0-9_.\-]*/`, and `TOOL_NAME`, which
+/// is the same production under a different name.
+pub fn is_bare_name_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+/// True when `c` may CONTINUE a bare name.
+///
+/// One production, four spellings before this existed: `cook-lang`'s lexer
+/// (which parses `recipe NAME`, `chore NAME` and `config @NAME`),
+/// `cook-cli`'s argv partitioner (which decides whether `@foo.bar` is a preset
+/// selector), `probe_key::is_tool_name`, and a diagnostic heuristic in
+/// `cook-plan`. The lexer's and the CLI's are the pair that MUST agree — a
+/// preset name is declared in a Cookfile and selected on the command line, so
+/// a class the CLI admits and the parser refuses is a preset the user can name
+/// and cannot select.
+///
+/// The `.` is what separates this from a Lua identifier (§12.1's `LUA_IDENT`,
+/// which is `[A-Za-z0-9_]` only), and it is deliberate: a recipe name is
+/// dotted by workspace composition and an executable name may carry one.
+pub fn is_bare_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+/// True when `s` is a well-formed bare name: a start character followed by any
+/// number of continue characters, and not empty.
+pub fn is_bare_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(is_bare_name_start) && chars.all(is_bare_name_char)
+}

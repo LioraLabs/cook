@@ -389,9 +389,12 @@ fn partition_argv(
     Ok(PartitionedArgv { argv, preset })
 }
 
-fn is_preset_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
-}
+/// What may appear in a preset name after the `@`.
+///
+/// The same class the Cookfile lexer parses `config @NAME` with (App. A's
+/// `BARE_IDENTIFIER`), because these are the two ends of one fact: a preset is
+/// declared in a Cookfile and selected here (COOK-421).
+use cook_contracts::naming::is_bare_name_char as is_preset_char;
 
 /// Strip a leading `@` from a preset token when it has the `@<bare-ident>`
 /// shape (the same shape `partition_argv` recognises for the run path). A token

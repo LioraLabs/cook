@@ -121,13 +121,13 @@ fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
     Ok(())
 }
 
-fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_'
-}
-
-fn is_ident_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
-}
+/// App. A's `BARE_IDENTIFIER` / `TOOL_NAME` class, which is one production
+/// with several readers: this lexer parses `recipe NAME`, `chore NAME` and
+/// `config @NAME`, and `cook-cli`'s argv partitioner decides from the same
+/// class whether `@foo.bar` is a preset selector. A name this admits and the
+/// CLI refuses is a preset the user can declare and cannot select, so the
+/// class lives in `cook_contracts::naming` (COOK-421).
+use cook_contracts::naming::{is_bare_name_char as is_ident_char, is_bare_name_start as is_ident_start};
 
 /// One `PROBE_SEG` char (CS-0201). As [`is_ident_char`] but WITHOUT `.`.
 ///

@@ -323,6 +323,8 @@ path_segment          ::= /[^\s\n\/]+/
 path                  ::= /[^\s\n]+/   /* legacy form; import_path is the canonical path */
 
 **No '..' segment (normative).** A `path_segment` MUST NOT consist solely of two dot characters (`..`). The grammar's regex permits `..` syntactically; this rule eliminates it normatively. See §{comp.import}.
+
+**`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions above are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile may declare is a name some other surface refuses. In the reference implementation both, plus the CLI's `@PRESET` argv recognition, read `cook_contracts::naming::is_bare_name_char` — the class was written out at four sites until COOK-421, and the pair that mattered was the lexer's and the CLI's: a preset is declared in a Cookfile (`config @NAME`) and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use.
 comment               ::= /#[^\n]*/ NEWLINE
 NEWLINE               ::= /\n/
 LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */

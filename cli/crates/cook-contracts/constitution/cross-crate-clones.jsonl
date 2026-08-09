@@ -16,15 +16,17 @@
 #   - Short law. `replace('-', "_")` inlined four times is six tokens, far
 #     below any window that would not drown in false positives.
 #   - Dense copies. The `is_ascii_alphanumeric() || c == '_' || …` character
-#     class below is caught between cook-cli and cook-lang, where it is written
-#     across several lines. A THIRD copy of the same predicate exists at
-#     cook-contracts/src/probe_key/mod.rs:74 and cook-plan/src/registers.rs:627
-#     as a one-liner, and this rule cannot see it. It is real work either way.
+#     class was caught between cook-cli and cook-lang, where it was written
+#     across several lines, while two more copies of the same predicate sat at
+#     cook-contracts/src/probe_key/mod.rs and cook-plan/src/registers.rs as
+#     one-liners this rule cannot see. COOK-421 consolidated all four into
+#     cook_contracts::naming::is_bare_name_char, so the entry is gone -- but
+#     the blind spot it illustrated is not, and this is what it looks like:
+#     the rule found half a finding, and only a reader found the rest.
 #
 # Keyed on the files involved, not on the matching tokens, so editing inside a
 # known clone does not churn the baseline into a rewrite nobody reviews.
 
-{"key": "crates/cook-cli/src/main.rs == crates/cook-lang/src/lexer.rs", "sites": ["crates/cook-cli/src/main.rs:392", "crates/cook-lang/src/lexer.rs:128"], "why": "Debt: the character class that decides what may appear in a preset name, implemented by the lexer that parses one and again by the CLI that validates one. Grammar is admissible law in cook-contracts by the bar's own list, and the two ends disagreeing means a preset the CLI accepts and the parser refuses. A third copy exists as a one-liner this rule is too coarse to see."}
 {"key": "crates/cook-cli/src/pipeline.rs == crates/cook-engine/src/run.rs", "sites": ["crates/cook-cli/src/pipeline.rs:676", "crates/cook-engine/src/run.rs:349"], "why": "Debt: the empty RunResult, constructed field by field in the crate that defines it and again in the crate that calls it. A new field gets a value in one place and a default in the other, and nothing says which is right. The type should offer the empty value it wants callers to use."}
 {"key": "crates/cook-engine/src/executor.rs == crates/cook-shell/src/lib.rs", "sites": ["crates/cook-engine/src/executor.rs:141", "crates/cook-shell/src/lib.rs:141"], "why": "Debt: joining captured chunks of one stream into text, in the crate that captures them and in the crate that consumes them. cook-shell already owns the chunk type; the fold over it belongs there too, or with the chunk in cook-contracts."}
 {"key": "crates/cook-lua-stdlib/src/fs_api.rs == crates/cook-register/src/dep_output_api.rs", "sites": ["crates/cook-lua-stdlib/src/fs_api.rs:173", "crates/cook-register/src/dep_output_api.rs:130"], "why": "Debt, mild: filling a Lua table from a path list, including the 1-based index convention Lua requires. Small, but it is a marshalling rule with two authors, and cook-lua-stdlib is the declared home for Lua-touching law."}

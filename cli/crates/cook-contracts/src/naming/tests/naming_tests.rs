@@ -43,3 +43,44 @@ fn one_underscore_is_not_the_convention() {
     assert!(!is_internal_recipe("_private"));
     assert_eq!(internal_module_tag("_private"), None);
 }
+
+// ---------------------------------------------------------------------------
+// The bare-name character class (COOK-421)
+// ---------------------------------------------------------------------------
+
+use super::{is_bare_name, is_bare_name_char, is_bare_name_start};
+
+/// The class stated once as data, against App. A's
+/// `BARE_IDENTIFIER ::= /[A-Za-z_][A-Za-z0-9_.\-]*/`. Written out rather than
+/// derived from the predicate, so this test disagrees with the code when the
+/// code changes.
+#[test]
+fn the_bare_name_class_is_the_grammars_class() {
+    for c in "abzABZ_".chars() {
+        assert!(is_bare_name_start(c), "{c:?} may start a bare name");
+        assert!(is_bare_name_char(c), "{c:?} may continue one");
+    }
+    for c in "09-.".chars() {
+        assert!(!is_bare_name_start(c), "{c:?} may NOT start a bare name");
+        assert!(is_bare_name_char(c), "{c:?} may continue one");
+    }
+    for c in " \t/:*?\"'\\@$(){}[]#!,+=~%^&|<>;".chars() {
+        assert!(!is_bare_name_start(c), "{c:?} is outside the class");
+        assert!(!is_bare_name_char(c), "{c:?} is outside the class");
+    }
+    // Non-ASCII is outside it too: the production is spelled in ASCII ranges.
+    for c in "éü漢".chars() {
+        assert!(!is_bare_name_start(c));
+        assert!(!is_bare_name_char(c));
+    }
+}
+
+#[test]
+fn a_whole_bare_name_needs_a_start_character_and_is_never_empty() {
+    for good in ["a", "_x", "build", "rust.build", "cc-version", "node.js"] {
+        assert!(is_bare_name(good), "{good:?} is a bare name");
+    }
+    for bad in ["", "1build", "-x", ".x", "a b", "a/b", "cc:zlib"] {
+        assert!(!is_bare_name(bad), "{bad:?} is not a bare name");
+    }
+}
