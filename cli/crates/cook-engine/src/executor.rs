@@ -330,14 +330,14 @@ fn run_interactive_on_main(
     line: usize,
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> Result<(), String> {
     // CS-0193: substitute `$<key:field>` probe references before the spawn,
     // through the same CS-0192 renderer the worker pool uses — a probe ref
     // means the same thing in a chore step as in a cook body, including the
     // composite-value diagnostics. The register-phase scan (unit_api) gave
     // the unit its probe edges, so the values are materialised by now.
-    let cmd = &cook_luaotp::resolve_probe_sigils(probe_store, cmd)?;
+    let cmd = &cook_probe::sigil::resolve_probe_sigils(probe_store, cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
     cook_cache::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
@@ -745,7 +745,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
@@ -950,7 +950,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         use cook_contracts::cache::record::{cacheability, Cacheability};
         match cacheability(work_node.cache_meta.as_ref()) {
@@ -3194,7 +3194,7 @@ fn publish_completion(
     working_dir: &std::path::Path,
     duration: Duration,
     output_chunks: &[cook_contracts::OutputChunk],
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
     published: &AtomicU64,
     // CS-0204: the module files this unit's Lua body loaded, as reported by
@@ -3818,7 +3818,7 @@ fn build_determinant_manifest(
     empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,
     seal_keys: &std::collections::BTreeSet<String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
         inputs.iter().map(|fr| (fr.path.to_string(), fr.hash)).collect();

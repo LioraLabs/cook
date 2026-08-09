@@ -564,6 +564,7 @@ version = "0.14.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
+ "serde_json",
  "tempfile",
 ]
 

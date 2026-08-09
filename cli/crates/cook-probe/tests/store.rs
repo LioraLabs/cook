@@ -1,7 +1,28 @@
 use std::fs;
 use std::io::{Read, Seek};
 
-use cook_probe::store::materialize_value;
+use cook_probe::store::{materialize_value, ProbeValueStore};
+
+/// The point of COOK-422's move: the reader of `.cook/probes/<key>.json` and
+/// its writer are one crate, so what one writes the other reads without a
+/// third party agreeing on the filename. Before the move this could only be
+/// written as a cook-luaotp test reaching across a dev-dependency, which is
+/// the shape that let the two halves drift with nothing to fail.
+#[test]
+fn the_store_reads_back_what_materialize_value_wrote() {
+    let temp = tempfile::tempdir().unwrap();
+    let written = materialize_value(temp.path(), "cc:zlib", b"42\n").unwrap();
+
+    let store = ProbeValueStore::new();
+    store.attach_dir(temp.path().to_path_buf());
+
+    assert_eq!(store.get("cc:zlib"), Some(b"42\n".to_vec()));
+
+    // Read-through means read ONCE: the bytes are cached, so removing the
+    // file the writer made does not change the answer.
+    fs::remove_file(&written).unwrap();
+    assert_eq!(store.get("cc:zlib"), Some(b"42\n".to_vec()));
+}
 
 #[test]
 fn creates_directory_and_writes_exact_bytes_to_canonical_name() {

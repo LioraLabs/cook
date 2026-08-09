@@ -238,7 +238,7 @@ pub fn explain(
     }
     let dag = dag_builder::build_dag(all_units)?;
 
-    let probe_store = cook_luaotp::ProbeValueStore::new();
+    let probe_store = cook_probe::store::ProbeValueStore::new();
     if probes_dir.exists() {
         probe_store.attach_dir(probes_dir.to_path_buf());
     }
@@ -351,7 +351,7 @@ fn node_line(node: &WorkNode) -> u32 {
 fn resolve_unit_determinants(
     node: &WorkNode,
     meta: &cook_contracts::CacheMeta,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
     predictions: &Predictions,
 ) -> UnitDeterminants {
     let mut inputs = BTreeMap::new();
