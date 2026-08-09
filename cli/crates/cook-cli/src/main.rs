@@ -12,6 +12,7 @@ mod progress;
 mod test_reporter;
 mod test_state;
 mod watcher;
+mod why_render;
 
 use clap::CommandFactory;
 use cook_cli::diagnostics;
