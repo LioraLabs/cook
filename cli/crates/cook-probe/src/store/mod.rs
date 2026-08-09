@@ -102,24 +102,24 @@ impl ProbeValueStore {
         inner.map.insert(key.to_string(), bytes.clone());
         Some(bytes)
     }
-}
 
-/// CS-0157: a probe value's READ VIEW — the canonical value with this run's
-/// tool-path metadata merged in. The merge is
-/// `cook_contracts::probe_value::merge_tool_paths`, applied to the JSON
-/// value BEFORE any Lua conversion, so `cook.probes.get` and `$<key>`
-/// substitution (CS-0192) build the same view from the same bytes and
-/// cannot drift.
-pub fn read_view(
-    store: &ProbeValueStore,
-    key: &str,
-    bytes: &[u8],
-) -> Result<serde_json::Value, String> {
-    let mut value = cook_contracts::probe::value::decode_json(bytes)?;
-    if let Some(paths) = store.tool_paths(key) {
-        cook_contracts::probe::value::merge_tool_paths(&mut value, &paths);
+    /// CS-0157: a probe value's READ VIEW — the canonical value with this
+    /// run's tool-path metadata merged in. The merge is
+    /// `cook_contracts::probe::value::merge_tool_paths`, applied to the JSON
+    /// value BEFORE any Lua conversion, so `cook.probes.get` and `$<key>`
+    /// substitution (CS-0192) build the same view from the same bytes and
+    /// cannot drift.
+    ///
+    /// A method rather than a free function taking a store: the only thing
+    /// it reads is this store's `tool_paths`, and the two always travelled
+    /// together at every call site.
+    pub fn read_view(&self, key: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
+        let mut value = cook_contracts::probe::value::decode_json(bytes)?;
+        if let Some(paths) = self.tool_paths(key) {
+            cook_contracts::probe::value::merge_tool_paths(&mut value, &paths);
+        }
+        Ok(value)
     }
-    Ok(value)
 }
 
 /// CS-0152: what a reader is told when `key` (already the full,

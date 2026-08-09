@@ -6,7 +6,7 @@
 //! resolved by reading bytes and rendering them, and the phase that happens
 //! to be spawning the command is not part of the answer.
 
-use crate::store::{not_materialised_message, read_view, ProbeValueStore};
+use crate::store::{not_materialised_message, ProbeValueStore};
 
 /// Substitute `$<key:field[i]>` probe references in a command with their
 /// resolved values, immediately before the command is spawned (CS-0188).
@@ -51,7 +51,8 @@ pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String
         let bytes = store
             .get(r.key())
             .ok_or_else(|| not_materialised_message(r.key()))?;
-        let value = read_view(store, r.key(), &bytes)
+        let value = store
+            .read_view(r.key(), &bytes)
             .map_err(|e| format!("$<{}>: probe value decode failed: {e}", span.ident))?;
         out.push_str(&cook_contracts::sigil::subst::substitute(
             &value,

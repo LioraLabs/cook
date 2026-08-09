@@ -585,28 +585,7 @@ fn a_failing_command_reports_its_exit_code_on_the_result() {
 /// Submit a single LuaChunk work item that runs `code` on a worker VM,
 /// then return the resulting `WorkResult` for inspection.
 fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
-    let dir = TempDir::new().unwrap();
-    let (pool, rx) = WorkerPool::spawn(1);
-    pool.submit(WorkItem {
-        process_env_vars: HashMap::new(),
-        id: 0,
-        payload: WorkPayload::LuaChunk {
-            code: code.to_string(),
-            inputs: vec![],
-            outputs: vec![],
-            ingredient_groups: vec![],
-            step_kind: cook_contracts::StepKind::Cook,
-            is_chore: false,
-            line: 0,
-        },
-        recipe_name: "rec".to_string(),
-        working_dir: dir.path().to_path_buf(),
-        env_vars: HashMap::new(),
-        project_root: dir.path().to_path_buf(),
-    });
-    let result = rx.recv().unwrap();
-    pool.shutdown();
-    result
+    run_lua_chunk_in_worker_at_line(0, code)
 }
 
 /// As `run_lua_chunk_in_worker`, but with the originating step's Cookfile

@@ -894,7 +894,7 @@ fn install_execute_phase_cook_probes(
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
             Some(bytes) => {
-                let jv = cook_probe::store::read_view(&store_for_get, &key, &bytes)
+                let jv = store_for_get.read_view(&key, &bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.probes.get('{}'): decode failed: {}", key, e
                     )))?;
@@ -928,7 +928,7 @@ fn install_execute_phase_cook_probes(
             let full = cook_contracts::probe_key::scoped_key(&label_for_get, &key);
             match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
-                    let jv = cook_probe::store::read_view(&store_for_scoped_get, &full, &bytes)
+                    let jv = store_for_scoped_get.read_view(&full, &bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.probes.get('{}'): decode failed: {}", full, e
                         )))?;

@@ -449,14 +449,15 @@ use cook_contracts::shell_block::strip_set_e;
 
 fn render_command_failure(failure: &CommandFailure) -> String {
     let command = strip_set_e(failure.command());
-    let mut message = if failure.line() == 0 {
-        format!("command failed (exit {}): {command}", failure.exit_code())
-    } else {
-        format!(
-            "Cookfile:{}: command failed (exit {}): {command}",
-            failure.line(),
+    // CS-0211: the located/unlocated decision is `CommandFailure::located`,
+    // not a `== 0` test spelled here. It was spelled here and again in
+    // cook-engine's progress line, and the two disagreed.
+    let mut message = match failure.located() {
+        None => format!("command failed (exit {}): {command}", failure.exit_code()),
+        Some(line) => format!(
+            "Cookfile:{line}: command failed (exit {}): {command}",
             failure.exit_code()
-        )
+        ),
     };
     if !failure.stdout().is_empty() {
         message.push_str("\n--- stdout ---\n");

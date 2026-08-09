@@ -363,13 +363,20 @@ fn run_interactive_on_main(
 fn progress_error(error: &str) -> String {
     CommandFailure::from_wire(error).map_or_else(
         || error.to_owned(),
-        |failure| {
-            format!(
+        |failure| match failure.located() {
+            // CS-0211: an unlocatable failure is reported without a
+            // location, not with `line 0`.
+            Some(line) => format!(
                 "command at line {} exited with code {}: {}",
-                failure.line(),
+                line,
                 failure.exit_code(),
                 failure.command()
-            )
+            ),
+            None => format!(
+                "command exited with code {}: {}",
+                failure.exit_code(),
+                failure.command()
+            ),
         },
     )
 }
