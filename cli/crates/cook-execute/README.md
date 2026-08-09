@@ -93,15 +93,17 @@ whether a unit needed to run.
 
 ## What it does not do
 
-It does not decide what to run, in what order, or how many at once. It owns a
-queue and a thread count; readiness is `cook-dag`'s and scheduling is
-`cook-engine::executor`'s. It does not consult a cache or compute a
-fingerprint, and it does not decide whether a unit needed to run at all.
+It does not decide what to run, in what order, or how many at once — the split
+at the top of this file. It owns a queue and a thread count; readiness is
+`cook-dag`'s and scheduling is `cook-engine::executor`'s.
 
 It does not define the both-phase Lua surface or the sandbox policy: those are
 `cook-lua-stdlib`'s, and a fix to `fs.*` belongs there rather than here. It
 does not define contracts; `WorkPayload`, `WorkResult`'s chunks, `CommandFailure`,
-and the canonical probe-value encoding are all `cook-contracts`'.
+and the canonical probe-value encoding are all `cook-contracts`'. It does not
+own a probe's value: the store that reads `.cook/probes/<key>.json`, the
+CS-0157 read view, and the `$<key:field>` render are `cook-probe`'s, next to
+the function that writes the file.
 
 It does not spawn processes itself. Every spawn goes through `cook-shell`,
 which is also where the ordering guarantee lives; this crate only decides
