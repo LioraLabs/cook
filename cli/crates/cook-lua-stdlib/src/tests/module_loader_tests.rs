@@ -4,7 +4,7 @@
 //! §12.3.3's error-survival rule, resolution order, init(), hook ordering.
 //! Phase-specific obligations (module caches, current-module tracking, the
 //! register scope surface) are covered where they live, in
-//! `cook-register`'s and `cook-luaotp`'s own suites.
+//! `cook-register`'s and `cook-execute`'s own suites.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -358,7 +358,7 @@ fn renamed_cache_stub_errors_with_did_you_mean() {
 }
 
 // ---------------------------------------------------------------------------
-// refresh_package_search_paths (relocated from cook-luaotp with the fn)
+// refresh_package_search_paths (relocated from cook-execute with the fn)
 // ---------------------------------------------------------------------------
 
 #[test]

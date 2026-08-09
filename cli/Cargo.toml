@@ -10,7 +10,7 @@ members = [
     "crates/cook-dag",
     "crates/cook-luagen",
     "crates/cook-lua-stdlib",
-    "crates/cook-luaotp",
+    "crates/cook-execute",
     "crates/cook-register",
     "crates/cook-engine",
     "crates/cook-plan",

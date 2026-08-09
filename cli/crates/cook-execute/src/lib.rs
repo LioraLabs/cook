@@ -1,4 +1,4 @@
-//! cook-luaotp — a pool of worker threads, each with its own Lua VM,
+//! cook-execute — a pool of worker threads, each with its own Lua VM,
 //! that executes work items (shell commands, Lua chunks, tests).
 //!
 //! The shared `fs.*`, `path.*`, and `cook.platform.*` Lua API tables

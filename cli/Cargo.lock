@@ -455,7 +455,7 @@ dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-dag",
- "cook-luaotp",
+ "cook-execute",
  "cook-probe",
  "cook-shell",
  "filetime",
@@ -467,6 +467,20 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "xxhash-rust",
+]
+
+[[package]]
+name = "cook-execute"
+version = "0.14.0"
+dependencies = [
+ "cook-cache",
+ "cook-contracts",
+ "cook-lua-stdlib",
+ "cook-probe",
+ "cook-shell",
+ "mlua",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -528,20 +542,6 @@ dependencies = [
  "cook-contracts",
  "cook-lang",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "cook-luaotp"
-version = "0.14.0"
-dependencies = [
- "cook-cache",
- "cook-contracts",
- "cook-lua-stdlib",
- "cook-probe",
- "cook-shell",
- "mlua",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

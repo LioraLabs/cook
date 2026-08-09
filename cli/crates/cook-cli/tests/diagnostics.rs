@@ -46,7 +46,7 @@ fn config_bare_value_gets_did_you_mean_and_no_traceback() {
 
 /// COOK-191 Task 5 / CS-0126 repro 2: an execute-phase `>` Lua step that
 /// errors must report `Cookfile:LINE:` — not the opaque
-/// `[string "crates/cook-luaotp/src/pool.rs:..."]` chunk name — and must
+/// `[string "crates/cook-execute/src/pool.rs:..."]` chunk name — and must
 /// not print a traceback by default.
 #[test]
 fn execute_phase_lua_error_is_source_mapped_and_clean() {

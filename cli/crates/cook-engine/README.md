@@ -81,7 +81,7 @@ dependency closure, so an engine that cannot even name `register_cookfile`
 is uncompilable into re-opening registration mid-walk — the two-phase law
 held by the crate graph, not by convention. Consequently it never parses a
 Cookfile or generates its Lua: `cook-lang` and `cook-luagen` are not in its
-closure at all. It does not own a worker VM (`cook-luaotp`), a
+closure at all. It does not own a worker VM (`cook-execute`), a
 cache backend or store layout (`cook-cache`), or a process spawn
 (`cook-shell`). It defines no contracts; `CacheMeta`, `WorkPayload`,
 `Sharing`, the cacheability classification, and the fingerprint and key law

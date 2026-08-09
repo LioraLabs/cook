@@ -1,6 +1,6 @@
-# cook-luaotp
+# cook-execute
 
-`cook-luaotp` runs one captured work item and reports what it did. It is the
+`cook-execute` runs one captured work item and reports what it did. It is the
 execute phase's Lua host: N worker threads, one `mlua` VM each, one `WorkItem`
 in and one `WorkResult` out.
 

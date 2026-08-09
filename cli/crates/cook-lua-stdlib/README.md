@@ -2,14 +2,14 @@
 
 `cook-lua-stdlib` is the one implementation of everything Cook's two Lua VMs do
 identically: the register-phase VM (`cook-register`) and the execute-phase
-worker VMs (`cook-luaotp`) install the same surface from here, so behaviour the
+worker VMs (`cook-execute`) install the same surface from here, so behaviour the
 Standard marks **Phase: Both** cannot be taught to one phase and not the other.
 
 ## How it does that well
 
 - It abstracts the *only* real difference between the two callers instead of
   forking on it. `cook-register` knows its working directory at VM creation and
-  never changes it; a `cook-luaotp` worker is reused across items from different
+  never changes it; a `cook-execute` worker is reused across items from different
   Cookfiles (CS-0017 imports), so its cwd moves per item. [`WorkingDirSource`]
   is `Static` or `Live`, `Live` resolves on every call, and one `fs_api` serves
   both. [`SandboxSource`] mirrors the split so the policy is per work item too.
@@ -17,7 +17,7 @@ Standard marks **Phase: Both** cannot be taught to one phase and not the other.
   serialize probe values into the same store and the same `seal_contribution`
   fingerprint, so they must agree byte-for-byte; they used to be
   manually-synchronized twins in `cook_register::probe_value` and
-  `cook_luaotp::probe_value`, plus a third weaker walker on the module-export
+  `cook_execute::probe_value`, plus a third weaker walker on the module-export
   path that turned a number outside i64/f64 range into `0.0` where the twins
   raised. The twins are now re-export shims and the agreement test runs two
   independently-created VMs to identical canonical bytes.
@@ -61,7 +61,7 @@ control of construction, `package.path`, module loading, and globals layout.
 It does not host phase-specific surfaces. `cook.sh`, `cook.probes`,
 `cook.export`/`cook.import`, `cook.add_unit`, and the registration verbs differ
 in mechanism between phases (a register-phase pre-pass store versus a worker's
-`SharedProbeValueStore`), so they stay in `cook-register` and `cook-luaotp`.
+`SharedProbeValueStore`), so they stay in `cook-register` and `cook-execute`.
 The line is mechanism, not spelling: when only the spelling differs, it belongs
 here.
 

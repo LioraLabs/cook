@@ -20,7 +20,7 @@ embedded Lua state.
 - Upstream crate: `lua-src` v547.0.0 (encodes Lua 5.4.7).
 - Pinned via: `mlua = "0.10"` (`vendored` feature) in
   `cli/crates/cook-register/Cargo.toml`,
-  `cli/crates/cook-luaotp/Cargo.toml`,
+  `cli/crates/cook-execute/Cargo.toml`,
   `cli/crates/cook-lua-stdlib/Cargo.toml`.
 - Recorded in `cli/Cargo.lock`.
 - `lua.c` and `luac.c` taken from

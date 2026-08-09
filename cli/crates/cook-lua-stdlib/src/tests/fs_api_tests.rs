@@ -83,7 +83,7 @@ fn static_exists_reports_present_and_missing() {
     assert!(!no);
 }
 
-// ---- Live-source tests (cook-luaotp call pattern, CS-0017) -------
+// ---- Live-source tests (cook-execute call pattern, CS-0017) -------
 
 /// The live source must reflect post-registration mutations to the
 /// shared slot — this is the CS-0017 multi-Cookfile imports

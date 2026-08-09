@@ -1,8 +1,8 @@
 [package]
-name = "cook-luaotp"
+name = "cook-execute"
 version.workspace = true
 edition = "2021"
-description = "Worker pool with per-thread Lua VMs for the Cook build system"
+description = "Runs one captured work item and reports what it did: the execute phase's Lua host"
 
 [dependencies]
 cook-cache = { path = "../cook-cache" }

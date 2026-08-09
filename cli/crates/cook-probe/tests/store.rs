@@ -6,8 +6,8 @@ use cook_probe::store::{materialize_value, ProbeValueStore};
 /// The point of COOK-422's move: the reader of `.cook/probes/<key>.json` and
 /// its writer are one crate, so what one writes the other reads without a
 /// third party agreeing on the filename. Before the move this could only be
-/// written as a cook-luaotp test reaching across a dev-dependency, which is
-/// the shape that let the two halves drift with nothing to fail.
+/// written as an execute-phase-VM test reaching across a dev-dependency,
+/// which is the shape that let the two halves drift with nothing to fail.
 #[test]
 fn the_store_reads_back_what_materialize_value_wrote() {
     let temp = tempfile::tempdir().unwrap();

@@ -22,7 +22,7 @@ pub mod var_api;
 // Lua API surface (CS-0044). The implementation lives in
 // `cook-lua-stdlib` so the same closures register in both the
 // register-phase VM (here) and the execute-phase worker VMs in
-// `cook-luaotp`. Re-exports preserve the historical
+// `cook-execute`. Re-exports preserve the historical
 // `cook_register::register_{fs,path}_api` import paths used by the
 // engine module.
 pub use cook_lua_stdlib::{register_fs_api, register_path_api, register_platform_api};

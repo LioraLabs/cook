@@ -714,7 +714,7 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
 
 /// `cook.sh` at register phase (§{lua.cook-sh}).
 ///
-/// The twin of `cook_luaotp::pool`'s worker-phase implementation, and this
+/// The twin of `cook_execute::pool`'s worker-phase implementation, and this
 /// milestone opened by naming them: "Command-failure formatting was fixed in
 /// one producer while its twin remained broken." They are no longer twins.
 /// Both call the one primitive, which builds the `CommandFailure` for both, so

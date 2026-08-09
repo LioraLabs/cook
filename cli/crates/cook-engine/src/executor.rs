@@ -2,7 +2,7 @@
 //!
 //! Executes all nodes in a `Dag<WorkNode>` respecting dependency order.
 //! Pre-satisfied (cached) nodes are completed immediately. Real work nodes
-//! are dispatched to the `cook_luaotp::WorkerPool`. Interactive nodes are
+//! are dispatched to the `cook_execute::WorkerPool`. Interactive nodes are
 //! queued and run on the main thread after the pool drains.
 
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ use cook_cache::{
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
 use cook_dag::Dag;
-use cook_luaotp::{WorkItem, WorkerPool};
+use cook_execute::{WorkItem, WorkerPool};
 
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
@@ -441,7 +441,7 @@ pub fn execute_dag(
     cache_ctx: Arc<CacheContext>,
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
-    dep_outputs: cook_luaotp::WorkerDepOutputs,
+    dep_outputs: cook_execute::WorkerDepOutputs,
     published: &AtomicU64,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
@@ -2820,7 +2820,7 @@ pub fn execute_dag(
                     node_name: result.node_name.clone(),
                     // Real per-unit wall time measured by the worker around
                     // execution (queue wait excluded) — see
-                    // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                    // `WorkResult::duration` in cook-execute/src/pool.rs.
                     elapsed: result.duration,
                     kind: node_kind_for_node(work_node),
                     cache_key: node_cache_key(work_node),
@@ -3057,7 +3057,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
@@ -3114,7 +3114,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
