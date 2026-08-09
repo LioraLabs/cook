@@ -6,7 +6,7 @@ use cook_lang::ast::*;
 use crate::cook_step::{generate_cook_step, generate_member_fanout_cook_step};
 use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
-use crate::resolver::{IterMode, OutputShape, ResolveCtx};
+use crate::resolver::{accessor_ref, IterMode, OutputShape, ResolveCtx};
 use crate::sigil;
 use crate::template::ConsultedEnv;
 use crate::test_step;
@@ -194,18 +194,15 @@ fn check_output_pattern_no_bare_accessors(
         let inner = span.ident.as_str();
 
 
-        match inner {
-            "stem" | "name" | "ext" | "dir" => {
-                return Err(CodegenError::PlaceholderViolation {
-                    recipe: recipe.to_string(),
-                    message: format!(
-                        "bare $<{inner}> in output pattern is not supported; \
-                         use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
-                    ),
-                    line,
-                });
-            }
-            _ => {}
+        if ACCESSORS.contains(&inner) {
+            return Err(CodegenError::PlaceholderViolation {
+                recipe: recipe.to_string(),
+                message: format!(
+                    "bare $<{inner}> in output pattern is not supported; \
+                     use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
+                ),
+                line,
+            });
         }
 
         // Standard §5.4: bare `$<lib>` (no accessor) referring to an
@@ -638,12 +635,8 @@ fn collect_drivers(
             continue;
         }
         for token in extract_sigil_tokens(pat.as_str()) {
-            if let Some(dot) = token.rfind('.') {
-                let prefix = &token[..dot];
-                let suffix = &token[dot + 1..];
-                if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
-                    drivers.insert(prefix.to_string());
-                }
+            if let Some(r) = accessor_ref(&token, recipe_names) {
+                drivers.insert(r.name.to_string());
             }
         }
     }
@@ -659,17 +652,12 @@ fn check_command(
     line: usize,
 ) -> Result<(), CodegenError> {
     for token in extract_sigil_tokens(command) {
-        if let Some(dot) = token.rfind('.') {
-            let prefix = &token[..dot];
-            let suffix = &token[dot + 1..];
-            if ACCESSORS.contains(&suffix)
-                && recipe_names.contains(prefix)
-                && !drivers.contains(prefix)
-            {
+        if let Some(r) = accessor_ref(&token, recipe_names) {
+            if !drivers.contains(r.name) {
                 return Err(CodegenError::AccessorWithoutDriver {
                     referrer: referrer.to_string(),
-                    referent: prefix.to_string(),
-                    accessor: suffix.to_string(),
+                    referent: r.name.to_string(),
+                    accessor: r.accessor.to_string(),
                     surface,
                     line,
                 });
