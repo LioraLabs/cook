@@ -2,7 +2,7 @@
 //!
 //! Executes all nodes in a `Dag<WorkNode>` respecting dependency order.
 //! Pre-satisfied (cached) nodes are completed immediately. Real work nodes
-//! are dispatched to the `cook_luaotp::WorkerPool`. Interactive nodes are
+//! are dispatched to the `cook_execute::WorkerPool`. Interactive nodes are
 //! queued and run on the main thread after the pool drains.
 
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ use cook_cache::{
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
 use cook_dag::Dag;
-use cook_luaotp::{WorkItem, WorkerPool};
+use cook_execute::{WorkItem, WorkerPool};
 
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
@@ -330,14 +330,14 @@ fn run_interactive_on_main(
     line: usize,
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> Result<(), String> {
     // CS-0193: substitute `$<key:field>` probe references before the spawn,
     // through the same CS-0192 renderer the worker pool uses — a probe ref
     // means the same thing in a chore step as in a cook body, including the
     // composite-value diagnostics. The register-phase scan (unit_api) gave
     // the unit its probe edges, so the values are materialised by now.
-    let cmd = &cook_luaotp::resolve_probe_sigils(probe_store, cmd)?;
+    let cmd = &cook_probe::sigil::resolve_probe_sigils(probe_store, cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
     cook_cache::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
@@ -363,13 +363,20 @@ fn run_interactive_on_main(
 fn progress_error(error: &str) -> String {
     CommandFailure::from_wire(error).map_or_else(
         || error.to_owned(),
-        |failure| {
-            format!(
+        |failure| match failure.located() {
+            // CS-0211: an unlocatable failure is reported without a
+            // location, not with `line 0`.
+            Some(line) => format!(
                 "command at line {} exited with code {}: {}",
-                failure.line(),
+                line,
                 failure.exit_code(),
                 failure.command()
-            )
+            ),
+            None => format!(
+                "command exited with code {}: {}",
+                failure.exit_code(),
+                failure.command()
+            ),
         },
     )
 }
@@ -441,7 +448,7 @@ pub fn execute_dag(
     cache_ctx: Arc<CacheContext>,
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
-    dep_outputs: cook_luaotp::WorkerDepOutputs,
+    dep_outputs: cook_execute::WorkerDepOutputs,
     published: &AtomicU64,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
@@ -745,7 +752,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
@@ -950,7 +957,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
-        probe_store: &cook_luaotp::ProbeValueStore,
+        probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
         use cook_contracts::cache::record::{cacheability, Cacheability};
         match cacheability(work_node.cache_meta.as_ref()) {
@@ -2820,7 +2827,7 @@ pub fn execute_dag(
                     node_name: result.node_name.clone(),
                     // Real per-unit wall time measured by the worker around
                     // execution (queue wait excluded) — see
-                    // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                    // `WorkResult::duration` in cook-execute/src/pool.rs.
                     elapsed: result.duration,
                     kind: node_kind_for_node(work_node),
                     cache_key: node_cache_key(work_node),
@@ -3057,7 +3064,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
@@ -3114,7 +3121,7 @@ pub fn execute_dag(
                         node_name: result.node_name.clone(),
                         // Real per-unit wall time measured by the worker
                         // around execution (queue wait excluded) — see
-                        // `WorkResult::duration` in cook-luaotp/src/pool.rs.
+                        // `WorkResult::duration` in cook-execute/src/pool.rs.
                         elapsed: result.duration,
                         error: progress_error(&err_msg),
                     },
@@ -3194,7 +3201,7 @@ fn publish_completion(
     working_dir: &std::path::Path,
     duration: Duration,
     output_chunks: &[cook_contracts::OutputChunk],
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
     published: &AtomicU64,
     // CS-0204: the module files this unit's Lua body loaded, as reported by
@@ -3818,7 +3825,7 @@ fn build_determinant_manifest(
     empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,
     seal_keys: &std::collections::BTreeSet<String>,
-    probe_store: &cook_luaotp::ProbeValueStore,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
         inputs.iter().map(|fr| (fr.path.to_string(), fr.hash)).collect();

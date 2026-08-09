@@ -819,7 +819,7 @@ const STRATA: [(&str, &[&str]); 6] = [
             "cook-logs",
         ],
     ),
-    ("execution", &["cook-luaotp", "cook-register"]),
+    ("execution", &["cook-execute", "cook-register"]),
     ("orchestration", &["cook-engine", "cook-plan"]),
     ("surface", &["cook-cli"]),
 ];

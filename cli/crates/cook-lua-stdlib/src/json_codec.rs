@@ -3,11 +3,11 @@
 //! One validating `lua_to_json` and one `json_to_lua`, shared by the
 //! register-phase VM (cook-register: probe pre-pass, `cook.export`,
 //! module-context `cook.probes.set`) and every execute-phase worker VM
-//! (cook-luaotp: probe dispatch, `cook.probes.get`). The two phases
+//! (cook-execute: probe dispatch, `cook.probes.get`). The two phases
 //! serialize probe values into the SAME store and the SAME
 //! `seal_contribution` fingerprint, so they must agree byte-for-byte;
 //! before COOK-388 they were manually-synchronized copies in
-//! `cook_register::probe_value` and `cook_luaotp::probe_value`, and a
+//! `cook_register::probe_value` and `cook_execute::probe_value`, and a
 //! third, weaker walker on the module-export path silently dropped what
 //! this one rejects.
 //!

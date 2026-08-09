@@ -240,7 +240,7 @@ Zero-work recipes (meta-targets whose body only declares `: dep` edges) never pr
 `execute_dag` drives the wave's work-unit DAG. Briefly:
 
 1. **Empty / cycle checks.** Empty DAG returns `Ok(vec![])`. `dag.validate()` defensively guards against cycles.
-2. **Worker pool.** `cook_luaotp::WorkerPool::spawn(num_workers)` starts `N` threads. Each worker owns its own `mlua::Lua` VM and pulls `WorkItem`s off a `(Mutex<VecDeque>, Condvar)` queue; results return on an mpsc channel.
+2. **Worker pool.** `cook_execute::WorkerPool::spawn(num_workers)` starts `N` threads. Each worker owns its own `mlua::Lua` VM and pulls `WorkItem`s off a `(Mutex<VecDeque>, Condvar)` queue; results return on an mpsc channel.
 3. **Seed.** `dag.initial_ready()` (`executor.rs:978`) returns every node with zero remaining deps; each goes through `process_ready` which dispatches by payload kind: `None` (presatisfied / cache hit) is completed inline; `Interactive` is queued for main-thread execution; anything else is submitted to the pool.
 4. **Main loop** (`executor.rs:1001`). The thread blocks on the result channel. On success it calls `dag.complete(id)` and dispatches newly-ready nodes; on failure it accumulates the failure and calls `cancel_subtree` to mark transitive dependents as cancelled (and synthesize `Blocked` test results for `cook test`).
 5. **Interactive / chore window.** When the pool is drained and the interactive queue is non-empty, the main thread runs the queued node directly with stdin attached. Chore bodies are emitted as a linear chain of interactive units bracketed by `_enter_chore` / `_exit_chore` and drain together as a single window with one `InteractiveStart` / `InteractiveEnd` pair (CS-0051).

@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use cook_contracts::{StepKind, WorkPayload};
-use crate::store::ProbeValueStore;
+use cook_probe::store::ProbeValueStore;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -89,13 +89,14 @@ pub struct WorkResult {
     /// as it was before CS-0204.
     pub module_inputs: Vec<String>,
     /// Wall-clock span of the actual work-item execution, measured by the
-    /// worker around the `execute_work_item` dispatch (queue wait
-    /// excluded). Measured for every payload kind so a unit's completion
-    /// line reports real elapsed time instead of a hardcoded zero. Individual `execute_*` helpers set this to
-    /// `Duration::ZERO` in their returned literals; `worker_loop`
-    /// overwrites it with the measured span for every outcome (success,
-    /// failure, and the worker-panic recovery path) before sending the
-    /// result, so the placeholder value never reaches the engine.
+    /// worker around the `execute_work_item` dispatch (queue wait excluded)
+    /// for every payload kind, so a unit's completion line reports real
+    /// elapsed time.
+    ///
+    /// The `Duration::ZERO` each `execute_*` helper puts in its returned
+    /// literal is a placeholder: `worker_loop` overwrites it with the
+    /// measured span on every path out, the panic-recovery path included,
+    /// so it can never reach the engine.
     pub duration: Duration,
 }
 
@@ -504,63 +505,6 @@ fn worker_loop(
     }
 }
 
-/// Substitute `$<key:field[i]>` probe references in a command with their
-/// resolved values, immediately before the command is spawned (CS-0188).
-///
-/// Before CS-0188 this happened by rewriting the command, at register phase,
-/// into a Lua chunk that read each value and called `cook.sh` with the result.
-/// The rewrite is gone; the substitution is not, because §22.5.7 still requires
-/// it and a probe's value is execute-phase, so here is the only phase it can
-/// happen in.
-///
-/// **The rendering is the Standard's, computed in Rust (CS-0192).** Each
-/// reference addresses the value's read view — canonical JSON plus the
-/// CS-0157 tool-path annotation, built by the same function that builds it
-/// for `cook.probes.get` — and renders through `cook_contracts::sigil::subst`,
-/// the one place §22.5.7's rules live. No VM is in the loop. Before CS-0192
-/// the walk read through `cook.probes.get` and finished with Lua's
-/// `tostring`, under which a table interpolated its heap address (different
-/// bytes on the same command line every run) and an absent member the four
-/// bytes `nil`.
-///
-/// A command with no probe reference is returned untouched, and a non-probe
-/// `$<...>` span is left literal, both matching what the rewrite did.
-pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String, String> {
-    let spans = cook_contracts::sigil::scan(cmd);
-    if spans.is_empty() {
-        return Ok(cmd.to_string());
-    }
-    let refs: Vec<_> = spans
-        .iter()
-        .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident).map(|r| (s, r)))
-        .collect();
-    if refs.is_empty() {
-        return Ok(cmd.to_string());
-    }
-
-    let mut out = String::with_capacity(cmd.len());
-    let mut cursor = 0usize;
-    for (span, r) in refs {
-        out.push_str(&cmd[cursor..span.range.start]);
-
-        // An unmaterialised key is the CS-0152 diagnostic, the same text
-        // `cook.probes.get` raises for the same miss.
-        let bytes = store
-            .get(r.key())
-            .ok_or_else(|| probe_not_materialised_message(r.key()))?;
-        let value = read_view(store, r.key(), &bytes)
-            .map_err(|e| format!("$<{}>: probe value decode failed: {e}", span.ident))?;
-        out.push_str(&cook_contracts::sigil::subst::substitute(
-            &value,
-            r.path(),
-            &span.ident,
-        )?);
-        cursor = span.range.end;
-    }
-    out.push_str(&cmd[cursor..]);
-    Ok(out)
-}
-
 /// Replace `print` and `io.write` on a worker VM so what a Lua body prints
 /// reaches the active unit's sink instead of the process's fd 1 (CS-0188).
 ///
@@ -645,6 +589,14 @@ fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
 // Per-worker cook table registration
 // ---------------------------------------------------------------------------
 
+/// The chunk name every execute-phase Lua body is loaded under (CS-0126).
+/// `execute_lua_chunk` newline-pads a body to its step's Cookfile line and
+/// names it this, so a Lua error reads `Cookfile:LINE:` instead of the
+/// opaque `[string "…"]:1:` — and so a stack walk looking for this name
+/// finds the body's real Cookfile line. Spelled once because the padding and
+/// the walk have to agree.
+const COOKFILE_CHUNK_NAME: &str = "@Cookfile";
+
 fn register_worker_cook_table(
     lua: &mlua::Lua,
     current_working_dir: &Arc<Mutex<PathBuf>>,
@@ -671,11 +623,21 @@ fn register_worker_cook_table(
     let penv = Arc::clone(current_process_env_vars);
     let sink = Arc::clone(current_output);
     let capture = Arc::clone(current_capture);
-    let sh_fn = lua.create_function(move |_, cmd: String| {
+    let sh_fn = lua.create_function(move |lua, cmd: String| {
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
         let to_terminal = !capture.load(Ordering::Relaxed);
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, 0, to_terminal)
+        // COOK-422: which Cookfile line this call is on. A failure carrying
+        // a line renders `Cookfile:LINE: command failed …`; one carrying 0
+        // renders with no location, which is what every execute-phase
+        // `cook.sh` failure did while this argument was a literal `0`. The
+        // walk is the register phase's, shared rather than copied; the only
+        // execute-phase part is the chunk name to look for, which is the one
+        // `execute_lua_chunk` pads and loads bodies under. A body the worker
+        // cannot line-map (a probe `produce`, named for its probe) yields
+        // `None` and the location-free rendering, which is the honest answer.
+        let line = cook_lua_stdlib::caller_line_in_source(lua, COOKFILE_CHUNK_NAME).unwrap_or(0);
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal)
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -884,25 +846,13 @@ fn register_worker_cook_table(
     Ok(())
 }
 
-/// CS-0152: build the runtime error `cook.probes.get`/scoped `get` raise
-/// when `key` (already the full, scope-prefixed key if applicable) has
-/// never been materialised in the probe-value store. Shared by the
-/// unscoped and scoped `get` implementations so the two diagnostics stay
-/// in lockstep.
+/// CS-0152: the runtime error `cook.probes.get`/scoped `get` raise when
+/// `key` (already the full, scope-prefixed key if applicable) has never been
+/// materialised. Only the mlua wrapping is here — the sentence itself is
+/// `cook_probe::store::not_materialised_message`, which `$<key>`
+/// substitution raises for the same miss outside any VM.
 fn probe_not_materialised_error(key: &str) -> mlua::Error {
-    mlua::Error::runtime(probe_not_materialised_message(key))
-}
-
-/// The CS-0152 diagnostic text, shared with `$<key>` substitution
-/// (`resolve_probe_sigils`), which reads the same store outside any VM.
-fn probe_not_materialised_message(key: &str) -> String {
-    format!(
-        "cook.probes.get(\"{key}\"): probe value not materialised — this step never \
-         demanded probe '{key}'. Reference the probe in this step (a $<key> sigil in a \
-         shell body, or probes = {{...}} on cook.add_unit), declare it in the probe's \
-         `inputs.requires` (when reading from a probe produce body), or seal it \
-         (seal {{ \"{key}\" }}) so it is scheduled before this step runs."
-    )
+    mlua::Error::runtime(cook_probe::store::not_materialised_message(key))
 }
 
 /// The CS-0074 rejection `cook.probes.set` and scoped `set` both raise on
@@ -927,20 +877,6 @@ fn probes_set_deprecated_error() -> mlua::Error {
 /// `nil` with no error — that boundary is load-bearing for probe produce
 /// bodies (`cook.probes.get(KEY) or { ... }`).
 ///
-/// CS-0157: build a probe value's READ VIEW — the canonical value with the
-/// per-run tool-path metadata merged in — from the store's bytes. The merge
-/// itself is `cook_contracts::probe_value::merge_tool_paths`, the one
-/// function `$<key>` substitution also builds its view through (CS-0192), so
-/// the Lua view and the sigil view cannot drift. Applied on the JSON value
-/// BEFORE `json_to_lua`, not on the Lua table after it.
-fn read_view(store: &ProbeValueStore, key: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
-    let mut value = cook_contracts::probe_value::decode_json(bytes)?;
-    if let Some(paths) = store.tool_paths(key) {
-        cook_contracts::probe_value::merge_tool_paths(&mut value, &paths);
-    }
-    Ok(value)
-}
-
 /// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
 /// it raises a runtime error directing the author to use `cook.probe` instead.
 ///
@@ -958,7 +894,7 @@ fn install_execute_phase_cook_probes(
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
             Some(bytes) => {
-                let jv = read_view(&store_for_get, &key, &bytes)
+                let jv = store_for_get.read_view(&key, &bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.probes.get('{}'): decode failed: {}", key, e
                     )))?;
@@ -992,7 +928,7 @@ fn install_execute_phase_cook_probes(
             let full = cook_contracts::probe_key::scoped_key(&label_for_get, &key);
             match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
-                    let jv = read_view(&store_for_scoped_get, &full, &bytes)
+                    let jv = store_for_scoped_get.read_view(&full, &bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.probes.get('{}'): decode failed: {}", full, e
                         )))?;
@@ -1352,7 +1288,7 @@ fn execute_shell(
     // rewriting the command into Lua; it does not, so it happens here, where
     // the values exist. The rendering is CS-0192's, computed in Rust — no VM
     // in the loop, so the error is already clean text, never a Lua traceback.
-    let cmd = match resolve_probe_sigils(probe_store, cmd) {
+    let cmd = match cook_probe::sigil::resolve_probe_sigils(probe_store, cmd) {
         Ok(resolved) => resolved,
         Err(e) => {
             return WorkResult {
@@ -1564,17 +1500,22 @@ fn execute_lua_chunk(
         } else {
             code
         };
-        lua.load(src).set_name("@Cookfile").exec()?;
+        lua.load(src).set_name(COOKFILE_CHUNK_NAME).exec()?;
         Ok(())
     };
 
     let result = setup();
 
-    // Flush this worker VM's stdout so recipe output (io.write/print) reaches
-    // fd 1 now, before the completion event. Otherwise libc block-buffers it
-    // when stdout isn't a TTY and it prints AFTER the `cook done` summary.
-    // Runs on both the success and chunk-error paths so partial output isn't
-    // stranded in the C stdio buffer.
+    // Flush this VM's C stdio buffer. The rationale it used to carry —
+    // "recipe output (io.write/print) reaches fd 1" — expired with CS-0188,
+    // which routes both of those into the active unit's sink and never
+    // through libc at all. What is left is the narrower case the flush still
+    // earns its place on: a body that writes to the descriptor DIRECTLY
+    // (`io.stdout:write(...)`), which no wrapper intercepts. Without this,
+    // libc block-buffers those bytes when stdout is not a TTY and they
+    // appear after the `cook done` summary, attributed to nothing. Runs on
+    // both the success and chunk-error paths, so partial output from a body
+    // that then failed is not stranded in the buffer.
     let _ = lua.load("io.stdout:flush()").exec();
 
     match result {

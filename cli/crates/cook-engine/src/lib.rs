@@ -2,7 +2,7 @@
 //!
 //! Takes a fully-built `RegisteredWorkspace` (produced by `cook-plan`),
 //! builds the unified work-unit DAG, decides for every unit whether the
-//! cache already holds the answer, and feeds ready nodes to cook-luaotp.
+//! cache already holds the answer, and feeds ready nodes to cook-execute.
 
 pub mod affected;
 pub mod dag_builder;

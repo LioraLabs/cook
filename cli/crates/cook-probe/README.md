@@ -1,7 +1,8 @@
 # cook-probe
 
 `cook-probe` owns the probe lifecycle: the sequence that turns a declared probe
-into a value, and the atomic materialization of that value.
+into a value, the atomic materialization of that value, and every read of it
+afterwards.
 
 ## How it does that well
 
@@ -17,12 +18,26 @@ into a value, and the atomic materialization of that value.
   to one phase and not the other (COOK-353).
 - It publishes probe values with same-directory atomic replacement, preserving
   either the old complete value or the new complete value.
+- **It owns both ends of `.cook/probes/<key>.json`.** The writer and the
+  read-through store are one crate, so the filename is computed by one call
+  and a test can write with one and read with the other without a third party
+  agreeing on anything (COOK-422). Until then the reader lived in the
+  execute-phase VM crate — the first consumer that needed it — and the two
+  halves of a file format sat in crates with no edge between them.
+- **A `$<key:field>` reference resolves here too, for the same reason.**
+  Rendering a probe reference is reading bytes and applying
+  `cook_contracts::sigil::subst`; no VM is involved, so the phase that happens
+  to be spawning the command was never part of the answer. It sits beside the
+  store it reads and the CS-0157 tool-path view it renders through, which is
+  what keeps `cook.probes.get` and `$<key>` from drifting apart.
 - It reports non-fatal conditions as returned warnings rather than printing
   them, leaving the diagnostic channel to the phase.
 
 It does not define contracts, choose a VM or sandbox, schedule work, order
 `requires`, or prune undemanded probes. Those decisions remain with the runtime
-adapters.
+adapters. It does not raise a Lua error either: the CS-0152 not-materialised
+sentence is a `String` here, and the execute-phase VM wraps it in an
+`mlua::Error` — one sentence, whichever reader hits the miss.
 
 ## Cache policy
 

@@ -673,12 +673,6 @@ pub fn install_cook_api(
 // the quoting law (COOK-389).
 use cook_contracts::quoting::quote_for_ctx;
 
-/// Upper bound on the Lua call-stack walk in `caller_line_in_cookfile`.
-/// A safety cap — 40 frames comfortably exceeds any realistic Cookfile
-/// call chain; the early `None` return on missing frames is the
-/// expected termination.
-const MAX_LUA_STACK_DEPTH: usize = 40;
-
 /// Walk the Lua call stack and return the line number of the topmost frame
 /// whose source string matches the Cookfile path label set by
 /// `__cook_cookfile_path` (or any module loaded via `module_loader` with a
@@ -689,32 +683,22 @@ const MAX_LUA_STACK_DEPTH: usize = 40;
 /// of the user-code site that registered it. When the registry value isn't
 /// populated (legacy/test call sites) or the matching frame can't be found,
 /// callers default to `line = 0`.
+///
+/// The walk itself is `cook_lua_stdlib::caller_line_in_source` (COOK-422):
+/// the execute phase asks the same question of its own chunk name, and a
+/// second copy of the answer is how one phase's `cook.sh` failure ends up
+/// located and the other's anonymous. What is register-specific — and stays
+/// here — is only which chunk name to look for.
 fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
     let target: String = lua
         .named_registry_value::<String>("__cook_cookfile_path")
         .ok()?;
-
-    // Lua call levels: 1 = the closure, 2 = the caller, 3+ = caller's caller, ...
-    for level in 1..MAX_LUA_STACK_DEPTH {
-        match lua.inspect_stack(level) {
-            None => return None,
-            Some(dbg) => {
-                let src_opt = dbg.source().source;
-                let source: &str = src_opt.as_deref().unwrap_or("");
-                // Module-loaded chunks have an "@" prefix (see module_loader.rs); the
-                // `__cook_cookfile_path` registry value does not. Match either form.
-                if source == target || source.ends_with(&target) {
-                    return Some(dbg.curr_line() as usize);
-                }
-            }
-        }
-    }
-    None
+    cook_lua_stdlib::caller_line_in_source(lua, &target)
 }
 
 /// `cook.sh` at register phase (§{lua.cook-sh}).
 ///
-/// The twin of `cook_luaotp::pool`'s worker-phase implementation, and this
+/// The twin of `cook_execute::pool`'s worker-phase implementation, and this
 /// milestone opened by naming them: "Command-failure formatting was fixed in
 /// one producer while its twin remained broken." They are no longer twins.
 /// Both call the one primitive, which builds the `CommandFailure` for both, so

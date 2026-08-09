@@ -18,21 +18,21 @@
 
 # --- The two Lua VMs' door names -------------------------------------------
 # The register VM (cook-register) installs a function; the worker VM
-# (cook-luaotp) installs its counterpart for execute phase. Both spell the name
+# (cook-execute) installs its counterpart for execute phase. Both spell the name
 # the Lua code calls. This is the exact shape the module-binding law was pulled
 # into cook-contracts to fix, and these doors have not been through that yet:
 # drift between them does not fail the build, it changes what a Cookfile can
 # call in one phase and not the other.
-{"key": "add_unit", "sites": ["crates/cook-luaotp/src/pool.rs:835", "crates/cook-register/src/unit_api.rs:1169"], "why": "Debt, not deliberate: a door name spelled by both VMs with no shared definition. Belongs beside the module-binding door names in cook-contracts."}
-{"key": "dep_output", "sites": ["crates/cook-luaotp/src/pool.rs:1132", "crates/cook-register/src/dep_output_api.rs:96"], "why": "Debt: a both-phase door name spelled twice. The spec says this API exists in both phases, which is precisely why one definition has to name it."}
-{"key": "dep_output_list", "sites": ["crates/cook-luaotp/src/pool.rs:1156", "crates/cook-register/src/dep_output_api.rs:135"], "why": "Debt: the plural half of the same both-phase door, spelled twice."}
-{"key": "member_to_string", "sites": ["crates/cook-luaotp/src/pool.rs:769", "crates/cook-register/src/capture.rs:614"], "why": "Debt: a both-phase door name spelled twice."}
-{"key": "cook.member_to_string: {e}", "sites": ["crates/cook-luaotp/src/pool.rs:766", "crates/cook-register/src/capture.rs:611"], "why": "Debt: the diagnostic for the door above, duplicated with it. A user hitting this in register phase and in execute phase must not get two different sentences."}
-{"key": "prior_outputs", "sites": ["crates/cook-luaotp/src/pool.rs:875", "crates/cook-register/src/unit_api.rs:1340"], "why": "Debt: a door name spelled by both VMs with no shared definition."}
-{"key": "interactive", "sites": ["crates/cook-luaotp/src/pool.rs:825", "crates/cook-register/src/capture.rs:553"], "why": "Debt: a unit-kind name crossing the VM boundary as a bare string."}
-{"key": "step_group", "sites": ["crates/cook-graph/src/dag_data.rs:370", "crates/cook-luaotp/src/pool.rs:845", "crates/cook-register/src/unit_api.rs:1288"], "why": "Debt, and the widest of this group: a field name shared by both VMs AND by the graph renderer that reads it back. Three ends, no definition."}
-{"key": "__metatable", "sites": ["crates/cook-luaotp/src/pool.rs:708", "crates/cook-register/src/var_api.rs:207"], "why": "Deliberate, weakly: this is Lua's own metamethod name, fixed by the language rather than chosen by us, so the two spellings cannot drift apart without Lua changing. It stays listed because both sites are sealing a table against writes, and THAT policy is a decision with two implementations."}
-{"key": "__newindex", "sites": ["crates/cook-luaotp/src/pool.rs:702", "crates/cook-register/src/var_api.rs:193"], "why": "Deliberate, weakly: Lua's own metamethod name, as above, guarding the same table-sealing policy in two places."}
+{"key": "add_unit", "sites": ["crates/cook-execute/src/pool.rs:835", "crates/cook-register/src/unit_api.rs:1169"], "why": "Debt, not deliberate: a door name spelled by both VMs with no shared definition. Belongs beside the module-binding door names in cook-contracts."}
+{"key": "dep_output", "sites": ["crates/cook-execute/src/pool.rs:1132", "crates/cook-register/src/dep_output_api.rs:96"], "why": "Debt: a both-phase door name spelled twice. The spec says this API exists in both phases, which is precisely why one definition has to name it."}
+{"key": "dep_output_list", "sites": ["crates/cook-execute/src/pool.rs:1156", "crates/cook-register/src/dep_output_api.rs:135"], "why": "Debt: the plural half of the same both-phase door, spelled twice."}
+{"key": "member_to_string", "sites": ["crates/cook-execute/src/pool.rs:769", "crates/cook-register/src/capture.rs:614"], "why": "Debt: a both-phase door name spelled twice."}
+{"key": "cook.member_to_string: {e}", "sites": ["crates/cook-execute/src/pool.rs:766", "crates/cook-register/src/capture.rs:611"], "why": "Debt: the diagnostic for the door above, duplicated with it. A user hitting this in register phase and in execute phase must not get two different sentences."}
+{"key": "prior_outputs", "sites": ["crates/cook-execute/src/pool.rs:875", "crates/cook-register/src/unit_api.rs:1340"], "why": "Debt: a door name spelled by both VMs with no shared definition."}
+{"key": "interactive", "sites": ["crates/cook-execute/src/pool.rs:825", "crates/cook-register/src/capture.rs:553"], "why": "Debt: a unit-kind name crossing the VM boundary as a bare string."}
+{"key": "step_group", "sites": ["crates/cook-graph/src/dag_data.rs:370", "crates/cook-execute/src/pool.rs:845", "crates/cook-register/src/unit_api.rs:1288"], "why": "Debt, and the widest of this group: a field name shared by both VMs AND by the graph renderer that reads it back. Three ends, no definition."}
+{"key": "__metatable", "sites": ["crates/cook-execute/src/pool.rs:708", "crates/cook-register/src/var_api.rs:207"], "why": "Deliberate, weakly: this is Lua's own metamethod name, fixed by the language rather than chosen by us, so the two spellings cannot drift apart without Lua changing. It stays listed because both sites are sealing a table against writes, and THAT policy is a decision with two implementations."}
+{"key": "__newindex", "sites": ["crates/cook-execute/src/pool.rs:702", "crates/cook-register/src/var_api.rs:193"], "why": "Deliberate, weakly: Lua's own metamethod name, as above, guarding the same table-sealing policy in two places."}
 
 # --- Cache and log wire formats --------------------------------------------
 # A field name written by one crate and read by another is a wire format. These
@@ -53,9 +53,9 @@
 {"key": "unknown recipe: {0}", "sites": ["crates/cook-engine/src/lib.rs:484", "crates/cook-plan/src/analyzer.rs:20"], "why": "Debt: one error a user can reach down two code paths, worded identically today by luck."}
 {"key": "invalid .cook/cloud.toml: {e}", "sites": ["crates/cook-cli/src/cache_du.rs:29", "crates/cook-engine/src/run.rs:677"], "why": "Debt: one config file, one failure, two authors — and the path inside the message is itself a layout fact that cook-contracts already owns elsewhere."}
 {"key": "terminal_outputs mutex poisoned", "sites": ["crates/cook-plan/src/registers.rs:336", "crates/cook-register/src/dep_output_api.rs:72"], "why": "Debt: an expect() message duplicated across the two crates that lock the same map. Low stakes for a reader, but it marks one lock invariant owned in two places."}
-{"key": "probe '{}': {}", "sites": ["crates/cook-luaotp/src/pool.rs:1475", "crates/cook-probe/src/eval/mod.rs:95"], "why": "Debt: the probe-error prefix, written by the evaluator and again by the worker VM that surfaces it."}
+{"key": "probe '{}': {}", "sites": ["crates/cook-execute/src/pool.rs:1475", "crates/cook-probe/src/eval/mod.rs:95"], "why": "Debt: the probe-error prefix, written by the evaluator and again by the worker VM that surfaces it."}
 {"key": "env changed", "sites": ["crates/cook-cache/src/check.rs:133", "crates/cook-engine/src/executor.rs:823"], "why": "Debt: a cache-miss cause string produced in two crates. Miss causes are what `cook why` renders, so this is a vocabulary with two authors."}
-{"key": "working_dir lock", "sites": ["crates/cook-lua-stdlib/src/lib.rs:91", "crates/cook-luaotp/src/pool.rs:350"], "why": "Debt: an expect() message on the same lock, held in two crates."}
+{"key": "working_dir lock", "sites": ["crates/cook-lua-stdlib/src/lib.rs:91", "crates/cook-execute/src/pool.rs:350"], "why": "Debt: an expect() message on the same lock, held in two crates."}
 
 # --- Surface vocabulary -----------------------------------------------------
 {"key": "ingredients", "sites": ["crates/cook-lang/src/cook_line.rs:255", "crates/cook-luagen/src/cook_step.rs:246", "crates/cook-register/src/capture.rs:97"], "why": "Debt, and the highest-stakes entry here: a Cookfile keyword spelled by the parser, by codegen and by registration. The Standard defines it; the grammar qualifies for cook-contracts by name; three crates spelling it is three chances to disagree with the spec."}

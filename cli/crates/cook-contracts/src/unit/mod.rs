@@ -65,7 +65,7 @@ pub enum WorkPayload {
         is_chore: bool,
         /// 1-indexed Cookfile line of the originating step; 0 = unknown.
         /// Purely a diagnostics aid (COOK-191/CS-0126): the execute-phase
-        /// worker (cook-luaotp/src/pool.rs) newline-pads `code` so that a
+        /// worker (cook-execute/src/pool.rs) newline-pads `code` so that a
         /// Lua error inside the chunk reports `Cookfile:LINE:` instead of
         /// the opaque `[string "..."]:1:` chunk name. This field MUST NOT
         /// be folded into any cache fingerprint — unit identity is hashed

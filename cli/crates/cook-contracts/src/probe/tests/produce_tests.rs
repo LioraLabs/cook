@@ -1,7 +1,7 @@
 use crate::probe::lower_produce;
 
 /// The lowering is byte-pinned: these exact bytes used to be spelled once
-/// per phase (cook-register's pre-pass and cook-luaotp's worker), and a
+/// per phase (cook-register's pre-pass and cook-execute's worker), and a
 /// one-line drift between them would have made a produce body's error
 /// report different line numbers depending on which phase evaluated it.
 #[test]

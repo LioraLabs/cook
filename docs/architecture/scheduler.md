@@ -3,7 +3,7 @@
 **Source crates:**
 - `cli/crates/cook-dag/src/lib.rs` — generic `Dag<T>` (~636 lines incl. tests)
 - `cli/crates/cook-engine/src/` — Cook-specific orchestration (~6.6k lines across 9 files)
-- `cli/crates/cook-luaotp/src/pool.rs` — `WorkerPool` and worker threads (~1.7k lines)
+- `cli/crates/cook-execute/src/pool.rs` — `WorkerPool` and worker threads (~1.7k lines)
 - `cli/crates/cook-contracts/src/lib.rs` — shared `WorkPayload`, `DepKind`, `CacheMeta`, `RecipeUnits`, `OutputStream`
 
 ---
@@ -44,7 +44,7 @@ There is no single "scheduler" module any more. Scheduling is split across four 
             ▼              │
    ┌──────────────────────┐
    │ WorkerPool           │  N threads, each owns a !Send mlua::Lua VM
-   │   (cook-luaotp)      │     executes Shell / LuaChunk / Test payloads
+   │   (cook-execute)      │     executes Shell / LuaChunk / Test payloads
    └──────────────────────┘
 ```
 
@@ -213,9 +213,9 @@ Before returning the DAG, `build_dag` calls `detect_output_collisions` (`dag_bui
 
 ---
 
-## 5. Worker pool (`cook-luaotp`)
+## 5. Worker pool (`cook-execute`)
 
-`cli/crates/cook-luaotp/src/pool.rs:77`:
+`cli/crates/cook-execute/src/pool.rs:77`:
 
 ```rust
 pub fn WorkerPool::spawn(n: usize) -> (WorkerPool, mpsc::Receiver<WorkResult>);

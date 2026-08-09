@@ -1,0 +1,20 @@
+[package]
+name = "cook-execute"
+version.workspace = true
+edition = "2021"
+description = "Runs one captured work item and reports what it did: the execute phase's Lua host"
+
+[dependencies]
+cook-cache = { path = "../cook-cache" }
+cook-contracts = { path = "../cook-contracts" }
+cook-shell = { path = "../cook-shell" }
+cook-lua-stdlib = { path = "../cook-lua-stdlib" }
+# The probe-value store and `$<key>` substitution (COOK-422). Was a
+# dev-dependency while the reader lived here and only its test reached the
+# writer; it is a real edge now that the reader lives with the writer.
+cook-probe = { path = "../cook-probe" }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

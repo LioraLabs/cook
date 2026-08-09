@@ -105,7 +105,7 @@ clean_state() {
     rm -f /tmp/cs_0045_should_not_exist.txt 2>/dev/null || true
 }
 
-echo "=== luaotp_audit_path_traversal (CS-0045) ==="
+echo "=== execute_audit_path_traversal (CS-0045) ==="
 echo
 
 echo "--- Scenario 1: relative '../' traversal MUST be rejected ---"

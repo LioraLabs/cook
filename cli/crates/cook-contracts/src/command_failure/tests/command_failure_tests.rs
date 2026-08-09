@@ -56,3 +56,27 @@ fn every_field_round_trips_without_delimiter_ambiguity() {
     assert_eq!(parsed.stdout().as_str(), stdout);
     assert_eq!(parsed.stderr().as_str(), stderr);
 }
+
+/// CS-0211: a producer that could not determine a line stores `0`, and
+/// `located` is how every renderer learns there is no location — so that
+/// "0" is never printed at a reader as though it were one.
+#[test]
+fn zero_is_the_absence_of_a_line_not_a_line() {
+    let unlocated = CommandFailure::new(
+        0,
+        1,
+        "false",
+        CapturedStream::from_bytes(b""),
+        CapturedStream::from_bytes(b""),
+    );
+    assert_eq!(unlocated.located(), None);
+
+    let located = CommandFailure::new(
+        7,
+        1,
+        "false",
+        CapturedStream::from_bytes(b""),
+        CapturedStream::from_bytes(b""),
+    );
+    assert_eq!(located.located(), Some(7));
+}

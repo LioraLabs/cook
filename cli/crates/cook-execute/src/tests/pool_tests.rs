@@ -585,6 +585,12 @@ fn a_failing_command_reports_its_exit_code_on_the_result() {
 /// Submit a single LuaChunk work item that runs `code` on a worker VM,
 /// then return the resulting `WorkResult` for inspection.
 fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
+    run_lua_chunk_in_worker_at_line(0, code)
+}
+
+/// As `run_lua_chunk_in_worker`, but with the originating step's Cookfile
+/// line, which the worker uses to newline-pad the chunk (CS-0126).
+fn run_lua_chunk_in_worker_at_line(line: usize, code: &str) -> WorkResult {
     let dir = TempDir::new().unwrap();
     let (pool, rx) = WorkerPool::spawn(1);
     pool.submit(WorkItem {
@@ -597,7 +603,7 @@ fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
             ingredient_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
-            line: 0,
+            line,
         },
         recipe_name: "rec".to_string(),
         working_dir: dir.path().to_path_buf(),
@@ -607,6 +613,58 @@ fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
     let result = rx.recv().unwrap();
     pool.shutdown();
     result
+}
+
+/// A `cook.sh` that fails inside an execute-phase Lua body reports the
+/// Cookfile line it was called on, as its register-phase twin already did.
+///
+/// This is not a field nobody reads: `cook-cli`'s `render_command_failure`
+/// prints `Cookfile:LINE: command failed …` when the line is non-zero and
+/// drops the location entirely when it is zero. The worker passed a
+/// hardcoded `0`, so every `cook.sh` failure inside a `>{ … }` body, a
+/// `lua_line`, or a chore body was reported with no location at all while
+/// the identical register-phase failure carried one.
+///
+/// The chunk is newline-padded to its step's line (CS-0126), so the body's
+/// first line IS Cookfile line 12 here and the failing call is on line 13.
+#[test]
+fn a_failing_cook_sh_in_a_lua_body_reports_its_cookfile_line() {
+    let result = run_lua_chunk_in_worker_at_line(12, "local marker = 1\ncook.sh(\"false\")\n");
+
+    assert!(!result.success, "a failing cook.sh must fail the unit");
+    let wire = result.error.expect("cook.sh failure reaches the result");
+    let failure = cook_contracts::CommandFailure::from_wire(&wire)
+        .expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 13, "wire: {wire}");
+    assert_eq!(failure.command(), "false");
+}
+
+/// A body the worker cannot line-map — a probe `produce`, whose chunk is
+/// named for the probe rather than the Cookfile — degrades to `0` and the
+/// location-free rendering. Better no location than a wrong one.
+#[test]
+fn a_failing_cook_sh_outside_a_cookfile_chunk_reports_no_line() {
+    let (pool, rx, dir) = make_pool(1);
+    pool.submit(WorkItem {
+        process_env_vars: HashMap::new(),
+        id: 0,
+        payload: WorkPayload::Probe {
+            key: "t:fails".to_string(),
+            produce: r#"return cook.sh("false")"#.to_string(),
+            line: 4,
+        },
+        recipe_name: "rec".to_string(),
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
+    let result = rx.recv().unwrap();
+    pool.shutdown();
+
+    let wire = result.error.expect("cook.sh failure reaches the result");
+    let failure = cook_contracts::CommandFailure::from_wire(&wire)
+        .expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 0, "wire: {wire}");
 }
 
 fn assert_register_only_diagnostic(result: &WorkResult, fn_name: &str) {
@@ -676,26 +734,53 @@ fn cook_probe_from_execute_phase_raises_register_only_diagnostic() {
     assert!(err.contains("execute-phase Lua"), "got: {err}");
 }
 
-/// SHI-216 / CS-0072: every register-only guard message MUST include
-/// a `>>` migration hint so users know how to move the call to register
-/// phase.  We spot-check `cook.add_unit` (representative of all five).
+/// Standard §6.3.2 / SHI-216 / CS-0072: every register-only name raises on
+/// the execute-phase VM, and every one of those diagnostics names itself,
+/// says what it is, and carries the `>>` migration hint.
+///
+/// Over ALL of them, not a representative. Until COOK-422 this test
+/// spot-checked `cook.add_unit` and described it as "representative of all
+/// five" — there are seven guards, and the description had been wrong since
+/// the sixth was added, which is exactly the drift a spot-check cannot
+/// report. A guard installed with a message missing a clause now fails on
+/// its own row.
 #[test]
-fn register_only_guard_includes_double_arrow_migration_hint() {
-    let result =
-        run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
-    assert!(
-        !result.success,
-        "expected register-only-API call to fail; got success"
-    );
-    let err = result.error.as_deref().unwrap_or("");
-    assert!(
-        err.contains(">>"),
-        "diagnostic must include `>>` migration hint; got: {err}"
-    );
-    assert!(
-        err.contains("register"),
-            "diagnostic must mention `register` block; got: {err}"
-    );
+fn every_register_only_guard_raises_and_says_how_to_fix_it() {
+    // (Lua call, `cook.<field>` the diagnostic must name.)
+    let calls = [
+        (r#"cook.exec("echo hi")"#, "cook.exec"),
+        (r#"cook.interactive("echo hi")"#, "cook.interactive"),
+        (r#"cook.add_unit({command = "echo hi"})"#, "cook.add_unit"),
+        (r#"cook.step_group("g")"#, "cook.step_group"),
+        (r#"cook.recipe("r", {}, function() end)"#, "cook.recipe"),
+        (
+            r#"cook.probe("cc:x", { inputs = {}, produce = "return 1" })"#,
+            "cook.probe",
+        ),
+        (r#"cook.prior_outputs()"#, "cook.prior_outputs"),
+    ];
+
+    for (call, door) in calls {
+        let result = run_lua_chunk_in_worker(call);
+        assert!(!result.success, "{door} must fail on the worker VM; got success");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains(&format!("{door}: register-only API")),
+            "{door}: diagnostic must open by naming itself; got: {err}"
+        );
+        assert!(
+            err.contains("execute-phase Lua"),
+            "{door}: diagnostic must say which phase called it; got: {err}"
+        );
+        assert!(
+            err.contains(">>"),
+            "{door}: diagnostic must carry the `>>` migration hint; got: {err}"
+        );
+        assert!(
+            err.contains("register"),
+            "{door}: diagnostic must point at the `register` block; got: {err}"
+        );
+    }
 }
 
 /// `cook.sh` is the both-phase shell-out helper (§6.3.1) and MUST
@@ -1356,57 +1441,4 @@ fn probe_unit_non_serialisable_value_fails() {
         err.contains("test:bad_type"),
         "error must name the probe key; got: {err}"
     );
-}
-
-// ── COOK-361: agreement guard against re-forking the substitution paths ──
-//
-// Every probe-substitution position shares `cook_contracts::sigil::subst`
-// (worker commands CS-0192, chore drain spawns CS-0193, register output
-// patterns CS-0195), but each entry point wraps its own store lookup and
-// read-view construction. This pins the worker wrapper to the law directly:
-// the same ident over the same canonical value must render identically
-// through `resolve_probe_sigils` and through `substitute`. If a second
-// renderer is ever deliberately introduced, COOK-361's standing rule
-// requires a new agreement test beside this one.
-
-#[test]
-fn worker_substitution_agrees_with_the_law() {
-    use cook_contracts::probe_value::encode_canonical_json;
-    use cook_contracts::sigil::{probe_ref, subst::substitute};
-
-    let value = serde_json::json!({
-        "name": "zlib",
-        "cflags": ["-O2", "-Wall"],
-        "version": 3.0,
-    });
-    let store = crate::store::ProbeValueStore::new();
-    store.insert("cc:zlib", encode_canonical_json(&value));
-
-    for ident in ["cc:zlib.name", "cc:zlib.cflags[2]", "cc:zlib.version"] {
-        let via_worker =
-            crate::pool::resolve_probe_sigils(&store, &format!("echo $<{ident}>"))
-                .expect("worker path renders");
-        let r = probe_ref(ident).expect("probe-shaped");
-        let via_law = substitute(&value, r.path(), ident).expect("law renders");
-        assert_eq!(via_worker, format!("echo {via_law}"), "ident {ident}");
-    }
-
-    // The read view too: a tool-path annotation merged by the store side
-    // must render exactly what the law renders over the merged value.
-    let tools = serde_json::json!({"gcc": {"hash": "ab12"}});
-    store.insert("cc:tc", encode_canonical_json(&tools));
-    store.set_tool_paths(
-        "cc:tc",
-        std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]),
-    );
-    let via_worker = crate::pool::resolve_probe_sigils(&store, "$<cc:tc.gcc.path>")
-        .expect("read view renders");
-    let mut merged = tools.clone();
-    cook_contracts::probe_value::merge_tool_paths(
-        &mut merged,
-        &std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]),
-    );
-    let r = probe_ref("cc:tc.gcc.path").expect("probe-shaped");
-    let via_law = substitute(&merged, r.path(), "cc:tc.gcc.path").expect("law renders");
-    assert_eq!(via_worker, via_law);
 }

@@ -2104,7 +2104,7 @@ impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
 }
 
 /// Run a probe's `produce` source on the register VM and return the
-/// canonical-JSON bytes (the execute-VM counterpart is `cook-luaotp`'s
+/// canonical-JSON bytes (the execute-VM counterpart is `cook-execute`'s
 /// `execute_probe`; CS-0102). The lowering — chunk name and wrapper — is
 /// `cook_contracts::probe::lower_produce`, the one law both VMs evaluate
 /// under, so a produce body's error reports the same line numbers
@@ -2531,7 +2531,7 @@ fn install_all_apis(
     crate::context::register_resolve_ingredients(lua, &builder.working_dir, &builder.workspace_root)?;
     // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
     // the shared implementation lives in cook-lua-stdlib so the worker VMs
-    // in cook-luaotp install byte-identical behaviour.
+    // in cook-execute install byte-identical behaviour.
     let cook_tbl: LuaTable = lua.globals().get("cook")?;
     cook_lua_stdlib::register_codec_api(lua, &cook_tbl)?;
     // CS-0158: cook.tools.id — canonical tool identity, both-phase (a probe

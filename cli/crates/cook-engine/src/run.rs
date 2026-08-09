@@ -440,7 +440,7 @@ where
     //
     //    Bridge on_event through an mpsc channel so executor can use its
     //    existing Option<Sender<EngineEvent>> interface.
-    let dep_outputs: cook_luaotp::WorkerDepOutputs =
+    let dep_outputs: cook_execute::WorkerDepOutputs =
         std::sync::Arc::new(registered_workspace.terminal_outputs.clone());
 
     // CAS publish counter for the end-of-run store-budget check. Owned here,

@@ -20,6 +20,10 @@ In the **execute phase**, `cook.sh` runs on the worker VM that is evaluating an 
 
 Until CS-0188 this section said only that "stderr is streamed to the worker's stderr", which named a destination rather than an owner and was not implemented: the reference implementation discarded a successful `cook.sh` call's stderr entirely, so a command that compiled with warnings reported none of them. Attribution is stated here rather than left to the diagnostic layer because the worker's stderr is one file descriptor shared by every unit running in parallel, and bytes written to it carry nothing that says which unit produced them.
 
+**A failure is located, and located the same way in both phases (CS-0211).** When an implementation can determine the Cookfile line the failing `cook.sh` call sits on, the reported failure MUST carry that line, and MUST do so in both phases: a call that fails during registration and the same call failing during execution MUST NOT differ in whether the author is told where it was. When the implementation cannot determine a line — the call is reached from Lua whose source is not the Cookfile, for instance a `probe`'s `produce` body — it MUST report the failure without a location rather than with a substitute one. A placeholder line is worse than no line, because a reader cannot tell the two apart.
+
+The phase symmetry is the point, and it is not automatic: the two phases are separate Lua hosts, so "which line called this" is a question each can answer independently and therefore answer differently. Before CS-0211 the reference implementation's register phase walked the Lua stack for the Cookfile frame while its execute phase supplied a constant zero, so every `cook.sh` failure inside a `>{ … }` body, a `lua_line`, or a chore body was reported with no location at all while the identical failure at register phase named its line. Nothing in this section had said the two owed the same answer, which is why nothing detected that they were not giving one.
+
 ## 24.2. `cook.load_module` [#lua.cook-load-module]
 **Signature.** `cook.load_module(target: string) -> table`
 **Phase.** Both.

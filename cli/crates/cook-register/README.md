@@ -92,7 +92,7 @@ first and reads the rest.
 
 It does not own the both-phase Lua surface. `fs.*`, `path.*`, `cook.platform`,
 the codecs, and `cook.tools.id` are installed from `cook-lua-stdlib` so the
-worker VMs in `cook-luaotp` install byte-identical closures (CS-0044, CS-0123,
+worker VMs in `cook-execute` install byte-identical closures (CS-0044, CS-0123,
 CS-0158). A surface that behaves differently in the two phases is the failure
 this arrangement exists to make impossible.
 
@@ -102,7 +102,7 @@ Findable, per the deliberate-copy protocol, and none of these has an agreement
 test. They are recorded here so the next audit's grep lands on them:
 
 - **The probe-produce lowering.** `engine.rs:2094` and
-  `cook-luaotp/src/pool.rs:1537` each build `@probe:{key}` as the chunk name and
+  `cook-execute/src/pool.rs:1537` each build `@probe:{key}` as the chunk name and
   wrap the body in `return (function()\n…\nend)()`. Both ends must agree or a
   produce body's reported error lines shift between phases. It is pure string
   law and `cook-contracts` would take it.
