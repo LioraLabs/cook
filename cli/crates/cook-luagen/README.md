@@ -31,11 +31,23 @@ means something other than what the author wrote.
   silently drops work (`CodegenError::UnknownStep`, recipe.rs:1078).
 - Every name in the generated program is a constant from `cook-contracts`, not
   a string literal spelled here: `REGISTER_SURFACE_NAME`,
-  `CONFIG_DISPATCH_NAME`, `MAIN_PROGRAM_NAME`, `PROBE_SUBST_NAME`,
-  `QUOTE_PARAM_NAME`, and the `MemberSourceDescriptor` shape plus its key
-  constants, which `cook-register`'s `parse_member_source_meta` reads back
-  (COOK-390). The emitter and the consumer of each literal are one declaration
-  apart.
+  `CONFIG_DISPATCH_NAME`, `MAIN_PROGRAM_NAME`, `QUOTE_PARAM_NAME`, and the
+  `MemberSourceDescriptor` shape plus its key constants, which
+  `cook-register`'s `parse_member_source_meta` reads back (COOK-390). The
+  emitter and the consumer of each literal are one declaration apart. For
+  `__probe_subst` the whole call comes from there too — `probe_subst_call`,
+  because pairing the shared name with a privately spelled receiver and escape
+  at three sites is the same drift one step out (COOK-440).
+- Text this crate embeds in the generated program is quoted and escaped by
+  `cook_contracts::lua_string`, called by its own name: `literal` where the
+  value IS the literal, `escape_double_quoted` where a larger template supplies
+  the quotes around it. There is no crate-local escaper and deliberately no
+  crate-local alias for the contract one — a rename would put shared law beyond
+  the reach of a grep for it, which is how this crate and `cook-register` came
+  to disagree about carriage returns (COOK-398, COOK-440). Long-bracket
+  wrapping (`long_bracket::wrap_lua_string`, `lua_chunk_literal`) stays here:
+  choosing a bracket level no inner close can match is a lowering choice, not a
+  rule two crates must agree on.
 - It composes a shell block through the law and classifies quoting without
   performing it. The hand-rolled `"set -e\n" + join` here was the copy that
   actually reached `/bin/sh`, so a change to `shell_block::compose` would not

@@ -81,7 +81,10 @@ Worked examples from this repo's history:
   into, and the crate that knew fewer of the spellings inserted the author's
   new entry into the middle of their string literal. Note what "shared" meant
   here: one crate's copy was *correct* and the finding was not drift between
-  them but a second, worse answer to a question already settled next door); the COOK-421 sweep, below.
+  them but a second, worse answer to a question already settled next door);
+  `lua_string` (COOK-398 / COOK-440 — how arbitrary text becomes a Lua literal,
+  and the `cook.<door>("…")` call it usually appears inside, `registration::door_call`);
+  the COOK-421 sweep, below.
 - **Moved here by COOK-421**, the first sweep run against the gate rather than
   by hand. Seven, and what each was doing before is more useful than what it is
   now:
@@ -205,6 +208,14 @@ Whenever a second implementation of anything is *deliberately* introduced, a
 new agreement test lands beside it in the same commit. Corollary: a parse-only
 conformance fixture MUST NOT be cited as evidence that a surface works; pin
 the fact, not the syntax.
+
+And when unification removes the second implementation, the test's *target*
+moves rather than disappearing: with one copy left there is nothing to compare
+it against but its author's own expectations, which is exactly what both
+historical Lua-escaping defects passed. COOK-440's answer is to check the law
+against the thing that consumes it — a generated literal is round-tripped
+through a real Lua VM, in the lowest crate holding both the law and mlua. Where
+such an oracle exists, prefer it to another table of hand-written spellings.
 
 ## Enforcement
 

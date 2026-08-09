@@ -1,13 +1,13 @@
-/// Escape a value for a double-quoted Lua literal.
-///
-/// The rule lives in `cook_contracts::lua_string` (COOK-398): `cook-register`
-/// builds the chore-param prelude with the same law, and the two hand-rolled
-/// versions had drifted. This crate's copy escaped `\`, `"` and newline only,
-/// so a carriage return in any of the ~60 sites below reached the generated
-/// source raw and Lua rejected the chunk.
-pub(crate) fn escape_lua_string(s: &str) -> String {
-    cook_contracts::lua_string::escape_double_quoted(s)
-}
+//! Long-bracket wrapping: `[[ … ]]` at a level no inner close can match.
+//!
+//! Separate from the short-literal law, which is `cook_contracts::lua_string`
+//! and is called there by its own name (COOK-398, COOK-440). The split is the
+//! stratum rule: what a `"…"` literal must escape is a rule this crate and
+//! `cook-register` must agree on, while choosing a bracket level is a lowering
+//! choice with one emitter and no counterpart to disagree with. This module
+//! was called `lua_string` until COOK-440, which left it holding only the
+//! long-bracket half and a name that collided with the contract it no longer
+//! implemented.
 
 /// Pick a long-bracket level high enough to safely wrap `s`.
 ///
@@ -63,5 +63,5 @@ pub(crate) fn lua_chunk_literal(code: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/lua_string_tests.rs"]
+#[path = "tests/long_bracket_tests.rs"]
 mod tests;

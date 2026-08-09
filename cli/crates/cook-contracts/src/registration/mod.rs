@@ -42,6 +42,48 @@ pub const CONFIG_DISPATCH_NAME: &str = "__cook_run_config_blocks";
 /// table; emitted with the `cook.` receiver by luagen.
 pub const PROBE_SUBST_NAME: &str = "__probe_subst";
 
+/// A call to a door on the `cook` table with one string argument, qualified
+/// and escaped: `door_call(PROBE_SUBST_NAME, ident)` is
+/// `cook.__probe_subst("…")`.
+///
+/// A door name is shared because drift in it is silent (see this module's
+/// header, and [`crate::module_binding::LOAD_MODULE_FN`], which is a door of
+/// the same kind kept next to the `use` rules that name it). The CALL around a
+/// name was not shared: `cook-luagen` composed `format!("cook.{}(\"{}\")", …)`
+/// at three sites and `module_binding` at a fourth, each pairing a shared
+/// constant with a privately spelled receiver, argument list and escape. The
+/// gate that flagged it saw only the repeated format string (COOK-437);
+/// COOK-440 is the finding that it was one decision written four times.
+///
+/// Two crates compose door calls — this one and `cook-luagen` — which is why
+/// the composer is here rather than in the emitter. Be clear about what that
+/// buys and what it does not: it makes the four *emissions* agree with each
+/// other, and it puts the escape on the path so a `"` or a carriage return in
+/// an ident cannot end the literal and fail the whole program's load. It does
+/// NOT yet make the emitter agree with the installer, which sets the field
+/// from its own `set(NAME, …)` on the register VM and is bound to this only by
+/// the constant. Closing that half is COOK-439's, and it will find the emitting
+/// half already in one place.
+///
+/// Doors taking more than one argument keep their own `format!`: the arity is
+/// part of what each door means, `__quote_param`'s third argument is a quoting
+/// context rather than a Lua string, and a composer generalised over arity
+/// before a second caller needs it would be an abstraction invented for a need
+/// nothing has.
+pub fn door_call(name: &str, arg: &str) -> String {
+    format!("cook.{}({})", name, crate::lua_string::literal(arg))
+}
+
+/// `cook.__probe_subst(ident)` for the CS-0195 register-time rendering of a
+/// probe-value reference, composed once.
+///
+/// `cook-luagen` emits this from three places — a command body, an output
+/// pattern, and a fan-out test command — each carrying a comment claiming one
+/// renderer per ident. This is that renderer.
+pub fn probe_subst_call(ident: &str) -> String {
+    door_call(PROBE_SUBST_NAME, ident)
+}
+
 /// `cook.__quote_param(value, name, ctx)` — the CS-0128 chore-parameter
 /// quoting helper. Installed on the `cook` table; emitted with the `cook.`
 /// receiver by luagen (which also encodes the 3-arg arity at its one
@@ -250,3 +292,7 @@ pub struct RegisteredWorkspace {
     /// taken at the end of `register_workspace` is sound.
     pub terminal_outputs: std::collections::BTreeMap<String, Vec<String>>,
 }
+
+#[cfg(test)]
+#[path = "tests/registration_tests.rs"]
+mod tests;

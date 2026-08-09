@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
-use crate::lua_string::lua_chunk_literal;
+use crate::long_bracket::lua_chunk_literal;
 use crate::use_prelude::with_execute_prelude;
 use crate::template::{
     detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,

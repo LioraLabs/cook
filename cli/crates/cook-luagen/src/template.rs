@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
+use cook_contracts::lua_string;
 use cook_contracts::ACCESSORS;
 use cook_lang::ast::Body;
 
 use crate::cook_step::{cook_mode_to_iter_mode, count_to_output_shape, CookMode};
-use crate::lua_string::escape_lua_string;
 use crate::resolver::{
     accessor_ref, BuiltinKind, IterMode, OutputShape, ResolveCtx, ResolveError, Resolved,
 };
@@ -44,17 +44,12 @@ pub(crate) fn expand_command_template(
             // `function() ... end` here is forbidden — cook.add_unit
             // rejects non-string commands.
             probe_keys.insert(key.clone());
-            Ok(lua_literal(&cmd[span.range.clone()]))
+            Ok(lua_string::literal(&cmd[span.range.clone()]))
         } else {
             resolved_to_lua(resolved, &span.ident, consulted_env)
         }
     })?;
     Ok((concat_expr, probe_keys))
-}
-
-/// A Lua string literal holding `text`.
-fn lua_literal(text: &str) -> String {
-    format!("\"{}\"", escape_lua_string(text))
 }
 
 /// Walk `template`'s `$<…>` spans and compose the Lua concatenation expression:
@@ -79,14 +74,14 @@ fn join_spans(
 
     for span in &spans {
         if span.range.start > last_end {
-            parts.push(lua_literal(&template[last_end..span.range.start]));
+            parts.push(lua_string::literal(&template[last_end..span.range.start]));
         }
         parts.push(lower(span)?);
         last_end = span.range.end;
     }
 
     if last_end < template.len() {
-        parts.push(lua_literal(&template[last_end..]));
+        parts.push(lua_string::literal(&template[last_end..]));
     }
 
     Ok(match parts.len() {
@@ -153,14 +148,14 @@ pub(crate) fn expand_member_fanout_template(
             if probe_lowering == ProbeLowering::LiteralSigil {
                 // COOK-187 / CS-0122: literal sigil text for register-time
                 // capture — see expand_command_template's doc comment.
-                Ok(lua_literal(&template[span.range.clone()]))
+                Ok(lua_string::literal(&template[span.range.clone()]))
             } else {
                 resolved_to_lua(resolved, &span.ident, consulted_env)
             }
         } else if let Resolved::RecipeMember { ref name } = resolved {
             Ok(format!(
                 "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
-                escape_lua_string(name)
+                lua_string::escape_double_quoted(name)
             ))
         } else {
             resolved_to_lua(resolved, &span.ident, consulted_env)
@@ -196,7 +191,7 @@ impl ConsultedEnv {
         let parts: Vec<String> = self
             .keys
             .iter()
-            .map(|k| format!("\"{}\"", escape_lua_string(k)))
+            .map(|k| lua_string::literal(k))
             .collect();
         format!("{{{}}}", parts.join(", "))
     }
@@ -254,8 +249,8 @@ pub(crate) fn expand_sigil_template_with_chore_params(
                 "cook.{}({}[\"{}\"], \"{}\", \"{}\")",
                 cook_contracts::registration::QUOTE_PARAM_NAME,
                 crate::COOK_PARAMS_LOCAL,
-                escape_lua_string(&span.ident),
-                escape_lua_string(&span.ident),
+                lua_string::escape_double_quoted(&span.ident),
+                lua_string::escape_double_quoted(&span.ident),
                 qctx
             ));
         }
@@ -269,7 +264,7 @@ pub(crate) fn expand_sigil_template_with_chore_params(
             // substitutes through the CS-0192 renderer. The old lowering
             // read `cook.probes.get` on the register VM, which raises
             // outside module context and created no edge.
-            Ok(lua_literal(&template[span.range.clone()]))
+            Ok(lua_string::literal(&template[span.range.clone()]))
         } else {
             resolved_to_lua(resolved, &span.ident, consulted_env)
         }
@@ -289,7 +284,7 @@ fn resolved_to_lua(
     match resolved {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
         Resolved::Recipe { name, accessor } => {
-            let escaped = escape_lua_string(&name);
+            let escaped = lua_string::escape_double_quoted(&name);
             if let Some(acc) = accessor {
                 Ok(format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped))
             } else {
@@ -298,18 +293,14 @@ fn resolved_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             consulted_env.record(&key);
-            Ok(format!("cook.require_var(\"{}\")", escape_lua_string(&key)))
+            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
         }
         // CS-0195: probe-value reference — one substitution helper, backed by
         // the CS-0192 law over the pre-pass store. Scalars render as their
         // canonical JSON token; composites/null/absent raise register-phase
         // diagnostics instead of interpolating a Lua heap address.
         Resolved::ProbeRef { .. } => {
-            Ok(format!(
-                "cook.{}(\"{}\")",
-                cook_contracts::registration::PROBE_SUBST_NAME,
-                escape_lua_string(ident)
-            ))
+            Ok(cook_contracts::registration::probe_subst_call(ident))
         }
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_member_fanout_template).
@@ -343,7 +334,7 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         // a nested table value, and the bare string form for a scalar.
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {
-            format!("cook.member_to_string(item[\"{}\"])", escape_lua_string(&field))
+            format!("cook.member_to_string(item[\"{}\"])", lua_string::escape_double_quoted(&field))
         }
     }
 }
@@ -463,7 +454,7 @@ fn output_pattern_ident_to_lua(
     match crate::resolver::resolve(ident, ctx) {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
         Resolved::Recipe { name, accessor } => {
-            let escaped = escape_lua_string(&name);
+            let escaped = lua_string::escape_double_quoted(&name);
             Ok(match accessor {
                 Some(acc) => format!("path.{}(cook.dep_output(\"{}\"))", acc, escaped),
                 None => format!("cook.dep_output(\"{}\")", escaped),
@@ -471,17 +462,13 @@ fn output_pattern_ident_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             out.record(&key);
-            Ok(format!("cook.require_var(\"{}\")", escape_lua_string(&key)))
+            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
         // CS-0195: same helper as resolved_to_lua — one renderer per ident.
         Resolved::ProbeRef { .. } => {
-            Ok(format!(
-                "cook.{}(\"{}\")",
-                cook_contracts::registration::PROBE_SUBST_NAME,
-                escape_lua_string(ident)
-            ))
+            Ok(cook_contracts::registration::probe_subst_call(ident))
         }
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
         // have no fan-out body context and `item` is not in scope.
@@ -704,11 +691,7 @@ pub(crate) fn expand_plate_test_body(
                 probe_keys.insert(key.clone());
                 // CS-0195: same helper; the caller rejects test-position probe
                 // refs before this string is ever used.
-                Ok(format!(
-                    "cook.{}(\"{}\")",
-                    cook_contracts::registration::PROBE_SUBST_NAME,
-                    escape_lua_string(&span.ident)
-                ))
+                Ok(cook_contracts::registration::probe_subst_call(&span.ident))
             }
             other => resolved_to_lua(other, &span.ident, out),
         }

@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use cook_contracts::lua_scan;
+use crate::long_bracket::wrap_lua_string;
+use cook_contracts::lua_string;
 use crate::resolver::{IterMode, OutputShape};
 use crate::use_prelude::with_execute_prelude;
 use crate::template::{
@@ -57,7 +59,7 @@ pub(crate) fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
     }
     let parts: Vec<String> = keys
         .iter()
-        .map(|k| format!("\"{}\"", crate::lua_string::escape_lua_string(k)))
+        .map(|k| lua_string::literal(k))
         .collect();
     format!("{{{}}}", parts.join(", "))
 }
@@ -201,7 +203,7 @@ fn one_to_one_add_unit_line(
         }
         Some(Body::LuaBlock(code)) => {
             let code_literal =
-                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
+                wrap_lua_string(&with_execute_prelude(uses, code));
             let ing_groups = format_ingredient_groups(ingredients_len);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
@@ -263,7 +265,7 @@ pub(crate) fn generate_cook_step(
             out.push_str(&format!(
                 "    _cook_outputs_{}[1] = \"{}\"\n",
                 index,
-                crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str())
+                lua_string::escape_double_quoted(cook_step.outputs[0].as_str())
             ));
         }
         CookMode::LuaExprOneToOne => {
@@ -320,7 +322,7 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToOne => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                    format!("cook.dep_output_list(\"{}\")", lua_string::escape_double_quoted(dep_name))
                 }
                 OutputPatternKind::OwnInputAccessor => input_source.clone(),
                 OutputPatternKind::Literal => input_source.clone(),
@@ -395,7 +397,7 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -416,7 +418,7 @@ pub(crate) fn generate_cook_step(
         CookMode::OneToMany => {
             let iter_source = match &pattern_kind {
                 OutputPatternKind::DepDriven { dep_name } => {
-                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                    format!("cook.dep_output_list(\"{}\")", lua_string::escape_double_quoted(dep_name))
                 }
                 _ => input_source.clone(),
             };
@@ -450,7 +452,7 @@ pub(crate) fn generate_cook_step(
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -483,7 +485,7 @@ pub(crate) fn generate_cook_step(
                     outs_lua.push_str(", ");
                 }
                 outs_lua.push('"');
-                outs_lua.push_str(&crate::lua_string::escape_lua_string(out_name.as_str()));
+                outs_lua.push_str(&lua_string::escape_double_quoted(out_name.as_str()));
                 outs_lua.push('"');
             }
             outs_lua.push('}');
@@ -516,7 +518,7 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
-                    let code_literal = crate::lua_string::wrap_lua_string(
+                    let code_literal = wrap_lua_string(
                         &with_execute_prelude(uses, code),
                     );
                     let ing_groups = format_ingredient_groups(ingredients.len());
@@ -606,7 +608,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     } else {
         let pats = extra_ingredients
             .iter()
-            .map(|p| format!("\"{}\"", crate::lua_string::escape_lua_string(p)))
+            .map(|p| lua_string::literal(p))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
@@ -638,7 +640,7 @@ pub(crate) fn generate_member_fanout_cook_step(
             // §8.2: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             let code_literal =
-                crate::lua_string::wrap_lua_string(&with_execute_prelude(uses, code));
+                wrap_lua_string(&with_execute_prelude(uses, code));
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
                 "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}, line = {}}})\n",
