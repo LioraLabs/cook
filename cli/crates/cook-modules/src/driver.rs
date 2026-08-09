@@ -4,8 +4,14 @@
 //! cook needs. Every call passes `--tree <project>/.cook/modules` so rocks
 //! land in the project's own build-output tree, never in a user-global
 //! luarocks tree (§27.1.1, CS-0207).
-//! Index precedence is realised by passing `--server <url>` repeatedly in
-//! left-to-right order.
+//!
+//! Index precedence is realised by ONE `--server=<url>` flag naming the first
+//! non-default index, which prepends to luarocks' built-in server list. This
+//! header used to claim the flag was passed repeatedly in left-to-right order;
+//! `base_argv` below records at length why that never worked and when it was
+//! found out. The consequence is stated there and bears repeating here, since
+//! this is the paragraph a reader trusts: a config with several private
+//! indexes is not expressible through the flag at all.
 //!
 //! Error handling is passthrough: on non-zero exit, the driver returns an
 //! `anyhow::Error` whose Display contains argv + captured stdout + captured

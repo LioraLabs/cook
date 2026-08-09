@@ -669,8 +669,7 @@ pub fn json_value(graph: &Graph) -> serde_json::Value {
             })
         })
         .collect();
-    serde_json::json!({
-        "schema_version": crate::DAG_SCHEMA_VERSION,
+    let mut document = serde_json::json!({
         "target": graph.target,
         "level": match graph.level {
             Level::Recipe => "recipe",
@@ -680,7 +679,9 @@ pub fn json_value(graph: &Graph) -> serde_json::Value {
         "total_units": graph.total_units,
         "nodes": nodes,
         "edges": edges,
-    })
+    });
+    crate::stamp_schema_version(&mut document);
+    document
 }
 
 fn render_json(graph: &Graph) -> String {

@@ -1,10 +1,15 @@
 //! Turning a `cook why` report into bytes.
 //!
-//! One thing: the query's answer, rendered. `pipeline.rs` registers the
-//! workspace and asks `cook_engine::why::explain` what a run would do; this
-//! module is everything that happens to the answer afterwards — the plain
-//! text a person reads, the JSON a tool parses, and the two `--level` /
-//! `--format` words that select between them.
+//! One thing: the query's answer, prepared for a reader. `pipeline.rs`
+//! registers the workspace and asks `cook_engine::why::explain` what a run
+//! would do; this module is everything that happens to the answer afterwards —
+//! the plain text a person reads, the JSON a tool parses, the two `--level` /
+//! `--format` words that select between them, and `annotations_from`, which
+//! folds the report into the per-unit facts `cook-graph` aggregates over. That
+//! last one produces no bytes of its own, and it belongs here anyway: it is the
+//! report restated for a renderer, and the alternative is `pipeline.rs` reading
+//! `local_hit` and `shared_present` to decide what "served" means, which is one
+//! more place holding an opinion about a cache verdict.
 //!
 //! It holds no cache logic and performs no lookup. Every verdict it prints was
 //! decided in `cook-engine`; a `match` here that reached its own conclusion
@@ -293,24 +298,24 @@ fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
 // insertion order. The determinant maps themselves are already `BTreeMap` in the
 // engine; this note covers the per-unit object keys assembled here.
 //
-// CS-0217: the version is `cook_graph::DAG_SCHEMA_VERSION`, the same number the
-// whole-closure document carries, because this IS that document at reduced
-// scope — same `units` array, built by the same `why_unit_json`. A second
-// constant would be a second thing to remember to bump, and the payload they
-// both describe is one payload.
+// CS-0217: the version is stamped by `cook_graph::stamp_schema_version`, the
+// same call the whole-closure document goes through, because this IS that
+// document at reduced scope — same `units` array, built by the same
+// `why_unit_json`. Neither the key nor the number is spelled here: a renderer
+// that wrote `"schema_version"` itself would be the second end of a wire
+// format with nothing holding the two ends together.
 fn render_why_json(
     report: &cook_engine::why::WhyReport,
     timings: &cook_engine::observations::Observations,
 ) -> String {
     let units: Vec<serde_json::Value> =
         report.units.iter().map(|u| why_unit_json(u, timings)).collect();
-    serde_json::to_string_pretty(&serde_json::json!({
-        "schema_version": cook_graph::DAG_SCHEMA_VERSION,
+    let mut document = serde_json::json!({
         "recipe": report.recipe,
         "units": units,
-    }))
-    .unwrap_or_default()
-        + "\n"
+    });
+    cook_graph::stamp_schema_version(&mut document);
+    serde_json::to_string_pretty(&document).unwrap_or_default() + "\n"
 }
 
 pub(crate) fn why_unit_json(

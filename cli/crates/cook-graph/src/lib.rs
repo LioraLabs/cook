@@ -40,6 +40,18 @@ pub use dag_data::{build_dag_data, DagData, EdgeData, EdgeKind, NodeData};
 /// describes has not been only a DAG since 4.
 pub const DAG_SCHEMA_VERSION: u32 = 4;
 
+/// Stamp the wire-format version onto a machine-readable `cook why` document.
+///
+/// Both documents the query emits go through here (§{exec.cache.why.formats} /
+/// CS-0217): this crate's whole-closure document, and `cook-cli`'s
+/// selector-scoped one. The key and the number are one decision, so a caller
+/// spelling `"schema_version"` for itself would be the second end of a wire
+/// format with nothing holding the two ends together — which is the state
+/// CS-0217 found, in the milder form of one end having no version at all.
+pub fn stamp_schema_version(document: &mut serde_json::Value) {
+    document["schema_version"] = DAG_SCHEMA_VERSION.into();
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ViewerError {
     #[error("failed to serialize DAG: {0}")]

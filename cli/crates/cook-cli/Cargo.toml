@@ -47,10 +47,12 @@ humantime = "2"
 [features]
 default = []
 
-# Five entries left this list with `cook modules` (COOK-420): `anyhow` and
-# `base64` outright, and `dirs`, `toml` and `sha2` down to dev-dependencies,
-# where the tests that read a cache directory, parse a dumped index or hash a
-# fixture still want them. What is left is what a CLI shell needs — argument
+# Five entries left this list with `cook modules` (COOK-420). Three of them —
+# `anyhow`, `base64` and `dirs` — have no remaining use anywhere in the crate
+# and are gone outright; `dirs` survives only in three doc comments that talk
+# ABOUT `dirs::cache_dir`, which is what nearly kept it. `toml` and `sha2` are
+# down to dev-dependencies, where the tests that parse a dumped index or hash
+# a fixture still want them. What is left is what a CLI shell needs — argument
 # parsing, completion, file watching, globbing, and JSON — which is the
 # preamble above finally being true of the manifest under it.
 [dev-dependencies]
@@ -60,6 +62,5 @@ walkdir = "2"
 serial_test = "3"
 serde_json = "1"
 regex = "1"
-dirs = "5"
 toml = "0.8"
 sha2 = "0.10"

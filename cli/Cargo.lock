@@ -404,7 +404,6 @@ dependencies = [
  "cook-modules",
  "cook-plan",
  "cook-progress",
- "dirs",
  "glob",
  "globset",
  "humantime",

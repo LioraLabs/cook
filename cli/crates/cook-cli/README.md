@@ -67,14 +67,15 @@ invocation and renders what happened, as terminal output and an exit code.
   and a failed sweep to one warning line each, and its `published_count == 0`
   short-circuit precedes both the config load and the store walk, so a settled
   no-op build pays nothing for it (COOK-235).
-
 - **A report is turned into bytes in one file, and that file decides nothing.**
-  `why_render.rs` holds every line of `cook why`'s plain text and JSON;
-  `pipeline.rs` registers the workspace and asks the engine, then hands the
-  answer over. The split is what keeps a renderer from growing a `match` that
-  reaches its own cache verdict — the failure `cook dag` shipped with, whose
-  private classification is why it could report a hit the run then rebuilt
-  (CS-0171).
+  `why_render.rs` holds `cook why`'s determinant rendering — the plain-text
+  report, the selector's JSON document, and the per-unit encoder both JSON
+  paths share — while `pipeline.rs` registers the workspace, asks the engine,
+  and assembles the whole-closure document by joining that encoder's output to
+  the graph `cook-graph` rendered. The split is what keeps a renderer from
+  growing a `match` that reaches its own cache verdict, which is the failure
+  `cook dag` shipped with: a private classification that could report a hit the
+  run then rebuilt (CS-0171).
 
 ## What it does not do
 

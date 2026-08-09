@@ -8,10 +8,11 @@ what it installed.
 - **The ask and the record are two files and never merge.** `cook.toml`'s
   `[modules]` is what the author asked for; `cook.lock` is the closure that
   answer produced, direct and transitive alike, each entry carrying the
-  SHA-256 of the source rock it came from. A bare `cook modules install`
-  installs from the lock, so the reproducible path cannot quietly resolve
-  something the author never saw. Every state-changing invocation rewrites the
-  lock; nothing else does.
+  SHA-256 of the source rock it came from. A bare `cook modules install` with
+  a lock present installs from the lock and writes nothing, so the
+  reproducible path cannot quietly resolve something the author never saw;
+  every invocation that changes the answer — adding, removing, updating, or
+  installing with no lock yet — re-introspects the tree and rewrites it.
 - **It invents no constraint grammar.** A version constraint is passed to
   luarocks verbatim, and rock names use luarocks's own character set. A build
   tool that re-implemented a package manager's resolution rules would own two
@@ -19,15 +20,21 @@ what it installed.
   wrong on the first release that stretched the syntax.
 - **Every rock lands in the project's own build-output tree.** Every driver
   invocation passes `--tree <project>/.cook/modules`, resolved through
-  `cook_contracts::layout::modules_dir` (§27.1.1 / CS-0207) rather than
+  `cook_contracts::layout::modules_dir` (§27.1.1, CS-0207) rather than
   spelled here, so the directory this crate installs into is the directory the
   module loader searches. A user-global luarocks tree is never written and
   never read.
-- **Index precedence is positional, and an override is one invocation wide.**
-  `[registry].indexes` becomes repeated `--server <url>` flags in
-  left-to-right order; `--registry` prepends for the current command only and
-  is not written to the manifest. Precedence you can read off the argv is
-  precedence you can reproduce.
+- **An override is one invocation wide.** `--registry` prepends to
+  `[registry].indexes` for the current command only and is never written to
+  the manifest, so trying an index cannot silently become depending on one.
+  What reaches luarocks is ONE `--server=<url>` naming the first non-default
+  index, which prepends to its built-in list: blessed index first, public
+  fallback behind it. `base_argv` records why it is one flag and not several —
+  luarocks' `--server` is last-wins in both spellings, so the repeated form
+  searched only the final index and every blessed-rock install failed. Found
+  on launch night against a live index. The honest consequence, stated in the
+  code and repeated here: a config naming several private indexes is not
+  expressible through the flag, and wants a generated luarocks config.
 - **A luarocks failure arrives whole.** The driver captures argv, stdout and
   stderr and puts all three in the error, each stream bounded by
   `cook_contracts::CapturedStream` at the same 64 KiB the rest of Cook
