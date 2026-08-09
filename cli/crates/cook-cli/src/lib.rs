@@ -3,4 +3,3 @@
 //! dispatch without spawning a subprocess.
 
 pub mod diagnostics;
-pub mod modules;
