@@ -1,8 +1,18 @@
-//! Make-format depfile parser, for the `.d`-style dependency files emitted
-//! by `discovered_inputs` (target: prerequisite prerequisite ...).
+//! Reading a Make-format depfile: the `.d`-style dependency files emitted by
+//! `discovered_inputs` (target: prerequisite prerequisite ...).
+//!
+//! What a depfile MEANS is `cook_contracts::depfile` — a function of text
+//! alone, shared by the executor that keys on the answer and the `cook why`
+//! renderer that draws it. What is left here is the part that needs the world:
+//! reading the file, and dropping the prerequisites that do not exist on disk.
+//! COOK-425 drew that line; before it, deciding a depfile's meaning required a
+//! filesystem, and every test of the grammar built a directory tree to assert
+//! something about a string.
 
 use std::io;
 use std::path::Path;
+
+use cook_contracts::depfile::parse_prerequisites;
 
 /// Result of attempting to read a Make-format depfile.
 #[derive(Debug)]
@@ -33,16 +43,20 @@ impl std::error::Error for DepfileError {
     }
 }
 
-/// Parse a Make-format depfile. Returns paths in input order, deduped.
+/// Read a Make-format depfile. Returns paths in input order, deduped.
 ///
-/// Filter rules:
-///   - Strip the leading target text up to and including the first `:`.
-///   - Join continuation lines (`\\\n` and `\\\r\n`).
-///   - Skip entries beginning with `/` (absolute paths).
-///   - Skip entries equal to `source_path`.
-///   - Skip entries whose path does not exist on disk relative to `working_dir`.
+/// The grammar — strip the target text up to the first `:`, join continuation
+/// lines, drop absolute entries and the source itself, dedupe — is
+/// `cook_contracts::depfile::parse_prerequisites`. What this adds is the two
+/// things that need the world: reading the file, and dropping entries whose
+/// path does not exist on disk relative to `working_dir`.
 ///
 /// `source_path` may be the empty string (no self-skip).
+///
+/// The existence filter runs AFTER the dedupe rather than interleaved with it,
+/// which is where it used to sit. The list is identical either way: existence
+/// is a pure function of the token within a run, so it cannot promote a later
+/// duplicate into a slot the first occurrence would not have taken.
 pub fn parse_make_depfile(
     depfile_path: &Path,
     source_path: &str,
@@ -56,61 +70,22 @@ pub fn parse_make_depfile(
         Err(e) => return Err(DepfileError::Io(e)),
     };
 
-    // Locate the first ':' separating the target from the prerequisites.
-    let colon_pos = match content.find(':') {
-        Some(p) => p,
-        None => {
-            return Err(DepfileError::Malformed {
-                byte_offset: 0,
-                reason: "no ':' separating target from prerequisites".to_string(),
-            });
-        }
-    };
+    let named = parse_prerequisites(&content, source_path).map_err(|e| {
+        DepfileError::Malformed { byte_offset: e.byte_offset, reason: e.reason }
+    })?;
 
-    // Strip target text and any leading whitespace after the colon.
-    let after_colon = &content[colon_pos + 1..];
-
-    // Join continuation lines: '\\\r\n' and '\\\n' both become a single space.
-    // CRLF is processed first so the trailing '\r' doesn't leak into a token
-    // when the file uses Windows line endings.
-    let joined = after_colon
-        .replace("\\\r\n", " ")
-        .replace("\\\n", " ");
-
-    // Tokenise on any whitespace and apply filter rules. Preserve first-occurrence order.
-    let mut seen = std::collections::HashSet::new();
-    let mut out: Vec<String> = Vec::new();
-
-    for token in joined.split_whitespace() {
-        if token.is_empty() {
-            continue;
-        }
-        // Filter: skip absolute paths.
-        if token.starts_with('/') {
-            continue;
-        }
-        // Filter: skip the source itself.
-        if !source_path.is_empty() && token == source_path {
-            continue;
-        }
-        // Filter: skip non-existent paths (relative to working_dir).
-        //
-        // COOK-306: this runs for every prerequisite of every depfile on every
-        // run, and C++ prerequisite lists are overwhelmingly the same headers
-        // over and over — on DuckDB, 1,687 depfiles named ~320k prerequisites
-        // resolving to 6,730 distinct paths. Answered through the per-run stat
-        // memo, which shares its entries with the input check below and is
-        // disarmed by the first write cook performs.
-        if crate::statmemo::stat_mtime_memo(working_dir, token).is_none() {
-            continue;
-        }
-        // Dedupe.
-        if seen.insert(token.to_string()) {
-            out.push(token.to_string());
-        }
-    }
-
-    Ok(out)
+    // Filter: skip non-existent paths (relative to working_dir).
+    //
+    // COOK-306: this runs for every prerequisite of every depfile on every
+    // run, and C++ prerequisite lists are overwhelmingly the same headers
+    // over and over — on DuckDB, 1,687 depfiles named ~320k prerequisites
+    // resolving to 6,730 distinct paths. Answered through the per-run stat
+    // memo, which shares its entries with the input check below and is
+    // disarmed by the first write cook performs.
+    Ok(named
+        .into_iter()
+        .filter(|token| crate::statmemo::stat_mtime_memo(working_dir, token).is_some())
+        .collect())
 }
 
 #[cfg(test)]
