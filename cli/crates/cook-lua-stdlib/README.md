@@ -106,10 +106,16 @@ Two things here are honest exceptions rather than design:
   author, which both of its historical defects did. This crate is the lowest
   one holding the law and an interpreter, so the oracle lives here even though
   the subject does not.
-- `register_fs_api` (the no-sandbox wrapper) has no production caller. Since
-  CS-0135 retired `plate`, no step kind selects `SandboxPolicy::Off`; it survives
-  as the worker's initial slot value and in this crate's tests. A permissive
-  constructor with no caller is a default waiting to be picked up by accident.
+- `register_fs_api` (the no-sandbox wrapper) is deleted (COOK-423). It had no
+  production caller: CS-0135 retired `plate`, after which no step kind selects
+  `SandboxPolicy::Off`, and a permissive constructor with no caller is a default
+  waiting to be picked up by accident, since the shorter of two constructors is
+  what an unfamiliar caller reaches for. `register_fs_api_with_sandbox` is now the
+  only way to install `fs.*`, so a call site states its confinement or does not
+  compile, and §25's "no exempted step kind" holds by shape rather than by
+  everyone remembering. `SandboxPolicy::Off` itself stays: it is still the
+  worker's initial slot value, and a test that wants no sandbox now says
+  `SandboxSource::off()` out loud.
 
 ## Relationship to `cook-contracts`
 

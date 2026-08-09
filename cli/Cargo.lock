@@ -501,7 +501,6 @@ name = "cook-lang"
 version = "0.14.0"
 dependencies = [
  "cook-contracts",
- "glob",
  "thiserror 2.0.18",
 ]
 
@@ -595,7 +594,6 @@ dependencies = [
  "cook-luagen",
  "cook-probe",
  "cook-shell",
- "glob",
  "mlua",
  "serde",
  "serde_json",

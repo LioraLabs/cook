@@ -62,16 +62,21 @@ fn glob_one_pattern(
     Ok(paths)
 }
 
-/// Register the `fs` table on the supplied Lua VM, with no sandbox
-/// (pre-CS-0045 behavior). Kept as a thin wrapper for callers that
-/// have not yet been ported to the sandbox-aware factory; new call
-/// sites SHOULD use [`register_fs_api_with_sandbox`] directly.
-pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> {
-    register_fs_api_with_sandbox(lua, wd_source, SandboxSource::off())
-}
+// COOK-423: the no-sandbox `register_fs_api` wrapper is deleted. It was kept
+// for callers not yet ported to the sandbox-aware factory, and there were none
+// left: CS-0135 retired `plate`, after which no step kind selects
+// `SandboxPolicy::Off`, and §25 says outright that every Lua execution context
+// in the language is sandboxed with no exempted step kind. Installing `fs.*`
+// unconfined is therefore not a thing this crate should be able to do by
+// accident, and the shorter of two constructors is exactly what an unfamiliar
+// caller reaches for. A test that wants no sandbox now passes
+// `SandboxSource::off()` and says so.
 
 /// Register the `fs` table on the supplied Lua VM with a sandbox
 /// policy. CS-0045.
+///
+/// This is the only way to install `fs.*`, so the policy is never defaulted:
+/// a call site states its confinement or does not compile.
 ///
 /// `wd_source` and `sandbox` are each cloned once per registered
 /// closure so every entry independently resolves its working directory
