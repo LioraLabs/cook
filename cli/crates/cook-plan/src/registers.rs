@@ -405,13 +405,12 @@ fn describe_unit(unit: &cook_contracts::CapturedUnit) -> String {
         WorkPayload::LuaChunk { .. } => "<lua step>".to_string(),
         _ => "<step>".to_string(),
     };
-    // Shell payloads carry a `set -e` preamble the author never wrote; drop it
-    // and flatten to one line so the two sites line up readably.
-    let body = raw
-        .trim()
-        .strip_prefix("set -e")
-        .unwrap_or_else(|| raw.trim())
-        .trim();
+    // CS-0215: shell payloads carry a `set -e` preamble the author never
+    // wrote, and its inverse is CALLED, not re-derived. This site had a
+    // fourth private stripper, and a divergent one: it dropped the prefix
+    // without requiring the newline that follows it, so a payload beginning
+    // `set -euo pipefail` was rendered as `uo pipefail`.
+    let body = cook_contracts::shell_block::strip_set_e(&raw).trim();
     let flattened = body
         .lines()
         .map(str::trim)

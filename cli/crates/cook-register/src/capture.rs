@@ -563,11 +563,16 @@ pub fn install_cook_api(
     let body_slot_sh = body_slot.clone();
     let wd_sh = working_dir.clone();
     let sh_recipe_name = recipe_name.to_string();
-    let sh_fn = lua.create_function(move |_, cmd: String| {
+    let sh_fn = lua.create_function(move |lua, cmd: String| {
         {
             let mut slot = body_slot_sh.borrow_mut();
             if let Some(body) = slot.as_mut() {
                 if body.inside_layer {
+                    // NOT the CS-0211 line: `inside_layer` is never set true
+                    // anywhere in the workspace, so this branch is dead and
+                    // the zero is a placeholder in a record nothing reads.
+                    // Do not copy it downward — the live path below walks the
+                    // stack, and a constant zero there is the COOK-426 defect.
                     body.layer_commands.push((cmd, 0));
                     return Ok("".to_string());
                 }
@@ -581,7 +586,19 @@ pub fn install_cook_api(
         // (§5.3.1) — injecting one here would make `$NAME` in a `cook.sh`
         // command silently resolve to a build variable, which is the
         // conflation this CS removes. `$<NAME>` interpolates one explicitly.
-        run_shell_command(&cmd, &wd_sh, &HashMap::new(), 0, &sh_recipe_name)
+        // CS-0211 requires a `cook.sh` failure to be located the SAME WAY in
+        // both phases, and this side supplied a constant zero — the reverse
+        // of what §{lua.cook-sh} recorded, and reachable from a plain
+        // `register` block (COOK-426). The walk is the shared one
+        // (`cook_lua_stdlib::caller_line_in_source`, via
+        // `caller_line_in_cookfile`), so both phases now ask one question of
+        // their own chunk name; it skips a module's own frames and answers
+        // with the Cookfile line that entered the module, which is the line
+        // a reader can act on. `None` — no Cookfile frame within the walk's
+        // depth bound — stays `0`, which `CommandFailure::located` reads as
+        // "no location" rather than as line zero.
+        let line = caller_line_in_cookfile(lua).unwrap_or(0);
+        run_shell_command(&cmd, &wd_sh, &HashMap::new(), line, &sh_recipe_name)
     })?;
     cook.set("sh", sh_fn)?;
 

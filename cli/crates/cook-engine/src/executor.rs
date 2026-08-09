@@ -363,6 +363,11 @@ fn run_interactive_on_main(
 fn progress_error(error: &str) -> String {
     CommandFailure::from_wire(error).map_or_else(
         || error.to_owned(),
+        // CS-0215: `displayed_command`, not `command`. The progress line used
+        // to print the raw field, so every failing block opened with
+        // `compose`'s `set -e` while the final diagnostic one row below
+        // showed the author's body — two renderers, one question, two answers,
+        // exactly as with `located` before CS-0211.
         |failure| match failure.located() {
             // CS-0211: an unlocatable failure is reported without a
             // location, not with `line 0`.
@@ -370,12 +375,12 @@ fn progress_error(error: &str) -> String {
                 "command at line {} exited with code {}: {}",
                 line,
                 failure.exit_code(),
-                failure.command()
+                failure.displayed_command()
             ),
             None => format!(
                 "command exited with code {}: {}",
                 failure.exit_code(),
-                failure.command()
+                failure.displayed_command()
             ),
         },
     )

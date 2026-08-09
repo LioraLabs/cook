@@ -66,6 +66,26 @@ impl CommandFailure {
         &self.command
     }
 
+    /// The command as a reader is shown it: the author's body, without the
+    /// prelude [`crate::shell_block::compose`] put in front of it.
+    ///
+    /// `set -e` is the implementation's line, not the author's, and §{lua.cook-sh}
+    /// (CS-0215) forbids showing it. A renderer holding a `CommandFailure`
+    /// asks this rather than calling `strip_set_e` on `command()` itself, for
+    /// the reason `located` gives one paragraph up: that was one decision with
+    /// four implementations, and they disagreed. `cook-cli`'s final diagnostic
+    /// stripped; `cook-engine`'s progress line printed the prelude as the
+    /// first line of the failing command; `cook-cli`'s test report and
+    /// `cook-plan`'s duplicate-output diagnostic each kept a private stripper,
+    /// one missing the empty-block case and the other dropping the prefix
+    /// without its newline, so `set -euo pipefail` rendered as `uo pipefail`.
+    /// The two sites that hold a shell payload rather than a failure call
+    /// [`crate::shell_block::strip_set_e`] directly; this is the same law one
+    /// level up, for callers that have the failure.
+    pub fn displayed_command(&self) -> &str {
+        crate::shell_block::strip_set_e(&self.command)
+    }
+
     pub fn stdout(&self) -> &CapturedStream {
         &self.stdout
     }
