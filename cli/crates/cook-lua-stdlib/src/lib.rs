@@ -39,6 +39,7 @@ pub mod path_api;
 pub mod platform_api;
 pub mod sandbox;
 pub mod shell_guard;
+pub mod source_line;
 pub mod tools_api;
 
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ pub use platform_api::register_platform_api;
 pub use tools_api::register_tools_api;
 pub use sandbox::{SandboxPolicy, SandboxSource};
 pub use shell_guard::install_shell_escape_guards;
+pub use source_line::caller_line_in_source;
 
 /// Source of the working directory used to resolve relative paths in
 /// `fs.*` calls.

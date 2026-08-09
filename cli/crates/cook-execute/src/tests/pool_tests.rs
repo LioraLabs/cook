@@ -609,6 +609,85 @@ fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
     result
 }
 
+/// As `run_lua_chunk_in_worker`, but with the originating step's Cookfile
+/// line, which the worker uses to newline-pad the chunk (CS-0126).
+fn run_lua_chunk_in_worker_at_line(line: usize, code: &str) -> WorkResult {
+    let dir = TempDir::new().unwrap();
+    let (pool, rx) = WorkerPool::spawn(1);
+    pool.submit(WorkItem {
+        process_env_vars: HashMap::new(),
+        id: 0,
+        payload: WorkPayload::LuaChunk {
+            code: code.to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            ingredient_groups: vec![],
+            step_kind: cook_contracts::StepKind::Cook,
+            is_chore: false,
+            line,
+        },
+        recipe_name: "rec".to_string(),
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
+    let result = rx.recv().unwrap();
+    pool.shutdown();
+    result
+}
+
+/// A `cook.sh` that fails inside an execute-phase Lua body reports the
+/// Cookfile line it was called on, as its register-phase twin already did.
+///
+/// This is not a field nobody reads: `cook-cli`'s `render_command_failure`
+/// prints `Cookfile:LINE: command failed …` when the line is non-zero and
+/// drops the location entirely when it is zero. The worker passed a
+/// hardcoded `0`, so every `cook.sh` failure inside a `>{ … }` body, a
+/// `lua_line`, or a chore body was reported with no location at all while
+/// the identical register-phase failure carried one.
+///
+/// The chunk is newline-padded to its step's line (CS-0126), so the body's
+/// first line IS Cookfile line 12 here and the failing call is on line 13.
+#[test]
+fn a_failing_cook_sh_in_a_lua_body_reports_its_cookfile_line() {
+    let result = run_lua_chunk_in_worker_at_line(12, "local marker = 1\ncook.sh(\"false\")\n");
+
+    assert!(!result.success, "a failing cook.sh must fail the unit");
+    let wire = result.error.expect("cook.sh failure reaches the result");
+    let failure = cook_contracts::CommandFailure::from_wire(&wire)
+        .expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 13, "wire: {wire}");
+    assert_eq!(failure.command(), "false");
+}
+
+/// A body the worker cannot line-map — a probe `produce`, whose chunk is
+/// named for the probe rather than the Cookfile — degrades to `0` and the
+/// location-free rendering. Better no location than a wrong one.
+#[test]
+fn a_failing_cook_sh_outside_a_cookfile_chunk_reports_no_line() {
+    let (pool, rx, dir) = make_pool(1);
+    pool.submit(WorkItem {
+        process_env_vars: HashMap::new(),
+        id: 0,
+        payload: WorkPayload::Probe {
+            key: "t:fails".to_string(),
+            produce: r#"return cook.sh("false")"#.to_string(),
+            line: 4,
+        },
+        recipe_name: "rec".to_string(),
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
+    let result = rx.recv().unwrap();
+    pool.shutdown();
+
+    let wire = result.error.expect("cook.sh failure reaches the result");
+    let failure = cook_contracts::CommandFailure::from_wire(&wire)
+        .expect("canonical command failure JSON");
+    assert_eq!(failure.line(), 0, "wire: {wire}");
+}
+
 fn assert_register_only_diagnostic(result: &WorkResult, fn_name: &str) {
     assert!(
         !result.success,

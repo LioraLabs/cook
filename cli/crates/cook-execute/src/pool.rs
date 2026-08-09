@@ -588,6 +588,14 @@ fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
 // Per-worker cook table registration
 // ---------------------------------------------------------------------------
 
+/// The chunk name every execute-phase Lua body is loaded under (CS-0126).
+/// `execute_lua_chunk` newline-pads a body to its step's Cookfile line and
+/// names it this, so a Lua error reads `Cookfile:LINE:` instead of the
+/// opaque `[string "…"]:1:` — and so a stack walk looking for this name
+/// finds the body's real Cookfile line. Spelled once because the padding and
+/// the walk have to agree.
+const COOKFILE_CHUNK_NAME: &str = "@Cookfile";
+
 fn register_worker_cook_table(
     lua: &mlua::Lua,
     current_working_dir: &Arc<Mutex<PathBuf>>,
@@ -614,11 +622,21 @@ fn register_worker_cook_table(
     let penv = Arc::clone(current_process_env_vars);
     let sink = Arc::clone(current_output);
     let capture = Arc::clone(current_capture);
-    let sh_fn = lua.create_function(move |_, cmd: String| {
+    let sh_fn = lua.create_function(move |lua, cmd: String| {
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
         let to_terminal = !capture.load(Ordering::Relaxed);
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, 0, to_terminal)
+        // COOK-422: which Cookfile line this call is on. A failure carrying
+        // a line renders `Cookfile:LINE: command failed …`; one carrying 0
+        // renders with no location, which is what every execute-phase
+        // `cook.sh` failure did while this argument was a literal `0`. The
+        // walk is the register phase's, shared rather than copied; the only
+        // execute-phase part is the chunk name to look for, which is the one
+        // `execute_lua_chunk` pads and loads bodies under. A body the worker
+        // cannot line-map (a probe `produce`, named for its probe) yields
+        // `None` and the location-free rendering, which is the honest answer.
+        let line = cook_lua_stdlib::caller_line_in_source(lua, COOKFILE_CHUNK_NAME).unwrap_or(0);
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal)
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -1481,7 +1499,7 @@ fn execute_lua_chunk(
         } else {
             code
         };
-        lua.load(src).set_name("@Cookfile").exec()?;
+        lua.load(src).set_name(COOKFILE_CHUNK_NAME).exec()?;
         Ok(())
     };
 
