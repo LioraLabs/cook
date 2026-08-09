@@ -28,9 +28,11 @@ pub mod quoting;
 pub mod recipe;
 pub mod render;
 pub mod shell_block;
+pub mod size;
 pub mod sigil;
 pub mod registration;
 pub mod step;
+pub mod timestamp;
 pub mod unit;
 pub mod unit_graph;
 

@@ -146,3 +146,71 @@ fn verify_json_survives_a_multiline_error_detail() {
     assert_eq!(parsed["units"][1]["unit"], r#"we"ird\path"#);
     assert_eq!(parsed["units"][1]["detail"], "bytes differ\r\nat offset 12");
 }
+
+// ---------------------------------------------------------------------------
+// The node and recipe vocabularies (COOK-421)
+// ---------------------------------------------------------------------------
+//
+// `cook_engine::NodeKind` and `cook_progress::NodeKind` used to be two
+// declarations of one vocabulary joined by `translate_kind`, and `RecipeKind`
+// was the same shape a third time. Nothing asserted the mappings were the
+// identity, and nothing asserted the kebab-case spelling `cook-logs` reads
+// back out of `.cook/logs`.
+//
+// These landed against the mirrors, each proved to bite by mutation, and are
+// kept now that the mirrors are gone: an agreement test that has become
+// trivially true is a unified path, and it is the guard against re-forking.
+// This crate remains the only place both aliases of the unified type are
+// visible alongside the registration name they came from.
+
+/// The engine's kind and the renderer's kind are the SAME TYPE, so no
+/// translation can be wrong. A re-fork does not fail this assertion, it fails
+/// to compile — which is the strongest form of the check.
+#[test]
+fn the_engine_and_the_renderer_name_one_node_kind() {
+    let from_engine: cook_progress::NodeKind = cook_engine::NodeKind::Link;
+    assert_eq!(from_engine, cook_progress::NodeKind::Link);
+
+    let declared: cook_progress::event::RecipeKind = cook_engine::RecipeKind::Chore;
+    assert_eq!(declared, cook_contracts::registration::RecipeKind::Chore);
+}
+
+/// The kind a node carries when nobody annotated it. An unannotated node must
+/// not change verb on its way to the renderer.
+#[test]
+fn the_unannotated_default_is_cooked() {
+    assert_eq!(cook_engine::NodeKind::default(), cook_progress::NodeKind::Cooked);
+    assert_eq!(
+        cook_engine::RecipeKind::default(),
+        cook_progress::event::RecipeKind::Recipe
+    );
+}
+
+/// The kind is serialised into `.cook/logs` and read back by `cook-logs`, so
+/// its spelling is a wire format, not a rendering detail. Unifying the enums
+/// moved which crate owns that spelling; these literals say it did not change
+/// it.
+///
+/// It pins the nine spellings, not the convention: every variant of both
+/// enums is a single word, so `kebab-case`, `lowercase` and `snake_case` would
+/// all produce this output. The spellings are what is on disk, so they are
+/// what is asserted.
+#[test]
+fn the_wire_spelling_is_what_is_already_on_disk() {
+    use cook_progress::event::RecipeKind as R;
+    use cook_progress::NodeKind as P;
+    for (kind, spelled) in [
+        (P::Compile, "compile"),
+        (P::Link, "link"),
+        (P::Resolve, "resolve"),
+        (P::Generate, "generate"),
+        (P::Write, "write"),
+        (P::Test, "test"),
+        (P::Cooked, "cooked"),
+    ] {
+        assert_eq!(serde_json::to_string(&kind).expect("serialise"), format!("\"{spelled}\""));
+    }
+    for (kind, spelled) in [(R::Recipe, "recipe"), (R::Chore, "chore")] {
+        assert_eq!(serde_json::to_string(&kind).expect("serialise"), format!("\"{spelled}\""));
+    }
+}

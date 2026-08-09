@@ -126,9 +126,11 @@ than none:
 - `depfile.rs` parses Make-format `.d` files. It is the one module here that
   neither writes nor reads cache state; it lives here because its output feeds
   the records that do.
-- `parse_size` and `SIZE_LITERAL_HELP` are pure and shared with `cook-cli`'s
-  `cache gc --max-size`, which by the `cook-contracts` admission bar puts their
-  home upstream, not here.
+- `parse_size` and `SIZE_LITERAL_HELP` used to be listed here as pure and
+  shared with `cook-cli`'s `cache gc --max-size`, which by the `cook-contracts`
+  admission bar put their home upstream. COOK-421 moved them to
+  `cook_contracts::size`; `cloud_config.rs` imports them like anyone else, and
+  the re-export cook-cli used to tunnel through is gone.
 
 ## What lives here that the sentence above does not cover
 

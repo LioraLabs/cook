@@ -69,19 +69,19 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::cache::cas::{CloudKey, EvictCandidate};
+use crate::cache::cas::{artifact_kind, CloudKey, EvictCandidate};
 
 /// Kinds the size-driven sweep must never evict (milestone D1).
 pub const SIZE_SWEEP_EXEMPT_KINDS: &[&str] = &[
-    "discovered_input_sets",
-    "discovered_inputs",
+    artifact_kind::DISCOVERED_INPUT_SETS,
+    artifact_kind::DISCOVERED_INPUTS,
     // CS-0204: the module-path manifest is the same shape of hazard — it is
     // the only route from a Lua-bodied unit's declared key to the full key its
     // artifacts sit under, so evicting it strands them.
-    "module_input_sets",
-    "probe_value",
-    "symlink",
-    "dir",
+    artifact_kind::MODULE_INPUT_SETS,
+    artifact_kind::PROBE_VALUE,
+    artifact_kind::SYMLINK,
+    artifact_kind::DIR,
 ];
 
 /// Low-water fraction COOK-235's `auto_gc` sweeps to. Manual `cook cache gc
@@ -176,7 +176,7 @@ fn eviction_order(c: &EvictCandidate) -> (u64, CloudKey) {
 }
 
 fn size_eviction_order(c: &EvictCandidate) -> (u8, u64, CloudKey) {
-    let priority = if c.kind.as_deref() == Some("observation") {
+    let priority = if c.kind.as_deref() == Some(artifact_kind::OBSERVATION) {
         0
     } else {
         1

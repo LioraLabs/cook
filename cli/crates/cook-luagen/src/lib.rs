@@ -6,7 +6,6 @@ mod cook_step;
 /// (COOK-390): it appears in the chore wrapper's parameter list, per-param
 /// locals, static-read rewrites, and the `cook.__quote_param` emission.
 pub(crate) const COOK_PARAMS_LOCAL: &str = "__cook_params";
-pub mod lua_var;
 mod lua_scan;
 mod lua_string;
 mod probe;

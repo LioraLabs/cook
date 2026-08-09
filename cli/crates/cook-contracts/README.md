@@ -81,7 +81,35 @@ Worked examples from this repo's history:
   into, and the crate that knew fewer of the spellings inserted the author's
   new entry into the middle of their string literal. Note what "shared" meant
   here: one crate's copy was *correct* and the finding was not drift between
-  them but a second, worse answer to a question already settled next door).
+  them but a second, worse answer to a question already settled next door); the COOK-421 sweep, below.
+- **Moved here by COOK-421**, the first sweep run against the gate rather than
+  by hand. Seven, and what each was doing before is more useful than what it is
+  now:
+  - `size` (`parse_size`, `SIZE_LITERAL_HELP`) — one byte-budget grammar with
+    two ends, `.cook/cloud.toml` and `cook cache gc --max-size`, reached by the
+    second through `cook_engine::cook_cache::parse_size`, a re-export of a
+    re-export.
+  - `unit::NodeKind` and `registration::RecipeKind` — one vocabulary declared
+    three times, joined by two hand-written translations, under a comment
+    claiming the copies were "deliberately distinct". They were not: the engine
+    derived its mirror from the declaration and the CLI derived the renderer's
+    from that.
+  - `cache::local_key` (`build_local_cache_key`, `observing_identity`,
+    `OBSERVING_KEY_MARKER`) — the identity every cached unit is filed under,
+    living in the phase that called it first. `cache::record`'s doc comment
+    already reached into cook-register to explain itself in terms of it.
+  - `cache::cas::artifact_kind` — seven on-disk `kind` values typed as bare
+    strings by writers in three crates and re-typed by their readers.
+  - `lua_scan` — the pure Lua text scanner, which made the phase that RUNS
+    generated Lua depend on the crate that GENERATES it.
+  - `timestamp` — the calendar, in THREE implementations, one of which faked it
+    as `(y*365 + m*31 + d)` and made a one-second build spanning 28 February
+    read as 72 hours. The correct one was two crates away.
+  - `naming::is_bare_name_char` — App. A's `BARE_IDENTIFIER` class, written out
+    at five sites, two of them the declaration and the selection of a config
+    preset. Four, until a review found that the one this sweep had counted in
+    `probe_key::is_tool_name` had no production caller, and the live
+    `TOOL_NAME` validator was a fifth copy nobody had looked at.
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
   their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
   `CacheBackend` trait and its implementations (mechanism, not law).
@@ -219,6 +247,25 @@ The clone rule matches exact tokens, so it catches a copy before it drifts and
 never after; the duration renderers were found by hand precisely because they
 had already diverged. Law shorter than its window is invisible to it. The
 answer to both is this document, not the gate.
+
+COOK-421 is the first sweep run against the baseline, and it measured those
+limits rather than restating them. Both blind spots fired on real work in one
+ticket. The bare-name character class was caught between two crates and missed
+at two more, where it is a one-liner — the rule found half a finding and a
+reader found the rest. The RFC-3339 parse was not caught at all, because it had
+already diverged: `cook-cli` had Hinnant's calendar right and `cook-logs` had
+invented `(y*365 + m*31 + d)`, so a one-second build spanning 28 February
+displayed as 72 hours, in a tree the gate called clean.
+
+One thing the sweep did that the gate cannot ask for: the baseline's
+justifications were re-read against the code, and two were wrong. The SHA-256
+entry called its finding "two implementations of one digest"; they are two
+different digests sharing a four-line conversion that `cache::cas` in this very
+crate already wrote as `.into()`. cook-register's README excused a misplaced law
+by naming `cook-fingerprint` as its correct home — a crate COOK-418 had already
+deleted — and by arguing it was "not yet a twin" because it had one caller. A
+waiver ages the way a comment ages, and nothing in `constitution/` checks
+whether its own reasons are still true.
 
 Every rule carries a mutation test, and that is not ceremony. The purity budget
 used to scan `use std::{…}` statements, so a `path.is_dir()` walked past it and

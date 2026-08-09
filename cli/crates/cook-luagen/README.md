@@ -74,17 +74,9 @@ pre-pass for probe key-versus-field resolution, COOK-190).
 
 ## Boundary debt
 
-Two things sit here that the crate name does not cover, and both are named
+One thing sits here that the crate name does not cover, and it is named
 rather than defended:
 
-- **`lua_var` + `lua_scan` are static analysis of Lua, not generation**
-  (~640 LoC). `scan_var_reads` finds the cache determinants a `>{ … }` body
-  reads; `scan_probe_reads` finds its literal `cook.probes.get("k")` calls.
-  The second has exactly one consumer, `cook-register`'s `unit_api.rs:866`, so
-  a runtime crate depends on the codegen crate for a text scanner. It answers
-  the same question the sigil scanner in `cook_contracts::sigil` answers for
-  the shell surface ("what does this body consume?"), and it is pure, so by
-  the admission bar its home is `cook-contracts`, beside its twin.
 - **`probe::lower_produce` authors probe semantics as program text**
   (probe.rs:104). The `tools { }` arm emits Lua that shells out to
   `command -v` and `sha256sum … | cut -d' ' -f1` to build

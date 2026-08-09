@@ -622,9 +622,7 @@ fn map_register_error(e: cook_register::RegisterError) -> PipelineError {
         } if declared == 0
             && supplied == 1
             && !first_unmatched.is_empty()
-            && first_unmatched
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') =>
+            && first_unmatched.chars().all(cook_contracts::naming::is_bare_name_char) =>
         {
             let base = e.to_string();
             PipelineError::Other(format!(

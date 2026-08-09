@@ -152,6 +152,19 @@ pub fn ident_end(bytes: &[u8], start: usize) -> usize {
     k
 }
 
+/// What a Lua body reads: `var.NAME` values and `cook.probes.get("k")` keys.
+///
+/// Same walk, second question. Codegen folds the scanned `var` names into a
+/// unit's `consulted_env_keys`, and the register phase asks the same source the
+/// same question about probe keys to decide which probes a unit declares. Those
+/// two must agree: a key one sees and the other does not is a probe read that
+/// never became a determinant. It lived in `cook-luagen` until COOK-421, which
+/// made `cook-register` — the phase that RUNS generated Lua — depend on the
+/// crate that GENERATES it, for a scanner that generates nothing.
+mod reads;
+
+pub use reads::{scan_probe_reads, scan_var_reads};
+
 #[cfg(test)]
 #[path = "tests/lua_scan_tests.rs"]
 mod tests;

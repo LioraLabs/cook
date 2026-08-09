@@ -66,9 +66,16 @@ same events through the same `BuildState`.
 ## What it does not do
 
 It does not decide what happened. `cook-engine` deliberately does not depend on
-this crate; it keeps its own `NodeKind` / `RecipeKind` and the CLI translates in
-an exhaustive match (`cook-cli/src/pipeline.rs:106`), so a new variant on either
-side is a compile error rather than a silent default.
+this crate: a renderer is one possible consumer of the event stream, not the
+consumer.
+
+That independence used to be bought with a copy — this crate kept its own
+`NodeKind` / `RecipeKind` and the CLI translated in an exhaustive match — and
+COOK-421 bought it with the stratum rule instead. Both enums are defined once
+in `cook_contracts::{unit, registration}`, which both crates already depend on,
+and re-exported here so `cook_progress::NodeKind` still names what it named. A
+new variant is now a compile error on every arm that matches it, and there is
+no translation left to get wrong.
 
 It does not own the log-reading UI. `cook logs` is `cook-logs`: ratatui widgets,
 search, theme, key handling. The boundary is the format, not the direction of

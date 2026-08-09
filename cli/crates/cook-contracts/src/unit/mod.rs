@@ -3,6 +3,32 @@
 use crate::{CacheMeta, StepKind};
 use std::collections::BTreeMap;
 
+/// What kind of work a node is doing. Determines which verb a renderer prints
+/// (`Compiled`, `Linked`, `Tested`, …); unannotated nodes default to `Cooked`.
+///
+/// One definition, because two crates must agree on it and disagreement is a
+/// bug rather than a preference (COOK-421). The engine produces this on its
+/// event stream, `cook-progress` renders it and writes it into `.cook/logs`,
+/// and `cook-logs` reads it back — so the serde spelling below is a wire
+/// format, not a rendering detail.
+///
+/// It used to be declared once per crate with a hand-written translation in
+/// cook-cli joining them, justified by keeping cook-engine free of a
+/// cook-progress dependency. The stratum rule answers that without a mirror:
+/// both crates already depend on this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeKind {
+    Compile,
+    Link,
+    Resolve,
+    Generate,
+    Write,
+    Test,
+    #[default]
+    Cooked,
+}
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

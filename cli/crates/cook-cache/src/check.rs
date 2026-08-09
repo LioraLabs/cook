@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cook_contracts::cache::cas::artifact_kind;
 use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
 
 use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
@@ -625,13 +626,13 @@ fn restore_one(
         }
     }
     match meta.kind.as_deref() {
-        Some("dir") => {
+        Some(artifact_kind::DIR) => {
             if std::fs::create_dir_all(abs).is_err() {
                 return false;
             }
             set_mode(abs, meta.mode)
         }
-        Some("symlink") => {
+        Some(artifact_kind::SYMLINK) => {
             let target = match meta.target.as_deref() {
                 Some(t) => t,
                 None => return false,
@@ -877,7 +878,7 @@ pub fn fetch_observation(
         crate::cas_backend::OBSERVATION_PATH,
     );
     let (mut reader, meta) = backend.get_with_meta(&artifact_k).ok().flatten()?;
-    if meta.kind.as_deref() != Some("observation") {
+    if meta.kind.as_deref() != Some(artifact_kind::OBSERVATION) {
         return None;
     }
     let mut bytes = Vec::new();

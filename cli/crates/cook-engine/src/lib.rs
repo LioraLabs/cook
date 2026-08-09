@@ -27,11 +27,9 @@ pub use run::{
 // structurally prevented from re-opening registration mid-walk, which is the
 // two-phase law enforced by the crate graph rather than by convention.
 //
-// Note: `registration::RecipeKind` is intentionally NOT re-exported at the
-// engine root — it would collide with the engine's own `RecipeKind` (the
-// progress-event mirror enum a few lines below). Consumers that need the
-// registration-phase kind reach it through the re-exported `cook_contracts`
-// module path: `cook_engine::cook_contracts::registration::RecipeKind`.
+// `registration::RecipeKind` used to be held out of the root re-export
+// because it collided with an engine-side mirror of the same name. COOK-421
+// deleted the mirror; the two were one vocabulary. It is re-exported below.
 pub use cook_contracts::registration::{RegisteredRecipePub, RegisteredWorkspace};
 
 // Re-export `cook_contracts` and `cook_cache` as modules so consumers
@@ -144,39 +142,16 @@ impl WorkNode {
 }
 
 // ---------------------------------------------------------------------------
-// NodeKind — engine-side mirror of cook_progress::NodeKind
+// NodeKind / RecipeKind — one vocabulary, defined in cook-contracts
 // ---------------------------------------------------------------------------
 
-/// Kind of work a node is doing — engine-side enum, isomorphic to
-/// `cook_progress::NodeKind`. The CLI translates between the two so that
-/// `cook-engine` does not depend on `cook-progress` (the renderer is one
-/// of several possible event consumers).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum NodeKind {
-    Compile,
-    Link,
-    Resolve,
-    Generate,
-    Write,
-    Test,
-    #[default]
-    Cooked,
-}
-
-// ---------------------------------------------------------------------------
-// RecipeKind — engine-side mirror of cook_progress::event::RecipeKind
-// ---------------------------------------------------------------------------
-
-/// Whether a completed recipe was a normal recipe or a chore — engine-side
-/// enum, isomorphic to `cook_progress::event::RecipeKind`. The CLI
-/// translates between the two so that `cook-engine` does not depend on
-/// `cook-progress`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RecipeKind {
-    #[default]
-    Recipe,
-    Chore,
-}
+// COOK-421. Both used to be declared here as "engine-side mirrors", so that
+// cook-engine need not depend on cook-progress. The stratum rule answers that
+// without a mirror: both crates already depend on cook-contracts, and a law
+// lives as low as its dependencies allow. Re-exported at the engine root so
+// `cook_engine::NodeKind` keeps naming the thing it always named.
+pub use cook_contracts::registration::RecipeKind;
+pub use cook_contracts::unit::NodeKind;
 
 // ---------------------------------------------------------------------------
 // EngineEvent — progress / observability events emitted during execution
