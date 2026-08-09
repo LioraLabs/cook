@@ -128,10 +128,7 @@ fn hash_file(path: &Path) -> [u8; 32] {
     let Ok(bytes) = std::fs::read(path) else {
         return [0u8; 32];
     };
-    let result = Sha256::digest(&bytes);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
-    out
+    Sha256::digest(&bytes).into()
 }
 
 #[cfg(test)]
