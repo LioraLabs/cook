@@ -60,8 +60,10 @@ impl Observations {
     }
 }
 
-pub fn render_ms(ms: u64) -> String {
-    // COOK-392: THE duration rendering (this impl was the canon the law
-    // adopted; it gained the >= 1h band in the move).
-    cook_contracts::render::duration_ms(ms)
-}
+// COOK-423: `render_ms` is deleted. It was this module's copy of the duration
+// rendering, kept as a forwarding shim after COOK-392 moved the canon to
+// `cook_contracts::render::duration_ms`, and it lost its last caller when
+// cook-graph stopped importing it. Every renderer in the workspace now names
+// the law directly. A shim is a second name for one decision, which is the
+// shape CS-0198 removed; leaving one behind invites the next reader to add a
+// band to whichever name they found first.

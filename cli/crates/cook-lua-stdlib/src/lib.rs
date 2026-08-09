@@ -59,7 +59,7 @@ pub use member_api::install_member_to_string;
 pub use probes_api::install_probes_api;
 pub use var_proxy::install_var_proxy;
 pub use cookfile_api::register_cookfile_api;
-pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
+pub use fs_api::register_fs_api_with_sandbox;
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
 pub use tools_api::register_tools_api;

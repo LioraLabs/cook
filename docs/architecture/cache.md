@@ -56,7 +56,7 @@ engine install `cook-cache::parse_make_depfile` at startup without
 | `lib.rs` | Re-exports + crate docs |
 | `backend.rs` | `LocalBackend` (v3 filesystem CAS), `VerifyingReader`, `get_bytes`/`put_bytes` helpers |
 | `store.rs` | `RecipeCache` on-disk format (TOML, hex-string hashes), `load`/`save`, atomic rename |
-| `manager.rs` | `ThreadSafeCacheManager`, `CacheState`, `SharedCacheState`, `record_completion` |
+| `manager.rs` | `ThreadSafeCacheManager`, `record_completion` |
 | `cache_ctx.rs` | `CacheContext` (per-build aggregate of exec ctx, denylist, backend, cloud config) |
 | `cloud_backend.rs` | `CloudBackend` HTTP client implementing `CacheBackend` |
 | `cloud_config.rs` | `CloudConfig` deserialised from `.cook/cloud.toml` |
@@ -491,7 +491,6 @@ Key methods (`cli/crates/cook-cache/src/manager.rs`):
 
 | Method | Behaviour |
 |---|---|
-| `load_recipe(name)` (manager.rs:91) | Load the named recipe's `.toml` index (or insert empty default) |
 | `get_or_load(name)` (manager.rs:127) | Return a clone of the in-memory cache, loading on demand |
 | `update_step(name, key, entry)` (manager.rs:97) | Insert/replace a step entry and mark the recipe dirty |
 | `record_completion(name, key, meta, wd)` (manager.rs:137) | Build a `StepEntry` from `CacheMeta` (fingerprinting inputs/outputs via `collect_records`), append the depfile to outputs when `discovered_inputs` is set, then `update_step` |
@@ -501,10 +500,12 @@ Key methods (`cli/crates/cook-cache/src/manager.rs`):
 
 ### Single-threaded path
 
-For non-parallel execution Cook uses `CacheState` (manager.rs:43) wrapped
-in `SharedCacheState = Rc<RefCell<CacheState>>`. `CacheState::flush`
-(manager.rs:60) writes when `dirty == true` and clears the flag — the same
-atomic tmp+rename underneath, just without the mutex hierarchy.
+There isn't one. `CacheState` / `SharedCacheState`, an `Rc<RefCell<…>>` twin of
+the manager for non-parallel execution, had no caller anywhere in the workspace
+and was deleted at COOK-423, along with the unused `load_recipe` loader whose row
+this table used to carry.
+`ThreadSafeCacheManager` serves both cases; a single-job run pays an uncontended
+mutex for it.
 
 ### Per-build aggregate: `CacheContext`
 

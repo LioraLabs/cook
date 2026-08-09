@@ -69,7 +69,6 @@ pub(crate) fn annotations_from(
                 observed_ms: timings
                     .get(&u.recipe_name, &u.cache_key)
                     .map(|o| o.elapsed_ms),
-                observed_builds_ago: 0,
             },
         );
     }

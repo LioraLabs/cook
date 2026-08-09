@@ -8,9 +8,8 @@
 //! dependency graph the engine resolves.
 //!
 //! Only the workspace-prefix helper [`find_full_prefix`] still operates on
-//! `Workspace`; it is consumed by `pipeline::registers`, `pipeline::registries`,
-//! and `pipeline::inferred_deps`, all of which walk the namespace map directly
-//! rather than the AST.
+//! `Workspace`; it is consumed by [`registers`](crate::registers), which walks
+//! the namespace map directly rather than the AST.
 
 use std::collections::BTreeMap;
 
@@ -74,10 +73,10 @@ pub fn build_recipe_infos_from_registered(
 /// Delegates to the analyzer.
 ///
 /// Retained as a `Workspace`-keyed convenience wrapper around
-/// [`analyzer::find_full_prefix`]. Used by `pipeline::registers` (Phase 5
-/// Task 5.1) when qualifying per-import register results, and by the legacy
-/// `pipeline::registries` / `pipeline::inferred_deps` paths that still walk
-/// `Workspace` directly.
+/// [`analyzer::find_full_prefix`]. Used by [`registers`](crate::registers)
+/// when qualifying per-import register results. It is the last caller, now that
+/// the `registries` and `inferred_deps` paths that also walked `Workspace`
+/// directly are gone (COOK-423).
 pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path) -> String {
     let root_dir = std::fs::canonicalize(&workspace.root.dir)
         .unwrap_or_else(|_| workspace.root.dir.clone());

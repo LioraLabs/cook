@@ -3,6 +3,7 @@ use cook_progress::event::{NodeId, NodeKind, RecipeId};
 use cook_progress::log_reader::{NodeView, RecipeView};
 use cook_progress::model::{NodeStatus, Status};
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 use std::collections::BTreeMap;
 
 fn one_failed_build() -> BuildView {
@@ -133,8 +134,17 @@ fn jump_to_bottom_shows_the_last_line_rather_than_a_blank_pane() {
 /// text advertised had no implementation at all.
 #[test]
 fn theme_from_name_resolves_both_documented_values_and_rejects_others() {
-    assert!(!Theme::from_name("auto").unwrap().is_mono());
-    assert!(Theme::from_name("mono").unwrap().is_mono());
+    // Asserted on the palette the renderers actually read, not on a
+    // convenience predicate: the renderers never ask whether a theme is mono,
+    // they read these fields, so this is the arm's real contract. `Theme` has
+    // no `PartialEq`, hence field-by-field (COOK-423).
+    let auto = Theme::from_name("auto").unwrap();
+    assert_eq!(auto.accent, Color::Cyan);
+    assert_eq!((auto.ok, auto.err), (Color::Green, Color::Red));
+
+    let mono = Theme::from_name("mono").unwrap();
+    assert_eq!(mono.accent, Color::Reset);
+    assert_eq!((mono.ok, mono.err, mono.warn), (Color::Reset, Color::Reset, Color::Reset));
 
     let err = Theme::from_name("solarized").unwrap_err();
     assert!(

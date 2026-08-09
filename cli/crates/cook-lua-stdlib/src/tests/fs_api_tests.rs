@@ -5,13 +5,18 @@ use tempfile::TempDir;
 
 fn setup_static(dir: &std::path::Path) -> Lua {
     let lua = Lua::new();
-    register_fs_api(&lua, WorkingDirSource::Static(dir.to_path_buf())).unwrap();
+    register_fs_api_with_sandbox(
+        &lua,
+        WorkingDirSource::Static(dir.to_path_buf()),
+        SandboxSource::off(),
+    )
+    .unwrap();
     lua
 }
 
 fn setup_live(slot: Arc<Mutex<PathBuf>>) -> Lua {
     let lua = Lua::new();
-    register_fs_api(&lua, WorkingDirSource::Live(slot)).unwrap();
+    register_fs_api_with_sandbox(&lua, WorkingDirSource::Live(slot), SandboxSource::off()).unwrap();
     lua
 }
 

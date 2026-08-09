@@ -101,13 +101,23 @@ unrepresentable.
 
 ## Residue
 
-- `ViewerError` (`src/lib.rs:36`) is never constructed. It outlived the
-  ratatui viewer.
-- `UnitFacts::observed_builds_ago` and `Node::observed_max_age` describe an
-  observation's age in retained builds. CS-0189 deleted that model:
-  observations live in the step index now and may be served to a machine with
-  no history of its own, where "three builds ago" names nothing. The only
-  production caller passes `0` (`cook-cli/src/pipeline.rs:2090`), so
-  `observed_max_age` is a permanent zero in the JSON payload and the
-  ", up to N builds ago" rendering (`src/emit.rs:398`) is unreachable.
-  `recorded_at` replaced it on every other surface.
+Both of this section's entries are settled, and the section is kept for the
+one lesson that outlived them (COOK-423).
+
+`ViewerError`, never constructed and an outlived leftover of the ratatui
+viewer, is deleted. It had been recorded here since the charter audit and was
+reported back once as a false finding, because the reader checked `cook_logs`'s
+identically-named error, which is thoroughly alive. Two crates holding one type
+name is enough to defeat a search that does not say which crate it means, and
+that is the lesson worth keeping: a name is not an address.
+
+`UnitFacts::observed_builds_ago` and `Node::observed_max_age` are deleted at
+CS-0216, with `DAG_SCHEMA_VERSION` bumped 4 → 5. They described an
+observation's age in retained builds; CS-0189 deleted that model, since
+observations live in the step index now and may be served to a machine with no
+history of its own, where "three builds ago" names nothing. The sole producer
+passed `0`, so the JSON payload told every reader that every contributing unit
+was timed in the most recent build. That is absence rendered as zero, which
+§17.1.6.5's second constraint on this reporting forbids, and it is
+why the field was removed rather than left as harmless: it was not reporting
+nothing, it was reporting something false.

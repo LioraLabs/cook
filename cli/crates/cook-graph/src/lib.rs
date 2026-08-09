@@ -38,7 +38,14 @@ pub use dag_data::{build_dag_data, DagData, EdgeData, EdgeKind, NodeData};
 /// that breaks a consumer of one breaks a consumer of the other, and one
 /// number is the only way to say so. The name is historical; the payload it
 /// describes has not been only a DAG since 4.
-pub const DAG_SCHEMA_VERSION: u32 = 4;
+///
+/// 5 at CS-0216, when `observed_max_age` left the node object. The model that
+/// fed it, an observation's position in a local build history, went at
+/// CS-0189, after which the only producer hardcoded `0`; the key survived as a
+/// permanent zero telling every reader that every contributing unit was timed
+/// in the most recent build. Dropping a key is a structurally incompatible
+/// change, which §17.1.6.6 says MUST bump this number.
+pub const DAG_SCHEMA_VERSION: u32 = 5;
 
 /// Stamp the wire-format version onto a machine-readable `cook why` document.
 ///
@@ -50,12 +57,6 @@ pub const DAG_SCHEMA_VERSION: u32 = 4;
 /// CS-0217 found, in the milder form of one end having no version at all.
 pub fn stamp_schema_version(document: &mut serde_json::Value) {
     document["schema_version"] = DAG_SCHEMA_VERSION.into();
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ViewerError {
-    #[error("failed to serialize DAG: {0}")]
-    Serialize(String),
 }
 
 /// The graph inputs, independent of how the graph is then presented.

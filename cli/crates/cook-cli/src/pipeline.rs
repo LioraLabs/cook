@@ -989,10 +989,12 @@ pub fn cmd_run(
         RegisterMode::Dispatch { name: recipe_name, argv },
     )?;
 
-    // `inferred_deps` / `*_dep_conflicts` are obsolete in the unified-DAG
-    // model: cross-recipe edges come from `RecipeUnits.dep_edges` (recorded
-    // directly by `cook.dep_output` / `cook.add_unit` during the register
-    // pass), and recipe-level coarse deps come from `RegisteredRecipePub.requires`.
+    // No inferred-dep pass: cross-recipe edges come from `RecipeUnits.dep_edges`
+    // (recorded directly by `cook.dep_output` / `cook.add_unit` during the
+    // register pass), and recipe-level coarse deps come from
+    // `RegisteredRecipePub.requires`. The `cook-plan` module this comment used
+    // to point at outlived its callers by three months and is deleted
+    // (COOK-423).
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
     let run_result = run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
