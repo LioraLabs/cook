@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use cook_engine::cook_cache::backend::EvictCandidate;
+use cook_contracts::cache::cas::EvictCandidate;
 use cook_engine::cook_cache::CloudConfig;
 
 use crate::cli::Globals;

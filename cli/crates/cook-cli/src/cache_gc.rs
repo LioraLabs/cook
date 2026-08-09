@@ -19,9 +19,9 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use cook_engine::cook_cache::backend::{
-    plan_eviction, EvictCandidate, EvictOutcome, EvictPlan, EvictPolicy, LocalBackend,
-};
+use cook_contracts::cache::cas::EvictCandidate;
+use cook_contracts::evict::{plan_eviction, EvictPlan, EvictPolicy};
+use cook_engine::cook_cache::backend::{EvictOutcome, LocalBackend};
 use cook_engine::cook_cache::{parse_size, CloudConfig, SIZE_LITERAL_HELP};
 
 use crate::cache_du::human_size;
