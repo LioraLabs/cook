@@ -438,6 +438,7 @@ dependencies = [
 name = "cook-cookfile"
 version = "0.14.0"
 dependencies = [
+ "cook-contracts",
  "thiserror 2.0.18",
  "tree-sitter",
  "tree-sitter-cook",

@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement path="lua/cook_edit.lua" alias="cook_edit" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="app" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_edit.bin({\n        -- links = { \"stale\" },\n        opts    = { links = { \"nested\" } },\n        sources = { [[src/a}b.cpp]] },\n        links   = { \"mathlib\" },\n    })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

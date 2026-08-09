@@ -1,0 +1,9 @@
+use ./lua/cook_edit.lua
+
+recipe app
+    cook_edit.bin({
+        -- links = { "stale" },
+        opts    = { links = { "nested" } },
+        sources = { [[src/a}b.cpp]] },
+        links   = { "mathlib" },
+    })

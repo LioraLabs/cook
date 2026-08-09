@@ -57,7 +57,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::lua_scan;
+use cook_contracts::lua_scan;
 
 /// Scan `source` for static reads of `var.<NAME>` and return the set of
 /// keys found (sorted, deduplicated).
@@ -72,7 +72,7 @@ pub fn scan_var_reads(source: &str) -> BTreeSet<String> {
         let b = bytes[i];
 
         // Strings and comments are not code (see `crate::lua_scan`).
-        match lua_scan::skip_non_code(source, bytes, i) {
+        match lua_scan::skip_non_code(source, i) {
             lua_scan::Skip::Ended(next) => {
                 i = next;
                 continue;
@@ -308,7 +308,7 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
         let b = bytes[i];
 
         // Strings and comments are not code (see `crate::lua_scan`).
-        match lua_scan::skip_non_code(source, bytes, i) {
+        match lua_scan::skip_non_code(source, i) {
             lua_scan::Skip::Ended(next) => {
                 i = next;
                 continue;

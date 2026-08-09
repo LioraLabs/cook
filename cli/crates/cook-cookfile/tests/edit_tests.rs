@@ -199,6 +199,124 @@ recipe app
         "got: {out}");
 }
 
+// ---------------------------------------------------------------------------
+// What is a key (CS-0208). A field name is a table key at the top level of the
+// call's argument. Text that merely looks like one — in a comment, in a
+// string, or in a table nested inside the call — is not the field, and each of
+// the three used to be spliced into.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_commented_out_field_is_not_the_field() {
+    // The worst way for this layer to be wrong: the entry lands inside the
+    // author's comment, which is the thing the whole splice strategy exists to
+    // preserve, and the real list is left alone.
+    let src = "\
+recipe app
+    cook_cc.bin({
+        -- links = { \"old\" },
+        links = { \"a\" },
+    })
+";
+    let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
+    assert!(
+        out.contains("-- links = { \"old\" },\n"),
+        "the comment must be byte-identical: {out}"
+    );
+    assert!(out.contains("links = { \"a\", \"b\" },"), "got: {out}");
+}
+
+#[test]
+fn a_key_written_inside_a_string_is_not_the_field() {
+    // `"links=1"` satisfies every test a substring scan can make: whole token,
+    // followed by `=`. It made the real `links` unreachable and the call was
+    // reported as not-a-list.
+    let src = "recipe app\n    cook_cc.bin({ defines = { \"links=1\" }, links = { \"a\" } })\n";
+    let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
+    assert!(out.contains("{ \"links=1\" }"), "defines untouched: {out}");
+    assert!(out.contains("links = { \"a\", \"b\" }"), "got: {out}");
+}
+
+#[test]
+fn a_nested_field_of_the_same_name_is_not_edited() {
+    // The nested list is a different field of a different table. Editing it
+    // still produces a file that parses and looks plausible, which is why this
+    // is the one that would have survived review.
+    let src = "recipe app\n    cook_cc.bin({ opts = { links = { \"x\" } }, links = { \"a\" } })\n";
+    let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
+    assert!(out.contains("opts = { links = { \"x\" } }"), "nested untouched: {out}");
+    assert!(out.contains(", links = { \"a\", \"b\" } }"), "got: {out}");
+}
+
+#[test]
+fn a_bracketed_key_is_refused_by_name_rather_than_mis_aimed() {
+    // `["links"] = { … }` is a table key this scan does not read: the name
+    // lives inside a string literal, and a string literal is not code. The
+    // limit is pinned rather than described, because the thing that makes it
+    // acceptable is that it FAILS — an unsupported spelling that silently
+    // edited the next candidate would not be a limit, it would be the bug.
+    let src = "recipe app\n    cook_cc.bin({ [\"links\"] = { \"a\" } })\n";
+    let err = splice_into_field(src, "app", "links", "\"b\"").unwrap_err();
+    assert!(matches!(err, EditError::FieldNotFound { .. }), "got: {err:?}");
+}
+
+#[test]
+fn a_field_that_exists_only_nested_is_reported_missing() {
+    // Failure is explicit and total (§22.13): being told to make the edit by
+    // hand beats an edit to a list the caller did not name.
+    let src = "recipe app\n    cook_cc.bin({ opts = { links = { \"x\" } } })\n";
+    let err = splice_into_field(src, "app", "links", "\"b\"").unwrap_err();
+    assert!(
+        matches!(err, EditError::FieldNotFound { .. }),
+        "got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Long brackets (CS-0208). Lua spells a string four ways and a comment two,
+// and a splice that understands only two of the six edits bytes the author
+// never pointed at.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_brace_inside_a_long_bracket_string_does_not_close_the_list() {
+    // `[[ … ]]` is a string literal, so §22.13's rule applies to it exactly as
+    // it applies to `"…"`. Counting the `}` closes the list two entries early
+    // and the insert lands INSIDE the literal: `[[a, "d"}b]]`.
+    let src = "recipe app\n    cook_cc.bin({ links = { [[a}b]], \"c\" } })\n";
+    let out = splice_into_field(src, "app", "links", "\"d\"").unwrap();
+    assert!(out.contains("{ [[a}b]], \"c\", \"d\" }"), "got: {out}");
+}
+
+#[test]
+fn a_levelled_long_bracket_is_understood_at_any_level() {
+    // `[=[ … ]=]` is the spelling an author reaches for precisely when the
+    // text contains `]]`, so it is the one most likely to hold odd bytes.
+    let src = "recipe app\n    cook_cc.bin({ links = { [=[a}b]=], \"c\" } })\n";
+    let out = splice_into_field(src, "app", "links", "\"d\"").unwrap();
+    assert!(out.contains("{ [=[a}b]=], \"c\", \"d\" }"), "got: {out}");
+}
+
+#[test]
+fn a_long_bracket_comment_does_not_swallow_the_rest_of_its_line() {
+    // `--[[ … ]]` ends at `]]`, not at the newline. Reading it as a line
+    // comment eats the real `}` that follows it on the same line, and the
+    // field then reads as unterminated.
+    let src = "recipe app\n    cook_cc.bin({ links = { \"a\" --[[ why } ]] } })\n";
+    let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
+    assert!(out.contains("{ \"a\", \"b\" --[[ why } ]] }"), "got: {out}");
+}
+
+#[test]
+fn two_dashes_inside_a_long_bracket_do_not_open_a_comment() {
+    // The anchor retracts to before a `--` because a comment must not be
+    // spliced into. Inside a string literal there is no comment to protect,
+    // and retracting there splices into the string instead.
+    let src = "recipe app\n    cook_cc.bin({ links = { [[note -- x]] } })\n";
+    let out = splice_into_field(src, "app", "links", "\"b\"").unwrap();
+    assert!(out.contains("{ [[note -- x]], \"b\" }"), "got: {out}");
+}
+
 #[test]
 fn a_subtraction_expression_is_not_read_as_a_comment() {
     // A single `-` must not start comment mode; `n-1` inside a table is legal
