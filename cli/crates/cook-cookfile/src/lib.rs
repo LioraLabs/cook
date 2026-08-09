@@ -36,6 +36,7 @@
 use std::ops::Range;
 
 use cook_contracts::lua_scan::{is_ident_cont, opens_comment, skip_non_code, Skip};
+use cook_contracts::module_binding::{alias_of, derived_alias};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -530,18 +531,36 @@ pub enum UseEdit {
     Inserted(String),
 }
 
-/// The module a `use_declaration` binds by name, unquoted.
+/// The Lua local a `use_declaration` binds, in any of its three spellings.
 ///
-/// `None` for the path form `use ALIAS "./x.lua"`, whose identifier the
-/// grammar records as `alias` and not as `module` (`grammar.js`,
-/// `use_declaration`). The distinction matters: the path form binds that name
-/// to a file the author chose, so treating it as `use cook_cc` would report a
-/// module nobody named and skip the declaration that actually loads it.
-fn declared_module<'s>(node: Node<'_>, source: &'s str) -> Option<&'s str> {
-    let field = node.child_by_field_name("module")?;
+/// The question is the ALIAS and not the module's identity, because that is
+/// what a second declaration would collide with. All three of `use cook_cc`,
+/// `use cook_cc ./vendor/cc.lua` and `use ./cook_cc.lua` bind `cook_cc`
+/// (§12.1), and adding a fourth line binding it again is not an addition: the
+/// two phases pick different winners — the register chunk emits one `local`
+/// per declaration in order, so the last wins, while the execute prelude skips
+/// an alias it has already bound, so the first does. A build whose two phases
+/// silently load different module code is the failure mode this crate exists
+/// to avoid, and §27.1.2 makes the path form the sanctioned way to patch a
+/// blessed module, so it is a shape a `cook modules install` will meet.
+///
+/// `None` only for a node the grammar admits with neither field.
+fn bound_alias(node: Node<'_>, source: &str) -> Option<String> {
     // Bare or double-quoted, exactly as recipe names are; the quoted form is
     // an exact equivalent, so compare on the unquoted text.
-    Some(source[field.byte_range()].trim().trim_matches('"'))
+    let text = |field: Node<'_>| source[field.byte_range()].trim().trim_matches('"');
+    if let Some(module) = node.child_by_field_name("module") {
+        return Some(alias_of(text(module)));
+    }
+    if let Some(alias) = node.child_by_field_name("alias") {
+        return Some(alias_of(text(alias)));
+    }
+    // A path with no explicit alias derives one from its basename, by the same
+    // rule the loader applies — spelled once, in `cook-contracts`, so this
+    // crate cannot come to a second opinion about what `./build/my-cc.lua`
+    // binds.
+    let path = node.child_by_field_name("path")?;
+    Some(derived_alias(text(path)))
 }
 
 /// Offset just past the newline terminating the line that `end` closes.
@@ -579,15 +598,19 @@ fn opens_a_new_block(source: &str, from: usize, to: usize) -> bool {
 /// Returns [`UseEdit::AlreadyPresent`] when it does, and otherwise the edited
 /// source: everything outside the inserted run is byte-identical, per §22.13.
 ///
-/// # Presence is structural
+/// # Presence is structural, and it is about the name that gets bound
 ///
-/// A match is a top-level `use_declaration` node whose `module` field names
-/// `module`, so `use cook_cc` and `use "cook_cc"` both count and the path form
-/// `use cook_cc "./vendor/cc.lua"` does not. `source.contains("use cook_cc")`
-/// would agree with all three and would also agree with a `use cook_cc` line
-/// written inside a step body, where the text is shell content and binds
-/// nothing. That last one is the case worth the parser: the chore reports the
-/// module available, writes a call to it, and the Cookfile fails to load.
+/// A match is a `use_declaration` node already binding `module` as its alias,
+/// by [`bound_alias`] — so `use cook_cc`, `use "cook_cc"`,
+/// `use cook_cc ./vendor/cc.lua` and `use ./cook_cc.lua` all count, because
+/// adding a second declaration of that name is not an addition but a conflict
+/// the two phases resolve differently.
+///
+/// `source.contains("use cook_cc")` would agree with the first three and would
+/// also agree with a `use cook_cc` line written inside a step body, where the
+/// text is shell content and binds nothing. That last one is the case worth the
+/// parser: the caller reports the module available, writes a call to it, and
+/// the Cookfile fails to load.
 ///
 /// # Where the line goes
 ///
@@ -639,9 +662,14 @@ pub fn ensure_use(source: &str, module: &str) -> Result<UseEdit, EditError> {
 
     let mut uses = Vec::new();
     nodes_of_kind(root, "use_declaration", &mut uses);
+    // Compared against the alias the line WOULD bind rather than against
+    // `module` itself: the two differ only for a name the grammar rejects, and
+    // asking the question in the units the collision happens in keeps this
+    // honest for the name production CS-0206 left room for.
+    let binds = alias_of(module);
     if uses
         .iter()
-        .any(|node| declared_module(*node, source) == Some(module))
+        .any(|node| bound_alias(*node, source).as_deref() == Some(binds.as_str()))
     {
         return Ok(UseEdit::AlreadyPresent);
     }

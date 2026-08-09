@@ -77,8 +77,8 @@ pub fn is_path_target(target: &str) -> bool {
 ///
 /// It came down here when it acquired a second consumer (CS-0220). `cook-lang`
 /// enforces it at the declaration site, where a violation is a lex error naming
-/// the line; `cook-modules` asks it BEFORE writing a declaration, because a
-/// rock name is drawn from the package manager's wider alphabet and
+/// the line; `cook-cli`'s `wire_use` asks it BEFORE writing a declaration,
+/// because a rock name is drawn from the package manager's wider alphabet and
 /// `cook modules install foo-bar` must refuse to write a `use` it knows the
 /// lexer will reject. The two answers have to be the same answer: an installer
 /// more permissive than the lexer writes a Cookfile that no longer parses, and

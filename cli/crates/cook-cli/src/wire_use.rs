@@ -20,6 +20,15 @@
 //! invocation named; writing the author's project files is a job this crate
 //! already owns for `cook init`, one function above in the same directory.
 //!
+//! # Which Cookfile
+//!
+//! The one in the invocation directory, not the one upward discovery would
+//! find. `cook modules` is exempted from entry discovery (`main.rs`,
+//! `apply_entry_discovery`) because it manages the `cook.toml` and `cook.lock`
+//! of the directory it was run in, and the declaration has to land in the
+//! Cookfile that belongs to those two files. `cook init` anchors the same way
+//! for the same reason.
+//!
 //! # The decision is separated from the doing
 //!
 //! [`plan_wiring`] is a pure function from the file's current bytes to the
@@ -93,6 +102,22 @@ pub fn plan_wiring(existing: Option<&str>, names: &[String]) -> Result<Wiring, E
     Ok(plan)
 }
 
+/// The file's contents, or `None` when it does not exist.
+///
+/// Absent and unreadable are kept apart: both files this module touches are
+/// created when missing, and a permission error read as "missing" would
+/// overwrite a file it could not open.
+fn read_if_present(path: &Path) -> Result<Option<String>, CookError> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(CookError::Other(format!(
+            "failed to read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
 /// Write the `use` declarations for `names` into `project_dir`'s Cookfile,
 /// creating the Cookfile (and merging the managed `.gitignore` section) when
 /// there is none, and report what changed.
@@ -106,16 +131,7 @@ pub fn plan_wiring(existing: Option<&str>, names: &[String]) -> Result<Wiring, E
 /// happened and no later step will notice.
 pub fn wire_use_declarations(project_dir: &Path, names: &[String]) -> Result<(), CookError> {
     let cookfile = project_dir.join("Cookfile");
-    let existing = match std::fs::read_to_string(&cookfile) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
-            return Err(CookError::Other(format!(
-                "failed to read {}: {e}",
-                cookfile.display()
-            )))
-        }
-    };
+    let existing = read_if_present(&cookfile)?;
     let creating = existing.is_none();
 
     let plan = plan_wiring(existing.as_deref(), names).map_err(|e| {
@@ -174,16 +190,7 @@ pub fn wire_use_declarations(project_dir: &Path, names: &[String]) -> Result<(),
 /// whose next `git add` commits a module tree.
 fn merge_gitignore(project_dir: &Path) -> Result<(), CookError> {
     let path = project_dir.join(".gitignore");
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
-            return Err(CookError::Other(format!(
-                "failed to read {}: {e}",
-                path.display()
-            )))
-        }
-    };
+    let existing = read_if_present(&path)?;
     let (content, said) = match merge_cook_gitignore_section(existing.as_deref()) {
         GitignoreMerge::Unchanged => return Ok(()),
         GitignoreMerge::Created(content) => (content, "Created .gitignore"),

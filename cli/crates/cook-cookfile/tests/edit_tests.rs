@@ -467,14 +467,34 @@ fn a_declaration_below_the_leading_run_still_counts_as_present() {
 }
 
 #[test]
-fn the_path_form_does_not_satisfy_a_module_name() {
-    // `use cook_cc "./vendor/cook_cc.lua"` binds the name to a file, and the
-    // grammar records `cook_cc` there as the ALIAS, not the module. Reading it
-    // as the module would report a module that was never named.
+fn a_path_form_binding_the_same_name_is_already_present() {
+    // The patched-module workflow §27.1.2 sanctions: the author points the
+    // name at their own file. Adding `use cook_cc` beside it binds the alias
+    // twice, and the two phases disagree about the winner — the register
+    // chunk's last `local` wins, the execute prelude's first binding wins — so
+    // the build would load the vendored file in one phase and the installed
+    // rock in the other, silently. Presence is about the NAME being bound.
     let src = "use cook_cc \"./vendor/cc.lua\"\n\nrecipe app\n    cook_cc.bin({})\n";
+    assert_eq!(ensure_use(src, "cook_cc").unwrap(), UseEdit::AlreadyPresent);
+}
+
+#[test]
+fn a_path_form_with_a_derived_alias_is_already_present() {
+    // No explicit alias, so the name comes from the basename by
+    // `cook_contracts::module_binding::derived_alias` — the same rule the
+    // loader applies. A second opinion here would collide exactly where the
+    // first one did.
+    let src = "use ./vendor/cook_cc.lua\n\nrecipe app\n    cook_cc.bin({})\n";
+    assert_eq!(ensure_use(src, "cook_cc").unwrap(), UseEdit::AlreadyPresent);
+}
+
+#[test]
+fn a_path_form_binding_some_other_name_is_not_present() {
+    // The alias is what matters, and this one binds `cc`, not `cook_cc`.
+    let src = "use cc \"./vendor/cc.lua\"\n\nrecipe app\n    cc.bin({})\n";
     assert_eq!(
         inserted(ensure_use(src, "cook_cc").unwrap()),
-        "use cook_cc \"./vendor/cc.lua\"\nuse cook_cc\n\nrecipe app\n    cook_cc.bin({})\n"
+        "use cc \"./vendor/cc.lua\"\nuse cook_cc\n\nrecipe app\n    cc.bin({})\n"
     );
 }
 
