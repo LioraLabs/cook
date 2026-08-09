@@ -1004,6 +1004,29 @@ fn symlink_hardening_allows_reentrant_within_anchor() {
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 
+/// COOK-414: a golden vector for the crate's LOCAL content hash, computed
+/// outside this codebase (Python's `xxhash`) rather than read off a passing
+/// run. The preimage, so it stays checkable without cook:
+///
+/// ```text
+/// xxh3_64(b"cook COOK-414 golden vector\n")   // 28 bytes
+///   == 1284380870946286766
+/// ```
+///
+/// The determinism and difference tests above pass under ANY hash function, so
+/// nothing in this suite would notice `hash_file` changing algorithm. It is the
+/// content identity every `FileRecord` carries and every local cache key folds,
+/// and the store is content-addressed across machines: a change to what it
+/// computes orphans every cache in existence, or worse, collides with one. That
+/// is a decision, not a refactor, and this test is what makes someone declare it.
+#[test]
+fn the_xxh3_file_hash_is_this_exact_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("golden");
+    std::fs::write(&path, b"cook COOK-414 golden vector\n").unwrap();
+    assert_eq!(hash_file(&path), Some(1284380870946286766));
+}
+
 /// CS-0173: `cook why` predicts a downstream unit's key by hashing a shared
 /// artifact's stream with `hash_reader` and feeding the result where a
 /// `hash_file` of the restored file would go. The prediction is sound only
