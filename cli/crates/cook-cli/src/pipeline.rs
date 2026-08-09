@@ -100,21 +100,6 @@ fn read_and_parse(globals: &Globals) -> Result<ParsedCookfile, CookError> {
 // EngineEvent → ProgressEvent bridge
 // ---------------------------------------------------------------------------
 
-/// Translate the engine's `NodeKind` mirror onto `cook_progress::NodeKind`.
-/// The two enums are isomorphic by design — keeping them separate lets
-/// `cook-engine` stay free of a `cook-progress` dependency.
-fn translate_kind(k: cook_engine::NodeKind) -> cook_progress::NodeKind {
-    match k {
-        cook_engine::NodeKind::Compile => cook_progress::NodeKind::Compile,
-        cook_engine::NodeKind::Link => cook_progress::NodeKind::Link,
-        cook_engine::NodeKind::Resolve => cook_progress::NodeKind::Resolve,
-        cook_engine::NodeKind::Generate => cook_progress::NodeKind::Generate,
-        cook_engine::NodeKind::Write => cook_progress::NodeKind::Write,
-        cook_engine::NodeKind::Test => cook_progress::NodeKind::Test,
-        cook_engine::NodeKind::Cooked => cook_progress::NodeKind::Cooked,
-    }
-}
-
 /// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
 /// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
 fn bridge_engine_to_progress_events(
@@ -240,10 +225,7 @@ fn bridge_engine_to_progress_events(
                         elapsed,
                         cached: cached_nodes,
                         total: total_nodes,
-                        kind: match kind {
-                            cook_engine::RecipeKind::Recipe => cook_progress::event::RecipeKind::Recipe,
-                            cook_engine::RecipeKind::Chore => cook_progress::event::RecipeKind::Chore,
-                        },
+                        kind,
                     }
                 }
                 cook_engine::EngineEvent::RecipeFailed {
@@ -294,7 +276,7 @@ fn bridge_engine_to_progress_events(
                         name: node_name,
                         artifact,
                         fallback_label,
-                        kind: translate_kind(kind),
+                        kind,
                         cause,
                         cache_key,
                     }
@@ -313,7 +295,7 @@ fn bridge_engine_to_progress_events(
                         recipe: rid,
                         node: nid,
                         elapsed,
-                        kind: translate_kind(kind),
+                        kind,
                         cache_key,
                     }
                 }
@@ -347,7 +329,7 @@ fn bridge_engine_to_progress_events(
                         node: nid,
                         name: node_name,
                         artifact,
-                        kind: translate_kind(kind),
+                        kind,
                     }
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {

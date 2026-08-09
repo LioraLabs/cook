@@ -985,14 +985,19 @@ pub fn string_literals(text: &str) -> Vec<(usize, String)> {
 
 /// Literals that name a Rust item rather than state a decision.
 ///
-/// Two of these are structural noise in every Rust workspace, and excluding
-/// them by construction is better than waiving them: a list padded with noise
-/// is a list nobody reads. `#[path = "tests/naming_tests.rs"]` collides
-/// whenever two crates have a module of the same name, which is a coincidence
-/// of naming. `skip_serializing_if = "Option::is_none"` is a function path
-/// that serde requires as a string; two crates writing it agree about nothing.
+/// These are structural noise in every Rust workspace, and excluding them by
+/// construction is better than waiving them: a list padded with noise is a
+/// list nobody reads. `#[path = "tests/naming_tests.rs"]` collides whenever
+/// two crates have a module of the same name, which is a coincidence of
+/// naming. `skip_serializing_if = "Option::is_none"` is a function path that
+/// serde requires as a string; two crates writing it agree about nothing.
+/// `rename_all = "kebab-case"` is serde's own vocabulary for a case
+/// convention — the two ends of a wire format do have to agree on it, but they
+/// agree by being ONE derive on ONE type, which is what moving a shared enum
+/// into this crate achieves; two crates naming the convention separately for
+/// unrelated types is the coincidence, not the agreement (COOK-421).
 fn names_an_item_not_a_decision(line: &str) -> bool {
-    line.contains("#[path") || line.contains("skip_serializing_if")
+    line.contains("#[path") || line.contains("skip_serializing_if") || line.contains("rename_all")
 }
 
 /// String literals of substance appearing in two or more crates.
@@ -1495,9 +1500,13 @@ fn a_literal_in_two_crates_is_caught_and_one_crate_is_not() {
     );
     // Comments and doc comments are not code.
     assert!(shared("// let x = \"registration_v2\";\n").is_empty());
-    // The two exclusions, which must not need a waiver.
+    // The exclusions, which must not need a waiver.
     assert!(shared("#[path = \"tests/naming_tests.rs\"]\nmod naming;\n").is_empty());
     assert!(shared("#[serde(skip_serializing_if = \"Option::is_none\")]\n").is_empty());
+    assert!(shared("#[serde(rename_all = \"kebab-case\")]\n").is_empty());
+    // The exclusion is the attribute, not the word: a case convention named
+    // in ordinary code is still a literal two crates share.
+    assert_eq!(shared("let style = \"kebab-case\";\n"), ["kebab-case"]);
 }
 
 #[test]

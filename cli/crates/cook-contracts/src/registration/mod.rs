@@ -97,12 +97,23 @@ pub enum MemberSourceDescriptor {
 /// diagnostics) can branch on it without reaching into cook-register's
 /// internal `RegisteredRecipe` shape.
 ///
-/// This is the register-phase kind. It is deliberately distinct from
-/// `cook_engine::RecipeKind`, the progress-event mirror enum: that one
-/// answers "how should a completed recipe be labelled", this one answers
-/// "what did the author declare".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// This used to say it was "deliberately distinct from
+/// `cook_engine::RecipeKind`, the progress-event mirror enum: that one answers
+/// 'how should a completed recipe be labelled', this one answers 'what did the
+/// author declare'". COOK-421 retired that distinction, because the code never
+/// held it: the engine derived its mirror from THIS value
+/// (`cook-engine/src/run.rs`) and cook-cli derived the renderer's from that,
+/// so the label was the declaration, twice removed, through two hand-written
+/// translations that nothing checked. One vocabulary, one declaration.
+///
+/// The serde spelling is a wire format: `cook-progress` writes this into
+/// `.cook/logs` and `cook-logs` reads it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RecipeKind {
+    /// Defaulted so an older reader round-trips a log written without the
+    /// field, which is what the renderer's copy of this enum did.
+    #[default]
     Recipe,
     Chore,
 }

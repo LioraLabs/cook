@@ -64,32 +64,15 @@ pub enum Stream {
     Stderr,
 }
 
-/// Distinguishes a regular recipe from a chore. Used by the renderer to
-/// pick the recipe-summary detail string (`(N nodes)` vs `(chore)`).
-/// Defaults to `Recipe` so older readers / tests round-trip unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RecipeKind {
-    #[default]
-    Recipe,
-    Chore,
-}
-
-/// What kind of work a node is doing. Determines which verb the renderer prints
-/// (`Compiled`, `Linked`, `Tested`, …). Engine and Lua-stdlib producers fill
-/// this in; unannotated nodes default to `Cooked`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum NodeKind {
-    Compile,
-    Link,
-    Resolve,
-    Generate,
-    Write,
-    Test,
-    #[default]
-    Cooked,
-}
+// COOK-421. `RecipeKind` and `NodeKind` were declared here and mirrored in
+// cook-engine, joined by a hand-written translation in cook-cli that nothing
+// checked. They are one vocabulary with two ends -- the engine names the kind,
+// this crate renders it and writes it into `.cook/logs`, cook-logs reads it
+// back -- so they are defined once in cook-contracts, which both crates
+// already depend on. Re-exported here so `cook_progress::event::NodeKind`
+// keeps naming the thing it always named.
+pub use cook_contracts::registration::RecipeKind;
+pub use cook_contracts::unit::NodeKind;
 
 /// Topology entry sent once in `BuildStarted`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
