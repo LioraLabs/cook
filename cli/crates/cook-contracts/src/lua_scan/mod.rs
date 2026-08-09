@@ -139,6 +139,27 @@ pub fn is_ident_cont(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Lua's reserved words (Lua 5.4 §3.1), which a name-shaped run of bytes may
+/// spell without being a name.
+///
+/// It sits beside [`is_ident_start`] for the same reason those do: a caller
+/// that has just matched an identifier and now has to decide whether it IS one
+/// needs both halves, and the list is not a judgement anyone should be making
+/// twice. It had two consumers before it had one home. `cook-lang` rules out
+/// `local x = 1` when looking for the `NAME "value"` config shape (CS-0126),
+/// and `cook-cookfile` refuses to write `end = { … }` as a table key
+/// (CS-0221) — different questions, one fact about the embedded language, and
+/// a list that agreed by coincidence rather than by construction.
+pub const RESERVED_WORDS: &[&str] = &[
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
+    "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+];
+
+/// Whether `word` is one of [`RESERVED_WORDS`].
+pub fn is_reserved_word(word: &str) -> bool {
+    RESERVED_WORDS.contains(&word)
+}
+
 /// Advance from `start` while identifier-continuation bytes match. Returns
 /// `start` unchanged when `start` is not an identifier-start byte.
 pub fn ident_end(bytes: &[u8], start: usize) -> usize {

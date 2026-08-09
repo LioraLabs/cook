@@ -1,0 +1,7 @@
+use ./lua/cook_edit.lua
+
+recipe game
+    cook_edit.bin({
+        sources = { "src/main.cpp" },  -- entry point
+        standard = cxx_std,
+    })

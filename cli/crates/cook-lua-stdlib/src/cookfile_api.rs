@@ -1,5 +1,5 @@
 //! `cook.cookfile.*` — structure-preserving Cookfile edits from Lua
-//! (Standard §22.12, CS-0179).
+//! (Standard §22.13, CS-0179).
 //!
 //! The surface a module's project-management chores (`cc.add`, `cc.link`,
 //! `cc.need`) use to write back into the Cookfile that invoked them. The
@@ -41,6 +41,53 @@ fn read_source(
     Ok((full, source))
 }
 
+/// Read `splice_field`'s optional trailing options table (CS-0221).
+///
+/// Absent, it is [`AbsentField::Refuse`] — §22.13's total failure, which is the
+/// behaviour a caller that says nothing must keep getting.
+///
+/// Unknown keys and non-boolean values are refused rather than ignored. The
+/// two policies differ in whether a Cookfile gets a field written into it, and
+/// a mistyped `create_if_missing` that silently means "refuse" would be
+/// reported to the user as the engine declining an edit their verb believed it
+/// had asked for.
+fn absent_field_policy(options: Option<LuaTable>) -> LuaResult<cook_cookfile::AbsentField> {
+    const API: &str = "cook.cookfile.splice_field";
+    let Some(table) = options else {
+        return Ok(cook_cookfile::AbsentField::Refuse);
+    };
+    let mut policy = cook_cookfile::AbsentField::Refuse;
+    for pair in table.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair?;
+        let name = match key.as_string() {
+            Some(s) => s.to_string_lossy().to_string(),
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "{API}: options keys must be strings; the options are: create_if_absent"
+                )))
+            }
+        };
+        match name.as_str() {
+            "create_if_absent" => match value {
+                mlua::Value::Boolean(true) => policy = cook_cookfile::AbsentField::Create,
+                mlua::Value::Boolean(false) => {}
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "{API}: options.create_if_absent must be a boolean, got {}",
+                        other.type_name()
+                    )))
+                }
+            },
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "{API}: unknown option '{other}'; the options are: create_if_absent"
+                )))
+            }
+        }
+    }
+    Ok(policy)
+}
+
 /// Register the `cook.cookfile` table on the supplied VM.
 ///
 /// `wd_source` and `sandbox` are cloned per closure so each call resolves the
@@ -53,7 +100,7 @@ pub fn register_cookfile_api(
 ) -> LuaResult<()> {
     let tbl = lua.create_table()?;
 
-    // cook.cookfile.splice_field(path, recipe, field, entry) -> true
+    // cook.cookfile.splice_field(path, recipe, field, entry [, options]) -> true
     //
     // Insert `entry` into `field`'s `{ ... }` list, in the module call inside
     // `recipe`. `entry` is written verbatim, so the caller renders its own
@@ -63,21 +110,34 @@ pub fn register_cookfile_api(
     // message names the manual fix. That honesty is the entire reason this is
     // a splice and not a decode/re-encode, which cannot fail this way because
     // it cannot tell that anything was wrong.
+    //
+    // `options.create_if_absent = true` (CS-0221) is the one relaxation, and
+    // it is opt-in for that reason: a caller that says nothing still gets the
+    // total failure §22.13 specifies.
     let s = wd_source.clone();
     let sb = sandbox.clone();
     tbl.set(
         "splice_field",
         lua.create_function(
-            move |_, (path, recipe, field, entry): (String, String, String, String)| {
+            move |_,
+                  (path, recipe, field, entry, options): (
+                String,
+                String,
+                String,
+                String,
+                Option<LuaTable>,
+            )| {
+                let absent = absent_field_policy(options)?;
                 let (full, source) =
                     read_source(&sb, "cook.cookfile.splice_field", &s.resolve(), &path)?;
-                let edited = cook_cookfile::splice_into_field(&source, &recipe, &field, &entry)
-                    .map_err(|e| {
-                        mlua::Error::runtime(format!(
-                            "cook.cookfile.splice_field: {}: {e}",
-                            full.display()
-                        ))
-                    })?;
+                let edited =
+                    cook_cookfile::splice_into_field(&source, &recipe, &field, &entry, absent)
+                        .map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "cook.cookfile.splice_field: {}: {e}",
+                                full.display()
+                            ))
+                        })?;
                 std::fs::write(&full, edited).map_err(|e| {
                     mlua::Error::runtime(format!(
                         "cook.cookfile.splice_field: writing {}: {e}",
@@ -137,6 +197,38 @@ pub fn register_cookfile_api(
                 ))),
             }
         })?,
+    )?;
+
+    // cook.cookfile.field_entries(path, recipe, field) -> { entry, ... } | nil
+    //
+    // The entries of a field's list, as written (CS-0221). nil where there is
+    // nothing to read — no such recipe, no module call, no such field — which
+    // is `find_call`'s rule.
+    //
+    // A verb asks this to be idempotent: `cc.link game math` twice must not
+    // write `math` twice. The reason it is not left to the module is that the
+    // obvious Lua answer, searching the call text for the entry, matches
+    // inside `sources = { "src/math/main.cpp" }`.
+    let s = wd_source.clone();
+    let sb = sandbox.clone();
+    tbl.set(
+        "field_entries",
+        lua.create_function(
+            move |lua, (path, recipe, field): (String, String, String)| {
+                let (full, source) =
+                    read_source(&sb, "cook.cookfile.field_entries", &s.resolve(), &path)?;
+                match cook_cookfile::field_entries(&source, &recipe, &field) {
+                    Ok(Some(entries)) => {
+                        Ok(mlua::Value::Table(lua.create_sequence_from(entries)?))
+                    }
+                    Ok(None) => Ok(mlua::Value::Nil),
+                    Err(e) => Err(mlua::Error::runtime(format!(
+                        "cook.cookfile.field_entries: {}: {e}",
+                        full.display()
+                    ))),
+                }
+            },
+        )?,
     )?;
 
     cook.set("cookfile", tbl)?;

@@ -83,15 +83,6 @@ pub(crate) fn collect_module_call(
     Ok((code, new_pos))
 }
 
-/// Lua reserved words (Lua 5.4 §3.1) — used to rule out shapes like
-/// `local x = 1` or `if true then ... end` when detecting a bare
-/// `NAME "value"` config statement (CS-0126).
-const LUA_KEYWORDS: &[&str] = &[
-    "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
-    "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return",
-    "then", "true", "until", "while",
-];
-
 /// Detects the make-refugee `NAME "value"` / `NAME value` statement shape
 /// on a config-block body line (CS-0126). This is the pre-CS-0011 VarDecl
 /// shape: a bare identifier followed by whitespace and a value, which is
@@ -116,7 +107,11 @@ fn detect_bare_config_value(line: &str) -> Option<(String, String)> {
     }
     let ident_end = t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
     let (ident, rest) = t.split_at(ident_end);
-    if LUA_KEYWORDS.contains(&ident) {
+    // Lua reserved words (Lua 5.4 §3.1) rule out shapes like `local x = 1`
+    // or `if true then ... end`. The list lives in `cook-contracts` because
+    // `cook-cookfile` asks the same question when it writes a table key
+    // (CS-0221), and two copies of it would agree only by coincidence.
+    if cook_contracts::lua_scan::is_reserved_word(ident) {
         return None;
     }
     if !rest.starts_with(|c: char| c.is_whitespace()) {
