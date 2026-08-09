@@ -1,7 +1,8 @@
 //! `LocalBackend` — the v3 filesystem implementation of `CacheBackend`.
 //!
-//! The trait, key types, and key composition (`cloud_key`, `artifact_key`)
-//! live in `cook-fingerprint::backend`; this module is the persistence side.
+//! The trait lives in `crate::cas_backend`, and the key types and key
+//! composition (`cloud_key`, `artifact_key`) in `cook_contracts::cache::cas`;
+//! this module is the persistence side.
 //! For back-compat we re-export the trait/key types here so existing callers
 //! that say `cook_cache::backend::*` continue to compile.
 

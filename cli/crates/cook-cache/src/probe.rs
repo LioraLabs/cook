@@ -35,7 +35,7 @@ pub fn resolve_probe_inputs(
         .inputs
         .files
         .iter()
-        .map(|path| (path.clone(), hash_file(&working_dir.join(path))))
+        .map(|path| (path.clone(), hash_file_sha256(&working_dir.join(path))))
         .collect();
 
     let upstream_probes: Vec<(String, [u8; 32])> = probe
@@ -78,11 +78,13 @@ pub fn resolve_tool_path(name: &str) -> Option<String> {
 /// resolved path)` — the hash is the machine-independent identity a module
 /// folds into a sealed probe VALUE; the path is location metadata for
 /// invocation. `None` when the name does not resolve. Hashing goes through
-/// the same per-run memo as the fingerprint fold, so a module calling this
-/// never re-hashes a binary the fingerprint pass already read.
+/// the same per-run memo as the fingerprint fold ([`crate::statmemo`]), so a
+/// module calling this never re-hashes a binary the fingerprint pass already
+/// read, and, since COOK-414, never sees a binary cook rebuilt mid-run at its
+/// pre-build bytes either.
 pub fn tool_identity(name: &str) -> Option<(String, String)> {
     let path = which::which(name).ok()?;
-    let hash = memoized_hash(&path);
+    let hash = crate::statmemo::tool_hash_memo(&path);
     Some((
         cook_contracts::render::lower_hex(&hash),
         path.to_string_lossy().into_owned(),
@@ -93,26 +95,7 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
     let Ok(path) = which::which(name) else {
         return [0u8; 32];
     };
-    memoized_hash(&path)
-}
-
-/// Per-run memo keyed by resolved path. The same tool is fingerprinted
-/// once per probe NODE (five recipes sealing one `web:tools` probe hash
-/// its binaries five times), and a binary like node is ~60MB — without
-/// this, an all-cached workspace build spends seconds re-hashing the
-/// same toolchain. One run = one process, so a process-wide memo cannot
-/// go stale across builds.
-fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static MEMO: OnceLock<Mutex<HashMap<std::path::PathBuf, [u8; 32]>>> = OnceLock::new();
-    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(h) = memo.lock().unwrap().get(path) {
-        return *h;
-    }
-    let h = hash_file(path);
-    memo.lock().unwrap().insert(path.to_path_buf(), h);
-    h
+    crate::statmemo::tool_hash_memo(&path)
 }
 
 /// SHA-256 of a file's bytes, or all-zero when it cannot be read.
@@ -120,11 +103,16 @@ fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
 /// Public because CS-0204 hashes module source with it: the probe fingerprint
 /// folds every other file through the same function, and a second hasher over
 /// the same question is how two halves of one key come to disagree.
+///
+/// COOK-414: cook-cache has two file hashes and they answer different
+/// questions. This one is IDENTITY THAT LEAVES THE MACHINE: the §22.5.3 probe
+/// fingerprint, the CS-0204 module-source fold, the cloud key underneath both.
+/// [`crate::check::hash_file`] is the other: xxh3 local content identity for
+/// `FileRecord` and the local cache key. The algorithm is part of each name
+/// because this function was once ALSO called `hash_file`, privately, in this
+/// module, which meant the crate's most-used verb named two different hashes
+/// depending on which file you were reading.
 pub fn hash_file_sha256(path: &Path) -> [u8; 32] {
-    hash_file(path)
-}
-
-fn hash_file(path: &Path) -> [u8; 32] {
     let Ok(bytes) = std::fs::read(path) else {
         return [0u8; 32];
     };

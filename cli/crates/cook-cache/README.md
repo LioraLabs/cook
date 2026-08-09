@@ -80,7 +80,7 @@ eviction policy, and what a declared path IS are pure rules in
   `CacheBackend` methods, so a `Box<dyn CacheBackend>` pointed at a shared
   multi-tenant store can never acquire "list every object" or "delete these".
   The policy that picks victims (`plan_eviction`) is pure and lives upstream in
-  `cook-fingerprint::evict`, shared with the eventual cloud-side sweep.
+  `cook_contracts::evict`, shared with the eventual cloud-side sweep.
 - **Freed bytes are counted from the delete's own result, not from a
   preceding stat.** Stat-then-delete opens a window where a concurrent sweep
   removes the blob in between and both sweeps report the same bytes freed;
@@ -102,12 +102,14 @@ eviction policy, and what a declared path IS are pure rules in
 
 ## What it does not do
 
-It does not decide whether an entry is still valid. `needs_rebuild_cook`, key
-composition (`cloud_key` / `artifact_key`), the env denylist, probe
-fingerprints, and the restore-into-workspace step all live in
-`cook-fingerprint`; this crate stores and serves what those decisions address.
-It does not own eviction *policy*, only candidate enumeration and plan
-application. It does not own the meaning of what it stores: `Observation`,
+It does not compose a cache key or state a rule that needs no world. Key
+composition (`cloud_key` / `artifact_key`), the env denylist, the probe
+fingerprint fold, determinant drift, and what a declared path IS are
+`cook-contracts`; this crate calls them with what the filesystem says. What it
+DOES own, since COOK-418, is asking: `needs_rebuild_cook`, the restore step, and
+the probe input resolution that reads env, PATH and files. It does not own
+eviction *policy*, only candidate enumeration and plan application. It does not
+own the meaning of what it stores: `Observation`,
 `CacheMeta`, and the index-basename encoding are `cook-contracts`. It does not
 schedule, print, or emit progress; a lookup returns a value and the caller
 decides what to say about it.
@@ -117,12 +119,21 @@ decides what to say about it.
 Named rather than hidden, because the seam moves and a stale claim is worse
 than none:
 
-- `lib.rs` re-exports a dozen `cook-fingerprint` items (`check`, `envkey`,
-  `context`, `needs_rebuild_cook`, `hash_file`, `RestoreCtx`, ...) for
-  back-compat with call sites that predate the split. New code should import
-  from `cook_fingerprint` directly. The re-exports make the boundary read as
+- `lib.rs` re-exports a dozen `cook-contracts` items (`consumes`, `context`,
+  `envkey`, `evict`, `hash_str`, `cache::cas`, ...) alongside its own, for
+  back-compat with call sites that predate COOK-418. New code should import law
+  from `cook_contracts` directly. The re-exports make the boundary read as
   softer than it is, and five of the integration tests under `tests/` exercise
   `needs_rebuild_cook` through them.
+- Two file hashes live here and they are not interchangeable (COOK-414):
+  `check::hash_file` is xxh3 over a path and answers LOCAL content identity:
+  what a `FileRecord` carries, what the local key folds. Meanwhile
+  `probe::hash_file_sha256` is the SHA-256 identity that LEAVES the machine in a
+  probe fingerprint or a cloud key. They were both spelled `hash_file` until
+  COOK-414, one publicly and one privately in the module that shadowed it. Both
+  are now pinned to golden vectors computed outside this codebase, because the
+  suite's determinism tests pass under any hash function and changing what
+  either computes orphans every cache in existence.
 - `depfile.rs` parses Make-format `.d` files. It is the one module here that
   neither writes nor reads cache state; it lives here because its output feeds
   the records that do.
@@ -136,15 +147,37 @@ than none:
 
 Said plainly rather than stretched to fit, per the crate-charter convention.
 
-`statmemo` is a process-global memo with an arm/disarm discipline (COOK-306: a
-large C++ graph resolved 648,153 input records to 8,350 distinct paths, so
-validating a settled build cost 0.88s of `stat` where 0.01s would do). It is
-correctly located here rather than in `cook-contracts`, because global mutable
-state is not law however effect-free the grep looks. But its invariant is still
-owned by convention at eight call sites across four crates, and it cannot be
-enforced at the write site: `cook-shell`, which spawns the commands that write
-the files, depends on `cook-contracts` alone and refuses the edge. A known
-hole, not a design.
+`statmemo` holds the crate's two per-run memos. The first memoises input
+`mtime` under an arm/disarm discipline (COOK-306: a large C++ graph resolved
+648,153 input records to 8,350 distinct paths, so validating a settled build
+cost 0.88s of `stat` where 0.01s would do). The second memoises a resolved tool
+binary's SHA-256, and revalidates on every lookup against everything one
+`metadata` call says about the inode a path names (COOK-414). They sit together
+and each doc states the other's rule, because the two disciplines look arbitrary
+apart and are forced
+apart on inspection: **a stat memo cannot revalidate itself**, because the
+`stat` IS the cheap check it exists to avoid, **and a hash memo can**, for one
+`metadata` call against a 60 MB read. Arm/disarm on the hash memo would be
+strictly worse, since `disarm` fires on the first executed command and the
+register phase, where module code calls `cook.tools.id`, runs entirely
+disarmed.
+
+The hash memo's residual window is named rather than asserted away, because it
+sits on a false-hit path: it is exactly as discriminating as `metadata` is. On
+unix that means a rewrite would have to reproduce mtime, ctime, length, inode
+and device, which cook cannot do to itself. Mtime and length alone would NOT
+have been enough: coarse filesystem timestamp granularity plus a same-length
+relink is a real pair, which is why `touch_forward` exists in this module's
+tests. Off unix only those two fields are available, and the README says so
+rather than letting the unix case stand for both.
+
+Both are correctly located here rather than in `cook-contracts`, because global
+mutable state is not law however effect-free the grep looks. The stat memo's
+invariant is still owned by convention at eight call sites across four crates,
+and it cannot be enforced at the write site: `cook-shell`, which spawns the
+commands that write the files, depends on `cook-contracts` alone and refuses the
+edge. A known hole, not a design, and the reason the hash memo was given a rule
+that needs no call sites to keep it.
 
 `depfile` parses Make `.d` files. It neither reads nor writes cache state and
 its only consumer is `cook-engine` (COOK-425).
