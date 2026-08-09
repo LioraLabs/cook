@@ -131,19 +131,12 @@ fn format_stream(s: &str) -> String {
     }
 }
 
-/// Reported commands carry codegen's `set -e` prelude; strip it for display.
-///
-/// The prefix comes from the constant that composes it rather than being
-/// re-typed here, which is what that constant's doc asks for: an inverse that
-/// spells the bytes itself keeps stripping the old prelude the day the
-/// composer emits a new one.
-fn strip_set_e(cmd: &str) -> &str {
-    cmd.strip_prefix(cook_contracts::shell_block::SET_E_PREFIX)
-        .unwrap_or(cmd)
-}
-
 fn single_line(s: &str) -> String {
-    let s = strip_set_e(s);
+    // CS-0215: the reported command is the author's body, and the inverse of
+    // `compose` is called, not re-derived. This function used to hold a
+    // private stripper that knew only the `set -e\n` spelling; it therefore
+    // quoted `compose(&[])`'s bare `set -e` straight back at the reader.
+    let s = cook_contracts::shell_block::strip_set_e(s);
     let trimmed = s.trim();
     match trimmed.find('\n') {
         Some(idx) => format!("{}…", &trimmed[..idx]),

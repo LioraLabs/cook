@@ -28,6 +28,37 @@ use crate::watcher::CookWatcher;
 // Error mapping
 // ---------------------------------------------------------------------------
 
+/// The CLI's consuming end of `COOK_CMD_FAILED`.
+///
+/// A Lua host that cannot return a structured value reports a failing command
+/// by encoding it into its error message (`CommandFailure::to_wire`), and this
+/// is where that encoding stops being the message and becomes one again. Every
+/// error whose text may have travelled through a Lua host passes through here,
+/// because the alternative — each catch-all deciding for itself — is how the
+/// register phase came to print `COOK_CMD_FAILED:{"line":0,…}` at users
+/// (COOK-426): the sentinel had two producers and one consumer, and the path
+/// without a consumer was the one a `register` block took.
+///
+/// A message carrying no wire is passed through untouched, so this is safe to
+/// apply to any diagnostic.
+///
+/// Decoding replaces the whole message, which is what the execute path has
+/// always done and is why the register path now matches it. The cost is worth
+/// naming: any text a Lua caller wrapped around the failure (a module's
+/// `pcall` + `error("cc: probing failed: " .. err)`) is dropped with the
+/// encoding it wrapped, and `COOK_BACKTRACE=1` has no traceback left to show
+/// for such a failure. Preserving the wrapper would mean splicing rendered
+/// text back into an arbitrary message, and the two phases would then differ
+/// in what they print for one failure — the defect this function exists to
+/// close. If a module's context needs to survive, the failure has to carry it
+/// as a field rather than as string decoration around a wire format.
+fn message_to_cook_error(message: String) -> CookError {
+    match CommandFailure::from_wire(&message) {
+        Some(failure) => CookError::CommandFailed(render_command_failure(&failure)),
+        None => CookError::Other(message),
+    }
+}
+
 /// Map `cook_plan::PipelineError` onto `CookError` for the CLI's
 /// exit-code classification.
 fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
@@ -77,10 +108,11 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
         PipelineError::DuplicateOutput { .. } => {
             CookError::RecipeCollision(format!("error: {e}"))
         }
+        // `Other` is where a register-phase Lua error lands, wire and all.
         PipelineError::UnknownConfig { .. }
         | PipelineError::Workspace(_)
         | PipelineError::InvalidSet(_)
-        | PipelineError::Other(_) => CookError::Other(e.to_string()),
+        | PipelineError::Other(_) => message_to_cook_error(e.to_string()),
     }
 }
 
@@ -443,12 +475,11 @@ fn bridge_engine_to_progress_events(
     })
 }
 
-/// Reported commands carry codegen's `set -e` prelude; strip it for display.
-/// The one inverse lives beside compose() (COOK-391).
-use cook_contracts::shell_block::strip_set_e;
-
 fn render_command_failure(failure: &CommandFailure) -> String {
-    let command = strip_set_e(failure.command());
+    // CS-0215: what the reader is shown is `displayed_command`, not
+    // `command`. Stripping here was correct and was also the third site to
+    // decide it; the one that forgot printed `set -e` at every user.
+    let command = failure.displayed_command();
     // CS-0211: the located/unlocated decision is `CommandFailure::located`,
     // not a `== 0` test spelled here. It was spelled here and again in
     // cook-engine's progress line, and the two disagreed.
@@ -480,14 +511,9 @@ fn render_command_failure(failure: &CommandFailure) -> String {
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
         cook_engine::EngineError::TaskFailures { failures, .. } => {
-            if let Some((_, _recipe_name, msg)) = failures.first() {
-                if let Some(failure) = CommandFailure::from_wire(msg) {
-                    CookError::CommandFailed(render_command_failure(&failure))
-                } else {
-                    CookError::Other(msg.clone())
-                }
-            } else {
-                CookError::Other("unknown engine error".into())
+            match failures.first() {
+                Some((_, _recipe_name, msg)) => message_to_cook_error(msg.clone()),
+                None => CookError::Other("unknown engine error".into()),
             }
         }
         cook_engine::EngineError::CycleDetected(name) => {

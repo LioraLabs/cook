@@ -80,3 +80,42 @@ fn zero_is_the_absence_of_a_line_not_a_line() {
     );
     assert_eq!(located.located(), Some(7));
 }
+
+fn failed(command: &str) -> CommandFailure {
+    CommandFailure::new(
+        0,
+        1,
+        command,
+        CapturedStream::from_bytes(b""),
+        CapturedStream::from_bytes(b""),
+    )
+}
+
+/// CS-0215: what a reader is shown is the body they wrote, never the text
+/// `shell_block::compose` made of it. The prelude is the implementation's,
+/// so no renderer may print it and none may decide that for itself.
+#[test]
+fn displayed_command_is_the_body_the_author_wrote() {
+    let composed = crate::shell_block::compose(&["echo a".to_string(), "false".to_string()]);
+    assert_eq!(failed(&composed).displayed_command(), "echo a\nfalse");
+}
+
+/// The empty block is the edge the per-crate strippers kept getting wrong:
+/// `compose(&[])` is the bare `set -e` with no trailing newline, and its
+/// inverse is the empty body — not the prelude printed at the user.
+#[test]
+fn displayed_command_of_an_empty_block_is_empty() {
+    let composed = crate::shell_block::compose(&[]);
+    assert_eq!(failed(&composed).displayed_command(), "");
+}
+
+/// A command that was never composed — a `cook.sh` argument, say — is shown
+/// exactly as it was given.
+#[test]
+fn displayed_command_passes_uncomposed_text_through() {
+    assert_eq!(failed("false").displayed_command(), "false");
+    assert_eq!(
+        failed("echo set -e").displayed_command(),
+        "echo set -e"
+    );
+}
