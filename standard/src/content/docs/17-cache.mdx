@@ -70,6 +70,8 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 >
 > A conforming implementation MUST NOT let an observing unit's identity collide with a producing unit's declared output path within one index. The means of keeping them apart is implementation-defined.
 >
+> In the reference implementation the identity is composed by `cook_contracts::cache::local_key`, as a pure function of the declaration in the crate that holds contract data rather than in the phase that first calls it (informative). Exclusion 2 is what that placement buys: the composing function takes the recipe name and the Cookfile path and uses neither, so "moving a recipe between Cookfiles MUST NOT bust its cache" is a property visible in one signature rather than a discipline spread across the register phase. The two identity spaces are kept apart by writing the digest in a form no workspace-relative output path takes.
+>
 > **What a hit replays.** An observing unit's hit reproduces its verdict, and that verdict is a pass: §{exec.cache.test-unit} rule 2 admits only a passed outcome to the cache, so the existence of a record is the verdict.
 >
 > **The observation (CS-0189).** CS-0186 left open, for every unit kind alike, whether a hit should also reproduce what the run printed. It should, and §{exec.cache.observation} says how. A conforming implementation records an **observation** for every unit it records at all, producing and observing alike, and a hit MAY reproduce it. Two constraints hold whether or not an implementation offers replay:

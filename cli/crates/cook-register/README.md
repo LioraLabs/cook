@@ -114,12 +114,19 @@ test. They are recorded here so the next audit's grep lands on them:
 - **The `cook.cache` renamed-namespace stub**, verbatim in `module_loader.rs:377`
   and `pool.rs:1079`.
 
-Two smaller exceptions to rules this crate otherwise keeps: `engine.rs:2050` and
-`engine.rs:2696` print warnings with `eprintln!` although `RegisteredCookfile`
-already carries a `warnings` field for exactly that; and `observing_identity`
-(`unit_api.rs:1435`) is cache-identity law hashed against a direct
-`xxhash-rust` dependency, where the stratum rule puts hashing law in
-`cook-fingerprint`. It has one caller today, so it is not yet a twin.
+One smaller exception to a rule this crate otherwise keeps: `engine.rs:2050`
+and `engine.rs:2696` print warnings with `eprintln!` although
+`RegisteredCookfile` already carries a `warnings` field for exactly that.
+
+This list used to carry a second: `observing_identity` in `unit_api.rs`,
+"cache-identity law hashed against a direct `xxhash-rust` dependency, where the
+stratum rule puts hashing law in `cook-fingerprint`. It has one caller today,
+so it is not yet a twin." Both halves of that reasoning expired.
+`cook-fingerprint` no longer exists (COOK-418), and waiting for a second caller
+is the wrong test — the composition and every reader of the composed key must
+already agree. COOK-421 moved it, with `build_local_cache_key` and
+`OBSERVING_KEY_MARKER`, to `cook_contracts::cache::local_key`. It was this
+crate's only use of `xxhash-rust`, so the dependency went with it.
 
 ## Relationship to `cook-contracts`
 
