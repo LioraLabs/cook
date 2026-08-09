@@ -32,6 +32,7 @@ pub mod size;
 pub mod sigil;
 pub mod registration;
 pub mod step;
+pub mod timestamp;
 pub mod unit;
 pub mod unit_graph;
 

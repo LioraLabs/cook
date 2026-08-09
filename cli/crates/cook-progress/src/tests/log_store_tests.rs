@@ -134,3 +134,55 @@ fn recipe_and_node_names_are_sanitized_into_paths() {
     // No traversal happened: there is no 'etc' directory outside the build.
     assert!(!tmp.path().join("etc").exists());
 }
+
+// ---------------------------------------------------------------------------
+// The composer and its inverse (COOK-421)
+// ---------------------------------------------------------------------------
+
+/// This crate WRITES `started_at` / `ended_at` into `.cook/logs` with the
+/// `time` crate's `Rfc3339`; `cook-logs` READS them back with
+/// `cook_contracts::timestamp::parse_rfc3339_ms` to show how long a build
+/// took. The two ends are in different crates, and only this one can see both
+/// the formatter and the parser, so the agreement test belongs here.
+///
+/// It is not a copy of the parser's own round-trip test. That one proves the
+/// parser is the inverse of the CONTRACTS formatter; this proves it is the
+/// inverse of the formatter this crate actually calls — the `time` crate's,
+/// whose exact output (how many fractional digits, whether the zone is `Z` or
+/// `+00:00`) is not ours to choose.
+#[test]
+fn every_timestamp_this_crate_writes_is_one_cook_logs_can_read_back() {
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+
+    // Fixed instants, so this cannot flake on a clock: the epoch, a leap day,
+    // a whole second, a sub-second, and an end-of-year rollover.
+    for nanos in [
+        0i128,
+        951_782_400_000_000_000,             // 2000-02-29T00:00:00Z
+        951_782_400_500_000_000,             // …with half a second
+        1_772_323_199_123_456_789,           // 2026-02-28T23:59:59.123456789Z
+        1_772_323_200_000_000_000,           // 2026-03-01T00:00:00Z
+    ] {
+        let instant = OffsetDateTime::from_unix_timestamp_nanos(nanos).expect("in range");
+        let written = instant.format(&Rfc3339).expect("format");
+        let read_back = cook_contracts::timestamp::parse_rfc3339_ms(&written)
+            .unwrap_or_else(|| panic!("cook-logs cannot read what this crate wrote: {written}"));
+        assert_eq!(
+            read_back,
+            (nanos / 1_000_000) as i64,
+            "{written} parsed to the wrong instant"
+        );
+    }
+}
+
+/// The live path, one instant, no assertion about WHICH instant: whatever the
+/// clock says, the string this crate stores must survive the trip.
+#[test]
+fn the_timestamp_actually_stored_survives_the_trip() {
+    let stamped = super::current_rfc3339();
+    assert!(
+        cook_contracts::timestamp::parse_rfc3339_ms(&stamped).is_some(),
+        "cook-logs cannot read the stamp this crate writes: {stamped}"
+    );
+}

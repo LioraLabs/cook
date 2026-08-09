@@ -262,14 +262,14 @@ pub(crate) fn human_size(bytes: u64) -> String {
 }
 
 /// Render a Unix-seconds timestamp as `YYYY-MM-DDTHH:MM:SSZ`, reusing
-/// `crate::iso8601::days_to_ymd` rather than pulling in `chrono`.
+/// `cook_contracts::timestamp::civil_from_days` rather than pulling in `chrono`.
 fn format_ts(secs: u64) -> String {
     let days = secs / 86_400;
     let rem = secs % 86_400;
     let hour = rem / 3600;
     let min = (rem % 3600) / 60;
     let sec = rem % 60;
-    let (year, month, day) = crate::iso8601::days_to_ymd(days as i64);
+    let (year, month, day) = cook_contracts::timestamp::civil_from_days(days as i64);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
 
