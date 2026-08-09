@@ -358,3 +358,40 @@ fn neither_knob_set_frees_nothing_even_with_real_candidates_present() {
     assert_eq!(plan.total_before, 600);
     assert_eq!(plan.count_before, 3);
 }
+
+// ---------------------------------------------------------------------------
+// Membership of the exempt set (COOK-421)
+// ---------------------------------------------------------------------------
+//
+// These pin MEMBERSHIP, not spelling. Both sides name the same constant, so a
+// renamed constant cannot fail them -- that is
+// `the_artifact_kind_wire_spellings_are_these_exact_strings`'s job, and
+// `size_sweep_drops_observations_before_file_artifacts` above catches it too,
+// because it still types the literal. What these catch is a kind quietly
+// entering or leaving the exempt list, which no spelling test can see.
+
+/// Every kind the size sweep must never evict. Removing one from
+/// `SIZE_SWEEP_EXEMPT_KINDS` strands the artifacts it points at; this is the
+/// only thing that says so.
+#[test]
+fn every_exempt_kind_is_named_by_its_constant() {
+    use crate::cache::cas::artifact_kind as k;
+    for kind in [
+        k::DISCOVERED_INPUT_SETS,
+        k::DISCOVERED_INPUTS,
+        k::MODULE_INPUT_SETS,
+        k::PROBE_VALUE,
+        k::SYMLINK,
+        k::DIR,
+    ] {
+        assert!(is_size_sweep_exempt(Some(kind)), "{kind} must survive a size sweep");
+    }
+}
+
+/// `observation` is deliberately NOT exempt -- it is the kind the size sweep
+/// drops FIRST. Adding it to the exempt list would make the priority branch in
+/// `size_eviction_order` unreachable, and nothing else would say so.
+#[test]
+fn an_observation_is_not_exempt_because_it_is_swept_first() {
+    assert!(!is_size_sweep_exempt(Some(crate::cache::cas::artifact_kind::OBSERVATION)));
+}

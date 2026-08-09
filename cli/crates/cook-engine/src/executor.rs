@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
+use cook_contracts::cache::cas::artifact_kind;
 use cook_contracts::{CommandFailure, WorkPayload};
 use cook_cache::backend::DeterminantManifest;
 use cook_cache::{
@@ -3376,7 +3377,7 @@ fn publish_completion(
             output_index: cook_cache::OBSERVATION_INDEX,
             output_path: cook_cache::OBSERVATION_PATH.to_string(),
             content_hash: ArtifactMeta::zero_content_hash(),
-            kind: Some("observation".to_string()),
+            kind: Some(artifact_kind::OBSERVATION.to_string()),
             mode: ArtifactMeta::default_mode(),
             target: None,
         };
@@ -3417,11 +3418,11 @@ fn publish_completion(
                     .and_then(|p| p.to_str().map(String::from));
                 // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
                 match t {
-                    Some(t) => (Vec::new(), Some("symlink".to_string()), Some(t)),
+                    Some(t) => (Vec::new(), Some(artifact_kind::SYMLINK.to_string()), Some(t)),
                     None => continue,
                 }
             } else if ft.is_dir() {
-                (Vec::new(), Some("dir".to_string()), None)
+                (Vec::new(), Some(artifact_kind::DIR.to_string()), None)
             } else {
                 match std::fs::read(&abs_output) {
                     Ok(b) => (b, None, None),
@@ -3555,7 +3556,7 @@ fn publish_completion(
                         .to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
-                    kind: Some("discovered_inputs".to_string()),
+                    kind: Some(artifact_kind::DISCOVERED_INPUTS.to_string()),
                     mode: 0o644,
                     target: None,
                 };
@@ -3604,7 +3605,7 @@ fn publish_completion(
                     output_path: cook_cache::DISCOVERED_INPUT_SETS_PATH.to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
-                    kind: Some("discovered_input_sets".to_string()),
+                    kind: Some(artifact_kind::DISCOVERED_INPUT_SETS.to_string()),
                     mode: 0o644,
                     target: None,
                 };
@@ -3677,7 +3678,7 @@ fn publish_completion(
                 output_path: cook_cache::MODULE_INPUT_SETS_PATH.to_string(),
                 // CS-0054: stamped by the backend on put.
                 content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some("module_input_sets".to_string()),
+                kind: Some(artifact_kind::MODULE_INPUT_SETS.to_string()),
                 mode: 0o644,
                 target: None,
             };
@@ -3752,7 +3753,7 @@ fn publish_completion(
                 output_path: ed.clone(),
                 // CS-0054: stamped by the backend on put.
                 content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some("dir".to_string()),
+                kind: Some(artifact_kind::DIR.to_string()),
                 mode,
                 target: None,
             };

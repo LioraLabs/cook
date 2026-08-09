@@ -464,7 +464,7 @@ fn publish_module_manifest(
     let sets = cook_cache::merge_path_set(&existing, observed);
     let json = cook_cache::encode_path_sets(&sets);
     let mut meta = probe_artifact_meta(cook_cache::MODULE_INPUT_SETS_PATH, json.len());
-    meta.kind = Some("module_input_sets".to_string());
+    meta.kind = Some(cook_contracts::cache::cas::artifact_kind::MODULE_INPUT_SETS.to_string());
     match cook_cache::backend::put_bytes(access.backend, &manifest_key, &json, &mut meta) {
         Ok(()) => Vec::new(),
         Err(e) => vec![format!(

@@ -353,3 +353,32 @@ fn malformed_manifest_bytes_decode_to_no_sets() {
     assert!(decode_path_sets(b"[\"a string, not a list of lists\"]").is_empty());
     assert!(decode_path_sets(&[]).is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Artifact kinds as constants (COOK-421)
+// ---------------------------------------------------------------------------
+
+/// `ArtifactMeta.kind` crosses the on-disk boundary: the executor and the probe
+/// evaluator write it, `cook-cache`'s restore and `evict` read it back. A
+/// rename on one side does not fail to compile — it silently stops matching,
+/// and a cache that stops matching is the worst failure this build system has.
+///
+/// These pin the bytes. A change here is a change to what is already written in
+/// every store on disk, which is why the constants exist at all: with the
+/// spelling typed at each site, that change looked like an edit to one file.
+#[test]
+fn the_artifact_kind_wire_spellings_are_these_exact_strings() {
+    use super::artifact_kind as k;
+    assert_eq!(k::PROBE_VALUE, "probe_value");
+    assert_eq!(k::SYMLINK, "symlink");
+    assert_eq!(k::DIR, "dir");
+    assert_eq!(k::DISCOVERED_INPUTS, "discovered_inputs");
+    assert_eq!(k::DISCOVERED_INPUT_SETS, "discovered_input_sets");
+    assert_eq!(k::MODULE_INPUT_SETS, "module_input_sets");
+    assert_eq!(k::OBSERVATION, "observation");
+}
+
+// `artifact_meta_as_probe_value_sets_kind` above already pins the constructor
+// against the literal `"probe_value"`, independently of the constant, which is
+// exactly the pairing wanted: one test says what the constant IS, the other
+// says the constructor writes that spelling.

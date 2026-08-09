@@ -91,12 +91,47 @@ impl ArtifactMeta {
         0o644
     }
 
-    /// Convenience: construct a probe-value artifact meta with `kind = Some("probe_value")`.
-    /// All other fields must be filled in by the caller.
+    /// Convenience: construct a probe-value artifact meta with
+    /// `kind = Some(artifact_kind::PROBE_VALUE)`. All other fields must be
+    /// filled in by the caller.
     pub fn as_probe_value(mut self) -> Self {
-        self.kind = Some("probe_value".into());
+        self.kind = Some(artifact_kind::PROBE_VALUE.into());
         self
     }
+}
+
+/// The values [`ArtifactMeta::kind`] may take.
+///
+/// Every one of these is a wire format: it is written into a sidecar on disk by
+/// one crate and compared against by another. Before COOK-421 each was typed as
+/// a bare string at both ends — the executor wrote `"discovered_inputs"`,
+/// `evict` matched on `"discovered_inputs"`, and nothing connected them. A
+/// rename on one side does not fail to compile; it stops matching, and the
+/// artifact it named becomes unreachable or, worse, evictable.
+///
+/// The list above this module's doc used to live in a doc comment on the
+/// `kind` field, which is rank-4 enforcement doing nothing. Adding a kind means
+/// adding it here, deciding whether it belongs in
+/// [`crate::evict::SIZE_SWEEP_EXEMPT_KINDS`], and saying so in a test.
+pub mod artifact_kind {
+    /// The canonical-JSON probe-output artifact (CS-0074, encoding revised by
+    /// CS-0102).
+    pub const PROBE_VALUE: &str = "probe_value";
+    /// Target carried in `ArtifactMeta::target`; no body.
+    pub const SYMLINK: &str = "symlink";
+    /// Empty directory; no body.
+    pub const DIR: &str = "dir";
+    /// Discovered-inputs manifest whose body is a JSON path list, keyed by the
+    /// unit's declared-inputs-only cloud key (cold cc sharing).
+    pub const DISCOVERED_INPUTS: &str = "discovered_inputs";
+    /// The per-unit sets that manifest is composed from.
+    pub const DISCOVERED_INPUT_SETS: &str = "discovered_input_sets";
+    /// CS-0204: the module-path manifest, the only route from a Lua-bodied
+    /// unit's declared key to the full key its artifacts sit under.
+    pub const MODULE_INPUT_SETS: &str = "module_input_sets";
+    /// A recorded unit observation. Deliberately NOT sweep-exempt: it is the
+    /// kind a size sweep drops first.
+    pub const OBSERVATION: &str = "observation";
 }
 
 /// One blob discovered by `LocalBackend::enumerate()` (COOK-232): everything
