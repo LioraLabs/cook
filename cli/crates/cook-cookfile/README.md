@@ -45,19 +45,36 @@ re-rendering it.
   counts as code — `{ n-1 }` is not a comment — while a `--` inside a string
   literal is not one either, so a list ending `[[note -- x]]` anchors after the
   bracket rather than inside the literal.
+- Creating a field that is not there is a request, never a default
+  (`AbsentField`, CS-0221), and it is a parameter rather than a flag so every
+  call site has to say which of the two it wants. Total failure is what pays
+  for the preservation rule, and turning it into a silent write for callers who
+  never asked would spend that.
 - Every failure names what it looked for and leaves the file byte-identical:
   `RecipeNotFound`, `NoModuleCall`, `FieldNotFound`, `FieldNotAList`,
-  `Unparseable`. This is the property the splice is bought with. A re-rendering
+  `NoArgumentTable`, `BracketedField`, `UnspellableField`, `Unparseable`. This
+  is the property the splice is bought with. A re-rendering
   implementation cannot fail this way because it cannot tell that anything was
   unusual; it writes a plausible file and reports success. Being told to make
   the edit by hand is worse than the edit working and much better than the edit
   appearing to work.
 - An unparseable file is refused before any edit, so a syntax error the author
   already has is never compounded by an insertion landing somewhere arbitrary.
+- A created field lands where the author would have written it: its own line at
+  their indentation and with their trailing comma where the call's entries sit
+  one per line, inline where they share one, and never between an entry and the
+  comment written about it. New bytes are the one case where nothing constrains
+  placement, so the crate constrains it — quietly changing a file's layout
+  convention one field at a time is a restyle by another name, which is the
+  thing this crate exists not to do.
+- It answers what is in a field's list (`field_entries`) as well as adding to
+  it, so a verb can be idempotent without a scanner of its own. Every consumer
+  has the same wrong answer available — search the call's text for the entry —
+  and it matches `"math"` inside `sources = { "src/math/main.cpp" }`.
 - It is pure: `&str` in, `String` out. No filesystem, no environment, no VM.
   Reading, writing, and the CS-0045 sandbox gate stay in the caller
   (`cook-lua-stdlib/src/cookfile_api.rs`), which is what lets the whole editing
-  algebra be pinned by 27 string-in/string-out tests with no Lua VM and no
+  algebra be pinned by string-in/string-out tests with no Lua VM and no
   tempdir.
 - The selector is the recipe name, which is exact rather than convenient. A
   target maker is a step contributor deriving its identity from
@@ -90,7 +107,10 @@ Recorded here rather than in a comment nobody greps.
 - **`["links"] = { … }` is not matched.** A bracketed key is a table key and
   the scan looks for the bare identifier form, so the edit is refused by name
   rather than mis-aimed. Failing is the correct half of the bargain; the
-  spelling is simply not supported yet.
+  spelling is simply not supported yet. Creating over one is refused
+  separately (`BracketedField`): the two spellings are one key to an
+  evaluator, so writing `links` beside `["links"]` would discard the author's
+  value rather than decline to touch it.
 
 The defects this file used to list — long-bracket literals spliced into, the
 field-key scan matching inside a comment or a nested table — are fixed

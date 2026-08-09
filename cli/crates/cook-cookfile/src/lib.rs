@@ -1,4 +1,4 @@
-//! Structure-preserving Cookfile edits (Standard §22.12, CS-0179).
+//! Structure-preserving Cookfile edits (Standard §22.13, CS-0179).
 //!
 //! The shared layer under every `cc.*` project-management verb: locate a
 //! module call, splice an entry into one of its fields, append a declaration.
@@ -35,7 +35,9 @@
 
 use std::ops::Range;
 
-use cook_contracts::lua_scan::{is_ident_cont, opens_comment, skip_non_code, Skip};
+use cook_contracts::lua_scan::{
+    is_ident_cont, is_ident_start, is_reserved_word, opens_comment, skip_non_code, Skip,
+};
 use cook_contracts::module_binding::{alias_of, derived_alias};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
@@ -71,16 +73,55 @@ pub enum EditError {
         entry: String,
     },
 
-    #[error(
-        "'{field}' in the {callee} call in recipe '{recipe}' is not a `{{ ... }}` list, \
-         so {entry} cannot be added to it automatically"
-    )]
+    #[error("'{field}' in the {callee} call in recipe '{recipe}' is not a `{{ ... }}` list")]
     FieldNotAList {
+        recipe: String,
+        callee: String,
+        field: String,
+    },
+
+    #[error(
+        "the {callee} call in recipe '{recipe}' has no `{{ ... }}` argument table, so '{field}' \
+         cannot be added to it — add {field} = {{ {entry} }} to it manually"
+    )]
+    NoArgumentTable {
         recipe: String,
         callee: String,
         field: String,
         entry: String,
     },
+
+    #[error(
+        "the {callee} call in recipe '{recipe}' writes '{field}' as [\"{field}\"], which is the \
+         same key and is not a spelling this edit can add to — add {entry} to it manually"
+    )]
+    BracketedField {
+        recipe: String,
+        callee: String,
+        field: String,
+        entry: String,
+    },
+
+    #[error(
+        "'{field}' cannot be written as a table key, so it cannot be created — a field name is a \
+         Lua identifier and not a reserved word"
+    )]
+    UnspellableField { field: String },
+}
+
+/// What to do when the field an edit names is not there (CS-0221).
+///
+/// [`AbsentField::Refuse`] is §22.13's original and still-default behaviour,
+/// and it is the reason this is a parameter rather than a flag someone might
+/// forget: total failure is a property callers depend on, so every call site
+/// has to say which of the two it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbsentField {
+    /// Fail with [`EditError::FieldNotFound`], changing nothing.
+    Refuse,
+    /// Write `field = { entry }` as one more entry of the call's argument
+    /// table.
+    Create,
 }
 
 /// A located module call: its byte span and the callee that opens it.
@@ -424,6 +465,271 @@ fn last_code_end(inner: &str) -> Option<usize> {
     last
 }
 
+/// Offset of the first byte of code in a fragment, skipping leading whitespace
+/// and any comment. The mirror of [`last_code_end`], and used for the same
+/// reason: an entry written as `-- keep this\n"math"` starts at the quote.
+fn first_code_start(inner: &str) -> Option<usize> {
+    for (kind, range) in regions(inner) {
+        match kind {
+            Region::Comment => {}
+            Region::Str => return Some(range.start),
+            Region::Code => {
+                for (i, ch) in inner[range.clone()].char_indices() {
+                    if !ch.is_whitespace() {
+                        return Some(range.start + i);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether a code byte separates two entries of a table constructor.
+///
+/// Lua admits both, and [`find_field_key`] has always accepted either as the
+/// thing that opens the entry it is looking at. Only the write side treated
+/// `,` as the whole story, which is how appending after `{ "a"; }` came to
+/// produce `{ "a";, "b" }` — a file that no longer loads.
+fn is_entry_separator(b: u8) -> bool {
+    b == b',' || b == b';'
+}
+
+/// The separator the code up to `end` already ends in, if any.
+fn trailing_separator(code: &str) -> Option<char> {
+    let last = code.trim_end().chars().next_back()?;
+    is_entry_separator(last as u8).then_some(last)
+}
+
+/// The offset of the line break that ends the line the code at `from` sits on,
+/// paired with the terminator that line uses.
+///
+/// "The next `\n`" is the wrong answer and is wrong in the damaging direction.
+/// Where the author's last entry carries a `--[[ note` comment running over
+/// several lines, the next `\n` is INSIDE that comment, and a field inserted
+/// there lands inside it: the call is unchanged, the edit reports success, and
+/// a second run stacks another line in the same comment. So the search runs
+/// over [`regions`] and only a newline in a code region ends a line.
+///
+/// The terminator comes back with it so a CRLF file keeps its convention.
+/// Inserting a bare `\n` line into one is a change to the file's line endings
+/// that nobody asked for, which is the kind of unannounced restyle §22.13
+/// exists to forbid.
+fn line_end_after(inner: &str, from: usize) -> (usize, &'static str) {
+    for (kind, range) in regions(inner) {
+        if kind != Region::Code || range.end <= from {
+            continue;
+        }
+        let start = range.start.max(from);
+        if let Some(i) = inner[start..range.end].find('\n') {
+            let at = start + i;
+            if at > 0 && inner.as_bytes()[at - 1] == b'\r' {
+                return (at - 1, "\r\n");
+            }
+            return (at, "\n");
+        }
+    }
+    (inner.len(), "\n")
+}
+
+/// The interior of the `{ ... }` a module call passes as its argument.
+///
+/// The same brace-matching the field locator does, one level out: the first
+/// `{` of the call and its match. Located by brace rather than by paren so
+/// that `f{ ... }`, Lua's sugar for `f({ ... })`, is the same shape here that
+/// it is to an evaluator — and `find_field_key`'s depth-1 rule already means
+/// the same table either way.
+///
+/// `None` for a call passing no table at all, which is the one case where a
+/// created field has nowhere to go.
+fn locate_argument_table(call: &str) -> Option<Range<usize>> {
+    let view = CodeView::of(call);
+    let open = view.bytes.iter().position(|&b| b == b'{')?;
+    let mut depth = 0usize;
+    for i in open..view.bytes.len() {
+        match view.bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(view.at[open] + 1..view.at[i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the call's argument table already binds `field` under the bracketed
+/// spelling `["field"] = …`.
+///
+/// §22.13 leaves that spelling outside what [`find_field_key`] must match, and
+/// answering "not found" is a fine reply when the consequence is a refusal. It
+/// stops being a fine reply when the consequence is writing a field: `["links"]`
+/// and `links` are one key to an evaluator, so creating the second silently
+/// discards the author's first. So this question is asked only on the create
+/// path, and only to refuse.
+///
+/// Short strings only. A long-bracket key is not a spelling anyone writes, and
+/// deciding whether `["li\nks"]` names `links` would mean unescaping, which is
+/// evaluating the author's Lua by another name.
+fn bracketed_key_present(call: &str, field: &str) -> bool {
+    let view = CodeView::of(call);
+    let literals: Vec<Range<usize>> = regions(call)
+        .into_iter()
+        .filter(|(kind, _)| *kind == Region::Str)
+        .map(|(_, range)| range)
+        .collect();
+
+    let mut depth = 0usize;
+    for i in 0..view.bytes.len() {
+        match view.bytes[i] {
+            b'{' => {
+                depth += 1;
+                continue;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 1 || view.bytes[i] != STRING_ATOM {
+            continue;
+        }
+        let bracketed = view
+            .significant_before(i)
+            .is_some_and(|p| view.bytes[p] == b'[')
+            && view
+                .significant_from(i + 1)
+                .and_then(|close| {
+                    (view.bytes[close] == b']').then(|| view.significant_from(close + 1))?
+                })
+                .is_some_and(|eq| view.bytes[eq] == b'=' && view.bytes.get(eq + 1) != Some(&b'='));
+        if !bracketed {
+            continue;
+        }
+        let Some(range) = literals.iter().find(|r| r.start == view.at[i]) else {
+            continue;
+        };
+        let raw = &call[range.clone()];
+        let unquoted = raw
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')));
+        if unquoted == Some(field) {
+            return true;
+        }
+    }
+    false
+}
+
+/// One insertion: the offset it lands at, and the bytes that land there.
+///
+/// Creating a field can need two of these, so the shape is a list rather than
+/// a pair.
+type Insertion = (usize, String);
+
+/// Apply insertions given in document order, at offsets relative to `at_base`.
+///
+/// Back to front, which is the whole reason the offsets never need adjusting
+/// for each other. Reversing the caller's order rather than sorting by offset
+/// is what makes two insertions AT THE SAME offset land in the order they were
+/// written: sorting leaves that tie to the sort's stability and then inserts
+/// the first-listed one first, which puts it after the second — a comma
+/// written before a new line ends up after it.
+fn apply(source: &str, at_base: usize, edits: Vec<Insertion>) -> String {
+    debug_assert!(
+        edits.windows(2).all(|w| w[0].0 <= w[1].0),
+        "insertions must be given in document order"
+    );
+    let mut out = source.to_string();
+    for (at, text) in edits.into_iter().rev() {
+        out.insert_str(at_base + at, &text);
+    }
+    out
+}
+
+/// Where `field = { entry }` goes in an argument table that has no such field,
+/// and how it is spelled, as offsets relative to the table's interior.
+///
+/// The anchor is [`last_code_end`], exactly as it is for an entry inside a
+/// list. What is added is layout matching, and it is not decoration: a call
+/// whose entries sit one per line is the common shape a scaffolded Cookfile
+/// grows into, and appending `, links = { … }` after the last one puts two
+/// fields on a line in a file that has none. §22.13 exists to keep an edit
+/// from restyling the author's file, and quietly changing its layout
+/// convention is a restyle by another name.
+///
+/// Two subtleties, both about a trailing comment:
+///
+/// - In the one-per-line layout the new line goes after the END of the anchor
+///   line, not after the last code byte, so a comment the author wrote against
+///   the previous field stays against that field rather than migrating onto
+///   the new one.
+/// - When that previous field carries no trailing comma, the comma still has
+///   to go at the code, which is before the comment. Hence two insertions.
+fn create_field_edits(inner: &str, field: &str, entry: &str) -> Vec<Insertion> {
+    let rendered = format!("{field} = {{ {entry} }}");
+    let Some(end) = last_code_end(inner) else {
+        // An argument table holding no code takes the field with no separator
+        // and no invented padding, which is what an empty LIST already does.
+        // `{}` has no layout to preserve, and inventing one would be this
+        // layer having an opinion about a file it did not write.
+        return vec![(0, rendered)];
+    };
+
+    let separator = trailing_separator(&inner[..end]);
+    // One field per line is decided on the run up to the anchor: if the
+    // author put a newline between the opening brace and the last field, they
+    // are writing a block, not a one-liner.
+    if !inner[..end].contains('\n') {
+        let sep = match separator {
+            Some(_) => " ".to_string(),
+            None => ", ".to_string(),
+        };
+        return vec![(end, format!("{sep}{rendered}"))];
+    }
+
+    let line_start = inner[..end].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let indent: String = inner[line_start..end]
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+    let (line_end, newline) = line_end_after(inner, end);
+
+    // The author's own separator is repeated rather than normalised to a
+    // comma: a table written with `;` stays written with `;`.
+    match separator {
+        Some(sep) => vec![(line_end, format!("{newline}{indent}{rendered}{sep}"))],
+        None => vec![
+            (end, ",".to_string()),
+            (line_end, format!("{newline}{indent}{rendered}")),
+        ],
+    }
+}
+
+/// Whether `field` can be WRITTEN as a bare table key.
+///
+/// Only the create path asks. Locating a field never needs this — a name that
+/// cannot be spelled simply is not found — but writing one does, and the two
+/// policies diverging on the same input is exactly the asymmetry to avoid:
+/// `find_field_key` already refuses an empty name outright, so without this an
+/// empty `field` would fail cleanly under [`AbsentField::Refuse`] and silently
+/// write ` = { "math" }` under [`AbsentField::Create`].
+///
+/// This is the same posture CS-0220 took for a `use` name and the opposite of
+/// the one `entry` is under: §22.13 delegates `entry` to the caller because
+/// only the caller knows whether it is adding a string, an identifier or a
+/// table. `field` admits no such variation — it is a key, in one spelling —
+/// so the layer that writes it is the one that can check it.
+fn is_writable_key(field: &str) -> bool {
+    let mut bytes = field.bytes();
+    let ok = matches!(bytes.next(), Some(b) if is_ident_start(b)) && bytes.all(is_ident_cont);
+    ok && !is_reserved_word(field)
+}
+
 /// Splice `entry` into `field`'s list, in the module call inside `recipe`.
 ///
 /// Returns the edited source. Everything outside the inserted bytes is
@@ -434,11 +740,22 @@ fn last_code_end(inner: &str) -> Option<usize> {
 /// which keeps the author's interior padding where they put it: inserting
 /// immediately before `}` turns `{ "a" }` into `{ "a", "b" }` rather than
 /// `{ "a", "b"}`.
+///
+/// `absent` decides the one case where the field is not there at all
+/// (CS-0221). [`AbsentField::Create`] writes `field = { entry }` into the
+/// call's argument table; the caller still renders `entry`, and this layer
+/// renders only the frame it was asked to create, so the two cannot come to
+/// different opinions about the same entry. Nothing else is relaxed by it: a
+/// field that IS there and is not a list, a recipe that does not exist, a
+/// recipe holding no module call, and a file that does not parse are refused
+/// under either policy, because in each of those the thing to create either
+/// already exists or has nowhere to go.
 pub fn splice_into_field(
     source: &str,
     recipe: &str,
     field: &str,
     entry: &str,
+    absent: AbsentField,
 ) -> Result<String, EditError> {
     let tree = parse(source)?;
     let recipe_span = locate_recipe(&tree, source, recipe).ok_or_else(|| {
@@ -454,6 +771,31 @@ pub fn splice_into_field(
 
     let call_text = &source[call.span.clone()];
     let interior = match locate_field_interior(call_text, field) {
+        None if absent == AbsentField::Create => {
+            if !is_writable_key(field) {
+                return Err(EditError::UnspellableField {
+                    field: field.to_string(),
+                });
+            }
+            if bracketed_key_present(call_text, field) {
+                return Err(EditError::BracketedField {
+                    recipe: recipe.to_string(),
+                    callee: call.callee,
+                    field: field.to_string(),
+                    entry: entry.to_string(),
+                });
+            }
+            let table = locate_argument_table(call_text).ok_or_else(|| {
+                EditError::NoArgumentTable {
+                    recipe: recipe.to_string(),
+                    callee: call.callee.clone(),
+                    field: field.to_string(),
+                    entry: entry.to_string(),
+                }
+            })?;
+            let edits = create_field_edits(&call_text[table.clone()], field, entry);
+            return Ok(apply(source, call.span.start + table.start, edits));
+        }
         None => {
             return Err(EditError::FieldNotFound {
                 recipe: recipe.to_string(),
@@ -467,7 +809,6 @@ pub fn splice_into_field(
                 recipe: recipe.to_string(),
                 callee: call.callee,
                 field: field.to_string(),
-                entry: entry.to_string(),
             })
         }
         Some(Ok(range)) => range,
@@ -481,12 +822,12 @@ pub fn splice_into_field(
     let (anchor_in_call, insertion) = match last_code_end(inner) {
         None => (interior.start, entry.to_string()),
         Some(end) => {
-            // A trailing comma is already the separator, so adding another
-            // would produce `{ "a",, "b" }`.
-            let sep = if inner[..end].trim_end().ends_with(',') {
-                format!(" {entry}")
-            } else {
-                format!(", {entry}")
+            // A trailing separator is already the separator, so adding another
+            // would produce `{ "a",, "b" }` — or, for the `;` spelling Lua
+            // equally admits, the `{ "a";, "b" }` that does not load at all.
+            let sep = match trailing_separator(&inner[..end]) {
+                Some(_) => format!(" {entry}"),
+                None => format!(", {entry}"),
             };
             (interior.start + end, sep)
         }
@@ -498,6 +839,88 @@ pub fn splice_into_field(
     edited.push_str(&insertion);
     edited.push_str(&source[at..]);
     Ok(edited)
+}
+
+/// The entries of `field`'s list in the module call inside `recipe`, as
+/// written (CS-0221).
+///
+/// `Ok(None)` where there is nothing to read — no such recipe, no module call
+/// in it, or no such field — which is [`find_call`]'s rule and the same
+/// question [`AbsentField::Create`] answers by writing. A field that IS there
+/// and is not a list is an error rather than `None`, because a caller told
+/// "nothing here" would go on to create a second key of that name.
+///
+/// The entries come back verbatim and in order, trimmed of surrounding
+/// whitespace and comments but otherwise untouched: `"math"` keeps its quotes,
+/// because the caller compares against the entry it would pass to
+/// [`splice_into_field`], and that is also written verbatim.
+///
+/// # Why this is a blessed read
+///
+/// The question it answers — is `math` already in `links` — has an obvious
+/// wrong implementation in every consuming module: `call.text:find('"math"')`
+/// matches inside `sources = { "src/math/main.cpp" }`. Answering it correctly
+/// means locating the field as a top-level key and splitting a list without
+/// tripping over a comma inside a nested table, a call, a string or a comment;
+/// that is this crate's whole subject, and two modules writing it again in Lua
+/// is the second opinion about the hard part that §22.13 exists to prevent.
+pub fn field_entries(
+    source: &str,
+    recipe: &str,
+    field: &str,
+) -> Result<Option<Vec<String>>, EditError> {
+    let tree = parse(source)?;
+    let Some(recipe_span) = locate_recipe(&tree, source, recipe) else {
+        return Ok(None);
+    };
+    let Some(call) = locate_call_within(&tree, source, recipe_span) else {
+        return Ok(None);
+    };
+    let call_text = &source[call.span.clone()];
+    match locate_field_interior(call_text, field) {
+        None => Ok(None),
+        Some(Err(())) => Err(EditError::FieldNotAList {
+            recipe: recipe.to_string(),
+            callee: call.callee,
+            field: field.to_string(),
+        }),
+        Some(Ok(range)) => Ok(Some(split_entries(&call_text[range]))),
+    }
+}
+
+/// Split a list's interior into its entries.
+///
+/// A comma separates entries only at the interior's own nesting level: the one
+/// in `{ "a", "b" }` and the one in `f(1, 2)` belong to a table and a call
+/// written *inside* an entry, and splitting on them would hand back two halves
+/// of one thing. Brackets of all three kinds are counted, over the
+/// [`CodeView`], so a comma inside a string or a comment is not a separator
+/// either.
+fn split_entries(inner: &str) -> Vec<String> {
+    let view = CodeView::of(inner);
+    let mut cuts: Vec<usize> = Vec::new();
+    let mut depth = 0usize;
+    for i in 0..view.bytes.len() {
+        match view.bytes[i] {
+            b'{' | b'(' | b'[' => depth += 1,
+            b'}' | b')' | b']' => depth = depth.saturating_sub(1),
+            b if is_entry_separator(b) && depth == 0 => cuts.push(view.at[i]),
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    for cut in cuts.into_iter().chain(std::iter::once(inner.len())) {
+        let slice = &inner[from..cut];
+        from = cut + 1;
+        // An empty run is the author's trailing comma, or a comment-only line
+        // between two entries. Neither is an entry.
+        if let (Some(start), Some(end)) = (first_code_start(slice), last_code_end(slice)) {
+            out.push(slice[start..end].to_string());
+        }
+    }
+    out
 }
 
 /// Append `text` at end of file, guaranteeing exactly one blank line before it
