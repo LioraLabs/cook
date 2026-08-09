@@ -220,3 +220,49 @@ pub enum DepKind {
     /// Sequential barrier (depends on all prior units in recipe).
     Sequential,
 }
+
+impl DepKind {
+    /// The name this relationship is rendered under in the graph JSON.
+    ///
+    /// It lives with the declaration for the reason COOK-421 gave when it
+    /// retired the `RecipeKind` mirror: the renderer's vocabulary was never its
+    /// own, it was the declaration's, copied. `cook-graph` used to spell these
+    /// strings itself in a `match` on this enum, and `#[non_exhaustive]` forced
+    /// that match to carry a `_ => "unknown"` arm — so a variant added here
+    /// left the renderer compiling and quietly labelling the new kind
+    /// `unknown`. Here the match is exhaustive, because `#[non_exhaustive]`
+    /// does not apply inside the defining crate: a new variant is a compile
+    /// error at the one site that has to name it, which is the whole reason to
+    /// keep the rendering next to the declaration.
+    ///
+    /// [`StepGroup`](Self::StepGroup) renders as the door that produced it:
+    /// a unit is in a step group because a recipe body called
+    /// `cook.step_group`, so the label is
+    /// [`crate::registration::STEP_GROUP_NAME`] rather than a second spelling
+    /// of it. That was the constitution's "three ends, no definition" finding
+    /// — both VMs and the renderer — and this is the definition.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            DepKind::StepGroup(_) => crate::registration::STEP_GROUP_NAME,
+            DepKind::Sequential => "sequential",
+        }
+    }
+}
+
+#[cfg(test)]
+mod dep_kind_tests {
+    use super::DepKind;
+
+    /// A step-group unit is labelled with the door that grouped it, and the
+    /// label is that door's constant rather than a second spelling of it —
+    /// the "three ends, no definition" finding, with the third end removed.
+    #[test]
+    fn the_wire_label_of_a_step_group_is_the_door_that_made_it() {
+        assert_eq!(
+            DepKind::StepGroup(0).wire_name(),
+            crate::registration::STEP_GROUP_NAME
+        );
+        assert_eq!(DepKind::StepGroup(7).wire_name(), "step_group");
+        assert_eq!(DepKind::Sequential.wire_name(), "sequential");
+    }
+}

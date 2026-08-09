@@ -13,6 +13,13 @@ Standard marks **Phase: Both** cannot be taught to one phase and not the other.
   Cookfiles (CS-0017 imports), so its cwd moves per item. [`WorkingDirSource`]
   is `Static` or `Live`, `Live` resolves on every call, and one `fs_api` serves
   both. [`SandboxSource`] mirrors the split so the policy is per work item too.
+- It parameterises over the difference rather than forking on it, wherever the
+  difference is one function. [`install_member_to_string`] is a whole door with
+  nothing left over; [`install_probes_api`] and [`install_var_proxy`] are doors
+  with exactly one phase-specific operation each, passed in. Both shapes make
+  the agreement structural: a fix to the shared part lands in both phases by
+  construction, and the part that is meant to differ is legible at the call site
+  instead of buried in a copy (COOK-439, CS-0213).
 - It holds THE Lua↔JSON codec (`json_codec.rs`, CS-0198/COOK-388). Both phases
   serialize probe values into the same store and the same `seal_contribution`
   fingerprint, so they must agree byte-for-byte; they used to be
@@ -58,12 +65,22 @@ It does not create or own a Lua VM. Every entry point takes a `&Lua` (and, where
 the surface hangs off `cook`, the `cook` table itself) so the phase crate keeps
 control of construction, `package.path`, module loading, and globals layout.
 
-It does not host phase-specific surfaces. `cook.sh`, `cook.probes`,
-`cook.export`/`cook.import`, `cook.add_unit`, and the registration verbs differ
-in mechanism between phases (a register-phase pre-pass store versus a worker's
-`SharedProbeValueStore`), so they stay in `cook-register` and `cook-execute`.
-The line is mechanism, not spelling: when only the spelling differs, it belongs
-here.
+It does not host phase-specific MECHANISM. `cook.sh`, `cook.export` /
+`cook.import`, `cook.add_unit` and the registration verbs do different work in
+each phase, and that work stays in `cook-register` and `cook-execute`. The line
+is mechanism, not spelling: when only the spelling differs, it belongs here.
+
+COOK-439 moved that line and it is worth saying where it now sits, because
+"phase-specific" was doing too much work. A door whose SCAFFOLDING agrees and
+whose one operation differs is not a phase-specific surface; it is a shared
+surface with a parameter. `cook.probes` was the case that showed it — the
+table, the `scope(label)` view, the §24.4.3 label rule and the `label:key`
+prefixing were copied verbatim into both VMs so that the CS-0074 difference in
+one setter could live in each copy. [`install_probes_api`] takes that setter as
+an argument, and [`install_var_proxy`] does the same for the `var` seal's
+refusal sentence. The rule the crate now follows: if the phases agree on
+everything but one function, the one function is the argument, not the reason
+to fork.
 
 It does not own the canonical JSON encoding. `encode_canonical_json` and
 `decode_json` are pure and live in `cook_contracts::probe_value`; this crate
