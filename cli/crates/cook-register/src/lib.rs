@@ -187,10 +187,12 @@ pub enum RegisterError {
     #[error("recipe '{recipe}': ingredients <probe> source names probe '{key}' but no such probe was declared")]
     MemberSourceProbeUndeclared { recipe: String, key: String },
 
-    /// COOK-64 §22.5.10: an `ingredients <probe>`-feeding probe's `produce` raised an error
-    /// when evaluated by the pre-pass (before any recipe body ran).
-    #[error("probe '{key}' feeds an ingredients <probe> source but its produce raised: {message}")]
-    MemberSourceProbeProduceFailed { key: String, message: String },
+    /// A probe the REGISTER PHASE resolved raised from its `produce` — as an
+    /// `ingredients <probe>` driver, a transitive `requires` of one, or a
+    /// register-phase `cook.probes.get` read (CS-0219). Route-neutral wording:
+    /// naming a fan-out source here reported one the Cookfile need not have.
+    #[error("probe '{key}': produce raised while resolving it at register phase: {message}")]
+    ProbeProduceFailed { key: String, message: String },
 
     /// COOK-64 §22.5.10: an `ingredients <probe>` source resolved to a non-array value.
     /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
@@ -220,8 +222,8 @@ pub enum RegisterError {
     /// `ingredients <probe>` source MUST be statically evaluable (it is resolved before
     /// any recipe runs), so an artifact dependency is rejected.
     #[error(
-        "probe '{key}' feeds an ingredients <probe> source but depends on build artifact '{path}'; \
-         sources must be statically evaluable"
+        "probe '{key}' is resolved at register phase but depends on build artifact '{path}'; \
+         a register-resolved probe must be statically evaluable"
     )]
     MemberSourceProbeArtifactDep { key: String, path: String },
 
@@ -234,6 +236,12 @@ pub enum RegisterError {
     /// reference cannot express a cycle at all.
     #[error("recipe '{recipe}': {message}")]
     AfterUnresolved { recipe: String, message: String },
+
+    /// CS-0219 §22.5.4: a `produce` body read a probe key it did not declare in
+    /// `inputs.requires`. Also the guard against a produce body naming itself,
+    /// which §22.5.9's `requires`-graph cycle check cannot see.
+    #[error("{}", produce_read_message(reader, key))]
+    ProbeReadOutsideRequires { reader: String, key: String },
 }
 
 /// Render the declaration site of a chore parameter for a diagnostic.
@@ -250,6 +258,30 @@ pub enum RegisterError {
 /// a module-registered chore's line is nonzero and meaningless, while a
 /// surface chore whose line genuinely failed to resolve is still a Cookfile
 /// declaration. `origin` is the field that actually distinguishes the two.
+/// Render the §22.5.4 produce-read diagnostic (CS-0219).
+///
+/// Two shapes, because the self-read is a different mistake from the
+/// undeclared-upstream one and the general wording reads as nonsense for it
+/// ("'p' would be served a stale value when 'p' changes"). The self case is
+/// also the one that used to recurse until the Lua stack gave out, so it is
+/// worth naming as the cycle it is.
+fn produce_read_message(reader: &str, key: &str) -> String {
+    if reader == key {
+        return format!(
+            "probe '{reader}': its produce body reads its own key. That is a cycle, and not one \
+             the probe graph can see: a produce-body read is not an `inputs.requires` edge, so \
+             the end-of-pass cycle check (Cook Standard \u{00a7}22.5.9) never looks at it"
+        );
+    }
+    format!(
+        "probe '{reader}': its produce body reads probe '{key}', which it does not declare in \
+         `inputs.requires`. A read outside the declared set is not folded into '{reader}''s \
+         fingerprint, so '{reader}' would keep serving a value computed against an older \
+         '{key}'; the same read raises on a worker VM, where nothing scheduled '{key}'. Declare \
+         it: inputs = {{ requires = {{ \"{key}\" }} }} (Cook Standard \u{00a7}22.5.4)"
+    )
+}
+
 fn chore_site(origin: &Option<String>, line: usize) -> String {
     match origin {
         Some(o) => format!("registered by {o}"),

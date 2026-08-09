@@ -196,16 +196,26 @@ fn probes_get(
     resolver: &crate::engine::RegisterProbeResolver,
     key: &str,
 ) -> LuaResult<LuaValue> {
-    if let Some(val) = resolver.store().borrow().get(key) {
-        return crate::probe_value::json_to_lua(lua, val);
-    }
-    if resolver.is_declared(key) {
-        resolver
-            .resolve(lua, key)
-            .map_err(|e| LuaError::runtime(format!("cook.probes.get('{key}'): {e}")))?;
+    if resolver.resolves(key) {
+        // §22.5.4: a read made from inside a `produce` body may only name a key
+        // that body declared in `inputs.requires`. Checked before the store
+        // hit, not only before resolution — a key some earlier body already
+        // resolved is just as far outside this probe's fingerprint chain as an
+        // unresolved one.
+        resolver.check_produce_read(key).map_err(|e| LuaError::runtime(e.to_string()))?;
         if let Some(val) = resolver.store().borrow().get(key) {
             return crate::probe_value::json_to_lua(lua, val);
         }
+        resolver
+            .resolve(lua, key)
+            .map_err(|e| LuaError::runtime(e.to_string()))?;
+        if let Some(val) = resolver.store().borrow().get(key) {
+            return crate::probe_value::json_to_lua(lua, val);
+        }
+    } else if let Some(val) = resolver.store().borrow().get(key) {
+        // A `key:field` selector alias the pre-pass stashed under its verbatim
+        // ref, which is not itself a declared probe key.
+        return crate::probe_value::json_to_lua(lua, val);
     }
     let state = state.borrow();
     let module_name = state
@@ -256,10 +266,21 @@ pub fn register_cache_api(
     // register-phase diagnostic — the old lowering interpolated Lua's
     // `tostring` of a table, a heap address, into a declared output path.
     let prepass_subst = prepass.clone();
-    let subst_fn = lua.create_function(move |_, ident: String| {
+    let resolver_subst = resolver.clone();
+    let subst_fn = lua.create_function(move |lua, ident: String| {
         let r = cook_contracts::sigil::probe_ref(&ident).ok_or_else(|| {
             LuaError::runtime(format!("$<{ident}>: not a probe-value reference"))
         })?;
+        // CS-0219: resolve on demand, exactly as a `cook.probes.get` read does.
+        // Reading the store alone made this succeed or fail on whether some
+        // unrelated recipe registered earlier and happened to have read the
+        // same probe — an output path that registers or does not depending on
+        // a neighbour's body order.
+        if resolver_subst.resolves(r.key()) && !prepass_subst.borrow().contains_key(r.key()) {
+            resolver_subst
+                .resolve(lua, r.key())
+                .map_err(|e| LuaError::runtime(e.to_string()))?;
+        }
         let store = prepass_subst.borrow();
         let value = store.get(r.key()).ok_or_else(|| {
             LuaError::runtime(format!(

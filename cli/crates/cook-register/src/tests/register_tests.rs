@@ -4672,3 +4672,159 @@ end)
     let result = register_one(rt, lua_src, "quiet");
     assert_eq!(result.units.len(), 1);
 }
+
+/// §22.5.4 (CS-0219): a `produce` body may read only the keys it declared in
+/// `inputs.requires`. A body naming its own key is not a `requires` edge, so
+/// §22.5.9's cycle check cannot see it; before the guard this re-entered
+/// resolution with a clean slate and recursed until the Lua stack gave out.
+#[test]
+fn a_produce_body_reading_its_own_key_is_a_named_error_not_a_recursion() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("p:self", {
+    inputs = {},
+    produce = [[ return cook.probes.get("p:self") ]],
+})
+cook.recipe("r", {}, function()
+    local v = cook.probes.get("p:self")
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. tostring(v) })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("self-read rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("inputs.requires"), "{msg}");
+    assert!(msg.contains("p:self"), "{msg}");
+    assert!(msg.len() < 2000, "message must not be a recursion trace: {} bytes", msg.len());
+}
+
+/// The same rule catches an UNDECLARED upstream, which is the silent-stale
+/// case: `cook_probe::eval` folds an upstream fingerprint only for keys in
+/// `inputs.requires`, so an undeclared read returns real data keyed on nothing.
+#[test]
+fn a_produce_body_reading_an_undeclared_upstream_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("p:base", { inputs = {}, produce = [[ return { v = 1 } ]] })
+cook.probe("p:derived", {
+    inputs = {},
+    produce = [[ return { v = cook.probes.get("p:base").v } ]],
+})
+cook.recipe("r", {}, function()
+    local v = cook.probes.get("p:derived")
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. v.v })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("undeclared upstream rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("p:base"), "{msg}");
+    assert!(msg.contains("inputs.requires"), "{msg}");
+}
+
+/// Declaring it is what makes it legal, and the value arrives.
+#[test]
+fn a_produce_body_may_read_an_upstream_it_declares_in_requires() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("p:base", { inputs = {}, produce = [[ return { v = 7 } ]] })
+cook.probe("p:derived", {
+    inputs = { requires = {"p:base"} },
+    produce = [[ return { v = cook.probes.get("p:base").v * 2 } ]],
+})
+cook.recipe("r", {}, function()
+    local v = cook.probes.get("p:derived")
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. v.v })
+end)
+"#;
+    let result = register_one(rt, lua_src, "r");
+    match &result.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => assert!(cmd.contains("echo 14"), "{cmd}"),
+        other => panic!("expected shell, got {other:?}"),
+    }
+}
+
+/// A `produce` body fired from inside a recipe body must not capture units
+/// into that recipe. It would make the recipe's unit set depend on whether the
+/// probe was a cache hit, which is registration output as a function of
+/// something other than registration input.
+#[test]
+fn a_produce_body_cannot_capture_units_into_the_registering_recipe() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("p:leak", {
+    inputs = {},
+    produce = [[ cook.exec("touch LEAKED.txt", 1) return { ok = true } ]],
+})
+cook.recipe("r", {}, function()
+    local v = cook.probes.get("p:leak")
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. tostring(v.ok) })
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("capture into the body refused");
+    assert!(
+        format!("{err}").contains("outside a recipe body"),
+        "{err}"
+    );
+}
+
+/// §22.5.10's static-input rule binds a probe a `cook.on_register_complete`
+/// callback resolved, which happens after the mid-pass check runs.
+#[test]
+fn the_static_input_rule_reaches_a_probe_a_finalizer_resolved() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("scan:late", {
+    inputs = { files = {"build/generated.txt"} },
+    produce = [[ return { "a" } ]],
+})
+cook.recipe("maker", {}, function()
+    cook.add_unit({ outputs = {"build/generated.txt"}, command = "gen" })
+end)
+cook.on_register_complete(function()
+    cook.probes.get("scan:late")
+end)
+"#;
+    let err = register_cookfile(rt, lua_src, None).expect_err("artifact dependence rejected");
+    let msg = format!("{err}");
+    assert!(msg.contains("scan:late"), "{msg}");
+    assert!(msg.contains("build/generated.txt"), "{msg}");
+}
+
+/// A discovery pass registers no units and executes nothing, so it must not
+/// run a `produce` body: that would put the cost of every probe a module reads
+/// on every `cook menu` and every workspace-member scan, uncached.
+#[test]
+fn a_discovery_pass_does_not_run_produce_bodies() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("Cookfile.lua"),
+        "-- placeholder\n",
+    )
+    .unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.probe("p:boom", {
+    inputs = {},
+    produce = [[ error("a discovery pass must not run this") ]],
+})
+local v = cook.probes.get("p:boom")
+cook.recipe("r", {}, function()
+    cook.add_unit({ outputs = {"a.txt"}, command = "echo " .. tostring(v) })
+end)
+"#;
+    // The read falls through to the module store exactly as it did before
+    // CS-0219, and a top-level read there is outside a module context. What
+    // matters is WHICH error: the probe's own `error(...)` would mean produce
+    // ran.
+    let err = list_names(rt, lua_src).expect_err("falls through, as before CS-0219");
+    let msg = format!("{err}");
+    assert!(msg.contains("outside of a module context"), "{msg}");
+    assert!(
+        !msg.contains("a discovery pass must not run this"),
+        "produce ran on a discovery pass: {msg}"
+    );
+}
