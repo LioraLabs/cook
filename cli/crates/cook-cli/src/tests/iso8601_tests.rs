@@ -19,9 +19,8 @@ fn the_stamp_is_a_real_instant_from_a_real_clock() {
     let ts = now_iso8601();
     let year: i32 = ts[..4].parse().unwrap();
     assert!(year >= 2026, "clock seems wrong: {ts}");
-    assert_eq!(
+    assert!(
         cook_contracts::timestamp::parse_rfc3339_ms(&ts).is_some(),
-        true,
         "the stamp must be one the shared parser reads back: {ts}"
     );
 }

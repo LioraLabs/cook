@@ -1,7 +1,8 @@
 //! Reading a Lua body's text for what it declares.
 //!
-//! Two questions, one walk. [`scan`] skips the regions of Lua source that are
-//! not code — strings and comments — and [`reads`] uses that walk to answer
+//! Two questions, one walk. The `scan` half skips the regions of Lua source
+//! that are not code — strings and comments — and the `reads` half uses that
+//! walk to answer
 //! what a body reads: which `var.NAME` values, and which probe keys it fetches
 //! through `cook.probes.get("k")`.
 //!

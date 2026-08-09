@@ -134,3 +134,34 @@ fn the_formatter_pads_every_field() {
     assert_eq!(format_rfc3339_secs(0), "1970-01-01T00:00:00Z");
     assert_eq!(format_rfc3339_secs(951_782_400 + 3661), "2000-02-29T01:01:01Z");
 }
+
+/// A day past the end of its month is refused, not rolled forward.
+///
+/// `days_from_civil` computes a day-of-year and trusts its input, so a
+/// `1..=31` bound let `2026-02-31` through as 3 March. The rejection list
+/// above pins `2026-05-32` — one past the boundary that WAS checked — which is
+/// exactly why the gap survived writing that test.
+#[test]
+fn a_day_past_the_end_of_its_month_is_refused_not_rolled_forward() {
+    for bad in [
+        "2026-02-29T00:00:00Z", // 2026 is not a leap year
+        "2026-02-31T00:00:00Z",
+        "2026-04-31T00:00:00Z",
+        "2026-06-31T00:00:00Z",
+        "2026-09-31T00:00:00Z",
+        "2026-11-31T00:00:00Z",
+        "1900-02-29T00:00:00Z", // century rule: 1900 was not a leap year
+    ] {
+        assert_eq!(parse_rfc3339_ms(bad), None, "{bad:?} is not a date");
+    }
+    // ...and the real ends of those months still parse.
+    for good in [
+        "2026-02-28T00:00:00Z",
+        "2024-02-29T00:00:00Z", // a leap year
+        "2000-02-29T00:00:00Z", // divisible by 400
+        "2026-04-30T00:00:00Z",
+        "2026-01-31T00:00:00Z",
+    ] {
+        assert!(parse_rfc3339_ms(good).is_some(), "{good:?} is a date");
+    }
+}

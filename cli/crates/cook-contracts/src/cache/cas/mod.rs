@@ -108,7 +108,7 @@ impl ArtifactMeta {
 ///
 /// This list used to live in a doc comment on the `kind` field, where it was
 /// four of the seven values and could not fail a build. A new kind must be
-/// added to [`ALL`], and `evict`'s tests then fail until it has been
+/// added to [`artifact_kind::ALL`], and `evict`'s tests then fail until it has been
 /// classified as sweep-exempt or not — the decision the doc comment used to
 /// ask for and could not enforce.
 pub mod artifact_kind {

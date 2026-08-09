@@ -14,7 +14,7 @@ variables the config blocks resolved.
   exception is `cook.sh`, whose return value drives author control flow, and it
   goes through `cook-shell`'s one primitive so its failure text is built by the
   same code the execute phase's `cook.sh` uses (CS-0188, COOK-377). It also
-  does not disarm `cook-fingerprint`'s stat memo, and says why: capture mode has
+  does not disarm `cook_cache::statmemo`, and says why: capture mode has
   nothing for the memo to have gone stale against.
 - **One installation of the API surface, for both passes.** `install_all_apis`
   is what `register_cookfile` and `list_names` both call, so `cook menu` cannot
@@ -34,17 +34,22 @@ variables the config blocks resolved.
   keylessness, cache lookup and publish, and the CS-0102 local copy have one
   implementation. Before COOK-359 that sequence existed twice here, and this
   side's cache block turned out never to have run at all.
-- **A unit's identity is blind to where it was declared, on purpose.**
-  `build_local_cache_key` takes `_cookfile_path` and `_recipe` and has never
-  used either, so moving a test within a recipe or a recipe between Cookfiles
-  does not bust its cache (§17.4, CS-0186). The effective seal key set *is*
-  folded in, because without it `test { ./run } seal toolchain` and a bare
-  `test { ./run }` are one identity, and they then invalidate each other on
-  every run: the permanent churn CS-0169 exists to refuse.
+- **A unit's identity is composed elsewhere, and is blind to where it was
+  declared.** `cook_contracts::cache::local_key::build_local_cache_key` takes
+  `_cookfile_path` and `_recipe` and has never used either, so moving a test
+  within a recipe or a recipe between Cookfiles does not bust its cache (§17.4,
+  CS-0186). The effective seal key set *is* folded in, because without it
+  `test { ./run } seal toolchain` and a bare `test { ./run }` are one identity,
+  and they then invalidate each other on every run: the permanent churn
+  CS-0169 exists to refuse. That composition lived in this crate until
+  COOK-421 moved it to the crate that owns contract data; this crate calls it.
 - **The one hash both sides of the cache use is the one function.**
-  `command_hash` is `cook_fingerprint::hash_str`, which is what
-  `cook-fingerprint`'s `check.rs` compares with. The local twin that used to
-  live here was drifted by construction (COOK-396).
+  `command_hash` is `cook_contracts::hash_str`, which is what `cook-cache`'s
+  `check.rs` compares with. The local twin that used to live here was drifted
+  by construction (COOK-396). This bullet said `cook_fingerprint::hash_str`
+  and `cook-fingerprint`'s `check.rs` until COOK-421 noticed — a crate COOK-418
+  deleted, named twice in the same README that carries the branch's own worked
+  example of a justification outliving its premises.
 - **Nothing is coerced, and nothing removed goes quietly nil.** Every
   `cook.add_unit` field is type-checked and a wrong type is a diagnostic naming
   the API, the expected type, and what arrived (CS-0127). A removed name raises

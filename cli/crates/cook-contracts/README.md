@@ -99,8 +99,10 @@ Worked examples from this repo's history:
     as `(y*365 + m*31 + d)` and made a one-second build spanning 28 February
     read as 72 hours. The correct one was two crates away.
   - `naming::is_bare_name_char` — App. A's `BARE_IDENTIFIER` class, written out
-    at four sites, two of them the declaration and the selection of a config
-    preset.
+    at five sites, two of them the declaration and the selection of a config
+    preset. Four, until a review found that the one this sweep had counted in
+    `probe_key::is_tool_name` had no production caller, and the live
+    `TOOL_NAME` validator was a fifth copy nobody had looked at.
 - **Held out, correctly:** the Lua↔JSON value walkers (law, but mlua-bearing —
   their home is `cook-lua-stdlib`); executor scheduling, worker VM policy, the
   `CacheBackend` trait and its implementations (mechanism, not law).

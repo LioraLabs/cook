@@ -121,7 +121,7 @@ pub(crate) fn ident_end(bytes: &[u8], start: usize) -> usize {
 ///
 /// - `cook_luagen::template` asks whether a plate/test body reads `input` or
 ///   `inputs`, which picks the body's iteration mode;
-/// - [`crate::use_prelude`] asks whether a body names a `use` alias, which
+/// - `cook_luagen::use_prelude` asks whether a body names a `use` alias, which
 ///   decides whether the CS-0205 binding is prepended.
 ///
 /// Both directions of a wrong answer are defects, and they are asymmetric.

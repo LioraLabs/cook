@@ -100,7 +100,7 @@ pub fn parse_rfc3339_ms(s: &str) -> Option<i64> {
     let year: i32 = parse_fixed(year, 4)?;
     let month: u32 = parse_fixed(month, 2)?;
     let day: u32 = parse_fixed(day, 2)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
         return None;
     }
 
@@ -129,6 +129,23 @@ pub fn parse_rfc3339_ms(s: &str) -> Option<i64> {
 
     let days = days_from_civil(year, month, day);
     Some((days * 86_400 + hour * 3600 + minute * 60 + second) * 1000 + millis)
+}
+
+/// How many days `month` has in `year`.
+///
+/// The day range has to be checked against the MONTH, not against 31.
+/// `days_from_civil` computes a day-of-year and trusts its input, so a
+/// `2026-02-31` that only cleared a `1..=31` bound came back as 3 March —
+/// three days invented from a corrupt log, which is the small version of the
+/// 72-hour error this module exists to kill.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 0,
+    }
 }
 
 /// Parse exactly `width` ASCII digits. Rejects signs, spaces and short or long

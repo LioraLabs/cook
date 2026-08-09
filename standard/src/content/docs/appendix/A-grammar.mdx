@@ -324,7 +324,6 @@ path                  ::= /[^\s\n]+/   /* legacy form; import_path is the canoni
 
 **No '..' segment (normative).** A `path_segment` MUST NOT consist solely of two dot characters (`..`). The grammar's regex permits `..` syntactically; this rule eliminates it normatively. See §{comp.import}.
 
-**`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions above are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile may declare is a name some other surface refuses. In the reference implementation both, plus the CLI's `@PRESET` argv recognition, read `cook_contracts::naming::is_bare_name_char` — the class was written out at four sites until COOK-421, and the pair that mattered was the lexer's and the CLI's: a preset is declared in a Cookfile (`config @NAME`) and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use.
 comment               ::= /#[^\n]*/ NEWLINE
 NEWLINE               ::= /\n/
 LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
@@ -349,6 +348,10 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
                              See § 2.9. */
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
+
+**`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile may declare is a name some other surface refuses.
+
+The reference implementation reads the class from one place, `cook_contracts::naming`, at every site that needs it: the lexer that parses `recipe NAME` / `chore NAME` / `config NAME`, the `tools { … }` validator that enforces `TOOL_NAME`, and the CLI's `@PRESET` argv recognition. It was written out at five sites until COOK-421, and the pair that mattered was the lexer's and the CLI's — a preset is declared in a Cookfile and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use, in either direction.
 
 **Placeholder shape.** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{phl.cook-step}. The single recognised form is the strict sigil `$<IDENT>`, normatively defined in §{phl.token} (CS-0033). Its production is reproduced here for reference in the context of surrounding grammar productions:
 

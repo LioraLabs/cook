@@ -122,3 +122,41 @@ fn partition_extracts_no_auto_gc_from_post_recipe_position() {
     assert!(p.argv.is_empty());
     assert!(g.no_auto_gc);
 }
+
+/// A preset selector must have the shape a preset DECLARATION can have.
+///
+/// COOK-421 consolidated the character class this and `cook-lang`'s lexer
+/// share, and the first pass got it half right: it tested the continue class
+/// against every character and never asked for a start character, so
+/// `cook build @9x` was taken as a preset selector while `config 9x` cannot be
+/// declared. The asymmetry ran the opposite way from the one the
+/// consolidation set out to fix, and is why the whole name is tested against
+/// one function rather than one predicate per character.
+#[test]
+fn a_preset_selector_needs_a_declarable_name() {
+    let mut g = crate::cli::Globals::default();
+    for token in ["@9x", "@-x", "@.x", "@"] {
+        let p = partition_argv(&[token.to_string()], "build", &mut g).unwrap();
+        assert!(
+            p.preset.is_none(),
+            "{token} is not a name a Cookfile can declare, so it is a literal argv value"
+        );
+        assert_eq!(p.argv, vec![token.to_string()]);
+    }
+
+    let mut g = crate::cli::Globals::default();
+    let p = partition_argv(&["@fast.v2".to_string()], "build", &mut g).unwrap();
+    assert_eq!(p.preset.as_deref(), Some("fast.v2"), "a declarable name selects a preset");
+    assert!(p.argv.is_empty());
+}
+
+/// `cook why` does not flow through `partition_argv`, so its sigil strip is a
+/// second reader of the same shape and must agree with the first.
+#[test]
+fn the_why_path_strips_the_same_shapes_and_no_others() {
+    assert_eq!(strip_preset_sigil("@fast.v2"), "fast.v2");
+    assert_eq!(strip_preset_sigil("@_x-1"), "_x-1");
+    for verbatim in ["@9x", "@-x", "@", "@a/b", "plain"] {
+        assert_eq!(strip_preset_sigil(verbatim), verbatim, "{verbatim} passes through");
+    }
+}

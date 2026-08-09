@@ -43,9 +43,11 @@
 //! [`is_tool_name`] keeps the dot.
 
 /// True when `c` may start a `PROBE_SEG` or a `TOOL_NAME`.
-fn is_head(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_'
-}
+// The start character is one class shared with `BARE_IDENTIFIER` and
+// `TOOL_NAME`, so it is asked for rather than respelled -- same-crate
+// duplication is invisible to the constitution gate by design, and COOK-421
+// unified the CONTINUE class while leaving this one forked two modules away.
+use crate::naming::is_bare_name_start as is_head;
 
 /// True when `s` is a single valid `PROBE_SEG`.
 pub fn is_segment(s: &str) -> bool {

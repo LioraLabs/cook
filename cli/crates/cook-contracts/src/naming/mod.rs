@@ -59,14 +59,22 @@ pub fn is_bare_name_start(c: char) -> bool {
 
 /// True when `c` may CONTINUE a bare name.
 ///
-/// One production, four spellings before this existed: `cook-lang`'s lexer
-/// (which parses `recipe NAME`, `chore NAME` and `config @NAME`),
-/// `cook-cli`'s argv partitioner (which decides whether `@foo.bar` is a preset
-/// selector), `probe_key::is_tool_name`, and a diagnostic heuristic in
-/// `cook-plan`. The lexer's and the CLI's are the pair that MUST agree — a
-/// preset name is declared in a Cookfile and selected on the command line, so
-/// a class the CLI admits and the parser refuses is a preset the user can name
-/// and cannot select.
+/// One production, FIVE spellings before this existed: `cook-lang`'s lexer
+/// (which parses `recipe NAME`, `chore NAME` and `config NAME`), `cook-lang`'s
+/// `tools { … }` validator (the live `TOOL_NAME` check), `cook-cli`'s argv
+/// partitioner (which decides whether `@foo.bar` is a preset selector),
+/// `probe_key::is_tool_name`, and a diagnostic heuristic in `cook-plan`.
+///
+/// The count was four for a while, and the fifth is the interesting one: a
+/// review found that `is_tool_name` had no production caller at all, so the
+/// first pass consolidated a dead function and left the live `TOOL_NAME`
+/// validator forked. Counting the copies you can see is not the same as
+/// counting the copies.
+///
+/// The lexer's and the CLI's are the pair that MUST agree — a preset name is
+/// declared in a Cookfile and selected on the command line, so a class one end
+/// admits and the other refuses is a preset the user can name and cannot
+/// select.
 ///
 /// The `.` is what separates this from a Lua identifier (§12.1's `LUA_IDENT`,
 /// which is `[A-Za-z0-9_]` only), and it is deliberate: a recipe name is

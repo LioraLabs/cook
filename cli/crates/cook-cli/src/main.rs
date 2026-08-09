@@ -235,7 +235,7 @@ fn partition_argv(
         // @PRESET sigil — but only when the token is `@<bare-ident-shape>`.
         // A token like `@something/else` is treated as a literal param value.
         if let Some(name) = tok.strip_prefix('@') {
-            if !name.is_empty() && name.chars().all(is_preset_char) {
+            if has_preset_shape(name) {
                 if preset.is_some() {
                     return Err(CookError::Other(format!(
                         "chore '{recipe}': multiple config presets supplied; use only one of '@PRESET' or '--config PRESET'"
@@ -389,12 +389,19 @@ fn partition_argv(
     Ok(PartitionedArgv { argv, preset })
 }
 
-/// What may appear in a preset name after the `@`.
+/// The shape a preset selector must have after the `@`.
 ///
-/// The same class the Cookfile lexer parses `config @NAME` with (App. A's
+/// The same production the Cookfile lexer parses `config NAME` with (App. A's
 /// `BARE_IDENTIFIER`), because these are the two ends of one fact: a preset is
 /// declared in a Cookfile and selected here (COOK-421).
-use cook_contracts::naming::is_bare_name_char as is_preset_char;
+///
+/// The START character matters and was missed the first time: this used to
+/// test the continue class against every character, so `cook build @9x` was
+/// recognised as a preset selector while `config 9x` cannot be declared. The
+/// asymmetry ran the other way from the one the consolidation set out to fix,
+/// which is why testing the whole name against one function is the fix rather
+/// than sharing a per-character predicate.
+use cook_contracts::naming::is_bare_name as has_preset_shape;
 
 /// Strip a leading `@` from a preset token when it has the `@<bare-ident>`
 /// shape (the same shape `partition_argv` recognises for the run path). A token
@@ -404,7 +411,7 @@ use cook_contracts::naming::is_bare_name_char as is_preset_char;
 /// through `partition_argv` (COOK-307).
 fn strip_preset_sigil(token: &str) -> &str {
     match token.strip_prefix('@') {
-        Some(rest) if !rest.is_empty() && rest.chars().all(is_preset_char) => rest,
+        Some(rest) if has_preset_shape(rest) => rest,
         _ => token,
     }
 }

@@ -157,3 +157,60 @@ fn reaching_one_path_twice_does_not_change_the_identity() {
 fn input_order_is_part_of_the_declaration() {
     assert_ne!(key(&[], &["a.c", "b.c"], 0xbeef, 0), key(&[], &["b.c", "a.c"], 0xbeef, 0));
 }
+
+/// The effective seal key set separates two units that declare nothing else
+/// differently.
+///
+/// The `keyed` helper above has advertised this since the tests were written
+/// and no case used it: every call came through `key(…)`, which passes an
+/// empty set. So the determinant with the longest paragraph in
+/// `observing_identity`'s doc — and the whole defence against the CS-0169
+/// churn shape §17.1.1.1 exclusion 3 describes — was documented, argued, and
+/// unasserted. Found on the move (COOK-421), because a move is when you
+/// re-read what you are carrying.
+#[test]
+fn the_effective_seal_key_set_separates_two_otherwise_identical_units() {
+    let bare = keyed(&[], &["run.sh"], 0xbeef, 0, &[]);
+    let sealed = keyed(&[], &["run.sh"], 0xbeef, 0, &["toolchain"]);
+    assert_ne!(
+        bare, sealed,
+        "`test {{ ./run }} seal toolchain` and a bare `test {{ ./run }}` are two units"
+    );
+}
+
+/// Sorted by the `BTreeSet` they arrive in, so declaring the same seals in a
+/// different order is the same declaration.
+#[test]
+fn seal_key_order_is_not_part_of_the_identity() {
+    assert_eq!(
+        keyed(&[], &["run.sh"], 0xbeef, 0, &["a", "b"]),
+        keyed(&[], &["run.sh"], 0xbeef, 0, &["b", "a"])
+    );
+}
+
+/// Different seal sets are different identities, including one that is a
+/// subset of the other.
+#[test]
+fn adding_a_seal_key_moves_the_identity() {
+    let one = keyed(&[], &["run.sh"], 0xbeef, 0, &["a"]);
+    let two = keyed(&[], &["run.sh"], 0xbeef, 0, &["a", "b"]);
+    assert_ne!(one, two);
+}
+
+/// The observing identity as exact bytes.
+///
+/// Every other test here is relational — these two differ, those two agree —
+/// so the whole digest could move and stay green. It is a LOCAL index key
+/// rather than a cross-machine one, but a silent change to it misses every
+/// test unit in every project at once, which is the same question
+/// `context_tests` asks of the probe fingerprint: not "which assertion do I
+/// update" but "did I mean to invalidate the world".
+///
+/// Computed with an independent xxh3 (Python's `xxhash`) rather than read off
+/// a passing run. The preimage, so it stays checkable: xxh3-64
+/// over `b"a.c\0=" b"b.c\0=" 0xbeefu64.to_le_bytes() b"toolchain\0"`,
+/// rendered as the marker `:` and sixteen lower-hex digits.
+#[test]
+fn the_observing_identity_is_these_exact_bytes() {
+    assert_eq!(keyed(&[], &["a.c", "b.c"], 0xbeef, 0, &["toolchain"]), ":cee58b942fa4c6ff");
+}

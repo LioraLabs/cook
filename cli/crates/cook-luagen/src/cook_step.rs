@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
-use cook_contracts::lua_scan as lua_var;
+use cook_contracts::lua_scan;
 use crate::resolver::{IterMode, OutputShape};
 use crate::use_prelude::with_execute_prelude;
 use crate::template::{
@@ -20,7 +20,7 @@ use crate::template::{
 /// scanned keys through the shared [`ConsultedEnv`] accumulator so the
 /// rendering path matches the shell-template emission exactly.
 fn lua_body_consulted_env_keys(code: &str) -> String {
-    let scanned = lua_var::scan_var_reads(code);
+    let scanned = lua_scan::scan_var_reads(code);
     let mut consulted = ConsultedEnv::new();
     for key in &scanned {
         consulted.record(key);
