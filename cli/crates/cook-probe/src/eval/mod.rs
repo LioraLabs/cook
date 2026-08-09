@@ -235,6 +235,26 @@ pub fn lookup(
         }
     }
 
+    // 4b. CS-0214 §22.5.2: a `tools { }` name that does not resolve on PATH
+    //     fails the probe, by name. The rule used to live inside the emitted
+    //     produce body, which put it behind the cache: a stored value could
+    //     serve a probe whose tool had since been uninstalled. It is checked
+    //     here, ahead of the GET, so it holds on hit and miss alike.
+    //
+    //     Only the synthesised producer is subject to it. A hand-written body
+    //     that happens to declare `inputs.tools` keeps folding a missing tool
+    //     as the all-zero digest, which is what §22.5.4 says it does.
+    if is_tools_identity(probe) {
+        for (name, _) in &inputs.tools {
+            if !tool_paths.contains_key(name) {
+                return Err(ProbeError::Produce {
+                    key: key.to_string(),
+                    message: format!("tools probe: '{name}' not found on PATH"),
+                });
+            }
+        }
+    }
+
     // 5. Cache GET, unless there is no key to look up.
     //
     // CS-0204 makes this two-level. The declared fingerprint identifies the
@@ -289,16 +309,21 @@ pub fn lookup(
         }
     }
 
-    // 6. Decide whether a VM is needed at all. A `files { }` probe never
-    //    reaches one: its produce string is the reserved `@files-manifest`
-    //    sentinel, deliberately not valid Lua so that a path which tried to run
-    //    it would fail loudly. The value is synthesised from the same path→hash
-    //    pairs the fingerprint's FILES section just folded, so every phase
-    //    agrees on it byte for byte.
+    // 6. Decide whether a VM is needed at all. Two producer kinds never reach
+    //    one: their produce strings are the reserved `@files-manifest` and
+    //    `@tools-identity` sentinels, deliberately not valid Lua so that a path
+    //    which tried to run one would fail loudly. Each value is synthesised
+    //    from the same pairs the fingerprint's FILES / TOOLS section just
+    //    folded, so trigger and value are one computation and every phase
+    //    agrees on the bytes.
     let resolved = match cached {
         Some(bytes) => Some((bytes, ValueSource::Cache)),
         None if is_files_manifest(probe) => Some((
             cook_contracts::probe_value::encode_files_manifest(&inputs.files),
+            ValueSource::Produced,
+        )),
+        None if is_tools_identity(probe) => Some((
+            cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
         None => None,
@@ -521,6 +546,11 @@ pub fn evaluate(
 /// CS-0148: a `files { }` producer is intercepted, never run.
 fn is_files_manifest(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+}
+
+/// CS-0214: a `tools { }` producer is intercepted, never run.
+fn is_tools_identity(probe: &ProbeUnit) -> bool {
+    probe.produce_source == cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE
 }
 
 /// Cache metadata for a stored probe value. Identical in both phases; it was

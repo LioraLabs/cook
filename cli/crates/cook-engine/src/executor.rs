@@ -1920,11 +1920,18 @@ pub fn execute_dag(
                             );
                         }
                         Err(e) => {
-                            // Fingerprint resolution failed (e.g. missing upstream).
-                            // This is a hard error — the probe cannot be fingerprinted
-                            // so it cannot safely proceed.
-                            let err_msg =
-                                format!("probe '{}': fingerprint resolution failed: {}", probe_key, e.message());
+                            // A hard error: the probe cannot safely proceed. The
+                            // cause is `ProbeError`'s to name and `ProbeError`'s
+                            // to render — `Display` already writes
+                            // `probe '<key>': <message>`. This site used to
+                            // rebuild that prefix by hand and insert
+                            // "fingerprint resolution failed" into the middle of
+                            // it, which was true of the one error `lookup` could
+                            // return when it was written and false of the
+                            // CS-0214 one it can return now (a `tools { }` name
+                            // that does not resolve on PATH is a statement about
+                            // the host, not about a fingerprint).
+                            let err_msg = e.to_string();
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             emit(
                                 event_tx,

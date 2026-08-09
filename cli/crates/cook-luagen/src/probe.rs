@@ -89,8 +89,9 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         // CS-0205: a probe's `produce` body is execute-phase Lua like any
         // other, so a `use` alias it names is bound the same way. The other
         // arms are generated Lua that can never name a user alias, and the
-        // `files { }` arm MUST stay byte-identical to the reserved sentinel —
-        // `cook-probe` compares it by equality to intercept the producer.
+        // `files { }` and `tools { }` arms MUST stay byte-identical to their
+        // reserved sentinels — `cook-probe` compares them by equality to
+        // intercept the producer.
         ProbeProduce::Lua(code) => crate::use_prelude::with_execute_prelude(uses, code),
         ProbeProduce::Shell { commands, typing } => {
             let script = commands.join("\n");
@@ -107,53 +108,31 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
                 ),
             }
         }
-        ProbeProduce::Tools(names) => {
-            // Build the VALUE `{ NAME = { hash } }` by resolving via
-            // `command -v` and hashing via `sha256sum`. The re-run TRIGGER is
-            // the declared `inputs.tools` (see emit_probe), which the
-            // fingerprint machinery resolves + hashes independently.
-            //
-            // CS-0157 (COOK-277): the resolved PATH deliberately does NOT
-            // enter the value. Path is location, not identity — folding it
-            // into the canonical bytes poisoned seal_contribution with a
-            // machine-specific string, so identical toolchains at different
-            // locations (homebrew vs /usr/bin, nix stores) could never share
-            // sealed artifacts. Path now rides the engine's per-run tool
-            // metadata channel: `cook.probes.get` merges a freshly-resolved
-            // `path` into the READ view and `cook why` displays it from the
-            // same channel, so consumers still see it — it just cannot key
-            // anything or go stale in a cached value.
-            let mut out = String::from("local _t = {}\n");
-            for name in names {
-                let resolve = format!("command -v {name}");
-                let resolve_sh = format!("cook.sh({})", wrap_lua_string(&resolve));
-                out.push_str(&format!(
-                    "do\n  local _p = ({resolve_sh}):gsub(\"\\n$\", \"\")\n"
-                ));
-                out.push_str(&format!(
-                    "  if _p == \"\" then error(\"tools probe: '{name}' not found on PATH\") end\n"
-                ));
-                // sha256sum '<path>' | cut -d' ' -f1. Escape any `'` in the
-                // resolved path for the single-quoted shell argument
-                // (`'` → `'\''`) so paths with quotes can't break out.
-                out.push_str(
-                    "  local _pq = _p:gsub(\"'\", \"'\\\\''\")\n",
-                );
-                out.push_str(
-                    "  local _h = (cook.sh(\"sha256sum '\" .. _pq .. \"' | cut -d' ' -f1\")):gsub(\"\\n$\", \"\")\n",
-                );
-                // `name` is a validated bare IDENT, so a quoted-string key is
-                // safe (a long-bracket `[[name]]` would be ambiguous as a table
-                // index — `_t[[[name]]]`).
-                out.push_str(&format!(
-                    "  _t[\"{}\"] = {{ hash = _h }}\n",
-                    lua_string::escape_double_quoted(name)
-                ));
-                out.push_str("end\n");
-            }
-            out.push_str("return _t");
-            out
-        }
+        // CS-0214: the second reserved sentinel, for the same reason as the
+        // first. The engine synthesises `{ NAME = { hash } }` from the probe's
+        // resolved `inputs.tools` (see emit_probe) — the same name→content-hash
+        // pairs the fingerprint's TOOLS section folds — so the re-run trigger
+        // and the value are one computation.
+        //
+        // Until CS-0214 this arm emitted a Lua program: `command -v` to
+        // resolve, `sha256sum … | cut -d' ' -f1` to digest. That made the
+        // producer a second implementation of an identity the fingerprint
+        // already computed, in a different language, with a different
+        // resolver, at a different moment in the run, agreeing only because
+        // both happened to land on lowercase-hex SHA-256. It also could not
+        // run at all on a host without GNU coreutils: stock macOS has
+        // `shasum`, not `sha256sum`.
+        //
+        // CS-0157 (COOK-277) still holds and is now structural rather than
+        // remembered: the synthesised value carries identity only. Path is
+        // location, and folding it into the canonical bytes poisoned
+        // seal_contribution with a machine-specific string, so identical
+        // toolchains at different locations (homebrew vs /usr/bin, nix stores)
+        // could never share sealed artifacts. Path rides the engine's per-run
+        // tool metadata channel instead: `cook.probes.get` merges a
+        // freshly-resolved `path` into the READ view and `cook why` displays it
+        // from the same channel.
+        ProbeProduce::Tools(_) => cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string(),
         ProbeProduce::Envs(names) => {
             // CS-0172: read the AMBIENT PROCESS environment via `os.getenv`.
             // An `envs { }` probe is the specced channel for making a host

@@ -86,17 +86,25 @@ pre-pass for probe key-versus-field resolution, COOK-190).
 
 ## Boundary debt
 
-One thing sits here that the crate name does not cover, and it is named
-rather than defended:
+None outstanding. One entry stood here and is recorded because the shape
+recurs, not because it remains:
 
-- **`probe::lower_produce` authors probe semantics as program text**
-  (probe.rs:104). The `tools { }` arm emits Lua that shells out to
-  `command -v` and `sha256sum … | cut -d' ' -f1` to build
-  `{ NAME = { hash = … } }`. `cook.tools.id` computes the same identity in
-  Rust through `cook_fingerprint::tool_identity`
-  (`cook-lua-stdlib/src/tools_api.rs:20`). Two implementations of one
-  decision, agreeing today only because both happen to be lowercase-hex
-  sha256, with no agreement test and no comment on either naming the other.
+- **`probe::lower_produce` used to author probe semantics as program text.**
+  Its `tools { }` arm emitted Lua that shelled out to `command -v` and
+  `sha256sum … | cut -d' ' -f1` to build `{ NAME = { hash = … } }` — a second
+  implementation of an identity the probe's own fingerprint already computed
+  in Rust, in a different language, with a different resolver, at a different
+  moment in the run, agreeing only because both happened to land on
+  lowercase-hex SHA-256. It also could not run on a host without GNU
+  coreutils. CS-0214 retired it: the arm now emits the reserved
+  `@tools-identity` sentinel and the engine synthesises the value from the
+  same `inputs.tools` pairs the fingerprint folds, exactly as CS-0148 did for
+  `files { }`.
+
+  The general lesson is the one the crate's charter already states: when this
+  crate would have to *decide* what a value is, the emission is a declaration
+  and the decision belongs to whoever owns the value. Emitting a program that
+  computes it is how the decision gets implemented twice.
 
 ## Relationship to `cook-contracts`
 

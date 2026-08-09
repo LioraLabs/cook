@@ -157,6 +157,20 @@ fn a_files_producer_keeps_its_sentinel_produce_verbatim() {
     );
 }
 
+#[test]
+fn a_tools_producer_keeps_its_sentinel_produce_verbatim() {
+    // CS-0214 gives `tools { }` the same interception as `files { }`, so it
+    // inherits the same hazard: `@tools-identity` is compared by EQUALITY in
+    // cook-probe, and a prelude glued onto it would route a synthesised
+    // producer to a worker VM — which would then die on a bare `@`.
+    let out = lua("use greet\n\nprobe toolchain\n    tools { cc }\n");
+    let sentinel = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE;
+    assert!(
+        out.contains(&format!("produce = [[{sentinel}]]")),
+        "tools producer must keep the reserved sentinel verbatim:\n{out}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // CS-0206: the path form composes the SAME binding through the SAME door
 // ---------------------------------------------------------------------------

@@ -71,6 +71,10 @@ fn declares_file(key: &str, path: &str) -> ProbeUnit {
     probe(key, ProbeInputs { files: vec![path.to_string()], ..Default::default() })
 }
 
+fn declares_tools(key: &str, tool: &str) -> ProbeUnit {
+    probe(key, ProbeInputs { tools: vec![tool.to_string()], ..Default::default() })
+}
+
 fn backend(root: &Path) -> cook_cache::backend::LocalBackend {
     cook_cache::backend::LocalBackend::new(root.to_path_buf())
 }
@@ -231,6 +235,66 @@ fn cs0148_a_files_producer_is_synthesised_and_never_reaches_a_vm() {
         value.get("a.txt").is_some(),
         "files manifest should map the declared path, got {value}",
     );
+}
+
+#[test]
+fn cs0214_a_tools_producer_is_synthesised_from_the_hashes_its_fingerprint_folded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut unit = declares_tools("ns:tc", "sh");
+    unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
+
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    // Before CS-0214 this producer was a Lua program shelling out to
+    // `command -v` and `sha256sum`. PoisonRunner proves no VM is reached now,
+    // which is also what makes the producer work on a host with no coreutils.
+    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .unwrap();
+
+    let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
+    let hash = value
+        .get("sh")
+        .and_then(|e| e.get("hash"))
+        .and_then(|h| h.as_str())
+        .unwrap_or_else(|| panic!("expected {{ sh = {{ hash }} }}, got {value}"));
+
+    // The rule under test is not "there is a hash" but "it is THE hash": the
+    // same content digest the fingerprint's TOOLS section just folded. Two
+    // computations that agree are what CS-0214 retired.
+    let resolved = cook_cache::resolve_tool_path("sh").expect("sh resolves on any unix host");
+    assert_eq!(
+        hash,
+        cook_contracts::render::lower_hex(&cook_cache::probe::hash_file_sha256(Path::new(
+            &resolved
+        ))),
+    );
+    assert!(
+        !out.bytes.windows(4).any(|w| w == b"path"),
+        "CS-0157: location must never enter the value bytes",
+    );
+}
+
+#[test]
+fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut unit = declares_tools("ns:tc", "cook-no-such-tool-COOK-416");
+    unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
+
+    // §22.5.2 requires the failure. The old lowering raised it from inside the
+    // produce body, which meant a cached value could serve the probe without
+    // the tool existing at all; synthesis raises it before the cache is
+    // consulted, so the rule holds on hit and miss alike.
+    let store = tempfile::tempdir().unwrap();
+    let be = backend(store.path());
+    let err = eval_cached(
+        &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.message().contains("cook-no-such-tool-COOK-416"),
+        "the diagnostic must name the tool; got: {err}",
+    );
+    assert!(err.message().contains("not found on PATH"), "got: {err}");
 }
 
 #[test]

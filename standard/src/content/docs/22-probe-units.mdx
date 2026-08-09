@@ -114,7 +114,20 @@ value is determined by the producer form:
   tool name, each entry an object `{ "hash": <content hash> }`. The hash is
   BOTH the probe value AND its re-run trigger: a change to the resolved binary
   changes the hash, re-fingerprinting the probe and any dependent unit —
-  freshness without a `volatile` annotation. The value MUST NOT contain the
+  freshness without a `volatile` annotation. Because it is both, it MUST be
+  ONE computation: the hash an implementation places in the value MUST be the
+  same content hash it folds into the fingerprint's TOOLS section
+  (§{cat.probes.inputs}), obtained the same way, from the same resolution of
+  the same name — not a second computation that agrees. Two computations of one
+  identity may agree today and diverge on the run that matters, since they read
+  the file at different moments and can resolve the name differently, and this
+  identity keys a store that crosses machines
+  (§{exec.cache.single-key}). For the same reason an implementation MUST NOT
+  make the value depend on an external hashing or path-resolution utility
+  being present on the host: a producer that shells out to one computes
+  nothing on a host that lacks it, and a rule about the resolved binary's
+  content cannot be delegated to a tool whose own availability varies by
+  platform. (CS-0214.) The value MUST NOT contain the
   resolved path or any other machine-specific location: path is location, not
   identity, and a location in the canonical bytes would fold into every
   sealing unit's key (§{exec.cache.single-key}), so identical toolchains at
@@ -128,7 +141,11 @@ value is determined by the producer form:
   fold, and the persisted probe artifact carry identity only. A consumer
   therefore always reads where the tool resolves NOW; a cached value can
   never replay a stale location. (CS-0157.) A name that does
-  not resolve on PATH MUST fail the probe with a diagnostic naming the tool. A
+  not resolve on PATH MUST fail the probe with a diagnostic naming the tool,
+  and MUST do so whether or not a value for this probe is available from a
+  cache: the failure is a statement about the host the run is on, so an
+  implementation that raises it from inside the producer alone reports it only
+  on the runs that produce (CS-0214). A
   conforming implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua
   block (the brace content is a name list, not a body).
 - `envs { NAME, … }` (name list): the brace content is a
