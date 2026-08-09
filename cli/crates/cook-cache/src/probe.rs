@@ -78,11 +78,13 @@ pub fn resolve_tool_path(name: &str) -> Option<String> {
 /// resolved path)` — the hash is the machine-independent identity a module
 /// folds into a sealed probe VALUE; the path is location metadata for
 /// invocation. `None` when the name does not resolve. Hashing goes through
-/// the same per-run memo as the fingerprint fold, so a module calling this
-/// never re-hashes a binary the fingerprint pass already read.
+/// the same per-run memo as the fingerprint fold ([`crate::statmemo`]), so a
+/// module calling this never re-hashes a binary the fingerprint pass already
+/// read — and, since COOK-414, never sees a binary cook rebuilt mid-run at its
+/// pre-build bytes either.
 pub fn tool_identity(name: &str) -> Option<(String, String)> {
     let path = which::which(name).ok()?;
-    let hash = memoized_hash(&path);
+    let hash = crate::statmemo::tool_hash_memo(&path);
     Some((
         cook_contracts::render::lower_hex(&hash),
         path.to_string_lossy().into_owned(),
@@ -93,26 +95,7 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
     let Ok(path) = which::which(name) else {
         return [0u8; 32];
     };
-    memoized_hash(&path)
-}
-
-/// Per-run memo keyed by resolved path. The same tool is fingerprinted
-/// once per probe NODE (five recipes sealing one `web:tools` probe hash
-/// its binaries five times), and a binary like node is ~60MB — without
-/// this, an all-cached workspace build spends seconds re-hashing the
-/// same toolchain. One run = one process, so a process-wide memo cannot
-/// go stale across builds.
-fn memoized_hash(path: &std::path::Path) -> [u8; 32] {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static MEMO: OnceLock<Mutex<HashMap<std::path::PathBuf, [u8; 32]>>> = OnceLock::new();
-    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(h) = memo.lock().unwrap().get(path) {
-        return *h;
-    }
-    let h = hash_file_sha256(path);
-    memo.lock().unwrap().insert(path.to_path_buf(), h);
-    h
+    crate::statmemo::tool_hash_memo(&path)
 }
 
 /// SHA-256 of a file's bytes, or all-zero when it cannot be read.

@@ -64,7 +64,7 @@ pub use resolve::{
     empty_dirs_under, normalize_glob_pattern, reconcile_dir_output, resolve_declared_inputs,
     resolve_glob, resolve_ingredient_glob,
 };
-pub use statmemo::stat_mtime_memo;
+pub use statmemo::{stat_mtime_memo, tool_hash_memo};
 
 pub use backend::LocalBackend;
 pub use cache_ctx::CacheContext;
