@@ -88,6 +88,18 @@ cache backend or store layout (`cook-cache`), or a process spawn
 are `cook-contracts` (with the store-side half in `cook-cache` since
 COOK-418 dissolved `cook-fingerprint`).
 
+**It does not run a unit, and `executor.rs` is not an exception.** The name is
+a near-collision with `cook-execute`, so the line is worth stating rather than
+inferring: **this crate decides, per unit, whether the cache already holds the
+answer; `cook-execute` runs the unit that survives that decision.** Everything
+`executor.rs` does is on the deciding side of that — readiness, the cache
+verdict, dispatch, and what to record when a result comes back. The one thing
+it never does is evaluate the work: it hands a `WorkItem` across the phase
+boundary and reads a `WorkResult` back, and it has no VM, no thread pool and no
+spawn of its own to do otherwise with. A change to *what running a unit means*
+belongs in `cook-execute`; a change to *whether a unit runs at all* belongs
+here.
+
 It does not render. It emits `EngineEvent`, and this crate does not depend on
 the renderer: a progress bar is one possible consumer of the event stream, not
 the consumer.

@@ -4,6 +4,16 @@
 execute phase's Lua host: N worker threads, one `mlua` VM each, one `WorkItem`
 in and one `WorkResult` out.
 
+Its twin is `cook-register`, which runs a Cookfile's generated Lua far enough
+to know every unit it declares. Two Lua hosts, one per phase, named for the
+phases the Standard already names.
+
+The name sits close to `cook-engine`'s `executor.rs`, so the line between them
+is stated rather than inferred: **`cook-engine` decides, per unit, whether the
+cache already holds the answer; this crate runs the unit that survives that
+decision.** Nothing here consults a cache, computes a fingerprint, or asks
+whether a unit needed to run.
+
 ## How it does that well
 
 - **One VM per thread, built once; everything per-item is a live slot.** The
@@ -31,19 +41,24 @@ in and one `WorkResult` out.
   getting it subtly wrong somewhere. The Rust trampoline the wrappers call is
   set back to `nil` afterwards, so a recipe body cannot reach it and write into
   another unit's attribution.
-- **Probe substitution happens here, with no VM in the loop.** `$<key:field>`
-  in a shell command is resolved immediately before the spawn, because a
-  probe's value is execute-phase and this is the only phase it exists in. The
-  rendering is `cook_contracts::sigil::subst`, computed in Rust (CS-0192).
-  Under the previous Lua-side `tostring` walk a table interpolated its heap
-  address, so the same command line carried different bytes every run, and an
-  absent member interpolated the four bytes `nil`. A COOK-361 agreement test
-  pins the worker's wrapper to the law it wraps, over the plain value and over
-  the CS-0157 tool-path read view, so the two cannot re-fork silently.
+- **Probe substitution happens at the last moment, and not in this crate.**
+  `$<key:field>` in a shell command is resolved immediately before the spawn,
+  because a probe's value is execute-phase and this is the only phase it
+  exists in. The resolver itself is `cook_probe::sigil` (COOK-422): it reads
+  bytes and renders them through `cook_contracts::sigil::subst` with no VM in
+  the loop, so the phase that happens to be spawning was never part of the
+  answer. This crate calls it and hands it the store. Under the pre-CS-0192
+  Lua-side `tostring` walk a table interpolated its heap address, so the same
+  command line carried different bytes every run, and an absent member
+  interpolated the four bytes `nil`; a COOK-361 agreement test still pins the
+  store-backed render to the law it wraps, over the plain value and over the
+  CS-0157 tool-path read view.
 - **Register-only API is a guard with a diagnostic, not an absence.** Seven
   names (`exec`, `interactive`, `add_unit`, `step_group`, `recipe`, `probe`,
   `prior_outputs`) raise a §6.3.2 error naming the fix, including the `>>`
-  migration hint (SHI-216). This replaced two worse behaviours: `cook.exec`
+  migration hint (SHI-216) — checked over all seven since COOK-422, where the
+  test had been spot-checking one and calling it representative of five. This
+  replaced two worse behaviours: `cook.exec`
   silently aliased to a shell-out, which is non-conformant rather than merely
   unhelpful, and the rest surfaced as `attempt to call a nil value`, which is
   compliant by accident and tells the author nothing.
@@ -90,7 +105,7 @@ and the canonical probe-value encoding are all `cook-contracts`'.
 
 It does not spawn processes itself. Every spawn goes through `cook-shell`,
 which is also where the ordering guarantee lives; this crate only decides
-where the captured chunks go. Disarming `cook-fingerprint`'s stat memo does
+where the captured chunks go. Disarming `cook-cache`'s stat memo does
 stay here, because it is the execute phase's asymmetry: registration is
 capture mode and deliberately does not disarm.
 
@@ -104,61 +119,70 @@ catches an accidental write outside the project rather than a determined one.
 
 ## The name
 
-`otp` is Erlang's Open Telecom Platform. In Cook's earliest design, execution
-was going to run on a BEAM-style actor platform, and the crate was named for
-it. That platform was never built.
+Settled in COOK-422, and worth recording because the previous name was a
+fossil. `otp` is Erlang's Open Telecom Platform: in Cook's earliest design
+execution was going to run on a BEAM-style actor platform, and the crate was
+named `cook-luaotp` for it. That platform was never built, so the name
+advertised an architecture the code deliberately abandoned — a reader who
+knew Erlang was misled more than one who did not, sent looking for a
+supervision tree, behaviours and message passing that are not here. What is
+here is a fixed pool of OS threads, one `mlua` VM pinned to each, a shared
+queue, and a `catch_unwind`.
 
-So the name describes an architecture that does not exist. What is here is a
-fixed pool of OS threads, one `mlua` VM pinned to each, a shared queue, and a
-`catch_unwind`: no supervision tree, no behaviours, no restart strategy, no
-actors, no message passing between workers. A reader who knows Erlang is
-misled more than one who does not, because the acronym leads them to look for
-a design the code deliberately abandoned. The docs that describe this crate
-already fall back to prose ("worker pool with Lua VMs") every time.
+`cook-execute` was chosen over two alternatives. `cook-worker` names the
+mechanism, and the mechanism is already the first line of this file; the
+constitution asks for boundaries to be named, and the boundary here is the
+phase line, with `WorkItem` → `WorkResult` as the value handed across it.
+`cook-lua-exec` would have made `cook-register` the odd one out in a Lua
+family it belongs to. Naming the pair for the two phases the Standard already
+names is what makes them legible as a pair.
 
-`cook-worker` or `cook-execute` would say what it is. This is recorded rather
-than acted on because a rename touches `cook-engine`, the workspace manifest,
-the vendored-Lua notes, and five architecture documents; but no one should
-have to read `pool.rs` to find out that the crate name is a fossil.
+The known cost is the near-collision with `cook-engine`'s `executor.rs`, and
+the top of this file and of `cook-engine`'s answer it directly rather than
+leaving a reader to work it out.
 
 ## Standing findings
 
-**The probe-value store has half a contract.** `ProbeValueStore`
-(`src/store.rs`) is the read-through cache of `.cook/probes/<key>.json`, and
-the function that *writes* those files is `cook_probe::store::materialize_value`.
-Two halves of one file contract in two crates, with no dependency edge between
-them. It is here because a worker VM's `cook.probes.get` needs it, but the
-engine now reaches through `pool.probe_value_store()` from a dozen call sites,
-and `cook-engine::why` constructs a bare `ProbeValueStore::new()` with no pool
-at all: proof that the store is not the pool's. `resolve_probe_sigils` is the
-same story, exported from a Lua-VM crate as a function with no Lua in it, and
-`cook-engine::executor` calls it directly for the chore path. `cook-probe`
-depends on nothing this crate needs and would not create a cycle, so the store
-and the sigil resolver want to move next to the writer.
+None. The four this file carried are closed, and how each closed is worth
+more than the fact that it did.
 
-**`cook.export` visibility depends on which thread ran the producer.** The
-execute-phase store (`install_execute_phase_cook_export`, `src/pool.rs`) is a
-per-VM Lua table, justified in its own comment by "each recipe is a
-self-contained producer/consumer pair within one worker." That is not a
-property the pool has: units are pulled off one shared queue by whichever
-worker is free, so two units of one recipe routinely land on different
-threads. A cross-unit `cook.import` therefore answers `nil` or a table
-depending on scheduling. The crate's test pins the isolation half
-(`cook_export_store_isolated_per_worker`) and nothing pins the other half,
-which is the half that can make a build nondeterministic. Either the store is
-shared across the pool or an execute-phase `cook.import` of a name this VM did
-not export should be a hard error, as the CS-0152 probe miss already is.
+**The probe-value store had half a contract**, with `ProbeValueStore` here and
+`materialize_value` in `cook-probe`, no dependency edge between them, and the
+engine building a bare store with no pool in sight. Both halves live in
+`cook-probe` now (COOK-422), along with `resolve_probe_sigils` — which was a
+function with no Lua in it exported from a Lua-VM crate — so the reader of
+`.cook/probes/<key>.json` is testable against its writer in one crate.
 
-**Smaller ones.** The register-only guard test says it spot-checks
-`cook.add_unit` as "representative of all five"; there are seven guards and
-one is checked. `run_shell_in_worker` passes a hardcoded line `0` into
-`CommandFailure`, where the register-phase twin passes the real Cookfile line;
-nothing renders `line()` today, so both sides are filling a field no one
-reads. The `io.stdout:flush()` in `execute_lua_chunk` still carries its
-pre-CS-0188 rationale ("recipe output (io.write/print)") although both of
-those are now captured; it survives only for a body that calls
-`io.stdout:write` directly. And `WorkResult::duration`'s doc comment contains
-a half-rewritten duplicate sentence.
+**`cook.export` visibility depended on which thread ran the producer**, and
+the crate's own test pinned the isolation half while nothing pinned the half
+that made a build nondeterministic. CS-0200 withdrew the surface instead:
+`cook.export` and `cook.import` are register-phase only and the worker VM
+refuses both by name. This finding was already stale when COOK-422 read it,
+which is the argument for re-reading a charter's findings rather than trusting
+them — a standing finding is a claim with a date on it.
+
+**The register-only guard test checked one of seven** while calling itself
+representative of five. It is a table over all seven (COOK-422).
+
+**`run_shell_in_worker` passed a hardcoded line `0`.** Recorded here as
+harmless because nothing read `CommandFailure::line()`; `cook-cli`'s
+`render_command_failure` does, and drops the location entirely when the line
+is zero, so every execute-phase `cook.sh` failure was reported without one.
+CS-0211 makes the phase symmetry normative and the line comes from the walk
+the register phase already had, shared from `cook-lua-stdlib`.
+
+## What COOK-439 inherits
+
+The doors this VM installs — `member_to_string`, `dep_output`,
+`dep_output_list`, `add_unit`, `step_group`, `prior_outputs`, `interactive`,
+the `cache.scope` table — are each spelled and implemented twice, once here
+and once in `cook-register`, and the constitution's waiver files list them by
+name. Two things about that got easier rather than harder in COOK-422. The
+crate pair is now named for the two phases, which is the frame the work needs
+to state its own goal in. And `caller_line_in_source` is a worked example of
+the move: a Lua-touching law with a consumer in each phase belongs in
+`cook-lua-stdlib`, parameterised over the one thing that genuinely differs,
+with the phase-specific spelling left at the call site.
 
 ## Relationship to `cook-contracts`
 
