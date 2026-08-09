@@ -1800,8 +1800,8 @@ pub fn execute_dag(
 
                             // A value already in hand: the cache served it, or
                             // the producer kind is synthesised (CS-0148
-                            // `files { }`). Either way no worker is involved,
-                            // so the node completes here.
+                            // `files { }`, CS-0214 `tools { }`). Either way no
+                            // worker is involved, so the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
                                 let recorded = cook_probe::eval::record(
@@ -1814,8 +1814,9 @@ pub fn execute_dag(
                                     // CS-0204: no VM ran on either arm of this
                                     // branch. A cache hit's identity is already
                                     // the folded one `lookup` settled on; a
-                                    // `files { }` value is synthesised from the
-                                    // declared FILES section and loads nothing.
+                                    // synthesised value (`files { }`,
+                                    // `tools { }`) comes from the declared
+                                    // FILES / TOOLS section and loads nothing.
                                     &[],
                                 );
                                 for w in &recorded.warnings {
@@ -1925,11 +1926,18 @@ pub fn execute_dag(
                             );
                         }
                         Err(e) => {
-                            // Fingerprint resolution failed (e.g. missing upstream).
-                            // This is a hard error — the probe cannot be fingerprinted
-                            // so it cannot safely proceed.
-                            let err_msg =
-                                format!("probe '{}': fingerprint resolution failed: {}", probe_key, e.message());
+                            // A hard error: the probe cannot safely proceed. The
+                            // cause is `ProbeError`'s to name and `ProbeError`'s
+                            // to render — `Display` already writes
+                            // `probe '<key>': <message>`. This site used to
+                            // rebuild that prefix by hand and insert
+                            // "fingerprint resolution failed" into the middle of
+                            // it, which was true of the one error `lookup` could
+                            // return when it was written and false of the
+                            // CS-0214 one it can return now (a `tools { }` name
+                            // that does not resolve on PATH is a statement about
+                            // the host, not about a fingerprint).
+                            let err_msg = e.to_string();
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             emit(
                                 event_tx,

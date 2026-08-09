@@ -114,7 +114,20 @@ value is determined by the producer form:
   tool name, each entry an object `{ "hash": <content hash> }`. The hash is
   BOTH the probe value AND its re-run trigger: a change to the resolved binary
   changes the hash, re-fingerprinting the probe and any dependent unit —
-  freshness without a `volatile` annotation. The value MUST NOT contain the
+  freshness without a `volatile` annotation. Because it is both, it MUST be
+  ONE computation: the hash an implementation places in the value MUST be the
+  same content hash it folds into the fingerprint's TOOLS section
+  (§{cat.probes.inputs}), obtained the same way, from the same resolution of
+  the same name — not a second computation that agrees. Two computations of one
+  identity may agree today and diverge on the run that matters, since they read
+  the file at different moments and can resolve the name differently, and this
+  identity keys a store that crosses machines
+  (§{exec.cache.single-key}). For the same reason an implementation MUST NOT
+  make the value depend on an external hashing or path-resolution utility
+  being present on the host: a producer that shells out to one computes
+  nothing on a host that lacks it, and a rule about the resolved binary's
+  content cannot be delegated to a tool whose own availability varies by
+  platform. (CS-0214.) The value MUST NOT contain the
   resolved path or any other machine-specific location: path is location, not
   identity, and a location in the canonical bytes would fold into every
   sealing unit's key (§{exec.cache.single-key}), so identical toolchains at
@@ -128,7 +141,20 @@ value is determined by the producer form:
   fold, and the persisted probe artifact carry identity only. A consumer
   therefore always reads where the tool resolves NOW; a cached value can
   never replay a stale location. (CS-0157.) A name that does
-  not resolve on PATH MUST fail the probe with a diagnostic naming the tool. A
+  not resolve on PATH MUST fail the probe with a diagnostic naming the tool,
+  and MUST do so whether or not a value for this probe is available from a
+  cache: the failure is a statement about the host the run is on, so an
+  implementation that raises it from inside the producer alone reports it only
+  on the runs that produce (CS-0214). A name that RESOLVES but whose bytes
+  cannot be read MUST fail the probe in the same way. An implementation MUST
+  NOT record a placeholder digest for it: a value that says "unreadable" says
+  the same thing on every host, so two machines each failing to read a
+  DIFFERENT toolchain would compose identical value bytes, and one could be
+  served a sealed artifact the other built. This case is reachable — PATH
+  resolution tests for executability, not readability — and it is the one
+  place where §{cat.probes.inputs}'s missing-input fold, which is a
+  deliberately collision-tolerant fingerprint contribution, must not be
+  promoted into an identity. (CS-0214.) A
   conforming implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua
   block (the brace content is a name list, not a body).
 - `envs { NAME, … }` (name list): the brace content is a
@@ -255,7 +281,7 @@ cook.probe("cc:zlib", {
 | Sub-key | Type | Semantics |
 |---|---|---|
 | `env` | list[string] | Env-var names. The current value of each named variable contributes to the probe's fingerprint. Reuses the env-contribution mechanism of §{exec.cache.abstract}. |
-| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the probe's value, which folds into the cache key of any unit that seals on this probe (§{exec.cache.single-key}). A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. |
+| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the probe's value, which folds into the cache key of any unit that seals on this probe (§{exec.cache.single-key}). A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. This row governs `inputs.tools` as a fingerprint contribution, where a collision-tolerant placeholder is the right answer; the `tools { }` PRODUCER of §{cat.probes.decl} is stricter and MUST fail instead, because its value is an identity rather than a determinant (CS-0214). |
 | `files` | list[string] | File paths relative to the Cookfile root. The content hash of each file contributes to the fingerprint. A missing file folds as `(path, "<missing>")`. |
 | `requires` | list[string] | Upstream probe keys. Each named probe's full fingerprint is folded into this probe's fingerprint (chained invalidation). The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
 

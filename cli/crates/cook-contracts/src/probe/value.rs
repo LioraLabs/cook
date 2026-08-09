@@ -40,6 +40,52 @@ pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
     encode_canonical_json(&JsonValue::Object(map))
 }
 
+/// The reserved `produce` string of a `tools { … }` probe (CS-0214). Same
+/// interception contract as [`FILES_MANIFEST_PRODUCE`] and deliberately a
+/// different spelling: the two are compared by equality, so one string could
+/// not stand for both without routing one producer kind's synthesis to the
+/// other's.
+///
+/// Before CS-0214 the `tools` lowering emitted a Lua program that resolved each
+/// name with `command -v` and digested it with `sha256sum`, while the probe's
+/// fingerprint resolved with `which` and digested with `sha2`. Two machineries
+/// answering one question, at two different moments in the run, agreeing only
+/// because both happened to land on lowercase-hex SHA-256 — and the emitted one
+/// could not run at all on a host without GNU coreutils.
+pub const TOOLS_IDENTITY_PRODUCE: &str = "@tools-identity";
+
+/// Build the canonical value bytes of a `tools { … }` probe (CS-0214): a JSON
+/// object keyed by tool name, each entry `{ "hash": "<lowercase hex>" }`.
+///
+/// The pairs are the probe's resolved `inputs.tools` — the same
+/// name→content-hash pairs the fingerprint's TOOLS section folds (§22.5.3) — so
+/// the re-run trigger and the value are one computation rather than two that
+/// agree. Keys sort bytewise via [`encode_canonical_json`], matching the sort
+/// the fingerprint applies to the same names.
+///
+/// Identity only: the resolved PATH location is deliberately absent (CS-0157).
+/// A location in these bytes would fold into every sealing unit's key through
+/// `seal_contribution`, so identical toolchains installed at different prefixes
+/// could never share a sealed artifact. Path reaches consumers through the
+/// per-run read view instead ([`merge_tool_paths`]).
+///
+/// Total by construction: a name that does not resolve on PATH MUST fail the
+/// probe by name (§22.5.2) before reaching here, and that rejection cannot be
+/// made here — an all-zero digest means "could not read the bytes", which a
+/// present-but-unreadable binary also produces.
+pub fn encode_tools_identity(tools: &[(String, [u8; 32])]) -> Vec<u8> {
+    let mut map = serde_json::Map::new();
+    for (name, hash) in tools {
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "hash".to_string(),
+            JsonValue::String(crate::render::lower_hex(hash)),
+        );
+        map.insert(name.clone(), JsonValue::Object(entry));
+    }
+    encode_canonical_json(&JsonValue::Object(map))
+}
+
 /// Render a validated probe value (§22.5.5) to its canonical bytes:
 /// pretty-printed JSON, 2-space indent, object keys sorted bytewise,
 /// UTF-8, exactly one trailing LF. These bytes are the value's single
