@@ -106,11 +106,6 @@ test. They are recorded here so the next audit's grep lands on them:
   wrap the body in `return (function()\n…\nend)()`. Both ends must agree or a
   produce body's reported error lines shift between phases. It is pure string
   law and `cook-contracts` would take it.
-- **Escaping a Rust string into a Lua literal**, and it has already drifted.
-  `engine.rs:1667` escapes `\`, `"`, `\n`, `\r`, and NUL; the twin at
-  `cook-luagen/src/lua_string.rs:1` escapes only `\`, `"`, and `\n`. A value
-  carrying a carriage return is a chore-parameter prelude that loads and a
-  generated command that does not.
 - **The `cook.load_module` sequence.** `module_loader.rs:92` and
   `pool.rs:719` each memoize, detect cycles, evaluate, and call `init()`.
   COOK-393 unified the candidate list and the search-path composition, not the
@@ -132,6 +127,17 @@ is the wrong test — the composition and every reader of the composed key must
 already agree. COOK-421 moved it, with `build_local_cache_key` and
 `OBSERVING_KEY_MARKER`, to `cook_contracts::cache::local_key`. It was this
 crate's only use of `xxhash-rust`, so the dependency went with it.
+
+It also used to carry a third: **escaping a Rust string into a Lua literal**,
+noted as already drifted — this crate escaped `\`, `"`, `\n`, `\r` and NUL
+where `cook-luagen` escaped only the first three, so a value carrying a
+carriage return was a chore-parameter prelude that loads and a generated
+command that does not. COOK-398 made it one function in
+`cook_contracts::lua_string`; COOK-440 deleted the crate-local name this crate
+still reached it under, because a rename hides shared law from the grep that
+finds its consumers. The chore-param prelude now calls `lua_string::literal`
+directly, and §7.1.2's value-fidelity rule (CS-0209) is what that call has to
+satisfy.
 
 ## Relationship to `cook-contracts`
 

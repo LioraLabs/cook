@@ -22,11 +22,17 @@
 //!
 //! # Scope
 //!
-//! This is the SHORT-literal law: what goes between two `"`. Long-bracket
-//! literals (`[[ … ]]`) escape nothing and are a different problem, solved by
-//! choosing a bracket level no inner close can match; that stays in
-//! `cook-luagen`'s `wrap_lua_string`, which is a lowering choice rather than a
-//! rule two crates must agree on.
+//! This is the SHORT-literal law: what goes between two `"`, and — since
+//! COOK-440 — the two `"` as well. The quotes are part of the decision rather
+//! than the caller's to remember: the escape rule is defined in terms of them,
+//! so an escaped string a caller wraps by hand is a caller who can wrap it
+//! wrong. [`literal`] is the whole literal; [`escape_double_quoted`] remains
+//! for the sites that build one around other text.
+//!
+//! Long-bracket literals (`[[ … ]]`) escape nothing and are a different
+//! problem, solved by choosing a bracket level no inner close can match; that
+//! stays in `cook-luagen`'s `wrap_lua_string`, which is a lowering choice
+//! rather than a rule two crates must agree on.
 //!
 //! Pure `&str` → `String`. No mlua, no IO.
 
@@ -59,6 +65,25 @@ pub fn escape_double_quoted(s: &str) -> String {
         }
     }
     out
+}
+
+/// The whole double-quoted literal holding `s`, quotes included:
+/// `cc -c main.c` becomes `"cc -c main.c"`.
+///
+/// Use this wherever the value IS the literal — a list element, an argument, a
+/// binding's right-hand side. `format!("\"{}\"", escape_double_quoted(x))` was
+/// written at fifteen such sites across `cook-luagen` and `cook-register`, and
+/// one of them had already grown a crate-local helper with its own name for it,
+/// which is a decision reinvented rather than reused (COOK-440).
+///
+/// [`escape_double_quoted`] remains the call for the other shape: a value
+/// embedded in a larger fixed template that supplies its own quotes, as in
+/// `format!("cook.dep_output(\"{}\")", …)`. There the quotes are visible in the
+/// template beside the value, so they are not a thing a caller can forget; what
+/// a caller can forget is the escape, and that is the one this module makes
+/// unavoidable.
+pub fn literal(s: &str) -> String {
+    format!("\"{}\"", escape_double_quoted(s))
 }
 
 #[cfg(test)]

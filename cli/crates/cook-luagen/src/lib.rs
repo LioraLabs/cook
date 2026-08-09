@@ -7,7 +7,7 @@ mod cook_step;
 /// locals, static-read rewrites, and the `cook.__quote_param` emission.
 pub(crate) const COOK_PARAMS_LOCAL: &str = "__cook_params";
 mod lua_scan;
-mod lua_string;
+mod long_bracket;
 mod probe;
 mod recipe;
 pub(crate) mod resolver;

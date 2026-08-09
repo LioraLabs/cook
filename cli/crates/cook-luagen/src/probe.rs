@@ -1,6 +1,7 @@
+use cook_contracts::lua_string;
 use cook_lang::ast::{Probe, ProbeProduce, ShellProduceType, UseStatement};
 
-use crate::lua_string::{escape_lua_string, wrap_lua_string};
+use crate::long_bracket::wrap_lua_string;
 
 /// Emit `cook.probe(key, { inputs = {...}, produce = "..." })` for one native
 /// `probe` declaration. Pure surface sugar over the register-phase API
@@ -8,20 +9,20 @@ use crate::lua_string::{escape_lua_string, wrap_lua_string};
 pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement]) {
     out.push_str(&format!(
         "cook.probe(\"{}\", {{\n",
-        escape_lua_string(&probe.name)
+        lua_string::escape_double_quoted(&probe.name)
     ));
     out.push_str("  inputs = {\n");
     if !probe.ingredients.is_empty() || !probe.excludes.is_empty() {
         let inc = probe
             .ingredients
             .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .map(|s| lua_string::literal(s))
             .collect::<Vec<_>>()
             .join(", ");
         let exc = probe
             .excludes
             .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .map(|s| lua_string::literal(s))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
@@ -33,7 +34,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         let reqs = probe
             .deps
             .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .map(|s| lua_string::literal(s))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
@@ -74,7 +75,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
 fn quoted_list(names: &[String]) -> String {
     names
         .iter()
-        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+        .map(|s| lua_string::literal(s))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -146,7 +147,7 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
                 // index — `_t[[[name]]]`).
                 out.push_str(&format!(
                     "  _t[\"{}\"] = {{ hash = _h }}\n",
-                    escape_lua_string(name)
+                    lua_string::escape_double_quoted(name)
                 ));
                 out.push_str("end\n");
             }
@@ -169,8 +170,8 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
                 // Quoted-string key (see Tools arm); `name` is a bare IDENT.
                 out.push_str(&format!(
                     "_e[\"{}\"] = os.getenv(\"{}\")\n",
-                    escape_lua_string(name),
-                    escape_lua_string(name)
+                    lua_string::escape_double_quoted(name),
+                    lua_string::escape_double_quoted(name)
                 ));
             }
             out.push_str("return _e");

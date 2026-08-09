@@ -20,8 +20,6 @@
 //! `cook-lua-stdlib` and `layout`. This module holds only the pure decisions —
 //! the alias a name derives, the door names, and the text of the binding.
 
-use crate::lua_string::escape_double_quoted;
-
 /// The field `cook.load_module` is installed under on the `cook` table.
 ///
 /// Spelled without the `cook.` prefix for the same reason
@@ -133,12 +131,13 @@ pub fn derived_alias(path_target: &str) -> String {
 /// The resolver call, qualified and with the target escaped as a
 /// double-quoted Lua literal: `cook.load_module("my-mod")`,
 /// `cook.load_module("build/helpers.lua")`.
+///
+/// Composed through [`crate::registration::door_call`] rather than spelled
+/// here (COOK-440): this is a call to a door on the `cook` table, and it was
+/// the same fifteen characters of Lua that `cook-luagen` was writing at three
+/// other sites.
 pub fn load_module_call(target: &str) -> String {
-    format!(
-        "cook.{}(\"{}\")",
-        LOAD_MODULE_FN,
-        escape_double_quoted(target)
-    )
+    crate::registration::door_call(LOAD_MODULE_FN, target)
 }
 
 /// The whole binding statement, with no terminator and no trailing newline:

@@ -96,3 +96,10 @@ impl WorkingDirSource {
 #[cfg(test)]
 #[path = "tests/lua_stdlib_tests.rs"]
 mod tests;
+
+// The pure Lua string-literal law lives in `cook-contracts` and may not depend
+// on mlua, so it cannot check itself against Lua. This is the lowest crate
+// that holds both (COOK-440).
+#[cfg(test)]
+#[path = "tests/lua_string_law_tests.rs"]
+mod lua_string_law_tests;

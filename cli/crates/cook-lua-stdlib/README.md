@@ -81,6 +81,14 @@ Two things here are honest exceptions rather than design:
   reuses is the *sandbox gate*, not the phase: `check_path`, `WorkingDirSource`,
   and `SandboxSource`. That is a defensible reason and it is still the one entry
   that would not be re-derived from this crate's charter.
+- It carries one test for a law it does not own: `tests/lua_string_law_tests.rs`
+  round-trips `cook_contracts::lua_string::literal` through a real VM (COOK-440).
+  The escaping law is pure and lives a stratum down, where the purity budget
+  bars mlua — so it cannot be checked against Lua where it is written, and a
+  table of hand-written expectations only proves the escaper agrees with its
+  author, which both of its historical defects did. This crate is the lowest
+  one holding the law and an interpreter, so the oracle lives here even though
+  the subject does not.
 - `register_fs_api` (the no-sandbox wrapper) has no production caller. Since
   CS-0135 retired `plate`, no step kind selects `SandboxPolicy::Off`; it survives
   as the worker's initial slot value and in this crate's tests. A permissive

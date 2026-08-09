@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::compile_chore;
-use crate::lua_string::escape_lua_string;
 
 // COOK-357 collapsed the four public codegen entry points into one,
 // `generate_checked`. These tests exercise the lowering below that validation
@@ -473,14 +472,6 @@ fn test_shell_with_double_brackets() {
     // the whole body unit's lua_code payload (which contains a nested cook.sh
     // call whose argument also long-brackets).
     assert!(output.contains("echo ]]"), "got:\n{output}");
-}
-
-#[test]
-fn test_escape_lua_string() {
-    assert_eq!(escape_lua_string("hello"), "hello");
-    assert_eq!(escape_lua_string("he\"llo"), "he\\\"llo");
-    assert_eq!(escape_lua_string("he\\llo"), "he\\\\llo");
-    assert_eq!(escape_lua_string("he\nllo"), "he\\nllo");
 }
 
 #[test]
