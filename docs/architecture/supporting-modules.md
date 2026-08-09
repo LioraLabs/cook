@@ -28,7 +28,9 @@ pub struct RecipeInfo {
 
 `ingredients` are glob patterns the recipe consumes; `serves` are cook-step output patterns; `requires` are the recipe names listed after `:` in the recipe header. The shape matches the historical struct exactly, but the file it lives in has moved.
 
-`WorkspaceLayout` (`analyzer.rs:188`) and the helper `NamespaceEntry = (PathBuf, String, PathBuf)` carry the canonical-path + import-name information needed to compute fully-qualified recipe names across imported Cookfiles. `build_workspace_recipe_info(layout)` returns a `BTreeMap<String, RecipeInfo>` whose keys are dotted-prefix names like `"backend.proto.generate"`.
+`NamespaceEntry = (PathBuf, String, PathBuf)` carries the canonical-path + import-name information needed to compute fully-qualified recipe names across imported Cookfiles; `find_full_prefix` resolves a canonical path to its dotted prefix, so a recipe reads as `"backend.proto.generate"`.
+
+`WorkspaceLayout`, `build_workspace_recipe_info`, `register_workspace_for_test`, `collect_all_recipe_names_in_workspace` and `build_recipe_info_for_targets` are gone (COOK-423). They were a second Cookfile import-walker beside `workspace::Workspace::load` and a second `RecipeInfo` assembler beside `recipe_info::build_recipe_infos_from_registered`, reachable only from tests.
 
 ### Algorithms
 
@@ -38,7 +40,7 @@ pub struct RecipeInfo {
 >
 > The historical rule — "if recipe A's `ingredients` contains a path string that another recipe B has in its `serves`, infer A depends on B" — is gone. `build_adjacency` no longer looks at `ingredients` or `serves` at all; it only resolves `requires`. Path-string equality between an ingredient and another recipe's cook-output is opaque and produces no edge. See Cook Standard § 5.6 and rationale B.5.N. The removal is pinned by `test_ingredient_serves_string_match_is_opaque` and `test_path_match_does_not_imply_dep` (`analyzer.rs:622`, `analyzer.rs:640`), and `test_dependency_edges_no_implicit_via_serves` (`analyzer.rs:836`) confirms the same for `dependency_edges`.
 >
-> Cross-recipe edges from name references in recipe bodies (`{lib}` / `{lib.accessor}`) are not produced by the analyzer either. They are extracted by codegen — `cook_luagen::dep_ref::extract_dep_refs` (driven from `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:27`, `:155`) — and stitched into the runtime DAG separately as "inferred deps" rather than walked through `build_adjacency`. The analyzer's job is now strictly the explicit-`requires` graph.
+> Cross-recipe edges from name references in recipe bodies (`{lib}` / `{lib.accessor}`) are not produced by the analyzer either. They are extracted by codegen (`cook_luagen::dep_ref::extract_dep_refs`) and merged into `cook-luagen`'s unified `requires` field, arriving as ordinary edges on `RecipeUnits.dep_edges` rather than being walked through `build_adjacency`. There is no separate "inferred deps" stage; the module that was one is deleted (COOK-423). The analyzer's job is now strictly the explicit-`requires` graph.
 
 **Topological sort.** `topological_sort(recipes, target)` (`analyzer.rs:128`) is a recursive DFS with three node states (`Unvisited` / `Visiting` / `Visited`). Returns recipes in post-order DFS, so index 0 has no remaining dependencies and the target recipe is last.
 
@@ -46,8 +48,6 @@ pub struct RecipeInfo {
 - **Diamond dependencies are emitted once.** The `Visited` state short-circuits re-entry.
 
 **Dependency edges.** `dependency_edges(recipes, target)` (`analyzer.rs:74`) computes `topological_sort` and then projects each reachable recipe's adjacency to a sorted `Vec<String>`, filtered to dependencies that are themselves reachable. `dependency_edges_multi` (`analyzer.rs:103`) merges per-target results into a single map.
-
-**Workspace recipe registration for `cook test`.** `register_workspace_for_test(project_root)` (`analyzer.rs:338`) walks the import graph from `project_root/Cookfile`, BFS-deduplicating by canonical path. Every reachable recipe is registered — even ones not referenced by any target — so `cook test` can discover all `test_step` units across the workspace. Imports use `cook_lang::ast::ImportPath::Tree` (resolved relative to the importing dir) or `ImportPath::Sigil` (resolved relative to `project_root`).
 
 ### Errors
 
@@ -57,7 +57,7 @@ pub struct RecipeInfo {
 |---|---|
 | `GraphError::CycleDetected(name)` | A node was encountered while already in `Visiting` state (direct self-dep or transitive cycle). |
 | `GraphError::UnknownRecipe(name)` | `target` is not in the recipes map, or some recipe's `requires` names a recipe that doesn't exist. |
-| `GraphError::Io(msg)` | Filesystem error while walking the workspace import graph (only emitted by `register_workspace_for_test` / `build_recipe_info_for_targets`). |
+| `GraphError::Io(msg)` | Filesystem error while walking the workspace import graph. Both of its emitters (`register_workspace_for_test`, `build_recipe_info_for_targets`) were deleted at COOK-423; the variant is retained by `#[non_exhaustive]`-style caution rather than by a live producer. |
 | `GraphError::Parse(msg)` | `cook_lang::parse` failed on a Cookfile encountered during workspace walk. |
 
 CLI-side translation to `CookError` lives in `cli/crates/cook-cli/src/pipeline.rs` (see `cmd_serve` at `pipeline.rs:1116`).

@@ -18,7 +18,6 @@ cook-cli::main()              process entry, clap parse, exit-code mapping
             ├─ pipeline::validate_selected_config()
             ├─ (workspace? → pipeline::Workspace::load + workspace_* builders)
             │   (single?    → pipeline::resolve_env + single_* builders)
-            ├─ pipeline::compute_*_inferred_deps()  {NAME} body refs → edges
             └─ cook_engine::run::run()
                  ├─ cache bootstrap (CloudConfig, CacheContext)
                  ├─ analyzer::dependency_edges_multi() → recipe DAG
@@ -143,16 +142,11 @@ pub struct RecipeInfo {
 **Data in:** parsed AST(s), env vars, named-config name, `--set` overrides
 **Data out:** `BTreeMap<String, RegistryEntry>` plus `BTreeMap<String, RecipeInfo>`
 
-### 4.3 Inferred deps — `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:29`
+### 4.3 Inferred deps — removed
 
-`compute_workspace_inferred_deps` walks every recipe body looking for `{NAME}` body references (Cook Standard § 5.3 / App. E.10), resolving them through any import aliases. The output is a `BTreeMap<String, Vec<String>>` from consumer recipe → referenced recipes. There is no separate single-Cookfile helper: a Cookfile with no imports loads as a workspace of one member (prefix `""`), so the workspace walk covers it (the former `compute_single_inferred_deps` twin is deleted).
+There is no inferred-dep pass. `{NAME}` body references (Cook Standard § 5.3 / App. E.10) are resolved by codegen: `cook_luagen`'s unified `requires` field merges a recipe's explicit deps and its body references into one deduplicated edge list, so both kinds arrive as ordinary edges on `RecipeUnits.dep_edges` and the engine never sees the distinction.
 
-These are **codegen-time** dependencies. Unlike explicit `requires` (which become wave boundaries), inferred deps cause **same-wave merging** in the wave grouper: a recipe and any recipe it body-references end up in the same wave so the referencing recipe sees the referent's outputs when it registers.
-
-`pipeline::workspace_dep_conflicts` reports the cases where a `{NAME}` reference conflicts with an explicit dep declaration (its former `single_dep_conflicts` twin is deleted with the single-Cookfile path).
-
-**Data in:** Cookfile AST(s)
-**Data out:** `BTreeMap<String, Vec<String>>` inferred edges, plus diagnostic warnings
+That is why the conflict warning this stage used to emit ("recipe X has both explicit ': dep' and inferred '{dep}' dependency") is gone rather than lost: the two no longer mean different scheduling, so there is nothing left to conflict. The `cook-plan::inferred_deps` module survived its last caller by three months and was deleted at COOK-423.
 
 ---
 

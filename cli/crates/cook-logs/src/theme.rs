@@ -64,10 +64,11 @@ impl Theme {
         }
     }
 
-    /// True when this palette carries no hue, so callers can lean on weight.
-    pub fn is_mono(&self) -> bool {
-        self.accent == Color::Reset && self.ok == Color::Reset && self.err == Color::Reset
-    }
+    // COOK-423: `is_mono` is deleted. It offered callers a mode to branch on,
+    // and no renderer ever wanted one. Mono works precisely because the
+    // palette below answers every question a renderer asks, so `Color::Reset`
+    // flows through the same code path colour does. A predicate inviting a
+    // second path is how the two would drift.
 
     pub fn ok_style(&self) -> Style { Style::default().fg(self.ok) }
     pub fn err_style(&self) -> Style { Style::default().fg(self.err) }

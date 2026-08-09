@@ -35,36 +35,37 @@ just became startable.
   make everything above true (id equals index, `remaining_deps` equals the
   inbound edge count) survive only if no caller can write a `Node` literal;
   the same commit that hardened `add_node` closed that door (cbc8278a).
-- `CycleError` carries a concrete path rather than a count. The diagnostic
-  prints `v0 -> v1 -> v0` plus how many nodes are blocked; the previous bare
-  count told a user that something was circular but not what (cbc8278a).
 - It has no dependencies at all, not even `cook-contracts`. `Dag<T>` is a data
   structure, not a shared law: no other crate has to agree with it about
   anything, because there is exactly one implementation and `T` is opaque to
   it. Nothing here meets the `cook-contracts` admission bar and nothing here
   wants to.
 
-## A standing finding: `validate()` cannot fail
+## A finding that was standing, and is now settled
 
 `add_node` is the only mutator, and it refuses forward references. Every edge
 therefore points from a higher id to a lower one, which means no DAG built
 through this crate's public API can contain a cycle, which means `validate()`
-returns `Ok` for every input a caller can construct.
+returned `Ok` for every input a caller could construct.
 
-Kahn's pass, `extract_cycle`, `CycleError`, and its `Display` are roughly a
-third of `lib.rs`, and they are unreachable from outside. The two tests that
-exercise them have to reach into the crate-private `deps` and `nodes` vectors
-to forge a cycle, which is the tell: a test that must violate the type's
-invariant to reach the code under test is testing something the type cannot
-do. `cook-engine`'s executor calls `validate()` before spawning workers and
-its own comment concedes the check is defensive.
+Kahn's pass, `extract_cycle`, `CycleError` and its `Display` were about a third
+of `lib.rs` and unreachable from outside. The two tests that exercised them had
+to reach into the crate-private `deps` and `nodes` vectors to forge a cycle,
+which is the tell: a test that must violate the type's invariant to reach the
+code under test is testing something the type cannot do. `cook-engine`'s
+executor called `validate()` before spawning workers, and its own comment
+conceded the check was defensive.
 
-This is recorded rather than removed because the cost is one O(V+E) pass per
-run and the diagnostic is genuinely good if a future mutator ever relaxes the
-ordering rule. But it should be read as dead weight with a rationale, not as a
-feature, and if the ordering rule is still standing at the next audit the
-honest move is to delete the cycle machinery and let `add_node`'s range check
-be the whole story.
+The earlier reading of this recorded it rather than removing it, on the grounds
+that the cost was one O(V+E) pass and the diagnostic would be good if a future
+mutator ever relaxed the ordering rule, while ending with the honest move: if
+the ordering rule is still standing at the next audit, delete the cycle
+machinery and let `add_node`'s range check be the whole story. It was still
+standing, and it is deleted. Reassurance that cannot fire is not reassurance;
+it is a third of a file that a reader has to understand before they can
+establish it does nothing. `add_node`'s doc comment now carries the reasoning,
+next to the check that actually enforces it, and says what has to come back if
+that check ever relaxes.
 
 ## What it does not do
 

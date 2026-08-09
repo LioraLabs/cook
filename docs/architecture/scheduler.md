@@ -92,15 +92,14 @@ The engine calls `dag.validate()` defensively at the top of `execute_dag` (`cli/
 
 The recipe-level scheduling layer sits above the work-unit DAG. Two structures cooperate:
 
-### `RecipeDag` — wave-by-wave readiness tracking
+### `RecipeDag` — deleted
 
-`cli/crates/cook-engine/src/recipe_dag.rs:22` — a much simpler structure than the work DAG. Each recipe is a node; nodes track `remaining_deps`, `in_flight`, and `done` flags. The API is:
-
-- `RecipeDag::new(dep_edges: &BTreeMap<String, Vec<String>>)`
-- `pop_ready() -> Vec<String>` — returns all recipes whose deps are satisfied and which are not yet in-flight or done, and flips them to `in_flight`.
-- `mark_done(names: &[String])` — flips `in_flight → done` and decrements `remaining_deps` on dependents.
-
-This struct is the abstract pattern; in practice the unified entry point in `run.rs` does not use `RecipeDag` directly because it pre-computes the full wave list up front via `wave_grouper`.
+`cook-engine` carried a `recipe_dag` module tracking per-recipe readiness
+(`remaining_deps`, `in_flight`, `done`) as a simpler twin of the work DAG. The
+unified entry point in `run.rs` never used it, since it pre-computes the whole
+wave list up front, and its only references were its own tests. It was a
+hand-rolled second implementation of `cook-dag`'s readiness law, and it is
+deleted (COOK-423).
 
 ### `wave_grouper::compute_waves` — two-tier wave assignment
 

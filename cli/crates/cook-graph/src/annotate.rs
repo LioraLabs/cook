@@ -25,12 +25,6 @@ pub struct UnitFacts {
     /// Wall time the unit was last observed to take, if any retained build
     /// timed it. `None` is "never observed", which is not the same as fast.
     pub observed_ms: Option<u64>,
-    /// How many retained builds back that observation came from; `0` is the
-    /// most recent build. Carried so a node can report how stale the number
-    /// feeding it is — an observation from fifteen builds ago deserves less
-    /// weight than one from the last run, and the reader can only know that if
-    /// told.
-    pub observed_builds_ago: usize,
 }
 
 /// Facts for every classified unit, keyed by `(recipe, cache_key)`.

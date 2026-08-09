@@ -80,14 +80,6 @@ pub struct Node {
     /// `observed_ms` MUST surface this too: a sum over three of forty units is
     /// not this node's build time (§17.1.6.4).
     pub unobserved: usize,
-    /// Staleness bound on `observed_ms`: the age, in retained builds, of the
-    /// OLDEST observation summed into it. `0` means every contributing unit was
-    /// timed in the most recent build.
-    ///
-    /// The maximum rather than the minimum, because this is the figure that
-    /// tells a reader how much to distrust the total, and the weakest
-    /// contributor sets that.
-    pub observed_max_age: usize,
     /// Units in nodes strictly downstream of this one — what this node's
     /// rebuild invalidates in the rest of the graph (§17.1.6.3). Filled by
     /// [`cascade`]; zero until then.
@@ -211,7 +203,6 @@ pub fn aggregate(
             unclassified: 0,
             observed_ms: 0,
             unobserved: 0,
-            observed_max_age: 0,
             forces: 0,
         });
         // A file node is structure, not work: it has no cache verdict and no
@@ -234,8 +225,6 @@ pub fn aggregate(
                 match f.observed_ms {
                     Some(ms) => {
                         entry.observed_ms += ms;
-                        entry.observed_max_age =
-                            entry.observed_max_age.max(f.observed_builds_ago);
                     }
                     None => entry.unobserved += 1,
                 }
@@ -394,15 +383,6 @@ fn timing_summary(n: &Node) -> String {
     let mut s = format!("{} observed", render_ms(n.observed_ms));
     if n.unobserved > 0 {
         let _ = write!(s, " ({} of {} units)", observed, n.units);
-    }
-    // Only worth saying when the number is not from the last run; on a freshly
-    // built tree every observation is current and the note would be noise.
-    match n.observed_max_age {
-        0 => {}
-        1 => s.push_str(", 1 build ago"),
-        age => {
-            let _ = write!(s, ", up to {age} builds ago");
-        }
     }
     s
 }
@@ -653,7 +633,6 @@ pub fn json_value(graph: &Graph) -> serde_json::Value {
                 "forces": n.forces,
                 "observed_ms": n.observed_ms,
                 "unobserved": n.unobserved,
-                "observed_max_age": n.observed_max_age,
             })
         })
         .collect();

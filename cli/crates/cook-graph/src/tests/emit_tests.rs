@@ -69,9 +69,9 @@ fn fixture() -> DagData {
 /// incremental case takes.
 fn facts() -> Annotations {
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400), observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: Some(600), observed_builds_ago: 0 });
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: Some(2100), observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400) });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: Some(600) });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: Some(2100) });
     a
 }
 
@@ -168,9 +168,9 @@ fn collapsed_nodes_tally_hits_and_rebuilds() {
 #[test]
 fn a_mixed_node_is_distinguishable_from_a_uniform_one() {
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
@@ -194,9 +194,9 @@ fn unannotated_units_are_unclassified_not_rebuilds() {
 #[test]
 fn cascade_counts_units_downstream() {
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Unit, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib0 = g.nodes.iter().find(|n| n.id == "unit:lib:0").unwrap();
@@ -211,10 +211,10 @@ fn cascade_counts_units_downstream() {
 #[test]
 fn cascade_counts_downstream_units_that_currently_hit() {
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
     // The consumer still looks warm: its input has not been rebuilt yet.
-    a.insert("bin", "bin:0", UnitFacts { served: true, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("bin", "bin:0", UnitFacts { served: true, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
@@ -246,7 +246,7 @@ fn cascade_is_transitive_and_counts_each_unit_once() {
     };
     let mut a = Annotations::new();
     for k in ["x:0", "x:1", "x:2"] {
-        a.insert("x", k, UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+        a.insert("x", k, UnitFacts { served: false, observed_ms: None });
     }
     let g = aggregate(&dag, Level::Unit, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let n0 = g.nodes.iter().find(|n| n.id == "unit:x:0").unwrap();
@@ -260,9 +260,9 @@ fn cascade_is_transitive_and_counts_each_unit_once() {
 #[test]
 fn text_marks_a_rebuilding_upstream() {
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let out = render(&g, Format::Text);
     assert!(out.contains("← rebuilding"), "{out}");
@@ -279,39 +279,26 @@ fn timing_renders_as_observation_and_admits_its_coverage() {
 
     // One of lib's two units never timed: coverage must be stated.
     let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400), observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None, observed_builds_ago: 0 });
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400) });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let partial = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let out = render(&partial, Format::Text);
     assert!(out.contains("(1 of 2 units)"), "{out}");
 }
 
-/// §17.1.6.4: how stale the number is, is part of the observation. A total
-/// summed from a fifteen-builds-old timing should not read like one measured
-/// on the last run.
-#[test]
-fn timing_reports_the_age_of_its_oldest_contributor() {
-    let mut a = Annotations::new();
-    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400), observed_builds_ago: 0 });
-    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: Some(600), observed_builds_ago: 7 });
-    a.insert("bin", "bin:0", UnitFacts { served: true, observed_ms: Some(100), observed_builds_ago: 0 });
-    let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
-
-    let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
-    assert_eq!(lib.observed_max_age, 7, "the weakest contributor sets the bound");
-    let out = render(&g, Format::Text);
-    assert!(out.contains("up to 7 builds ago"), "{out}");
-
-    // A node whose observations are all current says nothing about age.
-    let bin_line = out.lines().find(|l| l.starts_with("bin")).unwrap();
-    assert!(!bin_line.contains("ago"), "{bin_line:?}");
-}
+/// CS-0216 deleted `timing_reports_the_age_of_its_oldest_contributor`, which
+/// pinned the ", up to N builds ago" clause. Its subject was an age this crate
+/// was never told: the sole producer of `observed_builds_ago` hardcoded `0`,
+/// so the test could only reach the branch by constructing an age no run
+/// produces. What survives of §17.1.6.4 here is the hedge that IS derived from
+/// real data, how many of a node's units the total actually covers, pinned
+/// by `timing_renders_as_observation_and_admits_its_coverage` above.
 
 #[test]
 fn a_never_observed_node_shows_no_duration_at_all() {
     let mut a = Annotations::new();
-    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None, observed_builds_ago: 0 });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let bin = g.nodes.iter().find(|n| n.id == "recipe:bin").unwrap();
     assert_eq!(bin.observed_ms, 0);
@@ -396,4 +383,28 @@ fn json_carries_the_cache_and_timing_tallies() {
     assert_eq!(bin["observed_ms"], 2100);
     assert_eq!(bin["unobserved"], 0);
     assert_eq!(bin["unclassified"], 0);
+}
+
+/// CS-0216. `observed_max_age` was a permanent zero on the published payload:
+/// the only producer of the fact behind it hardcoded `0`, so the key asserted
+/// "every contributing unit was timed in the most recent build" on every node
+/// of every run. That is absence rendered as zero, which §17.1.6.5 forbids in
+/// the same breath as it permits the reporting.
+///
+/// Asserted as an absent key rather than a changed value, because the point is
+/// that a consumer no longer has a field to believe. The version bump rides in
+/// the same test: §17.1.6.6 makes it mandatory for a structurally incompatible
+/// change, and dropping a key is one.
+#[test]
+fn json_does_not_carry_a_field_nothing_can_populate() {
+    let g = agg(Level::Recipe);
+    let parsed: serde_json::Value = serde_json::from_str(&render(&g, Format::Json)).unwrap();
+
+    assert_eq!(parsed["schema_version"], 5);
+    for n in parsed["nodes"].as_array().unwrap() {
+        assert!(
+            n.get("observed_max_age").is_none(),
+            "node still carries observed_max_age: {n}"
+        );
+    }
 }

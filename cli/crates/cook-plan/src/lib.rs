@@ -30,7 +30,6 @@
 //! | Recipe-graph algorithms & namespace prefixes | [`analyzer`] |
 //! | `RecipeInfo` map assembly | [`recipe_info`] |
 //! | Unified register-phase entry | [`registers`] |
-//! | `{NAME}` inferred-dep computation | [`inferred_deps`] |
 //! | Pipeline-layer error type | [`error`] |
 //!
 //! Errors at this layer surface as `PipelineError`; the CLI maps it onto
@@ -40,7 +39,6 @@ pub mod analyzer;
 pub mod entry;
 pub mod env;
 pub mod error;
-pub mod inferred_deps;
 pub mod parse;
 pub mod recipe_info;
 pub mod registers;
@@ -48,7 +46,6 @@ pub mod workspace;
 
 pub use env::parse_cli_overrides;
 pub use error::PipelineError;
-pub use inferred_deps::{compute_workspace_inferred_deps, workspace_dep_conflicts};
 pub use parse::{read_and_parse, validate_selected_config_workspace, ParsedCookfile};
 pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{

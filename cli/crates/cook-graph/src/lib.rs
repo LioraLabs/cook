@@ -30,13 +30,14 @@ pub use dag_data::{build_dag_data, DagData, EdgeData, EdgeKind, NodeData};
 /// `unclassified` tallies plus `forces` and the timing pair, and the former
 /// `cook why --json` `units` array joined the same object. Two incompatible
 /// structural changes at once, and one bump covers both.
-pub const DAG_SCHEMA_VERSION: u32 = 4;
-
-#[derive(Debug, thiserror::Error)]
-pub enum ViewerError {
-    #[error("failed to serialize DAG: {0}")]
-    Serialize(String),
-}
+///
+/// 5 at CS-0216, when `observed_max_age` left the node object. The model that
+/// fed it, an observation's position in a local build history, went at
+/// CS-0189, after which the only producer hardcoded `0`; the key survived as a
+/// permanent zero telling every reader that every contributing unit was timed
+/// in the most recent build. Dropping a key is a structurally incompatible
+/// change, which §17.1.6.6 says MUST bump this number.
+pub const DAG_SCHEMA_VERSION: u32 = 5;
 
 /// The graph inputs, independent of how the graph is then presented.
 pub struct DagInputs<'a> {
