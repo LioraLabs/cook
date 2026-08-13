@@ -60,6 +60,20 @@ recipe lua-symbols-exported: cook-bin
     ingredients "scripts/check-lua-symbols.sh"
     test { scripts/check-lua-symbols.sh $<cook-bin> }
 
+# `examples/` is what a stranger reads first and the README tour points at it,
+# and nothing ever built it. Five cook_cc showcases rotted through two separate
+# surface changes and were deleted rather than migrated (COOK-453). The script
+# drives; the example sources determine. Module-dependent examples are excluded
+# — `examples/modules/monorepo` needs network and a pnpm toolchain — and the
+# script says so on success rather than skipping them quietly.
+probe examples:sources
+    files { "examples/**/Cookfile" "examples/**/*.lua" "examples/**/src/**" }
+
+recipe examples: cook-bin
+    ingredients "scripts/check-examples.sh"
+    seal examples:sources
+    test { COOK=$<cook-bin> scripts/check-examples.sh }
+
 # Every place this repo writes the Standard version it claims to implement.
 # They once drifted three cuts apart (v0.15 vs v0.18) because nothing compared
 # them, and `bump_claim` silently matched no pattern in grammar.js for several

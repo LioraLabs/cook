@@ -52,6 +52,12 @@ dist/
 !cli/e2e-fixtures/**/.cook/modules/**
 build/
 bin/
+# Examples declare outputs under out/ as well as build/. Running them (which
+# the `examples` gate now does on every `cook test`) would otherwise leave
+# untracked directories behind after every run. Scoped to examples/ rather
+# than a project-wide `out/`, because a broad rule over a common directory
+# name is exactly what swallowed COOK-412's fixtures.
+examples/**/out/
 # Vendored luarocks ships its own src/bin/ and src/luarocks/build/ trees
 # (and tests/fixtures use bin/ directories). Don't let the project-wide
 # build/ + bin/ ignore rules silently drop them — that's what caused
