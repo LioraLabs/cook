@@ -45,6 +45,21 @@ recipe cook-bin
         cargo build --release -p cook-cli --manifest-path cli/Cargo.toml
     }
 
+# cook embeds Lua statically, so a C rock (lpeg, cjson) only resolves `lua_*`
+# at dlopen if the executable was linked to export those symbols. That is what
+# `-rdynamic` in `.cargo/config.toml` does, and it applies only when cargo's
+# working directory is one the config search reaches — which is why the config
+# sits at the repo root rather than beside `cli/Cargo.toml`.
+#
+# Nothing about getting it wrong is loud: the binary links, runs, and passes
+# every Rust test, because none of them loads a C rock. It fails at a user's
+# first `require`, as `undefined symbol: lua_gettop`, which reads like a broken
+# rock. Gating it here means the binary this repo is about to self-host and ship
+# under has been shown to export the API, rather than assumed to.
+recipe lua-symbols-exported: cook-bin
+    ingredients "scripts/check-lua-symbols.sh"
+    test { scripts/check-lua-symbols.sh $<cook-bin> }
+
 # Every place this repo writes the Standard version it claims to implement.
 # They once drifted three cuts apart (v0.15 vs v0.18) because nothing compared
 # them, and `bump_claim` silently matched no pattern in grammar.js for several

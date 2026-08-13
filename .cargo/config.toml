@@ -1,0 +1,25 @@
+# Export Lua C API symbols from the cook executable so C rocks loaded via
+# luarocks can dlopen-resolve `lua_*` / `luaL_*` at runtime. Without these
+# flags, dlopen succeeds but symbol lookup fails with confusing errors.
+#   - Linux:  -rdynamic               (binutils ld / lld spelling)
+#   - macOS:  -Wl,-export_dynamic     (ld64 spelling, with underscore)
+#
+# This file lives at the REPOSITORY ROOT, not beside cli/Cargo.toml, and that
+# placement is the whole point. Cargo resolves .cargo/config.toml by walking up
+# from the CURRENT WORKING DIRECTORY, never from the manifest's directory. While
+# these flags lived in cli/.cargo/, `cargo build --manifest-path cli/Cargo.toml`
+# run from the repo root read no config at all and produced a binary with zero
+# exported `lua_*` symbols. Nothing failed at build time; the binary linked, ran,
+# and then died at the first `require` of a C rock with `undefined symbol:
+# lua_gettop`. That cost a whole milestone's integration testing to a diagnosis
+# of "no C rock can load in cook", which was never true.
+#
+# From the root, cargo walks up and finds this file; from cli/, cargo walks up
+# through cli/ and finds it too. One copy, both spellings correct. Do not add a
+# second config under cli/ — two copies of a link flag drift, and the failure
+# they produce is silent.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-rdynamic"]
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-export_dynamic"]
