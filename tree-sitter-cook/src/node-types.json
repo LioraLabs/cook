@@ -315,7 +315,7 @@
     }
   },
   {
-    "type": "glob_list",
+    "type": "file_set_line",
     "named": true,
     "fields": {},
     "children": {
@@ -324,6 +324,40 @@
       "types": [
         {
           "type": "glob_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "files_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "file_set_line",
           "named": true
         }
       ]
@@ -612,14 +646,6 @@
         {
           "type": "env_name_list",
           "named": true
-        },
-        {
-          "type": "glob_list",
-          "named": true
-        },
-        {
-          "type": "tool_name_list",
-          "named": true
         }
       ]
     }
@@ -797,6 +823,10 @@
           "named": true
         },
         {
+          "type": "files_declaration",
+          "named": true
+        },
+        {
           "type": "import_declaration",
           "named": true
         },
@@ -810,6 +840,10 @@
         },
         {
           "type": "register_block",
+          "named": true
+        },
+        {
+          "type": "tools_declaration",
           "named": true
         },
         {
@@ -888,7 +922,7 @@
     }
   },
   {
-    "type": "tool_name_list",
+    "type": "tool_set_line",
     "named": true,
     "fields": {},
     "children": {
@@ -897,6 +931,40 @@
       "types": [
         {
           "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tools_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "tool_set_line",
           "named": true
         }
       ]

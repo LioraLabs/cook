@@ -152,7 +152,7 @@ pub(crate) fn parse_config_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (column-0 Content matching the module-call
             // shape) is also a terminator as of CS-0072. Check the raw source
             // line to distinguish column-0 from indented Content.
@@ -232,7 +232,7 @@ pub(crate) fn parse_register_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (Content matching <id>.<id>(...) shape)
             // is also a terminator (CS-0072 §4.1.1 clause b).
             // Only column-0 Content can be top-level: check the raw source line.
@@ -370,7 +370,7 @@ pub(crate) fn parse_recipe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => {
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
                 finalize_base_seal(
                     &name,
                     recipe_line,
@@ -685,7 +685,7 @@ pub(crate) fn parse_chore(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => {
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
                 return Ok((
                     Chore { name, params, deps, steps, line: chore_line },
                     pos,

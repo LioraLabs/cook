@@ -23,6 +23,14 @@
         },
         {
           "type": "SYMBOL",
+          "name": "files_declaration"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "tools_declaration"
+        },
+        {
+          "type": "SYMBOL",
           "name": "probe"
         },
         {
@@ -574,6 +582,131 @@
         }
       ]
     },
+    "files_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "files"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_probe_name"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_newline"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "comment"
+              }
+            ]
+          }
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "file_set_line"
+          }
+        }
+      ]
+    },
+    "file_set_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "glob_pattern"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_newline"
+        }
+      ]
+    },
+    "tools_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "tools"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_probe_name"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_newline"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "comment"
+              }
+            ]
+          }
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "tool_set_line"
+          }
+        }
+      ]
+    },
+    "tool_set_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_tool_name"
+            },
+            "named": true,
+            "value": "identifier"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_newline"
+        }
+      ]
+    },
     "probe": {
       "type": "SEQ",
       "members": [
@@ -602,77 +735,46 @@
           }
         },
         {
-          "type": "CHOICE",
+          "type": "SEQ",
           "members": [
             {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "files_producer"
-              },
-              "named": true,
-              "value": "producer"
-            },
-            {
-              "type": "SEQ",
+              "type": "CHOICE",
               "members": [
                 {
-                  "type": "CHOICE",
+                  "type": "SEQ",
                   "members": [
                     {
-                      "type": "SEQ",
-                      "members": [
-                        {
-                          "type": "SYMBOL",
-                          "name": "ingredients_step"
-                        },
-                        {
-                          "type": "REPEAT",
-                          "content": {
-                            "type": "CHOICE",
-                            "members": [
-                              {
-                                "type": "SYMBOL",
-                                "name": "_newline"
-                              },
-                              {
-                                "type": "SYMBOL",
-                                "name": "comment"
-                              }
-                            ]
-                          }
-                        }
-                      ]
+                      "type": "SYMBOL",
+                      "name": "ingredients_step"
                     },
                     {
-                      "type": "BLANK"
+                      "type": "REPEAT",
+                      "content": {
+                        "type": "CHOICE",
+                        "members": [
+                          {
+                            "type": "SYMBOL",
+                            "name": "_newline"
+                          },
+                          {
+                            "type": "SYMBOL",
+                            "name": "comment"
+                          }
+                        ]
+                      }
                     }
                   ]
                 },
                 {
-                  "type": "SYMBOL",
-                  "name": "producer"
+                  "type": "BLANK"
                 }
               ]
+            },
+            {
+              "type": "SYMBOL",
+              "name": "producer"
             }
           ]
-        }
-      ]
-    },
-    "files_producer": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "files"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "glob_list"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "_newline"
         }
       ]
     },
@@ -817,19 +919,6 @@
                     "type": "SYMBOL",
                     "name": "shell_block"
                   }
-                }
-              ]
-            },
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "STRING",
-                  "value": "tools"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "tool_name_list"
                 }
               ]
             },
@@ -1027,8 +1116,16 @@
               "value": "!"
             },
             {
-              "type": "SYMBOL",
-              "name": "string"
+              "type": "ALIAS",
+              "content": {
+                "type": "IMMEDIATE_TOKEN",
+                "content": {
+                  "type": "PATTERN",
+                  "value": "\"([^\"\\\\]|\\\\.)*\""
+                }
+              },
+              "named": true,
+              "value": "string"
             }
           ]
         }

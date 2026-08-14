@@ -50,7 +50,7 @@
 (probe_dep_list
   (string) @function)
 
-(tool_name_list
+(tool_set_line
   (identifier) @variable)
 
 (env_name_list
@@ -142,6 +142,15 @@
 
 (unseal_group
   (identifier) @function)
+
+(files_declaration
+  name: (identifier) @function)
+
+(tools_declaration
+  name: (identifier) @function)
+
+"files" @keyword
+"tools" @keyword
 
 ; ── Top-level module call (CS-0072) ─────────────────────────────
 

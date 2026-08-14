@@ -3,7 +3,7 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="check" line=4
+    Recipe name="check" line=5
       deps: []
       ingredients: ["src/main.ts"]
       excludes: []

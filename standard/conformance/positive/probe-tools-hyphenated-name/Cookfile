@@ -1,5 +1,5 @@
-probe generate:tool
-    tools { tree-sitter, pkg-config, llvm-config }
+tools generate:tool
+    tree-sitter pkg-config llvm-config
 
 recipe generate
     ingredients "grammar.js"

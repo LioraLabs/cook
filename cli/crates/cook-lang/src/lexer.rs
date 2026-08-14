@@ -13,6 +13,8 @@ pub enum Token {
     ImportDecl { name: String, path: String },
     RegisterHeader,
     ProbeHeader { name: String, deps: Vec<String> },
+    FilesHeader { name: String },
+    ToolsHeader { name: String },
     LuaLine(String),
     LuaBlockOpen,
     InlineLuaLine(String),
@@ -91,6 +93,10 @@ pub enum LexError {
     ProbeExtraTokens { name: String, line: usize },
     #[error("line {line}: malformed probe key '{name}': '.' is member access in a probe reference and is not part of a key; use '-' or the quoted form \"{name}\"")]
     MalformedProbeName { name: String, line: usize },
+    #[error("line {line}: {kind} declaration requires a name")]
+    MissingSetName { kind: &'static str, line: usize },
+    #[error("line {line}: {kind} declaration '{name}' has unexpected trailing content")]
+    SetExtraTokens { kind: &'static str, name: String, line: usize },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter")]
     VariadicNotLast { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': at most one variadic parameter permitted; found '{first}' and '{second}'")]
@@ -675,6 +681,15 @@ fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
     Ok((s[..end].to_string(), &s[end..]))
 }
 
+fn parse_set_header(kind: &'static str, rest: &str, line: usize) -> Result<String, LexError> {
+    let rest = rest.trim();
+    if rest.is_empty() { return Err(LexError::MissingSetName { kind, line }); }
+    let parsed = if rest.starts_with('"') { parse_name(rest, line) } else { scan_probe_ref(rest, line) };
+    let (name, tail) = parsed.map_err(|_| LexError::SetExtraTokens { kind, name: rest.to_string(), line })?;
+    if !tail.trim().is_empty() { return Err(LexError::SetExtraTokens { kind, name, line }); }
+    Ok(name)
+}
+
 /// Parse a probe header's dependency list: whitespace-separated `probe_ref`s.
 fn parse_probe_dep_list(text: &str, line: usize) -> Result<Vec<String>, LexError> {
     let mut deps = Vec::new();
@@ -798,6 +813,16 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                     && (trimmed.as_bytes()[8] == b' ' || trimmed.as_bytes()[8] == b'\t')))
         {
             Token::RegisterHeader
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && (trimmed == "files" || trimmed.strip_prefix("files").is_some_and(|rest|
+                rest.starts_with(|c: char| c.is_whitespace()) || rest.starts_with('"') || rest.starts_with('.')))
+        {
+            Token::FilesHeader { name: parse_set_header("files", &trimmed["files".len()..], line_num)? }
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && (trimmed == "tools" || trimmed.strip_prefix("tools").is_some_and(|rest|
+                rest.starts_with(|c: char| c.is_whitespace()) || rest.starts_with('"') || rest.starts_with('.')))
+        {
+            Token::ToolsHeader { name: parse_set_header("tools", &trimmed["tools".len()..], line_num)? }
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("probe")
             && trimmed.len() > 5

@@ -1,5 +1,5 @@
-probe toolchain
-    tools { cc, ld }
+tools toolchain
+    cc ld
 
 recipe build
     seal toolchain

@@ -661,7 +661,7 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
 // ── Top-level keyword check ────────────────────────────────────
 // Returns true if the buffer (length len) matches a top-level Cookfile
 // keyword that implicitly terminates a config/register body
-// (§{toplevel.termination}, App. A.2): recipe, chore, probe, config,
+// (§{toplevel.termination}, App. A.2): recipe, chore, probe, files, tools, config,
 // use, import, register. The `register` keyword joins this set per
 // CS-0072; `probe` joins per COOK-67 (App. A.3.2).
 
@@ -669,6 +669,8 @@ static bool is_toplevel_keyword(const char *buf, int len) {
   return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
          (len == 5 && strncmp(buf, "chore", 5) == 0) ||
          (len == 5 && strncmp(buf, "probe", 5) == 0) ||
+         (len == 5 && strncmp(buf, "files", 5) == 0) ||
+         (len == 5 && strncmp(buf, "tools", 5) == 0) ||
          (len == 6 && strncmp(buf, "config", 6) == 0) ||
          (len == 3 && strncmp(buf, "use", 3) == 0) ||
          (len == 6 && strncmp(buf, "import", 6) == 0) ||

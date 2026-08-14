@@ -61,6 +61,8 @@ module.exports = grammar({
       choice(
         $.recipe,
         $.chore,
+        $.files_declaration,
+        $.tools_declaration,
         $.probe,
         $.config_block,
         $.register_block,
@@ -237,6 +239,31 @@ module.exports = grammar({
         $._newline,
       ),
 
+    // ── Named determinant sets (CS-0222) ───────────────────────
+
+    files_declaration: ($) =>
+      seq(
+        "files",
+        field("name", $._probe_name),
+        $._newline,
+        repeat(choice($._newline, $.comment)),
+        repeat1($.file_set_line),
+      ),
+
+    file_set_line: ($) => seq(repeat1($.glob_pattern), $._newline),
+
+    tools_declaration: ($) =>
+      seq(
+        "tools",
+        field("name", $._probe_name),
+        $._newline,
+        repeat(choice($._newline, $.comment)),
+        repeat1($.tool_set_line),
+      ),
+
+    tool_set_line: ($) =>
+      seq(repeat1(alias($._tool_name, $.identifier)), $._newline),
+
     // ── Probes (COOK-67/68/69, §22, App. A.3.2; CS-0092 / v0.14) ──
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
@@ -268,27 +295,13 @@ module.exports = grammar({
         $.probe_header,
         $._newline,
         repeat(choice($._newline, $.comment)),
-        choice(
-          alias($.files_producer, $.producer),
-          seq(
-            optional(seq(
-              $.ingredients_step,
-              repeat(choice($._newline, $.comment)),
-            )),
-            $.producer,
-          ),
+        seq(
+          optional(seq(
+            $.ingredients_step,
+            repeat(choice($._newline, $.comment)),
+          )),
+          $.producer,
         ),
-      ),
-
-    // `files` is a contextual keyword recognised only in this probe-body
-    // position (mirrors `tools`/`envs`/`json`/`lines` in `producer`
-    // below). Aliased to `$.producer` so the tree shape stays uniform
-    // with the other producer kinds (a single `producer` node per probe).
-    files_producer: ($) =>
-      seq(
-        "files",
-        $.glob_list,
-        $._newline,
       ),
 
     probe_header: ($) =>
@@ -352,7 +365,6 @@ module.exports = grammar({
       seq(
         choice(
           seq(optional(choice("json", "lines")), field("body", $.shell_block)),
-          seq("tools", $.tool_name_list),
           seq("envs", $.env_name_list),
           field("body", $.exec_lua_block),
         ),
@@ -400,7 +412,7 @@ module.exports = grammar({
     glob_pattern: ($) =>
       choice(
         $.string,
-        seq("!", $.string),
+        seq("!", alias(token.immediate(/"([^"\\]|\\.)*"/), $.string)),
       ),
 
     // ── Recipe body ────────────────────────────────────────────

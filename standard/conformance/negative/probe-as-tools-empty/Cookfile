@@ -1,2 +1,1 @@
-probe t
-    tools {  }
+tools t

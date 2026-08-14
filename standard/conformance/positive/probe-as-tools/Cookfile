@@ -1,2 +1,2 @@
-probe toolchain
-    tools { cc, ld }
+tools toolchain
+    cc ld

@@ -1,5 +1,5 @@
-probe sites
-    files { "src/*.txt" }
+files sites
+    "src/*.txt"
 
 recipe grade
     ingredients sites

@@ -328,6 +328,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 probes.push(probe);
                 pos = new_pos;
             }
+            Token::FilesHeader { name } => {
+                let line = tok.line; let name = name.clone(); pos += 1;
+                let (probe, new_pos) = probe::parse_files_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
+            }
+            Token::ToolsHeader { name } => {
+                let line = tok.line; let name = name.clone(); pos += 1;
+                let (probe, new_pos) = probe::parse_tools_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
+            }
             Token::RegisterHeader => {
                 let header_line = tok.line;
                 // Reject `register foo`: detect non-empty content after the keyword.

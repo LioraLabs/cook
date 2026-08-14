@@ -126,6 +126,11 @@ end)
 
 ## D.9. No multi-line continuation for `ingredients` lists [#pre-v1.multi-line-ingredients]
 
+**Resolved by CS-0222.** Named file sets now use an indented multi-line
+`files NAME` body. That surface closes the motivating long determinant-list
+case; backslash continuation, a bracketed list, and lifting the at-most-one
+`ingredients` rule are superseded and were not added.
+
 **Tension.** §{steps.ingredients} requires every ingredient on a single `ingredients` line: a recipe body MAY contain at most one `ingredients_step`, and the line itself accepts a sequence of space-separated quoted items but no escape for line continuation. There is no whitespace-tolerant alternative shape.
 
 **Symptom.** Recipes whose input set spans many globs grow horizontally without bound. A real Cookfile that builds an Android APK depends on Kotlin sources, the manifest, the resource tree, and three build-script files — seven globs producing a 200+ character `ingredients` line:

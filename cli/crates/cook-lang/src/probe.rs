@@ -25,7 +25,7 @@ pub(crate) fn parse_probe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             Token::Comment(_) | Token::Blank => { pos += 1; }
             Token::LuaBlockOpen => {
                 // A bare `>{ … }` line is the Lua producer (§22.5.2). Unlike the
@@ -66,6 +66,10 @@ pub(crate) fn parse_probe(
                     ingredients = inc; excludes = exc; pos = new_pos;
                     continue;
                 } else {
+                    if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {
+                        return Err(ParseError::Parse { line: tok.line,
+                            message: "`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`".into() });
+                    }
                     // Any other body content is the producer (§22.5.2). The
                     // producer KIND leads; there is exactly one per probe.
                     if producer.is_some() {
@@ -103,6 +107,44 @@ pub(crate) fn parse_probe(
     })?;
 
     Ok((Probe { name, deps, ingredients, excludes, produce, line: probe_line }, pos))
+}
+
+fn parse_set_declaration(name: String, declaration_line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str], files: bool) -> Result<(Probe, usize), ParseError> {
+    let mut pos = start;
+    let mut values = Vec::new();
+    let mut excludes = Vec::new();
+    while pos < tokens.len() {
+        let tok = &tokens[pos];
+        match &tok.value {
+            Token::RecipeHeader { .. } | Token::ChoreHeader { .. } | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. } | Token::ImportDecl { .. } | Token::RegisterHeader
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
+            Token::Comment(_) | Token::Blank => pos += 1,
+            Token::Content(_) => {
+                let raw = source_lines.get(tok.line - 1).copied().unwrap_or("");
+                if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
+                if files {
+                    let (mut includes, mut line_excludes) = parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
+                    values.append(&mut includes); excludes.append(&mut line_excludes);
+                } else {
+                    values.extend(parse_source_name_list(&format!("{{{}}}", raw.trim()), tok.line, "tools")?);
+                }
+                pos += 1;
+            }
+            _ => return Err(ParseError::Parse { line: tok.line, message: format!("{} declaration body admits only {}", if files { "files" } else { "tools" }, if files { "quoted globs" } else { "tool names" }) }),
+        }
+    }
+    if values.is_empty() { return Err(ParseError::Parse { line: declaration_line, message: format!("{} declaration '{}' requires at least one {}", if files { "files" } else { "tools" }, name, if files { "quoted glob" } else { "tool name" }) }); }
+    let produce = if files { ProbeProduce::Files { globs: values, excludes } } else { ProbeProduce::Tools(values) };
+    Ok((Probe { name, deps: vec![], ingredients: vec![], excludes: vec![], produce, line: declaration_line }, pos))
+}
+
+pub(crate) fn parse_files_declaration(name: String, line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str]) -> Result<(Probe, usize), ParseError> {
+    parse_set_declaration(name, line, tokens, start, source_lines, true)
+}
+
+pub(crate) fn parse_tools_declaration(name: String, line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str]) -> Result<(Probe, usize), ParseError> {
+    parse_set_declaration(name, line, tokens, start, source_lines, false)
 }
 
 /// Parse a `tools`/`envs` brace name list: `{ a, b c }` → `["a","b","c"]`.
@@ -184,6 +226,7 @@ fn parse_source_name_list(
 fn parse_files_glob_list(
     body_src: &str,
     line: usize,
+    require_include: bool,
 ) -> Result<(Vec<String>, Vec<String>), ParseError> {
     let s = body_src.trim_start();
     let inner = s
@@ -200,7 +243,7 @@ fn parse_files_glob_list(
     while !rest.is_empty() {
         let is_exc = rest.starts_with('!');
         if is_exc {
-            rest = rest[1..].trim_start();
+            rest = &rest[1..];
         }
         let Some(r) = rest.strip_prefix('"') else {
             return Err(ParseError::Parse {
@@ -224,7 +267,7 @@ fn parse_files_glob_list(
         }
         rest = r[end + 1..].trim_start_matches(',').trim_start();
     }
-    if globs.is_empty() {
+    if require_include && globs.is_empty() {
         return Err(ParseError::Parse {
             line,
             message: "files: expected at least one quoted glob in `{ … }`".into(),
@@ -249,7 +292,7 @@ fn finish_files_list(
                 .into(),
         });
     }
-    let (globs, excludes) = parse_files_glob_list(t, line)?;
+    let (globs, excludes) = parse_files_glob_list(t, line, true)?;
     let mut new_pos = current_pos + 1;
     while new_pos < tokens.len() && tokens[new_pos].line <= line {
         new_pos += 1;

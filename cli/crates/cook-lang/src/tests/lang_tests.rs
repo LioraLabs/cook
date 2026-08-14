@@ -1651,14 +1651,14 @@ fn produce_json_on_lua_block_is_error() {
 
 #[test]
 fn produce_tools_parses_name_list() {
-    let cf = parse("probe toolchain\n    tools { cc, ld }\n").unwrap();
+    let cf = parse("tools toolchain\n    cc ld\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
 }
 
 #[test]
 fn produce_tools_accepts_whitespace_separators() {
-    let cf = parse("probe toolchain\n    tools { cc ld   ar }\n").unwrap();
+    let cf = parse("tools toolchain\n    cc ld   ar\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()]));
 }
@@ -1672,14 +1672,14 @@ fn produce_envs_parses_name_list() {
 
 #[test]
 fn produce_tools_empty_list_is_error() {
-    let err = parse("probe t\n    tools {  }\n").unwrap_err();
+    let err = parse("tools t\n").unwrap_err();
     assert!(format!("{err}").contains("at least one"), "got: {err}");
 }
 
 #[test]
 fn produce_tools_lua_block_is_error() {
     let err = parse("probe t\n    tools >{ return {} }\n").unwrap_err();
-    assert!(format!("{err}").contains("NAME LIST"), "got: {err}");
+    assert!(format!("{err}").contains("top-level"), "got: {err}");
 }
 
 #[test]
@@ -1692,7 +1692,7 @@ fn produce_envs_invalid_name_is_error() {
 
 #[test]
 fn produce_files_parses_glob_list() {
-    let cf = parse("probe srcs\n    files { \"src/*.ts\" \"tsconfig.json\" }\n").unwrap();
+    let cf = parse("files srcs\n    \"src/*.ts\" \"tsconfig.json\"\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(
         p.produce,
@@ -1705,7 +1705,7 @@ fn produce_files_parses_glob_list() {
 
 #[test]
 fn produce_files_parses_excludes() {
-    let cf = parse("probe srcs\n    files { \"src/*.ts\" !\"src/gen/*.ts\" }\n").unwrap();
+    let cf = parse("files srcs\n    \"src/*.ts\" !\"src/gen/*.ts\"\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(
         p.produce,
@@ -1718,20 +1718,20 @@ fn produce_files_parses_excludes() {
 
 #[test]
 fn produce_files_empty_list_is_error() {
-    let err = parse("probe srcs\n    files {  }\n").unwrap_err();
+    let err = parse("files srcs\n").unwrap_err();
     assert!(format!("{err}").contains("at least one"), "got: {err}");
 }
 
 #[test]
 fn produce_files_bare_ident_is_error() {
-    let err = parse("probe srcs\n    files { src }\n").unwrap_err();
+    let err = parse("files srcs\n    src\n").unwrap_err();
     assert!(format!("{err}").contains("quoted"), "got: {err}");
 }
 
 #[test]
 fn produce_files_lua_block_is_error() {
     let err = parse("probe srcs\n    files >{ return {} }\n").unwrap_err();
-    assert!(format!("{err}").contains("GLOB LIST"), "got: {err}");
+    assert!(format!("{err}").contains("top-level"), "got: {err}");
 }
 
 #[test]
@@ -1740,7 +1740,7 @@ fn produce_files_with_ingredients_line_is_error() {
         "probe srcs\n    ingredients \"other/*.c\"\n    files { \"src/*.ts\" }\n",
     )
     .unwrap_err();
-    assert!(format!("{err}").contains("ingredients"), "got: {err}");
+    assert!(format!("{err}").contains("top-level"), "got: {err}");
 }
 
 // ── COOK-67 Task 3: probe declaration parser ────────────────────────
@@ -2525,4 +2525,33 @@ fn multi_segment_probe_keys_parse_at_every_site() {
         "    }\n",
     );
     parse(src).expect("a three-segment key must be declarable, consumable and sealable");
+}
+
+#[test]
+fn top_level_files_and_tools_desugar_to_probes() {
+    let cf = parse(concat!(
+        "recipe before\n    cook \"before\" { touch $<out> }\n",
+        "files app:src\n    \"src/**/*.rs\"\n    \"Cargo.toml\" !\"src/generated/**\"\n",
+        "tools app:toolchain\n    cargo rustc\n",
+        "recipe after\n    seal app:src app:toolchain\n    cook \"after\" { touch $<out> }\n",
+    )).unwrap();
+    assert_eq!(cf.probes.len(), 2);
+    assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files { globs: vec!["src/**/*.rs".into(), "Cargo.toml".into()], excludes: vec!["src/generated/**".into()] });
+    assert_eq!(cf.probes[1].produce, crate::ast::ProbeProduce::Tools(vec!["cargo".into(), "rustc".into()]));
+}
+
+#[test]
+fn top_level_files_and_tools_commit_as_keywords() {
+    for (source, kind) in [("files.mod()\n", "files"), ("tools.mod()\n", "tools")] {
+        let err = parse(source).unwrap_err().to_string();
+        assert!(err.contains(&format!("{kind} declaration")), "got: {err}");
+    }
+}
+
+#[test]
+fn probe_body_files_and_tools_name_top_level_replacement() {
+    for source in ["probe srcs\n    files { \"src/**\" }\n", "probe toolchain\n    tools { cc }\n"] {
+        let err = parse(source).unwrap_err().to_string();
+        assert!(err.contains("top-level"), "got: {err}");
+    }
 }
