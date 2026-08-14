@@ -790,13 +790,14 @@ pub fn execute_dag(
         // about the tree, and the unit read nothing. What is refused is SERVING
         // a hit for a unit with nothing whose movement could invalidate it.
         //
-        // The member arm is why the predicate takes all three terms. A fan-out
-        // unit over `ingredients <probe>` may declare no file by design and is
-        // keyed on its member, which reaches the key through `command_hash`.
+        // The member arm is why the predicate is not just an input check. A
+        // fan-out unit over `ingredients <probe>` may declare no file by design
+        // and is keyed on its member, which reaches the key through `command_hash`.
         if !cook_contracts::cache::record::has_something_to_key_on(
             meta.output_paths.len(),
             current_inputs.len(),
             meta.member_keyed,
+            !meta.seal_keys.is_empty(),
         ) {
             return CacheDecision::Miss(None);
         }

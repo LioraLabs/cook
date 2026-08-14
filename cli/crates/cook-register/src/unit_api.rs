@@ -790,6 +790,7 @@ pub fn register_unit_api(
                 output_paths.len(),
                 cache_inputs.len(),
                 member_keyed,
+                !seal_keys.is_empty(),
             );
         let cache_meta = if cache_enabled {
             let cache_key = cook_contracts::cache::local_key::build_local_cache_key(

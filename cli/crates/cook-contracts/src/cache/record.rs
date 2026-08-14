@@ -90,7 +90,7 @@ pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
 /// Whether a unit has anything whose movement could invalidate a record of it
 /// (§17.4 rule 1, CS-0138 generalised by CS-0186).
 ///
-/// **Asked twice, over the same three terms.** Once at registration, over the
+/// **Asked twice, over the same four terms.** Once at registration, over the
 /// DECLARED input list, where it decides whether the unit gets a key at all;
 /// and again when the unit is ready, over the RESOLVED one, where it decides
 /// whether a key may be served. The two can disagree, and only in one
@@ -101,17 +101,18 @@ pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
 /// the rule exists to refuse, reached through a declaration rather than through
 /// the absence of one.
 ///
-/// Stated over all three terms rather than over inputs alone because a unit
+/// Stated over all four terms rather than over inputs alone because a unit
 /// fanned out over `ingredients <probe>` may declare no file by design: its
 /// member is an observable input (§17.1 observable 5) and is what it is keyed
-/// on. A `seal` is deliberately NOT a term — it narrows reuse of a key that
-/// exists and never mints one (CS-0159).
+/// on. A non-empty seal is likewise an observable input: its materialised
+/// probe values move the unit's key (CS-0223).
 pub fn has_something_to_key_on(
     output_count: usize,
     input_count: usize,
     member_keyed: bool,
+    seal_keyed: bool,
 ) -> bool {
-    output_count > 0 || input_count > 0 || member_keyed
+    output_count > 0 || input_count > 0 || member_keyed || seal_keyed
 }
 
 /// The three values whose movement invalidates a record, independent of any
@@ -213,7 +214,11 @@ pub fn determinant_drift(
 /// published by 9 sits at a key composed from fewer terms, so a 10 reading
 /// either would be reading a record that means something else. Superseded
 /// indexes are swept, not migrated (CS-0166).
-pub const RECORD_SCHEMA_VERSION: u32 = 10;
+///
+/// 10 → 11 (CS-0223). A non-empty seal set can mint a cache key even when
+/// the unit has no files, outputs, or materialised member. Reject every entry
+/// addressed under the old keyability rule.
+pub const RECORD_SCHEMA_VERSION: u32 = 11;
 
 #[cfg(test)]
 #[path = "tests/record_tests.rs"]
