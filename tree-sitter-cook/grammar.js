@@ -324,7 +324,7 @@ module.exports = grammar({
       choice(alias($._bare_probe_key, $.identifier), $.string),
 
     // Default token precedence, deliberately. This carried `prec(-1)` until
-    // it was found to break `repeat1($._disposition_ref)`: a seal/unseal group
+    // it was found to break `repeat1($._disposition_ref)`: a seal step
     // accepted at most ONE bare ref, and only in first position, so
     // `seal a b` and `seal ns:x a` both ERRORed while `seal a ns:x` and
     // `seal ns:a ns:b` parsed — the prefixed alternative carries `prec(1)`
@@ -476,8 +476,7 @@ module.exports = grammar({
 
     ingredient_exclude: ($) => seq("!", $.string),
 
-    // Appendix A recipe-level determinant baseline. `unseal` is trailing-only
-    // and is therefore admitted below only as a cook modifier.
+    // Appendix A recipe-level determinant set.
     seal_step: ($) =>
       seq(
         "seal",
@@ -510,20 +509,7 @@ module.exports = grammar({
         $._newline,
       ),
 
-    cook_mods: ($) =>
-      choice(
-        seq(
-          repeat1(choice($.seal_group, $.unseal_group)),
-          optional($.share_mod),
-        ),
-        $.share_mod,
-      ),
-
-    seal_group: ($) =>
-      seq("seal", repeat1($._disposition_ref)),
-
-    unseal_group: ($) =>
-      seq("unseal", repeat1($._disposition_ref)),
+    cook_mods: ($) => $.share_mod,
 
     _disposition_ref: ($) =>
       choice(
@@ -563,24 +549,12 @@ module.exports = grammar({
         "}",
       ),
 
-    // CS-0159: a `test` is a cacheable unit, so it takes the INPUT half of
-    // the trailing tail — seal/unseal. No `share_mod`: local/pinned/nondet
-    // state a fact about an output artifact and a test produces none, so
-    // they are rejected here (App. A, §8.4.3.3).
     test_step: ($) =>
       seq(
         "test",
         field("body", choice($.shell_block, $.exec_lua_block)),
-        optional($.test_mods),
         $._newline,
       ),
-
-    // CS-0159 §8.4.3.3. Deliberately NOT `cook_mods`: a test takes the input
-    // half of the tail only. `share_mod` (local/pinned/nondet) states a fact
-    // about an output artifact and a test produces none, so it has no slot
-    // here — a `test { … } local` fails to parse rather than reducing to a
-    // node the Rust parser must then reject.
-    test_mods: ($) => repeat1(choice($.seal_group, $.unseal_group)),
 
     lua_line: ($) =>
       seq(

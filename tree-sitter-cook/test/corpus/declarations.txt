@@ -348,24 +348,6 @@ use cook_cc
     module: (identifier)))
 
 ================
-Test step with single-quoted as_name (CS-0061)
-================
-
-recipe r
-    test { true } as 'name'
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)))
-  (ERROR
-    (shell_block
-      (shell_content))
-    (lua_code)))
-
-================
 Config block reading the host surface (CS-0163)
 ================
 

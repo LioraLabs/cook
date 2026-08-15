@@ -1,1 +1,1 @@
-requires at least one probe ref
+`seal` was removed as a trailing modifier (CS-0225)

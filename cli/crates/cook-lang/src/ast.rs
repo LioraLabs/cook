@@ -269,7 +269,7 @@ pub struct TestStep {
     pub body: Body,
     /// Effective `seal` refs — sorted, de-duplicated bare probe keys. Folded
     /// from the recipe-level `seal` baseline plus this test's trailing
-    /// `seal`/`unseal` tail (§8.4.3, CS-0159). A test unit is a cacheable
+    /// recipe-level `seal` set (§8.4.3). A test unit is a cacheable
     /// unit, so it keys on its sealed probes' values exactly as a `cook`
     /// unit does (§17.4 rule 1).
     ///

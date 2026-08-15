@@ -13,7 +13,6 @@
   "cook"
   "test"
   "seal"
-  "unseal"
 ] @keyword
 
 (producer
@@ -136,12 +135,6 @@
   (string) @string)
 
 (seal_step
-  (identifier) @function)
-
-(seal_group
-  (identifier) @function)
-
-(unseal_group
   (identifier) @function)
 
 (files_declaration

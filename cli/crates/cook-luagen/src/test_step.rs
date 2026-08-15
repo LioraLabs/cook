@@ -140,8 +140,7 @@ pub(crate) fn generate_test_step(
     };
     let inputs_field: &str = &inputs_field;
 
-    // CS-0159: the test unit's effective seal set (recipe baseline folded with
-    // this step's trailing seal/unseal by the parser). Emitted as a leading
+    // The test unit's recipe seal set. Emitted as a leading
     // `seal = {...}, ` field so every add_test arm below carries it uniformly;
     // empty when the test seals nothing, keeping existing goldens for
     // unsealed tests byte-identical.
@@ -320,4 +319,3 @@ fn reject_probe_refs_in_command(
         keys: probe_keys.into_iter().collect(),
     })
 }
-

@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::ast::*;
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
@@ -356,18 +354,13 @@ fn scan_balanced_paren_expr<'a>(
     })
 }
 
-/// Build the parsed disposition + per-unit unseal set from a modifier tail.
-fn cook_disposition_from_tail(
-    tail: &str,
-    line: usize,
-) -> Result<(Disposition, BTreeSet<String>), ParseError> {
+fn cook_disposition_from_tail(tail: &str, line: usize) -> Result<Disposition, ParseError> {
     let m = crate::disposition::parse_cook_modifiers(tail, line)?;
-    let disposition = Disposition {
-        seal: m.seal,
+    Ok(Disposition {
+        seal: Default::default(),
         sharing: m.sharing,
         record: m.record,
-    };
-    Ok((disposition, m.unseal))
+    })
 }
 
 pub(crate) fn parse_cook_line(
@@ -376,7 +369,7 @@ pub(crate) fn parse_cook_line(
     tokens: &[Located<Token>],
     current_pos: usize,
     source_lines: &[&str],
-) -> Result<(CookStep, BTreeSet<String>, usize), ParseError> {
+) -> Result<(CookStep, usize), ParseError> {
     let rest = rest.trim();
 
     // §8.4.2 Lua-expression form: `cook (EXPR) >{ ... }`. Detected by a
@@ -427,12 +420,8 @@ pub(crate) fn parse_cook_line(
             source_lines,
             "cook",
         )?;
-        let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
-        return Ok((
-            CookStep { outputs, body: Some(body), disposition },
-            unseal,
-            new_pos,
-        ));
+        let disposition = cook_disposition_from_tail(&tail, line)?;
+        return Ok((CookStep { outputs, body: Some(body), disposition }, new_pos));
     }
 
     if !rest.starts_with('"') {
@@ -492,10 +481,6 @@ pub(crate) fn parse_cook_line(
 
     let (body, tail, new_pos) =
         parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
-    let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
-    Ok((
-        CookStep { outputs, body: Some(body), disposition },
-        unseal,
-        new_pos,
-    ))
+    let disposition = cook_disposition_from_tail(&tail, line)?;
+    Ok((CookStep { outputs, body: Some(body), disposition }, new_pos))
 }

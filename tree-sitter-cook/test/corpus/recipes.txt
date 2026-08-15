@@ -680,11 +680,12 @@ recipe package
       (identifier))))
 
 ================
-Cook disposition groups and final share modifier
+Recipe seal and final share modifier
 ================
 
 recipe package
-    cook "pkg" { bundle } seal cards ns:tools unseal volatile pinned
+    seal cards ns:tools
+    cook "pkg" { bundle } pinned
     cook "scratch" { generate } local
     cook "random" { sample } nondet
 
@@ -694,16 +695,14 @@ recipe package
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
     (cook_step
       outputs: (string)
       body: (shell_block
         (shell_content))
       (cook_mods
-        (seal_group
-          (identifier)
-          (identifier))
-        (unseal_group
-          (identifier))
         (share_mod)))
     (cook_step
       outputs: (string)
@@ -739,7 +738,8 @@ Disposition refs accept a multi-segment key (CS-0201)
 ================
 
 recipe ok
-    cook "a" { x } seal ns:key:field
+    seal ns:key:field
+    cook "a" { x }
 
 ---
 
@@ -747,20 +747,19 @@ recipe ok
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier))
     (cook_step
       outputs: (string)
       body: (shell_block
-        (shell_content))
-      (cook_mods
-        (seal_group
-          (identifier))))))
+        (shell_content)))))
 
 ================
-Share modifier is unique and final
+Single share modifier
 ================
 
 recipe bad
-    cook "a" { x } pinned local
+    cook "a" { x } pinned
 
 ---
 
@@ -773,8 +772,7 @@ recipe bad
       body: (shell_block
         (shell_content))
       (cook_mods
-        (share_mod))
-      (ERROR))))
+        (share_mod)))))
 
 ================
 Recipe seal steps
@@ -812,11 +810,12 @@ recipe app
       (module_call_text))))
 
 ================
-Cook disposition group repeats bare refs
+Recipe seal repeats bare refs
 ================
 
 recipe package
-    cook "pkg" { bundle } seal cards tools unseal stale volatile
+    seal cards tools
+    cook "pkg" { bundle }
 
 ---
 
@@ -824,25 +823,22 @@ recipe package
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
     (cook_step
       outputs: (string)
       body: (shell_block
-        (shell_content))
-      (cook_mods
-        (seal_group
-          (identifier)
-          (identifier))
-        (unseal_group
-          (identifier)
-          (identifier))))))
+        (shell_content)))))
 
 ================
-Cook disposition group mixes bare and prefixed refs in both orders
+Recipe seal mixes bare and prefixed refs
 ================
 
 recipe package
-    cook "a" { x } seal ns:tools cards
-    cook "b" { y } seal cards ns:tools
+    seal ns:tools cards
+    cook "a" { x }
+    cook "b" { y }
 
 ---
 
@@ -850,22 +846,17 @@ recipe package
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
     (cook_step
       outputs: (string)
       body: (shell_block
-        (shell_content))
-      (cook_mods
-        (seal_group
-          (identifier)
-          (identifier))))
+        (shell_content)))
     (cook_step
       outputs: (string)
       body: (shell_block
-        (shell_content))
-      (cook_mods
-        (seal_group
-          (identifier)
-          (identifier))))))
+        (shell_content)))))
 
 ================
 Module call: a long-bracket string is opaque (CS-0208)

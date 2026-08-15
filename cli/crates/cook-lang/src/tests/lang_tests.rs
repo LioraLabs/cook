@@ -2105,19 +2105,6 @@ fn first_test_seal(cf: &Cookfile) -> &std::collections::BTreeSet<String> {
     panic!("no test step found");
 }
 
-/// The nth `test` step's effective seal set (0-indexed among tests).
-fn nth_test_seal(cf: &Cookfile, n: usize) -> &std::collections::BTreeSet<String> {
-    cf.recipes[0]
-        .steps
-        .iter()
-        .filter_map(|s| match s {
-            crate::ast::Step::Test { step, .. } => Some(&step.seal),
-            _ => None,
-        })
-        .nth(n)
-        .expect("test step index out of range")
-}
-
 #[test]
 fn disp_recipe_seal_applies_to_cook() {
     let cf = parse("recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n").unwrap();
@@ -2155,43 +2142,33 @@ fn seal_baseline_reaches_both_cook_and_test() {
 /// A trailing `seal` on a test adds to the baseline; the tail is additive.
 #[test]
 fn test_trailing_seal_adds_to_baseline() {
-    let cf = parse(
+    let err = parse(
         "recipe verify\n    ingredients \"a.c\"\n    seal a\n    test { true } seal b c\n",
     )
-    .unwrap();
-    let seal = first_test_seal(&cf);
-    assert_eq!(
-        seal.iter().cloned().collect::<Vec<_>>(),
-        vec!["a".to_string(), "b".to_string(), "c".to_string()]
-    );
+    .unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
 }
 
 /// `effective(unit) = (baseline ∪ trailing seals) − trailing unseals`, on a
 /// test exactly as on a cook (§8.4.3 rule 4).
 #[test]
 fn test_trailing_unseal_removes_from_baseline() {
-    let cf = parse(
+    let err = parse(
         "recipe verify\n    ingredients \"a.c\"\n    seal a b\n    test { true } unseal a seal c\n",
     )
-    .unwrap();
-    let seal = first_test_seal(&cf);
-    assert_eq!(
-        seal.iter().cloned().collect::<Vec<_>>(),
-        vec!["b".to_string(), "c".to_string()]
-    );
+    .unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
 }
 
 /// An `unseal` on one test MUST NOT leak to a sibling test or cook unit.
 #[test]
 fn test_unseal_is_per_unit_only() {
-    let cf = parse(
+    let err = parse(
         "recipe verify\n    ingredients \"a.c\"\n    seal a\n\
          \x20   test { one } unseal a\n    test { two }\n    cook \"x.o\" { cc }\n",
     )
-    .unwrap();
-    assert!(nth_test_seal(&cf, 0).is_empty());
-    assert!(nth_test_seal(&cf, 1).contains("a"));
-    assert!(first_cook_disposition(&cf).seal.contains("a"));
+    .unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
 }
 
 /// The baseline is declarative: a `seal` after the test still applies to it.
@@ -2223,7 +2200,7 @@ fn test_bare_seal_rejected() {
             panic!("expected ParseError::Parse");
         };
         assert!(
-            message.contains("requires at least one probe ref"),
+            message.contains("CS-0225"),
             "got: {message}"
         );
     }
@@ -2240,7 +2217,7 @@ fn test_share_mod_rejected() {
             panic!("expected ParseError::Parse");
         };
         assert!(
-            message.contains("is not a test modifier") && message.contains("pass/fail"),
+            message.contains("unexpected text after test body"),
             "got: {message}"
         );
     }
@@ -2291,18 +2268,18 @@ fn test_seal_ref_validation_matches_cook() {
         let ParseError::Parse { message, .. } = err else {
             panic!("expected ParseError::Parse");
         };
-        assert!(message.contains("seal:"), "got: {message}");
+        assert!(message.contains("CS-0225"), "got: {message}");
     }
 }
 
 /// A module-prefixed probe ref (`cc:toolchain`) is admitted on a test tail.
 #[test]
 fn test_seal_accepts_module_prefixed_ref() {
-    let cf = parse(
+    let err = parse(
         "recipe v\n    ingredients \"a.c\"\n    test { true } seal cc:toolchain\n",
     )
-    .unwrap();
-    assert!(first_test_seal(&cf).contains("cc:toolchain"));
+    .unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
 }
 
 /// Recipe-level `unseal` stays rejected, and the diagnostic now names both
@@ -2315,7 +2292,7 @@ fn recipe_level_unseal_still_rejected_mentions_test() {
         panic!("expected ParseError::Parse");
     };
     assert!(
-        message.contains("`cook` or `test` step"),
+        message.contains("CS-0225"),
         "got: {message}"
     );
 }
@@ -2353,9 +2330,35 @@ fn disp_recipe_seal_stacks_additively() {
 #[test]
 fn disp_trailing_seal_unseal() {
     // base {a,b} ∪ trailing {c} − trailing unseal {a} = {b,c}
-    let cf = parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap();
-    let got: Vec<&str> = first_cook_disposition(&cf).seal.iter().map(|s| s.as_str()).collect();
-    assert_eq!(got, vec!["b", "c"]);
+    let err = parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
+}
+
+#[test]
+fn cs0225_removed_seal_tails_name_the_recipe_level_step() {
+    for src in [
+        "recipe r\n    cook \"x\" { c } seal host\n",
+        "recipe r\n    test { true } seal host\n",
+    ] {
+        let err = parse(src).expect_err("trailing seal must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("`seal` was removed as a trailing modifier (CS-0225)"), "got: {msg}");
+        assert!(msg.contains("recipe-level `seal` step"), "got: {msg}");
+    }
+}
+
+#[test]
+fn cs0225_removed_unseal_says_to_omit_the_recipe_seal() {
+    for src in [
+        "recipe r\n    cook \"x\" { c } unseal host\n",
+        "recipe r\n    test { true } unseal host\n",
+        "recipe r\n    unseal host\n    cook \"x\" { c }\n",
+    ] {
+        let err = parse(src).expect_err("unseal must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("`unseal` was removed (CS-0225)"), "got: {msg}");
+        assert!(msg.contains("do not put the ref in the recipe's `seal` step"), "got: {msg}");
+    }
 }
 
 #[test]
@@ -2373,10 +2376,8 @@ fn disp_trailing_local_pinned_nondet() {
 
 #[test]
 fn disp_trailing_seal_then_share_mod() {
-    let cf = parse("recipe r\n    cook \"x\" { c } seal rev local\n").unwrap();
-    let d = first_cook_disposition(&cf);
-    assert!(d.seal.contains("rev"));
-    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+    let err = parse("recipe r\n    cook \"x\" { c } seal rev local\n").unwrap_err();
+    assert!(err.to_string().contains("CS-0225"));
 }
 
 #[test]
@@ -2411,7 +2412,7 @@ fn disp_bare_recipe_seal_rejected() {
 #[test]
 fn disp_recipe_unseal_rejected() {
     let e = parse("recipe r\n    unseal a\n    cook \"x\" { c }\n").unwrap_err();
-    assert!(format!("{e:?}").contains("trailing modifier"));
+    assert!(format!("{e:?}").contains("CS-0225"));
 }
 
 #[test]

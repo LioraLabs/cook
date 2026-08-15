@@ -143,19 +143,11 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
-          "type": "seal_group",
-          "named": true
-        },
-        {
           "type": "share_mod",
-          "named": true
-        },
-        {
-          "type": "unseal_group",
           "named": true
         }
       ]
@@ -744,25 +736,6 @@
     }
   },
   {
-    "type": "seal_group",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "seal_step",
     "named": true,
     "fields": {},
@@ -896,25 +869,6 @@
     }
   },
   {
-    "type": "test_mods",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "seal_group",
-          "named": true
-        },
-        {
-          "type": "unseal_group",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "test_step",
     "named": true,
     "fields": {
@@ -932,16 +886,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "test_mods",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -1003,25 +947,6 @@
       "types": [
         {
           "type": "module_call_text",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "unseal_group",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "string",
           "named": true
         }
       ]
@@ -1263,10 +1188,6 @@
   },
   {
     "type": "tools",
-    "named": false
-  },
-  {
-    "type": "unseal",
     "named": false
   },
   {

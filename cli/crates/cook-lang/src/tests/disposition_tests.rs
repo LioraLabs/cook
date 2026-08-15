@@ -3,7 +3,6 @@ use super::*;
 #[test]
 fn mods_empty_tail_is_default() {
     let m = parse_cook_modifiers("", 1).unwrap();
-    assert!(m.seal.is_empty() && m.unseal.is_empty());
     assert_eq!(m.sharing, cook_contracts::Sharing::Shared);
     assert!(!m.record);
 }
@@ -22,31 +21,11 @@ fn mods_share_mod_local_pinned_nondet() {
 }
 
 #[test]
-fn mods_seal_unseal_collect_refs() {
-    let m = parse_cook_modifiers("seal a b unseal c", 1).unwrap();
-    assert_eq!(
-        m.seal.iter().cloned().collect::<Vec<_>>(),
-        vec!["a".to_string(), "b".to_string()]
-    );
-    assert_eq!(
-        m.unseal.iter().cloned().collect::<Vec<_>>(),
-        vec!["c".to_string()]
-    );
-}
-
-#[test]
-fn mods_seal_then_share_mod() {
-    let m = parse_cook_modifiers("seal rev local", 1).unwrap();
-    assert!(m.seal.contains("rev"));
-    assert_eq!(m.sharing, cook_contracts::Sharing::Local);
-}
-
-#[test]
-fn mods_bare_seal_rejected() {
-    assert!(parse_cook_modifiers("seal", 1).is_err());
-    // `local` terminates the ref run → bare seal
-    assert!(parse_cook_modifiers("seal local", 1).is_err());
-    assert!(parse_cook_modifiers("unseal", 1).is_err());
+fn mods_removed_seal_and_unseal_rejected() {
+    for tail in ["seal a", "unseal a"] {
+        let err = parse_cook_modifiers(tail, 1).unwrap_err().to_string();
+        assert!(err.contains("CS-0225"), "got: {err}");
+    }
 }
 
 #[test]

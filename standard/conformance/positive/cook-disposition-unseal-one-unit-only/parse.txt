@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["x.o"] body=ShellBlock(["cc -c x.c -o x.o"]) disposition=[local=false pinned=false record=false seal=["b"]]
+        Cook outputs=["x.o"] body=ShellBlock(["cc -c x.c -o x.o"]) disposition=[local=false pinned=false record=false seal=["a", "b"]]
         Cook outputs=["y.o"] body=ShellBlock(["cc -c y.c -o y.o"]) disposition=[local=false pinned=false record=false seal=["a", "b"]]
   chores:
   register_blocks: []

@@ -1461,78 +1461,8 @@
       ]
     },
     "cook_mods": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "REPEAT1",
-              "content": {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "SYMBOL",
-                    "name": "seal_group"
-                  },
-                  {
-                    "type": "SYMBOL",
-                    "name": "unseal_group"
-                  }
-                ]
-              }
-            },
-            {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "share_mod"
-                },
-                {
-                  "type": "BLANK"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "SYMBOL",
-          "name": "share_mod"
-        }
-      ]
-    },
-    "seal_group": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "seal"
-        },
-        {
-          "type": "REPEAT1",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_disposition_ref"
-          }
-        }
-      ]
-    },
-    "unseal_group": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "unseal"
-        },
-        {
-          "type": "REPEAT1",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_disposition_ref"
-          }
-        }
-      ]
+      "type": "SYMBOL",
+      "name": "share_mod"
     },
     "_disposition_ref": {
       "type": "CHOICE",
@@ -1686,38 +1616,10 @@
           }
         },
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SYMBOL",
-              "name": "test_mods"
-            },
-            {
-              "type": "BLANK"
-            }
-          ]
-        },
-        {
           "type": "SYMBOL",
           "name": "_newline"
         }
       ]
-    },
-    "test_mods": {
-      "type": "REPEAT1",
-      "content": {
-        "type": "CHOICE",
-        "members": [
-          {
-            "type": "SYMBOL",
-            "name": "seal_group"
-          },
-          {
-            "type": "SYMBOL",
-            "name": "unseal_group"
-          }
-        ]
-      }
     },
     "lua_line": {
       "type": "SEQ",

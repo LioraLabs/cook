@@ -16,65 +16,12 @@ recipe r
         (shell_content)))))
 
 ==================
-Removed test as modifier is rejected
+Recipe seal applies to test (CS-0225)
 ==================
 
 recipe r
-    test { true } as "foo"
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)))
-  (ERROR
-    (shell_block
-      (shell_content))
-    (lua_code)))
-
-==================
-Removed test timeout modifier is rejected
-==================
-
-recipe r
-    test { true } timeout 30
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)))
-  (ERROR
-    (shell_block
-      (shell_content))
-    (lua_code)))
-
-==================
-Removed test should_fail modifier is rejected
-==================
-
-recipe r
-    test { true } should_fail
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)))
-  (ERROR
-    (shell_block
-      (shell_content))
-    (lua_code)))
-
-==================
-Test step with trailing seal (CS-0159)
-==================
-
-recipe r
-    test { true } seal host
+    seal host
+    test { true }
 
 ---
 
@@ -82,19 +29,19 @@ recipe r
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      (test_mods
-        (seal_group
-          (identifier))))))
+        (shell_content)))))
 
 ==================
-Test step with trailing unseal then seal (CS-0159)
+Recipe seal carries multiple refs to test (CS-0225)
 ==================
 
 recipe r
-    test { true } unseal a seal b
+    seal a b
+    test { true }
 
 ---
 
@@ -102,21 +49,20 @@ recipe r
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      (test_mods
-        (unseal_group
-          (identifier))
-        (seal_group
-          (identifier))))))
+        (shell_content)))))
 
 ==================
-Test step seals a module-prefixed probe (CS-0159)
+Recipe seals a module-prefixed probe for test (CS-0225)
 ==================
 
 recipe r
-    test { true } seal cc:toolchain
+    seal cc:toolchain
+    test { true }
 
 ---
 
@@ -124,19 +70,19 @@ recipe r
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      (test_mods
-        (seal_group
-          (identifier))))))
+        (shell_content)))))
 
 ==================
-Test step trailing seal repeats bare refs (CS-0159)
+Recipe seal repeats bare refs for test (CS-0225)
 ==================
 
 recipe verify
-    test { true } seal host toolchain
+    seal host toolchain
+    test { true }
 
 ---
 
@@ -144,20 +90,20 @@ recipe verify
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      (test_mods
-        (seal_group
-          (identifier)
-          (identifier))))))
+        (shell_content)))))
 
 ==================
-Test step trailing unseal repeats bare refs (CS-0159)
+Recipe seal repeats four bare refs for test (CS-0225)
 ==================
 
 recipe verify
-    test { true } unseal a b seal c d
+    seal a b c d
+    test { true }
 
 ---
 
@@ -165,13 +111,11 @@ recipe verify
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      (test_mods
-        (unseal_group
-          (identifier)
-          (identifier))
-        (seal_group
-          (identifier)
-          (identifier))))))
+        (shell_content)))))

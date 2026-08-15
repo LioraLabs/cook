@@ -1,3 +1,2 @@
-COOK-171: trailing per-unit `seal`/`unseal` adjust the recipe-level baseline for
-one cook unit: effective(unit) = (base ∪ step_seals) − step_unseals.
-base={a,b}, +seal c, −unseal a  →  {b, c} (sorted, de-duplicated).
+CS-0225 removes trailing `seal` and `unseal`; the recipe-level `seal` step is
+the complete seal set for every cacheable unit.

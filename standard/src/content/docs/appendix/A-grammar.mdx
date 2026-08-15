@@ -194,27 +194,19 @@ ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 gather_step           ::= "gather" ingredient+ NEWLINE  /* CS-0224 */
 
-seal_step             ::= ("seal" | "unseal") probe_ref+ NEWLINE
-                          /* recipe-body step; a determinant input stream,
-                             sibling of ingredients_step. Recipe-level `unseal`
-                             is rejected (trailing-only) — see §8.4.3. */
+seal_step             ::= "seal" probe_ref+ NEWLINE
+                          /* recipe-body determinant input stream; see §8.4.3 */
 cook_step             ::= "cook" cook_output body cook_mods NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
-cook_mods             ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
+cook_mods             ::= share_mod?
 share_mod             ::= "local" | "pinned" | "nondet"
-                          /* a probe_ref in seal_step / cook_mods follows the
+                          /* a probe_ref in seal_step follows the
                              same BARE_PROBE_KEY | STRING shape as every other
                              site that names a probe key (CS-0201) — see §8.4.3 */
 
-test_step             ::= "test"  body test_mods? NEWLINE
-test_mods             ::= ("seal" probe_ref+ | "unseal" probe_ref+)*
-                          /* the INPUT half of cook_mods: a test is a cacheable
-                             unit and seals like one. No share_mod — local /
-                             pinned / nondet state a fact about an output
-                             artifact and a test produces none; they are
-                             rejected in this position. See §8.4.3.3 */
+test_step             ::= "test" body NEWLINE
 body                  ::= exec_lua_block | shell_block
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
@@ -239,7 +231,7 @@ lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
 module_call           ::= MODULE_CALL_TEXT NEWLINE?
                           /* Used both as a top_level_module_call (§A.1) and,
                              as of CS-0134, as a recipe-body item (register-
-                             phase; §{steps.dispatch}, rule 6) — reinstating the
+                             phase; §{steps.dispatch}, rule 7) — reinstating the
                              recipe-body dispatch CS-0072 had removed.
                              MODULE_CALL_TEXT is any Content line whose first
                              token matches /[A-Za-z_][A-Za-z0-9_]*/ (alphanumeric
@@ -300,20 +292,20 @@ ingredients "src/*.c"
 
 **Cook body is mandatory (CS-0133).** A `cook_step` MUST have a body (`{ … }` or `>{ … }`). The former declaration-only form (a `cook` with output pattern(s) and no body) was removed: it registered no work unit and its documented "declaration now, build later via a following `shell_command` or preceding Lua" idiom never executed. A conforming implementation MUST reject a body-less `cook_step` with a diagnostic naming CS-0133. A tail that is neither a body opener nor a valid `cook_mods` token still produces the sharper `cook_mods` diagnostic (see "Multi-line patterns"). Conformance fixture `cs0133-declaration-only-cook-rejected` pins the rejection.
 
-**Cook-step disposition (normative).** A unit's cache participation is declared by two crisp surfaces: `seal`/`unseal` **steps** (a recipe-body determinant input stream) and the trailing **`cook_mods`** on a `cook_step`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a recipe-level `seal` step requires at least one `probe_ref` (bare `seal` rejected), is additive across the recipe, and contributes to a recipe-wide baseline applied to every cook regardless of position (order-independent); a recipe-level `unseal` is rejected (`unseal` is a trailing modifier only); a `cook_step`'s effective seal set is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated; the trailing `share_mod` is a single optional slot (`local`, `pinned`, or `nondet`) which MUST be last (at most one — `local`/`pinned`/`nondet` are mutually exclusive by construction); a `probe_ref` follows the `BARE_PROBE_KEY | STRING` shape of §{grammar-appendix.probe} (CS-0201: the quoted form and multi-segment keys are admitted here as at every other site); and the removed `record` keyword (renamed `nondet`) is rejected with a migration diagnostic. `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words; `seal`/`unseal` are recognised as steps only at a recipe-body line position, and `local`/`pinned`/`nondet` only in the trailing `cook_mods` position.
+**Cook-step disposition (normative).** A recipe-level `seal` step requires at least one `probe_ref`, is additive and order-independent, and its set applies to every cacheable unit. `cook_mods` is the optional single `share_mod` slot (`local`, `pinned`, or `nondet`). Trailing `seal` and every `unseal` position are removed by CS-0225 and MUST receive migration diagnostics. The removed `record` keyword remains rejected with its `nondet` migration diagnostic.
 
 **Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning. This cascade MUST agree with the prose cascade of §{steps.dispatch} (§8.1). As of CS-0134 the recipe body is **purely declarative**: every admitted line is a register-phase step, and a line matching none of the admitted forms is REJECTED — the pre-CS-0134 `shell_command` fall-through is gone (a `shell_command` survives only inside a `chore` body, §{grammar-appendix.chore}), and the `@` interactive prefix with its `interactive_command` step kind is removed from the language entirely (§{lexical.line-prefixes}):
 
 1. Prefix `gather` + separator (space, tab, or end of token) → `gather_step`.
 2. Prefix `ingredients` + separator → `ingredients_step`.
 3. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
-4. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
+4. Prefix `unseal` + separator → rejected as removed by CS-0225 (§{steps.cook-disposition}).
 5. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body — a cook always has one, CS-0133).
 6. Prefix `test` + separator → `test_step`.
 7. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
 8. Otherwise → REJECTED (§{steps.dispatch}). In particular a loose/anonymous `shell_command`, a line beginning with `@` (the `@` prefix and its former `interactive_command` step kind are removed from the language, §{lexical.line-prefixes}), and a standalone `>` / `>{` line (outside body position) are all rejected here; the standalone `>>` / `>>{` forms are already rejected at the lexical layer because CS-0134 removes those prefixes from the language (§{lexical.line-prefixes}). A line whose first token is `local`, `pinned`, or `nondet` is likewise rejected — those keywords are recognised only in the trailing `cook_mods` of a `cook_step`, not at a recipe-body line position.
 
-Note: **CS-0134 reinstates rule 6 (the module-call classification), reversing the CS-0072 removal** of the recipe-body `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` dispatch. CS-0072 had removed that rule and forced authors to reach for the `>>` (`inline_lua_line`) / `>>{` (`inline_lua_block`) prefix to get register-phase Lua inside a recipe body; CS-0134 both reinstates the bare module-call dispatch and removes `>>` / `>>{` from the language entirely (§{lexical.line-prefixes}). Top-level module_call dispatch (§{toplevel.module-call}) is unaffected by this reinstatement.
+Note: **CS-0134 reinstates rule 7 (the module-call classification), reversing the CS-0072 removal** of the recipe-body `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` dispatch. CS-0072 had removed that rule and forced authors to reach for the `>>` (`inline_lua_line`) / `>>{` (`inline_lua_block`) prefix to get register-phase Lua inside a recipe body; CS-0134 both reinstates the bare module-call dispatch and removes `>>` / `>>{` from the language entirely (§{lexical.line-prefixes}). Top-level module_call dispatch (§{toplevel.module-call}) is unaffected by this reinstatement.
 
 ## A.5. Primitives [#grammar-appendix.primitives]
 ```ebnf
