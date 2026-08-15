@@ -129,9 +129,20 @@ fn validate_gather_usage(
             }
         }
 
-        let has_member_driver = recipe.steps.iter()
-            .any(|step| matches!(step, Step::MemberSource { .. }));
-        if has_member_driver {
+        let member_source = recipe.steps.iter().find_map(|step| match step {
+            Step::MemberSource { step, .. } => Some(step),
+            _ => None,
+        });
+        let has_member_driver = member_source.is_some();
+        // CS-0234: the single-quote law is about canonical JSON on a command
+        // line, so it binds DATA members — the array elements of an ordinary
+        // probe. A bare gather source naming a `files` declaration binds the
+        // manifest's PATH members, which are strings and never composite, and
+        // quote exactly as a glob gather's member does. Doubt resolves toward
+        // rejection: only a locally declared `files` source is exempt.
+        let drives_data_members =
+            member_source.is_some_and(|source| !names_files_declaration(cookfile, source));
+        if drives_data_members {
             for step in &recipe.steps {
                 let (body, line) = match step {
                     Step::Cook { step, line } => (step.body.as_ref(), *line),
@@ -173,6 +184,25 @@ fn validate_gather_usage(
         }
     }
     Ok(())
+}
+
+/// Does this member source name a `files` declaration this Cookfile declares?
+///
+/// Standard §22.5.10: a bare gather source selects either a named `files`
+/// declaration, whose manifest keys are path members, or an ordinary probe,
+/// whose array elements are data members. The surface spells both the same
+/// way, so the category is only recoverable from the declaration the key
+/// names. A key this Cookfile does not declare — an imported probe, a
+/// module-registered one — is not exempt: the check runs before registration
+/// (CS-0234), and an unresolvable key resolves toward the data-member reading.
+fn names_files_declaration(cookfile: &Cookfile, source: &MemberSourceStep) -> bool {
+    let MemberSource::GatherKey(key) = &source.source else {
+        return false;
+    };
+    cookfile
+        .probes
+        .iter()
+        .any(|probe| &probe.name == key && matches!(probe.produce, ProbeProduce::Files { .. }))
 }
 
 fn has_unsafe_whole_member_ref(body: &Body) -> bool {

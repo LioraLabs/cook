@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="check" line=4
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        MemberSource source=GatherKey("srcs")
+        Test body=ShellBlock(["node --check $<in>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="srcs" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Files globs=["src/*.test.ts"] excludes=[]

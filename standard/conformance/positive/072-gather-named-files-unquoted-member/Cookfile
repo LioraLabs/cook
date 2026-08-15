@@ -1,0 +1,6 @@
+files srcs
+    "src/*.test.ts"
+
+recipe check
+    gather srcs
+    test { node --check $<in> }
