@@ -744,8 +744,17 @@
                   "type": "SEQ",
                   "members": [
                     {
-                      "type": "SYMBOL",
-                      "name": "ingredients_step"
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "ingredients_step"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "seal_step"
+                        }
+                      ]
                     },
                     {
                       "type": "REPEAT",

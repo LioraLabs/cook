@@ -1,0 +1,1 @@
+probe 'x': at most one `seal`

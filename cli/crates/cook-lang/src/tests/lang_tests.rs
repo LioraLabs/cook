@@ -1753,6 +1753,14 @@ fn parse_probe_lua_block_with_deps_and_ingredients() {
 }
 
 #[test]
+fn parse_probe_seal_adds_fingerprint_refs() {
+    let src = "files \"svc data\"\n    \"data/services.json\"\nprobe services\n    seal \"svc data\"\n    json { cat data/services.json }\n";
+    let cf = crate::parse(src).unwrap();
+    assert_eq!(cf.probes[1].deps, vec!["svc data"]);
+    assert!(cf.probes[1].ingredients.is_empty());
+}
+
+#[test]
 fn parse_probe_terminates_at_next_recipe() {
     let src = "probe a\n    >{ return 1 }\nrecipe build\n    cook.log(\"hi\")\n";
     let cf = crate::parse(src).unwrap();
@@ -1816,10 +1824,24 @@ fn probe_two_ingredients_rejected() {
 }
 
 #[test]
+fn probe_two_seals_rejected() {
+    let msg = parse_err("probe x\n    seal a\n    seal b\n    >{ return 1 }\n");
+    assert!(msg.contains("at most one `seal`"), "got: {msg}");
+    assert!(msg.contains("probe 'x'"), "got: {msg}");
+}
+
+#[test]
 fn probe_ingredients_after_produce_rejected() {
     // Real message: "probe: `ingredients` must appear before the producer"
     let msg = parse_err("probe x\n    >{ return 1 }\n    ingredients \"a\"\n");
     assert!(msg.contains("must appear before the producer"), "got: {msg}");
+}
+
+#[test]
+fn probe_seal_after_produce_rejected() {
+    let msg = parse_err("probe x\n    >{ return 1 }\n    seal a\n");
+    assert!(msg.contains("must appear before the producer"), "got: {msg}");
+    assert!(msg.contains("probe 'x'"), "got: {msg}");
 }
 
 

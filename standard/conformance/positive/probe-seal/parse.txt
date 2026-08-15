@@ -1,0 +1,19 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="svc data" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Files globs=["data/services.json"] excludes=[]
+    Probe name="services_raw" line=4
+      deps: ["svc data"]
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["cat data/services.json"]

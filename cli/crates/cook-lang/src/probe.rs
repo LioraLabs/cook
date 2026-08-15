@@ -1,11 +1,12 @@
 use crate::ast::*;
 use crate::cook_line::{parse_ingredients_line, strip_keyword};
+use crate::disposition::parse_seal_ref_text;
 use crate::lexer::*;
 use crate::ParseError;
 
 pub(crate) fn parse_probe(
     name: String,
-    deps: Vec<String>,
+    mut deps: Vec<String>,
     probe_line: usize,
     tokens: &[Located<Token>],
     start: usize,
@@ -15,6 +16,7 @@ pub(crate) fn parse_probe(
     let mut ingredients: Vec<String> = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut producer: Option<ProbeProduce> = None;
+    let mut seal_seen = false;
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -57,13 +59,30 @@ pub(crate) fn parse_probe(
                         return Err(ParseError::Parse { line: tok.line,
                             message: "probe: `ingredients` must appear before the producer".into() });
                     }
-                    if !ingredients.is_empty() || !excludes.is_empty() {
+                    if seal_seen || !ingredients.is_empty() || !excludes.is_empty() {
                         return Err(ParseError::Parse { line: tok.line,
                             message: "probe: at most one `ingredients` per probe".into() });
                     }
                     let (inc, exc, new_pos) =
                         parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
                     ingredients = inc; excludes = exc; pos = new_pos;
+                    continue;
+                } else if let Some(rest) = strip_keyword(text, "seal") {
+                    if producer.is_some() {
+                        return Err(ParseError::Parse { line: tok.line,
+                            message: format!("probe '{name}': `seal` must appear before the producer") });
+                    }
+                    if seal_seen || !ingredients.is_empty() || !excludes.is_empty() {
+                        return Err(ParseError::Parse { line: tok.line,
+                            message: format!("probe '{name}': at most one `seal` per probe") });
+                    }
+                    if rest.trim().is_empty() {
+                        return Err(ParseError::Parse { line: tok.line,
+                            message: "seal: a probe-level `seal` requires at least one probe ref".into() });
+                    }
+                    deps.extend(parse_seal_ref_text(rest, tok.line)?);
+                    seal_seen = true;
+                    pos += 1;
                     continue;
                 } else {
                     if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {
@@ -94,7 +113,7 @@ pub(crate) fn parse_probe(
             }
             _other => {
                 return Err(ParseError::Parse { line: tok.line,
-                    message: "probe body: only `ingredients` and a producer \
+                    message: "probe body: only `ingredients`, `seal`, and a producer \
                         (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
                         .into() });
             }

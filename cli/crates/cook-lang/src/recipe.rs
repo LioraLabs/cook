@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::ast::*;
 use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
-use crate::disposition::{parse_seal_refs, removed_trailing_seal, removed_unseal};
+use crate::disposition::{parse_seal_ref_text, removed_trailing_seal, removed_unseal};
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
@@ -425,16 +425,14 @@ pub(crate) fn parse_recipe(
                 // stream, sibling of `ingredients`). It contributes to the
                 // recipe-level baseline applied to every cook at finalize.
                 if let Some(rest) = strip_keyword(text, "seal") {
-                    let refs: Vec<String> =
-                        rest.split_whitespace().map(str::to_string).collect();
-                    if refs.is_empty() {
+                    if rest.trim().is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message: "seal: a recipe-level `seal` step requires at least one probe ref"
                                 .to_string(),
                         });
                     }
-                    for r in parse_seal_refs(&refs, tok.line)? {
+                    for r in parse_seal_ref_text(rest, tok.line)? {
                         base_seal.insert(r);
                     }
                     pos += 1;

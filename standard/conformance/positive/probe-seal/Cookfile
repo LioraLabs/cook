@@ -1,0 +1,6 @@
+files "svc data"
+    "data/services.json"
+
+probe services_raw
+    seal "svc data"
+    json { cat data/services.json }

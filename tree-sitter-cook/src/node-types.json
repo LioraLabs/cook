@@ -563,6 +563,10 @@
         {
           "type": "producer",
           "named": true
+        },
+        {
+          "type": "seal_step",
+          "named": true
         }
       ]
     }

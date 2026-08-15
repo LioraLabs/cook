@@ -307,6 +307,29 @@ recipe render
     assert!(tmp.path().join("out/second.txt").exists(), "second.txt missing after edit");
 }
 
+#[test]
+fn native_probe_seal_edit_reinvalidates() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"first"}]"#).unwrap();
+    let cookfile = r#"
+files cards_data
+    "cards.json"
+
+probe cards
+    seal cards_data
+    json { cat cards.json }
+
+recipe render
+    ingredients cards
+    cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/second.txt").exists());
+}
+
 /// A native `probe` and a `cook.probe()` API call with the same key MUST be
 /// rejected by the §22.5.2 duplicate-key diagnostic (coexistence: both register
 /// into one probe table).

@@ -268,8 +268,7 @@ module.exports = grammar({
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body ::= "files" glob_list NEWLINE
-    //                | ingredients_step? producer NEWLINE
+    //   probe_body ::= (ingredients_step | seal_step)? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
     //                | exec_lua_block
     //
@@ -296,7 +295,7 @@ module.exports = grammar({
         repeat(choice($._newline, $.comment)),
         seq(
           optional(seq(
-            $.ingredients_step,
+            choice($.ingredients_step, $.seal_step),
             repeat(choice($._newline, $.comment)),
           )),
           $.producer,

@@ -149,6 +149,34 @@ pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String
     Ok(out)
 }
 
+pub(crate) fn parse_seal_ref_text(text: &str, line: usize) -> Result<Vec<String>, ParseError> {
+    let mut refs = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (i, ch) in text.char_indices() {
+        if start.is_none() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            start = Some(i);
+        }
+        if quoted && escaped {
+            escaped = false;
+        } else if quoted && ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            quoted = !quoted;
+        } else if ch.is_whitespace() && !quoted {
+            refs.push(text[start.take().unwrap()..i].to_string());
+        }
+    }
+    if let Some(start) = start {
+        refs.push(text[start..].to_string());
+    }
+    parse_seal_refs(&refs, line)
+}
+
 #[cfg(test)]
 #[path = "tests/disposition_tests.rs"]
 mod tests;

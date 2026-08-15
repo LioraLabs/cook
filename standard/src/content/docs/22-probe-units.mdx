@@ -25,13 +25,15 @@ denote (§{cat.probes.api}). The `cook.probe()` API is retained for
 dynamic registration; the two register into the same probe table and share the
 duplicate-key diagnostic of §{cat.probes.api}.
 
-The `probe_body` (App. A) comprises an optional declarative `ingredients_step`
-(§{steps.ingredients}) followed by exactly one **producer**. A conforming
+The `probe_body` (App. A) comprises an optional declarative `seal_step`
+(§{steps.disposition}) followed by exactly one **producer**. A conforming
 implementation MUST reject a probe body that: contains no producer; contains
-two or more producers; contains two or more `ingredients`; or contains an
-`ingredients` line after the producer. The header dependency list
-(`probe NAME: a b`) names upstream probe keys and is equivalent to
-`inputs.requires` (§{cat.probes.inputs}).
+two or more producers; contains two or more `seal` lines; or contains a `seal`
+line after the producer. Each seal ref names an upstream probe key and joins
+the header dependency list (`probe NAME: a b`) in `inputs.requires`
+(§{cat.probes.inputs}), so the referenced declaration's fingerprint folds into
+this probe's fingerprint. The legacy `ingredients` spelling remains accepted
+during migration and is mutually exclusive with `seal`.
 
 A **producer** has no introducer keyword: the producer KIND leads, and the
 braces are that kind's body. Since CS-0226 there are four forms — a bare shell
@@ -57,10 +59,9 @@ its Cookfile or module owner: probe keys share one workspace namespace across
 imports, so this convention mitigates collisions. A named declaration is for a
 set worth naming; a single inline determinant should use the inline seal form.
 
-A probe's `ingredients` declares its **file-input fingerprint set** — NOT an
-iteration driver. A probe yields one value and never fans out; the
-`ingredients` globs (with `!` excludes, §{steps.ingredients}) populate
-`inputs.files` (§{cat.probes.inputs}), each file's content hash folding.
+A probe's `seal` declares its **fingerprint inputs** — NOT an iteration driver.
+A probe yields one value and never fans out; each named declaration contributes
+through `inputs.requires`, using the same fingerprint path as a header dependency.
 
 **Diagnostics.** A conforming implementation MUST reject the following probe
 bodies at parse time with a diagnostic that identifies the probe by name and
@@ -71,15 +72,15 @@ the offending line:
 - Two or more producers — a conforming implementation MUST reject the second
   producer with a diagnostic indicating that at most one producer is permitted
   per probe.
-- Two or more `ingredients` blocks — a conforming implementation MUST reject the
-  second `ingredients` with a diagnostic indicating that at most one `ingredients`
+- Two or more `seal` lines — a conforming implementation MUST reject the
+  second `seal` with a diagnostic indicating that at most one `seal`
   is permitted per probe.
-- An `ingredients` block appearing after the producer — a conforming
-  implementation MUST reject with a diagnostic indicating that `ingredients`
+- A `seal` line appearing after the producer — a conforming
+  implementation MUST reject with a diagnostic indicating that `seal`
   must precede the producer.
-- A body step that is neither `ingredients` nor a producer (e.g. a `cook`,
+- A body step that is neither `seal` nor a producer (e.g. a `cook`,
   `test`, or other non-producer step) — a conforming implementation MUST
-  reject with a diagnostic indicating that only `ingredients` and a producer are
+  reject with a diagnostic indicating that only `seal` and a producer are
   permitted in a probe body.
 - A probe name with an EMPTY segment (`probe :a`, `probe a:`, `probe a::b`) —
   a conforming implementation MUST reject it. CS-0201 removed the former
