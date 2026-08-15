@@ -1,0 +1,3 @@
+recipe bundle
+    cook "build/gen.c" { echo 'int main(void){return 0;}' > $<out> }
+    cook "build/bundle.o" { cc -c $<in> -o $<out> }

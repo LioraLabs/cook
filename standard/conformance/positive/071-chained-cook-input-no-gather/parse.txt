@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="bundle" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["build/gen.c"] body=ShellBlock(["echo 'int main(void){return 0;}' > $<out>"])
+        Cook outputs=["build/bundle.o"] body=ShellBlock(["cc -c $<in> -o $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
