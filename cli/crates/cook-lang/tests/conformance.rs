@@ -310,7 +310,6 @@ fn format_probe(p: &Probe) -> String {
             format!("Shell typing={} commands={}", typing_str, repr_list(commands))
         }
         ProbeProduce::Tools(names) => format!("Tools names={}", repr_list(names)),
-        ProbeProduce::Envs(names) => format!("Envs names={}", repr_list(names)),
         ProbeProduce::Files { globs, excludes } => format!(
             "Files globs={} excludes={}",
             repr_list(globs),

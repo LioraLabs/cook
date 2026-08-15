@@ -42,14 +42,11 @@ probe tag-list
         (shell_content)))))
 
 ================
-Top-level tools declaration and envs probe producer
+Top-level tools declaration
 ================
 
 tools toolchain
     cc ld
-
-probe build-env
-    envs { CC CFLAGS }
 
 ---
 
@@ -58,14 +55,7 @@ probe build-env
     name: (identifier)
     (tool_set_line
       (identifier)
-      (identifier)))
-  (probe
-    (probe_header
-      name: (identifier))
-    (producer
-      (env_name_list
-        (identifier)
-        (identifier)))))
+      (identifier))))
 
 ================
 Lua producer
@@ -175,22 +165,6 @@ tools flagname
     (lua_code)))
 
 ================
-envs is not widened to hyphens (CS-0181)
-================
-
-probe envdash
-    envs { CC-FLAGS }
-
----
-
-(source_file
-  (ERROR
-    (probe_header
-      name: (identifier))
-    (identifier)
-    (lua_code)))
-
-================
 Probe declaration accepts a multi-segment key (CS-0201)
 ================
 
@@ -212,7 +186,7 @@ Probe declaration rejects a dotted bare key (CS-0201)
 ================
 
 probe cc.version
-    envs { PATH }
+    lines { echo "$PATH" }
 
 ---
 

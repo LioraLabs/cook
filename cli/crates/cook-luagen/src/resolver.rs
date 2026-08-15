@@ -93,13 +93,13 @@ pub enum ResolveError {
     /// longer backs declared variables. `$<var.NAME>` is the explicit spelling
     /// for a declared variable; an ambient process variable is read either as
     /// an ordinary shell variable (`$NAME` — a step inherits the environment)
-    /// or, when it must be a cache determinant, through an `envs { }` probe.
+    /// or, when it must be a cache determinant, through a named shell probe.
     #[error(
         "placeholder $<env.{key}>: the `env.` prefix is retired — a declared \
          variable is `$<{key}>` (or `$<var.{key}>` to disambiguate from a \
          recipe of the same name). For an ambient process variable use `${key}` \
-         in the step body, or declare an `envs {{ {key} }}` probe to make it a \
-         determinant."
+         in the step body, or declare and seal `probe host:{key}` with \
+         `lines {{ echo \"${key}\" }}` to make it a determinant."
     )]
     RetiredEnvPrefix { key: String },
     /// CS-0187: `$<file:PATH>` is removed. Without a diagnostic the retired

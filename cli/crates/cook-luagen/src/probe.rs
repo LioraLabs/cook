@@ -39,17 +39,13 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
     }
-    // COOK-164: `tools { … }` / `envs { … }` declares the named tools/env-vars
-    // as probe inputs so the fingerprint machinery (resolve_probe_inputs) folds
-    // each tool's binary hash / each env value into the probe fingerprint. This
+    // `tools { … }` declares named tools as probe inputs so the fingerprint
+    // machinery folds each binary hash into the probe fingerprint. This
     // is what makes the hash/value the re-run trigger — the produce body only
     // computes the VALUE; the determinant lives in these declared inputs.
     match &probe.produce {
         ProbeProduce::Tools(names) => {
             out.push_str(&format!("    tools = {{{}}},\n", quoted_list(names)));
-        }
-        ProbeProduce::Envs(names) => {
-            out.push_str(&format!("    env = {{{}}},\n", quoted_list(names)));
         }
         // CS-0148: `files { … }` declares its glob set as `inputs.files` —
         // register-time glob resolution, each file's content hash folding into
@@ -133,31 +129,6 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         // freshly-resolved `path` into the READ view and `cook why` displays it
         // from the same channel.
         ProbeProduce::Tools(_) => cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string(),
-        ProbeProduce::Envs(names) => {
-            // CS-0172: read the AMBIENT PROCESS environment via `os.getenv`.
-            // An `envs { }` probe is the specced channel for making a host
-            // environment value a keyed determinant (§22.5.2), so it must read
-            // the process environment — not the declared-variable namespace.
-            // Before CS-0172 it read `cook.env`, which was both at once; a
-            // config block could therefore silently redefine what an `envs`
-            // probe recorded about the host. The re-run trigger is the declared
-            // `inputs.env` (see emit_probe). An unset var assigns nil, which Lua
-            // never stores as a table key, so the key is OMITTED from the
-            // resulting JSON object (§22.5.2).
-            let mut out = String::from("local _e = {}\n");
-            for name in names {
-                // `name` is a validated bare IDENT, so a quoted-string key is
-                // safe. A long-bracket `[[name]]` would be ambiguous as a table
-                // index — `_e[[[name]]]`.
-                out.push_str(&format!(
-                    "_e[\"{}\"] = os.getenv(\"{}\")\n",
-                    lua_string::escape_double_quoted(name),
-                    lua_string::escape_double_quoted(name)
-                ));
-            }
-            out.push_str("return _e");
-            out
-        }
         // CS-0148: the reserved sentinel — not Lua, never dispatched to a
         // worker. The engine synthesises the value `{ [path] = hash }` from
         // the probe's resolved `inputs.files` (see emit_probe), the same

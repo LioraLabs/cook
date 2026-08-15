@@ -1647,7 +1647,7 @@ fn produce_json_on_lua_block_is_error() {
         "got: {err}");
 }
 
-// ── COOK-164 / COOK-174: tools / envs name-list producers ─────────────
+// ── COOK-164 / COOK-174: tools name-list producer ───────────────
 
 #[test]
 fn produce_tools_parses_name_list() {
@@ -1664,10 +1664,11 @@ fn produce_tools_accepts_whitespace_separators() {
 }
 
 #[test]
-fn produce_envs_parses_name_list() {
-    let cf = parse("probe sdk\n    envs { SDKROOT, CC }\n").unwrap();
-    let p = &cf.probes[0];
-    assert_eq!(p.produce, crate::ast::ProbeProduce::Envs(vec!["SDKROOT".into(), "CC".into()]));
+fn produce_envs_names_shell_probe_replacement() {
+    let err = parse("probe sdk\n    envs { SDKROOT, CC }\n").unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("removed"), "got: {message}");
+    assert!(message.contains("lines { echo \"$SDKROOT\"; echo \"$CC\" }"), "got: {message}");
 }
 
 #[test]
@@ -1680,12 +1681,6 @@ fn produce_tools_empty_list_is_error() {
 fn produce_tools_lua_block_is_error() {
     let err = parse("probe t\n    tools >{ return {} }\n").unwrap_err();
     assert!(format!("{err}").contains("top-level"), "got: {err}");
-}
-
-#[test]
-fn produce_envs_invalid_name_is_error() {
-    let err = parse("probe t\n    envs { 1bad }\n").unwrap_err();
-    assert!(format!("{err}").contains("name"), "got: {err}");
 }
 
 // ── CS-0148: files glob-list producer ─────────────────────────────────

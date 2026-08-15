@@ -10,8 +10,8 @@ entire purpose is that a config body's inputs are declared, was bypassable by
 simply not declaring them.
 
 A step still inherits the ambient environment as ordinary shell variables, so
-`echo $HOME` in the body works. Making a host value a *determinant* is what the
-`envs { }` probe (§22.5.2) is for.
+`echo $HOME` in the body works. Making a host value a *determinant* requires an
+ordinary shell probe over that variable, sealed by name (§8.4.3).
 
 The rejection is register-time (the frozen keyset is consulted when the
 placeholder lowers), so the parser-only harness SKIPS this fixture.

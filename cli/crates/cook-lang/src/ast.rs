@@ -142,10 +142,6 @@ pub enum ProbeProduce {
     /// value is `{ NAME = { path, hash }, … }`. The hash is both the value and
     /// the re-run trigger (COOK-164).
     Tools(Vec<String>),
-    /// `envs { CFLAGS, LDFLAGS }` — the brace content is a LIST of bare
-    /// env-var names (NOT a shell body). The value is `{ NAME = value_or_nil,
-    /// … }`; reading the env records the consulted-env determinant (COOK-164).
-    Envs(Vec<String>),
     /// `files { "src/*.ts" !"src/gen/*.ts" }` — the brace content is a LIST of
     /// quoted glob patterns (NOT a shell body), `!"…"` excluding, following
     /// `ingredients` pattern syntax. The expanded file set self-fingerprints

@@ -6,5 +6,4 @@ the list took the narrow `IDENT` and none of these parsed, which left
 native probe surface.
 
 The `[A-Za-z_]` head is unchanged, so `probe-as-tools-bad-name`
-(`tools { cc --version }`) stays a rejection. `envs` is NOT widened:
-see `cook-disposition-seal-envs-probe`.
+(`tools { cc --version }`) stays a rejection.

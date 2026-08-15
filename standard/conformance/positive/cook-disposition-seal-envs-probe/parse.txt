@@ -17,4 +17,4 @@ Cookfile
       deps: []
       ingredients: []
       excludes: []
-      produce: Envs names=["CFLAGS", "LDFLAGS"]
+      produce: Shell typing=Lines commands=["echo \"$CFLAGS\"; echo \"$LDFLAGS\""]

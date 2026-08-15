@@ -1523,7 +1523,7 @@ fn probe_fingerprint_changes_invalidate_cache() {
     };
     assert_ne!(fp_v1, fp_v2, "fingerprints must differ when env var changes");
 
-    // CS-0172: an `envs { }` probe determinant is read from the AMBIENT PROCESS
+    // An `inputs.env` probe determinant is read from the ambient process
     // environment, so the simulated "machine change" is a real `set_var` rather
     // than a value planted in the node's variable map.
     std::env::set_var(env_var, "first");

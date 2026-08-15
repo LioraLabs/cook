@@ -34,11 +34,12 @@ two or more producers; contains two or more `ingredients`; or contains an
 `inputs.requires` (§{cat.probes.inputs}).
 
 A **producer** has no introducer keyword: the producer KIND leads, and the
-braces are that kind's body. Since CS-0222 there are five forms — a bare shell
-block `{ … }`, a `json`-typed shell block, a `lines`-typed shell block, an
-`envs` name list, and a `>{ … }` Lua block. The former `files { … }` and
-`tools { … }` producers are removed; a conforming implementation MUST reject
-either with a diagnostic naming the corresponding top-level declaration.
+braces are that kind's body. Since CS-0226 there are four forms — a bare shell
+block `{ … }`, a `json`-typed shell block, a `lines`-typed shell block, and a
+`>{ … }` Lua block. The former `files { … }` and `tools { … }` producers are
+removed by CS-0222; `envs { … }` is removed by CS-0226. A conforming
+implementation MUST reject each retired spelling with a diagnostic naming its
+replacement.
 
 ## 22.5.2.1. Named file and tool sets [#cat.probes.named-sets]
 
@@ -93,10 +94,10 @@ the offending line:
   — a conforming implementation MUST reject with a diagnostic indicating that
   `json`/`lines` are valid only on a shell block, since a Lua block already
   returns a structured value.
-- An `envs` name list that is empty, or is given a `>{ … }` Lua block in place
-  of a name list — a conforming implementation MUST reject with a diagnostic
-  identifying the probe and the offending construct. Separately, a top-level
-  `tools NAME` declaration MUST contain at least one `TOOL_NAME` (internal `-`
+- An `envs { NAME, … }` producer — a conforming implementation MUST reject it
+  with a removed-keyword diagnostic naming an ordinary shell probe such as
+  `lines { echo "$NAME" }` as the replacement. Separately, a top-level `tools
+  NAME` declaration MUST contain at least one `TOOL_NAME` (internal `-`
   and `.` allowed; its own production since CS-0201, because a `PROBE_SEG` has
   no `.`). `IDENT` and `TOOL_NAME` both require an `[A-Za-z_]` head, so
   `tools t` followed by `cc --version` is rejected.
@@ -172,14 +173,6 @@ follow lower to the same probe-value model:
   deliberately collision-tolerant fingerprint contribution, must not be
   promoted into an identity. (CS-0214.) A
   conforming implementation MUST reject an empty body.
-- `envs { NAME, … }` (name list): the brace content is a
-  comma/whitespace-separated LIST of bare environment-variable names (`IDENT`),
-  NOT a shell or Lua body. The probe value is a JSON object keyed by variable
-  name; an unset variable is OMITTED from the object. Reading each variable
-  records it as a consulted-environment determinant (§{cat.probes.inputs}), so
-  the environment values fingerprint the probe — an `envs` probe is a named,
-  cached, shareable env-set fingerprint, the env-twin of `tools`. A conforming
-  implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua block.
 - `files NAME` (top-level declaration, CS-0148/CS-0222): the indented body is a
   whitespace-separated LIST of quoted glob patterns following
   `ingredients` pattern syntax (`!"…"` excludes; §{steps.ingredients}), NOT a
@@ -209,8 +202,8 @@ follow lower to the same probe-value model:
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
 implementation MUST reject either applied to a `>{ … }` Lua-block producer with a
 register-phase diagnostic, since a Lua block already returns a structured value.
-The `envs` kind takes a brace NAME LIST. `files` and `tools` are not producer
-kinds after CS-0222; their bodies belong only to top-level declarations.
+`files` and `tools` are not producer kinds after CS-0222; their bodies belong
+only to top-level declarations. `envs` is not a producer kind after CS-0226.
 
 **Coexistence.** The native `probe` declaration and the register-phase
 `cook.probe()` API register into one probe table within a register pass; a key
@@ -230,8 +223,8 @@ the header dependency list becomes `inputs.requires`; `ingredients` (globs and
 `opts.produce` Lua source string — a `>{ … }` block verbatim, a shell block
 wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
 one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
-→ `cook.json_decode`). The `tools`/`envs` name lists become `inputs.tools` /
-`inputs.env` determinant declarations. A `files` glob list lowers to
+→ `cook.json_decode`). A top-level `tools` declaration becomes an
+`inputs.tools` determinant declaration. A `files` glob list lowers to
 `inputs.files` (register-time glob resolution, as for `ingredients`) with the
 reserved `opts.produce` string `"@files-manifest"` — not executable Lua (a bare
 `@` is a Lua syntax error, so no hand-written produce body collides with it);
@@ -412,7 +405,7 @@ A probe unit MUST run at most once per build invocation.
 
 Keylessness propagates along `requires`: a probe that names a keyless probe in `inputs.requires` is itself keyless. Its own fingerprint would otherwise fold section 7 over an upstream fingerprint that is constant while the upstream's *value* moves, so it would be served from cache across a change it exists to notice.
 
-This rule does not reach forms that declare their inputs by construction. A top-level `tools` declaration, an `envs { }` producer, or a top-level `files` declaration lowers to `inputs.tools` / `inputs.env` / `inputs.files` (§{cat.probes.decl}), populating sections 5, 4, or 6, and is therefore **self-keying**. Nor does it reach the units that consume a keyless probe. A unit sealing one keys on the probe's *value* (§{exec.cache.single-key}), not its fingerprint, so re-observing an unchanged world leaves every consumer's key untouched and the build's early cutoff intact.
+This rule does not reach forms that declare their inputs by construction. A top-level `tools` or `files` declaration lowers to `inputs.tools` or `inputs.files` (§{cat.probes.decl}), populating section 5 or 6, and is therefore **self-keying**. An ordinary shell probe over environment has no declared source and deliberately remains keyless: it re-observes whenever reached, while a unit sealing it keys on the probe's *value* (§{exec.cache.single-key}). Re-observing an unchanged environment leaves every consumer's key untouched and the build's early cutoff intact.
 
 Demand-driven scheduling is unaffected: a keyless probe that no scheduled unit reaches still MUST NOT execute, and its fingerprint still MUST NOT be computed.
 

@@ -16,7 +16,7 @@ Five recipes, one per disposition:
 | `generate` | `nondet`      | non-reproducible output; a warm hit reuses the recording instead of re-generating |
 | `pin`      | `pinned`      | fetch-only: served from the cache, never rebuilt; a cold miss is a HARD ERROR |
 
-The `host` probe folds `$SIMHOST` (`envs { SIMHOST }`) so the demos can
+The named `host` probe observes `$SIMHOST` (`lines { echo "$SIMHOST" }`) so the demos can
 simulate moving to a different machine by changing one environment variable —
 in a real Cookfile it would be `cc -dumpmachine` or `uname -srm`.
 

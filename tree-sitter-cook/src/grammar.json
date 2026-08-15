@@ -923,19 +923,6 @@
               ]
             },
             {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "STRING",
-                  "value": "envs"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "env_name_list"
-                }
-              ]
-            },
-            {
               "type": "FIELD",
               "name": "body",
               "content": {
@@ -989,57 +976,6 @@
                 "content": {
                   "type": "SYMBOL",
                   "name": "_tool_name"
-                },
-                "named": true,
-                "value": "identifier"
-              }
-            ]
-          }
-        },
-        {
-          "type": "STRING",
-          "value": "}"
-        }
-      ]
-    },
-    "env_name_list": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "{"
-        },
-        {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_lua_ident"
-          },
-          "named": true,
-          "value": "identifier"
-        },
-        {
-          "type": "REPEAT",
-          "content": {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": ","
-                  },
-                  {
-                    "type": "BLANK"
-                  }
-                ]
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_lua_ident"
                 },
                 "named": true,
                 "value": "identifier"

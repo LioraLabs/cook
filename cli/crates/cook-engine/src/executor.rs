@@ -1757,9 +1757,9 @@ pub fn execute_dag(
                     // genuinely the scheduler's: dispatch, events, node
                     // completion, and fingerprint propagation.
                     //
-                    // CS-0172: an `envs { }` probe records AMBIENT PROCESS
-                    // environment values (§22.5.2) — the whole point of the
-                    // probe is to make a host value a keyed determinant — so
+                    // An `inputs.env` probe records ambient process environment
+                    // values — the whole point of the input is to make a host
+                    // value a keyed determinant — so
                     // the lookup reads the process environment, not the
                     // declared-variable namespace. The two were the same table
                     // before CS-0172, which let a config block redefine what

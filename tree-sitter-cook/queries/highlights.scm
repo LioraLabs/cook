@@ -16,7 +16,7 @@
 ] @keyword
 
 (producer
-  ["json" "lines" "tools" "envs" "files"] @keyword)
+  ["json" "lines" "tools" "files"] @keyword)
 
 (share_mod) @keyword.modifier
 
@@ -51,9 +51,6 @@
   (string) @function)
 
 (tool_set_line
-  (identifier) @variable)
-
-(env_name_list
   (identifier) @variable)
 
 ; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────

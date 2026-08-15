@@ -2208,9 +2208,8 @@ impl RegisterProbeResolver {
         self.state.borrow_mut().in_progress.pop();
         recursed?;
 
-        // CS-0172: `envs { }` probe determinants are ambient process
-        // environment values (§22.5.2), not declared variables — see the
-        // matching lookup in `cook-engine`'s executor.
+        // `inputs.env` probe determinants are ambient process environment
+        // values, not declared variables; modules retain this lower-level API.
         let env_lookup = |name: &str| std::env::var(name).ok();
 
         // Everything from resolving the declared inputs to materialising the

@@ -135,9 +135,7 @@ IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
 PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_\-]*/    /* CS-0201: no `.` — see below */
 probe_body       ::= ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
-                   | "envs" env_name_list
                    | exec_lua_block
-env_name_list    ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
 TOOL_NAME        ::= /[A-Za-z_][A-Za-z0-9_.\-]*/ /* CS-0201: its own production; keeps `.` */
 glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
 glob_pattern     ::= "!"? STRING
@@ -145,19 +143,16 @@ glob_pattern     ::= "!"? STRING
 
 `ingredients_step` is defined in §{grammar-appendix.steps}; `shell_block` and `exec_lua_block` are also defined there (the body-dispatch tests `>{` before `{`).
 
-**Probe body (normative).** A `probe_body` is an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected. `envs` remains a contextual probe-body keyword. The former `files { … }` and `tools { … }` producers are removed by CS-0222; a diagnostic MUST name the corresponding top-level declaration.
+**Probe body (normative).** A `probe_body` is an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected. The former `files { … }` and `tools { … }` producers are removed by CS-0222; `envs { … }` is removed by CS-0226. Each retired spelling MUST receive a diagnostic naming its replacement.
 
 **Named determinant sets (normative; CS-0222).** `files_decl` and `tools_decl` are keyword-led, column-0 top-level declarations. Their indented bodies admit one or more physical lines and one or more entries per line; `files_decl` also admits the no-whitespace `!"glob"` exclusion marker. Each declaration desugars to a probe of the same name with, respectively, `files`-manifest or tool-identity semantics, so its name is admitted anywhere a `probe_ref` is admitted, including `seal`. A column-0 module call whose module segment is `files` or `tools` is shadowed by the declaration keyword and MUST NOT be recovered through backtracking.
 
-**Source-list kinds (normative).** The `tools` and `envs` forms take a name list
-— a brace-delimited, comma/whitespace-separated list of bare names — and the
-`files` form a `glob_list` — the same brace shape holding quoted glob patterns
-with optional `!` exclude prefixes (`ingredients` pattern syntax,
-§{steps.ingredients}) — NOT a `shell_block` or `exec_lua_block`. A conforming
-implementation MUST reject an empty name list or `glob_list` (a `glob_list`
-MUST contain at least one include pattern), an `env_name_list` entry that is not
-an `IDENT`, a `tool_name_list` entry that is not a `TOOL_NAME`, a `glob_list`
-entry that is not a quoted `STRING`, and a body (in particular a `>{ … }`
+**Source-list kinds (normative).** The `tools` declaration takes bare tool names
+and the `files` declaration takes quoted glob patterns with optional `!` exclude
+prefixes (`ingredients` pattern syntax, §{steps.ingredients}). A conforming
+implementation MUST reject an empty list (a `glob_list` MUST contain at least
+one include pattern), a tool entry that is not a `TOOL_NAME`, a glob entry that
+is not a quoted `STRING`, and a body (in particular a `>{ … }`
 `exec_lua_block`) supplied where a name or glob list is required
 (§{cat.probes.decl}). Both list forms are written on a single physical line
 (unlike a multi-line `shell_block`).

@@ -19,8 +19,8 @@ probe target_count: target_list         # probe depending on a probe
 ```
 
 (there is also `json { ... }` for structured data — example 05 fans out
-over JSON records — plus `tools { ... }` / `envs { ... }` for fingerprinting
-tool paths and environment variables, which example 10 uses as a host key.)
+over JSON records. Top-level `tools` declarations fingerprint tool identities;
+example 10 uses an ordinary named shell probe as a host key.)
 
 ## The demo
 

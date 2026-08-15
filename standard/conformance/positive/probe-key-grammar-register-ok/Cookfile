@@ -2,13 +2,13 @@ probe cc-version
     lines { echo one }
 
 probe demo:cc-version
-    envs { PATH }
+    lines { echo "$PATH" }
 
 probe cc:find:raylib
-    envs { PATH }
+    lines { echo "$PATH" }
 
 probe "odd+spelling"
-    envs { PATH }
+    lines { echo "$PATH" }
 
 recipe build
     ingredients cc-version

@@ -23,14 +23,14 @@ Cookfile
       deps: []
       ingredients: []
       excludes: []
-      produce: Envs names=["PATH"]
+      produce: Shell typing=Lines commands=["echo \"$PATH\""]
     Probe name="cc:find:raylib" line=7
       deps: []
       ingredients: []
       excludes: []
-      produce: Envs names=["PATH"]
+      produce: Shell typing=Lines commands=["echo \"$PATH\""]
     Probe name="odd+spelling" line=10
       deps: []
       ingredients: []
       excludes: []
-      produce: Envs names=["PATH"]
+      produce: Shell typing=Lines commands=["echo \"$PATH\""]

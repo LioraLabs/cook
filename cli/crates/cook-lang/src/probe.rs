@@ -147,24 +147,17 @@ pub(crate) fn parse_tools_declaration(name: String, line: usize, tokens: &[Locat
     parse_set_declaration(name, line, tokens, start, source_lines, false)
 }
 
-/// Parse a `tools`/`envs` brace name list: `{ a, b c }` → `["a","b","c"]`.
+/// Parse a `tools` name list, or the retired `envs` list for its diagnostic.
 /// Separators are commas and/or whitespace (mixed allowed). The list MUST be on
 /// one physical line and MUST be non-empty. The `{ … }` here is a NAME LIST, not
 /// a shell/Lua body — so a `>{ … }` Lua block is rejected by the caller before
 /// reaching this function.
 ///
-/// The two kinds take different character sets (CS-0181). An `envs` entry names
-/// an environment variable and stays the narrow `IDENT`: a shell cannot address
-/// `FOO-BAR`, so widening it would admit names nothing could ever set. A `tools`
-/// entry names an executable resolved on PATH, and real ones carry `-` and `.`
-/// routinely — `tree-sitter`, `pkg-config`, `llvm-config`, `wasm-opt` — so it
-/// takes `PROBE_SEG`, the same class CS-0131 gave probe keys. Both still require
-/// an alphabetic-or-underscore head, which is what keeps `tools { cc --version }`
-/// rejected: a flag is not a tool name.
+/// Tools admit `-` and `.`; environment names retain the shell-safe IDENT set.
 fn parse_source_name_list(
     body_src: &str,
     line: usize,
-    kind: &str, // "tools" or "envs", for diagnostics
+    kind: &str,
 ) -> Result<Vec<String>, ParseError> {
     let s = body_src.trim_start();
     let inner = s
@@ -182,12 +175,8 @@ fn parse_source_name_list(
         if tok.is_empty() {
             continue;
         }
-        // CS-0181: `tools` widens to TOOL_NAME; `envs` stays LUA_IDENT. Two
-        // productions, and only the first is the class App. A shares with
-        // `BARE_IDENTIFIER` (COOK-421) -- so this is the live TOOL_NAME
-        // validator and asks for it by name rather than respelling it.
-        let dashes_ok = kind == "tools";
-        let ok = if dashes_ok {
+        let tools = kind == "tools";
+        let ok = if tools {
             cook_contracts::probe_key::is_tool_name(tok)
         } else {
             let mut chars = tok.chars();
@@ -195,11 +184,7 @@ fn parse_source_name_list(
                 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
         if !ok {
-            let charset = if dashes_ok {
-                "[A-Za-z_][A-Za-z0-9_.-]*"
-            } else {
-                "[A-Za-z_][A-Za-z0-9_]*"
-            };
+            let charset = if tools { "[A-Za-z_][A-Za-z0-9_.-]*" } else { "[A-Za-z_][A-Za-z0-9_]*" };
             return Err(ParseError::Parse {
                 line,
                 message: format!(
@@ -300,7 +285,7 @@ fn finish_files_list(
     Ok((ProbeProduce::Files { globs, excludes }, new_pos))
 }
 
-/// Finish a `tools`/`envs` producer: reject a `>{ … }` Lua block (a body, not a
+/// Finish a `tools` producer: reject a `>{ … }` Lua block (a body, not a
 /// name list), parse the brace name list, and advance the token cursor past this
 /// physical line.
 fn finish_source_list(
@@ -325,12 +310,7 @@ fn finish_source_list(
     while new_pos < tokens.len() && tokens[new_pos].line <= line {
         new_pos += 1;
     }
-    let produce = match kind {
-        "tools" => ProbeProduce::Tools(names),
-        "envs" => ProbeProduce::Envs(names),
-        _ => unreachable!("finish_source_list called with kind={kind}"),
-    };
-    Ok((produce, new_pos))
+    Ok((ProbeProduce::Tools(names), new_pos))
 }
 
 /// Finish a `json`/`lines` typed shell producer. The leading keyword has already
@@ -365,11 +345,10 @@ fn finish_typed_shell(
 ///   json  { … }      shell block  -> parsed + validated JSON
 ///   lines { … }      shell block  -> array of stdout lines
 ///   tools { cc, ld } name list    -> cached toolset fingerprint
-///   envs  { CFLAGS } name list    -> cached env-set fingerprint
 ///   files { "a/*.c" } glob list   -> per-file content-hash manifest (CS-0148)
 ///   >{ … }           Lua block    -> structured value (the block's `return`)
 ///
-/// `json`/`lines`/`tools`/`envs`/`files` are contextual keywords, valid only in this
+/// `json`/`lines`/`tools`/`files` are contextual keywords, valid only in this
 /// probe-body position. A bare `{ … }`/`>{ … }` opener never matches a leading
 /// keyword, so detection is unambiguous.
 pub(crate) fn parse_producer(
@@ -385,7 +364,13 @@ pub(crate) fn parse_producer(
         return finish_source_list(tail, line, tokens, current_pos, "tools");
     }
     if let Some(tail) = strip_keyword(text, "envs") {
-        return finish_source_list(tail, line, tokens, current_pos, "envs");
+        let replacement = parse_source_name_list(tail, line, "envs")
+            .map(|names| names.iter().map(|name| format!("echo \"${name}\"")).collect::<Vec<_>>().join("; "))
+            .unwrap_or_else(|_| "echo \"$NAME\"".into());
+        return Err(ParseError::Parse {
+            line,
+            message: format!("`envs {{ … }}` was removed (CS-0226); use an ordinary shell probe: `lines {{ {replacement} }}`"),
+        });
     }
     // Glob-list producer: the braces hold a quoted GLOB LIST, not a body.
     if let Some(tail) = strip_keyword(text, "files") {

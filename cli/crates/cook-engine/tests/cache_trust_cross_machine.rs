@@ -12,7 +12,7 @@
 //!   * `generate` (`record`)     — warm hit reuses the recording, no re-generate.
 //!   * `pin` (`pinned`)          — cold miss in both stores is a HARD ERROR.
 //!
-//! The host signal is an `envs { SIMHOST }` probe; flipping SIMHOST
+//! The host signal is a shell probe over `SIMHOST`; flipping SIMHOST
 //! simulates moving to a different machine. Per-unit runlogs make a re-run
 //! observable; `record` counts via a byte-appended side file. The shared store
 //! is a LocalBackend rooted at `.cook/cloud.toml`'s cache_dir, in a SEPARATE
@@ -36,7 +36,7 @@ fn cook_binary() -> std::path::PathBuf {
 }
 
 const COOKFILE: &str = r#"probe host
-    envs { SIMHOST }
+    lines { echo "$SIMHOST" }
 
 recipe portable
     ingredients "src/in.txt"

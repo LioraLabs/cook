@@ -247,21 +247,6 @@
     }
   },
   {
-    "type": "env_name_list",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "exec_lua_block",
     "named": true,
     "fields": {},
@@ -637,7 +622,7 @@
     "fields": {
       "body": {
         "multiple": false,
-        "required": false,
+        "required": true,
         "types": [
           {
             "type": "exec_lua_block",
@@ -649,16 +634,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "env_name_list",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -1067,10 +1042,6 @@
     "named": false
   },
   {
-    "type": ",",
-    "named": false
-  },
-  {
     "type": ":",
     "named": false
   },
@@ -1100,10 +1071,6 @@
   },
   {
     "type": "cook",
-    "named": false
-  },
-  {
-    "type": "envs",
     "named": false
   },
   {

@@ -7,7 +7,7 @@
 # Host identity as a declared probe (target triple / libc / locale stand-in).
 # `verify.sh` flips SIMHOST to simulate moving to a different machine.
 probe host
-    envs { SIMHOST }
+    lines { echo "$SIMHOST" }
 
 # (unannotated) shares fleet-wide: no host determinant, so its key is
 # machine-independent. A lint/codegen/docs artifact — reproducible anywhere.

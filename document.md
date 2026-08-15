@@ -433,21 +433,21 @@ recomputes exactly when they change. Probes depend on other probes with the same
 colon syntax as recipes; a `>{ lua }` body reads its upstreams with
 `cook.probes.get`.
 
-Three more forms run nothing of yours; they *record a determinant*:
+Top-level declarations can record file and tool determinant sets:
 
 ```
-probe compiler
-    tools { cc }                          # the resolved identity of an executable
+tools compiler
+    cc                                     # the resolved identity of an executable
+
+files sources
+    "src/**/*.c" !"src/gen/**"             # a file set, hashed per file
 
 probe build_env
-    envs { HOSTNAME TERM }                # environment values
-
-probe sources
-    files { "src/**/*.c" !"src/gen/**" }  # a file set, hashed per file
+    lines { echo "$HOSTNAME"; echo "$TERM" } # grouped environment values
 ```
 
-`tools` records which `cc` resolved and its content hash. `envs` records the
-named environment values. `files` records each matched path's content hash
+`tools` records which `cc` resolved and its content hash. The ordinary named
+shell probe groups environment observations for sealing. `files` records each matched path's content hash
 (`ingredients` glob syntax), so editing, adding, or removing any matched file
 changes the value.
 

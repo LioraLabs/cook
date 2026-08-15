@@ -271,7 +271,6 @@ module.exports = grammar({
     //   probe_body ::= "files" glob_list NEWLINE
     //                | ingredients_step? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
-    //                | ("tools" | "envs") name_list
     //                | exec_lua_block
     //
     // The body region (App. A.3.2 "Column-zero constraint" + the
@@ -329,7 +328,7 @@ module.exports = grammar({
     // `seal a b` and `seal ns:x a` both ERRORed while `seal a ns:x` and
     // `seal ns:a ns:b` parsed — the prefixed alternative carries `prec(1)`
     // and repeated fine. The negative precedence was not needed to keep
-    // contextual keywords (`tools`, `envs`, `files`, `json`, `lines`,
+    // contextual keywords (`tools`, `files`, `json`, `lines`,
     // `local`, `pinned`, `nondet`, `as`) winning: those are string literals,
     // which tree-sitter already prefers over a regex token of equal
     // precedence and equal match length. The at-most-one-colon shape is
@@ -353,19 +352,11 @@ module.exports = grammar({
     probe_dep_list: ($) => repeat1($._probe_ref),
 
     // Producer keywords are contextual because these literals occur only
-    // after a probe header. JSON/lines decorate shell output; tools/envs
-    // accept a non-empty, one-line list of bare names.
-    //
-    // The two name lists take different charsets (CS-0201). A `tools` entry
-    // names an executable on PATH, so it is a TOOL_NAME (its own production;
-    // internal `-` and `.` admitted) and `tree-sitter` / `python3.11` are
-    // spellable. An `envs` entry names an environment variable and stays the
-    // narrow IDENT: a shell cannot address `FOO-BAR`.
+    // after a probe header. JSON/lines decorate shell output.
     producer: ($) =>
       seq(
         choice(
           seq(optional(choice("json", "lines")), field("body", $.shell_block)),
-          seq("envs", $.env_name_list),
           field("body", $.exec_lua_block),
         ),
         $._newline,
@@ -376,14 +367,6 @@ module.exports = grammar({
         "{",
         alias($._tool_name, $.identifier),
         repeat(seq(optional(","), alias($._tool_name, $.identifier))),
-        "}",
-      ),
-
-    env_name_list: ($) =>
-      seq(
-        "{",
-        alias($._lua_ident, $.identifier),
-        repeat(seq(optional(","), alias($._lua_ident, $.identifier))),
         "}",
       ),
 
@@ -398,7 +381,7 @@ module.exports = grammar({
     // an optional `!` exclude prefix instead of bare IDENTs. Mirrors
     // `name_list`'s convention of requiring the first entry syntactically
     // (an empty `{}` MISSES the first `glob_pattern`, matching how an
-    // empty `tools {}`/`envs {}` is rejected above): the A-grammar prose
+    // empty `tools {}` is rejected above): the A-grammar prose
     // (§22.5.2) requires a conforming implementation to reject an empty
     // `glob_list`.
     glob_list: ($) =>

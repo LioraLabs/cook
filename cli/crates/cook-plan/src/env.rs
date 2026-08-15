@@ -12,8 +12,8 @@
 //! whole point of which is that a config body's inputs are declared — could
 //! be bypassed by simply not declaring them. Both layers are gone. A step
 //! still inherits the ambient environment as ordinary shell variables (`$HOME`
-//! in a step body works); reading one as a *keyed determinant* is what the
-//! `envs { ... }` probe (§22) is for.
+//! in a step body works); an ordinary named shell probe can observe an ambient
+//! value that must be a keyed determinant (§8.4.3).
 
 use std::collections::HashMap;
 
