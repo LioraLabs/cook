@@ -28,7 +28,7 @@ fn store_backed_substitution_agrees_with_the_law() {
     for ident in ["cc:zlib.name", "cc:zlib.cflags[2]", "cc:zlib.version"] {
         let via_store = resolve_probe_sigils(&store, &format!("echo $<{ident}>"))
             .expect("store path renders");
-        let r = probe_ref(ident).expect("probe-shaped");
+        let r = probe_ref(ident, cook_contracts::sigil::colon_keys_only).expect("probe-shaped");
         let via_law = substitute(&value, r.path(), ident).expect("law renders");
         assert_eq!(via_store, format!("echo {via_law}"), "ident {ident}");
     }
@@ -48,7 +48,7 @@ fn store_backed_substitution_agrees_with_the_law() {
         &mut merged,
         &std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]),
     );
-    let r = probe_ref("cc:tc.gcc.path").expect("probe-shaped");
+    let r = probe_ref("cc:tc.gcc.path", cook_contracts::sigil::colon_keys_only).expect("probe-shaped");
     let via_law = substitute(&merged, r.path(), "cc:tc.gcc.path").expect("law renders");
     assert_eq!(via_store, via_law);
 }
@@ -81,4 +81,59 @@ fn an_unmaterialised_key_is_the_cs0152_diagnostic() {
         error.contains("not materialised"),
         "must be the CS-0152 sentence; got: {error}"
     );
+}
+
+// ─── CS-0240: a colon-free key is a probe ref when the store holds it ───────
+//
+// The execute-phase half of the by-name rule. The renderer has no probe
+// keyset of its own; what it has is the store the unit's `probes` list
+// materialised, which §22.5.7 makes the classification.
+
+#[test]
+fn cs0240_bare_materialised_key_substitutes() {
+    // COOK-491
+    use cook_contracts::probe_value::encode_canonical_json;
+    let store = ProbeValueStore::new();
+    store.insert("keyed_obs", encode_canonical_json(&serde_json::json!("hello")));
+    assert_eq!(
+        resolve_probe_sigils(&store, "echo $<keyed_obs>").expect("substitutes"),
+        "echo hello"
+    );
+}
+
+#[test]
+fn cs0240_bare_materialised_key_takes_a_field_path() {
+    // COOK-491
+    use cook_contracts::probe_value::encode_canonical_json;
+    let store = ProbeValueStore::new();
+    store.insert(
+        "toolchain",
+        encode_canonical_json(&serde_json::json!({"ver": "14.2"})),
+    );
+    assert_eq!(
+        resolve_probe_sigils(&store, "cc-$<toolchain.ver> -c").expect("substitutes"),
+        "cc-14.2 -c"
+    );
+}
+
+#[test]
+fn cs0240_bare_unmaterialised_key_stays_literal() {
+    // COOK-491: every non-probe sigil is already substituted by the time a
+    // command reaches this renderer, so an unrecognised one is shell text —
+    // not a probe miss, which would turn a stray `$<x>` into a hard error.
+    let store = ProbeValueStore::new();
+    assert_eq!(
+        resolve_probe_sigils(&store, "echo $<not_a_probe>").expect("left alone"),
+        "echo $<not_a_probe>"
+    );
+}
+
+#[test]
+fn cs0240_colon_key_miss_is_still_the_cs0152_diagnostic() {
+    // COOK-491: the colon form cannot mean anything else, so an
+    // unmaterialised one stays an error rather than joining the literal case.
+    let store = ProbeValueStore::new();
+    let err = resolve_probe_sigils(&store, "echo $<cc:absent>")
+        .expect_err("an unmaterialised colon key must raise");
+    assert!(err.contains("cc:absent"), "names the key: {err}");
 }

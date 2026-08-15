@@ -365,11 +365,13 @@ pub(crate) fn cook_step_ctx<'a>(
     iter_mode: IterMode,
     output_shape: OutputShape,
     recipes_in_scope: &'a BTreeSet<String>,
+    probe_keys_in_scope: &'a BTreeSet<String>,
 ) -> ResolveCtx<'a> {
     ResolveCtx {
         mode: iter_mode,
         outputs: output_shape,
         recipes_in_scope,
+        probe_keys_in_scope,
     }
 }
 
@@ -426,6 +428,7 @@ fn first_dep_accessor_sigil(pattern: &str, recipe_names: &BTreeSet<String>) -> O
 pub(crate) fn expand_output_pattern(
     pattern: &str,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     out: &mut ConsultedEnv,
 ) -> Result<String, ResolveError> {
     // `$<dep.accessor>` normalises to `path.accessor(_cook_in)`: iteration is
@@ -435,6 +438,7 @@ pub(crate) fn expand_output_pattern(
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: recipe_names,
+        probe_keys_in_scope,
     };
 
     join_spans(pattern, |span| {
@@ -599,11 +603,12 @@ pub(crate) fn validate_plate_test_placeholders(
     body: &Body,
     mode: PlateTestMode,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<(), PlateTestPlaceholderError> {
     if let Body::ShellBlock(lines) = body {
         for line in lines {
             for span in sigil::scan(line) {
-                validate_sigil_token(&span.ident, mode, line, recipe_names)?;
+                validate_sigil_token(&span.ident, mode, line, recipe_names, probe_keys_in_scope)?;
             }
         }
     }
@@ -615,6 +620,7 @@ fn validate_sigil_token(
     mode: PlateTestMode,
     line: &str,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<(), PlateTestPlaceholderError> {
     // COOK-357: classification comes from the resolver, so this validator and
     // `expand_plate_test_body` cannot disagree about what an ident IS. It used
@@ -629,6 +635,7 @@ fn validate_sigil_token(
         mode: IterMode::OneToOne,
         outputs: OutputShape::None,
         recipes_in_scope: recipe_names,
+        probe_keys_in_scope,
     };
 
     // A plate/test step declares no outputs, so every `$<out…>` form is
@@ -693,6 +700,7 @@ fn validate_sigil_token(
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     iter_var: &str,
     out: &mut ConsultedEnv,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
@@ -703,9 +711,10 @@ pub(crate) fn expand_plate_test_body(
         mode: IterMode::OneToOne,
         outputs: OutputShape::None,
         recipes_in_scope: recipe_names,
+        probe_keys_in_scope,
     };
 
-    let mut probe_keys: BTreeSet<String> = BTreeSet::new();
+    let mut found_probe_keys: BTreeSet<String> = BTreeSet::new();
     let concat = join_spans(template, |span| {
         match crate::resolver::resolve(&span.ident, &ctx) {
             // The one substitution that is genuinely plate/test-specific: the
@@ -718,7 +727,7 @@ pub(crate) fn expand_plate_test_body(
             // no execute-phase probe substitution, so the caller rejects the
             // step. See `test_step::reject_probe_refs_in_command`.
             Resolved::ProbeRef { ref key } => {
-                probe_keys.insert(key.clone());
+                found_probe_keys.insert(key.clone());
                 // CS-0195: same helper; the caller rejects test-position probe
                 // refs before this string is ever used.
                 Ok(cook_contracts::registration::probe_subst_call(&span.ident))
@@ -726,7 +735,7 @@ pub(crate) fn expand_plate_test_body(
             other => resolved_to_lua(other, &span.ident, out),
         }
     })?;
-    Ok((concat, probe_keys))
+    Ok((concat, found_probe_keys))
 }
 
 // ─── cook step shell body expansion (sigil-based) ─────────────────────────
@@ -742,6 +751,7 @@ pub(crate) struct PlaceholderValidationContext<'a> {
     pub mode: &'a CookMode,
     pub declared_output_count: usize,
     pub recipe_names: &'a BTreeSet<String>,
+    pub probe_keys_in_scope: &'a BTreeSet<String>,
 }
 
 /// Validate all `$<...>` placeholders in `body_text` against the given context.
@@ -756,6 +766,7 @@ pub(crate) fn validate_placeholders(
         mode: resolver_mode,
         outputs: output_shape,
         recipes_in_scope: ctx.recipe_names,
+        probe_keys_in_scope: ctx.probe_keys_in_scope,
     };
 
     for span in sigil::scan(body_text) {

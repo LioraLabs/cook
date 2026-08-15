@@ -460,7 +460,7 @@ The `BuiltinMatch::Malformed` variant in the resolver makes the hard-stop explic
 
 ## C.21.1. The `cook.require_var` runtime mechanism [#rationale.require-env]
 
-§{xref.resolution} step 3 (declared variable) defers the "declared" check to register time, after config-block evaluation has captured the declared names. The reference implementation realizes this contract through a Lua function `cook.require_var(name)` injected alongside the read-only `var` global, `cook.dep_output`, and the other `cook.*` helpers.
+§{xref.resolution} step 4 (declared variable) defers the "declared" check to register time, after config-block evaluation has captured the declared names. The reference implementation realizes this contract through a Lua function `cook.require_var(name)` injected alongside the read-only `var` global, `cook.dep_output`, and the other `cook.*` helpers.
 
 The function checks `name` against a frozen keyset captured immediately after the config-block phase completes. A missing name produces a `RuntimeError` with a diagnostic that names the consulted token, the closest declared names, and the recommended `var.NAME = ...` declaration form. The keyset is frozen at the end of config-block evaluation; CS-0172 additionally makes the store unreachable for writing outside a config body, so there is no post-freeze write to reason about.
 

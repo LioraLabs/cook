@@ -227,6 +227,17 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0184 §10.2.4: probe-value ref in a verbatim test command — codegen refusal, not syntactic'],
   ['062-retired-env-prefix-in-test-body',
    'CS-0184 §10.2.4: retired `env.` prefix in a test body — codegen rejection, not syntactic'],
+  // CS-0240 App. A.2: one name, one kind. Each declaration in these two files
+  // is well formed on its own; what is refused is the pair, and a uniqueness
+  // rule over declaration names is not something a context-free tree holds.
+  ['probe-name-collides-with-recipe',
+   'CS-0240 App. A.2: probe key equal to a recipe name — parse-phase uniqueness rule, not syntactic'],
+  ['probe-name-collides-with-import-alias',
+   'CS-0240 App. A.2: probe key equal to an import alias — parse-phase uniqueness rule, not syntactic'],
+  // CS-0240 §10.7: a well-formed import declaration whose alias happens to be
+  // the reserved `var` namespace. Nothing about the shape is wrong.
+  ['import-alias-var-reserved',
+   'CS-0240 §10.7: `import` alias spelled `var` — parse-phase reserved-name rule, not syntactic'],
 ]);
 
 function corpusRoot() {

@@ -379,7 +379,7 @@ pub fn register_cookfile(
     //     top-level module calls, register blocks, and recipe registrations
     //     codegen wrapped in `__cook_main`.
     run_main_program(&lua)?;
-    warn_var_shadowing(&builder, &recipes.borrow());
+    warn_var_shadowing(&builder, &recipes.borrow(), &probe_registry.borrow());
 
     // 8. Collision detection — Task 2.3. A name registered more than once
     //    (surface vs dynamic, dynamic vs dynamic, chore vs dynamic) is a
@@ -2155,7 +2155,20 @@ impl RegisterProbeResolver {
     ///
     /// False for a key no probe declares, and false on a discovery pass.
     pub fn resolves(&self, key: &str) -> bool {
-        self.resolution_enabled && self.registry.borrow().probes.contains_key(key)
+        self.resolution_enabled && self.declares(key)
+    }
+
+    /// Does any registered probe carry this key? (CS-0240.)
+    ///
+    /// The half of [`Self::resolves`] that is about the NAME rather than about
+    /// whether this pass will act on it, and the membership question
+    /// §{xref.resolution} step 3 asks. Only the first half belongs there: a
+    /// probe sigil means the same thing on a discovery pass as on a resolving
+    /// one, and classifying it by the pass mode would make `$<keyed_obs>` a
+    /// probe reference or a declared-variable reference depending on which
+    /// pass happened to read it.
+    pub fn declares(&self, key: &str) -> bool {
+        self.registry.borrow().probes.contains_key(key)
     }
 
     /// §22.5.4: a read made from inside a `produce` body may only name a key
@@ -2633,7 +2646,7 @@ pub fn list_names(
     // `register` block that gates a registration on a `var` sees the resolved
     // value. Bodies are still never invoked.
     run_main_program(&lua)?;
-    warn_var_shadowing(&builder, &recipes.borrow());
+    warn_var_shadowing(&builder, &recipes.borrow(), &probe_registry.borrow());
 
     // Same hard-error checks register_cookfile applies. Probe cycle
     // detection runs on the static `requires` graph — no probe BODY runs,
@@ -2977,6 +2990,7 @@ fn run_main_program(lua: &Lua) -> Result<(), RegisterError> {
 fn warn_var_shadowing(
     builder: &RegisterSessionBuilder,
     recipes: &[crate::capture::RegisteredRecipe],
+    probes: &ProbeRegistry,
 ) {
     let declared: std::collections::BTreeSet<String> =
         builder.env_keyset.declared_list().into_iter().collect();
@@ -2985,6 +2999,15 @@ fn warn_var_shadowing(
     }
     let recipe_names: std::collections::BTreeSet<String> =
         recipes.iter().map(|r| r.name.clone()).collect();
+    // CS-0240: a probe key resolves at §{xref.resolution} step 3, ahead of the
+    // declared variable at step 4, so it shadows a variable exactly as a
+    // recipe does. §{xref.env-shadowing} is what CS-0240 chose INSTEAD of a
+    // hard error for this one pair, on the ground that a config-block variable
+    // has no declaration site a parser could name — and that choice is only
+    // honest if the warning it defers to actually fires. So the probe keyset
+    // intersects here beside the recipe set.
+    let probe_keys: std::collections::BTreeSet<String> =
+        probes.probes.keys().cloned().collect();
     let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
     for name in recipe_names.intersection(&declared) {
         let key = (name.clone(), name.clone());
@@ -2993,6 +3016,19 @@ fn warn_var_shadowing(
                 "cook: warning: recipe '{name}' shadows declared var \
                  '{name}': $<{name}> resolves to the recipe (Standard \
                  §5.2.3). Rename one of them."
+            );
+        }
+    }
+    for name in probe_keys.intersection(&declared) {
+        // Keyed distinctly from the recipe case: a name that is somehow both
+        // should report both, not have the second swallowed as a duplicate.
+        let key = (format!("probe:{name}"), name.clone());
+        if emitted.insert(key) {
+            eprintln!(
+                "cook: warning: probe '{name}' shadows declared var \
+                 '{name}': $<{name}> resolves to the probe (Standard \
+                 §5.2.3). Rename one of them, or write $<var.{name}> for \
+                 the variable."
             );
         }
     }

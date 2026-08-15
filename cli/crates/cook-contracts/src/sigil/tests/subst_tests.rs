@@ -11,7 +11,7 @@ use crate::sigil::probe_ref;
 
 /// Parse `ident`, walk its path over `value`, render.
 fn subst(value: serde_json::Value, ident: &str) -> Result<String, String> {
-    let r = probe_ref(ident).expect("test ident must be probe-shaped");
+    let r = probe_ref(ident, crate::sigil::colon_keys_only).expect("test ident must be probe-shaped");
     substitute(&value, r.path(), ident)
 }
 
@@ -127,7 +127,7 @@ fn index_into_non_array_is_a_diagnostic_naming_the_type() {
 #[test]
 fn non_numeric_index_is_a_diagnostic() {
     // The scanner admits `[foo]`; the value walk refuses it.
-    let r = probe_ref("v:t.a[foo]").expect("probe-shaped");
+    let r = probe_ref("v:t.a[foo]", crate::sigil::colon_keys_only).expect("probe-shaped");
     let err = substitute(&json!({"a": ["x"]}), r.path(), "v:t.a[foo]").unwrap_err();
     assert!(err.contains("`[foo]` is not a numeric index"), "{err}");
 }

@@ -1,0 +1,2 @@
+recipe build
+    cook "out/x.txt" { echo x > $<out> }

@@ -36,6 +36,12 @@ pub struct ResolveCtx<'a> {
     pub mode: IterMode,
     pub outputs: OutputShape,
     pub recipes_in_scope: &'a BTreeSet<String>,
+    /// CS-0240 §{xref.resolution} step 3: the probe keys a colon-free sigil may
+    /// name. Derived from the Cookfile being lowered — its native `probe`,
+    /// `files` and `tools` declarations — since those are the keys an author
+    /// can spell without a module prefix. Colon-carrying keys need no
+    /// membership check and so are absent from it.
+    pub probe_keys_in_scope: &'a BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,11 +292,22 @@ pub struct RecipeRef {
 /// [`validate_builtin`] can only narrow an already-matched builtin into an
 /// error. No context turns a builtin into a recipe reference or the reverse, so
 /// no caller has to know the step it is analysing. `resolver_tests` pins it.
+/// **Probe-free by construction (CS-0240).** It supplies an empty probe keyset,
+/// which is sound rather than convenient. Adding a probe key can only turn an
+/// answer of `None` into a different `None` — a probe is not a recipe — and it
+/// can never turn a `Some` into a `None`, because App. A.2's one-name-one-kind
+/// rule rejects at parse time any Cookfile where a name is both a probe key and
+/// a recipe. So the edge set §{xref.dep-implications} derives from this
+/// function is identical with or without the keyset, and CS-0210's requirement
+/// that an analysis agree with §{xref.resolution} about what a token names is
+/// met without threading a set no caller has.
 pub fn recipe_ref(ident: &str, recipes_in_scope: &BTreeSet<String>) -> Option<RecipeRef> {
+    let no_probes = BTreeSet::new();
     let ctx = ResolveCtx {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope,
+        probe_keys_in_scope: &no_probes,
     };
     match resolve(ident, &ctx) {
         Resolved::Recipe { name, accessor } => Some(RecipeRef { name, accessor }),
@@ -310,7 +327,7 @@ pub fn recipe_ref(ident: &str, recipes_in_scope: &BTreeSet<String>) -> Option<Re
 }
 
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
-    // CS-0187: the retired `file:` prefix, refused ahead of the probe colon
+    // CS-0187: the retired `file:` prefix, refused ahead of the probe
     // dispatch — the position the removed namespace occupied — so the
     // diagnostic names the retirement rather than an undeclared probe key.
     if let Some(path) = ident.strip_prefix("file:") {
@@ -319,12 +336,38 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
         });
     }
 
-    // CS-0074: probe-value reference — IDENT contains `:`.
-    // Dispatched before builtin/recipe/env so the colon discriminator is
-    // unambiguous (no builtin or recipe name can contain `:`). The grammar
-    // lives in `sigil` so cook-register's `cook.add_unit` capture reads the
-    // same walker (COOK-357).
-    if let Some(r) = crate::sigil::probe_ref(ident) {
+    // CS-0172 / §{xref.var-namespace}: the reserved `var.` prefix, hoisted
+    // ahead of every lookup step (CS-0240). §10.7 requires `$<var.X>` to reach
+    // the declared variable "regardless of whether a recipe of the same name
+    // exists in scope", and the naming rules forbid `var` as the first segment
+    // of a recipe name, so no earlier step could ever have claimed it —
+    // hoisting is behaviour-preserving for what was already here. It is NOT
+    // behaviour-preserving for the probe-name step added below, which is why it
+    // had to move: a probe keyed `var` would otherwise read `$<var.X>` as field
+    // `X` of that probe, and the explicit spelling would stop being explicit.
+    //
+    // The retired `env.` prefix deliberately did NOT move with it. `env` is
+    // reserved only as a placeholder segment, not as an import alias, so a
+    // qualified `$<env.foo>` naming an imported recipe is legal and must stay
+    // an edge (`dep_ref_tests::cs_0210_a_qualified_name_under_a_builtin_looking_alias_is_a_dep`);
+    // its refusal therefore stays below, after the recipe steps.
+    if let Some(key) = ident.strip_prefix("var.") {
+        return Resolved::EnvRuntime(key.to_string());
+    }
+
+    // CS-0074, amended by CS-0240: probe-value reference. A colon-carrying
+    // IDENT is one on sight — no builtin, recipe or variable name may contain
+    // a colon — and a colon-free one is one when it names a declared probe
+    // key. Ordering: after `file:`/`var.`, ahead of builtin/recipe only for
+    // the colon form, which nothing else can claim. The colon-free form is
+    // resolved BELOW, at §{xref.resolution} step 3, so a builtin shape and a
+    // recipe name keep winning over a same-named probe; the parse-time
+    // one-name-one-kind rule (App. A.2) makes the recipe case unreachable, and
+    // the builtin case is the closed set every position shares.
+    //
+    // The grammar lives in `sigil` so cook-register's `cook.add_unit` capture
+    // reads the same walker (COOK-357).
+    if let Some(r) = crate::sigil::probe_ref(ident, cook_contracts::sigil::colon_keys_only) {
         return Resolved::ProbeRef {
             key: r.key().to_string(),
         };
@@ -377,16 +420,29 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
             accessor: Some(r.accessor.to_string()),
         };
     }
-    // Otherwise a declared variable. CS-0172: `var.` is the explicit prefix
-    // that disambiguates a variable from a same-named recipe; the pre-CS-0172
-    // `env.` prefix is retired along with the process-env namespace it named.
+    // CS-0172: the retired `env.` prefix. Kept ahead of the probe step and the
+    // variable fallthrough, exactly where it was: `env` is reserved as a
+    // placeholder segment, so its refusal outranks a probe that happens to be
+    // keyed `env`.
     if let Some(key) = ident.strip_prefix("env.") {
         return Resolved::Error(ResolveError::RetiredEnvPrefix {
             key: key.to_string(),
         });
     }
-    let var_key = ident.strip_prefix("var.").unwrap_or(ident);
-    Resolved::EnvRuntime(var_key.to_string())
+    // §{xref.resolution} step 3 (CS-0240): a declared probe key, by NAME. The
+    // colon-free half of the probe rule — the half CS-0074 could not express,
+    // because it read the punctuation rather than the name, leaving `probe
+    // keyed_obs` declaring a probe that `$<keyed_obs>` fell past into the
+    // variable step below and reported as undeclared.
+    if let Some(r) = crate::sigil::probe_ref(ident, |k| ctx.probe_keys_in_scope.contains(k)) {
+        return Resolved::ProbeRef {
+            key: r.key().to_string(),
+        };
+    }
+    // Otherwise a declared variable — §{xref.resolution} step 4, and the
+    // fallthrough that step 5's hard error is raised from at register time.
+    // The `var.` and `env.` prefixes are handled at the top of this function.
+    Resolved::EnvRuntime(ident.to_string())
 }
 
 fn match_builtin(ident: &str) -> BuiltinMatch {

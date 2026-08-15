@@ -1,0 +1,2 @@
+recipe helper
+    cook "out/h.txt" { echo h > $<out> }

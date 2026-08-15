@@ -181,6 +181,7 @@ fn one_to_one_add_unit_line(
     uses: &[UseStatement],
     gather_len: usize,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     iter_mode: IterMode,
     output_shape: OutputShape,
     consulted: &mut ConsultedEnv,
@@ -189,7 +190,7 @@ fn one_to_one_add_unit_line(
     Ok(match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
             let combined = cook_contracts::shell_block::compose(lines);
-            let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+            let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names, probe_keys_in_scope);
             let (lua_expr, probe_keys) = expand_command_template(&combined, &ctx, consulted)?;
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
@@ -221,6 +222,7 @@ pub(crate) fn generate_cook_step(
     prev_cook_index: Option<usize>,
     inputs: &[String],
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<(), crate::resolver::ResolveError> {
     // CS-0101: one accumulator per cook step, tagged by the step's position in
     // the recipe body so hoisted locals are unique within the recipe chunk.
@@ -283,6 +285,7 @@ pub(crate) fn generate_cook_step(
                 uses,
                 inputs.len(),
                 recipe_names,
+                probe_keys_in_scope,
                 iter_mode,
                 output_shape,
                 &mut consulted,
@@ -340,7 +343,7 @@ pub(crate) fn generate_cook_step(
             // `cook "out/all-$<suffix>.o"` wrote a file called `out/all-$`
             // and let /bin/sh read `$<suffix>` as a redirect.
             let out_expr =
-                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, &mut consulted)?;
+                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, probe_keys_in_scope, &mut consulted)?;
 
             let add_unit_line = one_to_one_add_unit_line(
                 cook_step,
@@ -348,6 +351,7 @@ pub(crate) fn generate_cook_step(
                 uses,
                 inputs.len(),
                 recipe_names,
+                probe_keys_in_scope,
                 iter_mode,
                 output_shape,
                 &mut consulted,
@@ -381,13 +385,13 @@ pub(crate) fn generate_cook_step(
             // `cook "out/all-$<suffix>.o"` wrote a file called `out/all-$`
             // and let /bin/sh read `$<suffix>` as a redirect.
             let out_expr =
-                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, &mut consulted)?;
+                expand_output_pattern(cook_step.outputs[0].as_str(), recipe_names, probe_keys_in_scope, &mut consulted)?;
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
 
             match &cook_step.body {
                 Some(Body::ShellBlock(lines)) => {
                     let combined = cook_contracts::shell_block::compose(lines);
-                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names, probe_keys_in_scope);
                     let (lua_expr, probe_keys) =
                         expand_command_template(&combined, &ctx, &mut consulted)?;
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
@@ -430,7 +434,7 @@ pub(crate) fn generate_cook_step(
             let mut consulted = ConsultedEnv::new();
             let mut outs_block = String::from("        local _cook_outs = {\n");
             for pat in &cook_step.outputs {
-                let expr = expand_output_pattern(pat.as_str(), recipe_names, &mut consulted)?;
+                let expr = expand_output_pattern(pat.as_str(), recipe_names, probe_keys_in_scope, &mut consulted)?;
                 outs_block.push_str(&format!("            {},\n", expr));
             }
             outs_block.push_str("        };\n");
@@ -443,6 +447,7 @@ pub(crate) fn generate_cook_step(
                         IterMode::OneToOne,
                         OutputShape::Multi(cook_step.outputs.len()),
                         recipe_names,
+                        probe_keys_in_scope,
                     );
                     let (lua_expr, probe_keys) =
                         expand_command_template(&combined, &oto_many_ctx, &mut consulted)?;
@@ -505,6 +510,7 @@ pub(crate) fn generate_cook_step(
                         IterMode::ManyToOne,
                         OutputShape::Multi(cook_step.outputs.len()),
                         recipe_names,
+                        probe_keys_in_scope,
                     );
                     let (lua_expr, probe_keys) =
                         expand_command_template(&combined, &block_ctx, &mut consulted)?;
@@ -557,6 +563,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     uses: &[UseStatement],
     index: usize,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     member_source: &MemberSourceStep,
 ) -> Result<(), crate::resolver::ResolveError> {
     let extra_gather: &[String] = &member_source.extra_gather;
@@ -571,6 +578,7 @@ pub(crate) fn generate_member_fanout_cook_step(
         IterMode::OneShot,
         count_to_output_shape(cook_step.outputs.len()),
         recipe_names,
+        probe_keys_in_scope,
     );
     // CS-0101 compute-then-emit: expand the output paths and body BEFORE
     // pushing the member-loop header so file-ref hoists precede the loop.

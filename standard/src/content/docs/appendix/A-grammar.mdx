@@ -63,13 +63,15 @@ The discriminator is the `.lua` suffix rather than "does the argument fail to le
 
 **Recipe / chore declaration names — no dots.** The `name` of a `recipe_header` or `chore_header` MUST NOT contain `.` (dot). A conforming implementation MUST reject a top-level declaration `recipe NAME` or `chore NAME` whose `NAME` (whether bare or quoted) contains a dot, at parse time. Diagnostic: `recipe name 'NAME': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing`. Namespacing across Cookfiles is achieved exclusively via `import_declaration` (§{comp.import}); a dotted reference appearing in a `dependency_list` or in a `$<...>` placeholder resolves through an `import` alias per §{comp.qualified-refs}.
 
-**Duplicate recipe / chore declaration name rule.** Recipes and chores share a single callable namespace within a Cookfile. The `name` of every `recipe_header` and `chore_header` MUST be unique across the union of recipe and chore declarations. A conforming implementation MUST reject, at parse time, a Cookfile that contains:
+**Duplicate declaration name rule.** Recipes, chores and probe keys share a single declaration namespace within a Cookfile. The `name` of every `recipe_header` and `chore_header`, and the `probe_name` of every `probe`, `files_decl` and `tools_decl`, MUST be unique across the union of those declarations. A conforming implementation MUST reject, at parse time, a Cookfile that contains:
 
 1. two `recipe_header` declarations with the same `name` (recipe-vs-recipe collision); or
 2. two `chore_header` declarations with the same `name` (chore-vs-chore collision); or
-3. one `recipe_header` and one `chore_header` with the same `name` (recipe-vs-chore collision).
+3. one `recipe_header` and one `chore_header` with the same `name` (recipe-vs-chore collision); or
+4. a probe key equal to a `recipe_header` or `chore_header` `name`, in either declaration order (CS-0240); or
+5. a probe key equal to an `import_declaration` alias, in either declaration order (CS-0240).
 
-Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe build` and `recipe "build"`) refer to the same callable and therefore collide. The diagnostic MUST identify the offending kind, the colliding name, and the source line of the prior declaration. The recommended diagnostic form is `KIND 'NAME': duplicate declaration (already declared as PRIOR_KIND at line N)`, where `KIND` is the kind of the second declaration and `PRIOR_KIND` is the kind of the first. Cross-Cookfile namespacing for callables that would otherwise collide is achieved via `import_declaration` aliases per §{comp.import}.
+Rules 4 and 5 exist because §{xref.resolution} step 3 resolves a probe key by name: a name that is two kinds gives `$<NAME>` two readings and `$<NAME.field>` three, and rejecting it is what keeps §{xref.dotted-names} at two heuristics rather than three. They do not extend to recipe-vs-alias, which stays legal. A colon-qualified key is outside both rules by construction, since a colon cannot appear in a bare declaration name; the QUOTED form is not, because names compare verbatim and `probe "status"` denotes the same key as `probe status` — `recipe status` beside `probe "status"` is a collision and MUST be rejected. Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe build` and `recipe "build"`) refer to the same callable and therefore collide. The diagnostic MUST identify the offending kind, the colliding name, and the source line of the prior declaration. The recommended diagnostic form is `KIND 'NAME': duplicate declaration (already declared as PRIOR_KIND at line N)`, where `KIND` is the kind of the second declaration and `PRIOR_KIND` is the kind of the first. Cross-Cookfile namespacing for callables that would otherwise collide is achieved via `import_declaration` aliases per §{comp.import}.
 
 **Reserved recipe segment identifiers.** The seven identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `env` MUST NOT appear as the *final* dot-separated segment of a `dependency_list` entry or a `$<...>` placeholder, and `env` MUST NOT appear as the *first* dot-separated segment of either. This reserves the `env.` prefix for the explicit env-var-lookup form (§{xref.env-namespace}). The reservation does NOT constrain a recipe or chore *declaration name* or a chore *parameter name* (CS-0132): a declaration name is undotted (a dotted declaration name is rejected outright by the no-dots rule above), so `recipe out`, `chore name`, and `recipe env` are all well-formed. `all` is NOT among these reserved identifiers (CS-0130): `recipe all` and a dependency segment `all` are both well-formed.
 
@@ -368,8 +370,10 @@ The reference implementation reads the class from one place, `cook_contracts::na
 
 ```ebnf
 sigil_placeholder       ::= "$<" placeholder_ident ">"
-placeholder_ident       ::= bare_ident | recipe_member | out_indexed | out_indexed_acc
+placeholder_ident       ::= bare_ident | probe_sigil_ref | recipe_member | out_indexed | out_indexed_acc
 bare_ident              ::= ALPHA (ALPHA | DIGIT | "_" | ".")*
+probe_sigil_ref         ::= BARE_PROBE_KEY probe_access_path
+probe_access_path       ::= ( "." IDENT | "[" DIGIT+ "]" )*
 recipe_member           ::= bare_ident "[" member_index "]"
 member_index            ::= "in"
 out_indexed             ::= "out_" DIGIT+
@@ -378,7 +382,7 @@ ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
 DIGIT                   ::= "0"…"9"
 ```
 
-The `ACCESSOR` production is defined above. The `recipe_member` alternative (CS-0098, respelled `[in]` by CS-0137) is resolved per §{steps.cross-recipe-member}; only the literal index `in` is valid in v1.0 — the bracketed-index position is reserved for 1.x keyed joins. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and a `test_step`'s `shell_block` body text. Resolution is defined by §{xref.resolution} and §{phl.cook-step}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
+The `ACCESSOR` production is defined above. The `probe_sigil_ref` alternative (CS-0240) is the probe-value reference of §{cat.probes.templates}: `BARE_PROBE_KEY` is the production of §{grammar-appendix.probe}, so the sigil's IDENT-continue set admits `:` and internal `-` beyond `bare_ident`'s. It is not distinguished from `bare_ident` by shape — a colon-free key is spelled exactly like a recipe name — so the alternatives are disambiguated by §{xref.resolution}, not by the lexer, and the one-name-one-kind rule of A.2 is what makes that disambiguation total. The `recipe_member` alternative (CS-0098, respelled `[in]` by CS-0137) is resolved per §{steps.cross-recipe-member}; only the literal index `in` is valid in v1.0 — the bracketed-index position is reserved for 1.x keyed joins. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and a `test_step`'s `shell_block` body text. Resolution is defined by §{xref.resolution} and §{phl.cook-step}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 

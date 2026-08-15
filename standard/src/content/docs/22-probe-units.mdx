@@ -25,6 +25,20 @@ denote (§{cat.probes.api}). The `cook.probe()` API is retained for
 dynamic registration; the two register into the same probe table and share the
 duplicate-key diagnostic of §{cat.probes.api}.
 
+**Probe keys share a name space with callables and import aliases (normative;
+CS-0240).** A probe key declared in a Cookfile — by a native `probe`
+declaration or by a `files` or `tools` declaration (§{cat.probes.named-sets}) —
+MUST NOT equal the name of a `recipe` or `chore` declared in the same Cookfile,
+nor an `import` alias declared there. A conforming implementation MUST reject
+such a Cookfile at parse time with a diagnostic naming both declaration sites,
+in either declaration order (App. A.2). The rule follows from §{xref.resolution}
+step 3: with a probe key resolving by name, a name that is two kinds gives
+`$<NAME>` two readings and `$<NAME.field>` three. A colon-qualified key is
+outside the rule's reach by construction, since a colon cannot appear in a bare
+declaration name. The quoted form is NOT outside it: names compare verbatim, so
+`probe "status"` denotes the same key as `probe status` and collides with
+`recipe status` exactly as the bare spelling does.
+
 The `probe_body` (App. A) comprises an optional declarative `seal_step`
 (§{steps.cook-disposition}) followed by exactly one **producer**. A conforming
 implementation MUST reject a probe body that: contains no producer; contains
@@ -359,7 +373,13 @@ Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` pl
 >
 > A conforming implementation MUST make a unit's captured output independent of whether its command contains a probe reference. Whether it substitutes into the command text, rewrites the command into some other executable form, or does something else again, is its own affair, and no part of it is observable to a Cookfile author beyond the substituted values themselves.
 
-The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
+The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil is a probe-value reference when the part of its IDENT preceding any access path names a declared probe key, which is step 3 of §{xref.resolution}; the implementation MUST dispatch such a sigil to the cache-read path described here. Any other sigil retains its register-time semantics (builtins, recipe names, declared variables).
+
+> **Amended (CS-0240): the colon was the dispatch rule and is now only a lexing fact.** This section previously read "a sigil whose IDENT contains a colon is unambiguously a probe-value reference … a sigil whose IDENT contains no colon retains its existing register-time semantics", which left the sigil as the one bare-name position in the language resolving lexically rather than by lookup. Every other position that names a probe key — a `seal` operand, a `gather` source, a `probes = {…}` entry, a `cook.probes.get` argument — already resolved a colon-free key by name, and the native `probe` declaration (§{cat.probes.decl}) mints colon-free keys, so a probe was reachable through every surface except the one this section specifies.
+>
+> What the colon retains is narrower and needs no rule of its own: no builtin, recipe or declared-variable name may contain one, so a colon-carrying IDENT is a probe reference on sight, which is what lets an implementation dispatch a module-prefixed key at a site holding no probe keyset. The reference implementation's raw `cook.add_unit` capture is exactly such a site — §{cat.probes.consumer} leaves `cook.probe` and `cook.add_unit` call order unconstrained, so at the moment a command string is captured the probe keyset is not yet complete, and only a colon-carrying key can be recognised there.
+>
+> Because a probe key now resolves by name, one name MUST NOT be two kinds: §{xref.resolution}'s one-name-one-kind rule rejects a Cookfile declaring the same name as a probe key and as a recipe, chore, or import alias.
 
 These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including bodies of `gather <probe>` fan-out recipes), to chore `shell_command` steps (§{chores.default-interactive}, CS-0193), and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; this closes a prior defect where the reference implementation emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
 

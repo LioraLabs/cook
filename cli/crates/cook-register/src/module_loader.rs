@@ -298,7 +298,15 @@ pub fn register_cache_api(
     let prepass_subst = prepass.clone();
     let resolver_subst = resolver.clone();
     let subst_fn = lua.create_function(move |lua, ident: String| {
-        let r = cook_contracts::sigil::probe_ref(&ident)
+        // CS-0240: the key/path split asks the register-phase probe registry
+        // whether a colon-free base names a probe. This is the one site that
+        // holds the FULL keyset — every `probe`/`files`/`tools` declaration and
+        // every module `cook.probe` registration — which is why the membership
+        // question is answered here rather than inherited from codegen's
+        // narrower, parse-time view. The borrow is released when `probe_ref`
+        // returns, before `resolve` below reaches for the registry again.
+        let declared = |k: &str| resolver_subst.declares(k);
+        let r = cook_contracts::sigil::probe_ref(&ident, declared)
             .ok_or_else(|| LuaError::runtime(format!("$<{ident}>: not a probe-value reference")))?;
         // CS-0219: resolve on demand, exactly as a `cook.probes.get` read does.
         // Reading the store alone made this succeed or fail on whether some

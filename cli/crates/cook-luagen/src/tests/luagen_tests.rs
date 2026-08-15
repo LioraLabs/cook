@@ -4,6 +4,13 @@ use cook_lang::ast::*;
 
 use crate::compile_chore;
 
+/// COOK-491: the §10.2 step-3 lookup set, empty for tests that predate it.
+fn no_probes() -> &'static BTreeSet<String> {
+    static S: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    S.get_or_init(BTreeSet::new)
+}
+
+
 // COOK-357 collapsed the four public codegen entry points into one,
 // `generate_checked`. These tests exercise the lowering below that validation
 // layer, so they reach for the crate-internal lowering directly rather than
@@ -71,6 +78,7 @@ fn test_expand_template_no_placeholders() {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("echo hello", &ctx, &mut env).unwrap();
@@ -87,6 +95,7 @@ fn test_expand_template_single_placeholder() {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<in>", &ctx, &mut env).unwrap();
@@ -103,6 +112,7 @@ fn test_expand_template_mixed() {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env).unwrap();
@@ -120,6 +130,7 @@ fn test_expand_template_stem_in_path() {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("build/$<stem>.o", &ctx, &mut env).unwrap();
@@ -137,6 +148,7 @@ fn test_expand_template_in_stem_in_path() {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env).unwrap();
@@ -156,6 +168,7 @@ fn test_expand_template_in_many_to_one() {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Single,
         recipes_in_scope: &r,
+        probe_keys_in_scope: no_probes(),
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env).unwrap();
@@ -1880,7 +1893,7 @@ fn test_compile_chore_resolves_recipe_ref_to_dep_output() {
     );
     let mut names = std::collections::BTreeSet::new();
     names.insert("engine".to_string());
-    let lua = compile_chore(&chore, &[], &names);
+    let lua = compile_chore(&chore, &[], &names, no_probes());
     assert!(
         lua.contains("cook.dep_output(\"engine\")"),
         "chore $<engine> must lower to cook.dep_output, got:\n{lua}"
@@ -1904,7 +1917,7 @@ fn test_compile_chore_basic_shell_interactive_cache_false() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     // Surface chores lower to `cook.__register_surface_chore` (CS-0077 codegen).
     // The metadata table always carries `__line = N` even when the chore has
     // no deps, so the table is non-empty.
@@ -1948,7 +1961,7 @@ fn test_compile_chore_multiple_shell_steps_not_bundled() {
             },
         ],
     );
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert_eq!(
         lua.matches("cook.add_unit").count(),
         2,
@@ -1979,7 +1992,7 @@ fn test_compile_chore_with_lua_step_cache_false() {
             line: 2,
         }],
     );
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(lua.contains(r#"print("hello")"#), "Lua code missing, got:\n{lua}");
     assert!(
         lua.contains("cache = false"),
@@ -2041,7 +2054,7 @@ fn test_compile_chore_with_deps() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(
         lua.contains(r#"requires = {"build"}"#),
         "chore deps should become requires, got:\n{lua}"
@@ -2063,7 +2076,7 @@ fn test_compile_chore_emits_no_enter_exit_markers() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(!lua.contains("_enter_chore"), "stale _enter_chore marker, got:\n{lua}");
     assert!(!lua.contains("_exit_chore"), "stale _exit_chore marker, got:\n{lua}");
     // The body still registers its unit uncached and interactive.
@@ -3133,7 +3146,7 @@ fn compile_chore_emits_param_metadata_and_locals() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(lua.contains("__params"), "lua: {lua}");
     assert!(lua.contains(r#"{name = "target", kind = "required""#), "lua: {lua}");
     assert!(lua.contains(r#"{name = "host", kind = "defaulted_string", default = "prod""#), "lua: {lua}");
@@ -3160,7 +3173,7 @@ fn compile_chore_emits_defaulted_lua_param_metadata() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(
         lua.contains(r#"{name = "version", kind = "defaulted_lua", default = function() return (cook.git.head_tag() or "v0") end}"#),
         "lua: {lua}"
@@ -3186,7 +3199,7 @@ fn compile_chore_emits_variadic_param_metadata() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(
         lua.contains(r#"{name = "files", kind = "variadic_plus"}"#),
         "lua: {lua}"
@@ -3207,7 +3220,7 @@ fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     assert!(!lua.contains("__params"), "lua: {lua}");
     assert!(!lua.contains("local "), "no local-binding prelude expected for paramless chore. lua: {lua}");
     // Paramless chores still take `function(__cook_params)` so the runtime
@@ -3317,7 +3330,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new(), no_probes());
     // Must emit env = {["target"] = __cook_params.target}
     assert!(lua.contains("env ="), "env field missing from add_unit. lua:\n{lua}");
     assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");
@@ -3894,7 +3907,7 @@ fn test_compile_chore_infers_requires_from_body_dep_ref() {
     );
     let mut names = std::collections::BTreeSet::new();
     names.insert("app".to_string());
-    let lua = compile_chore(&chore, &[], &names);
+    let lua = compile_chore(&chore, &[], &names, no_probes());
     assert!(
         lua.contains(r#"requires = {"app"}"#),
         "chore body $<app> must contribute an inferred requires edge, got:\n{lua}"
@@ -3917,7 +3930,7 @@ fn test_compile_chore_merges_explicit_and_inferred_requires() {
     let mut names = std::collections::BTreeSet::new();
     names.insert("app".to_string());
     names.insert("setup".to_string());
-    let lua = compile_chore(&chore, &[], &names);
+    let lua = compile_chore(&chore, &[], &names, no_probes());
     assert!(
         lua.contains(r#"requires = {"setup", "app"}"#),
         "explicit-first, inferred-appended, deduped requires expected, got:\n{lua}"

@@ -1,5 +1,12 @@
 use super::*;
 
+/// COOK-491: the §10.2 step-3 lookup set, empty for tests that predate it.
+fn no_probes() -> &'static BTreeSet<String> {
+    static S: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    S.get_or_init(BTreeSet::new)
+}
+
+
 // ─── expand_command_template: probe detection via $<...> sigils ──────────
 
 #[test]
@@ -8,7 +15,7 @@ fn expand_command_template_plain_sigils_unchanged() {
     let ctx = ResolveCtx {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let (lua, keys) =
@@ -23,7 +30,7 @@ fn expand_command_template_probe_only_keeps_literal_sigil() {
     let ctx = ResolveCtx {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     // CS-0074: probe refs now use $<key:field> instead of {{key.field}}.
@@ -48,7 +55,7 @@ fn expand_command_template_probe_bare_key() {
     let ctx = ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let (lua, keys) =
@@ -66,7 +73,7 @@ fn expand_command_template_probe_indexed_field() {
     let ctx = ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let (lua, keys) =
@@ -83,7 +90,7 @@ fn expand_command_template_multiple_probe_refs_collected() {
     let ctx = ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let (lua, keys) =
@@ -102,7 +109,7 @@ fn expand_command_template_no_probe_no_sigil_plain_literal() {
     let ctx = ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let (lua, keys) = expand_command_template("echo hello", &ctx, &mut env).unwrap();

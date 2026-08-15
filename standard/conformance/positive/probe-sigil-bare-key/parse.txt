@@ -1,0 +1,20 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="show" line=4
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["out/b.txt"] body=ShellBlock(["echo \"$<keyed_obs>\" > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="keyed_obs" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Shell typing=String commands=["printf 'observed'"]

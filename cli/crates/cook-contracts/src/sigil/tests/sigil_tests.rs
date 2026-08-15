@@ -187,14 +187,79 @@ fn dollar_lt_followed_by_dollar_lt() {
 fn probe_ref_key_ends_at_first_dot_or_bracket_after_the_colon() {
     // The colon discriminator is part of the KEY; a dot BEFORE it does not
     // start the path (`demo:cc-version.ver` keys on `demo:cc-version`).
-    let r = probe_ref("demo:cc-version.ver").expect("probe-shaped");
+    let r = probe_ref("demo:cc-version.ver", colon_keys_only).expect("probe-shaped");
     assert_eq!(r.key(), "demo:cc-version");
     assert_eq!(r.path(), &[Seg::Field("ver".to_string())]);
 }
 
 #[test]
 fn probe_ref_rejects_idents_without_a_colon() {
-    assert!(probe_ref("in.stem").is_none());
-    assert!(probe_ref("out_1").is_none());
-    assert!(probe_ref("HOME").is_none());
+    assert!(probe_ref("in.stem", colon_keys_only).is_none());
+    assert!(probe_ref("out_1", colon_keys_only).is_none());
+    assert!(probe_ref("HOME", colon_keys_only).is_none());
+}
+
+// ─── CS-0240: a probe reference resolves by name, not by colon (COOK-491) ────
+//
+// The colon stops being the discriminator and becomes one of two ways a base
+// can be a probe key. `declares` supplies the other.
+
+/// Declared-keyset predicate for the tests below.
+fn declared(keys: &'static [&'static str]) -> impl Fn(&str) -> bool {
+    move |name: &str| keys.contains(&name)
+}
+
+#[test]
+fn colon_free_declared_key_is_a_probe_ref() {
+    // COOK-491: `probe keyed_obs` + `$<keyed_obs>` — the ticket's repro. Before
+    // CS-0240 this answered None and the sigil fell through to the declared-
+    // variable step, which reported "no config block declares 'keyed_obs'".
+    let r = probe_ref("keyed_obs", declared(&["keyed_obs"])).expect("declared key");
+    assert_eq!(r.key(), "keyed_obs");
+    assert!(r.path().is_empty());
+}
+
+#[test]
+fn colon_free_declared_key_takes_a_field_path() {
+    // COOK-491: the base ends at the first dot, so member access reads the same
+    // way it does for a colon key.
+    let r = probe_ref("keyed_obs.ver", declared(&["keyed_obs"])).expect("declared key");
+    assert_eq!(r.key(), "keyed_obs");
+    assert_eq!(r.path(), &[Seg::Field("ver".to_string())]);
+}
+
+#[test]
+fn colon_free_hyphenated_declared_key_splits_at_the_dot() {
+    // COOK-491: PROBE_SEG admits `-` and not `.`, so the hyphen stays in the
+    // key and the dot starts the path.
+    let r = probe_ref("cc-version.ver", declared(&["cc-version"])).expect("declared key");
+    assert_eq!(r.key(), "cc-version");
+    assert_eq!(r.path(), &[Seg::Field("ver".to_string())]);
+}
+
+#[test]
+fn colon_free_undeclared_name_is_not_a_probe_ref() {
+    // COOK-491: the closed cascade is unchanged for everything that is not a
+    // probe — an undeclared bare name must still reach the variable step and
+    // its hard error, not become a silent probe miss.
+    assert!(probe_ref("HOME", declared(&["keyed_obs"])).is_none());
+    assert!(probe_ref("in.stem", declared(&["keyed_obs"])).is_none());
+    assert!(probe_ref("out_1", declared(&["keyed_obs"])).is_none());
+}
+
+#[test]
+fn colon_key_needs_no_keyset() {
+    // COOK-491: back-compat. A module key is self-identifying, so a caller
+    // holding no keyset resolves it exactly as CS-0074 did.
+    let r = probe_ref("demo:cc-version.ver", colon_keys_only).expect("colon key");
+    assert_eq!(r.key(), "demo:cc-version");
+    assert_eq!(r.path(), &[Seg::Field("ver".to_string())]);
+}
+
+#[test]
+fn colon_keys_only_rejects_every_bare_name() {
+    // COOK-491: the two lexical-only call sites (`cook.add_unit` capture) must
+    // keep answering None for a bare name, whatever it is.
+    assert!(probe_ref("keyed_obs", colon_keys_only).is_none());
+    assert!(probe_ref("keyed_obs.ver", colon_keys_only).is_none());
 }

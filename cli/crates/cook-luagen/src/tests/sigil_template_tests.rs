@@ -1,9 +1,16 @@
 use super::*;
 
+/// COOK-491: the §10.2 step-3 lookup set, empty for tests that predate it.
+fn no_probes() -> &'static BTreeSet<String> {
+    static S: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    S.get_or_init(BTreeSet::new)
+}
+
+
 fn empty_recipes() -> BTreeSet<String> { BTreeSet::new() }
 
 fn ctx_os_n0(r: &BTreeSet<String>) -> ResolveCtx<'_> {
-    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: r }
+    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: r, probe_keys_in_scope: no_probes() }
 }
 
 #[test]
@@ -24,7 +31,7 @@ fn in_in_many_to_one() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env).unwrap();
@@ -37,7 +44,7 @@ fn out_n_in_multi_output() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Multi(2),
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("cp $<out_1> $<out_2>", &ctx, &mut env).unwrap();

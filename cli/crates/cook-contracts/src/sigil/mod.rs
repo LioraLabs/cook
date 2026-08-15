@@ -6,16 +6,27 @@
 //!   bare_ident       := ALPHA (ALPHA | DIGIT | "_" | "." | ":" | "[" | "]")*
 //!   out_indexed      := "out_" DIGIT+
 //!   out_indexed_acc  := "out_" DIGIT+ "." accessor
-//!   probe_ref        := ALPHA (ALPHA | DIGIT | "_" | ".")* ":" ...
+//!   probe_ref        := PROBE_KEY ( "." field | "[" index "]" )*
 //!   ACC              := "stem" | "name" | "ext" | "dir"
 //!   ALPHA            := "a"…"z" | "A"…"Z" | "_"
 //!   PATH_CHAR        := ALPHA | DIGIT | "_" | "." | "-" | "/" | "*"
 //!
-//! CS-0074: IDENTs containing a colon (`:`) are probe-value references.
-//! The scanner admits `:`, `.`, `[`, `]`, and `-` as IDENT-continue characters
-//! so that `$<cc:zlib.cflags[2]>` and `$<demo:cc-version.ver>` tokenise as
-//! single spans. The resolver dispatches on the presence of `:` to select
-//! between existing register-time semantics and the new probe-cache-read path.
+//! CS-0074 admitted `:`, `.`, `[`, `]`, and `-` as IDENT-continue characters so
+//! that `$<cc:zlib.cflags[2]>` and `$<demo:cc-version.ver>` tokenise as single
+//! spans. That much is unchanged.
+//!
+//! **CS-0240: a probe reference is recognised by NAME, not by punctuation.**
+//! CS-0074 dispatched a sigil to the probe path when — and only when — its
+//! IDENT contained a colon, which left the sigil as the one bare-name position
+//! in the language resolving lexically rather than by lookup. Every other one
+//! (`seal` operands, `gather` sources, `probes = {…}`, `cook.probes.get`)
+//! already resolved a colon-free key by name, and the native `probe` DSL mints
+//! colon-free keys, so `probe keyed_obs` declared a probe that `$<keyed_obs>`
+//! could not reach. [`probe_ref`] now asks its caller whether the base name is
+//! a declared probe key. A colon-carrying base still answers yes with no
+//! lookup: no builtin, recipe or variable name can contain one, so it stays
+//! self-identifying, which is what keeps module keys working through callers
+//! that hold no keyset of their own.
 //!
 //!
 //! Anything not matching the strict shape is literal shell text. The scanner
@@ -117,9 +128,10 @@ pub struct ProbeRef {
 }
 
 impl ProbeRef {
-    /// The probe key: everything up to the first `.` or `[` that follows the
-    /// `:` discriminator. A dot BEFORE the colon belongs to the key
-    /// (`demo:cc-version.ver` keys on `demo:cc-version`).
+    /// The probe key: everything up to the first `.` or `[` at or after any
+    /// `:`. A dot BEFORE the colon belongs to the key
+    /// (`demo:cc-version.ver` keys on `demo:cc-version`); with no colon the
+    /// whole leading run is the key (`keyed_obs.field` keys on `keyed_obs`).
     pub fn key(&self) -> &str {
         &self.key
     }
@@ -131,20 +143,51 @@ impl ProbeRef {
 
 }
 
-/// Parse a probe-shaped IDENT, or `None` when `ident` is not one.
+/// The base name an IDENT keys on, and the byte offset where its access path
+/// begins.
 ///
-/// Probe-shaped means: contains a `:`. CS-0187 removed the one namespace that
-/// was dispatched ahead of the colon discriminator, so a colon now means a
-/// probe reference and nothing else.
-pub fn probe_ref(ident: &str) -> Option<ProbeRef> {
-    let colon = ident.find(':')?;
-
-    // The key ends at the first `.` or `[` that appears AFTER the colon.
-    let after_colon = &ident[colon + 1..];
-    let path_start = after_colon
+/// The base ends at the first `.` or `[` at or after any `:`. A dot BEFORE the
+/// colon belongs to the base (`demo:cc-version.ver` keys on
+/// `demo:cc-version`), which is the CS-0074 rule generalised: with no colon
+/// present the scan simply starts at offset 0, so `keyed_obs.field` keys on
+/// `keyed_obs`. `PROBE_SEG` admits `-` but not `.` (see `probe_key`), so the
+/// first dot is always the start of member access and never part of the key.
+fn split_base(ident: &str) -> (&str, usize) {
+    let from = ident.find(':').map(|c| c + 1).unwrap_or(0);
+    let path_start = ident[from..]
         .find(|c: char| c == '.' || c == '[')
-        .map(|p| colon + 1 + p)
+        .map(|p| from + p)
         .unwrap_or(ident.len());
+    (&ident[..path_start], path_start)
+}
+
+/// The membership predicate for [`probe_ref`] at a call site that holds no
+/// probe keyset — colon-carrying bases only, which is the CS-0074 behaviour.
+///
+/// Named rather than spelled `|_| false` at each site so the two callers that
+/// deliberately stay lexical say so, and a reader can find them.
+pub fn colon_keys_only(_name: &str) -> bool {
+    false
+}
+
+/// Parse a probe-value reference out of an IDENT, or `None` when `ident` is
+/// not one.
+///
+/// `declares` answers "is this a declared probe key" for the caller's scope.
+/// A base containing `:` is a probe reference regardless of what `declares`
+/// says: CS-0187 removed the one namespace dispatched ahead of the colon, so a
+/// colon means a probe key and nothing else, and a caller that cannot see a
+/// keyset (the raw `cook.add_unit` capture, whose pass has not finished
+/// registering probes) keeps working by passing [`colon_keys_only`].
+///
+/// A colon-free base is a probe reference exactly when `declares` says so
+/// (CS-0240). Ordering against the rest of §10.2's cascade is the caller's;
+/// this function only answers what the token names in the probe namespace.
+pub fn probe_ref(ident: &str, declares: impl Fn(&str) -> bool) -> Option<ProbeRef> {
+    let (base, path_start) = split_base(ident);
+    if !base.contains(':') && !declares(base) {
+        return None;
+    }
 
     let mut path = Vec::new();
     let mut chars = ident[path_start..].chars().peekable();

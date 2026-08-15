@@ -1,0 +1,5 @@
+probe keyed_obs
+    { printf 'observed' }
+
+recipe show
+    cook "out/b.txt" { echo "$<keyed_obs>" > $<out> }

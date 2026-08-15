@@ -117,6 +117,24 @@ pub fn generate_checked(
     Ok((generate_with_names(cookfile, recipe_names)?, warnings))
 }
 
+/// §{xref.resolution} step 3's lookup set: the probe keys this Cookfile
+/// declares (CS-0240).
+///
+/// Derived here rather than taken as a parameter of the crate's entry points,
+/// because it is a property of the Cookfile being lowered and of nothing else.
+/// The three declaration forms — native `probe`, `files`, `tools` — all land in
+/// `cookfile.probes` by parse time, which is the same point the recipe set is
+/// extracted at. Colon-carrying keys are in the set and cost nothing: the
+/// resolver recognises them without a lookup either way.
+///
+/// A probe registered at register time by `cook.probe` is NOT here, and cannot
+/// be: codegen runs before the register pass. Such a key reaches a sigil
+/// through the colon form, which is the convention every module already
+/// follows and the case the colon is kept for.
+pub(crate) fn probe_keys_of(cookfile: &Cookfile) -> BTreeSet<String> {
+    cookfile.probes.iter().map(|p| p.name.clone()).collect()
+}
+
 fn validate_gather_usage(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
@@ -425,6 +443,7 @@ fn validate_accessor_placement(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
+    let probe_keys_in_scope = probe_keys_of(cookfile);
     for recipe in &cookfile.recipes {
         for step in &recipe.steps {
             match step {
@@ -470,6 +489,7 @@ fn validate_accessor_placement(
                             mode: &mode,
                             declared_output_count: cook_step.outputs.len(),
                             recipe_names,
+                            probe_keys_in_scope: &probe_keys_in_scope,
                         };
                         for shell_line in lines {
                             if let Err(msg) =
@@ -636,6 +656,7 @@ fn emit_body_unit_with_names(
     bundle: &[Step],
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     recipe_name: &str,
 ) -> Result<(), CodegenError> {
     // CS-0101: bare shell steps are cache = false — `$<file:PATH>` is pure
@@ -699,6 +720,7 @@ fn emit_body_unit_with_names(
                         mode: IterMode::OneShot,
                         outputs: OutputShape::None,
                         recipes_in_scope: recipe_names,
+                        probe_keys_in_scope,
                     };
                     let mut consulted = ConsultedEnv::new();
                     // COOK-188: an unresolvable placeholder is propagated, not
@@ -915,6 +937,9 @@ pub fn generate_with_names(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
 ) -> Result<String, CodegenError> {
+    // §{xref.resolution} step 3's lookup set, derived once for the whole
+    // lowering: it is a property of this Cookfile, not of any step (CS-0240).
+    let probe_keys_in_scope = probe_keys_of(cookfile);
     let mut out = String::new();
 
     if cookfile.config_blocks.is_empty() {
@@ -1201,6 +1226,7 @@ pub fn generate_with_names(
                                     &cookfile.uses,
                                     cook_index,
                                     recipe_names,
+                                    &probe_keys_in_scope,
                                     fe,
                                 )
                                 .map_err(|source| {
@@ -1220,6 +1246,7 @@ pub fn generate_with_names(
                                     prev_cook_index,
                                     &recipe.inputs,
                                     recipe_names,
+                                    &probe_keys_in_scope,
                                 )
                                 .map_err(|source| {
                                     CodegenError::SigilResolve {
@@ -1245,6 +1272,7 @@ pub fn generate_with_names(
                                     *line,
                                     &cookfile.uses,
                                     recipe_names,
+                                    &probe_keys_in_scope,
                                     fe,
                                 )?;
                             } else {
@@ -1256,6 +1284,7 @@ pub fn generate_with_names(
                                     prev_cook_index,
                                     !recipe.inputs.is_empty(),
                                     recipe_names,
+                                    &probe_keys_in_scope,
                                 )?;
                             }
                             out.push_str("    end)\n");
@@ -1270,7 +1299,7 @@ pub fn generate_with_names(
                             // body-bundling (the next imperative step starts a fresh
                             // body unit).
                             // Apply sigil substitution to the command (CS-0033).
-                            let cmd_expr = expand_shell_command_sigil(command, recipe_names)
+                            let cmd_expr = expand_shell_command_sigil(command, recipe_names, &probe_keys_in_scope)
                                 .map_err(|e| CodegenError::SigilResolve {
                                     recipe: recipe.name.clone(),
                                     line: *line,
@@ -1306,6 +1335,7 @@ pub fn generate_with_names(
                                 &recipe.steps[bundle_start..i],
                                 &cookfile.uses,
                                 recipe_names,
+                                &probe_keys_in_scope,
                                 &recipe.name,
                             )?;
                         }
@@ -1335,7 +1365,7 @@ pub fn generate_with_names(
                 out.push_str("end)\n\n");
             }
             TopLevelItem::Chore(chore) => {
-                out.push_str(&compile_chore_checked(chore, &cookfile.uses, recipe_names)?);
+                out.push_str(&compile_chore_checked(chore, &cookfile.uses, recipe_names, &probe_keys_in_scope)?);
             }
             TopLevelItem::Probe(p) => {
                 crate::probe::emit_probe(&mut out, p, &cookfile.uses);
@@ -1413,6 +1443,7 @@ fn step_kind_name(step: &Step) -> String {
 fn expand_shell_command_sigil(
     command: &str,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<String, crate::resolver::ResolveError> {
     let has_sigils = !crate::sigil::scan(command).is_empty();
     if !has_sigils {
@@ -1422,6 +1453,7 @@ fn expand_shell_command_sigil(
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
         recipes_in_scope: recipe_names,
+        probe_keys_in_scope,
     };
     let mut consulted = ConsultedEnv::new();
     crate::template::expand_sigil_template(command, &ctx, &mut consulted)
@@ -1436,6 +1468,7 @@ fn expand_shell_command_sigil(
 fn expand_chore_shell_command(
     command: &str,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     chore_params: &BTreeSet<String>,
 ) -> Result<String, crate::resolver::ResolveError> {
     let has_sigils = !crate::sigil::scan(command).is_empty();
@@ -1446,6 +1479,7 @@ fn expand_chore_shell_command(
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
         recipes_in_scope: recipe_names,
+        probe_keys_in_scope,
     };
     let mut consulted = ConsultedEnv::new();
     crate::template::expand_sigil_template_with_chore_params(
@@ -1516,8 +1550,9 @@ pub fn compile_chore(
     chore: &Chore,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> String {
-    compile_chore_checked(chore, uses, recipe_names).expect(
+    compile_chore_checked(chore, uses, recipe_names, probe_keys_in_scope).expect(
         "compile_chore: unexpected codegen error (use generate_checked for validated codegen)",
     )
 }
@@ -1526,6 +1561,7 @@ fn compile_chore_checked(
     chore: &Chore,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<String, CodegenError> {
     let mut out = String::new();
 
@@ -1606,7 +1642,8 @@ fn compile_chore_checked(
                 // CS-0101: chore units are cache = false — hoisted file-ref
                 // locals, no file_refs field.
                 let cmd_expr =
-                    expand_chore_shell_command(command, recipe_names, &chore_param_names).map_err(
+                    expand_chore_shell_command(command, recipe_names, probe_keys_in_scope, &chore_param_names)
+                        .map_err(
                         |e| CodegenError::SigilResolve {
                             recipe: chore.name.clone(),
                             line: *line,

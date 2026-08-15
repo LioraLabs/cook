@@ -1,0 +1,4 @@
+import var "sub"
+
+recipe build
+    cook "out/x.txt" { echo x > $<out> }

@@ -1,0 +1,5 @@
+recipe status
+    cook "out/s.txt" { uname -s > $<out> }
+
+probe status
+    { uname -s }

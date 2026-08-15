@@ -28,14 +28,26 @@ use crate::store::{not_materialised_message, ProbeValueStore};
 ///
 /// A command with no probe reference is returned untouched, and a non-probe
 /// `$<...>` span is left literal, both matching what the rewrite did.
+///
+/// **What makes a span a probe reference (CS-0240).** A colon-carrying base is
+/// one on sight, and an unmaterialised one is still the CS-0152 diagnostic
+/// below — the colon form cannot mean anything else, so a miss is a miss and
+/// not a maybe. A colon-free base is one when the store holds it, which is
+/// §22.5.7's "classify by membership in the unit's `probes` list" read off the
+/// thing that list produced: codegen puts exactly the keys it resolved into
+/// that list, and the store is populated from it before the command is spawned.
+/// A colon-free base the store does not hold is left literal, because by this
+/// point every non-probe sigil has already been substituted at register time —
+/// what is left is text the shell owns.
 pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String, String> {
     let spans = cook_contracts::sigil::scan(cmd);
     if spans.is_empty() {
         return Ok(cmd.to_string());
     }
+    let materialised = |key: &str| store.get(key).is_some();
     let refs: Vec<_> = spans
         .iter()
-        .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident).map(|r| (s, r)))
+        .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident, materialised).map(|r| (s, r)))
         .collect();
     if refs.is_empty() {
         return Ok(cmd.to_string());

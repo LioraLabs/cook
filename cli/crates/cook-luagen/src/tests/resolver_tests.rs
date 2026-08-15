@@ -1,10 +1,17 @@
 use super::*;
 
+/// COOK-491: the §10.2 step-3 lookup set, empty for tests that predate it.
+fn no_probes() -> &'static BTreeSet<String> {
+    static S: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    S.get_or_init(BTreeSet::new)
+}
+
+
 fn ctx_oneone_single<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
-    ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: recipes }
+    ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: recipes, probe_keys_in_scope: no_probes() }
 }
 fn ctx_oneshot_none<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
-    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: recipes }
+    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: recipes, probe_keys_in_scope: no_probes() }
 }
 fn empty() -> BTreeSet<String> { BTreeSet::new() }
 
@@ -174,7 +181,7 @@ fn in_in_many_to_one_is_ok_accessor_is_error() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     assert_eq!(resolve("in", &ctx), Resolved::Builtin(BuiltinKind::In));
     // A path accessor on the joined form is still meaningless — rejected.
@@ -190,7 +197,7 @@ fn out_in_multi_output_is_error() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Multi(2),
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     assert!(matches!(resolve("out", &ctx), Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })));
 }
@@ -201,7 +208,7 @@ fn out_n_overflow_is_error() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Multi(2),
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     assert!(matches!(resolve("out_3", &ctx), Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })));
 }
@@ -216,7 +223,7 @@ fn out_zero_is_lexically_valid_but_semantically_rejected() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Multi(2),
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     assert!(matches!(
         resolve("out_0", &ctx),
@@ -231,7 +238,7 @@ fn out_zero_with_accessor_is_also_malformed() {
     let ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Multi(2),
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     assert!(matches!(
         resolve("out_0.stem", &ctx),
@@ -243,7 +250,7 @@ fn ctx_member<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
     ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::Single,
-        recipes_in_scope: recipes,
+        recipes_in_scope: recipes, probe_keys_in_scope: no_probes()
     }
 }
 
@@ -386,7 +393,7 @@ fn cs_0210_recipe_ref_is_independent_of_mode_and_output_shape() {
         let expected = recipe_ref(ident, &names);
         for mode in modes {
             for outputs in shapes {
-                let ctx = ResolveCtx { mode, outputs, recipes_in_scope: &names };
+                let ctx = ResolveCtx { mode, outputs, recipes_in_scope: &names, probe_keys_in_scope: no_probes() };
                 let via_resolve = match resolve(ident, &ctx) {
                     Resolved::Recipe { name, accessor } => Some(RecipeRef { name, accessor }),
                     Resolved::RecipeMember { name } => Some(RecipeRef { name, accessor: None }),
@@ -485,5 +492,99 @@ fn accessor_ref_reads_the_split_not_the_whole_token() {
     assert_eq!(
         accessor_ref("alias.stem", &names(&["alias"])),
         Some(AccessorRef { name: "alias", accessor: "stem" })
+    );
+}
+
+// ─── CS-0240: probe key is step 3 of the §10.2 cascade (COOK-491) ───────────
+
+fn probes(keys: &[&str]) -> BTreeSet<String> {
+    keys.iter().map(|s| s.to_string()).collect()
+}
+
+fn ctx_with_probes<'a>(
+    recipes: &'a BTreeSet<String>,
+    probe_keys: &'a BTreeSet<String>,
+) -> ResolveCtx<'a> {
+    ResolveCtx {
+        mode: IterMode::OneShot,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipes,
+        probe_keys_in_scope: probe_keys,
+    }
+}
+
+#[test]
+fn cs0240_bare_declared_probe_key_resolves_to_a_probe_ref() {
+    // COOK-491: the ticket's repro. Before CS-0240 this fell through to
+    // EnvRuntime and reported "no config block declares 'keyed_obs'".
+    let r = empty();
+    let p = probes(&["keyed_obs"]);
+    assert_eq!(
+        resolve("keyed_obs", &ctx_with_probes(&r, &p)),
+        Resolved::ProbeRef { key: "keyed_obs".to_string() }
+    );
+}
+
+#[test]
+fn cs0240_bare_declared_probe_key_takes_a_field_path() {
+    // COOK-491: the key is the base; the path travels to the renderer.
+    let r = empty();
+    let p = probes(&["cc-version"]);
+    assert_eq!(
+        resolve("cc-version.ver", &ctx_with_probes(&r, &p)),
+        Resolved::ProbeRef { key: "cc-version".to_string() }
+    );
+}
+
+#[test]
+fn cs0240_undeclared_bare_name_still_falls_through_to_a_variable() {
+    // COOK-491: the cascade stays closed. Adding step 3 must not swallow a
+    // name no probe declares — that name is still a declared-variable lookup
+    // and still the source of §10.2 step 5's hard error at register time.
+    let r = empty();
+    let p = probes(&["keyed_obs"]);
+    assert_eq!(
+        resolve("SOMETHING_ELSE", &ctx_with_probes(&r, &p)),
+        Resolved::EnvRuntime("SOMETHING_ELSE".to_string())
+    );
+}
+
+#[test]
+fn cs0240_a_recipe_outranks_a_probe_of_the_same_name() {
+    // COOK-491: step 2 before step 3. Unreachable from a Cookfile — App. A.2
+    // rejects the collision at parse time — but the resolver is called from
+    // analyses that build their own name sets, and the order it applies is
+    // the Standard's, not an accident of which lookup runs first.
+    let mut r = empty();
+    r.insert("shared".to_string());
+    let p = probes(&["shared"]);
+    assert_eq!(
+        resolve("shared", &ctx_with_probes(&r, &p)),
+        Resolved::Recipe { name: "shared".to_string(), accessor: None }
+    );
+}
+
+#[test]
+fn cs0240_var_prefix_still_reaches_the_variable_past_a_probe_of_that_name() {
+    // COOK-491: §10.7 reserves `var.` as the explicit declared-variable form.
+    // A probe keyed `var` must not turn `$<var.X>` into field `X` of it —
+    // which is exactly what a probe step placed ahead of the prefix would do.
+    let r = empty();
+    let p = probes(&["var"]);
+    assert_eq!(
+        resolve("var.PREFIX", &ctx_with_probes(&r, &p)),
+        Resolved::EnvRuntime("PREFIX".to_string())
+    );
+}
+
+#[test]
+fn cs0240_colon_key_resolves_with_no_probe_keyset() {
+    // COOK-491: back-compat. A module key stays self-identifying, so a caller
+    // that knows no probe keys resolves it exactly as CS-0074 did.
+    let r = empty();
+    let p = empty();
+    assert_eq!(
+        resolve("cc:zlib.cflags", &ctx_with_probes(&r, &p)),
+        Resolved::ProbeRef { key: "cc:zlib".to_string() }
     );
 }

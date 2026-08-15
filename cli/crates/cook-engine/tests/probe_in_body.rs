@@ -214,3 +214,120 @@ recipe dyn
         "error output must say the probe value was not materialised:\n{combined}"
     );
 }
+
+// ─── CS-0240: a colon-free probe key is reachable from a sigil (COOK-491) ───
+
+#[test]
+fn bare_probe_key_in_native_cook_body_substitutes_value() {
+    // COOK-491. The native `probe` declaration mints colon-free keys, but
+    // CS-0074 dispatched a sigil to the probe path only on a colon, so this
+    // Cookfile failed at register with `no config block declares 'keyed_obs'`
+    // — a probe declared three lines up, never mentioned by the diagnostic.
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path();
+    let cache = wd.join("cache");
+    write_cloud_toml(wd, &cache);
+    fs::create_dir_all(wd.join("out")).unwrap();
+    fs::write(
+        wd.join("Cookfile"),
+        r#"probe keyed_obs
+    { printf 'observed-by-name' }
+
+recipe show
+    cook "out/b.txt" { echo "$<keyed_obs>" > $<out> }
+"#,
+    )
+    .unwrap();
+
+    let out = run_cook(wd, "show");
+    assert!(
+        out.status.success(),
+        "cook show failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let b = wd.join("out/b.txt");
+    assert!(b.exists(), "out/b.txt was not produced");
+    assert_eq!(
+        fs::read_to_string(&b).unwrap().trim(),
+        "observed-by-name",
+        "a bare probe key must substitute exactly as a colon-prefixed one does"
+    );
+}
+
+#[test]
+fn bare_probe_key_is_demanded_by_the_consumer() {
+    // COOK-491: resolving by name is not enough — the key must also union into
+    // the unit's `probes` list, or the consumer runs with no DAG edge and keys
+    // on nothing the probe observed. §22.5.8 makes that observable: a probe no
+    // scheduled unit demands MUST NOT execute and MUST be omitted from the
+    // DAG, so the probe node appearing in the run is the edge.
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path();
+    let cache = wd.join("cache");
+    write_cloud_toml(wd, &cache);
+    fs::create_dir_all(wd.join("out")).unwrap();
+    fs::write(
+        wd.join("Cookfile"),
+        r#"probe demanded_by_name
+    { printf 'v' }
+
+recipe show
+    cook "out/b.txt" { echo "$<demanded_by_name>" > $<out> }
+"#,
+    )
+    .unwrap();
+
+    let out = run_cook(wd, "show");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        log.contains("demanded_by_name"),
+        "the probe must be scheduled as a node of this recipe — an undemanded \
+         probe is silently omitted (§22.5.8), so its absence is the missing edge:\n{log}"
+    );
+}
+
+#[test]
+fn probe_shadowing_a_declared_var_warns_naming_both() {
+    // COOK-491 / §10.2.3. CS-0240 chose the shadowing WARNING over a hard
+    // error for probe-vs-var, because a config-block variable has no
+    // declaration site a parser can name. That choice is only defensible if
+    // the warning fires, and it did not: `warn_var_shadowing` intersected the
+    // declared vars with recipe names alone. The scenario it left silent: a
+    // config block exports `var.tag`, someone adds `probe tag`, and `$<tag>`
+    // flips from the declared string to the observed value with no diagnostic.
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path();
+    let cache = wd.join("cache");
+    write_cloud_toml(wd, &cache);
+    fs::create_dir_all(wd.join("out")).unwrap();
+    fs::write(
+        wd.join("Cookfile"),
+        r#"config
+    var.tag = "v1.0"
+
+probe tag
+    { printf 'observed' }
+
+recipe show
+    cook "out/b.txt" { echo "$<tag>" > $<out> }
+"#,
+    )
+    .unwrap();
+
+    let out = run_cook(wd, "show");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("probe 'tag' shadows declared var 'tag'"),
+        "§10.2.3 requires a warning naming both; got:\n{err}"
+    );
+    // And the substitution really is the probe's, which is what makes the
+    // warning worth emitting rather than a formality.
+    assert_eq!(fs::read_to_string(wd.join("out/b.txt")).unwrap().trim(), "observed");
+}

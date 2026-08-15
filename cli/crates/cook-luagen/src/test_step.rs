@@ -60,10 +60,11 @@ pub(crate) fn generate_test_step(
     last_cook_index: Option<usize>,
     has_gather: bool,
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     let mode = detect_plate_test_mode(&test_step.body)
         .map_err(|e| CodegenError::PlateTestMode { line, source: e })?;
-    validate_plate_test_placeholders(&test_step.body, mode, recipe_names)
+    validate_plate_test_placeholders(&test_step.body, mode, recipe_names, probe_keys_in_scope)
         .map_err(|e| CodegenError::Placeholder { line, source: e })?;
 
     // CS-0024 §3.5: a OneToOne or ManyToOne test step requires a non-empty
@@ -163,7 +164,7 @@ pub(crate) fn generate_test_step(
                 let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) =
-                    expand_plate_test_body(&cmd_text, recipe_names, "_test_in", &mut consulted)
+                    expand_plate_test_body(&cmd_text, recipe_names, probe_keys_in_scope, "_test_in", &mut consulted)
                         .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
                 out.push_str(&format!(
@@ -180,7 +181,7 @@ pub(crate) fn generate_test_step(
                 let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
                 let (cmd_expr, probe_keys) =
-                    expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &mut consulted)
+                    expand_plate_test_body(&cmd_text, recipe_names, probe_keys_in_scope, "\"\"", &mut consulted)
                         .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
                 out.push_str(&format!(
@@ -261,6 +262,7 @@ pub(crate) fn generate_member_fanout_test_step(
     line: usize,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
+    probe_keys_in_scope: &BTreeSet<String>,
     member_source: &MemberSourceStep,
 ) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
@@ -274,7 +276,7 @@ pub(crate) fn generate_member_fanout_test_step(
         }
     };
 
-    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
+    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names, probe_keys_in_scope);
     // CS-0159: the effective seal set travels with the fan-out units too —
     // every member unit of a sealed `test` keys on the same sealed probes.
     let seal_field: String = if test_step.seal.is_empty() {

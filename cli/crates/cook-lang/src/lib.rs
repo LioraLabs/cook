@@ -89,16 +89,35 @@ fn path_contains_dotdot_segment(path: &str) -> bool {
     path.split('/').any(|seg| seg == "..")
 }
 
-/// Kind of a callable declaration, recorded in the duplicate-name map.
+/// Kind of a declaration recorded in the duplicate-name map.
 ///
 /// Recipes and chores share a single callable namespace (App. A.2,
 /// "Duplicate recipe / chore declaration name rule"): two declarations of
 /// either kind that share a name are rejected at parse time, including
 /// recipe-vs-chore collisions.
+///
+/// CS-0240 puts probe keys in that namespace too, and for the reason it
+/// exists. A probe key now resolves in §10.2's cascade, so `$<foo>` with both
+/// a probe `foo` and a recipe `foo` in scope would have two readings, and
+/// `$<foo.x>` three; rejecting the collision at load time is what lets the
+/// dotted reading be decided by the base name's KIND rather than by a third
+/// heuristic layered onto §10.2.1's two. Import aliases are in the namespace
+/// for the same reason (`$<alias.recipe>` against probe `alias` field
+/// `recipe`) and carry this label, but only probes are checked against them:
+/// making recipe-vs-alias an error is a separate rule this change does not
+/// need and would break Cookfiles CS-0240 leaves alone.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum CallableKind {
     Recipe,
     Chore,
+    /// A `probe` block. `files` and `tools` mint keys in the same namespace
+    /// but are their own kinds: App. A.2 requires the diagnostic to identify
+    /// the offending kind, and "probe 'lib': duplicate declaration" for a line
+    /// reading `files lib` names a keyword the author did not write.
+    Probe,
+    Files,
+    Tools,
+    Import,
 }
 
 impl CallableKind {
@@ -106,13 +125,18 @@ impl CallableKind {
         match self {
             CallableKind::Recipe => "recipe",
             CallableKind::Chore => "chore",
+            CallableKind::Probe => "probe",
+            CallableKind::Files => "files declaration",
+            CallableKind::Tools => "tools declaration",
+            CallableKind::Import => "import alias",
         }
     }
 }
 
 /// Build the App. A.2 duplicate-declaration diagnostic, naming the kind and
-/// line of the prior declaration. Same wording for all three collision modes
-/// (recipe-vs-recipe, chore-vs-chore, recipe-vs-chore).
+/// line of the prior declaration. One wording for every collision mode
+/// (recipe/chore/probe in any order, and probe-vs-import-alias), so a reader
+/// who has seen one has seen them all.
 fn duplicate_callable_error(
     new_kind: CallableKind,
     name: &str,
@@ -130,6 +154,26 @@ fn duplicate_callable_error(
             prior_line,
         ),
     }
+}
+
+/// Record a top-level `probe` / `files` / `tools` declaration in the shared
+/// name space, rejecting a collision with anything already declared there.
+///
+/// CS-0240. Called from the three declaration arms rather than folded into a
+/// post-parse sweep so the diagnostic can name the prior declaration's line
+/// whichever order the two appear in: probes carry no before-recipes ordering
+/// rule, so both directions are reachable.
+fn note_probe_decl(
+    callable_decls: &mut BTreeMap<String, (CallableKind, usize)>,
+    kind: CallableKind,
+    name: &str,
+    line: usize,
+) -> Result<(), ParseError> {
+    if let Some(&(prior_kind, prior_line)) = callable_decls.get(name) {
+        return Err(duplicate_callable_error(kind, name, line, prior_kind, prior_line));
+    }
+    callable_decls.insert(name.to_string(), (kind, line));
+    Ok(())
 }
 
 pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
@@ -319,6 +363,25 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                         message: format!("duplicate import name '{}'", name),
                     });
                 }
+                // CS-0240: `var.` is a reserved placeholder namespace (§10.7)
+                // and is resolved ahead of every lookup step, so a recipe
+                // reached as `$<var.NAME>` through an alias spelled `var` is
+                // unreachable by construction. The reservation already covers
+                // recipe names; it did not cover the alias, which left
+                // `import var sub` declaring recipes no reference could name.
+                // Refused at the declaration, where the fix is renaming one
+                // word, rather than at each use site.
+                if name == "var" {
+                    return Err(ParseError::Parse {
+                        line: tok.line,
+                        message: "import alias 'var': `var` is the reserved \
+                                  declared-variable namespace (Standard \
+                                  §10.7), so `$<var.NAME>` always names a \
+                                  variable and can never reach a recipe \
+                                  through this alias; choose another alias"
+                            .to_string(),
+                    });
+                }
                 let parsed_path = validate_and_classify_import_path(path, tok.line)?;
                 imports.push(ast::ImportDecl {
                     name: name.clone(),
@@ -333,6 +396,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if name.starts_with("@seal:") {
                     return Err(ParseError::Parse { line: probe_line, message: "probe: keys beginning `@seal:` are reserved for inline file determinants".into() });
                 }
+                note_probe_decl(&mut callable_decls, CallableKind::Probe, &name, probe_line)?;
                 let deps = deps.clone();
                 pos += 1;
                 let (probe, inline_probes, new_pos) =
@@ -344,12 +408,14 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
             Token::FilesHeader { name } => {
                 let line = tok.line; let name = name.clone(); pos += 1;
                 if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "files: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                note_probe_decl(&mut callable_decls, CallableKind::Files, &name, line)?;
                 let (probe, new_pos) = probe::parse_files_declaration(name, line, &tokens, pos, &source_lines)?;
                 probes.push(probe); pos = new_pos;
             }
             Token::ToolsHeader { name } => {
                 let line = tok.line; let name = name.clone(); pos += 1;
                 if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "tools: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                note_probe_decl(&mut callable_decls, CallableKind::Tools, &name, line)?;
                 let (probe, new_pos) = probe::parse_tools_declaration(name, line, &tokens, pos, &source_lines)?;
                 probes.push(probe); pos = new_pos;
             }
@@ -385,6 +451,33 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     // error over two declarations that are the same declaration.
     let mut seen_anonymous = std::collections::HashSet::new();
     probes.retain(|p| !p.name.starts_with("@seal:") || seen_anonymous.insert(p.name.clone()));
+
+    // CS-0240: a probe key and an import alias share the `$<…>` name space.
+    // With probe keys in §10.2's cascade, `$<alias.recipe>` and probe `alias`
+    // field `recipe` are the same token with two readings, so the collision is
+    // rejected here. Checked after the loop rather than in the two declaration
+    // arms because either can come first: imports must precede recipes, probes
+    // need not, so neither map is complete while the other is being built.
+    // Runs after CS-0236's dedup, though the order is unobservable: an
+    // anonymous `@seal:` key carries a colon and can never equal a bare alias.
+    for probe in &probes {
+        if let Some(imp) = imports.iter().find(|i| i.name == probe.name) {
+            // The kind comes from the map rather than being assumed `Probe`:
+            // `cookfile.probes` is flat, and a `files`/`tools` declaration must
+            // name its own keyword here too.
+            let kind = callable_decls
+                .get(&probe.name)
+                .map(|&(k, _)| k)
+                .unwrap_or(CallableKind::Probe);
+            return Err(duplicate_callable_error(
+                kind,
+                &probe.name,
+                probe.line,
+                CallableKind::Import,
+                imp.line,
+            ));
+        }
+    }
 
     Ok(Cookfile {
         config_blocks,

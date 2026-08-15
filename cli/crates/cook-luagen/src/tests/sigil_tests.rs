@@ -4,7 +4,7 @@
 
 #[test]
 fn reexport_stays_wired() {
-    let r = super::probe_ref("cc:zlib.cflags[2]").expect("probe-shaped");
+    let r = super::probe_ref("cc:zlib.cflags[2]", cook_contracts::sigil::colon_keys_only).expect("probe-shaped");
     assert_eq!(r.key(), "cc:zlib");
     assert_eq!(r.path().len(), 2);
 }

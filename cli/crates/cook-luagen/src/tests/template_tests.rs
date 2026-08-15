@@ -1,5 +1,12 @@
 use super::*;
 
+/// COOK-491: the §10.2 step-3 lookup set, empty for tests that predate it.
+fn no_probes() -> &'static BTreeSet<String> {
+    static S: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    S.get_or_init(BTreeSet::new)
+}
+
+
 // ─── ConsultedEnv tests ───────────────────────────────────────────────────
 
 #[test]
@@ -43,7 +50,7 @@ fn ctx_oneone_single(recipes: &BTreeSet<String>) -> ResolveCtx<'_> {
     ResolveCtx {
         mode: IterMode::OneToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: recipes,
+        recipes_in_scope: recipes, probe_keys_in_scope: no_probes()
     }
 }
 
@@ -51,7 +58,7 @@ fn ctx_oneshot_none(recipes: &BTreeSet<String>) -> ResolveCtx<'_> {
     ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::None,
-        recipes_in_scope: recipes,
+        recipes_in_scope: recipes, probe_keys_in_scope: no_probes()
     }
 }
 
@@ -144,7 +151,7 @@ fn builtin_in_wrong_mode_returns_err() {
     let os_ctx = ResolveCtx {
         mode: IterMode::OneShot,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<in>", &os_ctx, &mut env);
@@ -155,7 +162,7 @@ fn builtin_in_wrong_mode_returns_err() {
     let m2o_ctx = ResolveCtx {
         mode: IterMode::ManyToOne,
         outputs: OutputShape::Single,
-        recipes_in_scope: &r,
+        recipes_in_scope: &r, probe_keys_in_scope: no_probes()
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env);
@@ -203,7 +210,7 @@ fn item_builtins_lower_to_member_access() {
 fn recipe_member_lowers_to_dep_output_member() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes, no_probes());
         let mut env = ConsultedEnv::new();
         let (lua, _) = expand_member_fanout_template(
             "bin/mux --video $<render[in]>",
@@ -223,7 +230,7 @@ fn recipe_member_lowers_to_dep_output_member() {
 fn recipe_member_in_plain_command_is_error() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-        let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
+        let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes, no_probes());
         let mut env = ConsultedEnv::new();
         let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env);
     assert!(
@@ -238,7 +245,7 @@ fn recipe_member_in_plain_command_is_error() {
 fn recipe_member_empty_index_errors_in_fanout_body() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes, no_probes());
         let mut env = ConsultedEnv::new();
         let res = expand_member_fanout_template(
             "bin/mux --video $<render[]>",
@@ -258,7 +265,7 @@ fn recipe_member_empty_index_errors_in_fanout_body() {
 fn recipe_member_bad_index_errors_in_fanout_body() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes, no_probes());
         let mut env = ConsultedEnv::new();
         let res = expand_member_fanout_template(
             "bin/mux --video $<render[key]>",
@@ -280,13 +287,13 @@ fn recipe_member_bracket_errors_are_typed_in_output_patterns() {
     let names = BTreeSet::new();
     let mut env = ConsultedEnv::new();
 
-    let res = expand_output_pattern("build/$<render[]>.o", &names, &mut env);
+    let res = expand_output_pattern("build/$<render[]>.o", &names, no_probes(), &mut env);
     assert!(
         matches!(res, Err(ResolveError::RecipeMemberEmptyIndex { .. })),
         "expected the did-you-mean error, got: {res:?}"
     );
 
-    let res = expand_output_pattern("build/$<render[key]>.o", &names, &mut env);
+    let res = expand_output_pattern("build/$<render[key]>.o", &names, no_probes(), &mut env);
     assert!(
         matches!(res, Err(ResolveError::RecipeMemberBadIndex { .. })),
         "expected the reserved-index error, got: {res:?}"

@@ -2840,6 +2840,115 @@ fn cs0229_ingredients_is_a_removed_keyword() {
     assert!(err.to_string().contains("`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants"), "got: {err}");
 }
 
+// ─── CS-0240: probe keys join the load-time name space (COOK-491) ───────────
+//
+// A probe key resolves in §10.2's cascade now, so a name that is both a probe
+// and a recipe/chore/import alias has two readings. Each of these is rejected
+// at parse time naming both declaration sites; that rejection is what makes
+// the cascade's ordering unobservable and lets §10.2.1's dotted reading be
+// decided by the base name's kind.
+
+#[test]
+fn cs0240_probe_after_recipe_of_the_same_name_is_rejected() {
+    // COOK-491
+    let err = parse("recipe status\n    cook \"o\" { echo hi > $<out> }\n\nprobe status\n    { uname -s }\n")
+        .expect_err("probe colliding with a recipe must be rejected")
+        .to_string();
+    assert!(
+        err.contains("probe 'status'")
+            && err.contains("duplicate declaration")
+            && err.contains("as recipe at line 1"),
+        "must name both sites; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_recipe_after_probe_of_the_same_name_is_rejected() {
+    // COOK-491: probes carry no before-recipes ordering rule, so the reverse
+    // order is reachable and must be rejected too.
+    let err = parse("probe status\n    { uname -s }\n\nrecipe status\n    cook \"o\" { echo hi > $<out> }\n")
+        .expect_err("recipe colliding with a probe must be rejected")
+        .to_string();
+    assert!(
+        err.contains("recipe 'status'")
+            && err.contains("duplicate declaration")
+            && err.contains("as probe at line 1"),
+        "must name both sites; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_probe_colliding_with_a_chore_is_rejected() {
+    // COOK-491: App. A.2 requires the diagnostic to identify the OFFENDING
+    // kind. The offender here wrote `tools`, so naming it "probe" would name a
+    // keyword absent from the file.
+    let err = parse("chore tidy\n    echo first\n\ntools tidy\n    rm\n")
+        .expect_err("tools declaration colliding with a chore must be rejected")
+        .to_string();
+    assert!(
+        err.contains("tools declaration 'tidy'") && err.contains("as chore at line 1"),
+        "must name both sites and the offending kind; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_a_files_collision_names_files_not_probe() {
+    // COOK-491: the sibling of the above for the other key-minting keyword.
+    let err = parse("recipe lib\n    cook \"o\" { echo hi > $<out> }\n\nfiles lib\n    \"src/*.c\"\n")
+        .expect_err("files declaration colliding with a recipe must be rejected")
+        .to_string();
+    assert!(
+        err.contains("files declaration 'lib'") && err.contains("as recipe at line 1"),
+        "must name the offending kind; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_import_alias_var_is_reserved() {
+    // COOK-491: `var.` resolves ahead of every lookup step (§10.7), so an
+    // alias spelled `var` declares recipes that no reference can reach.
+    // Refused at the declaration rather than diagnosed at each use.
+    let err = parse("import var \"sub\"\n\nrecipe r\n    cook \"o\" { echo hi > $<out> }\n")
+        .expect_err("an alias named `var` must be rejected")
+        .to_string();
+    assert!(
+        err.contains("import alias 'var'") && err.contains("§10.7"),
+        "must name the alias and the reservation; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_quoted_probe_key_collides_verbatim() {
+    // COOK-491: App. A.2 compares names verbatim, so the quoted form is NOT
+    // outside the collision rule — only the colon-qualified form is, and it is
+    // outside because it cannot equal a bare declaration name.
+    let err = parse("recipe status\n    cook \"o\" { echo hi > $<out> }\n\nprobe \"status\"\n    { uname -s }\n")
+        .expect_err("a quoted key equal to a recipe name must be rejected")
+        .to_string();
+    assert!(err.contains("probe 'status'"), "got: {err}");
+}
+
+#[test]
+fn cs0240_probe_colliding_with_an_import_alias_is_rejected() {
+    // COOK-491: `$<lib.x>` would read as the qualified cross-Cookfile
+    // reference and as probe `lib` field `x`.
+    let err = parse("import lib \"sub\"\n\nfiles lib\n    \"src/*.c\"\n")
+        .expect_err("files declaration colliding with an import alias must be rejected")
+        .to_string();
+    assert!(
+        err.contains("files declaration 'lib'") && err.contains("as import alias at line 1"),
+        "must name both sites; got: {err}"
+    );
+}
+
+#[test]
+fn cs0240_colon_qualified_probe_key_never_collides() {
+    // COOK-491: a module key cannot equal a bare recipe name, so the new rule
+    // has no reach over the convention it is making optional.
+    parse("recipe os\n    cook \"o\" { echo hi > $<out> }\n\nprobe sys:os\n    { uname -s }\n")
+        .expect("a colon-qualified key is a different name space");
+}
+
 // ── COOK-490 / CS-0239: `gather $<recipe>` — the third gather form ──────
 
 #[test]

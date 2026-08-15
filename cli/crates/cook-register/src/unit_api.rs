@@ -188,12 +188,24 @@ fn scan_probe_keys(command: &str) -> Result<Vec<String>, String> {
         ));
     }
 
-    // `probe_ref` owns the colon discriminator AND the `file:` exclusion, so
-    // there is no second filter to keep in step.
+    // `probe_ref` owns the key/path split AND the `file:` exclusion, so there
+    // is no second filter to keep in step.
+    //
+    // CS-0240: this site stays LEXICAL — colon-carrying keys only. It is the
+    // call site the Standard names as having no keyset to consult, and the
+    // reason is §22.5.6: `cook.probe` and `cook.add_unit` call order within a
+    // register pass is unconstrained, so at the moment a raw command string is
+    // captured the probe registry is not yet complete, and a name lookup here
+    // would answer differently depending on which module happened to run
+    // first. Cookfile bodies do not depend on it: codegen resolves their
+    // colon-free keys by name and emits them in the unit's `probes` list, so
+    // this scan is not the only route a key has into that list.
     let mut seen = std::collections::BTreeSet::new();
     let mut keys: Vec<String> = vec![];
     for span in &spans {
-        if let Some(r) = cook_contracts::sigil::probe_ref(&span.ident) {
+        if let Some(r) =
+            cook_contracts::sigil::probe_ref(&span.ident, cook_contracts::sigil::colon_keys_only)
+        {
             if seen.insert(r.key().to_string()) {
                 keys.push(r.key().to_string());
             }
