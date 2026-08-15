@@ -8,6 +8,7 @@ Cookfile
       ingredients: ["src/*.js"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["dist/bundle.js"] body=LuaBlock("        local f = io.open(outputs[1], \"w\")\n        for _, src in ipairs(inputs) do f:write(io.open(src):read(\"*a\")) end\n        f:close()")
   chores:
   register_blocks: []

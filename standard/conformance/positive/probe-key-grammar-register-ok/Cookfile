@@ -11,7 +11,7 @@ probe "odd+spelling"
     lines { echo "$PATH" }
 
 recipe build
-    ingredients cc-version
+    gather cc-version
     seal demo:cc-version cc:find:raylib
     cook "out/$<in>.stamp" {
         echo '$<in>' > $<out>

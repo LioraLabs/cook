@@ -10,4 +10,4 @@ variable step and reported `no config block declares 'sys:os'` — advice that
 cannot be followed, since `sys:os` is not a legal variable name.
 
 Parses cleanly; rejected at codegen. The same diagnostic covers the
-`ingredients <probe>` fan-out test path, which has always refused.
+`gather <probe>` fan-out test path, which has always refused.

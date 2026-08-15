@@ -8,6 +8,7 @@ Cookfile
       ingredients: ["src1.txt", "src2.txt"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["out.txt"] body=ShellBlock(["cat $<in> > out.txt"])
   chores:
   register_blocks: []

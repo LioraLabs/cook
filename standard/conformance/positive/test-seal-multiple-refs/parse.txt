@@ -1,0 +1,20 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="verify" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["./run.sh"]) seal=["@seal:verify:2", "a", "b", "c"]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="@seal:verify:2" line=2
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Files globs=["src/*.c"] excludes=[]

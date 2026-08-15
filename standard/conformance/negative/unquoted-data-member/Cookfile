@@ -2,5 +2,5 @@ probe rows
     json { echo '[{"name":"auth","port":"8001"}]' }
 
 recipe render
-    ingredients rows
+    gather rows
     cook "out/$<in.name>.txt" { echo $<in> > $<out> }

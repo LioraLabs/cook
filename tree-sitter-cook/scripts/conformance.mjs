@@ -37,19 +37,17 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0224: gather with no own-input reference — whole-recipe codegen rejection, not syntactic'],
   ['003-use-after-recipe',
    'top-level ordering rule (App. A.2) — semantic, not syntactic'],
-  ['004-duplicate-ingredients',
-   'at-most-one-ingredients rule (App. A.3) — semantic, not syntactic'],
+  ['004-duplicate-gather',
+   'at-most-one-gather rule (App. A.3) — semantic, not syntactic'],
   ['006-accessor-in-cook-body',
    'App. A.4 iteration coherence — codegen templating check across recipe sources'],
-  // CS-0095: `ingredients <probe>` parses cleanly; these rejections are
+  // CS-0095: `gather <probe>` parses cleanly; these rejections are
   // register-phase (probe declared? array-valued? non-artifact dep?).
-  ['ingredients-probe-undeclared',
+  ['gather-probe-undeclared',
    'CS-0095: undeclared probe key — register-phase rejection, not syntactic'],
-  ['ingredients-probe-non-array',
+  ['gather-probe-non-array',
    'CS-0095: non-array probe value — register-phase rejection, not syntactic'],
-  ['ingredients-probe-files-kind',
-   'COOK-353: files probe in driver position — register-phase rejection, not syntactic'],
-  ['ingredients-probe-artifact-dep',
+  ['gather-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
   // CS-0219: `after` is a `cook.add_unit` Lua field, not surface syntax. The
   // Cookfile is a `use` and a module call; the rejection is the register
@@ -124,7 +122,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0185: cook.add_test was removed — register-phase rejection, not syntactic'],
   ['test-unit-suite-rejected',
    'CS-0185: suite on a step_kind = "test" unit — register-phase rejection, not syntactic'],
-  // CS-0155: a literal-output first cook step in an ingredients <probe>
+  // CS-0155: a literal-output first cook step in a gather <probe>
   // recipe parses cleanly; only the register pass knows there is no
   // preceding step whose outputs it could gather (§8.4.1).
   ['probe-fanout-literal-first-step',

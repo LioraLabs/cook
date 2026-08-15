@@ -1,5 +1,5 @@
 recipe lib
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe broken

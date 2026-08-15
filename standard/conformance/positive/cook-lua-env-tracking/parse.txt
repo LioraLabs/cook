@@ -5,10 +5,16 @@ Cookfile
   recipes:
     Recipe name="touch" line=1
       deps: []
-      ingredients: ["Cookfile"]
+      ingredients: []
       excludes: []
       steps:
-        Cook outputs=[LuaExpr("input .. \".out\"")] body=LuaBlock("        local f = io.open(output, \"w\")\n        f:write(\"FOO=\" .. tostring(cook.env.FOO))\n        f:write(\" BAR=\" .. tostring(cook.env[\"BAR\"]))\n        f:close()")
+        Cook outputs=[LuaExpr("input .. \".out\"")] body=LuaBlock("        local f = io.open(output, \"w\")\n        f:write(\"FOO=\" .. tostring(cook.env.FOO))\n        f:write(\" BAR=\" .. tostring(cook.env[\"BAR\"]))\n        f:close()") disposition=[local=false pinned=false record=false seal=["@seal:touch:2"]]
   chores:
   register_blocks: []
   top_level_module_calls: []
+  probes:
+    Probe name="@seal:touch:2" line=2
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Files globs=["Cookfile"] excludes=[]

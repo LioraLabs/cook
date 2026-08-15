@@ -1,5 +1,6 @@
 recipe "protos"
-    ingredients "proto/a.proto"
+    gather "proto/a.proto"
+    cook "build/proto/$<in.stem>.proto" { cp $<in> $<out> }
 
 recipe "bad"
     cook "build/fixed.o" {

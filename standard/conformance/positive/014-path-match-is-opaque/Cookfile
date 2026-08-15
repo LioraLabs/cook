@@ -1,11 +1,11 @@
 recipe "compile"
-    ingredients "src/a.c"
+    gather "src/a.c"
     cook "build/lib.a" {
         ar rcs $<out> $<in>
     }
 
 recipe "link"
-    ingredients "build/lib.a"
+    gather "build/lib.a"
     cook "build/app" {
         cc -o $<out> $<in>
     }

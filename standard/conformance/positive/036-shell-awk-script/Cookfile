@@ -1,5 +1,5 @@
 recipe extract
-    ingredients "data.txt"
+    gather "data.txt"
     cook "$<in.stem>.col1" {
         awk '{print $1}' $<in> > $<out>
     }

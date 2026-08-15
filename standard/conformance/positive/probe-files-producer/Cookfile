@@ -3,6 +3,6 @@ files srcs
     !"src/gen/*.ts"
 
 recipe check
-    ingredients "src/main.ts"
+    seal "src/main.ts"
     seal srcs
     cook "build/check.stamp" { echo ok > $<out> }

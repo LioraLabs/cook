@@ -8,6 +8,7 @@ Cookfile
       ingredients: ["t/*.sh"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/$<in.stem>"] body=ShellBlock(["cp $<in> $<out>"])
         Test body=ShellBlock(["./$<in>"])
     Recipe name="naked" line=6

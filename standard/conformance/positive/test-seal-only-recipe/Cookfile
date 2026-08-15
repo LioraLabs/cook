@@ -1,4 +1,4 @@
 recipe verify
-    ingredients "src/*.c"
+    seal "src/*.c"
     seal host
     test { ./run.sh }

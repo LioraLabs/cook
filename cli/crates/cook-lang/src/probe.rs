@@ -65,7 +65,9 @@ pub(crate) fn parse_probe(
                             message: "probe: at most one `ingredients` per probe".into() });
                     }
                     let (inc, exc, new_pos) =
-                        parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
+                        parse_ingredients_line(
+                            rest, "ingredients", tok.line, tokens, pos, source_lines,
+                        )?;
                     ingredients = inc; excludes = exc; pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "seal") {

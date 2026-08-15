@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="art" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        MemberSource source=GatherKey("cards")
+        Cook outputs=["build/art/$<in.id>.png"] body=ShellBlock(["gen \"$<in.name>\" $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

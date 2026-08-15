@@ -1,0 +1,8 @@
+recipe "headers"
+    gather "include/a.h" "include/b.h"
+    cook "build/include/$<in.stem>.h" { cp $<in> $<out> }
+
+recipe "list_headers"
+    cook "build/$<headers.stem>.listed" {
+        echo $<in> > $<out>
+    }

@@ -1,3 +1,3 @@
 recipe verify
-    ingredients "src/*.c"
+    seal "src/*.c"
     test { ./run.sh } seal

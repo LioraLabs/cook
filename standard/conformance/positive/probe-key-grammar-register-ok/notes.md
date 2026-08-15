@@ -1,6 +1,6 @@
 §{cat.probes.decl}, CS-0201. Five sites named a probe key and no two agreed:
 
-| key | `probe` decl | `cook.probe()` | `$<ref>` | `seal` | `ingredients` |
+| key | `probe` decl | `cook.probe()` | `$<ref>` | `seal` | `gather` |
 |---|---|---|---|---|---|
 | `plain` | yes | yes | yes | yes | yes |
 | `demo:ver` | yes | yes | yes | yes | yes |
@@ -15,7 +15,7 @@ path — could not be sealed at all. Sealing a discovered library is exactly the
 pin a cache-trust story exists to offer.
 
 The two rejection sites also blamed different things for the same cause:
-`seal` reported "malformed probe ref" while `ingredients` reported "unexpected
+`seal` reported "malformed probe ref" while `gather` reported "unexpected
 trailing content '-version'", because its scanner stopped at the hyphen and
 called the remainder a trailer. One grammar and one diagnostic now.
 

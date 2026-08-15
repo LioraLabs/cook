@@ -467,7 +467,14 @@ pub(crate) fn parse_recipe(
                             });
                         }
                         let (inc, exc, new_pos) =
-                            parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
+                            parse_ingredients_line(
+                                rest,
+                                if gather.is_some() { "gather" } else { "ingredients" },
+                                tok.line,
+                                tokens,
+                                pos,
+                                source_lines,
+                            )?;
                         ingredients = inc;
                         excludes = exc;
                         if gather.is_some() {

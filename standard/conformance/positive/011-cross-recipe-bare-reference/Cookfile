@@ -1,5 +1,5 @@
 recipe "libmath"
-    ingredients "src/math/a.c"
+    gather "src/math/a.c"
     cook "build/libmath.a" {
         ar rcs $<out> $<in>
     }

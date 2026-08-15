@@ -8,6 +8,7 @@ Cookfile
       ingredients: ["tests/*.sh"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/$<in.stem>"] body=ShellBlock(["cp $<in> $<out>"])
         Test body=ShellBlock(["./$<in>"])
         Test body=LuaBlock("for _, b in ipairs(inputs) do cook.sh(b) end")

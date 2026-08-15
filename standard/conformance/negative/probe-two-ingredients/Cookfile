@@ -1,4 +1,0 @@
-probe p
-    ingredients "a"
-    ingredients "b"
-    >{ return 1 }

@@ -1,5 +1,6 @@
 recipe "protos"
-    ingredients "proto/a.proto" "proto/b.proto"
+    gather "proto/a.proto" "proto/b.proto"
+    cook "build/proto/$<in.stem>.proto" { cp $<in> $<out> }
 
 recipe "compile_protos"
     cook "build/obj/$<protos.stem>.pb.cc" {

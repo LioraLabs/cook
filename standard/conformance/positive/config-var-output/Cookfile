@@ -6,5 +6,5 @@ config release
     var.CFLAGS = "-O2"
 
 recipe build
-    ingredients "src/main.c"
+    gather "src/main.c"
     cook "build/main" { $<CC> $<CFLAGS> $<in> -o $<out> }

@@ -174,6 +174,7 @@ pub(crate) fn collect_quoted_patterns_multiline(
 /// Returns (includes, excludes, new_pos).
 pub(crate) fn parse_ingredients_line(
     text: &str,
+    keyword: &str,
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
@@ -186,7 +187,7 @@ pub(crate) fn parse_ingredients_line(
     if !leftover.trim().is_empty() {
         return Err(ParseError::Parse {
             line,
-            message: format!("ingredients: expected '\"' or '!\"', found: {}", leftover),
+            message: format!("{keyword}: expected '\"' or '!\"', found: {leftover}"),
         });
     }
     let mut includes = Vec::new();

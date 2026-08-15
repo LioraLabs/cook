@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        MemberSource source=ProbeKey("cc-version")
+        MemberSource source=GatherKey("cc-version")
         Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo '$<in>' > $<out>"]) disposition=[local=false pinned=false record=false seal=["cc:find:raylib", "demo:cc-version"]]
   chores:
   register_blocks: []

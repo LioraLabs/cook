@@ -8,7 +8,9 @@ Cookfile
       ingredients: ["proto/a.proto", "proto/b.proto"]
       excludes: []
       steps:
-    Recipe name="compile_protos" line=4
+        Gather
+        Cook outputs=["build/proto/$<in.stem>.proto"] body=ShellBlock(["cp $<in> $<out>"])
+    Recipe name="compile_protos" line=5
       deps: []
       ingredients: []
       excludes: []

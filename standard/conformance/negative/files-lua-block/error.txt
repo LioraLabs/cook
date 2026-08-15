@@ -1,0 +1,1 @@
+files declaration body admits only quoted globs

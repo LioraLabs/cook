@@ -1,0 +1,3 @@
+recipe art
+    gather cards
+    cook "build/art/$<in.id>.png" { gen "$<in.name>" $<out> }
