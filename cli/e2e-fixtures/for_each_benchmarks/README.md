@@ -1,10 +1,9 @@
 # §8.2 `gather <probe>` Benchmarks (COOK-63 / CS-0091)
 
 Concrete coverage of Cook's **data-driven fan-out**: the `gather <probe>`
-form, the data-member counterpart to `gather "glob"`. Where `gather
-"glob"` drives one work unit per filesystem path, `gather <probe>` drives
-one unit per **data member** — a record or scalar — with the current member
-bound as `item`.
+form supplies a recipe with data members — records or scalars. In these
+recipes, accessor-bearing `cook` outputs and item-referencing `test` bodies
+fan out with the current member bound as `item`.
 
 ## Surface forms
 
@@ -23,7 +22,11 @@ The current member is available as:
   scalar's string form otherwise);
 - `$<in.FIELD>` — the value of record field `FIELD`.
 
-`cook` and `test` steps each produce **one unit per member**.
+The gather source supplies the recipe's members. An accessor-bearing `cook`
+output registers one unit per member; a later all-literal `cook` output
+registers one aggregate unit over the preceding outputs; an all-literal first
+`cook` step is rejected. Every consumer in this benchmark deliberately selects
+the per-member form (`test` selects it by referencing the item in its body).
 
 ## The recipes
 
@@ -52,7 +55,7 @@ cook emit-lua     # print the generated register-phase fan-out Lua
 `verify.sh` confirms each recipe lowers to the expected `for _, item in
 ipairs(_items)` fan-out: the right member source (`cook.probes.get` / `:field`
 index), `$<in.FIELD>` → `cook.member_to_string(item["FIELD"])`, bare `$<in>` →
-`cook.member_to_string(item)`, and one `cook.add_unit` / `cook.add_test` per
+`cook.member_to_string(item)`, and one `cook.add_unit` per
 member.
 
 ## Once COOK-64 lands

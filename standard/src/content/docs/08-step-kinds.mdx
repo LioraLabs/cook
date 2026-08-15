@@ -195,7 +195,7 @@ A `cook_step`'s **iteration mode** is determined by its output pattern list, bef
 |---|---|---|---|
 | At least one output contains an accessor for its current driver (`$<in.ACCESSOR>` or `$<lib.ACCESSOR>`) | **One-to-one over driver outputs** | The gathered input set or `lib`'s output list (§{xref.dep-driven}) | One per driver output |
 | All outputs are literal (no accessor placeholders) | **Many-to-one** (the "one" refers to *one unit*, not one output) | None — one unit runs with the full input list visible | Exactly one |
-| The recipe carries  a `gather <probe>` source (§{steps.gather}) | **One-to-one over data members** | The probe's resolved member list | One per member |
+| At least one output contains `$<in.ACCESSOR>` and the recipe carries a `gather <probe>` source (§{steps.gather}) | **One-to-one over data members** | The source's resolved member list | One per member |
 
 A conforming implementation MUST reject, with a load-time diagnostic, a `cook_step` whose output patterns mix iteration sources — that is, where two outputs select different drivers (one bears `$<in.ACCESSOR>` while another bears `$<libmath.ACCESSOR>`, or one bears `$<in.ACCESSOR>` while another is literal). All output patterns of a single `cook_step` MUST share one driver.
 
@@ -207,6 +207,11 @@ literal-output step produces exactly one unit whose `$<in>` is the complete
 gathered set. [added CS-0224]
 
 When the recipe carries  a `gather <probe>` source (§{steps.gather}), the output-pattern rule of this section selects between two modes (CS-0155; before that amendment every step was member-iterated "regardless of its output-pattern accessors", which left literal-output steps registering one colliding unit per member over raw record text):
+
+The gather source supplies the recipe's members. An accessor-bearing `cook`
+output registers one unit per member; a later all-literal `cook` output
+registers one aggregate unit over the preceding outputs; an all-literal first
+`cook` step is rejected.
 
 - A `cook_step` with at least one accessor-bearing output is in **one-to-one over data members** mode: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no input path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by  a `gather <probe>` source.
 - A `cook_step` whose outputs are all literal is the ordinary **many-to-one** gather of this section, and its input list is the *preceding* `cook_step`'s collected outputs — exactly the chained-step rule that applies in a glob-driven recipe: one unit, `$<in>` expanding to that collected list, space-joined. Data members are records, not file paths, so there is nothing path-shaped for a *first* step to gather: a conforming implementation MUST reject a literal-output `cook_step` with no preceding `cook_step` in a probe-driven recipe with a register-phase diagnostic that names the recipe and directs the author to fan out first or to aggregate member values in a `>{ … }` Lua body via `cook.probes.get` (§{cat.probes.consumer}).

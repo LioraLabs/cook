@@ -7,6 +7,7 @@ const cache = readFileSync(new URL('../../content/docs/17-cache.mdx', import.met
 const probes = readFileSync(new URL('../../content/docs/22-probe-units.mdx', import.meta.url), 'utf8');
 const modules = readFileSync(new URL('../../content/docs/12-modules.mdx', import.meta.url), 'utf8');
 const changes = readFileSync(new URL('../../content/docs/appendix/E-changes.mdx', import.meta.url), 'utf8');
+const benchmark = readFileSync(new URL('../../../../cli/e2e-fixtures/for_each_benchmarks/README.md', import.meta.url), 'utf8');
 
 const section = (document: string, start: string, end: string) => {
   const startAt = document.indexOf(start);
@@ -41,7 +42,17 @@ const expectSevenRuleDispatch = (dispatch: string) => {
   ]);
 };
 
-const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cache, probesDoc = probes, modulesDoc = modules, changesDoc = changes } = {}) => {
+const expectGatherCardinality = (summary: string) => {
+  const normalized = normalize(summary);
+  expect(normalized).toMatch(/gather source supplies .*members/i);
+  expect(normalized).toMatch(/accessor-bearing .*output.*one unit per member/i);
+  expect(normalized).toMatch(/later all-literal .*output.*one aggregate unit.*preceding outputs/i);
+  expect(normalized).toMatch(/all-literal first .*step.*rejected/i);
+  expect(normalized).not.toMatch(/gather (?:<[^>]+>|source)[^.]*\b(?:drives|registers|produces) one (?:work )?unit per (?:data )?member/i);
+  expect(normalized).not.toMatch(/gather <[^>]+>`? registers one work unit per array element/i);
+};
+
+const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cache, probesDoc = probes, modulesDoc = modules, changesDoc = changes, benchmarkDoc = benchmark } = {}) => {
     const disposition = section(stepsDoc, '### 8.4.3. Cook-step disposition', '## 8.5. `cook`');
     const testSteps = section(stepsDoc, '## 8.6. `test` step', '## 8.7.');
     const gatheredInputs = section(stepsDoc, '## 8.2. Gathered inputs', '## 8.3.');
@@ -54,6 +65,13 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     const probeDecl = section(probesDoc, '## 22.5.2.', '## 22.5.3.');
     const probeLowering = section(probesDoc, '**Lowering (informative).**', '## 22.5.3.');
     const probeExecution = section(probesDoc, '## 22.5.8.', '## 22.5.9.');
+    const cookIteration = section(stepsDoc, '### 8.4.1. Iteration mode', '### Example 8.4.1.1');
+    const memberModeRow = [...cookIteration.matchAll(/^\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|$/gm)]
+      .map((match) => match.slice(1).map(normalize))
+      .find(([, mode]) => /one-to-one over data members/i.test(mode));
+    expect(memberModeRow).toBeDefined();
+    expect(memberModeRow?.[0]).toMatch(/output.*\$<in\.ACCESSOR>/i);
+    expect(memberModeRow?.[3]).toBe('One per member');
 
     const cookMods = disposition.match(/^cook_mods\s*::=([\s\S]*?)(?=^share_mod\s*::=)/m)?.[1];
     expect(cookMods && normalize(cookMods)).toBe('share_mod?');
@@ -117,6 +135,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
 
     const memberSources = section(probesDoc, '## 22.5.10.', '## 22.5.11.');
     expectBareGatherUnion(memberSources);
+    for (const summary of [cookIteration, memberSources, benchmarkDoc]) expectGatherCardinality(summary);
     expect(normalize(memberSources)).toContain('There is no segment-count limit');
     expect(memberSources).not.toMatch(/(?:at most two|four or more segments)/i);
 
@@ -235,5 +254,23 @@ describe('Language v2 Standard contract', () => {
       const denied = document.replace(anchor, `${anchor}\n\nNamed files cannot gather.`);
       expect(() => assertContract({ [field]: denied })).toThrow();
     }
+  });
+
+  it('rejects unconditional gathered-member unit cardinality in every teaching copy', () => {
+    for (const [document, anchor, field] of [
+      [steps, '### 8.4.1. Iteration mode', 'stepsDoc'],
+      [probes, '## 22.5.10.', 'probesDoc'],
+      [benchmark, '## Surface forms', 'benchmarkDoc'],
+    ] as const) {
+      const mutated = document.replace(anchor, `${anchor}\n\nA gather source drives one work unit per data member.`);
+      expect(() => assertContract({ [field]: mutated })).toThrow();
+    }
+
+    const oldTableRow = '| The recipe carries  a `gather <probe>` source (§{steps.gather}) | **One-to-one over data members** | The probe\'s resolved member list | One per member |';
+    const tableMutation = steps.replace(/^\| At least one output contains `\$<in\.ACCESSOR>` and the recipe carries.*$/m, oldTableRow);
+    expect(() => assertContract({ stepsDoc: tableMutation })).toThrow();
+
+    const probeMutation = probes.replace('`gather <key>` supplies the array elements as recipe members', '`gather <key>` registers one work unit per array element');
+    expect(() => assertContract({ probesDoc: probeMutation })).toThrow();
   });
 });

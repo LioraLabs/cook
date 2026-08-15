@@ -1010,11 +1010,10 @@ pub fn generate_with_names(
                     ));
                 }
 
-                // COOK-63 §8.2: a member-fanout recipe drives its per-member
-                // steps from a data source. Emit the member set once, then
-                // route this recipe's cook/plate/test steps through the
-                // data-member fan-out path (each producing one unit per member,
-                // member bound as `item`) instead of the input-driven one.
+                // Emit the gathered member set once. Each step then selects
+                // its own route: accessor-bearing cook outputs and
+                // item-referencing plate/test bodies fan out, while CS-0155
+                // keeps later literal-output cook steps aggregate.
                 let member_source = recipe.steps.iter().find_map(|s| match s {
                     Step::MemberSource { step, line } => Some((step, *line)),
                     _ => None,
