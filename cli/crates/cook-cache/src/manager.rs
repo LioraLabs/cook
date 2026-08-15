@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::{FileRecord, StepEntry, hash_file, stat_mtime};
 use cook_contracts::CacheMeta;
-use crate::{hash_file, stat_mtime, FileRecord, StepEntry};
 
 use crate::store::RecipeCache;
 
@@ -16,11 +16,14 @@ pub fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileR
         let abs = working_dir.join(rel);
         let mtime = stat_mtime(&abs).ok_or_else(|| rel.clone())?;
         let hash = hash_file(&abs).ok_or_else(|| rel.clone())?;
-        out.push(FileRecord { path: rel.as_str().into(), mtime, hash });
+        out.push(FileRecord {
+            path: rel.as_str().into(),
+            mtime,
+            hash,
+        });
     }
     Ok(out)
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
@@ -29,7 +32,6 @@ pub enum RecordError {
     #[error("cache record skipped: output file missing or unreadable: {0}")]
     UnreadableFile(String),
 }
-
 
 /// Outcome of a single keyed step lookup against a recipe index.
 ///
@@ -83,9 +85,7 @@ impl ThreadSafeCacheManager {
 
     pub fn update_step(&self, recipe_name: &str, cache_key: &str, entry: StepEntry) {
         let mut caches = self.caches.lock().unwrap();
-        let recipe_cache = caches
-            .entry(recipe_name.to_string())
-            .or_default();
+        let recipe_cache = caches.entry(recipe_name.to_string()).or_default();
         // COOK-306: a settled run re-validates every step and writes back an
         // entry identical to the one it read. Storing it is a no-op; marking
         // the recipe dirty is not — it costs a full re-serialisation of the
@@ -100,7 +100,9 @@ impl ThreadSafeCacheManager {
         // (every caller drops it within its own statement or block), so this
         // is an in-place insert on the hot path. Retaining a snapshot across
         // a build would silently restore the COOK-306 quadratic clone.
-        Arc::make_mut(recipe_cache).steps.insert(cache_key.to_string(), entry);
+        Arc::make_mut(recipe_cache)
+            .steps
+            .insert(cache_key.to_string(), entry);
         drop(caches);
         let mut dirty = self.dirty.lock().unwrap();
         dirty.insert(recipe_name.to_string());
@@ -171,16 +173,14 @@ impl ThreadSafeCacheManager {
     /// This is the per-work-node hot path (COOK-306). `output_base` is the
     /// unit's first declared output path, used only to attribute a miss to a
     /// changed env value — see [`StepLookup::env_moved_key`].
-    pub fn lookup_step(
-        &self,
-        recipe_name: &str,
-        cache_key: &str,
-        output_base: &str,
-    ) -> StepLookup {
+    pub fn lookup_step(&self, recipe_name: &str, cache_key: &str, output_base: &str) -> StepLookup {
         let mut caches = self.caches.lock().unwrap();
         let cache = Self::resolve(&mut caches, &self.cache_dir, recipe_name);
         if let Some(entry) = cache.steps.get(cache_key) {
-            return StepLookup { entry: Some(entry.clone()), env_moved_key: false };
+            return StepLookup {
+                entry: Some(entry.clone()),
+                env_moved_key: false,
+            };
         }
         let prefix = format!("{output_base}@");
         let env_moved_key = cache.steps.contains_key(output_base)
@@ -190,7 +190,10 @@ impl ThreadSafeCacheManager {
                 .take_while(|(k, _)| k.starts_with(&prefix))
                 .next()
                 .is_some();
-        StepLookup { entry: None, env_moved_key }
+        StepLookup {
+            entry: None,
+            env_moved_key,
+        }
     }
 
     pub fn record_completion(
@@ -219,10 +222,7 @@ impl ThreadSafeCacheManager {
             // Append the depfile as an implicit output. If the file is
             // missing on disk post-execution, skip silently — the engine's
             // augmentation block (Task 10) handles the warning.
-            if let Ok(records) = collect_records(
-                &[di.from.clone()],
-                working_dir,
-            ) {
+            if let Ok(records) = collect_records(&[di.from.clone()], working_dir) {
                 if let Some(rec) = records.into_iter().next() {
                     new_outputs.push(rec);
                 }
@@ -233,8 +233,8 @@ impl ThreadSafeCacheManager {
         // being dropped: dropping it would file an entry keyed on LESS than
         // the unit actually ran, which is the defect this change closes. No
         // entry is a cold miss; a short entry is a wrong hit.
-        let module_inputs = collect_records(module_paths, working_dir)
-            .map_err(RecordError::UnreadableFile)?;
+        let module_inputs =
+            collect_records(module_paths, working_dir).map_err(RecordError::UnreadableFile)?;
 
         let entry = StepEntry {
             inputs: new_inputs,

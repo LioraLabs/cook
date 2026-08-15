@@ -108,7 +108,9 @@ fn a_sub_require_records_its_own_file() {
     let observer = ModuleObserver::new();
     let lua = vm(tmp.path().to_path_buf(), &observer);
 
-    lua.load(r#"assert(cook.load_module("rock").v == 7)"#).exec().unwrap();
+    lua.load(r#"assert(cook.load_module("rock").v == 7)"#)
+        .exec()
+        .unwrap();
 
     let mut seen = observer.take();
     seen.sort();
@@ -176,7 +178,10 @@ fn a_native_module_on_cpath_is_recorded() {
     let tmp = tempfile::tempdir().unwrap();
     let native = cook_contracts::layout::modules_dir(tmp.path())
         .join(cook_contracts::layout::MODULES_LIB_LUA_SUBDIR)
-        .join(format!("native.{}", cook_contracts::layout::native_lua_ext()));
+        .join(format!(
+            "native.{}",
+            cook_contracts::layout::native_lua_ext()
+        ));
     std::fs::create_dir_all(native.parent().unwrap()).unwrap();
     std::fs::write(&native, b"\x7fELF not really").unwrap();
 
@@ -186,7 +191,9 @@ fn a_native_module_on_cpath_is_recorded() {
         .exec()
         .unwrap();
 
-    lua.load(r#"assert(require("native").v == 1)"#).exec().unwrap();
+    lua.load(r#"assert(require("native").v == 1)"#)
+        .exec()
+        .unwrap();
 
     assert_eq!(observer.take(), vec![native]);
 }
@@ -204,19 +211,13 @@ fn a_require_served_from_package_loaded_records_the_file_it_actually_ran() {
 
     let observer = ModuleObserver::new();
     let lua = vm(one.path().to_path_buf(), &observer);
-    let from_one: String = lua
-        .load(r#"return require("shared").from"#)
-        .eval()
-        .unwrap();
+    let from_one: String = lua.load(r#"return require("shared").from"#).eval().unwrap();
     assert_eq!(from_one, "one");
     assert_eq!(observer.take(), vec![first.clone()]);
 
     // Second work item, different Cookfile directory, same VM.
     crate::module_loader::refresh_package_search_paths(&lua, two.path()).unwrap();
-    let still_one: String = lua
-        .load(r#"return require("shared").from"#)
-        .eval()
-        .unwrap();
+    let still_one: String = lua.load(r#"return require("shared").from"#).eval().unwrap();
 
     assert_eq!(
         still_one, "one",

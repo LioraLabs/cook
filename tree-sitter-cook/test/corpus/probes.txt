@@ -197,28 +197,6 @@ probe cc.version
     (lua_code)))
 
 ================
-Probe with ingredients and producer
-================
-
-probe cards
-    ingredients "data/*.json" !"data/old.json"
-    json { cat data/*.json }
-
----
-
-(source_file
-  (probe
-    (probe_header
-      (identifier))
-    (ingredients_step
-      (string)
-      (ingredient_exclude
-        (string)))
-    (producer
-      (shell_block
-        (shell_content)))))
-
-================
 Removed produce introducer is rejected
 ================
 
@@ -286,47 +264,6 @@ Probe duplicate producers are rejected
 probe duplicate
     { echo one }
     lines { echo two }
-
----
-
-(source_file
-  (probe
-    (probe_header
-      (identifier))
-    (producer
-      (shell_block
-        (shell_content))))
-  (ERROR
-    (import_name)
-    (lua_code)))
-
-================
-Probe duplicate ingredients are rejected
-================
-
-probe duplicate-inputs
-    ingredients "one"
-    ingredients "two"
-    { echo done }
-
----
-
-(source_file
-  (ERROR
-    (probe_header
-      (identifier))
-    (ingredients_step
-      (string))
-    (import_name)
-    (lua_code)))
-
-================
-Probe ingredients after producer are rejected
-================
-
-probe late-inputs
-    { echo done }
-    ingredients "late"
 
 ---
 
@@ -434,25 +371,6 @@ files srcs
     (file_set_line
       (glob_pattern
         (string)))))
-
-================
-Files producer combined with ingredients is rejected (CS-0148)
-================
-
-probe srcs
-    ingredients "other/*.c"
-    files { "src/*.ts" }
-
----
-
-(source_file
-  (ERROR
-    (probe_header
-      name: (identifier))
-    (ingredients_step
-      (string))
-    (import_name)
-    (lua_code)))
 
 ================
 Empty files glob-list is rejected

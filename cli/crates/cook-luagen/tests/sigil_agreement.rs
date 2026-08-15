@@ -28,10 +28,10 @@ fn codegen(src: &str) -> Result<String, String> {
 /// minimal recipe. Returns the two diagnostics.
 fn diagnostics_for(ident: &str) -> (String, String) {
     let cook_src = format!(
-        "recipe c\n    ingredients \"*.txt\"\n    cook \"out/$<in.stem>.o\" {{ echo \"$<{ident}>\" > $<out> }}\n"
+        "recipe c\n    gather \"*.txt\"\n    cook \"out/$<in.stem>.o\" {{ echo $<in> \"$<{ident}>\" > $<out> }}\n"
     );
     let test_src =
-        format!("recipe t\n    ingredients \"*.txt\"\n    test {{ echo \"$<{ident}>\" }}\n");
+        format!("recipe t\n    gather \"*.txt\"\n    test {{ echo $<in> \"$<{ident}>\" }}\n");
     (
         codegen(&cook_src).err().unwrap_or_default(),
         codegen(&test_src).err().unwrap_or_default(),
@@ -70,13 +70,13 @@ fn retired_env_prefix_answers_the_same_in_both_bodies() {
 fn recipe_member_ref_answers_the_same_in_both_bodies() {
     // Before: the cook body gave the typed RecipeMemberOutsideFanout error
     // while the test body advised declaring a variable named `c[in]`.
-    let cook_src = "recipe dep\n    ingredients \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\nrecipe c\n    ingredients \"*.txt\"\n    cook \"out/x.o\" { echo \"$<dep[in]>\" > $<out> }\n";
-    let test_src = "recipe dep\n    ingredients \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\nrecipe t\n    ingredients \"*.txt\"\n    test { echo \"$<dep[in]>\" }\n";
+    let cook_src = "recipe dep\n    gather \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\nrecipe c\n    gather \"*.txt\"\n    cook \"out/x.o\" { echo $<in> \"$<dep[in]>\" > $<out> }\n";
+    let test_src = "recipe dep\n    gather \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\nrecipe t\n    gather \"*.txt\"\n    test { echo $<in> \"$<dep[in]>\" }\n";
     let cook = codegen(cook_src).expect_err("cook body must reject");
     let test = codegen(test_src).expect_err("test body must reject");
     assert_eq!(body(&cook), body(&test), "cook={cook:?}\ntest={test:?}");
     assert!(
-        cook.contains("only valid inside an `ingredients <probe>` fan-out body"),
+        cook.contains("only valid inside a `gather <probe>` fan-out body"),
         "expected the fan-out diagnostic, got: {cook}"
     );
 }
@@ -92,13 +92,11 @@ fn unknown_in_accessor_lowers_the_same_in_both_bodies() {
     // rejects at codegen: both defer to the register-phase variable check, and
     // agreeing to defer is the point.
     let cook = codegen(
-        "recipe c\n    ingredients \"*.txt\"\n    cook \"out/$<in.stem>.o\" { echo \"$<in.bogus>\" > $<out> }\n",
+        "recipe c\n    gather \"*.txt\"\n    cook \"out/$<in.stem>.o\" { echo \"$<in.bogus>\" > $<out> }\n",
     )
     .expect("cook body lowers");
-    let test = codegen(
-        "recipe t\n    ingredients \"*.txt\"\n    test { echo \"$<in.bogus>\" }\n",
-    )
-    .expect("test body lowers");
+    let test = codegen("recipe t\n    gather \"*.txt\"\n    test { echo \"$<in.bogus>\" }\n")
+        .expect("test body lowers");
 
     for (label, lua) in [("cook", &cook), ("test", &test)] {
         assert!(
@@ -119,12 +117,11 @@ fn probe_ref_is_refused_identically_by_both_test_paths() {
     // this slice guarantees is that the plain and fan-out test paths refuse it
     // with the same diagnostic, instead of one erroring and the other claiming
     // no config block declares the probe key.
-    let plain = codegen(
-        "probe sys:os\n    { uname -s }\n\nrecipe t\n    test { echo \"$<sys:os>\" }\n",
-    )
-    .expect_err("plain test body must refuse");
+    let plain =
+        codegen("probe sys:os\n    { uname -s }\n\nrecipe t\n    test { echo \"$<sys:os>\" }\n")
+            .expect_err("plain test body must refuse");
     let fan_out = codegen(
-        "probe sys:os\n    { uname -s }\n\nprobe list:items\n    >{ return {\"a\"} }\n\nrecipe f\n    ingredients list:items\n    test { echo \"$<sys:os>\" }\n",
+        "probe sys:os\n    { uname -s }\n\nprobe list:items\n    >{ return {\"a\"} }\n\nrecipe f\n    gather list:items\n    test { echo \"$<sys:os>\" }\n",
     )
     .expect_err("fan-out test body must refuse");
 
@@ -154,7 +151,7 @@ fn a_variable_substitutes_in_an_output_pattern_as_it_does_in_a_body() {
     // pattern reached /bin/sh with the sigil intact and wrote a file called
     // `out/all-$`. Both surfaces now lower the same reference the same way.
     let lua = codegen(
-        "config\n    var.suffix = \"dev\"\n\nrecipe r\n    ingredients \"*.c\"\n    cook \"out/all-$<suffix>.o\" { cat $<in> > $<out> }\n",
+        "config\n    var.suffix = \"dev\"\n\nrecipe r\n    gather \"*.c\"\n    cook \"out/all-$<suffix>.o\" { cat $<in> > $<out> }\n",
     )
     .expect("must lower");
     assert!(
@@ -179,17 +176,21 @@ fn a_bare_recipe_name_is_rejected_in_any_output_pattern() {
     // No semantics moved, because the checked path rejects the form outright
     // in both shapes. This pins that: the divergence was latent, and it stays
     // unreachable.
-    let dep = "recipe dep\n    ingredients \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\n";
+    let dep =
+        "recipe dep\n    gather \"*.txt\"\n    cook \"out/$<in.stem>.o\" { cp $<in> $<out> }\n\n";
     let with_accessor = codegen(&format!(
-        "{dep}recipe r\n    ingredients \"*.c\"\n    cook \"out/$<dep.stem>-$<dep>.o\" {{ cat $<in> > $<out> }}\n"
+        "{dep}recipe r\n    gather \"*.c\"\n    cook \"out/$<dep.stem>-$<dep>.o\" {{ cat $<in> > $<out> }}\n"
     ))
     .expect_err("bare recipe ref in an output pattern is rejected");
     let without_accessor = codegen(&format!(
-        "{dep}recipe r\n    ingredients \"*.c\"\n    cook \"out/$<dep>.o\" {{ cat $<in> > $<out> }}\n"
+        "{dep}recipe r\n    gather \"*.c\"\n    cook \"out/$<dep>.o\" {{ cat $<in> > $<out> }}\n"
     ))
     .expect_err("bare recipe ref in an output pattern is rejected");
 
-    for (label, e) in [("with accessor", &with_accessor), ("without", &without_accessor)] {
+    for (label, e) in [
+        ("with accessor", &with_accessor),
+        ("without", &without_accessor),
+    ] {
         assert!(
             e.contains("bare recipe reference) is not allowed in an output pattern"),
             "{label}: expected the uniform rejection, got: {e}"
@@ -203,9 +204,9 @@ fn no_generated_lua_carries_a_sigil_error_marker() {
     // placeholder is a typed error, never a string literal smuggled through
     // the emitted Lua for a later grep to find.
     let sources = [
-        "recipe r\n    ingredients \"*.c\"\n    cook \"out/a.o\" { echo $<out_0> > $<out> }\n",
-        "recipe r\n    ingredients \"*.c\"\n    cook \"out/$<render[]>.o\" { cat $<in> > $<out> }\n",
-        "recipe r\n    ingredients \"*.c\"\n    cook \"out/a.o\" \"out/b.o\" { gen $<out> }\n",
+        "recipe r\n    gather \"*.c\"\n    cook \"out/a.o\" { echo $<out_0> > $<out> }\n",
+        "recipe r\n    gather \"*.c\"\n    cook \"out/$<render[]>.o\" { cat $<in> > $<out> }\n",
+        "recipe r\n    gather \"*.c\"\n    cook \"out/a.o\" \"out/b.o\" { gen $<out> }\n",
     ];
     for src in sources {
         match codegen(src) {
@@ -227,7 +228,7 @@ fn codegen_is_the_only_public_lowering_entry_point() {
     // returns the warnings alongside the Lua so callers stop lowering the
     // whole Cookfile twice to collect them.
     let cookfile = cook_lang::parse(
-        "recipe empty\n\nrecipe r\n    ingredients \"*.c\"\n    cook \"out/a.o\" { echo $<empty> > $<out> }\n",
+        "recipe empty\n\nrecipe r\n    gather \"*.c\"\n    cook \"out/a.o\" { echo $<in> $<empty> > $<out> }\n",
     )
     .expect("parses");
     let names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);

@@ -46,20 +46,19 @@ fn mods_record_keyword_hints_nondet() {
         assert!(message.contains("nondet"));
     } else {
         panic!("expected Parse error");
-        }
     }
+}
 
-    #[test]
-    fn mods_as_keyword_hints_removed_in_v1() {
-        let e = parse_cook_modifiers("as 'x'", 1).unwrap_err();
+#[test]
+fn mods_as_keyword_hints_removed_in_v1() {
+    let e = parse_cook_modifiers("as 'x'", 1).unwrap_err();
     if let ParseError::Parse { message, .. } = e {
         assert!(message.contains("removed in v1.0"));
     } else {
         panic!("expected Parse error");
-        }
     }
+}
 
-    
 #[test]
 fn parse_seal_refs_accepts_bare_keys() {
     let refs = vec!["host".to_string(), "cc:toolchain".to_string()];
@@ -70,11 +69,9 @@ fn parse_seal_refs_accepts_bare_keys() {
     assert_eq!(out, vec!["_x".to_string(), "a1:_b2".to_string()]);
 }
 
-
-    
-    #[test]
-    fn parse_seal_refs_rejects_leading_digit() {
-        let refs = vec!["1bad".to_string()];
+#[test]
+fn parse_seal_refs_rejects_leading_digit() {
+    let refs = vec!["1bad".to_string()];
     assert!(parse_seal_refs(&refs, 1).is_err());
 }
 

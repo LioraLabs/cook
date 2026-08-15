@@ -49,10 +49,7 @@ impl Workspace {
         _overrides: &[String],
     ) -> Result<Self, PipelineError> {
         let cookfile_path = std::fs::canonicalize(cookfile_path).map_err(|e| {
-            PipelineError::Workspace(format!(
-                "cannot resolve {}: {e}",
-                cookfile_path.display()
-            ))
+            PipelineError::Workspace(format!("cannot resolve {}: {e}", cookfile_path.display()))
         })?;
         let root_dir = cookfile_path
             .parent()
@@ -67,10 +64,7 @@ impl Workspace {
         })?;
 
         let source = std::fs::read_to_string(&cookfile_path).map_err(|e| {
-            PipelineError::Workspace(format!(
-                "cannot read {}: {e}",
-                cookfile_path.display()
-            ))
+            PipelineError::Workspace(format!("cannot read {}: {e}", cookfile_path.display()))
         })?;
         let cookfile =
             cook_lang::parse(&source).map_err(|e| PipelineError::Parse(e.to_string()))?;
@@ -84,9 +78,7 @@ impl Workspace {
         let mut imports = BTreeMap::new();
         let mut namespace_map = Vec::new();
         let mut visited = HashSet::new();
-        visited.insert(
-            std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone()),
-        );
+        visited.insert(std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone()));
 
         Self::load_imports(
             &cookfile,
@@ -120,8 +112,8 @@ impl Workspace {
         namespace_map: &mut Vec<(PathBuf, String, PathBuf)>,
         visited: &mut HashSet<PathBuf>,
     ) -> Result<(), PipelineError> {
-        let parent_canonical = std::fs::canonicalize(cookfile_dir)
-            .unwrap_or_else(|_| cookfile_dir.to_path_buf());
+        let parent_canonical =
+            std::fs::canonicalize(cookfile_dir).unwrap_or_else(|_| cookfile_dir.to_path_buf());
 
         for import_decl in &cookfile.imports {
             let import_dir = match &import_decl.path {
@@ -184,9 +176,8 @@ impl Workspace {
                     import_decl.name
                 ))
             })?;
-            let sub_cookfile = cook_lang::parse(&source).map_err(|e| {
-                PipelineError::Parse(format!("Import '{}': {e}", import_decl.name))
-            })?;
+            let sub_cookfile = cook_lang::parse(&source)
+                .map_err(|e| PipelineError::Parse(format!("Import '{}': {e}", import_decl.name)))?;
             let sub_recipe_names = cook_luagen::dep_ref::extract_recipe_names(&sub_cookfile);
             let (sub_lua, _) = cook_luagen::generate_checked(&sub_cookfile, &sub_recipe_names)
                 .map_err(|e| {
@@ -223,8 +214,8 @@ impl Workspace {
     /// importee-relative paths into importer-relative paths.
     pub fn alias_dirs_for(&self, importer_dir: &Path) -> BTreeMap<String, PathBuf> {
         let mut out = BTreeMap::new();
-        let importer_canon = std::fs::canonicalize(importer_dir)
-            .unwrap_or_else(|_| importer_dir.to_path_buf());
+        let importer_canon =
+            std::fs::canonicalize(importer_dir).unwrap_or_else(|_| importer_dir.to_path_buf());
         for (parent_canon, alias, target_canon) in &self.namespace_map {
             if parent_canon != &importer_canon {
                 continue;
@@ -247,13 +238,10 @@ impl Workspace {
     /// two different chains has one canonical prefix, and every importer's
     /// alias map points at that canonical prefix regardless of which chain
     /// the importer itself sits on.
-    pub fn alias_qualified_prefixes_for(
-        &self,
-        importer_dir: &Path,
-    ) -> BTreeMap<String, String> {
+    pub fn alias_qualified_prefixes_for(&self, importer_dir: &Path) -> BTreeMap<String, String> {
         let mut out = BTreeMap::new();
-        let importer_canon = std::fs::canonicalize(importer_dir)
-            .unwrap_or_else(|_| importer_dir.to_path_buf());
+        let importer_canon =
+            std::fs::canonicalize(importer_dir).unwrap_or_else(|_| importer_dir.to_path_buf());
         for (parent_canon, alias, target_canon) in &self.namespace_map {
             if parent_canon != &importer_canon {
                 continue;
@@ -267,7 +255,6 @@ impl Workspace {
         }
         out
     }
-
 }
 
 /// Per §7.3 (+ §10.2 step 2 when `extra` is non-empty), regenerate the
@@ -280,8 +267,8 @@ pub(crate) fn regenerate_lua_sources(
     extra: &BTreeMap<PathBuf, BTreeSet<String>>,
 ) -> Result<(), PipelineError> {
     // Build a snapshot of canonical-path → Cookfile for cross-reference.
-    let root_canon = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
+    let root_canon =
+        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
     let mut canon_to_cookfile: BTreeMap<PathBuf, Cookfile> = workspace
         .imports
         .iter()
@@ -293,11 +280,9 @@ pub(crate) fn regenerate_lua_sources(
 
     // Build the union recipe-name set for `cookfile` located at `cookfile_dir`,
     // then regenerate its Lua source.
-    let regen = |cookfile_dir: &Path,
-                 cookfile: &Cookfile|
-     -> Result<String, PipelineError> {
-        let cookfile_dir_canon = std::fs::canonicalize(cookfile_dir)
-            .unwrap_or_else(|_| cookfile_dir.to_path_buf());
+    let regen = |cookfile_dir: &Path, cookfile: &Cookfile| -> Result<String, PipelineError> {
+        let cookfile_dir_canon =
+            std::fs::canonicalize(cookfile_dir).unwrap_or_else(|_| cookfile_dir.to_path_buf());
         let mut imports_by_alias: BTreeMap<String, &Cookfile> = BTreeMap::new();
         let mut imp_canon_by_alias: BTreeMap<String, PathBuf> = BTreeMap::new();
         for imp_decl in &cookfile.imports {
@@ -311,10 +296,8 @@ pub(crate) fn regenerate_lua_sources(
             }
             imp_canon_by_alias.insert(imp_decl.name.clone(), imp_canon);
         }
-        let mut union = cook_luagen::dep_ref::extract_recipe_names_with_imports(
-            cookfile,
-            &imports_by_alias,
-        );
+        let mut union =
+            cook_luagen::dep_ref::extract_recipe_names_with_imports(cookfile, &imports_by_alias);
         // (a) This member's own register-phase-discovered names.
         if let Some(names) = extra.get(&cookfile_dir_canon) {
             union.extend(names.iter().cloned());

@@ -14,7 +14,9 @@ use crate::theme::Theme;
 pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
     let view = &state.view;
     let total_recipes = view.recipes.len();
-    let failed_nodes: usize = view.recipes.values()
+    let failed_nodes: usize = view
+        .recipes
+        .values()
         .flat_map(|r| r.nodes.values())
         .filter(|n| n.status == NodeStatus::Failed)
         .count();
@@ -22,12 +24,12 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
     let status_text = match view.exit_code {
         Some(0) => "✓ passed",
         Some(_) => "✗ failed",
-        None    => "… unknown",
+        None => "… unknown",
     };
     let status_style = match view.exit_code {
         Some(0) => theme.ok_style(),
         Some(_) => theme.err_style(),
-        None    => Style::default(),
+        None => Style::default(),
     };
 
     let duration_text = duration_str(&view.started_at, view.ended_at.as_deref());
@@ -41,8 +43,14 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
         Span::raw("  ·  "),
         Span::raw(format!("{} recipes", total_recipes)),
         Span::raw("  ·  "),
-        Span::styled(format!("failed:{}", failed_nodes),
-            if failed_nodes > 0 { theme.err_style() } else { theme.dim_style() }),
+        Span::styled(
+            format!("failed:{}", failed_nodes),
+            if failed_nodes > 0 {
+                theme.err_style()
+            } else {
+                theme.dim_style()
+            },
+        ),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -56,7 +64,9 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
 /// `(y*365 + m*31 + d)`, which made a one-second build spanning 28 February
 /// read as 72 hours (COOK-421).
 fn duration_str(started: &str, ended: Option<&str>) -> String {
-    let Some(end) = ended else { return "(running…)".into() };
+    let Some(end) = ended else {
+        return "(running…)".into();
+    };
     let (Some(a), Some(b)) = (
         cook_contracts::timestamp::parse_rfc3339_ms(started),
         cook_contracts::timestamp::parse_rfc3339_ms(end),

@@ -334,13 +334,21 @@ fn annotated_recipes_align_origin_column() {
         .unwrap_or_else(|| panic!("expected a cc:config-header line; stdout:\n{stdout}"));
 
     let build_col = build_line.find("(from").expect("build line has annotation");
-    let header_col = header_line.find("(from").expect("header line has annotation");
+    let header_col = header_line
+        .find("(from")
+        .expect("header line has annotation");
     assert_eq!(
         build_col, header_col,
         "annotations must align to the same column; stdout:\n{stdout}"
     );
-    assert_eq!(build_line, "  recipe web:build         (from cook_pnpm.workspace)");
-    assert_eq!(header_line, "  recipe cc:config-header  (from cook_cc.config_header)");
+    assert_eq!(
+        build_line,
+        "  recipe web:build         (from cook_pnpm.workspace)"
+    );
+    assert_eq!(
+        header_line,
+        "  recipe cc:config-header  (from cook_cc.config_header)"
+    );
 }
 
 /// A workspace with zero annotated recipes must produce output
@@ -364,8 +372,7 @@ fn all_unannotated_workspace_output_is_unchanged() {
     );
     let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
     assert_eq!(
-        stdout,
-        "  chore  greet caller who=\"world\"\n  recipe build\n",
+        stdout, "  chore  greet caller who=\"world\"\n  recipe build\n",
         "all-unannotated output must be byte-identical to the pre-annotation renderer",
     );
 }

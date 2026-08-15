@@ -10,7 +10,9 @@ fn plain_recipe_names_are_not_internal() {
 
 #[test]
 fn bare_internal_names_are_recognised() {
-    assert!(is_internal_recipe("__cc_config_header__build_dhewm3_config_h"));
+    assert!(is_internal_recipe(
+        "__cc_config_header__build_dhewm3_config_h"
+    ));
     assert_eq!(
         internal_module_tag("__cc_config_header__build_dhewm3_config_h"),
         Some("cc")
@@ -22,7 +24,10 @@ fn bare_internal_names_are_recognised() {
 #[test]
 fn a_qualified_internal_name_is_internal_too() {
     assert!(is_internal_recipe("game.__cc_config_header__x"));
-    assert_eq!(internal_module_tag("game.__cc_config_header__x"), Some("cc"));
+    assert_eq!(
+        internal_module_tag("game.__cc_config_header__x"),
+        Some("cc")
+    );
 
     assert!(is_internal_recipe("apps.web.__pnpm_install"));
     assert_eq!(internal_module_tag("apps.web.__pnpm_install"), Some("pnpm"));

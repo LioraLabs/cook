@@ -26,7 +26,10 @@ fn rewrite_at(path: &std::path::Path, body: &str, mtime: std::time::SystemTime) 
 }
 
 fn mtime_of(path: &std::path::Path) -> std::time::SystemTime {
-    std::fs::metadata(path).expect("metadata").modified().expect("mtime")
+    std::fs::metadata(path)
+        .expect("metadata")
+        .modified()
+        .expect("mtime")
 }
 
 fn sha256_of(body: &str) -> [u8; 32] {
@@ -159,7 +162,11 @@ fn a_binary_rebuilt_mid_run_is_hashed_at_its_new_bytes() {
     let memo = ToolHashMemo::new();
 
     assert_eq!(memo.hash(&tool), sha256_of("v1"));
-    rewrite_at(&tool, "v2-rebuilt", mtime_of(&tool) + std::time::Duration::from_secs(1));
+    rewrite_at(
+        &tool,
+        "v2-rebuilt",
+        mtime_of(&tool) + std::time::Duration::from_secs(1),
+    );
 
     assert_eq!(
         memo.hash(&tool),
@@ -201,7 +208,11 @@ fn a_rewrite_costs_exactly_one_further_read() {
     let memo = ToolHashMemo::new();
 
     assert_eq!(memo.hash(&tool), sha256_of("before"));
-    rewrite_at(&tool, "after", mtime_of(&tool) + std::time::Duration::from_secs(1));
+    rewrite_at(
+        &tool,
+        "after",
+        mtime_of(&tool) + std::time::Duration::from_secs(1),
+    );
     assert_eq!(memo.hash(&tool), sha256_of("after"));
     assert_eq!(memo.hash(&tool), sha256_of("after"));
 
@@ -328,7 +339,11 @@ fn the_global_tool_hash_memo_memoises_and_revalidates() {
     assert_eq!(tool_hash_memo(&tool), crate::probe::hash_file_sha256(&tool));
     assert_eq!(tool_hash_memo(&tool), sha256_of("content"));
 
-    rewrite_at(&tool, "replaced", mtime_of(&tool) + std::time::Duration::from_secs(1));
+    rewrite_at(
+        &tool,
+        "replaced",
+        mtime_of(&tool) + std::time::Duration::from_secs(1),
+    );
     assert_eq!(tool_hash_memo(&tool), sha256_of("replaced"));
 }
 

@@ -27,7 +27,10 @@ impl std::fmt::Display for DepfileError {
         match self {
             DepfileError::NotFound => write!(f, "depfile not found"),
             DepfileError::Io(e) => write!(f, "depfile io error: {e}"),
-            DepfileError::Malformed { byte_offset, reason } => {
+            DepfileError::Malformed {
+                byte_offset,
+                reason,
+            } => {
                 write!(f, "depfile malformed at byte {byte_offset}: {reason}")
             }
         }
@@ -77,9 +80,11 @@ pub fn parse_make_depfile(
         Err(e) => return Err(DepfileError::Io(e)),
     };
 
-    let named = parse_prerequisites(&content, source_path).map_err(|e| {
-        DepfileError::Malformed { byte_offset: e.byte_offset, reason: e.reason }
-    })?;
+    let named =
+        parse_prerequisites(&content, source_path).map_err(|e| DepfileError::Malformed {
+            byte_offset: e.byte_offset,
+            reason: e.reason,
+        })?;
 
     // Filter: skip non-existent paths (relative to working_dir).
     //

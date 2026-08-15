@@ -261,7 +261,7 @@ Parses `text` as YAML under the same value mapping as `cook.json_decode`. Malfor
 
 ### Note 24.8.1
 
-The codecs are pure functions of their argument; they perform no I/O and consult no phase state. A conforming implementation MUST install both on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body (§{cat.probes.api}) behaves identically whether it is evaluated by the `ingredients <probe>` register pre-pass or by a demand-driven worker (CS-0123).
+The codecs are pure functions of their argument; they perform no I/O and consult no phase state. A conforming implementation MUST install both on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body (§{cat.probes.api}) behaves identically whether it is evaluated by the `gather <probe>` register pre-pass or by a demand-driven worker (CS-0123).
 
 ## 24.9. `cook.tools.id` [#lua.cook-tools-id]
 **Phase.** Both.

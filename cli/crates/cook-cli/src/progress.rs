@@ -1,8 +1,8 @@
 //! Selects and spawns the cook-progress Driver.
 
 use cook_progress::{
-    Driver, EventWriterOptions, InlineOptions, InlineRenderer, JsonWriter,
-    LogConfig, LogStore, PlainRenderer, Renderer, StatusLineOptions,
+    Driver, EventWriterOptions, InlineOptions, InlineRenderer, JsonWriter, LogConfig, LogStore,
+    PlainRenderer, Renderer, StatusLineOptions,
 };
 
 #[derive(Debug, Clone, Copy)]

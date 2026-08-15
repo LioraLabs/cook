@@ -69,8 +69,11 @@ fn strip_is_composes_inverse_including_the_empty_edge() {
     // text — holds for every block, INCLUDING the empty one whose composed
     // form carries no trailing LF (the case the old strip_prefix twins
     // left unstripped).
-    for body in [vec![], vec!["echo hi".to_string()],
-                 vec!["mkdir -p b".to_string(), "cc -o b/x x.c".to_string()]] {
+    for body in [
+        vec![],
+        vec!["echo hi".to_string()],
+        vec!["mkdir -p b".to_string(), "cc -o b/x x.c".to_string()],
+    ] {
         assert_eq!(strip_set_e(&compose(&body)), body.join("\n"));
     }
 }

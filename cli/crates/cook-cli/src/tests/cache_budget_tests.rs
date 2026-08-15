@@ -88,7 +88,12 @@ fn budget_warning_reclaim_matches_what_the_printed_command_would_free() {
 /// label would render as a bare size with nothing in front of it.
 #[test]
 fn budget_warning_renders_an_empty_namespace_as_unattributed() {
-    let out = render_budget_warning(3_000_000_000, 2_000_000_000, "2GB", Some(("", 1_500_000_000)));
+    let out = render_budget_warning(
+        3_000_000_000,
+        2_000_000_000,
+        "2GB",
+        Some(("", 1_500_000_000)),
+    );
     assert!(
         out.contains("largest: (unattributed) 1.5 GB (50%)"),
         "expected the (unattributed) label, got:\n{out}"
@@ -105,7 +110,10 @@ fn budget_warning_omits_the_largest_line_without_candidates() {
         "cook: warning: cache store is 3.0 GB, over the 2.0 GB budget (150%)\n\
          cook:          run `cook cache gc --max-size 2GB` to reclaim 1.0 GB\n"
     );
-    assert!(!out.contains("largest"), "no candidates, no largest line:\n{out}");
+    assert!(
+        !out.contains("largest"),
+        "no candidates, no largest line:\n{out}"
+    );
 }
 
 // ---------------------------------------------------------------------------

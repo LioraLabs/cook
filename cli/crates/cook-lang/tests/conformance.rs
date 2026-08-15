@@ -132,9 +132,7 @@ fn corpus_root() -> PathBuf {
 fn case_dirs(sub: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let dir = corpus_root().join(sub);
-    for entry in fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e))
-    {
+    for entry in fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e)) {
         let entry = entry.unwrap();
         let path = entry.path();
         if path.is_dir() {
@@ -150,10 +148,10 @@ fn repr(s: &str) -> String {
     out.push('"');
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out.push('"');
@@ -183,7 +181,7 @@ fn format_output_patterns(xs: &[OutputPattern]) -> String {
 fn format_body(u: &Option<Body>) -> String {
     match u {
         None => "None".to_string(),
-        Some(Body::LuaBlock(s))    => format!("LuaBlock({})", repr(s)),
+        Some(Body::LuaBlock(s)) => format!("LuaBlock({})", repr(s)),
         Some(Body::ShellBlock(xs)) => format!("ShellBlock({})", repr_list(xs)),
     }
 }
@@ -204,8 +202,16 @@ fn repr_body(body: &Body) -> String {
 fn format_step(step: &Step) -> String {
     match step {
         Step::Gather { .. } => "Gather".to_string(),
-        Step::Shell { command, interactive, .. } => {
-            format!("Shell interactive={} command={}", interactive, repr(command))
+        Step::Shell {
+            command,
+            interactive,
+            ..
+        } => {
+            format!(
+                "Shell interactive={} command={}",
+                interactive,
+                repr(command)
+            )
         }
         Step::Lua { code, .. } => format!("Lua code={}", repr(code)),
         Step::LuaBlock { code, .. } => format!("LuaBlock code={}", repr(code)),
@@ -233,7 +239,7 @@ fn format_step(step: &Step) -> String {
             }
             s
         }
-        // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).
+        // §8.x: gather <probe> desugar node — probe-key source only (COOK-97).
         Step::MemberSource { step, .. } => format!(
             "MemberSource source={}",
             match &step.source {
@@ -270,7 +276,11 @@ fn format_use(u: &UseStatement) -> String {
             u.line
         )
     } else {
-        format!("UseStatement module_name={} line={}", repr(&u.target), u.line)
+        format!(
+            "UseStatement module_name={} line={}",
+            repr(&u.target),
+            u.line
+        )
     }
 }
 
@@ -285,10 +295,15 @@ fn format_import(i: &ImportDecl) -> String {
 
 fn format_config(cb: &ConfigBlock) -> String {
     let name = match &cb.name {
-        None    => "None".to_string(),
+        None => "None".to_string(),
         Some(n) => format!("Some({})", repr(n)),
     };
-    format!("ConfigBlock name={} body={} line={}", name, repr(&cb.body), cb.line)
+    format!(
+        "ConfigBlock name={} body={} line={}",
+        name,
+        repr(&cb.body),
+        cb.line
+    )
 }
 
 fn format_register_block(rb: &RegisterBlock) -> String {
@@ -296,7 +311,11 @@ fn format_register_block(rb: &RegisterBlock) -> String {
 }
 
 fn format_top_level_module_call(mc: &TopLevelModuleCall) -> String {
-    format!("TopLevelModuleCall code={} line={}", repr(&mc.code), mc.line)
+    format!(
+        "TopLevelModuleCall code={} line={}",
+        repr(&mc.code),
+        mc.line
+    )
 }
 
 fn format_probe(p: &Probe) -> String {
@@ -305,10 +324,14 @@ fn format_probe(p: &Probe) -> String {
         ProbeProduce::Shell { commands, typing } => {
             let typing_str = match typing {
                 ShellProduceType::String => "String",
-                ShellProduceType::Lines  => "Lines",
-                ShellProduceType::Json   => "Json",
+                ShellProduceType::Lines => "Lines",
+                ShellProduceType::Json => "Json",
             };
-            format!("Shell typing={} commands={}", typing_str, repr_list(commands))
+            format!(
+                "Shell typing={} commands={}",
+                typing_str,
+                repr_list(commands)
+            )
         }
         ProbeProduce::Tools(names) => format!("Tools names={}", repr_list(names)),
         ProbeProduce::Files { globs, excludes } => format!(
@@ -318,11 +341,11 @@ fn format_probe(p: &Probe) -> String {
         ),
     };
     format!(
-        "    Probe name={} line={}\n      deps: {}\n      ingredients: {}\n      excludes: {}\n      produce: {}",
+        "    Probe name={} line={}\n      deps: {}\n      inputs: {}\n      excludes: {}\n      produce: {}",
         repr(&p.name),
         p.line,
         repr_list(&p.deps),
-        repr_list(&p.ingredients),
+        repr_list(&p.inputs),
         repr_list(&p.excludes),
         produce,
     )
@@ -332,17 +355,30 @@ fn format_chore_params(params: &[ChoreParam]) -> String {
     if params.is_empty() {
         return "[]".to_string();
     }
-    let parts: Vec<String> = params.iter().map(|p| match p {
-        ChoreParam::Required { name, .. } => format!("Required name={}", repr(name)),
-        ChoreParam::DefaultedString { name, default, .. } => {
-            format!("DefaultedString name={} default={}", repr(name), repr(default))
-        }
-        ChoreParam::DefaultedLua { name, default_lua, .. } => {
-            format!("DefaultedLua name={} default_lua={}", repr(name), repr(default_lua))
-        }
-        ChoreParam::VariadicPlus { name, .. } => format!("VariadicPlus name={}", repr(name)),
-        ChoreParam::VariadicStar { name, .. } => format!("VariadicStar name={}", repr(name)),
-    }).collect();
+    let parts: Vec<String> = params
+        .iter()
+        .map(|p| match p {
+            ChoreParam::Required { name, .. } => format!("Required name={}", repr(name)),
+            ChoreParam::DefaultedString { name, default, .. } => {
+                format!(
+                    "DefaultedString name={} default={}",
+                    repr(name),
+                    repr(default)
+                )
+            }
+            ChoreParam::DefaultedLua {
+                name, default_lua, ..
+            } => {
+                format!(
+                    "DefaultedLua name={} default_lua={}",
+                    repr(name),
+                    repr(default_lua)
+                )
+            }
+            ChoreParam::VariadicPlus { name, .. } => format!("VariadicPlus name={}", repr(name)),
+            ChoreParam::VariadicStar { name, .. } => format!("VariadicStar name={}", repr(name)),
+        })
+        .collect();
     format!("[{}]", parts.join(", "))
 }
 
@@ -367,7 +403,7 @@ fn format_cookfile(c: &Cookfile) -> String {
             r.line,
         ));
         out.push_str(&format!("      deps: {}\n", repr_list(&r.deps)));
-        out.push_str(&format!("      ingredients: {}\n", repr_list(&r.ingredients)));
+        out.push_str(&format!("      inputs: {}\n", repr_list(&r.inputs)));
         out.push_str(&format!("      excludes: {}\n", repr_list(&r.excludes)));
         out.push_str("      steps:\n");
         for s in &r.steps {
@@ -382,7 +418,10 @@ fn format_cookfile(c: &Cookfile) -> String {
             repr(&ch.name),
             ch.line,
         ));
-        out.push_str(&format!("      params: {}\n", format_chore_params(&ch.params)));
+        out.push_str(&format!(
+            "      params: {}\n",
+            format_chore_params(&ch.params)
+        ));
         out.push_str(&format!("      deps: {}\n", repr_list(&ch.deps)));
         out.push_str("      steps:\n");
         for s in &ch.steps {
@@ -390,11 +429,25 @@ fn format_cookfile(c: &Cookfile) -> String {
         }
     }
 
-    let register_blocks: Vec<String> = c.register_blocks.iter().map(format_register_block).collect();
-    out.push_str(&format!("  register_blocks: [{}]\n", register_blocks.join(", ")));
+    let register_blocks: Vec<String> = c
+        .register_blocks
+        .iter()
+        .map(format_register_block)
+        .collect();
+    out.push_str(&format!(
+        "  register_blocks: [{}]\n",
+        register_blocks.join(", ")
+    ));
 
-    let top_level_calls: Vec<String> = c.top_level_module_calls.iter().map(format_top_level_module_call).collect();
-    out.push_str(&format!("  top_level_module_calls: [{}]\n", top_level_calls.join(", ")));
+    let top_level_calls: Vec<String> = c
+        .top_level_module_calls
+        .iter()
+        .map(format_top_level_module_call)
+        .collect();
+    out.push_str(&format!(
+        "  top_level_module_calls: [{}]\n",
+        top_level_calls.join(", ")
+    ));
 
     if !c.probes.is_empty() {
         out.push_str("  probes:\n");

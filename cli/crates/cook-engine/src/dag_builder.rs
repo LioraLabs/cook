@@ -146,7 +146,11 @@ fn lower_unit(ru: &RecipeUnits, unit: &CapturedUnit) -> WorkNode {
     // (params shadow any recipe-level key of the same name).
     let merged_env_vars: BTreeMap<String, String> = {
         let mut m = ru.env_vars.clone();
-        m.extend(unit.unit_env_vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+        m.extend(
+            unit.unit_env_vars
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
         m
     };
     // R1 (CS-0164): only per-unit exports (chore params) go into the spawned
@@ -160,9 +164,17 @@ fn lower_unit(ru: &RecipeUnits, unit: &CapturedUnit) -> WorkNode {
         .collect();
     let presatisfied = is_presatisfied(unit);
     WorkNode {
-        payload: if presatisfied { None } else { Some(unit.payload.clone()) },
+        payload: if presatisfied {
+            None
+        } else {
+            Some(unit.payload.clone())
+        },
         recipe_name: ru.recipe_name.clone(),
-        cache_meta: if presatisfied { None } else { unit.cache_meta.clone() },
+        cache_meta: if presatisfied {
+            None
+        } else {
+            unit.cache_meta.clone()
+        },
         working_dir: ru.working_dir.clone(),
         env_vars: merged_env_vars,
         process_env_vars,
@@ -376,14 +388,14 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
 ///
 /// Detection needs a SOURCE-DECLARED path — one fixed by the Cookfile text,
 /// not by what is on disk. `cook.add_unit`'s `inputs[]`/`outputs[]` and `cook`
-/// step output literals qualify. An `ingredients` literal does NOT: it is a
+/// step output literals qualify. An `inputs` literal does NOT: it is a
 /// glob resolved against the filesystem at register time (§21.2.1), so an
 /// absent artifact matches zero files and reaches `input_paths` as nothing at
 /// all. Covering it would invert the rule — silent on the cold build that
 /// actually races, loud only once a stale artifact already exists. §16.1.2's
 /// enumeration is therefore closed over the two surfaces above, and Note
 /// 16.1.2.2 records the exclusion. (§10.6's *prohibition* still covers
-/// `ingredients` literals; that is a rule about what must not happen and
+/// `inputs` literals; that is a rule about what must not happen and
 /// needs no detection.)
 pub(crate) fn check_literal_read_after_write(
     recipe_units: &[RecipeUnits],
@@ -593,4 +605,3 @@ fn connected(graph: &BTreeMap<String, BTreeSet<String>>, a: &str, b: &str) -> bo
 #[cfg(test)]
 #[path = "tests/dag_builder_tests.rs"]
 mod tests;
-

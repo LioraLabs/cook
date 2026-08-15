@@ -35,9 +35,7 @@ fn corpus_root() -> PathBuf {
 fn case_dirs(sub: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let dir = corpus_root().join(sub);
-    for entry in fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e))
-    {
+    for entry in fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e)) {
         let entry = entry.unwrap();
         let path = entry.path();
         if path.is_dir() {
@@ -79,7 +77,8 @@ fn register_positive_conformance_corpus() {
 
         // Step 3: register. Use the fixture directory as the working directory
         // so any sibling files are visible to the register phase.
-        let registry = RegisterSessionBuilder::new(case.clone(), HashMap::new()).with_selected_config(None);
+        let registry =
+            RegisterSessionBuilder::new(case.clone(), HashMap::new()).with_selected_config(None);
 
         // register_cookfile registers ALL recipes in the file and invokes
         // every body; positive fixtures must succeed end-to-end without
@@ -90,7 +89,10 @@ fn register_positive_conformance_corpus() {
         }
     }
 
-    assert!(cases_seen > 0, "no register_ok fixtures found — check that register_ok.txt markers exist");
+    assert!(
+        cases_seen > 0,
+        "no register_ok fixtures found — check that register_ok.txt markers exist"
+    );
     assert!(
         failures.is_empty(),
         "register-phase positive conformance failures:\n\n{}",

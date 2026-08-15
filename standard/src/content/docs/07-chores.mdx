@@ -139,7 +139,7 @@ A chore body MUST NOT contain any of the following step kinds:
 
 | § | Step kind | Diagnostic guidance |
 |---|---|---|
-| §{steps.ingredients} | `ingredients_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
+| §{steps.gather} | `gather_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.cook-single} | `cook_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.test} | `test_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 
@@ -195,7 +195,7 @@ A chore MAY depend on a recipe (run a build, then post-process) and a recipe MAY
 
 ```cook
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
     cook "build/app" { cc $<in> -o $<out> }
 

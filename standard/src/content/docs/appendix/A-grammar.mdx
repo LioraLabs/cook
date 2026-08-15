@@ -79,14 +79,14 @@ recipe                ::= recipe_header NEWLINE recipe_body
 recipe_header         ::= "recipe" name (":" dependency_list)?
 dependency_list       ::= name+
 recipe_body           ::= recipe_item*
-recipe_item           ::= gather_step | ingredients_step | seal_step | cook_step
+recipe_item           ::= gather_step | seal_step | cook_step
                        | test_step | module_call
                        | comment | NEWLINE
 ```
 
 As of CS-0134 a recipe body is **purely declarative**: it is a flat sequence of `recipe_item`s, all of which are register-phase (§{steps.dispatch}, §{steps.overview}). The pre-CS-0134 two-region structure — a `declarative_region` followed by an optional `imperative_region` of `lua_line` / `lua_block` / `shell_command` steps — is removed, along with the register-phase `inline_lua_line` (`>>`) and `inline_lua_block` (`>>{`) items (those prefixes no longer exist anywhere in the language, §{lexical.line-prefixes}), and along with the `@` interactive prefix and its `interactive_command` step kind, which CS-0134 removed from the language outright (§{lexical.line-prefixes}). Register-phase Lua inside a recipe body is now written as a bare `module_call` (§{grammar-appendix.steps}, "Step-dispatch priority", the module-call rule). The `lua_line` / `lua_block` (`>` / `>{`) forms survive only in **body position** — as the opener of a `cook` / `test` / `probe` step's body — and never as a standalone recipe-body item; a `shell_command` is rejected as a recipe-body item and survives only inside a `chore` body (§{grammar-appendix.chore}, §{steps.dispatch}).
 
-**At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
+**At-most-one-gather rule.** A `recipe_body` MUST contain at most one `gather_step`. A conforming implementation MUST reject a recipe with two or more `gather_step` items.
 
 **Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{toplevel.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
@@ -117,7 +117,7 @@ As of CS-0134 a `chore_body` is a flat sequence of execute-phase (imperative) st
 
 **Variadic rules (normative).** A `variadic_param` with sigil `+` (one-or-more) MUST be the final parameter; at invocation time, all remaining argv collect into a Lua sequence. If zero remain, a diagnostic MUST be raised (§7.1.3). A `variadic_param` with sigil `*` (zero-or-more) behaves identically except that zero remaining argv is valid and binds `{}`. At most one `variadic_param` is permitted per `param_list`; a `variadic_param` MUST NOT carry an `=default`.
 
-**Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `ingredients_step`, `cook_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
+**Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `gather_step`, `cook_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
 
 **Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` is interactive: it MUST be run with the controlling terminal inherited (§{chores.default-interactive}). There is no `@` prefix or `interactive_command` step kind — CS-0134 removed both from the language (§{lexical.line-prefixes}).
 
@@ -149,7 +149,7 @@ glob_pattern     ::= "!"? STRING
 
 **Source-list kinds (normative).** The `tools` declaration takes bare tool names
 and the `files` declaration takes quoted glob patterns with optional `!` exclude
-prefixes (`ingredients` pattern syntax, §{steps.ingredients}). A conforming
+prefixes (`gather` pattern syntax, §{steps.gather}). A conforming
 implementation MUST reject an empty list (a `glob_list` MUST contain at least
 one include pattern), a tool entry that is not a `TOOL_NAME`, a glob entry that
 is not a quoted `STRING`, and a body (in particular a `>{ … }`
@@ -164,7 +164,7 @@ is not a quoted `STRING`, and a body (in particular a `>{ … }`
 - Each further contiguous `:IDENT` segment extends `BARE_PROBE_KEY` under the same rule: `cc:find:raylib` is a single three-segment key. There is no cap on segment count (CS-0201, superseding the two-segment cap and its rejection diagnostic).
 - The quoted `STRING` form (e.g. `probe "cc:zlib"`) is always unambiguous and bypasses the positional rule entirely.
 
-**Probe-key segment charset (normative; CS-0201, superseding CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` is `[A-Za-z_][A-Za-z0-9_-]*`: an alpha/underscore head, then alphanumerics, underscores and internal hyphens. The `:` is the sole segment separator, `-` never terminates a segment, and there is **no cap on segment count** — `cc:find:raylib` is a well-formed key. The `STRING` form is an exact-equivalent escape hatch for any non-empty spelling, including one the bare form cannot express: `"odd+key"` and `probe "odd+key"` denote the same key. A conforming implementation MUST accept both spellings at **every** site that names a probe key: the declaration, a `probe_dep_list` entry, `seal`, and an `ingredients` probe source.
+**Probe-key segment charset (normative; CS-0201, superseding CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` is `[A-Za-z_][A-Za-z0-9_-]*`: an alpha/underscore head, then alphanumerics, underscores and internal hyphens. The `:` is the sole segment separator, `-` never terminates a segment, and there is **no cap on segment count** — `cc:find:raylib` is a well-formed key. The `STRING` form is an exact-equivalent escape hatch for any non-empty spelling, including one the bare form cannot express: `"odd+key"` and `probe "odd+key"` denote the same key. A conforming implementation MUST accept both spellings at **every** site that names a probe key: the declaration, a `probe_dep_list` entry, `seal`, and  a `gather` probe source.
 
 `.` is NOT admitted. It is member access in a probe reference, so a dot inside a segment makes `$<demo:cc-version.ver>` ambiguous between "field `ver` of `demo:cc-version`" and "the key `demo:cc-version.ver`", with nothing in the text to separate the readings. CS-0131 admitted `.` before probe references had member access; the two features are incompatible and member access is worth more. A conforming implementation MUST reject a dotted bare key with a diagnostic naming member access as the cause and offering the quoted form — "malformed key" alone reads as a typo rather than a rule, over a spelling an earlier version accepted.
 
@@ -180,14 +180,13 @@ is not a quoted `STRING`, and a body (in particular a `>{ … }`
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
-ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref STRING* ) NEWLINE
+gather_step      ::= "gather" ( input+ | probe_ref STRING* ) NEWLINE
                           /* probe_ref form is a probe member source; trailing STRING
                              globs (CS-0197) declare per-member file inputs, resolved
                              at register time and folded into every member unit's
                              declared inputs; see §22.5.10 */
-ingredient            ::= STRING            /* include */
+input            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
-gather_step           ::= "gather" (ingredient+ | probe_ref STRING*) NEWLINE  /* CS-0224, CS-0226 */
 
 seal_step             ::= "seal" seal_operand+ NEWLINE
 seal_operand          ::= BARE_PROBE_KEY | STRING | "!" STRING
@@ -244,7 +243,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
-**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{`, which is mandatory for `cook_step` — CS-0133; end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is neither a legal terminator nor a valid `cook_mods` token MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the analogous "ingredients without trailing patterns" idiom. For `cook_step`, a continuation line that is not a quoted pattern still terminates pattern collection silently, after which the body-mandatory rule (CS-0133) applies: a `cook_step` left without a body opener on its final pattern line is rejected.
+**Multi-line patterns (CS-0078).** In both `gather_step` and `cook_step`, whitespace between successive `STRING` (or `input`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `gather_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{`, which is mandatory for `cook_step` — CS-0133; end-of-declaration for `gather_step`); a non-quote token on the same line as a quoted pattern that is neither a legal terminator nor a valid `cook_mods` token MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `gather_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the analogous "gather without trailing patterns" idiom. For `cook_step`, a continuation line that is not a quoted pattern still terminates pattern collection silently, after which the body-mandatory rule (CS-0133) applies: a `cook_step` left without a body opener on its final pattern line is rejected.
 
 ### Example A.4.1
 
@@ -260,14 +259,14 @@ cook "a.o"
      "c.o" { ... }
 ```
 
-Similarly for `ingredients`:
+Similarly for `gather`:
 
 ```
-ingredients "src/*.c" !"src/legacy.c"
+gather "src/*.c" !"src/legacy.c"
 ```
 
 ```
-ingredients "src/*.c"
+gather "src/*.c"
             !"src/legacy.c"
 ```
 
@@ -277,7 +276,7 @@ ingredients "src/*.c"
 
 **Test mode coherence (CS-0024, revised by CS-0130).** A `test_step` Lua-block body MUST NOT reference both an iteration-item binding (`input`) and a batched-source binding (`inputs`) (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a Lua-block body that violates this rule with a diagnostic naming both tokens. A shell-block body has no batched-source placeholder — CS-0130 removed the shell-text all-inputs sigil — so a shell body either references the per-item accessor (`$<in>` / `$<in.ACCESSOR>`, one-to-one) or references no iteration item (a single unit); it cannot textually address the collected set (a Lua-block body MAY bind `inputs` to do so). Whether a single-unit test is keyed on its source set (engine `ManyToOne`) or runs uncached (engine `OneShot`) is decided by source presence, not by the body. See §{steps.iteration-mode-plate-test}.
 
-**Test source presence (CS-0024).** A one-to-one `test_step` (its body references the iteration item) MUST have a non-empty iteration source: the recipe MUST contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a one-to-one `test_step` whose source resolves empty (a fan-out over nothing). A single-unit `test_step` whose declared source resolves empty, or which declares no source at all, is not rejected: it has no cache key and runs uncached (the one-shot disposition).
+**Test source presence (CS-0024).** A one-to-one `test_step` (its body references the iteration item) MUST have a non-empty iteration source: the recipe MUST contain a preceding `cook_step` whose output list is non-empty, or  a `gather_step` whose resolved path list is non-empty. A conforming implementation MUST reject a one-to-one `test_step` whose source resolves empty (a fan-out over nothing). A single-unit `test_step` whose declared source resolves empty, or which declares no source at all, is not rejected: it has no cache key and runs uncached (the one-shot disposition).
 
 **`>>{` is rejected as a body.** The only valid body openers are `{` (shell block) and `>{` (Lua block). As of CS-0134 the `>>{` prefix no longer exists anywhere in the language — it is rejected unconditionally at the lexical layer (§{lexical.line-prefixes}) — so `cook "out" >>{ … }` is rejected because `>>{` is not a valid body opener. A conforming implementation MUST reject `cook STR >>{ … }`.
 
@@ -292,7 +291,7 @@ ingredients "src/*.c"
 **Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning. This cascade MUST agree with the prose cascade of §{steps.dispatch} (§8.1). As of CS-0134 the recipe body is **purely declarative**: every admitted line is a register-phase step, and a line matching none of the admitted forms is REJECTED — the pre-CS-0134 `shell_command` fall-through is gone (a `shell_command` survives only inside a `chore` body, §{grammar-appendix.chore}), and the `@` interactive prefix with its `interactive_command` step kind is removed from the language entirely (§{lexical.line-prefixes}):
 
 1. Prefix `gather` + separator (space, tab, or end of token) → `gather_step`.
-2. Prefix `ingredients` + separator → `ingredients_step`.
+2. Prefix `gather` + separator → `gather_step`.
 3. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
 4. Prefix `unseal` + separator → rejected as removed by CS-0225 (§{steps.cook-disposition}).
 5. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body — a cook always has one, CS-0133).

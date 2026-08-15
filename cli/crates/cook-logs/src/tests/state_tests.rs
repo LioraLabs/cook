@@ -75,7 +75,10 @@ fn initial_selection_lands_on_first_failed_node() {
 fn picker_starts_closed_and_can_be_opened() {
     let mut s = UiState::new(mk(false), LoadDiagnostics::default());
     assert!(s.picker.is_none());
-    s.picker = Some(PickerState { builds: vec![], cursor: 0 });
+    s.picker = Some(PickerState {
+        builds: vec![],
+        cursor: 0,
+    });
     assert!(s.picker.is_some());
 }
 
@@ -83,19 +86,23 @@ fn picker_starts_closed_and_can_be_opened() {
 fn cycle_filter_failed_only_hides_passing_nodes() {
     let mut s = UiState::new(mk(false), LoadDiagnostics::default());
     s.cycle_filter(); // -> FailedOnly
-    // Recipe row + only the failing node (b)
+                      // Recipe row + only the failing node (b)
     assert_eq!(s.flat.len(), 2);
 }
 
 #[test]
 fn search_finds_substring_in_node_lines() {
-    use cook_progress::log_reader::LogLine;
     use cook_progress::event::Stream;
+    use cook_progress::log_reader::LogLine;
     let mut view = mk(false);
     // Add a line to the first node containing "error: foo"
     let (_rid, recipe) = view.recipes.iter_mut().next().unwrap();
     let (_nid, node) = recipe.nodes.iter_mut().next().unwrap();
-    node.lines.push(LogLine { stream: Stream::Stdout, ts: None, text: "error: foo".into() });
+    node.lines.push(LogLine {
+        stream: Stream::Stdout,
+        ts: None,
+        text: "error: foo".into(),
+    });
 
     let mut s = UiState::new(view, LoadDiagnostics::default());
     s.set_search_pattern("ERROR".into());
@@ -144,7 +151,9 @@ fn set_fold_is_directional_and_idempotent() {
     // Select the first recipe row.
     s.selected = 0;
     assert!(matches!(s.flat[0], FlatRow::Recipe(_)));
-    let FlatRow::Recipe(rid) = s.flat[0] else { unreachable!() };
+    let FlatRow::Recipe(rid) = s.flat[0] else {
+        unreachable!()
+    };
 
     assert!(s.expanded.contains(&rid), "recipes start expanded");
 

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="compile" line=1
       deps: []
-      ingredients: ["src/main.c"]
+      inputs: ["src/main.c"]
       excludes: []
       steps:
         Gather

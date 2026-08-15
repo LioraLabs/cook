@@ -157,9 +157,9 @@ fn cloud_backend_put_rejects_oversize() {
     let err = backend
         .put(&k, &mut cursor, &mut meta)
         .expect_err("oversize put must error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("exceeds"),
+    let msg = err.to_string();
+    assert!(
+        msg.contains("exceeds"),
         "diagnostic must mention 'exceeds'; got: {msg}"
     );
     assert!(
@@ -177,17 +177,17 @@ fn cloud_backend_put_handles_409_conflict() {
         .mock("PUT", url_path.as_str())
         .with_status(409)
         .with_body("server-side bytes differ")
-            .create();
+        .create();
 
-        let backend = make_backend(&server.url(), 0);
-        let mut meta = sample_meta();
-        let mut cursor = std::io::Cursor::new(b"new bytes".to_vec());
+    let backend = make_backend(&server.url(), 0);
+    let mut meta = sample_meta();
+    let mut cursor = std::io::Cursor::new(b"new bytes".to_vec());
     let err = backend
         .put(&k, &mut cursor, &mut meta)
         .expect_err("409 must error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("conflict"),
+    let msg = err.to_string();
+    assert!(
+        msg.contains("conflict"),
         "diagnostic must mention 'conflict'; got: {msg}"
     );
     match err {
@@ -433,9 +433,9 @@ fn cloud_backend_retry_after_http_date_falls_through_to_none() {
     let backend = make_backend(&server.url(), 5);
     match backend.get(&k) {
         Err(BackendError::QuotaExceeded(None)) => {}
-        Err(other) => panic!(
-            "HTTP-date form must map to QuotaExceeded(None) (terminal), got {other:?}"
-        ),
+        Err(other) => {
+            panic!("HTTP-date form must map to QuotaExceeded(None) (terminal), got {other:?}")
+        }
         Ok(_) => panic!("expected error, got success"),
     }
     m.assert();
@@ -501,7 +501,9 @@ fn cloud_backend_delete_404_idempotent() {
         .create();
 
     let backend = make_backend(&server.url(), 0);
-    backend.delete(&k).expect("delete missing must be idempotent");
+    backend
+        .delete(&k)
+        .expect("delete missing must be idempotent");
     m.assert();
 }
 
@@ -567,7 +569,10 @@ fn get_with_meta_round_trips_mode_kind_target() {
         .create();
 
     let backend = make_backend(&server.url(), 0);
-    let (mut reader, meta) = backend.get_with_meta(&k).expect("get_with_meta ok").expect("present");
+    let (mut reader, meta) = backend
+        .get_with_meta(&k)
+        .expect("get_with_meta ok")
+        .expect("present");
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf).expect("read body");
     assert_eq!(meta.mode, 0o755);

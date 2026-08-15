@@ -9,7 +9,12 @@ fn err(text: &str) -> OutputChunk {
 
 #[test]
 fn the_scalar_half_carries_what_a_reader_needs_without_a_fetch() {
-    let o = Observation::new(1_500, 1_753_600_000, Some("input changed: a.c".into()), 4_200);
+    let o = Observation::new(
+        1_500,
+        1_753_600_000,
+        Some("input changed: a.c".into()),
+        4_200,
+    );
     assert_eq!(o.duration_ms(), 1_500);
     assert_eq!(o.recorded_at(), 1_753_600_000);
     assert_eq!(o.cause(), Some("input changed: a.c"));
@@ -84,14 +89,15 @@ fn truncation_is_recorded_and_survives_the_round_trip() {
 fn truncate_keeps_the_head_and_the_tail() {
     // Head and tail are what a reader needs: a compiler's first errors and its
     // summary. The middle of a runaway log is the part nobody scrolls to.
-    let log = OutputLog::new(
-        vec![out("AAAA"), out("BBBB"), out("CCCC"), out("DDDD")],
-        0,
-    );
+    let log = OutputLog::new(vec![out("AAAA"), out("BBBB"), out("CCCC"), out("DDDD")], 0);
     let t = log.truncate_to(8);
     let kept: Vec<String> = t.chunks().iter().map(|c| c.lossy().into_owned()).collect();
     assert_eq!(kept, vec!["AAAA", "DDDD"]);
-    assert_eq!(t.truncated_bytes(), 8, "the two dropped chunks are reported");
+    assert_eq!(
+        t.truncated_bytes(),
+        8,
+        "the two dropped chunks are reported"
+    );
 }
 
 #[test]
@@ -129,7 +135,10 @@ fn a_split_chunk_keeps_its_stream_tag() {
     // stream; it must not relabel which stream that was.
     let log = OutputLog::new(vec![err("AAAABBBBCCCC")], 0);
     let t = log.truncate_to(4);
-    assert!(t.chunks().iter().all(|c| c.stream() == OutputStream::Stderr));
+    assert!(t
+        .chunks()
+        .iter()
+        .all(|c| c.stream() == OutputStream::Stderr));
 }
 
 #[test]
@@ -152,8 +161,8 @@ fn truncate_never_keeps_more_than_the_cap_or_overlaps() {
         let original = "AAAAAAABBBCCCCC";
         let text: String = t.chunks().iter().map(|c| c.lossy().into_owned()).collect();
         assert!(
-            (0..=text.len()).any(|k| original.starts_with(&text[..k])
-                && original.ends_with(&text[k..])),
+            (0..=text.len())
+                .any(|k| original.starts_with(&text[..k]) && original.ends_with(&text[k..])),
             "cap {cap} produced {text:?}, which is not a head+tail of the original"
         );
     }
@@ -173,7 +182,10 @@ fn a_foreign_blob_is_refused_at_the_door() {
     // observation. It must not decode into a plausible-looking empty log.
     assert!(OutputLog::decode(b"").is_err());
     assert!(OutputLog::decode(b"not a cook log at all").is_err());
-    assert!(OutputLog::decode(b"COOKLOG\0").is_err(), "magic alone is not a log");
+    assert!(
+        OutputLog::decode(b"COOKLOG\0").is_err(),
+        "magic alone is not a log"
+    );
 }
 
 #[test]
@@ -245,5 +257,7 @@ fn an_unknown_stream_tag_is_refused() {
     let mut bytes = OutputLog::new(vec![out("x")], 0).encode();
     let tag = 8 + 4 + 8; // magic + version + truncated_bytes
     bytes[tag] = 7;
-    assert!(OutputLog::decode(&bytes).unwrap_err().contains("unknown stream tag"));
+    assert!(OutputLog::decode(&bytes)
+        .unwrap_err()
+        .contains("unknown stream tag"));
 }

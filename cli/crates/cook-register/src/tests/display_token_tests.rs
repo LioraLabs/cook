@@ -3,8 +3,10 @@ use super::*;
 /// `cook menu` renders a required positional as its bare name.
 #[test]
 fn required_renders_as_bare_name() {
-    let meta = ChoreParamMeta::Required { name: "caller".to_string() };
-        assert_eq!(meta.display_token(), "caller");
+    let meta = ChoreParamMeta::Required {
+        name: "caller".to_string(),
+    };
+    assert_eq!(meta.display_token(), "caller");
 }
 
 /// A defaulted-string positional renders `name="default"` with the
@@ -34,13 +36,17 @@ fn defaulted_lua_renders_placeholder() {
 /// brackets — at least one argv is required).
 #[test]
 fn variadic_plus_renders_with_trailing_ellipsis() {
-    let meta = ChoreParamMeta::VariadicPlus { name: "rest".to_string() };
+    let meta = ChoreParamMeta::VariadicPlus {
+        name: "rest".to_string(),
+    };
     assert_eq!(meta.display_token(), "rest...");
 }
 
 /// A zero-or-more variadic renders bracketed to signal optionality.
 #[test]
 fn variadic_star_renders_bracketed() {
-    let meta = ChoreParamMeta::VariadicStar { name: "rest".to_string() };
+    let meta = ChoreParamMeta::VariadicStar {
+        name: "rest".to_string(),
+    };
     assert_eq!(meta.display_token(), "[rest...]");
 }

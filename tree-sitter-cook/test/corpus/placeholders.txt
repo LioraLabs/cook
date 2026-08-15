@@ -49,7 +49,7 @@ Recipe member and probe-value placeholders
 ================
 
 recipe mux
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.mp4" {
         mux $<render[in]> $<toolchain:cc.path> $<probe:key.field[2]> $<out>
     }
@@ -60,8 +60,8 @@ recipe mux
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
-      probe: (identifier))
+    (gather_step
+      source: (identifier))
     (cook_step
       outputs: (string
         (placeholder
@@ -224,7 +224,7 @@ File-reference placeholder in shell block (CS-0101)
 ================
 
 recipe html
-    ingredients "src/page.md"
+    gather "src/page.md"
     cook "build/$<in.stem>.html" {
         render --tokens $<file:tokens.css> $<in> -o $<out>
     }
@@ -235,7 +235,7 @@ recipe html
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string
@@ -261,7 +261,7 @@ config
     var.CFLAGS = "-O2"
 
 recipe obj
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/{in.stem}.o" {
         cc $<var.CFLAGS> -c $<in> -o $<out>
     }
@@ -274,7 +274,7 @@ recipe obj
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string)

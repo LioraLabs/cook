@@ -163,7 +163,7 @@ The input is a wave's worth of `RecipeUnits` in registration order. The builder 
 |---|---|---|
 | `Shell { cmd, line }` | A literal shell command | Worker thread: `/bin/sh -c cmd`, captures stdout+stderr |
 | `Interactive { cmd, line, is_chore }` | Shell command needing inherited stdio | Main thread, after pool drains; `is_chore=true` joins a chore window |
-| `LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore }` | Cook/test/chore-step Lua body | Worker VM `lua.load(code).exec()`; if `is_chore=true` it routes through the chore-window drain instead |
+| `LuaChunk { code, inputs, outputs, gather_groups, step_kind, is_chore }` | Cook/test/chore-step Lua body | Worker VM `lua.load(code).exec()`; if `is_chore=true` it routes through the chore-window drain instead |
 | `Test { cmd, line, timeout, should_fail, suite_name, test_name, iteration_item }` | One test unit | Worker thread: spawned with a timeout, outcome reported as `TestStarted` / `TestPassed` / `TestFailed` / `TestTimedOut` events |
 
 ### `DepKind` and the barrier concept

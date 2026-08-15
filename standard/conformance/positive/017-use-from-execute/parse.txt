@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="say-hello" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("greet.say(\"world\")")

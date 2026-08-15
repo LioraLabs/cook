@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
-use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 use cook_contracts::registration::INLINE_SEAL_PROBE_NAME;
+use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
 use crate::SharedBodySlot;
 
@@ -62,7 +62,9 @@ pub fn install_cook_probe(
         // 1. Validate key is non-empty (the table typing is already checked by
         //    mlua's argument destructuring — a non-string key raises before here).
         if key.is_empty() {
-            return Err(LuaError::runtime("cook.probe: key must be a non-empty string"));
+            return Err(LuaError::runtime(
+                "cook.probe: key must be a non-empty string",
+            ));
         }
 
         // 4. Detect call-site line via debug.getinfo(2, "Sl").
@@ -79,7 +81,12 @@ pub fn install_cook_probe(
                 let tools = read_string_list(&inp, "tools")?;
                 let files = read_string_list(&inp, "files")?;
                 let requires = read_string_list(&inp, "requires")?;
-                ProbeInputs { env, tools, files, requires }
+                ProbeInputs {
+                    env,
+                    tools,
+                    files,
+                    requires,
+                }
             }
             Ok(LuaValue::Nil) | Err(_) => ProbeInputs::default(),
             Ok(other) => {
@@ -116,11 +123,7 @@ pub fn install_cook_probe(
         if let Some(prev) = reg.probes.get(&key) {
             return Err(LuaError::runtime(format!(
                 "probe key '{}' declared at {}:{}; previously declared at {}:{}",
-                key,
-                source_file,
-                call_line,
-                prev.source_file,
-                prev.source_line,
+                key, source_file, call_line, prev.source_file, prev.source_line,
             )));
         }
 
@@ -227,10 +230,7 @@ impl ProbeRegistry {
                         let start = stack.iter().position(|&n| n == r.as_str()).unwrap_or(0);
                         let mut path: Vec<&str> = stack[start..].to_vec();
                         path.push(r.as_str());
-                        return Err(format!(
-                            "probe cycle detected: {}",
-                            path.join(" -> ")
-                        ));
+                        return Err(format!("probe cycle detected: {}", path.join(" -> ")));
                     }
                     Some(NodeState::Done) => continue,
                     None => self.dfs(r, state, stack)?,

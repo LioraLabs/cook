@@ -93,8 +93,8 @@ fn bare_cook_test_does_not_execute_or_rerecord_unrelated_recipes() {
     fs::write(
         root.join("Cookfile"),
         r#"recipe build
-    ingredients "src/in.txt"
-    cook "dist/out.txt" { mkdir -p dist && cp src/in.txt $<out> }
+    gather "src/in.txt"
+    cook "dist/out.txt" { mkdir -p dist && cp $<in> $<out> }
 
 recipe typecheck: build
     cook "build2/tc.stamp" { echo x >> tc-runs.log; cat $<build> > /dev/null && mkdir -p build2 && echo ok > $<out> }
@@ -265,8 +265,8 @@ fn explicit_recipe_scope_still_builds_named_recipe_closure() {
     fs::write(
         root.join("Cookfile"),
         r#"recipe build
-    ingredients "src/in.txt"
-    cook "dist/out.txt" { mkdir -p dist && cp src/in.txt $<out> }
+    gather "src/in.txt"
+    cook "dist/out.txt" { mkdir -p dist && cp $<in> $<out> }
 
 recipe typecheck: build
     cook "build2/tc.stamp" { cat $<build> > /dev/null && mkdir -p build2 && echo ok > $<out> }

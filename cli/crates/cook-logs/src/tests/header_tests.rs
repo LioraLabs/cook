@@ -14,7 +14,10 @@ fn a_build_spanning_a_month_boundary_lasts_as_long_as_it_lasted() {
 
 #[test]
 fn an_ordinary_same_day_build_is_measured_correctly() {
-    assert_eq!(duration_str("2026-05-07T10:00:00Z", Some("2026-05-07T10:00:02Z")), "2.0s");
+    assert_eq!(
+        duration_str("2026-05-07T10:00:00Z", Some("2026-05-07T10:00:02Z")),
+        "2.0s"
+    );
 }
 
 #[test]

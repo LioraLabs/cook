@@ -46,11 +46,11 @@ recipe "my build": "dep one"
         (string)))))
 
 ================
-Recipe with ingredients
+Recipe with gather
 ================
 
 recipe lib: setup
-    ingredients "lib/*.c" "include/*.h"
+    gather "lib/*.c" "include/*.h"
 
 ---
 
@@ -60,7 +60,7 @@ recipe lib: setup
       name: (identifier)
       (dependency_list
         (identifier)))
-    (ingredients_step
+    (gather_step
       (string)
       (string))))
 
@@ -80,7 +80,7 @@ recipe lib
       name: (identifier))
     (gather_step
       (string)
-      (ingredient_exclude
+      (gather_exclude
         (string)))
     (cook_step
       outputs: (string
@@ -152,7 +152,7 @@ Recipe with test step
 ================
 
 recipe run-tests: build
-    ingredients "build/bin/test_*"
+    gather "build/bin/test_*"
     test { ./{in} }
 
 ---
@@ -163,7 +163,7 @@ recipe run-tests: build
       name: (identifier)
       (dependency_list
         (identifier)))
-    (ingredients_step
+    (gather_step
       (string))
     (test_step
       body: (shell_block
@@ -174,7 +174,7 @@ Cook with inline lua block
 ================
 
 recipe lib: setup
-    ingredients "lib/*.c"
+    gather "lib/*.c"
     cook "build/{in.stem}.o" >{
         cook.sh(var.CC .. " -c " .. input .. " -o " .. output)
     }
@@ -187,7 +187,7 @@ recipe lib: setup
       name: (identifier)
       (dependency_list
         (identifier)))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string)
@@ -199,7 +199,7 @@ Cook multi-output with shell block
 ================
 
 recipe wasm
-    ingredients "src/*.rs"
+    gather "src/*.rs"
     cook "a.js" "b.wasm" {
         wasm-pack build
         cp pkg/a.js a.js
@@ -212,7 +212,7 @@ recipe wasm
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string)
@@ -242,11 +242,11 @@ recipe gen
         (lua_code)))))
 
 ================
-Ingredients with exclude
+Gather with exclude
 ================
 
 recipe pack
-    ingredients "src/*.c" !"src/excluded.c"
+    gather "src/*.c" !"src/excluded.c"
 
 ---
 
@@ -254,9 +254,9 @@ recipe pack
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string)
-      (ingredient_exclude
+      (gather_exclude
         (string)))))
 
 ================
@@ -280,20 +280,20 @@ recipe colorize
       (module_call_text))))
 
 ================
-Ingredients from probe refs (CS-0201: a selector is part of the key)
+Gather from probe refs (CS-0201: a selector is part of the key)
 ================
 
 recipe cards
-    ingredients card-set
+    gather card-set
 
 recipe namespaced
-    ingredients ns:cards
+    gather ns:cards
 
 recipe selected
-    ingredients ns:cards:items
+    gather ns:cards:items
 
 recipe deep
-    ingredients ns:cards:items:extra
+    gather ns:cards:items:extra
 
 ---
 
@@ -301,30 +301,30 @@ recipe deep
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
-      probe: (identifier)))
+    (gather_step
+      source: (identifier)))
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
-      probe: (identifier)))
+    (gather_step
+      source: (identifier)))
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
-      probe: (identifier)))
+    (gather_step
+      source: (identifier)))
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
-      probe: (identifier))))
+    (gather_step
+      source: (identifier))))
 
 ================
-Ingredients quoted continuation
+Gather quoted continuation
 ================
 
 recipe pack
-    ingredients "src/*.c"
+    gather "src/*.c"
         !"src/legacy.c"
 
 ---
@@ -333,30 +333,30 @@ recipe pack
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string)
-      (ingredient_exclude
+      (gather_exclude
         (string)))))
 
 ================
-Malformed ingredient selectors
+Malformed input selectors
 ================
 
 recipe missing-field
-    ingredients ns:cards:
+    gather ns:cards:
 
 recipe quoted-selector
-    ingredients "ns:cards":items
+    gather "ns:cards":items
 
 ---
 
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (ingredients_step
-      probe: (identifier)
-      (ERROR)))
+      name: (identifier)))
+  (ERROR
+    (identifier)
+    (lua_code))
   (recipe
     (explicit_recipe_header
       name: (identifier)))
@@ -386,7 +386,7 @@ Cook step (multi-line outputs, CS-0078)
 ================
 
 recipe maps
-    ingredients "src/*.map"
+    gather "src/*.map"
     cook "build/$<in.stem>.aas48"
          "build/$<in.stem>.aas96"
          "build/$<in.stem>.aas120" {
@@ -399,7 +399,7 @@ recipe maps
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string
@@ -418,11 +418,11 @@ recipe maps
         (shell_content)))))
 
 ================
-Ingredients step (multi-line with exclude, CS-0078)
+Gather step (multi-line with exclude, CS-0078)
 ================
 
 recipe build
-    ingredients "neo/sys/*.cpp"
+    gather "neo/sys/*.cpp"
                 "neo/sys/posix/*.cpp"
                 !"neo/sys/sdl/*.cpp"
     cook "build/sys.o" {
@@ -435,10 +435,10 @@ recipe build
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string)
       (string)
-      (ingredient_exclude
+      (gather_exclude
         (string)))
     (cook_step
       outputs: (string)
@@ -589,7 +589,7 @@ Cook with Lua-expression output (CS-0089)
 ==================
 
 recipe translate
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("/en/", "/fr/")) { cp $<in> $<out> }
 
 ---
@@ -598,7 +598,7 @@ recipe translate
   (recipe
     (explicit_recipe_header
       (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       (lua_expr_output
@@ -613,11 +613,11 @@ recipe translate
         (shell_content)))))
 
 ==================
-Ingredients probe member source (CS-0095)
+Gather probe member source (CS-0095)
 ==================
 
 recipe art
-    ingredients cards
+    gather cards
     cook "build/art/$<in.id>.png" { gen "$<in.name>" $<out> }
 
 ---
@@ -626,7 +626,7 @@ recipe art
   (recipe
     (explicit_recipe_header
       (identifier))
-    (ingredients_step
+    (gather_step
       (identifier))
     (cook_step
       (string
@@ -646,7 +646,7 @@ Per-member cross-recipe accessor (CS-0098)
 ==================
 
 recipe mux
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }
 
 ---
@@ -655,7 +655,7 @@ recipe mux
   (recipe
     (explicit_recipe_header
       (identifier))
-    (ingredients_step
+    (gather_step
       (identifier))
     (cook_step
       (string

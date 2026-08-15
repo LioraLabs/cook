@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::capture::RegisteredRecipe;
 use crate::{RegisterError, SharedBodySlot};
 
-/// Set up the `recipe` global table with name and resolved ingredient files.
+/// Set up the `recipe` global table with name and resolved input files.
 /// No cache operations — cache evaluation is handled by cook-engine.
 pub fn setup_recipe_context(
     lua: &Lua,
@@ -22,16 +22,20 @@ pub fn setup_recipe_context(
     // Resolve exclude patterns into a set for fast lookup
     let mut excluded: BTreeSet<String> = BTreeSet::new();
     for pattern in &recipe.metadata.excludes {
-        excluded.extend(cook_cache::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?);
+        excluded.extend(
+            cook_cache::resolve_gather_glob(working_dir, workspace_root, pattern)
+                .map_err(mlua::Error::runtime)?,
+        );
     }
 
-    // Build ingredients table by resolving glob patterns, minus excludes
-    let ingredients_table = lua.create_table()?;
-    for (i, pattern) in recipe.metadata.ingredients.iter().enumerate() {
-        let files = cook_cache::resolve_ingredient_glob(working_dir, workspace_root, pattern).map_err(mlua::Error::runtime)?;
+    // Build inputs table by resolving glob patterns, minus excludes
+    let gather_table = lua.create_table()?;
+    for (i, pattern) in recipe.metadata.inputs.iter().enumerate() {
+        let files = cook_cache::resolve_gather_glob(working_dir, workspace_root, pattern)
+            .map_err(mlua::Error::runtime)?;
         if files.is_empty() {
             warnings.borrow_mut().push(format!(
-                "ingredient {pattern:?} matched 0 files (recipe {})",
+                "input {pattern:?} matched 0 files (recipe {})",
                 recipe.name
             ));
         }
@@ -43,48 +47,57 @@ pub fn setup_recipe_context(
         for (idx, file) in filtered.iter().enumerate() {
             files_table.set(idx + 1, file.as_str())?;
         }
-        ingredients_table.set(i + 1, files_table)?;
+        gather_table.set(i + 1, files_table)?;
     }
-    recipe_table.set("ingredients", ingredients_table)?;
+    recipe_table.set("inputs", gather_table)?;
 
     lua.globals().set("recipe", recipe_table)?;
     Ok(())
 }
 
-/// Register `cook.resolve_ingredients(includes, excludes)` on the cook global table.
+/// Register `cook.resolve_gather(includes, excludes)` on the cook global table.
 /// Returns a flat Lua table of relative file paths after glob+exclude resolution.
-pub fn register_resolve_ingredients(lua: &Lua, working_dir: &Path, workspace_root: &Path) -> Result<(), RegisterError> {
+pub fn register_resolve_gather(
+    lua: &Lua,
+    working_dir: &Path,
+    workspace_root: &Path,
+) -> Result<(), RegisterError> {
     let cook: LuaTable = lua.globals().get("cook")?;
     let wd = working_dir.to_path_buf();
     let root = workspace_root.to_path_buf();
-    let resolve_fn = lua.create_function(move |lua, (includes, excludes): (LuaTable, LuaTable)| {
-        // Collect exclude patterns and resolve them
-        let mut excluded: BTreeSet<String> = BTreeSet::new();
-        for exc in excludes.sequence_values::<String>() {
-            let pattern = exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}")))?;
-            excluded.extend(cook_cache::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?);
-        }
+    let resolve_fn =
+        lua.create_function(move |lua, (includes, excludes): (LuaTable, LuaTable)| {
+            // Collect exclude patterns and resolve them
+            let mut excluded: BTreeSet<String> = BTreeSet::new();
+            for exc in excludes.sequence_values::<String>() {
+                let pattern = exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}")))?;
+                excluded.extend(
+                    cook_cache::resolve_gather_glob(&wd, &root, &pattern)
+                        .map_err(mlua::Error::runtime)?,
+                );
+            }
 
-        // Resolve include patterns, filtering out excludes
-        let mut result: Vec<String> = Vec::new();
-        for inc in includes.sequence_values::<String>() {
-            let pattern = inc.map_err(|e| mlua::Error::runtime(format!("bad include: {e}")))?;
-            let files = cook_cache::resolve_ingredient_glob(&wd, &root, &pattern).map_err(mlua::Error::runtime)?;
-            for f in files {
-                if !excluded.contains(&f) {
-                    result.push(f);
+            // Resolve include patterns, filtering out excludes
+            let mut result: Vec<String> = Vec::new();
+            for inc in includes.sequence_values::<String>() {
+                let pattern = inc.map_err(|e| mlua::Error::runtime(format!("bad include: {e}")))?;
+                let files = cook_cache::resolve_gather_glob(&wd, &root, &pattern)
+                    .map_err(mlua::Error::runtime)?;
+                for f in files {
+                    if !excluded.contains(&f) {
+                        result.push(f);
+                    }
                 }
             }
-        }
 
-        // Build Lua table
-        let table = lua.create_table()?;
-        for (i, file) in result.iter().enumerate() {
-            table.set(i + 1, file.as_str())?;
-        }
-        Ok(table)
-    })?;
-    cook.set("resolve_ingredients", resolve_fn)?;
+            // Build Lua table
+            let table = lua.create_table()?;
+            for (i, file) in result.iter().enumerate() {
+                table.set(i + 1, file.as_str())?;
+            }
+            Ok(table)
+        })?;
+    cook.set("resolve_gather", resolve_fn)?;
     Ok(())
 }
 
@@ -378,7 +391,7 @@ pub fn register_dep_order_forcing(
 /// Resolve a glob pattern into a sorted set of relative file paths.
 ///
 /// Matches whose final (symlink-resolved) metadata is a directory are
-/// dropped (CS-0064): `recipe.ingredients` and `cook.resolve_ingredients`
+/// dropped (CS-0064): `recipe.inputs` and `cook.resolve_gather`
 /// feed straight into `cook.add_unit` inputs, which CS-0063 already
 /// rejects directory paths from. Filtering here keeps a glob like
 /// `src/*` well-defined when `src/` contains sub-directories.

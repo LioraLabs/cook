@@ -47,7 +47,10 @@ fn init_scaffolds_builds_and_cleans() {
         String::from_utf8_lossy(&init_out.stderr),
     );
 
-    assert!(tmp.path().join("Cookfile").exists(), "Cookfile must be created");
+    assert!(
+        tmp.path().join("Cookfile").exists(),
+        "Cookfile must be created"
+    );
 
     // Cache-isolate before running the default build so the test never
     // touches the shared artifact store.

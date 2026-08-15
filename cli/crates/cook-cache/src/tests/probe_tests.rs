@@ -41,8 +41,7 @@ fn env_lookup_propagates_to_fingerprint_inputs() {
         "MY_VAR" => Some("value".into()),
         _ => None,
     };
-    let r =
-        resolve_probe_inputs(&probe, &PathBuf::from("."), &lookup, &BTreeMap::new()).unwrap();
+    let r = resolve_probe_inputs(&probe, &PathBuf::from("."), &lookup, &BTreeMap::new()).unwrap();
     assert_eq!(r.env, vec![("MY_VAR".into(), Some("value".into()))]);
 }
 
@@ -90,7 +89,6 @@ fn missing_env_value_becomes_none() {
         inputs: cook_contracts::ProbeInputs::default(),
     };
     probe.inputs.env = vec!["UNSET_VAR".into()];
-    let r =
-        resolve_probe_inputs(&probe, &PathBuf::from("."), &|_| None, &BTreeMap::new()).unwrap();
+    let r = resolve_probe_inputs(&probe, &PathBuf::from("."), &|_| None, &BTreeMap::new()).unwrap();
     assert_eq!(r.env, vec![("UNSET_VAR".into(), None)]);
 }

@@ -1,14 +1,14 @@
 //! Sticky bottom-of-terminal status line — threading + I/O.
 
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 
-use crate::render::snapshot::{render_status_line, StatusLineOptions, StatusSnapshot};
+use crate::render::snapshot::{StatusLineOptions, StatusSnapshot, render_status_line};
 
 /// Tick interval for the status-line repaint thread. ~10 Hz.
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -54,8 +54,12 @@ impl StatusLine {
         let thread = thread::spawn(move || {
             loop {
                 thread::sleep(TICK_INTERVAL);
-                if halt.load(Ordering::Relaxed) { break; }
-                if !vis.load(Ordering::Relaxed) { continue; }
+                if halt.load(Ordering::Relaxed) {
+                    break;
+                }
+                if !vis.load(Ordering::Relaxed) {
+                    continue;
+                }
                 let s = snap.load();
                 let line = render_status_line(&*s, opts, detect_cols());
                 if line.is_empty() {
@@ -68,17 +72,28 @@ impl StatusLine {
             let _ = writer.clear_line();
         });
 
-        Self { snapshot, visible, shutdown, thread: Some(thread) }
+        Self {
+            snapshot,
+            visible,
+            shutdown,
+            thread: Some(thread),
+        }
     }
 
     pub fn update(&self, snap: StatusSnapshot) {
         self.snapshot.store(Arc::new(snap));
     }
-    pub fn show(&self) { self.visible.store(true, Ordering::Relaxed); }
-    pub fn hide(&self) { self.visible.store(false, Ordering::Relaxed); }
+    pub fn show(&self) {
+        self.visible.store(true, Ordering::Relaxed);
+    }
+    pub fn hide(&self) {
+        self.visible.store(false, Ordering::Relaxed);
+    }
     /// Whether the tick thread may currently be painting the line — i.e.
     /// whether an event writer needs to clear before printing its own line.
-    pub fn is_visible(&self) -> bool { self.visible.load(Ordering::Relaxed) }
+    pub fn is_visible(&self) -> bool {
+        self.visible.load(Ordering::Relaxed)
+    }
 
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);

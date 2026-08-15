@@ -15,8 +15,7 @@ pub type SharedTerminalOutputs = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
 /// COOK-96: per-member terminal outputs. recipe qualified-name → member-string
 /// → terminal output paths. Keyed identically to `SharedTerminalOutputs` so
 /// `cook.dep_output_member` and `cook.dep_output` resolve the same name space.
-pub type SharedMemberOutputs =
-    Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<String>>>>>;
+pub type SharedMemberOutputs = Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<String>>>>>;
 
 /// Register `cook.dep_output(name)` and `cook.dep_output_list(name)` on the cook table.
 ///
@@ -71,9 +70,9 @@ pub fn register_dep_output_api(
         let global_key = resolve_global_key(&name, &qp, &aqp);
         let store = to.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&global_key).ok_or_else(|| {
-            mlua::Error::RuntimeError(
-                cook_contracts::registration::no_terminal_output_message(&name),
-            )
+            mlua::Error::RuntimeError(cook_contracts::registration::no_terminal_output_message(
+                &name,
+            ))
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad);
         {
@@ -105,9 +104,9 @@ pub fn register_dep_output_api(
         let global_key = resolve_global_key(&name, &qp2, &aqp2);
         let store = to2.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&global_key).ok_or_else(|| {
-            mlua::Error::RuntimeError(
-                cook_contracts::registration::no_terminal_output_message(&name),
-            )
+            mlua::Error::RuntimeError(cook_contracts::registration::no_terminal_output_message(
+                &name,
+            ))
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad2);
         {
@@ -130,7 +129,10 @@ pub fn register_dep_output_api(
         }
         Ok(table)
     })?;
-    cook.set(cook_contracts::registration::DEP_OUTPUT_LIST_NAME, dep_output_list_fn)?;
+    cook.set(
+        cook_contracts::registration::DEP_OUTPUT_LIST_NAME,
+        dep_output_list_fn,
+    )?;
 
     // cook.dep_order(name) → nil
     // COOK-297: the ordering-only counterpart of cook.dep_output. Records

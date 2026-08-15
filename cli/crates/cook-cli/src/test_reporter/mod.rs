@@ -6,10 +6,10 @@ pub mod live;
 pub mod style;
 pub mod summary;
 
+use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
-use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
 pub struct Reporter {
     started: std::time::Instant,
     verbose: bool,
@@ -30,11 +30,8 @@ impl Reporter {
     pub fn new(globals: &crate::cli::Globals) -> Self {
         let no_color_env = std::env::var("NO_COLOR").ok();
         let is_tty = std::io::stdout().is_terminal();
-        let colored = style::resolve_color_choice(
-            globals.color.as_str(),
-            no_color_env.as_deref(),
-            is_tty,
-        );
+        let colored =
+            style::resolve_color_choice(globals.color.as_str(), no_color_env.as_deref(), is_tty);
         Self {
             started: std::time::Instant::now(),
             verbose: globals.verbose,
@@ -66,43 +63,61 @@ impl Reporter {
 
     pub fn on_event(&mut self, evt: EngineEvent) {
         match evt {
-            EngineEvent::TestStarted { id, recipe, name: _, line, iteration_item } => {
+            EngineEvent::TestStarted {
+                id,
+                recipe,
+                name: _,
+                line,
+                iteration_item,
+            } => {
                 if !self.header_printed {
                     println!("{}", self.style.bold("running tests"));
                     self.header_printed = true;
                 }
-                self.label_meta.insert(id.0.clone(), LabelMeta {
-                    recipe: recipe.clone(),
-                    line,
-                    iteration_item: iteration_item.clone(),
-                });
+                self.label_meta.insert(
+                    id.0.clone(),
+                    LabelMeta {
+                        recipe: recipe.clone(),
+                        line,
+                        iteration_item: iteration_item.clone(),
+                    },
+                );
                 if self.verbose {
                     println!("    test {} ...", self.label_for(&id.0));
                 }
             }
-            EngineEvent::TestPassed { id, cached, should_fail, .. } => {
+            EngineEvent::TestPassed {
+                id,
+                cached,
+                should_fail,
+                ..
+            } => {
                 let lbl = self.label_for(&id.0);
-                println!("{}", live::outcome_line(
-                    &lbl, live::Outcome::Ok, cached, should_fail, &self.style,
-                ));
+                println!(
+                    "{}",
+                    live::outcome_line(&lbl, live::Outcome::Ok, cached, should_fail, &self.style,)
+                );
             }
             EngineEvent::TestFailed { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!("{}", live::outcome_line(
-                    &lbl, live::Outcome::Failed, false, false, &self.style,
-                ));
+                println!(
+                    "{}",
+                    live::outcome_line(&lbl, live::Outcome::Failed, false, false, &self.style,)
+                );
             }
             EngineEvent::TestTimedOut { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!("{}", live::outcome_line(
-                    &lbl, live::Outcome::Timeout, false, false, &self.style,
-                ));
+                println!(
+                    "{}",
+                    live::outcome_line(&lbl, live::Outcome::Timeout, false, false, &self.style,)
+                );
             }
             EngineEvent::TestBlocked { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!("{}", live::outcome_line(
-                    &lbl, live::Outcome::Blocked, false, false, &self.style,
-                ));
+                println!(
+                    "{}",
+                    live::outcome_line(&lbl, live::Outcome::Blocked, false, false, &self.style,)
+                );
             }
             _ => {}
         }
@@ -112,12 +127,17 @@ impl Reporter {
         let multi_ns = self.multi_ns;
         // Pre-build labels keyed by TestId.0 so the failure renderer doesn't
         // need to reach into self.
-        let labels: BTreeMap<String, String> = results.iter()
+        let labels: BTreeMap<String, String> = results
+            .iter()
             .map(|r| {
                 let meta = self.label_meta.get(&r.id.0);
-                let recipe = meta.map(|m| m.recipe.clone()).unwrap_or_else(|| r.recipe.clone());
+                let recipe = meta
+                    .map(|m| m.recipe.clone())
+                    .unwrap_or_else(|| r.recipe.clone());
                 let ln = meta.map(|m| m.line).unwrap_or(r.line);
-                let it = meta.and_then(|m| m.iteration_item.clone()).or(r.iteration_item.clone());
+                let it = meta
+                    .and_then(|m| m.iteration_item.clone())
+                    .or(r.iteration_item.clone());
                 let lbl = label::label(&recipe, ln, it.as_deref(), multi_ns);
                 (r.id.0.clone(), lbl)
             })
@@ -237,8 +257,8 @@ pub fn write_json_sidecar(
     report_json_path: Option<&std::path::Path>,
     results: &[TestResult],
 ) -> std::io::Result<()> {
-    use serde_json::json;
     use crate::iso8601::now_iso8601;
+    use serde_json::json;
 
     let path = report_json_path
         .map(|p| p.to_path_buf())
@@ -246,7 +266,8 @@ pub fn write_json_sidecar(
 
     let summary = compute_summary(results);
     let total_duration: f64 = results.iter().map(|r| r.duration.as_secs_f64()).sum();
-    let saved_by_cache: f64 = results.iter()
+    let saved_by_cache: f64 = results
+        .iter()
         .filter(|r| r.from_cache)
         .map(|r| r.duration.as_secs_f64())
         .sum();
@@ -307,10 +328,7 @@ pub fn write_json_sidecar(
 /// - `Failed`   → `<testcase><failure .../></testcase>`
 /// - `TimedOut` → `<testcase><failure message="timed out" .../></testcase>`
 /// - `Blocked`  → `<testcase><skipped .../></testcase>`
-pub fn write_junit_sidecar(
-    path: &std::path::Path,
-    results: &[TestResult],
-) -> std::io::Result<()> {
+pub fn write_junit_sidecar(path: &std::path::Path, results: &[TestResult]) -> std::io::Result<()> {
     let mut by_recipe: BTreeMap<String, Vec<&TestResult>> = BTreeMap::new();
     for r in results {
         by_recipe.entry(recipe_of(&r.id)).or_default().push(r);
@@ -329,7 +347,8 @@ pub fn write_junit_sidecar(
     ));
 
     for (recipe, tests) in &by_recipe {
-        let recipe_failures = tests.iter()
+        let recipe_failures = tests
+            .iter()
             .filter(|r| matches!(r.outcome, TestOutcome::Failed | TestOutcome::TimedOut))
             .count();
         let recipe_time: f64 = tests.iter().map(|r| r.duration.as_secs_f64()).sum();
@@ -342,7 +361,11 @@ pub fn write_junit_sidecar(
         ));
 
         for r in tests {
-            let test_name = if r.name.is_empty() { "(unnamed)" } else { &r.name };
+            let test_name = if r.name.is_empty() {
+                "(unnamed)"
+            } else {
+                &r.name
+            };
             out.push_str(&format!(
                 "    <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\"",
                 xml_escape_attr(test_name),

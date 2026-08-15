@@ -1,8 +1,8 @@
 //! Renderer trait and implementations.
-pub mod inline;
-pub mod plain;
-pub mod json;
 pub mod event_writer;
+pub mod inline;
+pub mod json;
+pub mod plain;
 pub mod snapshot;
 pub mod status_line;
 

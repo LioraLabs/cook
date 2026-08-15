@@ -129,7 +129,10 @@ fn cloud_key_changes_on_namespace_change() {
 fn cloud_key_changes_on_input_content_change() {
     let a = make_key_inputs();
     let alt_inputs = [0x1111, 0x2222, 0x9999]; // last hash differs
-    let b = CloudKeyInputs { sorted_input_content_hashes: &alt_inputs, ..a };
+    let b = CloudKeyInputs {
+        sorted_input_content_hashes: &alt_inputs,
+        ..a
+    };
     assert_ne!(cloud_key(&a), cloud_key(&b));
 }
 
@@ -141,10 +144,19 @@ fn cloud_key_caller_must_sort_inputs() {
     let sorted = [0x1111u64, 0x2222, 0x3333];
     let unsorted = [0x3333u64, 0x1111, 0x2222];
     let a = make_key_inputs();
-    let b = CloudKeyInputs { sorted_input_content_hashes: &sorted, ..a };
-    let c = CloudKeyInputs { sorted_input_content_hashes: &unsorted, ..a };
-    assert_ne!(cloud_key(&b), cloud_key(&c),
-        "the function does not internally sort; caller responsibility");
+    let b = CloudKeyInputs {
+        sorted_input_content_hashes: &sorted,
+        ..a
+    };
+    let c = CloudKeyInputs {
+        sorted_input_content_hashes: &unsorted,
+        ..a
+    };
+    assert_ne!(
+        cloud_key(&b),
+        cloud_key(&c),
+        "the function does not internally sort; caller responsibility"
+    );
 }
 
 #[test]
@@ -247,7 +259,10 @@ fn artifact_meta_kind_none_not_serialised() {
         target: None,
     };
     let s = serde_json::to_string(&meta).unwrap();
-    assert!(!s.contains("kind"), "kind: None MUST be omitted from JSON: {s}");
+    assert!(
+        !s.contains("kind"),
+        "kind: None MUST be omitted from JSON: {s}"
+    );
 }
 
 // ---- end CS-0074 ----
@@ -256,9 +271,7 @@ fn artifact_meta_kind_none_not_serialised() {
 
 #[test]
 fn artifact_meta_mode_and_symlink_target_round_trip() {
-    let json = minimal_meta_json(
-        r#", "mode": 493, "kind": "symlink", "target": "../sib""#,
-    );
+    let json = minimal_meta_json(r#", "mode": 493, "kind": "symlink", "target": "../sib""#);
     let meta: ArtifactMeta = serde_json::from_str(&json).expect("parse");
     assert_eq!(meta.mode, 0o755);
     assert_eq!(meta.kind.as_deref(), Some("symlink"));
@@ -320,7 +333,10 @@ fn determinant_manifest_serializes_deterministically() {
 fn merging_a_path_set_puts_it_first_and_deduplicates() {
     let old = vec![vec!["a.lua".to_string()], vec!["b.lua".to_string()]];
     let merged = merge_path_set(&old, &["b.lua".to_string()]);
-    assert_eq!(merged, vec![vec!["b.lua".to_string()], vec!["a.lua".to_string()]]);
+    assert_eq!(
+        merged,
+        vec![vec!["b.lua".to_string()], vec!["a.lua".to_string()]]
+    );
 }
 
 #[test]

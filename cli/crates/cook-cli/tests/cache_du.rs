@@ -106,7 +106,7 @@ fn seeded_project(cache_dir: &Path) -> TempDir {
     fs::write(
         dir.path().join("Cookfile"),
         r#"recipe build
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     cook "out/$<in.stem>.up" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe other
@@ -143,7 +143,9 @@ fn stat_walk_store(cache_dir: &Path) -> (u64, usize) {
         }
         let name = entry.file_name().to_string_lossy();
         let is_blob = name.len() == 62
-            && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
         if !is_blob {
             continue;
         }
@@ -249,7 +251,10 @@ fn seeded_store_total_matches_an_independent_stat_walk() {
     );
     // Sanity: the store isn't trivially empty (that would make the equality
     // above vacuous).
-    assert!(walked_count >= 3, "expected at least 3 blobs seeded; got {walked_count}");
+    assert!(
+        walked_count >= 3,
+        "expected at least 3 blobs seeded; got {walked_count}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -269,8 +274,14 @@ fn by_kind_and_by_namespace_breakdown_is_accurate_and_unprefixed() {
     assert!(du.status.success());
     let text = String::from_utf8(du.stdout).unwrap();
 
-    assert!(text.contains("By kind:\n"), "missing By kind: section:\n{text}");
-    assert!(text.contains("By namespace:\n"), "missing By namespace: section:\n{text}");
+    assert!(
+        text.contains("By kind:\n"),
+        "missing By kind: section:\n{text}"
+    );
+    assert!(
+        text.contains("By namespace:\n"),
+        "missing By namespace: section:\n{text}"
+    );
 
     let (_, total_count) = parse_total_line(&text);
 
@@ -315,7 +326,9 @@ fn by_kind_and_by_namespace_breakdown_is_accurate_and_unprefixed() {
     // The probe artifact's own namespace ("probe:<key>") is likewise
     // reported verbatim, with no project prefix glued on either.
     assert!(
-        namespaces.iter().any(|(label, _)| label == "probe:ns:greet"),
+        namespaces
+            .iter()
+            .any(|(label, _)| label == "probe:ns:greet"),
         "expected the exact probe namespace 'probe:ns:greet'; got {namespaces:?}\n{text}"
     );
 }
@@ -337,9 +350,15 @@ fn budget_line_reflects_max_size_relative_to_the_seeded_store() {
     // budget, no OVER BUDGET text, exit 0.
     write_local_cloud_toml(project.path(), &cache_dir, Some("10MB"));
     let under = run(project.path(), &["cache", "du"]);
-    assert!(under.status.success(), "du must exit 0 under budget: {under:?}");
+    assert!(
+        under.status.success(),
+        "du must exit 0 under budget: {under:?}"
+    );
     let under_text = String::from_utf8(under.stdout).unwrap();
-    assert!(under_text.contains("Budget: "), "missing budget line:\n{under_text}");
+    assert!(
+        under_text.contains("Budget: "),
+        "missing budget line:\n{under_text}"
+    );
     assert!(
         !under_text.contains("OVER BUDGET"),
         "must not claim over-budget when max_size is far above the store size:\n{under_text}"
@@ -378,16 +397,27 @@ fn empty_store_reports_zero_total_without_error() {
     .unwrap();
     let cache_dir = project.path().join("does-not-exist");
     write_local_cloud_toml(project.path(), &cache_dir, None);
-    assert!(!cache_dir.exists(), "precondition: cache_dir must not exist yet");
+    assert!(
+        !cache_dir.exists(),
+        "precondition: cache_dir must not exist yet"
+    );
 
     let du = run(project.path(), &["cache", "du"]);
-    assert!(du.status.success(), "an absent store is a zero-total report, not an error: {du:?}");
+    assert!(
+        du.status.success(),
+        "an absent store is a zero-total report, not an error: {du:?}"
+    );
     let text = String::from_utf8(du.stdout).unwrap();
     assert!(
         text.contains("Total: 0 B (0 bytes) across 0 objects"),
         "expected the zero-total line:\n{text}"
     );
-    assert!(text.trim().split('\n').next().unwrap().starts_with("Store: "));
+    assert!(text
+        .trim()
+        .split('\n')
+        .next()
+        .unwrap()
+        .starts_with("Store: "));
     // COOK-232 cleanup: `du` is read-only and must never mkdir the store as
     // a side effect of merely inspecting it — a fresh machine asking "how
     // big is my cache?" must not itself create `~/.cache/cook/cloud`.
@@ -413,7 +443,10 @@ fn unparseable_max_size_names_the_offending_literal() {
     write_local_cloud_toml(project.path(), &cache_dir, Some("twenty gigs"));
 
     let du = run(project.path(), &["cache", "du"]);
-    assert!(!du.status.success(), "a bad max_size literal must not exit 0: {du:?}");
+    assert!(
+        !du.status.success(),
+        "a bad max_size literal must not exit 0: {du:?}"
+    );
     let stderr = String::from_utf8_lossy(&du.stderr);
     assert!(
         stderr.contains("twenty gigs"),

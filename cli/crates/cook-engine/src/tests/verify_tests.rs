@@ -43,14 +43,18 @@ fn rerun_nondeterministic_producer_changes_hash() {
     let a = rerun_outputs_in_sandbox(cmd, dir.path(), &env, &["out.txt".to_string()]).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(5));
     let b = rerun_outputs_in_sandbox(cmd, dir.path(), &env, &["out.txt".to_string()]).unwrap();
-    assert_ne!(a.get("out.txt"), b.get("out.txt"), "nondeterministic producer must differ");
-    }
+    assert_ne!(
+        a.get("out.txt"),
+        b.get("out.txt"),
+        "nondeterministic producer must differ"
+    );
+}
 
-    #[test]
-    fn rerun_failed_command_is_err() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = std::collections::BTreeMap::new();
-        let r = rerun_outputs_in_sandbox("exit 7", dir.path(), &env, &["out.txt".to_string()]);
+#[test]
+fn rerun_failed_command_is_err() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = std::collections::BTreeMap::new();
+    let r = rerun_outputs_in_sandbox("exit 7", dir.path(), &env, &["out.txt".to_string()]);
     assert!(r.is_err());
 }
 
@@ -65,15 +69,27 @@ fn verdict_pass_is_ok_and_record_exempt_is_ok() {
 #[test]
 fn report_exit_code_zero_iff_all_ok() {
     let mut r = VerifyReport::default();
-    r.units.push(UnitReport { recipe: "build".into(), unit: "a.o".into(), key: "k".into(), verdict: UnitVerdict::Pass });
+    r.units.push(UnitReport {
+        recipe: "build".into(),
+        unit: "a.o".into(),
+        key: "k".into(),
+        verdict: UnitVerdict::Pass,
+    });
     assert_eq!(r.exit_code(), 0);
-    r.units.push(UnitReport { recipe: "build".into(), unit: "b.o".into(), key: "k2".into(), verdict: UnitVerdict::Divergence { detail: "bytes differ".into() } });
-        assert_ne!(r.exit_code(), 0);
-    }
+    r.units.push(UnitReport {
+        recipe: "build".into(),
+        unit: "b.o".into(),
+        key: "k2".into(),
+        verdict: UnitVerdict::Divergence {
+            detail: "bytes differ".into(),
+        },
+    });
+    assert_ne!(r.exit_code(), 0);
+}
 
-    #[test]
-    fn matching_bytes_pass() {
-        let recorded: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
+#[test]
+fn matching_bytes_pass() {
+    let recorded: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
     let rerun: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
     assert_eq!(classify(false, &recorded, &rerun), UnitVerdict::Pass);
 }

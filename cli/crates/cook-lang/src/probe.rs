@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::cook_line::{parse_ingredients_line, strip_keyword};
+use crate::cook_line::strip_keyword;
 use crate::disposition::parse_seal_operands;
 use crate::lexer::*;
 use crate::ParseError;
@@ -13,8 +13,8 @@ pub(crate) fn parse_probe(
     source_lines: &[&str],
 ) -> Result<(Probe, Vec<Probe>, usize), ParseError> {
     let mut pos = start;
-    let mut ingredients: Vec<String> = Vec::new();
-    let mut excludes: Vec<String> = Vec::new();
+    let inputs: Vec<String> = Vec::new();
+    let excludes: Vec<String> = Vec::new();
     let mut producer: Option<ProbeProduce> = None;
     let mut seal_seen = false;
     let mut inline_probes = Vec::new();
@@ -28,8 +28,12 @@ pub(crate) fn parse_probe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
-            Token::Comment(_) | Token::Blank => { pos += 1; }
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => break,
+            Token::Comment(_) | Token::Blank => {
+                pos += 1;
+            }
             Token::LuaBlockOpen => {
                 // A bare `>{ … }` line is the Lua producer (§22.5.2). Unlike the
                 // shell/`json`/`lines`/`tools`/`envs` forms (which lex as
@@ -38,8 +42,10 @@ pub(crate) fn parse_probe(
                 // both the inline `>{ … }` and multi-line forms parse uniformly
                 // through `parse_producer`.
                 if producer.is_some() {
-                    return Err(ParseError::Parse { line: tok.line,
-                        message: "probe: at most one producer per probe".into() });
+                    return Err(ParseError::Parse {
+                        line: tok.line,
+                        message: "probe: at most one producer per probe".into(),
+                    });
                 }
                 let raw = source_lines
                     .get(tok.line.saturating_sub(1))
@@ -52,36 +58,38 @@ pub(crate) fn parse_probe(
             }
             Token::Content(text) => {
                 if crate::recipe::is_module_call(text) {
-                    let raw = source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("");
-                    if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
+                    let raw = source_lines
+                        .get(tok.line.saturating_sub(1))
+                        .copied()
+                        .unwrap_or("");
+                    if !raw.starts_with(|c: char| c.is_whitespace()) {
+                        break;
+                    }
                 }
-                if let Some(rest) = strip_keyword(text, "ingredients") {
-                    if producer.is_some() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: "probe: `ingredients` must appear before the producer".into() });
-                    }
-                    if seal_seen || !ingredients.is_empty() || !excludes.is_empty() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: "probe: at most one `ingredients` per probe".into() });
-                    }
-                    let (inc, exc, new_pos) =
-                        parse_ingredients_line(
-                            rest, "ingredients", tok.line, tokens, pos, source_lines,
-                        )?;
-                    ingredients = inc; excludes = exc; pos = new_pos;
-                    continue;
+                if strip_keyword(text, "ingredients").is_some() {
+                    return Err(ParseError::Parse { line: tok.line,
+                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
                 } else if let Some(rest) = strip_keyword(text, "seal") {
                     if producer.is_some() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: format!("probe '{name}': `seal` must appear before the producer") });
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: format!(
+                                "probe '{name}': `seal` must appear before the producer"
+                            ),
+                        });
                     }
-                    if seal_seen || !ingredients.is_empty() || !excludes.is_empty() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: format!("probe '{name}': at most one `seal` per probe") });
+                    if seal_seen || !inputs.is_empty() || !excludes.is_empty() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: format!("probe '{name}': at most one `seal` per probe"),
+                        });
                     }
                     if rest.trim().is_empty() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: "seal: a probe-level `seal` requires at least one probe ref".into() });
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "seal: a probe-level `seal` requires at least one probe ref"
+                                .into(),
+                        });
                     }
                     let parsed = parse_seal_operands(rest, tok.line, &name)?;
                     deps.extend(parsed.refs);
@@ -90,35 +98,42 @@ pub(crate) fn parse_probe(
                     pos += 1;
                     continue;
                 } else {
-                    if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {
+                    if strip_keyword(text, "files").is_some()
+                        || strip_keyword(text, "tools").is_some()
+                    {
                         return Err(ParseError::Parse { line: tok.line,
                             message: "`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`".into() });
                     }
                     // Any other body content is the producer (§22.5.2). The
                     // producer KIND leads; there is exactly one per probe.
                     if producer.is_some() {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: "probe: at most one producer per probe".into() });
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "probe: at most one producer per probe".into(),
+                        });
                     }
-                    let (p, new_pos) =
-                        parse_producer(text, tok.line, tokens, pos, source_lines)?;
+                    let (p, new_pos) = parse_producer(text, tok.line, tokens, pos, source_lines)?;
                     // A `files` producer's glob set IS its file-input
-                    // fingerprint set (CS-0148); a separate `ingredients`
+                    // fingerprint set (CS-0148); a separate `inputs`
                     // line would declare a second, divergable one.
                     if matches!(p, ProbeProduce::Files { .. })
-                        && (!ingredients.is_empty() || !excludes.is_empty())
+                        && (!inputs.is_empty() || !excludes.is_empty())
                     {
-                        return Err(ParseError::Parse { line: tok.line,
+                        return Err(ParseError::Parse {
+                            line: tok.line,
                             message: "probe: a `files` producer declares its own file set; \
-                                a separate `ingredients` line is not allowed".into() });
+                                a separate `inputs` line is not allowed"
+                                .into(),
+                        });
                     }
-                    producer = Some(p); pos = new_pos;
+                    producer = Some(p);
+                    pos = new_pos;
                     continue;
                 }
             }
             _other => {
                 return Err(ParseError::Parse { line: tok.line,
-                    message: "probe body: only `ingredients`, `seal`, and a producer \
+                    message: "probe body: only `inputs`, `seal`, and a producer \
                         (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
                         .into() });
             }
@@ -130,44 +145,124 @@ pub(crate) fn parse_probe(
         message: format!("probe '{name}' has no producer"),
     })?;
 
-    Ok((Probe { name, deps, ingredients, excludes, produce, line: probe_line }, inline_probes, pos))
+    Ok((
+        Probe {
+            name,
+            deps,
+            inputs,
+            excludes,
+            produce,
+            line: probe_line,
+        },
+        inline_probes,
+        pos,
+    ))
 }
 
-fn parse_set_declaration(name: String, declaration_line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str], files: bool) -> Result<(Probe, usize), ParseError> {
+fn parse_set_declaration(
+    name: String,
+    declaration_line: usize,
+    tokens: &[Located<Token>],
+    start: usize,
+    source_lines: &[&str],
+    files: bool,
+) -> Result<(Probe, usize), ParseError> {
     let mut pos = start;
     let mut values = Vec::new();
     let mut excludes = Vec::new();
     while pos < tokens.len() {
         let tok = &tokens[pos];
         match &tok.value {
-            Token::RecipeHeader { .. } | Token::ChoreHeader { .. } | Token::ConfigHeader { .. }
-            | Token::UseDecl { .. } | Token::ImportDecl { .. } | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. }
+            | Token::RegisterHeader
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => break,
             Token::Comment(_) | Token::Blank => pos += 1,
             Token::Content(_) => {
                 let raw = source_lines.get(tok.line - 1).copied().unwrap_or("");
-                if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
+                if !raw.starts_with(|c: char| c.is_whitespace()) {
+                    break;
+                }
                 if files {
-                    let (mut includes, mut line_excludes) = parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
-                    values.append(&mut includes); excludes.append(&mut line_excludes);
+                    let (mut includes, mut line_excludes) =
+                        parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
+                    values.append(&mut includes);
+                    excludes.append(&mut line_excludes);
                 } else {
-                    values.extend(parse_source_name_list(&format!("{{{}}}", raw.trim()), tok.line, "tools")?);
+                    values.extend(parse_source_name_list(
+                        &format!("{{{}}}", raw.trim()),
+                        tok.line,
+                        "tools",
+                    )?);
                 }
                 pos += 1;
             }
-            _ => return Err(ParseError::Parse { line: tok.line, message: format!("{} declaration body admits only {}", if files { "files" } else { "tools" }, if files { "quoted globs" } else { "tool names" }) }),
+            _ => {
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message: format!(
+                        "{} declaration body admits only {}",
+                        if files { "files" } else { "tools" },
+                        if files { "quoted globs" } else { "tool names" }
+                    ),
+                })
+            }
         }
     }
-    if values.is_empty() { return Err(ParseError::Parse { line: declaration_line, message: format!("{} declaration '{}' requires at least one {}", if files { "files" } else { "tools" }, name, if files { "quoted glob" } else { "tool name" }) }); }
-    let produce = if files { ProbeProduce::Files { globs: values, excludes } } else { ProbeProduce::Tools(values) };
-    Ok((Probe { name, deps: vec![], ingredients: vec![], excludes: vec![], produce, line: declaration_line }, pos))
+    if values.is_empty() {
+        return Err(ParseError::Parse {
+            line: declaration_line,
+            message: format!(
+                "{} declaration '{}' requires at least one {}",
+                if files { "files" } else { "tools" },
+                name,
+                if files { "quoted glob" } else { "tool name" }
+            ),
+        });
+    }
+    let produce = if files {
+        ProbeProduce::Files {
+            globs: values,
+            excludes,
+        }
+    } else {
+        ProbeProduce::Tools(values)
+    };
+    Ok((
+        Probe {
+            name,
+            deps: vec![],
+            inputs: vec![],
+            excludes: vec![],
+            produce,
+            line: declaration_line,
+        },
+        pos,
+    ))
 }
 
-pub(crate) fn parse_files_declaration(name: String, line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str]) -> Result<(Probe, usize), ParseError> {
+pub(crate) fn parse_files_declaration(
+    name: String,
+    line: usize,
+    tokens: &[Located<Token>],
+    start: usize,
+    source_lines: &[&str],
+) -> Result<(Probe, usize), ParseError> {
     parse_set_declaration(name, line, tokens, start, source_lines, true)
 }
 
-pub(crate) fn parse_tools_declaration(name: String, line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str]) -> Result<(Probe, usize), ParseError> {
+pub(crate) fn parse_tools_declaration(
+    name: String,
+    line: usize,
+    tokens: &[Located<Token>],
+    start: usize,
+    source_lines: &[&str],
+) -> Result<(Probe, usize), ParseError> {
     parse_set_declaration(name, line, tokens, start, source_lines, false)
 }
 
@@ -189,9 +284,7 @@ fn parse_source_name_list(
         .and_then(|t| t.trim_end().strip_suffix('}'))
         .ok_or_else(|| ParseError::Parse {
             line,
-            message: format!(
-                "{kind}: expected a brace name list `{{ a, b }}` on one line"
-            ),
+            message: format!("{kind}: expected a brace name list `{{ a, b }}` on one line"),
         })?;
     let mut names = Vec::new();
     for tok in inner.split(|c: char| c == ',' || c.is_whitespace()) {
@@ -204,11 +297,17 @@ fn parse_source_name_list(
             cook_contracts::probe_key::is_tool_name(tok)
         } else {
             let mut chars = tok.chars();
-            chars.next().is_some_and(cook_contracts::naming::is_bare_name_start)
+            chars
+                .next()
+                .is_some_and(cook_contracts::naming::is_bare_name_start)
                 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
         if !ok {
-            let charset = if tools { "[A-Za-z_][A-Za-z0-9_.-]*" } else { "[A-Za-z_][A-Za-z0-9_]*" };
+            let charset = if tools {
+                "[A-Za-z_][A-Za-z0-9_.-]*"
+            } else {
+                "[A-Za-z_][A-Za-z0-9_]*"
+            };
             return Err(ParseError::Parse {
                 line,
                 message: format!(
@@ -228,7 +327,7 @@ fn parse_source_name_list(
 }
 
 /// Parse a `files` brace glob list: `{ "a/*.c" !"a/gen/*.c" }` →
-/// (globs, excludes). Each pattern is a quoted string following `ingredients`
+/// (globs, excludes). Each pattern is a quoted string following `inputs`
 /// syntax (`!"…"` excludes). The list MUST be on one physical line and MUST
 /// contain at least one include glob. The `{ … }` here is a GLOB LIST, not a
 /// shell/Lua body.
@@ -350,7 +449,12 @@ fn finish_typed_shell(
     source_lines: &[&str],
 ) -> Result<(ProbeProduce, usize), ParseError> {
     let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
-        tail, line, tokens, current_pos, source_lines, "probe",
+        tail,
+        line,
+        tokens,
+        current_pos,
+        source_lines,
+        "probe",
     )?;
     crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     match body {
@@ -389,7 +493,13 @@ pub(crate) fn parse_producer(
     }
     if let Some(tail) = strip_keyword(text, "envs") {
         let replacement = parse_source_name_list(tail, line, "envs")
-            .map(|names| names.iter().map(|name| format!("echo \"${name}\"")).collect::<Vec<_>>().join("; "))
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|name| format!("echo \"${name}\""))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
             .unwrap_or_else(|_| "echo \"$NAME\"".into());
         return Err(ParseError::Parse {
             line,
@@ -402,20 +512,43 @@ pub(crate) fn parse_producer(
     }
     // Typed shell producers: the braces hold a shell block, typed.
     if let Some(tail) = strip_keyword(text, "json") {
-        return finish_typed_shell(tail, ShellProduceType::Json, line, tokens, current_pos, source_lines);
+        return finish_typed_shell(
+            tail,
+            ShellProduceType::Json,
+            line,
+            tokens,
+            current_pos,
+            source_lines,
+        );
     }
     if let Some(tail) = strip_keyword(text, "lines") {
-        return finish_typed_shell(tail, ShellProduceType::Lines, line, tokens, current_pos, source_lines);
+        return finish_typed_shell(
+            tail,
+            ShellProduceType::Lines,
+            line,
+            tokens,
+            current_pos,
+            source_lines,
+        );
     }
     // Bare shell block (`{ … }` → string) or Lua block (`>{ … }` → structured).
     let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
-        text, line, tokens, current_pos, source_lines, "probe",
+        text,
+        line,
+        tokens,
+        current_pos,
+        source_lines,
+        "probe",
     )?;
     crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     Ok(match body {
         Body::LuaBlock(code) => (ProbeProduce::Lua(code), new_pos),
-        Body::ShellBlock(cmds) => {
-            (ProbeProduce::Shell { commands: cmds, typing: ShellProduceType::String }, new_pos)
-        }
+        Body::ShellBlock(cmds) => (
+            ProbeProduce::Shell {
+                commands: cmds,
+                typing: ShellProduceType::String,
+            },
+            new_pos,
+        ),
     })
 }

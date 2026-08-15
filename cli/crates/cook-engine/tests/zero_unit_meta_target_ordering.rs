@@ -143,9 +143,8 @@ recipe consumer : middle
     // wrote, not a stale/partial file from a race, and not a cache hit from
     // some other run (which could not have this nonce).
     let copy_path = wd.join("build/copy.a");
-    let copy_contents = fs::read_to_string(&copy_path).unwrap_or_else(|e| {
-        panic!("consumer's output build/copy.a must exist: {e}\n{combined}")
-    });
+    let copy_contents = fs::read_to_string(&copy_path)
+        .unwrap_or_else(|e| panic!("consumer's output build/copy.a must exist: {e}\n{combined}"));
     let expected = format!("UNIQUE-{nonce}");
     assert_eq!(
         copy_contents.trim(),

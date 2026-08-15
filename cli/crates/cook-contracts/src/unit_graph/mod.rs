@@ -65,8 +65,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::{CapturedUnit, RecipeUnits, WorkPayload};
 use crate::unit::DepKind;
+use crate::{CapturedUnit, RecipeUnits, WorkPayload};
 
 /// Where a graph node came from, in terms a caller that holds the original
 /// `RecipeUnits` slice can resolve: a captured unit is `(recipe, unit_idx)`;
@@ -147,10 +147,7 @@ pub enum UnitGraphError {
     /// message can name it; the inner error says which of the two ways it
     /// failed. Registration diagnoses this first — see [`resolve_after`] — so
     /// reaching it here means a producer of `RecipeUnits` skipped that check.
-    After {
-        recipe: String,
-        source: AfterError,
-    },
+    After { recipe: String, source: AfterError },
 }
 
 /// The two ways a `cook.add_unit` `after` entry (§22.1.3, CS-0219) can fail to
@@ -534,8 +531,10 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
     // the full name set up front correctly treats "present in the slice but
     // zero units" (a legitimate empty leaf set) as distinct from "absent
     // from the slice" (the genuine error).
-    let known_recipe_names: BTreeSet<&str> =
-        recipe_units.iter().map(|ru| ru.recipe_name.as_str()).collect();
+    let known_recipe_names: BTreeSet<&str> = recipe_units
+        .iter()
+        .map(|ru| ru.recipe_name.as_str())
+        .collect();
     for ru in recipe_units {
         for (_, dep_name) in &ru.dep_edges {
             if !known_recipe_names.contains(dep_name.as_str()) {
@@ -764,7 +763,11 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             // provenance is the consumer's own dep_kind — a step-group
             // member depends on the prior barrier as a group entry,
             // everything else as a sequential barrier.
-            let within_deps: Vec<usize> = if is_probe { Vec::new() } else { barrier.clone() };
+            let within_deps: Vec<usize> = if is_probe {
+                Vec::new()
+            } else {
+                barrier.clone()
+            };
             let within_kind = match &unit.dep_kind {
                 DepKind::StepGroup(_) => EdgeProvenance::Group,
                 DepKind::Sequential => EdgeProvenance::Serial,
@@ -778,10 +781,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                     .map(|&d| (d, EdgeProvenance::Barrier))
                     .collect()
             } else {
-                within_deps
-                    .into_iter()
-                    .map(|d| (d, within_kind))
-                    .collect()
+                within_deps.into_iter().map(|d| (d, within_kind)).collect()
             };
 
             // Fine-grained dep edges: the leaves of specific recipes, for
@@ -890,7 +890,11 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         // the same rule), so a chain of empty-barrier recipes forwards the
         // original producer's leaves the whole way down. When `cross_deps`
         // is also empty, empty forwards empty — there is nothing to forward.
-        let leaves = if barrier.is_empty() { cross_deps } else { barrier };
+        let leaves = if barrier.is_empty() {
+            cross_deps
+        } else {
+            barrier
+        };
         recipe_leaves.insert(ru.recipe_name.clone(), leaves);
     }
 

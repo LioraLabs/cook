@@ -194,7 +194,9 @@ pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u
         policy.low_water
     );
 
-    let total_before: u64 = candidates.iter().fold(0u64, |a, c| a.saturating_add(c.size));
+    let total_before: u64 = candidates
+        .iter()
+        .fold(0u64, |a, c| a.saturating_add(c.size));
     let count_before = candidates.len();
 
     let mut victims: Vec<EvictCandidate> = Vec::new();

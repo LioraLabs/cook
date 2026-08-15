@@ -76,7 +76,11 @@ pub fn skip_non_code(src: &str, i: usize) -> Skip {
         let quote = b;
         let mut j = i + 1;
         while j < bytes.len() && bytes[j] != quote {
-            j += if bytes[j] == b'\\' && j + 1 < bytes.len() { 2 } else { 1 };
+            j += if bytes[j] == b'\\' && j + 1 < bytes.len() {
+                2
+            } else {
+                1
+            };
         }
         // A short string that runs to end-of-input consumes the rest, rather
         // than reporting `Unterminated` as the long forms do. That asymmetry

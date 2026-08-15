@@ -11,11 +11,16 @@ pub enum ViewerError {
     #[error("layout failure: {0}")]
     Layout(String),
     #[error("build {requested} not found. Recent builds: {}", nearby.join(", "))]
-    BuildNotFound { requested: String, nearby: Vec<String> },
+    BuildNotFound {
+        requested: String,
+        nearby: Vec<String>,
+    },
     #[error("failed to list builds: {0}")]
     IoListing(io::Error),
 }
 
 impl ViewerError {
-    pub fn io_listing(e: io::Error) -> Self { Self::IoListing(e) }
+    pub fn io_listing(e: io::Error) -> Self {
+        Self::IoListing(e)
+    }
 }

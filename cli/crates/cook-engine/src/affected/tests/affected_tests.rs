@@ -22,11 +22,14 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         consulted_env: BTreeMap::new(),
         discovered_inputs: None,
         seal_keys: Default::default(),
-            sharing: Default::default(),
+        sharing: Default::default(),
         record: false,
     };
     let unit = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "echo build".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "echo build".into(),
+            line: 1,
+        },
         cache_meta: Some(cache_meta),
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -34,7 +37,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let mut units_by_recipe = BTreeMap::new();
     units_by_recipe.insert(
@@ -72,7 +75,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
                 code: String::new(),
                 inputs: inputs.iter().map(|s| s.to_string()).collect(),
                 outputs: vec![],
-                ingredient_groups: vec![],
+                gather_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
                 line: 0,
@@ -83,7 +86,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
             unit_env_vars: BTreeMap::new(),
             member: None,
             output_paths: Vec::new(),
-                    test_name: None,
+            test_name: None,
 
             after: Vec::new(),
         };
@@ -141,7 +144,13 @@ fn empty_closure_returns_empty() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[]);
     let closure = names(&[]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["src/main.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 
@@ -150,7 +159,13 @@ fn single_recipe_matching_path_returned() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["src/main.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["build"]));
 }
 
@@ -159,7 +174,13 @@ fn single_recipe_non_matching_path_not_returned() {
     let ws = workspace_with(&[("build", &["src/main.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["docs/readme.md"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["docs/readme.md"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 
@@ -168,7 +189,13 @@ fn empty_inputs_no_consumers_never_returned() {
     let ws = workspace_with(&[("noop", &[])]);
     let edges = edges_from(&[("noop", &[])]);
     let closure = names(&["noop"]);
-    let got = compute_affected(&paths(&["anything.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["anything.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 
@@ -178,18 +205,16 @@ fn empty_inputs_with_downstream_consumer_returned_transitively() {
     // source-bearing leaf. Touch `lib/foo.rs` → both `lib` and `pure` and
     // `app` should run (lib is direct hit, app depends on pure which depends
     // on lib).
-    let ws = workspace_with(&[
-        ("lib", &["lib/foo.rs"]),
-        ("pure", &[]),
-        ("app", &[]),
-    ]);
-    let edges = edges_from(&[
-        ("app", &["pure"]),
-        ("pure", &["lib"]),
-        ("lib", &[]),
-    ]);
+    let ws = workspace_with(&[("lib", &["lib/foo.rs"]), ("pure", &[]), ("app", &[])]);
+    let edges = edges_from(&[("app", &["pure"]), ("pure", &["lib"]), ("lib", &[])]);
     let closure = names(&["app", "pure", "lib"]);
-    let got = compute_affected(&paths(&["lib/foo.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["lib/foo.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["app", "pure", "lib"]));
 }
 
@@ -206,31 +231,43 @@ fn diamond_only_one_side_affected() {
         ("shared", &[]),
     ]);
     let closure = names(&["app", "utils", "shared"]);
-    let got = compute_affected(&paths(&["utils/src/x.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["utils/src/x.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["app", "utils"]));
 }
 
 #[test]
 fn affected_outside_closure_not_returned() {
-    let ws = workspace_with(&[
-        ("build", &["src/main.rs"]),
-        ("lint", &["src/lint.rs"]),
-    ]);
+    let ws = workspace_with(&[("build", &["src/main.rs"]), ("lint", &["src/lint.rs"])]);
     let edges = edges_from(&[("build", &[]), ("lint", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/lint.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["src/lint.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 
 #[test]
 fn same_input_in_multiple_recipes_all_returned() {
-    let ws = workspace_with(&[
-        ("a", &["shared/x.rs"]),
-        ("b", &["shared/x.rs"]),
-    ]);
+    let ws = workspace_with(&[("a", &["shared/x.rs"]), ("b", &["shared/x.rs"])]);
     let edges = edges_from(&[("a", &[]), ("b", &[])]);
     let closure = names(&["a", "b"]);
-    let got = compute_affected(&paths(&["shared/x.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["shared/x.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["a", "b"]));
 }
 
@@ -239,7 +276,13 @@ fn recipe_with_multiple_inputs_one_hit_enough() {
     let ws = workspace_with(&[("build", &["src/a.rs", "src/b.rs", "src/c.rs"])]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/b.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["src/b.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["build"]));
 }
 
@@ -251,24 +294,20 @@ fn changed_path_unrelated_to_any_recipe_returns_empty() {
     ]);
     let edges = edges_from(&[("build", &[]), ("test", &[])]);
     let closure = names(&["build", "test"]);
-    let got = compute_affected(&paths(&["random.txt"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["random.txt"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 
 #[test]
 fn long_chain_transitive_downstream() {
-    let ws = workspace_with(&[
-        ("a", &["a.rs"]),
-        ("b", &[]),
-        ("c", &[]),
-        ("d", &[]),
-    ]);
-    let edges = edges_from(&[
-        ("d", &["c"]),
-        ("c", &["b"]),
-        ("b", &["a"]),
-        ("a", &[]),
-    ]);
+    let ws = workspace_with(&[("a", &["a.rs"]), ("b", &[]), ("c", &[]), ("d", &[])]);
+    let edges = edges_from(&[("d", &["c"]), ("c", &["b"]), ("b", &["a"]), ("a", &[])]);
     let closure = names(&["a", "b", "c", "d"]);
     let got = compute_affected(&paths(&["a.rs"]), &ws, &edges, &closure, Path::new("/ws"));
     assert_eq!(got, names(&["a", "b", "c", "d"]));
@@ -282,7 +321,13 @@ fn shell_payload_with_cache_meta_inputs_is_a_direct_hit() {
     let ws = workspace_with_shell("build", &["src/main.rs"]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["src/main.rs"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["src/main.rs"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert_eq!(got, names(&["build"]));
 }
 
@@ -291,7 +336,13 @@ fn shell_payload_with_cache_meta_inputs_unrelated_path_misses() {
     let ws = workspace_with_shell("build", &["src/main.rs"]);
     let edges = edges_from(&[("build", &[])]);
     let closure = names(&["build"]);
-    let got = compute_affected(&paths(&["docs/x.md"]), &ws, &edges, &closure, Path::new("/ws"));
+    let got = compute_affected(
+        &paths(&["docs/x.md"]),
+        &ws,
+        &edges,
+        &closure,
+        Path::new("/ws"),
+    );
     assert!(got.is_empty());
 }
 

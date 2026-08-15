@@ -70,10 +70,26 @@ impl Theme {
     // flows through the same code path colour does. A predicate inviting a
     // second path is how the two would drift.
 
-    pub fn ok_style(&self) -> Style { Style::default().fg(self.ok) }
-    pub fn err_style(&self) -> Style { Style::default().fg(self.err) }
-    pub fn skip_style(&self) -> Style { Style::default().fg(self.skip) }
-    pub fn dim_style(&self) -> Style { Style::default().fg(self.fg_dim) }
-    pub fn header_style(&self) -> Style { Style::default().fg(self.accent).add_modifier(Modifier::BOLD) }
-    pub fn selection_style(&self) -> Style { Style::default().bg(self.selection_bg).add_modifier(Modifier::BOLD) }
+    pub fn ok_style(&self) -> Style {
+        Style::default().fg(self.ok)
+    }
+    pub fn err_style(&self) -> Style {
+        Style::default().fg(self.err)
+    }
+    pub fn skip_style(&self) -> Style {
+        Style::default().fg(self.skip)
+    }
+    pub fn dim_style(&self) -> Style {
+        Style::default().fg(self.fg_dim)
+    }
+    pub fn header_style(&self) -> Style {
+        Style::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
+    }
+    pub fn selection_style(&self) -> Style {
+        Style::default()
+            .bg(self.selection_bg)
+            .add_modifier(Modifier::BOLD)
+    }
 }

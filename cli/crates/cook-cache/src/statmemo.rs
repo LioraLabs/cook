@@ -69,8 +69,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Two-level so a lookup allocates nothing: the outer key is the unit's
 /// working directory (`&Path` borrows from `PathBuf`), the inner key the
@@ -342,8 +342,7 @@ impl Default for ToolHashMemo {
 
 /// The one instance the tool-hashing paths share. Needs no arming: unlike
 /// [`GLOBAL`], it holds no run-scoped state, only answers it can re-check.
-static TOOL_HASHES: std::sync::LazyLock<ToolHashMemo> =
-    std::sync::LazyLock::new(ToolHashMemo::new);
+static TOOL_HASHES: std::sync::LazyLock<ToolHashMemo> = std::sync::LazyLock::new(ToolHashMemo::new);
 
 /// Memoised [`crate::probe::hash_file_sha256`] against the process-wide memo.
 pub fn tool_hash_memo(path: &Path) -> [u8; 32] {

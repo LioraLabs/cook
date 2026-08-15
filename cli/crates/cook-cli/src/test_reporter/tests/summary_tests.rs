@@ -1,7 +1,13 @@
 use super::*;
 
 fn t(p: usize, f: usize, b: usize, to: usize, c: usize) -> Tally {
-    Tally { passed: p, failed: f, blocked: b, timed_out: to, cached: c }
+    Tally {
+        passed: p,
+        failed: f,
+        blocked: b,
+        timed_out: to,
+        cached: c,
+    }
 }
 
 #[test]

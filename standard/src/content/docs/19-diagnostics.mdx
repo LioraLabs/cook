@@ -17,7 +17,7 @@ The exact wording and formatting of diagnostics are implementation-defined (§{i
 
 ```cook
 recipe build
-    ingredients "src/main.c"
+    gather "src/main.c"
     cook "app { gcc $<in> -o $<out> }
 ```
 

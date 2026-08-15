@@ -98,10 +98,7 @@ pub(crate) fn enumerate_store(store: &Path) -> Result<Option<Vec<EvictCandidate>
     }
     let backend = LocalBackend::new(store.to_path_buf());
     let candidates = backend.enumerate().map_err(|e| {
-        CookError::Other(format!(
-            "enumerating cache store {}: {e}",
-            store.display()
-        ))
+        CookError::Other(format!("enumerating cache store {}: {e}", store.display()))
     })?;
     Ok(Some(candidates))
 }
@@ -129,7 +126,10 @@ pub(crate) fn sweep(
     let plan = plan_eviction(candidates, policy, now);
 
     if dry_run || plan.victims.is_empty() {
-        return Ok(Sweep { plan, outcome: None });
+        return Ok(Sweep {
+            plan,
+            outcome: None,
+        });
     }
 
     let backend = LocalBackend::new(store.to_path_buf());

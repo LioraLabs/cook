@@ -61,7 +61,7 @@ fn fs_api_in_cook_body_lua_block_end_to_end() {
     fs::write(tmp.path().join("docs/en/a.md"), "hello world\n").unwrap();
     let cookfile = r#"
 recipe translate
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("/en/", "/fr/")) >{
         fs.write(output, fs.read(input):upper())
     }
@@ -117,7 +117,10 @@ recipe build
         err.contains("cook.import: register-phase only"),
         "diagnostic must name the function and the phase: {err}"
     );
-    assert!(err.contains("CS-0200"), "diagnostic must cite the change: {err}");
+    assert!(
+        err.contains("CS-0200"),
+        "diagnostic must cite the change: {err}"
+    );
 
     // The point of the change: before CS-0200 this SUCCEEDED and wrote "nil",
     // because the worker's export table was built empty and never seeded from

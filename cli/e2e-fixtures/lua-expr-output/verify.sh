@@ -67,7 +67,7 @@ LUA="$("$COOK" emit-lua 2>/dev/null)"
 if [ -z "$LUA" ]; then echo "FAIL: cook emit-lua produced no output"; exit 1; fi
 
 echo "codegen assertions (cook emit-lua):"
-assert_contains "translate: expression evaluated per ingredient"   '_cook_out = (input:gsub("docs/en", "build/fr"))'
+assert_contains "translate: expression evaluated per input"   '_cook_out = (input:gsub("docs/en", "build/fr"))'
 assert_contains "index: chained gsub expression"                   '_cook_out = (input:gsub("docs/en", "build/meta"):gsub("%.md$", ".json"))'
 assert_contains "register-phase guard (Note 8.4.2.3 diagnostic)"   'cook (LUA_EXPR) returned non-string or empty value for input'
 assert_contains "index: Lua body recorded as lua_code payload"     'lua_code = [['
@@ -88,7 +88,7 @@ Bonjour — install the tool, then come back."
 assert_file_eq "sidecar carries the §23.1 input binding" build/meta/reference.json \
 '{"source": "docs/en/reference.md", "lines": 3}'
 
-# No-op rebuild: every per-ingredient unit is a cache hit.
+# No-op rebuild: every per-input unit is a cache hit.
 RERUN="$("$COOK" translate 2>&1)"
 assert_grep "clean re-run is fully cached"               "$RERUN" "3/3 cached"
 

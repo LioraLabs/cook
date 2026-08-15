@@ -5,9 +5,9 @@
 //! constant tags every persisted RecipeCache so a schema change is rejected
 //! on load (see `cook-cache::store`).
 
+use crate::cache::observation::Observation;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::cache::observation::Observation;
 
 /// Serde adapter: u64 <-> zero-padded lowercase hex string.
 ///

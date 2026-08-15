@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="extract" line=1
       deps: []
-      ingredients: ["data.txt"]
+      inputs: ["data.txt"]
       excludes: []
       steps:
         Gather

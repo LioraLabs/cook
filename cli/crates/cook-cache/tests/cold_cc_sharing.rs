@@ -13,13 +13,13 @@
 //!               `fetch_by_key` returns false; no output written.
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    ArtifactMeta, CloudKeyInputs, LocalBackend, artifact_key, cloud_key, put_bytes,
 };
 use cook_cache::store::CACHE_VERSION;
-use cook_contracts::DiscoveredInputs;
 use cook_cache::{
-    fetch_by_key, RestoreCtx, DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH,
+    DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, RestoreCtx, fetch_by_key,
 };
+use cook_contracts::DiscoveredInputs;
 
 // ── Shared constants ─────────────────────────────────────────────────────────
 
@@ -96,8 +96,7 @@ fn seed_backend(backend: &LocalBackend, dep_h_bytes: &[u8]) {
         mode: ArtifactMeta::default_mode(),
         target: None,
     };
-    put_bytes(backend, &manifest_k, &manifest_bytes, &mut manifest_meta)
-        .expect("seed manifest");
+    put_bytes(backend, &manifest_k, &manifest_bytes, &mut manifest_meta).expect("seed manifest");
 
     // 2. Real output artifact under the full key.
     let obj_bytes: &[u8] = b"OBJ";
@@ -204,11 +203,8 @@ fn cold_fetch_safe_miss_when_header_differs() {
     std::fs::create_dir_all(wd.join("src")).expect("src dir");
     std::fs::write(wd.join("src/main.c"), MAIN_C_BYTES).expect("main.c");
     // Different header content → different xxh3 hash → different full key.
-    std::fs::write(
-        wd.join("src/dep.h"),
-        b"#pragma once\n#define ANSWER 99\n",
-    )
-    .expect("dep.h (different)");
+    std::fs::write(wd.join("src/dep.h"), b"#pragma once\n#define ANSWER 99\n")
+        .expect("dep.h (different)");
 
     let declared_hash = xxhash_rust::xxh3::xxh3_64(MAIN_C_BYTES);
     let mut declared_hashes = vec![declared_hash];
@@ -235,7 +231,10 @@ fn cold_fetch_safe_miss_when_header_differs() {
         false,
     );
 
-    assert!(hit.is_none(), "safe miss: consumer dep.h differs, full key must not match");
+    assert!(
+        hit.is_none(),
+        "safe miss: consumer dep.h differs, full key must not match"
+    );
     assert!(
         !wd.join("build/main.o").exists(),
         "build/main.o must NOT be created on a safe miss",

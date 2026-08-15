@@ -31,12 +31,12 @@ fn write_unique_seed(dir: &std::path::Path) {
 fn passing_test_caches_and_replays() {
     let tmp = tempdir().unwrap();
     // CS-0135 §17.4: a test caches only when it declares a file source
-    // (here `ingredients`), which gives it a cache key. A source-less test
+    // (here `inputs`), which gives it a cache key. A source-less test
     // is covered by `source_less_test_always_runs` below.
     write_unique_seed(tmp.path());
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"data.txt\"\n    test { true }\n",
+        "recipe r\n    gather \"data.txt\"\n    test { true $<in> }\n",
     )
     .unwrap();
 
@@ -76,7 +76,7 @@ fn cached_test_replays_its_duration_into_junit() {
     write_unique_seed(tmp.path());
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"data.txt\"\n    test { sleep 0.05 }\n",
+        "recipe r\n    gather \"data.txt\"\n    test { printf '%s\\n' $<in> >/dev/null; sleep 0.05 }\n",
     )
     .unwrap();
     let report = tmp.path().join("junit.xml");
@@ -114,7 +114,7 @@ fn observation_serves_a_machine_without_the_local_index() {
     .unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"data.txt\"\n    test { echo ran >> executions.txt }\n",
+        "recipe r\n    gather \"data.txt\"\n    test { : $<in>; echo ran >> executions.txt }\n",
     )
     .unwrap();
 
@@ -149,7 +149,7 @@ fn a_cached_tests_streams_are_opt_in() {
     write_unique_seed(tmp.path());
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"data.txt\"\n    test { echo RECORDED-MARKER }\n",
+        "recipe r\n    gather \"data.txt\"\n    test { echo RECORDED-MARKER $<in> }\n",
     )
     .unwrap();
     let sidecar = tmp.path().join(".cook/test-report.json");
@@ -162,7 +162,9 @@ fn a_cached_tests_streams_are_opt_in() {
         .unwrap()
         .success());
     assert!(
-        fs::read_to_string(&sidecar).unwrap().contains("RECORDED-MARKER"),
+        fs::read_to_string(&sidecar)
+            .unwrap()
+            .contains("RECORDED-MARKER"),
         "the cold run really did print the marker"
     );
 
@@ -174,7 +176,10 @@ fn a_cached_tests_streams_are_opt_in() {
         .unwrap()
         .success());
     let warm = fs::read_to_string(&sidecar).unwrap();
-    assert!(warm.contains("\"from_cache\": true"), "expected a hit: {warm}");
+    assert!(
+        warm.contains("\"from_cache\": true"),
+        "expected a hit: {warm}"
+    );
     assert!(
         !warm.contains("RECORDED-MARKER"),
         "a default warm hit must not replay the streams: {warm}"
@@ -208,7 +213,7 @@ fn replay_logs_prints_a_cached_cook_units_log_on_request() {
     .unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"seed.txt\"\n    cook \"out.txt\" { echo RECORDED-MARKER; touch $<out> }\n",
+        "recipe r\n    gather \"seed.txt\"\n    cook \"out.txt\" { echo RECORDED-MARKER $<in>; touch $<out> }\n",
     )
     .unwrap();
     assert!(Command::new(cook_binary())
@@ -237,16 +242,12 @@ fn replay_logs_prints_a_cached_cook_units_log_on_request() {
 
 #[test]
 fn source_less_test_always_runs() {
-    // CS-0135 §8.6.1/§5: a source-less test — no `ingredients`, no upstream
+    // CS-0135 §8.6.1/§5: a source-less test — no `inputs`, no upstream
     // `cook` — has no cache key and MUST always run. A stable command-text-only
     // key would be a false green (the true inputs of `cargo test` etc. are
     // opaque to Cook), so such a test is never cached and never shows `(cached)`.
     let tmp = tempdir().unwrap();
-    fs::write(
-        tmp.path().join("Cookfile"),
-        "recipe r\n    test { true }\n",
-    )
-    .unwrap();
+    fs::write(tmp.path().join("Cookfile"), "recipe r\n    test { true }\n").unwrap();
 
     // First run
     let out1 = Command::new(cook_binary())
@@ -320,7 +321,7 @@ fn rerun_busts_cache() {
     write_unique_seed(tmp.path());
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    ingredients \"data.txt\"\n    test { true }\n",
+        "recipe r\n    gather \"data.txt\"\n    test { true $<in> }\n",
     )
     .unwrap();
 

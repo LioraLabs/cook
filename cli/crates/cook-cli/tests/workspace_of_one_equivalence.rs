@@ -82,13 +82,16 @@ fn run_cook(dir: &std::path::Path, target: &str) -> (bool, String) {
 #[test]
 fn module_recipe_dep_ref_on_bare_cookfile() {
     let tmp = TempDir::new().expect("tempdir");
-    write(tmp.path(), &installed_module_rel("", "toolmod"), TOOLMOD_LUA);
+    write(
+        tmp.path(),
+        &installed_module_rel("", "toolmod"),
+        TOOLMOD_LUA,
+    );
     write(tmp.path(), "Cookfile", MEMBER_COOKFILE);
 
     let (ok, diag) = run_cook(tmp.path(), "consume");
     assert!(ok, "bare cook consume failed:\n{diag}");
-    let produced =
-        std::fs::read_to_string(tmp.path().join("build/out.txt")).expect("out.txt");
+    let produced = std::fs::read_to_string(tmp.path().join("build/out.txt")).expect("out.txt");
     assert_eq!(produced, "hi");
 }
 
@@ -99,7 +102,11 @@ fn module_recipe_dep_ref_on_bare_cookfile() {
 #[test]
 fn module_recipe_dep_ref_equivalent_when_mounted_via_import() {
     let tmp = TempDir::new().expect("tempdir");
-    write(tmp.path(), &installed_module_rel("sub/", "toolmod"), TOOLMOD_LUA);
+    write(
+        tmp.path(),
+        &installed_module_rel("sub/", "toolmod"),
+        TOOLMOD_LUA,
+    );
     write(tmp.path(), "sub/Cookfile", MEMBER_COOKFILE);
     write(
         tmp.path(),

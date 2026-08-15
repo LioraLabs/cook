@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="wasm" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["web/src/wasm/pkg/"] body=ShellBlock(["wasm-pack build crates/ppu-core --target web --out-dir ../../web/src/wasm/pkg"])

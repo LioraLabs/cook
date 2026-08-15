@@ -37,29 +37,29 @@ fn assert_ok(output: &Output) {
 }
 
 #[test]
-fn absent_ingredient_warns_once_with_raw_pattern_and_recipe() {
+fn absent_gather_warns_once_with_raw_pattern_and_recipe() {
     let tmp = TempDir::new().unwrap();
     write(
         tmp.path(),
         "Cookfile",
-        "recipe build\n    ingredients \"missing/**\"\n    cook \"out/$<in.name>\" { cp $<in> $<out> }\n",
+        "recipe build\n    gather \"missing/**\"\n    cook \"out/$<in.name>\" { cp $<in> $<out> }\n",
     );
 
     let output = cook(tmp.path(), &["build"]);
     assert_ok(&output);
-    let diagnostic = "cook: warning: ingredient \"missing/**\" matched 0 files (recipe build)";
+    let diagnostic = "cook: warning: input \"missing/**\" matched 0 files (recipe build)";
     assert_eq!(stderr(&output).matches(diagnostic).count(), 1);
 }
 
 #[test]
-fn member_root_ingredient_is_tracked_by_why() {
+fn member_root_gather_is_tracked_by_why() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "root-file", "root\n");
     write(tmp.path(), "Cookfile", "import member ./member\n");
     write(
         tmp.path(),
         "member/Cookfile",
-        "recipe build\n    ingredients \"//root-file\"\n    cook \"out.txt\" { cp $<in> $<out> }\n",
+        "recipe build\n    gather \"//root-file\"\n    cook \"out.txt\" { cp $<in> $<out> }\n",
     );
 
     let build = cook(tmp.path(), &["member.build"]);
@@ -75,12 +75,12 @@ fn member_root_ingredient_is_tracked_by_why() {
 }
 
 #[test]
-fn malformed_root_ingredient_fails_loudly() {
+fn malformed_root_gather_fails_loudly() {
     let tmp = TempDir::new().unwrap();
     write(
         tmp.path(),
         "Cookfile",
-        "recipe build\n    ingredients \"//../escape\"\n    cook \"out.txt\" { true }\n",
+        "recipe build\n    gather \"//../escape\"\n    cook \"out.txt\" { true $<in> }\n",
     );
 
     let output = cook(tmp.path(), &["build"]);
@@ -182,20 +182,23 @@ fn uncached_output_declaration_warns_when_glob_is_empty() {
 }
 
 #[test]
-fn member_relative_ingredient_cannot_escape_member_root() {
+fn member_relative_gather_cannot_escape_member_root() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "outside.txt", "outside\n");
     write(tmp.path(), "Cookfile", "import member ./member\n");
     write(
         tmp.path(),
         "member/Cookfile",
-        "recipe build\n    ingredients \"../outside.txt\"\n    cook \"out.txt\" { true }\n",
+        "recipe build\n    gather \"../outside.txt\"\n    cook \"out.txt\" { true $<in> }\n",
     );
 
     let output = cook(tmp.path(), &["member.build"]);
     assert!(!output.status.success());
     let diagnostic = stderr(&output);
-    assert!(diagnostic.contains("../outside.txt"), "stderr: {diagnostic}");
+    assert!(
+        diagnostic.contains("../outside.txt"),
+        "stderr: {diagnostic}"
+    );
     assert!(diagnostic.contains("escape"), "stderr: {diagnostic}");
 }
 
@@ -214,7 +217,7 @@ fn migration_and_root_lockfile_repro_tracks_every_file_without_warning() {
     write(
         tmp.path(),
         "member/Cookfile",
-        "recipe build\n    ingredients \"migrations/**\" \"//Cargo.toml\" \"//Cargo.lock\"\n    cook \"stamp\" { touch $<out> }\n",
+        "recipe build\n    gather \"migrations/**\" \"//Cargo.toml\" \"//Cargo.lock\"\n    cook \"stamp\" { printf '%s\\n' $<in> >/dev/null; touch $<out> }\n",
     );
 
     let build = cook(tmp.path(), &["member.build"]);
@@ -251,7 +254,10 @@ fn duplicate_literal_output_is_rejected() {
     );
 
     let output = cook(tmp.path(), &["dup"]);
-    assert!(!output.status.success(), "expected a register-phase refusal");
+    assert!(
+        !output.status.success(),
+        "expected a register-phase refusal"
+    );
     let err = stderr(&output);
     assert!(err.contains("same output 'same.txt'"), "stderr:\n{err}");
     // Both producing sites must be named — finding one of them is the whole
@@ -272,7 +278,10 @@ fn duplicate_literal_output_across_recipes_is_rejected() {
     );
 
     let output = cook(tmp.path(), &["b"]);
-    assert!(!output.status.success(), "expected a register-phase refusal");
+    assert!(
+        !output.status.success(),
+        "expected a register-phase refusal"
+    );
     let err = stderr(&output);
     assert!(err.contains("same output 'shared.txt'"), "stderr:\n{err}");
     assert!(err.contains("[a]") && err.contains("[b]"), "stderr:\n{err}");

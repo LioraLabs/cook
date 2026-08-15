@@ -5,10 +5,10 @@ fn fake_prefix() -> tempfile::TempDir {
     // Set up a fake $prefix where bin/luarocks is a symlink to the
     // tests/fixtures/driver/fake-luarocks.sh script.
     let tmp = tempfile::tempdir().expect("tempdir");
-        let bin = tmp.path().join("bin");
+    let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let fake = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/driver/fake-luarocks.sh");
+    let fake =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/driver/fake-luarocks.sh");
     std::os::unix::fs::symlink(&fake, bin.join("luarocks")).expect("symlink");
     tmp
 }
@@ -22,7 +22,12 @@ fn read_argv_log(path: &Path) -> Vec<String> {
 }
 
 fn clear_fake_env() {
-    for var in ["FAKE_LUAROCKS_LOG", "FAKE_LUAROCKS_EXIT", "FAKE_LUAROCKS_STDOUT", "FAKE_LUAROCKS_STDERR"] {
+    for var in [
+        "FAKE_LUAROCKS_LOG",
+        "FAKE_LUAROCKS_EXIT",
+        "FAKE_LUAROCKS_STDOUT",
+        "FAKE_LUAROCKS_STDERR",
+    ] {
         std::env::remove_var(var);
     }
 }
@@ -59,10 +64,7 @@ fn install_argv_includes_tree_and_servers() {
         cook_contracts::layout::modules_dir(project.path())
     );
     assert!(argv[tree_idx + 1].ends_with(".cook/modules"));
-    let server_args: Vec<&String> = argv
-        .iter()
-        .filter(|a| a.starts_with("--server="))
-        .collect();
+    let server_args: Vec<&String> = argv.iter().filter(|a| a.starts_with("--server=")).collect();
     // Exactly ONE --server flag: luarocks' flag is single-valued
     // (last-wins), and luarocks.org is already in its built-in default
     // server list, so the blessed index is the only flag emitted.
@@ -139,7 +141,7 @@ fn nonzero_exit_passes_through_argv_stdout_stderr() {
     std::env::set_var("FAKE_LUAROCKS_LOG", &log);
     std::env::set_var("FAKE_LUAROCKS_EXIT", "7");
     std::env::set_var("FAKE_LUAROCKS_STDOUT", "stdout-marker");
-        std::env::set_var("FAKE_LUAROCKS_STDERR", "stderr-marker");
+    std::env::set_var("FAKE_LUAROCKS_STDERR", "stderr-marker");
 
     let driver = RocksDriver::new(
         prefix.path().to_path_buf(),
@@ -150,7 +152,7 @@ fn nonzero_exit_passes_through_argv_stdout_stderr() {
     let msg = format!("{:#}", err);
     assert!(msg.contains("luarocks failed"));
     assert!(msg.contains("stdout-marker"));
-        assert!(msg.contains("stderr-marker"));
+    assert!(msg.contains("stderr-marker"));
     assert!(msg.contains("exit 7"));
     clear_fake_env();
 }

@@ -152,7 +152,9 @@ pub(crate) fn parse_config_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => break,
             // Top-level module_call (column-0 Content matching the module-call
             // shape) is also a terminator as of CS-0072. Check the raw source
             // line to distinguish column-0 from indented Content.
@@ -183,7 +185,9 @@ pub(crate) fn parse_config_block_lua(
         // config block body and the next keyword does not become part of
         // the body (consistent with v0.3 explicit-`end` behaviour).
         let lines = &source_lines[start_idx..end_idx];
-        let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
+        let trimmed_end = lines
+            .iter()
+            .rposition(|l| !l.trim().is_empty())
             .map(|i| i + 1)
             .unwrap_or(0);
 
@@ -232,7 +236,9 @@ pub(crate) fn parse_register_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => break,
             // Top-level module_call (Content matching <id>.<id>(...) shape)
             // is also a terminator (CS-0072 §4.1.1 clause b).
             // Only column-0 Content can be top-level: check the raw source line.
@@ -318,7 +324,9 @@ fn finalize_base_seal(
 }
 
 fn reject_test_tail(tail: &str, line: usize) -> Result<(), ParseError> {
-    let Some(word) = tail.split_whitespace().next() else { return Ok(()) };
+    let Some(word) = tail.split_whitespace().next() else {
+        return Ok(());
+    };
     Err(match word {
         "seal" => removed_trailing_seal("test", line),
         "unseal" => removed_unseal(line),
@@ -338,10 +346,10 @@ pub(crate) fn parse_recipe(
     source_lines: &[&str],
 ) -> Result<(Recipe, Vec<Probe>, usize), ParseError> {
     let mut pos = start;
-    let mut ingredients = Vec::new();
+    let mut inputs = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
-    // §{steps.ingredients}: glob-pattern `ingredients` and `ingredients <probe>`
+    // §{steps.inputs}: glob-pattern `inputs` and `inputs <probe>`
     // (probe member source) are mutually exclusive within a recipe, and at most
     // one probe source is allowed per recipe.
     let mut member_source_seen = false;
@@ -363,18 +371,15 @@ pub(crate) fn parse_recipe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
-                finalize_base_seal(
-                    &name,
-                    recipe_line,
-                    &mut steps,
-                    &base_seal,
-                )?;
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => {
+                finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
                 return Ok((
                     Recipe {
                         name,
                         deps,
-                        ingredients,
+                        inputs,
                         excludes,
                         steps,
                         line: recipe_line,
@@ -398,17 +403,12 @@ pub(crate) fn parse_recipe(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         // column-0 module call terminates the recipe body.
-                        finalize_base_seal(
-                            &name,
-                            recipe_line,
-                            &mut steps,
-                            &base_seal,
-                        )?;
+                        finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
                         return Ok((
                             Recipe {
                                 name,
                                 deps,
-                                ingredients,
+                                inputs,
                                 excludes,
                                 steps,
                                 line: recipe_line,
@@ -420,19 +420,23 @@ pub(crate) fn parse_recipe(
                     // CS-0134: an indented bare module call is register-phase Lua.
                     let (code, new_pos) =
                         collect_module_call(text, tok.line, tokens, pos, source_lines)?;
-                    steps.push(Step::InlineLua { code, line: tok.line });
+                    steps.push(Step::InlineLua {
+                        code,
+                        line: tok.line,
+                    });
                     pos = new_pos;
                     continue;
                 }
                 // COOK-171: `seal` is a recipe-body step (a determinant input
-                // stream, sibling of `ingredients`). It contributes to the
+                // stream, sibling of `inputs`). It contributes to the
                 // recipe-level baseline applied to every cook at finalize.
                 if let Some(rest) = strip_keyword(text, "seal") {
                     if rest.trim().is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message: "seal: a recipe-level `seal` step requires at least one probe ref"
-                                .to_string(),
+                            message:
+                                "seal: a recipe-level `seal` step requires at least one probe ref"
+                                    .to_string(),
                         });
                     }
                     let parsed = parse_seal_operands(rest, tok.line, &name)?;
@@ -447,54 +451,54 @@ pub(crate) fn parse_recipe(
                 if strip_keyword(text, "unseal").is_some() {
                     return Err(removed_unseal(tok.line));
                 }
+                if strip_keyword(text, "ingredients").is_some() {
+                    return Err(ParseError::Parse {
+                        line: tok.line,
+                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".to_string(),
+                    });
+                }
                 let gather = strip_keyword(text, "gather");
-                if let Some(rest) = gather.or_else(|| strip_keyword(text, "ingredients")) {
+                if let Some(rest) = gather {
                     if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message:
-                                "a recipe may declare at most one `ingredients <probe>` source"
-                                    .to_string(),
+                            message: "a recipe may declare at most one `inputs <probe>` source"
+                                .to_string(),
                         });
                     }
                     let head = rest.trim_start();
                     if head.starts_with('"') || head.starts_with('!') {
-                        // Glob ingredients (existing path).
-                        if !ingredients.is_empty() || !excludes.is_empty() {
+                        // Glob inputs (existing path).
+                        if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "duplicate 'ingredients' line".to_string(),
+                                message: "duplicate 'inputs' line".to_string(),
                             });
                         }
                         let (inc, exc, new_pos) =
-                            parse_ingredients_line(
-                                rest,
-                                if gather.is_some() { "gather" } else { "ingredients" },
-                                tok.line,
-                                tokens,
-                                pos,
-                                source_lines,
-                            )?;
-                        ingredients = inc;
+                            parse_gather_line(rest, "gather", tok.line, tokens, pos, source_lines)?;
+                        inputs = inc;
                         excludes = exc;
-                        if gather.is_some() {
-                            steps.push(Step::Gather { line: tok.line });
-                        }
+                        steps.push(Step::Gather { line: tok.line });
                         pos = new_pos;
                         continue;
                     } else {
                         // COOK-88: bare identifier => probe member source. Desugar to MemberSource.
-                        if !ingredients.is_empty() || !excludes.is_empty() {
+                        if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "ingredients: cannot mix glob patterns with a probe source"
+                                message: "inputs: cannot mix glob patterns with a probe source"
                                     .to_string(),
                             });
                         }
-                        let (fe, new_pos) =
-                            crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos, gather.is_some())?;
+                        let (fe, new_pos) = crate::cook_line::parse_gather_probe_source(
+                            rest, tok.line, tokens, pos, true,
+                        )?;
                         member_source_seen = true;
-                        steps.push(Step::MemberSource { step: fe, line: tok.line });
+                        steps.push(Step::MemberSource {
+                            step: fe,
+                            line: tok.line,
+                        });
                         pos = new_pos;
                         continue;
                     }
@@ -512,11 +516,19 @@ pub(crate) fn parse_recipe(
                 } else if let Some(rest) = strip_keyword(text, "test") {
                     // Tests admit no tail; the recipe seal set is folded in at finalize.
                     let (body, trailing, new_pos) = crate::cook_line::parse_body_payload(
-                        rest, tok.line, tokens, pos, source_lines, "test",
+                        rest,
+                        tok.line,
+                        tokens,
+                        pos,
+                        source_lines,
+                        "test",
                     )?;
                     reject_test_tail(&trailing, tok.line)?;
                     steps.push(Step::Test {
-                        step: TestStep { body, seal: BTreeSet::new() },
+                        step: TestStep {
+                            body,
+                            seal: BTreeSet::new(),
+                        },
                         line: tok.line,
                     });
                     pos = new_pos;
@@ -538,13 +550,10 @@ pub(crate) fn parse_recipe(
                     // remains a shell_command per the post-CS-0072 rule 6.
                     {
                         let trimmed = text.trim();
-                        if trimmed.starts_with("register")
-                            && trimmed.len() > 8
-                            && {
-                                let b = trimmed.as_bytes()[8];
-                                b == b' ' || b == b'\t'
-                            }
-                        {
+                        if trimmed.starts_with("register") && trimmed.len() > 8 && {
+                            let b = trimmed.as_bytes()[8];
+                            b == b' ' || b == b'\t'
+                        } {
                             return Err(ParseError::Parse {
                                 line: tok.line,
                                 message:
@@ -566,10 +575,9 @@ pub(crate) fn parse_recipe(
             Token::LuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message:
-                        "execute-phase `>` Lua is not allowed in a recipe body (CS-0134); \
+                    message: "execute-phase `>` Lua is not allowed in a recipe body (CS-0134); \
                          use `cook \"out\" >{ … }`, `test >{ … }`, or a chore"
-                            .to_string(),
+                        .to_string(),
                 });
             }
             Token::LuaBlockOpen => {
@@ -584,11 +592,10 @@ pub(crate) fn parse_recipe(
             Token::InlineLuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message:
-                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                    message: "the register-phase `>>` sigil was removed (CS-0134); write a bare \
                          `module.call()` in the recipe body, or move register work to a \
                          top-level `register` block"
-                            .to_string(),
+                        .to_string(),
                 });
             }
             Token::InlineLuaBlockOpen => {
@@ -604,19 +611,14 @@ pub(crate) fn parse_recipe(
     }
 
     // COOK-171: fold the recipe-level seal baseline into each cook at finalize.
-    finalize_base_seal(
-        &name,
-        recipe_line,
-        &mut steps,
-        &base_seal,
-    )?;
+    finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
 
     // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
     Ok((
         Recipe {
             name,
             deps,
-            ingredients,
+            inputs,
             excludes,
             steps,
             line: recipe_line,
@@ -640,10 +642,10 @@ pub(crate) fn parse_chore(
 
     let chore_banned = |keyword: &str, line: usize| -> ParseError {
         let kind_descriptor = match keyword {
-            "ingredients" => "inputs",
-            "cook"        => "outputs",
-            "test"        => "tested outputs",
-            _             => "targets",
+            "inputs" => "inputs",
+            "cook" => "outputs",
+            "test" => "tested outputs",
+            _ => "targets",
         };
         ParseError::Parse {
             line,
@@ -665,9 +667,17 @@ pub(crate) fn parse_chore(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => {
                 return Ok((
-                    Chore { name, params, deps, steps, line: chore_line },
+                    Chore {
+                        name,
+                        params,
+                        deps,
+                        steps,
+                        line: chore_line,
+                    },
                     pos,
                 ));
             }
@@ -684,14 +694,23 @@ pub(crate) fn parse_chore(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         return Ok((
-                            Chore { name, params, deps, steps, line: chore_line },
+                            Chore {
+                                name,
+                                params,
+                                deps,
+                                steps,
+                                line: chore_line,
+                            },
                             pos,
                         ));
                     }
                 }
                 let text = text.clone();
                 if strip_keyword(&text, "ingredients").is_some() {
-                    return Err(chore_banned("ingredients", tok.line));
+                    return Err(ParseError::Parse { line: tok.line,
+                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
+                } else if strip_keyword(&text, "gather").is_some() {
+                    return Err(chore_banned("gather", tok.line));
                 } else if strip_keyword(&text, "cook").is_some() {
                     return Err(chore_banned("cook", tok.line));
                 } else if strip_keyword(&text, "test").is_some() {
@@ -710,13 +729,10 @@ pub(crate) fn parse_chore(
                     // the post-CS-0072 rule 6.
                     {
                         let trimmed = text.trim();
-                        if trimmed.starts_with("register")
-                            && trimmed.len() > 8
-                            && {
-                                let b = trimmed.as_bytes()[8];
-                                b == b' ' || b == b'\t'
-                            }
-                        {
+                        if trimmed.starts_with("register") && trimmed.len() > 8 && {
+                            let b = trimmed.as_bytes()[8];
+                            b == b' ' || b == b'\t'
+                        } {
                             return Err(ParseError::Parse {
                                 line: tok.line,
                                 message:
@@ -735,7 +751,10 @@ pub(crate) fn parse_chore(
                 pos += 1;
             }
             Token::LuaLine(code) => {
-                steps.push(Step::Lua { code: code.clone(), line: tok.line });
+                steps.push(Step::Lua {
+                    code: code.clone(),
+                    line: tok.line,
+                });
                 pos += 1;
             }
             Token::LuaBlockOpen => {
@@ -754,17 +773,19 @@ pub(crate) fn parse_chore(
                 let (code, block_tail, new_pos) =
                     collect_lua_block(block_line, after_open, tokens, pos, source_lines)?;
                 crate::shell_block::reject_stray_tail(&block_tail, block_line, "chore")?;
-                steps.push(Step::LuaBlock { code, line: block_line });
+                steps.push(Step::LuaBlock {
+                    code,
+                    line: block_line,
+                });
                 pos = new_pos;
             }
             Token::InlineLuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message:
-                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                    message: "the register-phase `>>` sigil was removed (CS-0134); write a bare \
                          `module.call()` in the recipe body, or move register work to a \
                          top-level `register` block"
-                            .to_string(),
+                        .to_string(),
                 });
             }
             Token::InlineLuaBlockOpen => {
@@ -780,5 +801,14 @@ pub(crate) fn parse_chore(
     }
 
     // EOF terminates
-    Ok((Chore { name, params, deps, steps, line: chore_line }, pos))
+    Ok((
+        Chore {
+            name,
+            params,
+            deps,
+            steps,
+            line: chore_line,
+        },
+        pos,
+    ))
 }

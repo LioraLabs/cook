@@ -11,7 +11,8 @@ fn make_lua() -> Lua {
 #[test]
 fn test_json_decode_object() {
     let lua = make_lua();
-    lua.load(r#"
+    lua.load(
+        r#"
             local t = cook.json_decode('{"name":"foo","version":1,"active":true,"items":[1,2,3]}')
             assert(t.name == "foo")
             assert(t.version == 1)
@@ -19,7 +20,8 @@ fn test_json_decode_object() {
             assert(t.items[1] == 1)
             assert(t.items[2] == 2)
             assert(t.items[3] == 3)
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 }
@@ -27,10 +29,12 @@ fn test_json_decode_object() {
 #[test]
 fn test_json_decode_null() {
     let lua = make_lua();
-    lua.load(r#"
+    lua.load(
+        r#"
             local t = cook.json_decode('{"a":null}')
             assert(t.a == nil)
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 }
@@ -38,11 +42,13 @@ fn test_json_decode_null() {
 #[test]
 fn test_json_decode_nested() {
     let lua = make_lua();
-    lua.load(r#"
+    lua.load(
+        r#"
             local t = cook.json_decode('{"scripts":{"build":"tsc","test":"jest"}}')
             assert(t.scripts.build == "tsc")
             assert(t.scripts.test == "jest")
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 }
@@ -57,7 +63,8 @@ fn test_json_decode_error() {
 #[test]
 fn test_yaml_decode_workspace() {
     let lua = make_lua();
-    lua.load(r#"
+    lua.load(
+        r#"
             local t = cook.yaml_decode([[
 packages:
   - "packages/*"
@@ -72,7 +79,8 @@ catalogs:
             assert(t.catalog.typescript == "^5.4.0")
             assert(t.catalogs.internal["shared-utils"] == "workspace:*")
             assert(t.catalogs.internal.ui == "workspace:*")
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 }
@@ -80,8 +88,6 @@ catalogs:
 #[test]
 fn test_yaml_decode_error() {
     let lua = make_lua();
-    let result = lua
-        .load(r#"cook.yaml_decode(":\n  :\n    - :")"#)
-        .exec();
+    let result = lua.load(r#"cook.yaml_decode(":\n  :\n    - :")"#).exec();
     assert!(result.is_err());
 }

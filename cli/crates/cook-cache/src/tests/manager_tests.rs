@@ -21,7 +21,10 @@ fn make_step_entry(command_hash: u64) -> StepEntry {
     }
 }
 
-fn make_cache_meta(input_paths: Vec<String>, output_paths: Vec<String>) -> cook_contracts::CacheMeta {
+fn make_cache_meta(
+    input_paths: Vec<String>,
+    output_paths: Vec<String>,
+) -> cook_contracts::CacheMeta {
     cook_contracts::CacheMeta {
         recipe_name: "test_recipe".into(),
         project_id: String::new(),
@@ -44,9 +47,9 @@ fn make_cache_meta(input_paths: Vec<String>, output_paths: Vec<String>) -> cook_
 #[test]
 fn test_thread_safe_cache_write() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
-        manager.update_step("my_recipe", "step_one", make_step_entry(0xdeadbeef));
+    manager.update_step("my_recipe", "step_one", make_step_entry(0xdeadbeef));
     manager.flush_all().expect("flush_all failed");
 
     let loaded = store::RecipeCache::load(dir.path(), "my_recipe")
@@ -61,9 +64,9 @@ fn test_thread_safe_cache_write() {
 #[test]
 fn test_thread_safe_cache_multi_recipe() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
-        manager.update_step("recipe_a", "step_a1", make_step_entry(0x1111));
+    manager.update_step("recipe_a", "step_a1", make_step_entry(0x1111));
     manager.update_step("recipe_b", "step_b1", make_step_entry(0x2222));
     manager.flush_all().expect("flush_all failed");
 
@@ -93,9 +96,9 @@ fn test_thread_safe_cache_multi_recipe() {
 #[test]
 fn test_thread_safe_cache_idempotent_flush() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
-        manager.update_step("recipe_x", "step_x1", make_step_entry(0xabcd));
+    manager.update_step("recipe_x", "step_x1", make_step_entry(0xabcd));
     manager.flush_all().expect("first flush_all failed");
     manager.flush_all().expect("second flush_all failed");
 }
@@ -103,9 +106,9 @@ fn test_thread_safe_cache_idempotent_flush() {
 #[test]
 fn test_get_or_load_missing() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    let manager = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
-        let cache = manager.get_or_load("nonexistent_recipe");
+    let cache = manager.get_or_load("nonexistent_recipe");
     assert!(cache.steps.is_empty());
     assert_eq!(cache.schema_version, store::CACHE_VERSION);
 }
@@ -113,8 +116,8 @@ fn test_get_or_load_missing() {
 #[test]
 fn record_completion_writes_full_step_entry() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let cache_dir = dir.path().join("cache");
@@ -122,7 +125,8 @@ fn record_completion_writes_full_step_entry() {
     let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
     let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-    cm.record_completion("rec", "step_one", &meta, wd, 0, &[]).expect("record ok");
+    cm.record_completion("rec", "step_one", &meta, wd, 0, &[])
+        .expect("record ok");
     cm.flush_all().expect("flush");
 
     let loaded = store::RecipeCache::load(&cache_dir, "rec").expect("load");
@@ -135,16 +139,18 @@ fn record_completion_writes_full_step_entry() {
 #[test]
 fn record_completion_skips_on_missing_input() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        // Do NOT create "in.c" — record_completion should skip.
+    let wd = dir.path();
+    // Do NOT create "in.c" — record_completion should skip.
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let cache_dir = dir.path().join("cache");
     std::fs::create_dir_all(&cache_dir).expect("mkdir");
-        let cm = ThreadSafeCacheManager::new(cache_dir.clone());
+    let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
-        let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-    let err = cm.record_completion("rec", "step_one", &meta, wd, 0, &[]).unwrap_err();
+    let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
+    let err = cm
+        .record_completion("rec", "step_one", &meta, wd, 0, &[])
+        .unwrap_err();
     assert!(matches!(err, RecordError::MissingFile(_)));
 
     // Verify nothing was written.
@@ -158,50 +164,56 @@ fn record_completion_appends_depfile_to_outputs() {
     use cook_contracts::DiscoveredInputs;
 
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("a.c"), b"src").expect("a.c");
+    let wd = dir.path();
+    std::fs::write(wd.join("a.c"), b"src").expect("a.c");
     std::fs::write(wd.join("a.o"), b"obj").expect("a.o");
     std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
-        std::fs::write(wd.join(".cook/deps/a.d"), b"a.o: a.c\n").expect("dep");
+    std::fs::write(wd.join(".cook/deps/a.d"), b"a.o: a.c\n").expect("dep");
 
     let cache_dir = wd.join(".cook/cache");
     std::fs::create_dir_all(&cache_dir).expect("cachedir");
-        let mgr = ThreadSafeCacheManager::new(cache_dir.clone());
+    let mgr = ThreadSafeCacheManager::new(cache_dir.clone());
 
-        let mut meta = make_cache_meta(vec!["a.c".into()], vec!["a.o".into()]);
+    let mut meta = make_cache_meta(vec!["a.c".into()], vec!["a.o".into()]);
     meta.discovered_inputs = Some(DiscoveredInputs {
         from: ".cook/deps/a.d".into(),
         format: "make".into(),
     });
 
-    let entry = mgr.record_completion("rec", "k", &meta, wd, 0, &[]).expect("rec");
+    let entry = mgr
+        .record_completion("rec", "k", &meta, wd, 0, &[])
+        .expect("rec");
 
-    let output_paths: Vec<&str> =
-        entry.outputs.iter().map(|fr| fr.path.as_ref()).collect();
+    let output_paths: Vec<&str> = entry.outputs.iter().map(|fr| fr.path.as_ref()).collect();
     assert!(output_paths.contains(&"a.o"), "user output present");
-    assert!(output_paths.contains(&".cook/deps/a.d"),
-        "depfile appended to outputs when discovered_inputs is set");
+    assert!(
+        output_paths.contains(&".cook/deps/a.d"),
+        "depfile appended to outputs when discovered_inputs is set"
+    );
 }
 
 #[test]
 fn record_completion_preserves_prior_entry_on_skip() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+    let wd = dir.path();
+    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let cache_dir = dir.path().join("cache");
     std::fs::create_dir_all(&cache_dir).expect("mkdir");
-        let cm = ThreadSafeCacheManager::new(cache_dir.clone());
+    let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
-        // First successful record.
-        let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-    cm.record_completion("rec", "step_one", &meta, wd, 0, &[]).expect("record 1");
+    // First successful record.
+    let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
+    cm.record_completion("rec", "step_one", &meta, wd, 0, &[])
+        .expect("record 1");
     cm.flush_all().expect("flush 1");
 
     // Now remove the input and try again — must err and leave prior entry intact.
     std::fs::remove_file(wd.join("in.c")).expect("rm");
-    let err = cm.record_completion("rec", "step_one", &meta, wd, 0, &[]).unwrap_err();
+    let err = cm
+        .record_completion("rec", "step_one", &meta, wd, 0, &[])
+        .unwrap_err();
     assert!(matches!(err, RecordError::MissingFile(_)));
     cm.flush_all().expect("flush 2");
 
@@ -213,8 +225,8 @@ fn record_completion_preserves_prior_entry_on_skip() {
 #[test]
 fn retain_steps_drops_and_persists() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
-        cm.update_step("rec", "keep", make_step_entry(0x1));
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "keep", make_step_entry(0x1));
     cm.update_step("rec", "drop", make_step_entry(0x2));
     cm.flush_all().expect("flush 1");
 
@@ -232,22 +244,33 @@ fn retain_steps_drops_and_persists() {
 #[test]
 fn manager_construction_sweeps_superseded_indexes() {
     let dir = tempfile::tempdir().expect("tempdir");
-        // Legacy bincode index + torn tmp from an interrupted pre-v4 write.
-        std::fs::write(dir.path().join("old_recipe.bin"), b"\x03legacy").expect("bin");
+    // Legacy bincode index + torn tmp from an interrupted pre-v4 write.
+    std::fs::write(dir.path().join("old_recipe.bin"), b"\x03legacy").expect("bin");
     std::fs::write(dir.path().join("old_recipe.bin.tmp"), b"torn").expect("tmp");
     // Things the sweep must NOT touch: the live `.idx` index, and subdirs —
     // except `tests/`, the removed test-result store, which it now takes
     // (CS-0186).
-    store::RecipeCache::new().save(dir.path(), "current").expect("save");
+    store::RecipeCache::new()
+        .save(dir.path(), "current")
+        .expect("save");
     std::fs::create_dir_all(dir.path().join("tests/ab")).expect("mkdir");
     std::fs::write(dir.path().join("tests/ab/abcd1234.json"), b"{}").expect("json");
     std::fs::create_dir_all(dir.path().join("cc-state")).expect("mkdir");
     std::fs::write(dir.path().join("cc-state/probe.json"), b"{}").expect("json");
     let _mgr = ThreadSafeCacheManager::new(dir.path().to_path_buf());
     assert!(!dir.path().join("old_recipe.bin").exists(), ".bin swept");
-    assert!(!dir.path().join("old_recipe.bin.tmp").exists(), ".bin.tmp swept");
-    assert!(dir.path().join("current.idx").exists(), "live index untouched");
-    assert!(!dir.path().join("tests").exists(), "removed test-result store swept");
+    assert!(
+        !dir.path().join("old_recipe.bin.tmp").exists(),
+        ".bin.tmp swept"
+    );
+    assert!(
+        dir.path().join("current.idx").exists(),
+        "live index untouched"
+    );
+    assert!(
+        !dir.path().join("tests").exists(),
+        "removed test-result store swept"
+    );
     assert!(
         dir.path().join("cc-state/probe.json").exists(),
         "every other subdirectory untouched"
@@ -257,7 +280,7 @@ fn manager_construction_sweeps_superseded_indexes() {
 #[test]
 fn manager_construction_tolerates_missing_cache_dir() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let missing = dir.path().join("does-not-exist");
+    let missing = dir.path().join("does-not-exist");
     let _mgr = ThreadSafeCacheManager::new(missing); // must not panic or create the dir
     assert!(!dir.path().join("does-not-exist").exists());
 }
@@ -265,8 +288,8 @@ fn manager_construction_tolerates_missing_cache_dir() {
 #[test]
 fn retain_steps_keeps_all_is_not_dirty() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
-        cm.update_step("rec", "a", make_step_entry(0x1));
+    let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    cm.update_step("rec", "a", make_step_entry(0x1));
     cm.retain_steps("rec", |_, _| true);
     // Nothing removed; flush still succeeds and the step survives.
     cm.flush_all().expect("flush");
@@ -348,14 +371,20 @@ fn rewriting_an_identical_entry_does_not_dirty_the_recipe() {
     cm.flush_all().expect("flush 1");
 
     let index = dir.path().join("rec.idx");
-    let stamp = std::fs::metadata(&index).expect("stat").modified().expect("mtime");
+    let stamp = std::fs::metadata(&index)
+        .expect("stat")
+        .modified()
+        .expect("mtime");
 
     // Same entry again, then flush: the file must not be rewritten.
     cm.update_step("rec", "step", make_step_entry(0xabc));
     cm.flush_all().expect("flush 2");
     assert_eq!(
         stamp,
-        std::fs::metadata(&index).expect("stat").modified().expect("mtime"),
+        std::fs::metadata(&index)
+            .expect("stat")
+            .modified()
+            .expect("mtime"),
         "an identical write must leave the index untouched"
     );
 

@@ -6,8 +6,10 @@ fn make_state_with_one_recipe() -> BuildState {
     let mut state = BuildState::new();
     state.apply(&ProgressEvent::BuildStarted {
         recipes: vec![RecipeTopo {
-            id: RecipeId::new(0), name: "deps".into(),
-            deps: vec![], expected_nodes: 3,
+            id: RecipeId::new(0),
+            name: "deps".into(),
+            deps: vec![],
+            expected_nodes: 3,
         }],
         total_nodes: 3,
     });
@@ -26,13 +28,18 @@ fn write_event(state: &BuildState, event: &ProgressEvent) -> String {
 #[test]
 fn build_started_uses_recipe_names() {
     let state = make_state_with_one_recipe();
-    let s = write_event(&state, &ProgressEvent::BuildStarted {
-        recipes: vec![RecipeTopo {
-            id: RecipeId::new(0), name: "deps".into(),
-            deps: vec![], expected_nodes: 3,
-        }],
-        total_nodes: 3,
-    });
+    let s = write_event(
+        &state,
+        &ProgressEvent::BuildStarted {
+            recipes: vec![RecipeTopo {
+                id: RecipeId::new(0),
+                name: "deps".into(),
+                deps: vec![],
+                expected_nodes: 3,
+            }],
+            total_nodes: 3,
+        },
+    );
     assert!(s.contains("\"type\":\"build-started\""), "got: {s}");
     assert!(s.contains("\"v\":1"), "got: {s}");
     assert!(s.contains("\"ts\":"), "got: {s}");
@@ -41,31 +48,51 @@ fn build_started_uses_recipe_names() {
 #[test]
 fn recipe_completed_uses_elapsed_ms_integer() {
     let mut state = make_state_with_one_recipe();
-    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
-    let s = write_event(&state, &ProgressEvent::RecipeCompleted {
+    state.apply(&ProgressEvent::RecipeStarted {
         recipe: RecipeId::new(0),
-        elapsed: Duration::from_millis(1234),
-        cached: 0, total: 3,
-        kind: crate::event::RecipeKind::Recipe,
     });
-    assert!(s.contains("\"elapsed_ms\":1234"), "expected elapsed_ms integer; got: {s}");
-    assert!(s.contains("\"recipe\":\"deps\""), "expected name not id; got: {s}");
+    let s = write_event(
+        &state,
+        &ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(1234),
+            cached: 0,
+            total: 3,
+            kind: crate::event::RecipeKind::Recipe,
+        },
+    );
+    assert!(
+        s.contains("\"elapsed_ms\":1234"),
+        "expected elapsed_ms integer; got: {s}"
+    );
+    assert!(
+        s.contains("\"recipe\":\"deps\""),
+        "expected name not id; got: {s}"
+    );
 }
 
 #[test]
 fn node_output_uses_names_and_stream_string() {
     let mut state = make_state_with_one_recipe();
     state.apply(&ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+        recipe: RecipeId::new(0),
+        node: NodeId::new(0),
+        name: "lvm.c".into(),
+        artifact: None,
+        fallback_label: "x".into(),
         kind: NodeKind::Cooked,
-            cause: None,
-            cache_key: None,
-        });
-    let s = write_event(&state, &ProgressEvent::NodeOutput {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        line: "warning: unused".into(), stream: Stream::Stderr,
+        cause: None,
+        cache_key: None,
     });
+    let s = write_event(
+        &state,
+        &ProgressEvent::NodeOutput {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            line: "warning: unused".into(),
+            stream: Stream::Stderr,
+        },
+    );
     assert!(s.contains("\"recipe\":\"deps\""), "got: {s}");
     assert!(s.contains("\"node\":\"lvm.c\""), "got: {s}");
     assert!(s.contains("\"stream\":\"stderr\""), "got: {s}");
@@ -76,13 +103,18 @@ fn keys_are_emitted_in_lexicographic_order() {
     // Pins the wire-format guarantee documented on `JsonWriter::handle`:
     // keys are emitted in alphabetical order, not insertion order.
     let state = make_state_with_one_recipe();
-    let s = write_event(&state, &ProgressEvent::BuildStarted {
-        recipes: vec![RecipeTopo {
-            id: RecipeId::new(0), name: "deps".into(),
-            deps: vec![], expected_nodes: 3,
-        }],
-        total_nodes: 3,
-    });
+    let s = write_event(
+        &state,
+        &ProgressEvent::BuildStarted {
+            recipes: vec![RecipeTopo {
+                id: RecipeId::new(0),
+                name: "deps".into(),
+                deps: vec![],
+                expected_nodes: 3,
+            }],
+            total_nodes: 3,
+        },
+    );
     let key_order: Vec<&str> = ["recipes", "total_nodes", "ts", "type", "v"]
         .iter()
         .map(|k| *k)
@@ -91,7 +123,11 @@ fn keys_are_emitted_in_lexicographic_order() {
         .iter()
         .map(|k| {
             let needle = format!("\"{k}\":");
-            (s.find(&needle).unwrap_or_else(|| panic!("missing key {k}; got: {s}")), *k)
+            (
+                s.find(&needle)
+                    .unwrap_or_else(|| panic!("missing key {k}; got: {s}")),
+                *k,
+            )
         })
         .collect();
     let mut sorted = positions.clone();
@@ -105,27 +141,45 @@ fn node_event_node_field_resolves_via_state() {
     // BuildState lookup, not the inline `name` carried by some variants.
     let mut state = make_state_with_one_recipe();
     state.apply(&ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+        recipe: RecipeId::new(0),
+        node: NodeId::new(0),
+        name: "lvm.c".into(),
+        artifact: None,
+        fallback_label: "x".into(),
         kind: NodeKind::Cooked,
-            cause: None,
-            cache_key: None,
-        });
-    let s_started = write_event(&state, &ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        name: "ignored-inline-name".into(), artifact: None, fallback_label: "x".into(),
-        kind: NodeKind::Cooked,
-            cause: None,
-            cache_key: None,
-        });
-    assert!(s_started.contains("\"node\":\"lvm.c\""),
-        "node-started must read state, not inline name; got: {s_started}");
-    let s_skipped = write_event(&state, &ProgressEvent::NodeSkipped {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        name: "ignored-inline-name".into(), reason: crate::event::SkipReason::Disabled,
+        cause: None,
+        cache_key: None,
     });
-    assert!(s_skipped.contains("\"node\":\"lvm.c\""),
-        "node-skipped must read state, not inline name; got: {s_skipped}");
+    let s_started = write_event(
+        &state,
+        &ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            name: "ignored-inline-name".into(),
+            artifact: None,
+            fallback_label: "x".into(),
+            kind: NodeKind::Cooked,
+            cause: None,
+            cache_key: None,
+        },
+    );
+    assert!(
+        s_started.contains("\"node\":\"lvm.c\""),
+        "node-started must read state, not inline name; got: {s_started}"
+    );
+    let s_skipped = write_event(
+        &state,
+        &ProgressEvent::NodeSkipped {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            name: "ignored-inline-name".into(),
+            reason: crate::event::SkipReason::Disabled,
+        },
+    );
+    assert!(
+        s_skipped.contains("\"node\":\"lvm.c\""),
+        "node-skipped must read state, not inline name; got: {s_skipped}"
+    );
 }
 
 #[test]
@@ -134,14 +188,20 @@ fn node_field_falls_back_to_synthesized_id_when_unknown() {
     // a renderer wired into a replay) get a stable synthesized label
     // rather than a missing field.
     let state = make_state_with_one_recipe();
-    let s = write_event(&state, &ProgressEvent::NodeCompleted {
-        recipe: RecipeId::new(0), node: NodeId::new(7),
-        elapsed: Duration::from_millis(1),
-        kind: NodeKind::Cooked,
-        cache_key: None,
-    });
-    assert!(s.contains("\"node\":\"node#7\""),
-        "expected synthesized fallback; got: {s}");
+    let s = write_event(
+        &state,
+        &ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(7),
+            elapsed: Duration::from_millis(1),
+            kind: NodeKind::Cooked,
+            cache_key: None,
+        },
+    );
+    assert!(
+        s.contains("\"node\":\"node#7\""),
+        "expected synthesized fallback; got: {s}"
+    );
 }
 
 #[test]
@@ -150,8 +210,15 @@ fn each_event_is_one_line() {
     let mut buf = Vec::new();
     {
         let mut w = JsonWriter::new(&mut buf);
-        w.handle(&state, &ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) }).unwrap();
-        w.handle(&state, &ProgressEvent::Finished { success: true }).unwrap();
+        w.handle(
+            &state,
+            &ProgressEvent::RecipeStarted {
+                recipe: RecipeId::new(0),
+            },
+        )
+        .unwrap();
+        w.handle(&state, &ProgressEvent::Finished { success: true })
+            .unwrap();
     }
     let s = String::from_utf8(buf).unwrap();
     let lines: Vec<&str> = s.lines().collect();
@@ -163,26 +230,35 @@ fn each_event_is_one_line() {
 #[test]
 fn node_started_emits_kind_in_wire_format() {
     let state = make_state_with_one_recipe();
-    let s = write_event(&state, &ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        name: "lvm.c".into(), artifact: None,
-        fallback_label: "x".into(),
-        kind: NodeKind::Compile,
+    let s = write_event(
+        &state,
+        &ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            name: "lvm.c".into(),
+            artifact: None,
+            fallback_label: "x".into(),
+            kind: NodeKind::Compile,
             cause: None,
             cache_key: None,
-        });
+        },
+    );
     assert!(s.contains("\"kind\":\"compile\""), "got: {s}");
 }
 
 #[test]
 fn node_completed_emits_kind_in_wire_format() {
     let state = make_state_with_one_recipe();
-    let s = write_event(&state, &ProgressEvent::NodeCompleted {
-        recipe: RecipeId::new(0), node: NodeId::new(0),
-        elapsed: std::time::Duration::from_millis(100),
-        kind: NodeKind::Link,
-        cache_key: None,
-    });
+    let s = write_event(
+        &state,
+        &ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            elapsed: std::time::Duration::from_millis(100),
+            kind: NodeKind::Link,
+            cache_key: None,
+        },
+    );
     assert!(s.contains("\"kind\":\"link\""), "got: {s}");
 }
 
@@ -210,7 +286,7 @@ fn check_schema_version_accepts_lower_versions() {
     // CS-0048: readers accept any `v <= MAX_KNOWN`. Build a synthetic
     // v=0 line to pin the additive-only contract for the future v=2 case
     // (today MAX_KNOWN=1, so v=0 is the only "lower" value we can test).
-        let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":0}"#;
+    let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":0}"#;
     let v = check_schema_version(line).expect("v <= MAX_KNOWN must validate");
     assert_eq!(v, 0);
 }

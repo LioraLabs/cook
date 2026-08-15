@@ -51,7 +51,10 @@ impl ConsumesFilter {
         let mut rules = Vec::with_capacity(patterns.len());
         for p in patterns {
             let matcher = build(p).map_err(|e| (p.clone(), e))?;
-            rules.push(Rule { matcher, basename_only: !p.contains('/') });
+            rules.push(Rule {
+                matcher,
+                basename_only: !p.contains('/'),
+            });
         }
         Ok(Self { rules })
     }
@@ -88,8 +91,10 @@ impl ConsumesFilter {
         if self.is_empty() {
             return candidates.iter().collect();
         }
-        let kept: Vec<&T> =
-            candidates.iter().filter(|c| self.matches(&root_rel(c))).collect();
+        let kept: Vec<&T> = candidates
+            .iter()
+            .filter(|c| self.matches(&root_rel(c)))
+            .collect();
         if kept.is_empty() && !candidates.is_empty() {
             return candidates.iter().collect();
         }

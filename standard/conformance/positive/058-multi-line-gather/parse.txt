@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: ["neo/sys/*.cpp", "neo/sys/posix/*.cpp"]
+      inputs: ["neo/sys/*.cpp", "neo/sys/posix/*.cpp"]
       excludes: ["neo/sys/sdl/*.cpp"]
       steps:
         Gather

@@ -64,7 +64,10 @@ recipe withprobe
         String::from_utf8_lossy(&out.stderr),
     );
     let b = wd.join("out/b.txt");
-    assert!(b.exists(), "out/b.txt was not produced — probe-in-body silently no-op'd");
+    assert!(
+        b.exists(),
+        "out/b.txt was not produced — probe-in-body silently no-op'd"
+    );
     let content = fs::read_to_string(&b).unwrap();
     assert_eq!(
         content.trim(),

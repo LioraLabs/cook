@@ -93,7 +93,7 @@ fn work_payload_lua_chunk_construction() {
         code: "print('hi')".into(),
         inputs: vec!["in.txt".into()],
         outputs: vec!["out.txt".into()],
-        ingredient_groups: vec![vec!["a".into(), "b".into()]],
+        gather_groups: vec![vec!["a".into(), "b".into()]],
         step_kind: StepKind::Cook,
         is_chore: false,
         line: 1,
@@ -103,7 +103,7 @@ fn work_payload_lua_chunk_construction() {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind,
             is_chore,
             line: _,
@@ -112,8 +112,8 @@ fn work_payload_lua_chunk_construction() {
             assert_eq!(code, "print('hi')");
             assert_eq!(inputs, &vec!["in.txt".to_string()]);
             assert_eq!(outputs, &vec!["out.txt".to_string()]);
-            assert_eq!(ingredient_groups.len(), 1);
-            assert_eq!(ingredient_groups[0].len(), 2);
+            assert_eq!(gather_groups.len(), 1);
+            assert_eq!(gather_groups[0].len(), 2);
             assert!(!*is_chore);
         }
         _ => panic!("expected LuaChunk variant"),
@@ -126,7 +126,7 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
         code: "print('chore')".into(),
         inputs: vec![],
         outputs: vec![],
-        ingredient_groups: vec![],
+        gather_groups: vec![],
         step_kind: StepKind::Chore,
         is_chore: true,
         line: 1,
@@ -146,7 +146,10 @@ fn work_payload_lua_chunk_carries_is_chore_flag() {
 #[test]
 fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
     let command_test = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "./run_tests".into(), line: 10 },
+        payload: WorkPayload::Shell {
+            cmd: "./run_tests".into(),
+            line: 10,
+        },
         cache_meta: None,
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -170,7 +173,7 @@ fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
             code: "assert(true)".into(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: StepKind::Test,
             is_chore: false,
             line: 12,
@@ -194,13 +197,30 @@ fn a_test_unit_is_an_ordinary_unit_carrying_a_reporting_name() {
 /// them knew only three variants and reported 0 for the rest.
 #[test]
 fn every_payload_reports_its_line() {
-    assert_eq!(WorkPayload::Shell { cmd: "x".into(), line: 1 }.line(), 1);
     assert_eq!(
-        WorkPayload::Interactive { cmd: "x".into(), line: 2, is_chore: false }.line(),
+        WorkPayload::Shell {
+            cmd: "x".into(),
+            line: 1
+        }
+        .line(),
+        1
+    );
+    assert_eq!(
+        WorkPayload::Interactive {
+            cmd: "x".into(),
+            line: 2,
+            is_chore: false
+        }
+        .line(),
         2
     );
     assert_eq!(
-        WorkPayload::Probe { key: "k".into(), produce: "return 1".into(), line: 3 }.line(),
+        WorkPayload::Probe {
+            key: "k".into(),
+            produce: "return 1".into(),
+            line: 3
+        }
+        .line(),
         3
     );
     assert_eq!(
@@ -208,7 +228,7 @@ fn every_payload_reports_its_line() {
             code: "x".into(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: StepKind::Cook,
             is_chore: false,
             line: 4,
@@ -376,7 +396,7 @@ fn captured_unit_construction() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };
@@ -391,7 +411,6 @@ fn dep_kind_variants() {
 
     let seq = DepKind::Sequential;
     assert!(matches!(seq, DepKind::Sequential));
-
 }
 
 #[test]
@@ -415,7 +434,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                            test_name: None,
+                test_name: None,
 
                 after: Vec::new(),
             },
@@ -430,7 +449,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                            test_name: None,
+                test_name: None,
 
                 after: Vec::new(),
             },
@@ -540,7 +559,7 @@ fn captured_unit_probes_defaults_to_empty() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     assert!(cu.probes.is_empty());
 }
@@ -596,7 +615,7 @@ fn captured_unit_with_cache() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };

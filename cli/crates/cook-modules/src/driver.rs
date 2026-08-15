@@ -175,7 +175,10 @@ impl RocksDriver {
                 argv_quoted,
                 CapturedStream::from_bytes(&out.stdout).as_str(),
                 CapturedStream::from_bytes(&out.stderr).as_str(),
-                out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+                out.status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".into()),
             ));
         }
         Ok(out)

@@ -341,6 +341,21 @@
     }
   },
   {
+    "type": "gather_exclude",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "gather_step",
     "named": true,
     "fields": {
@@ -360,7 +375,7 @@
       "required": false,
       "types": [
         {
-          "type": "ingredient_exclude",
+          "type": "gather_exclude",
           "named": true
         },
         {
@@ -414,51 +429,6 @@
           }
         ]
       }
-    }
-  },
-  {
-    "type": "ingredient_exclude",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "string",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "ingredients_step",
-    "named": true,
-    "fields": {
-      "probe": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "ingredient_exclude",
-          "named": true
-        },
-        {
-          "type": "string",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -561,10 +531,6 @@
       "types": [
         {
           "type": "comment",
-          "named": true
-        },
-        {
-          "type": "ingredients_step",
           "named": true
         },
         {
@@ -676,10 +642,6 @@
           "named": true
         },
         {
-          "type": "ingredients_step",
-          "named": true
-        },
-        {
           "type": "module_call",
           "named": true
         },
@@ -734,11 +696,11 @@
       "required": true,
       "types": [
         {
-          "type": "identifier",
+          "type": "gather_exclude",
           "named": true
         },
         {
-          "type": "ingredient_exclude",
+          "type": "identifier",
           "named": true
         },
         {
@@ -1107,10 +1069,6 @@
   {
     "type": "import_name",
     "named": true
-  },
-  {
-    "type": "ingredients",
-    "named": false
   },
   {
     "type": "json",

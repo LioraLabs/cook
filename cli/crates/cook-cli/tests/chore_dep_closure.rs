@@ -19,7 +19,7 @@ fn cook_bin() -> PathBuf {
 }
 
 const COOKFILE: &str = r#"recipe app
-    ingredients "src/hello.txt"
+    gather "src/hello.txt"
     cook "build/app.txt" {
         mkdir -p build && cat $<in> > $<out>
     }

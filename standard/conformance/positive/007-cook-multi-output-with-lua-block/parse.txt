@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="gen_lua" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out/a.js", "out/a.wasm"] body=LuaBlock("        local f = io.open(outputs[1], \"w\"); f:write(\"js\"); f:close()\n        local g = io.open(outputs[2], \"w\"); g:write(\"wasm\"); g:close()")

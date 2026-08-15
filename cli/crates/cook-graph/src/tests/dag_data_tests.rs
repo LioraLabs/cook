@@ -1,7 +1,5 @@
 use super::*;
-use cook_contracts::{
-    CapturedUnit, DepKind, DiscoveredInputs, RecipeUnits, WorkPayload,
-};
+use cook_contracts::{CapturedUnit, DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -46,7 +44,7 @@ fn recipe_with_depfile(
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };
@@ -103,7 +101,7 @@ fn independent_probes_have_no_edges_between_them() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };
@@ -119,12 +117,15 @@ fn independent_probes_have_no_edges_between_them() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };
     let consumer = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "link".into(), line: 3 },
+        payload: WorkPayload::Shell {
+            cmd: "link".into(),
+            line: 3,
+        },
         cache_meta: None,
         dep_kind: DepKind::Sequential,
         probes: vec!["cc:a".into(), "cc:b".into()],
@@ -132,7 +133,7 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -167,9 +168,7 @@ fn independent_probes_have_no_edges_between_them() {
     );
     // Consumer must still depend on both probes — sequencing flows through
     // each unit's `probes` field, not the barrier.
-    let has_edge = |from: &str, to: &str| {
-        edges.iter().any(|e| e.from == from && e.to == to)
-    };
+    let has_edge = |from: &str, to: &str| edges.iter().any(|e| e.from == from && e.to == to);
     assert!(
         has_edge("unit:game:0", "unit:game:2"),
         "consumer must depend on probe A",
@@ -204,7 +203,10 @@ fn build_dag_data_emits_discovered_file_nodes() {
     let by_id = |id: &str| nodes.iter().find(|n| n.id == id);
 
     let bar_cpp = by_id("file:bar.cpp").expect("declared file node missing");
-    assert_eq!(bar_cpp.discovered, None, "declared file should not be flagged discovered");
+    assert_eq!(
+        bar_cpp.discovered, None,
+        "declared file should not be flagged discovered"
+    );
 
     let helpers = by_id("file:helpers.h").expect("discovered helpers.h missing");
     assert_eq!(helpers.discovered, Some(true));
@@ -213,9 +215,7 @@ fn build_dag_data_emits_discovered_file_nodes() {
     assert_eq!(math.discovered, Some(true));
 
     let edges = &g.edges;
-    let has_edge = |from: &str, to: &str| {
-        edges.iter().any(|e| e.from == from && e.to == to)
-    };
+    let has_edge = |from: &str, to: &str| edges.iter().any(|e| e.from == from && e.to == to);
     assert!(has_edge("file:bar.cpp", "unit:compile:0"));
     assert!(has_edge("file:helpers.h", "unit:compile:0"));
     assert!(has_edge("file:math.h", "unit:compile:0"));
@@ -253,7 +253,10 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         record: false,
     };
     let unit_a = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "clang -c a.cpp".into(),
+            line: 1,
+        },
         cache_meta: Some(cm_a),
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -261,7 +264,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let ru_a = RecipeUnits {
         recipe_name: "a".into(),
@@ -293,7 +296,10 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         record: false,
     };
     let unit_b = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "clang -c b.cpp".into(),
+            line: 1,
+        },
         cache_meta: Some(cm_b),
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -301,7 +307,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let ru_b = RecipeUnits {
         recipe_name: "b".into(),
@@ -357,7 +363,6 @@ fn missing_depfile_does_not_panic_or_emit_discovered() {
 
     let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
-    
     // Declared file is present; no discovered nodes.
     assert!(g.nodes.iter().any(|n| n.id == "file:bar.cpp"));
     assert!(
@@ -381,7 +386,6 @@ fn malformed_depfile_does_not_panic_or_emit_discovered() {
 
     let g = build_dag_data("build", &all_units, &explicit, &cms).unwrap();
 
-    
     assert!(g.nodes.iter().any(|n| n.id == "file:bar.cpp"));
     assert!(
         !g.nodes.iter().any(|n| n.discovered == Some(true)),
@@ -418,7 +422,10 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         record: false,
     };
     let unit_compile = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "clang -c a.cpp".into(),
+            line: 1,
+        },
         cache_meta: Some(cm_compile),
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -426,7 +433,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let ru_compile = RecipeUnits {
         recipe_name: "compile".into(),
@@ -461,7 +468,10 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         record: false,
     };
     let unit_archive = CapturedUnit {
-        payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "ar rcs libfoo.a a.o".into(),
+            line: 1,
+        },
         cache_meta: Some(cm_archive),
         dep_kind: DepKind::Sequential,
         probes: vec![],
@@ -469,7 +479,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-            test_name: None,
+        test_name: None,
     };
     let ru_archive = RecipeUnits {
         recipe_name: "archive".into(),
@@ -483,7 +493,10 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         probes: vec![],
     };
 
-    let all_units = vec![("compile".into(), ru_compile), ("archive".into(), ru_archive)];
+    let all_units = vec![
+        ("compile".into(), ru_compile),
+        ("archive".into(), ru_archive),
+    ];
     let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
 
@@ -558,7 +571,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-            test_name: None,
+        test_name: None,
 
         after: Vec::new(),
     };
@@ -588,8 +601,8 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
             command_hash: 0,
             env_contribution: 0,
             seal_contribution: 0,
-        module_inputs: Vec::new(),
-        observed: None,
+            module_inputs: Vec::new(),
+            observed: None,
         },
     );
 
@@ -629,7 +642,10 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
 
 fn bare_unit(cmd: &str) -> CapturedUnit {
     CapturedUnit {
-        payload: WorkPayload::Shell { cmd: cmd.into(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: cmd.into(),
+            line: 1,
+        },
         cache_meta: None,
         dep_kind: DepKind::Sequential,
         probes: vec![],

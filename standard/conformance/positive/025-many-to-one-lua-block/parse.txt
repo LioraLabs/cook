@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="bundle" line=1
       deps: []
-      ingredients: ["src/*.js"]
+      inputs: ["src/*.js"]
       excludes: []
       steps:
         Gather

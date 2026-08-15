@@ -17,7 +17,7 @@
 //! `-` and `.` and capped at two colon-segments; `cook.probe()` validated
 //! nothing; the sigil scanner allowed `- . : [ ]` uncapped; `seal` allowed
 //! neither `-` nor `.`, capped at two, and refused the quoted form outright;
-//! `ingredients` allowed neither `-` nor `.` but was uncapped and did accept
+//! `inputs` allowed neither `-` nor `.` but was uncapped and did accept
 //! quoting. So `probe cc-version` declared a key that could be referenced by
 //! sigil but neither sealed nor consumed, and `cc:find:raylib` — the flagship
 //! module's ordinary case — could not be sealed at all, which is exactly the
@@ -78,7 +78,7 @@ pub fn is_tool_name(s: &str) -> bool {
 }
 
 /// The diagnostic for a bare key that does not match the grammar. One wording,
-/// so `seal`, `ingredients` and the declaration cannot blame different things
+/// so `seal`, `inputs` and the declaration cannot blame different things
 /// for the same cause.
 pub fn bare_key_error(site: &str, key: &str) -> String {
     let hint = if key.contains('.') {

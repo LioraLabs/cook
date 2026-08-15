@@ -20,13 +20,13 @@ The module works entirely with string-keyed `BTreeMap<String, RecipeInfo>` — i
 
 ```rust
 pub struct RecipeInfo {
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub serves: Vec<String>,
     pub requires: Vec<String>,
 }
 ```
 
-`ingredients` are glob patterns the recipe consumes; `serves` are cook-step output patterns; `requires` are the recipe names listed after `:` in the recipe header. The shape matches the historical struct exactly, but the file it lives in has moved.
+`inputs` are glob patterns the recipe consumes; `serves` are cook-step output patterns; `requires` are the recipe names listed after `:` in the recipe header. The shape matches the historical struct exactly, but the file it lives in has moved.
 
 `NamespaceEntry = (PathBuf, String, PathBuf)` carries the canonical-path + import-name information needed to compute fully-qualified recipe names across imported Cookfiles; `find_full_prefix` resolves a canonical path to its dotted prefix, so a recipe reads as `"backend.proto.generate"`.
 
@@ -36,9 +36,9 @@ pub struct RecipeInfo {
 
 **Adjacency.** `build_adjacency` (`analyzer.rs:55`) maps each recipe name to the `BTreeSet<&str>` of names it depends on. **Edges come from explicit `requires` only.** Every other kind of cross-recipe edge enters the pipeline elsewhere.
 
-> **Important: implicit ingredient-serves matching has been removed.**
+> **Important: implicit input-serves matching has been removed.**
 >
-> The historical rule — "if recipe A's `ingredients` contains a path string that another recipe B has in its `serves`, infer A depends on B" — is gone. `build_adjacency` no longer looks at `ingredients` or `serves` at all; it only resolves `requires`. Path-string equality between an ingredient and another recipe's cook-output is opaque and produces no edge. See Cook Standard § 5.6 and rationale B.5.N. The removal is pinned by `test_ingredient_serves_string_match_is_opaque` and `test_path_match_does_not_imply_dep` (`analyzer.rs:622`, `analyzer.rs:640`), and `test_dependency_edges_no_implicit_via_serves` (`analyzer.rs:836`) confirms the same for `dependency_edges`.
+> The historical rule — "if recipe A's `inputs` contains a path string that another recipe B has in its `serves`, infer A depends on B" — is gone. `build_adjacency` no longer looks at `inputs` or `serves` at all; it only resolves `requires`. Path-string equality between an input and another recipe's cook-output is opaque and produces no edge. See Cook Standard § 5.6 and rationale B.5.N. The removal is pinned by `test_gather_serves_string_match_is_opaque` and `test_path_match_does_not_imply_dep` (`analyzer.rs:622`, `analyzer.rs:640`), and `test_dependency_edges_no_implicit_via_serves` (`analyzer.rs:836`) confirms the same for `dependency_edges`.
 >
 > Cross-recipe edges from name references in recipe bodies (`{lib}` / `{lib.accessor}`) are not produced by the analyzer either. They are extracted by codegen (`cook_luagen::dep_ref::extract_dep_refs`) and merged into `cook-luagen`'s unified `requires` field before registration, so by the time the analyzer runs they ARE `requires` entries and `build_adjacency` walks them like any other. There is no separate "inferred deps" stage; the module that was one is deleted (COOK-423). The analyzer's job is the `requires` graph, and it no longer matters to it whether an entry was written as `: dep` or as a body reference.
 
@@ -68,7 +68,7 @@ CLI-side translation to `CookError` lives in `cli/crates/cook-cli/src/pipeline.r
 
 ### Purpose
 
-The watcher powers `cook serve` — the continuous rebuild mode. It watches ingredient directories and every Cookfile in the workspace for changes, debounces rapid filesystem events, and invokes a callback that triggers a rebuild.
+The watcher powers `cook serve` — the continuous rebuild mode. It watches input directories and every Cookfile in the workspace for changes, debounces rapid filesystem events, and invokes a callback that triggers a rebuild.
 
 ### Structures
 
@@ -81,7 +81,7 @@ pub struct CookWatcher {
 
 Defined at `cli/crates/cook-cli/src/watcher.rs:8`. Note `cookfile_paths` is **plural** — workspaces can have multiple Cookfiles via `import`, and every imported Cookfile is watched so a change in any of them re-parses and rebuilds.
 
-`globs` is populated by `CookWatcher::collect_globs_for_recipes(cookfile, recipe_names)` (`watcher.rs:21`), which iterates the recipes of a *single* `cook_lang::ast::Cookfile` and collects the `ingredients` patterns of every recipe whose name appears in `recipe_names`. The function takes one Cookfile at a time; the workspace driver (`cmd_serve` in `cli/crates/cook-cli/src/pipeline.rs:1087`) collects globs per Cookfile and accumulates `cookfile_paths` for every imported file.
+`globs` is populated by `CookWatcher::collect_globs_for_recipes(cookfile, recipe_names)` (`watcher.rs:21`), which iterates the recipes of a *single* `cook_lang::ast::Cookfile` and collects the `inputs` patterns of every recipe whose name appears in `recipe_names`. The function takes one Cookfile at a time; the workspace driver (`cmd_serve` in `cli/crates/cook-cli/src/pipeline.rs:1087`) collects globs per Cookfile and accumulates `cookfile_paths` for every imported file.
 
 ### Algorithms
 
@@ -94,7 +94,7 @@ Each Cookfile's parent directory is then registered with `RecursiveMode::NonRecu
 **Change classification.** When a relevant event arrives, the callback receives a boolean `cookfile_changed` (`watcher.rs:87-93`):
 
 - `true` — the event's path list contains any of `self.cookfile_paths`. The caller is expected to re-parse the Cookfile from scratch.
-- `false` — a non-Cookfile path matched one of the ingredient globs. The caller rebuilds from the already-parsed Cookfile.
+- `false` — a non-Cookfile path matched one of the input globs. The caller rebuilds from the already-parsed Cookfile.
 
 An event with no Cookfile-matching path and no glob-matching path is ignored entirely.
 

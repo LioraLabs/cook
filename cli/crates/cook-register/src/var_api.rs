@@ -148,8 +148,10 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// §22.8, CS-0144), which suggests the closest registered recipe names the
 /// same way this suggests the closest declared variables.
 pub(crate) fn closest_declared(name: &str, declared: &[String], n: usize) -> Vec<String> {
-    let mut scored: Vec<(usize, &String)> =
-        declared.iter().map(|d| (edit_distance(name, d), d)).collect();
+    let mut scored: Vec<(usize, &String)> = declared
+        .iter()
+        .map(|d| (edit_distance(name, d), d))
+        .collect();
     scored.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(y.1)));
     scored.into_iter().take(n).map(|(_, d)| d.clone()).collect()
 }

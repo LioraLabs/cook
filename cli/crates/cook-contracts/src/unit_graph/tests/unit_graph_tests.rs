@@ -60,7 +60,10 @@ fn unit_id(g: &UnitGraph, recipe: &str, unit_idx: usize) -> usize {
 }
 
 fn has_edge(g: &UnitGraph, from: usize, to: usize, kind: EdgeProvenance) -> bool {
-    g.nodes[to].deps.iter().any(|&(d, k)| d == from && k == kind)
+    g.nodes[to]
+        .deps
+        .iter()
+        .any(|&(d, k)| d == from && k == kind)
 }
 
 fn edge_list(g: &UnitGraph) -> String {
@@ -87,7 +90,11 @@ fn plan_records_provenance_per_edge_kind() {
         &["producer"],
         vec![
             unit(probe("cc:flags"), DepKind::Sequential, vec![]),
-            unit(shell("gcc -c a.c"), DepKind::StepGroup(0), vec!["cc:flags".into()]),
+            unit(
+                shell("gcc -c a.c"),
+                DepKind::StepGroup(0),
+                vec!["cc:flags".into()],
+            ),
             unit(shell("gcc -c b.c"), DepKind::StepGroup(0), vec![]),
             seq_unit("ld -o app a.o b.o"),
         ],
@@ -105,15 +112,39 @@ fn plan_records_provenance_per_edge_kind() {
     let link = unit_id(&g, "consumer", 3);
 
     // Coarse dep-list barrier: producer leaf -> every consumer root.
-    assert!(has_edge(&g, p0, cc_a, EdgeProvenance::Barrier), "{}", edge_list(&g));
-    assert!(has_edge(&g, p0, cc_b, EdgeProvenance::Barrier), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, p0, cc_a, EdgeProvenance::Barrier),
+        "{}",
+        edge_list(&g)
+    );
+    assert!(
+        has_edge(&g, p0, cc_b, EdgeProvenance::Barrier),
+        "{}",
+        edge_list(&g)
+    );
     // Probe consumption.
-    assert!(has_edge(&g, probe0, cc_a, EdgeProvenance::Probe), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, probe0, cc_a, EdgeProvenance::Probe),
+        "{}",
+        edge_list(&g)
+    );
     // Group members become the barrier; the link unit enters sequentially.
-    assert!(has_edge(&g, cc_a, link, EdgeProvenance::Serial), "{}", edge_list(&g));
-    assert!(has_edge(&g, cc_b, link, EdgeProvenance::Serial), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, cc_a, link, EdgeProvenance::Serial),
+        "{}",
+        edge_list(&g)
+    );
+    assert!(
+        has_edge(&g, cc_b, link, EdgeProvenance::Serial),
+        "{}",
+        edge_list(&g)
+    );
     // Fine-grained ref on the link unit, additive with the barrier above.
-    assert!(has_edge(&g, p0, link, EdgeProvenance::DepOrder), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, p0, link, EdgeProvenance::DepOrder),
+        "{}",
+        edge_list(&g)
+    );
 }
 
 /// The additive rule (CS-0161, "Rejected alternative"): a declared
@@ -140,7 +171,11 @@ fn plan_keeps_declared_barrier_alongside_fine_cover() {
         "the declared requires barrier must survive fine coverage: {}",
         edge_list(&g)
     );
-    assert!(has_edge(&g, p0, fine, EdgeProvenance::DepOrder), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, p0, fine, EdgeProvenance::DepOrder),
+        "{}",
+        edge_list(&g)
+    );
 }
 
 /// Leaf pass-through: a unit-less meta-target forwards its deps' leaves, so
@@ -205,15 +240,20 @@ fn plan_prunes_an_unconsumed_probe_and_keeps_the_barrier_intact() {
 
     // The pruned probe has no node at all.
     assert!(
-        !g.nodes.iter().any(|n| matches!(&n.origin,
-            NodeOrigin::Unit { unit_idx: 1, .. })),
+        !g.nodes
+            .iter()
+            .any(|n| matches!(&n.origin, NodeOrigin::Unit { unit_idx: 1, .. })),
         "unconsumed probe must be pruned: {:?}",
         g.nodes
     );
     // `second` serially depends on `first` — the probe did not sever it.
     let first = unit_id(&g, "build", 0);
     let second = unit_id(&g, "build", 2);
-    assert!(has_edge(&g, first, second, EdgeProvenance::Serial), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, first, second, EdgeProvenance::Serial),
+        "{}",
+        edge_list(&g)
+    );
 }
 
 /// The closure-map filter: `orders`-derived names never become coarse deps.
@@ -221,7 +261,10 @@ fn plan_prunes_an_unconsumed_probe_and_keeps_the_barrier_intact() {
 fn declared_coarse_deps_filters_orders_only_names() {
     let declared = vec!["a".to_string()];
     let closure = vec!["a".to_string(), "b-via-orders".to_string()];
-    assert_eq!(declared_coarse_deps(&declared, &closure), vec!["a".to_string()]);
+    assert_eq!(
+        declared_coarse_deps(&declared, &closure),
+        vec!["a".to_string()]
+    );
     assert!(declared_coarse_deps(&[], &closure).is_empty());
 }
 
@@ -233,8 +276,7 @@ fn toposort_orders_deps_first_and_names_cycles() {
         ("c".to_string(), vec!["b".to_string()]),
     ]
     .into();
-    let reachable: BTreeSet<String> =
-        ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+    let reachable: BTreeSet<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
     assert_eq!(
         toposort_recipes(&edges, &reachable).unwrap(),
         vec!["a".to_string(), "b".to_string(), "c".to_string()]
@@ -267,7 +309,12 @@ fn after_resolves_backward_references_and_normalises_leading_dot_slash() {
     let units = vec![
         group_unit_with("build foo", 0, &["build/foo.bmi"], &[]),
         group_unit_with("build bar", 0, &["build/bar.o"], &["./build/foo.bmi"]),
-        group_unit_with("build baz", 0, &["build/baz.o"], &["build/foo.bmi", "build/bar.o"]),
+        group_unit_with(
+            "build baz",
+            0,
+            &["build/baz.o"],
+            &["build/foo.bmi", "build/bar.o"],
+        ),
     ];
     assert_eq!(
         resolve_after(&units).expect("resolves"),
@@ -280,7 +327,10 @@ fn after_resolves_backward_references_and_normalises_leading_dot_slash() {
 #[test]
 fn after_is_a_no_op_when_nothing_declares_one() {
     let units = vec![seq_unit("a"), seq_unit("b")];
-    assert_eq!(resolve_after(&units).expect("resolves"), vec![Vec::<usize>::new(), Vec::<usize>::new()]);
+    assert_eq!(
+        resolve_after(&units).expect("resolves"),
+        vec![Vec::<usize>::new(), Vec::<usize>::new()]
+    );
 }
 
 /// The two failures are distinct, and the forward-reference one names the
@@ -301,7 +351,12 @@ fn after_distinguishes_a_forward_reference_from_an_unknown_path() {
         }
     );
 
-    let unknown = vec![group_unit_with("build bar", 0, &["build/bar.o"], &["nope.bmi"])];
+    let unknown = vec![group_unit_with(
+        "build bar",
+        0,
+        &["build/bar.o"],
+        &["nope.bmi"],
+    )];
     assert_eq!(
         resolve_after(&unknown).expect_err("unknown path"),
         AfterError::NotDeclared {
@@ -346,12 +401,28 @@ fn after_plans_a_unit_order_edge_additive_with_the_group_barrier() {
     let foo = unit_id(&g, "gen", 1);
     let bar = unit_id(&g, "gen", 2);
 
-    assert!(has_edge(&g, foo, bar, EdgeProvenance::UnitOrder), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, foo, bar, EdgeProvenance::UnitOrder),
+        "{}",
+        edge_list(&g)
+    );
     // The group entry barrier survives alongside it.
-    assert!(has_edge(&g, prepare, bar, EdgeProvenance::Group), "{}", edge_list(&g));
-    assert!(has_edge(&g, prepare, foo, EdgeProvenance::Group), "{}", edge_list(&g));
+    assert!(
+        has_edge(&g, prepare, bar, EdgeProvenance::Group),
+        "{}",
+        edge_list(&g)
+    );
+    assert!(
+        has_edge(&g, prepare, foo, EdgeProvenance::Group),
+        "{}",
+        edge_list(&g)
+    );
     // And `foo` gains nothing from `bar`.
-    assert!(!has_edge(&g, bar, foo, EdgeProvenance::UnitOrder), "{}", edge_list(&g));
+    assert!(
+        !has_edge(&g, bar, foo, EdgeProvenance::UnitOrder),
+        "{}",
+        edge_list(&g)
+    );
     // Every dep points at an already-materialised node — the invariant
     // `cook-dag` deleted its cycle checker on (COOK-400).
     for (id, node) in g.nodes.iter().enumerate() {
@@ -368,7 +439,12 @@ fn plan_reports_an_unresolvable_after_entry_naming_the_recipe() {
     let ru = recipe(
         "gen",
         &[],
-        vec![group_unit_with("build bar", 0, &["build/bar.o"], &["missing.bmi"])],
+        vec![group_unit_with(
+            "build bar",
+            0,
+            &["build/bar.o"],
+            &["missing.bmi"],
+        )],
     );
     let err = plan(&[ru]).expect_err("unresolvable after");
     let msg = err.to_string();

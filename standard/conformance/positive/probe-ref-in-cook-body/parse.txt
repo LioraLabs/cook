@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="withprobe" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out/b.txt"] body=ShellBlock(["echo \"$<sys:os>\" > $<out>"])
@@ -15,6 +15,6 @@ Cookfile
   probes:
     Probe name="sys:os" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=String commands=["uname -s"]

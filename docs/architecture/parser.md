@@ -162,7 +162,7 @@ Sigil-anchored paths resolve from the workspace root; tree-relative paths resolv
 pub struct Recipe {
     pub name:        String,
     pub deps:        Vec<String>,
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub excludes:    Vec<String>,
     pub steps:       Vec<Step>,
     pub line:        usize,
@@ -170,7 +170,7 @@ pub struct Recipe {
 ```
 
 - `deps` — recipes/chores this one depends on (from the `: dep1 dep2 …` header tail). Dotted names like `backend.build` resolve through `import` aliases at register time.
-- `ingredients` / `excludes` — glob patterns from the recipe's single `ingredients` line. Include patterns are bare `"pattern"`; exclude patterns are `!"pattern"`. At most one `ingredients` line is allowed per recipe.
+- `inputs` / `excludes` — glob patterns from the recipe's single `inputs` line. Include patterns are bare `"pattern"`; exclude patterns are `!"pattern"`. At most one `inputs` line is allowed per recipe.
 - `steps` — the ordered sequence of actions.
 - `line` — source line of the `recipe` header, used in error messages.
 
@@ -185,7 +185,7 @@ pub struct Chore {
 }
 ```
 
-A chore is a top-level callable with no build outputs. Same `Step` enum as a recipe, but `ingredients`, `cook`, `plate`, and `test` are **not** allowed in a chore body (see `chore_banned` in `cli/crates/cook-lang/src/recipe.rs:539`). Recipes and chores share a single callable namespace: duplicate-name detection at the global level (`callable_decls` map in `cli/crates/cook-lang/src/lib.rs:142`) rejects any collision between two recipes, two chores, or one of each, per App. A.2.
+A chore is a top-level callable with no build outputs. Same `Step` enum as a recipe, but `inputs`, `cook`, `plate`, and `test` are **not** allowed in a chore body (see `chore_banned` in `cli/crates/cook-lang/src/recipe.rs:539`). Recipes and chores share a single callable namespace: duplicate-name detection at the global level (`callable_decls` map in `cli/crates/cook-lang/src/lib.rs:142`) rejects any collision between two recipes, two chores, or one of each, per App. A.2.
 
 ### `Step` (`cli/crates/cook-lang/src/ast.rs:102`)
 
@@ -336,7 +336,7 @@ Token handling inside a recipe:
 
 The `strip_keyword(text, keyword)` helper (`cli/crates/cook-lang/src/cook_line.rs:71`) returns the remainder if `text` begins with `keyword` followed by a space or tab (or exactly equals `keyword`). Dispatch order:
 
-1. `strip_keyword(text, "ingredients")` matches → parse as include/exclude patterns via `parse_ingredients_line` (`cli/crates/cook-lang/src/cook_line.rs:86`), store in `ingredients` / `excludes`. Duplicate `ingredients` lines and any `ingredients` after the imperative region has started are both errors.
+1. `strip_keyword(text, "inputs")` matches → parse as include/exclude patterns via `parse_gather_line` (`cli/crates/cook-lang/src/cook_line.rs:86`), store in `inputs` / `excludes`. Duplicate `inputs` lines and any `inputs` after the imperative region has started are both errors.
 2. `strip_keyword(text, "cook")` matches → `parse_cook_line()`, push `Step::Cook`.
 3. `strip_keyword(text, "plate")` matches → `parse_body_payload()`, push `Step::Plate`.
 4. `strip_keyword(text, "test")` matches → `parse_body_payload()` + `parse_test_modifier_tail()`, push `Step::Test`.
@@ -344,13 +344,13 @@ The `strip_keyword(text, keyword)` helper (`cli/crates/cook-lang/src/cook_line.r
 6. `text.strip_prefix('@')` succeeds → strip the `@`, require non-empty remainder, push `Step::Shell { interactive: true }`. Marks the imperative region as started.
 7. Otherwise → push `Step::Shell { interactive: false }`. Marks the imperative region as started.
 
-**Region-ordering rule (App. A.3 / §recipes.step-kinds).** The parser tracks `imperative_began: Option<usize>` — the line on which the first imperative step (`Shell`, `Lua`, `LuaBlock`) appeared. Once set, any subsequent declarative-region step — `ingredients`, `cook`, `plate`, `test`, module-call, `InlineLua`, `InlineLuaBlock` — is rejected with a diagnostic naming both lines (`region_violation`, `cli/crates/cook-lang/src/recipe.rs:287`).
+**Region-ordering rule (App. A.3 / §recipes.step-kinds).** The parser tracks `imperative_began: Option<usize>` — the line on which the first imperative step (`Shell`, `Lua`, `LuaBlock`) appeared. Once set, any subsequent declarative-region step — `inputs`, `cook`, `plate`, `test`, module-call, `InlineLua`, `InlineLuaBlock` — is rejected with a diagnostic naming both lines (`region_violation`, `cli/crates/cook-lang/src/recipe.rs:287`).
 
 #### 4. Chore Scope (`parse_chore()`, `cli/crates/cook-lang/src/recipe.rs:519`)
 
 Almost identical to recipe scope, with three differences:
 
-- `ingredients`, `cook`, `plate`, `test` are all banned and produce a tailored error from `chore_banned` (`cli/crates/cook-lang/src/recipe.rs:539`): "'cook' is not allowed in a chore; use 'recipe' for build outputs".
+- `inputs`, `cook`, `plate`, `test` are all banned and produce a tailored error from `chore_banned` (`cli/crates/cook-lang/src/recipe.rs:539`): "'cook' is not allowed in a chore; use 'recipe' for build outputs".
 - Bare shell commands inside a chore body are pushed as `Step::Shell { interactive: true }` regardless of whether `@` is present — chores are default-interactive.
 - The same region-ordering rule applies, but only `InlineLua` / `InlineLuaBlock` / module-call can violate it (the others are banned outright).
 

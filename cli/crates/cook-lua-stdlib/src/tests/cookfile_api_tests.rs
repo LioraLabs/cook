@@ -68,8 +68,10 @@ fn append_adds_a_declaration_at_end_of_file() {
     .unwrap();
 
     let out = read(dir.path());
-    assert!(out.ends_with("recipe math\n    cook_cc.lib({ sources = { \"src/math.cpp\" } })\n"),
-        "got: {out}");
+    assert!(
+        out.ends_with("recipe math\n    cook_cc.lib({ sources = { \"src/math.cpp\" } })\n"),
+        "got: {out}"
+    );
     assert!(out.contains("recipe app"), "existing content kept: {out}");
 }
 
@@ -108,7 +110,10 @@ fn a_failed_splice_leaves_the_file_untouched() {
         .to_string();
 
     assert!(err.contains("couldn't find 'needs'"), "got: {err}");
-    assert!(err.contains("add \"sdl2\" to it manually"), "actionable: {err}");
+    assert!(
+        err.contains("add \"sdl2\" to it manually"),
+        "actionable: {err}"
+    );
     assert_eq!(read(dir.path()), COOKFILE, "file must be byte-identical");
 }
 
@@ -228,8 +233,14 @@ fn a_mistyped_option_is_refused_rather_than_read_as_a_refusal() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(err.contains("unknown option 'create_if_missing'"), "got: {err}");
-    assert!(err.contains("create_if_absent"), "names the real one: {err}");
+    assert!(
+        err.contains("unknown option 'create_if_missing'"),
+        "got: {err}"
+    );
+    assert!(
+        err.contains("create_if_absent"),
+        "names the real one: {err}"
+    );
     assert_eq!(read(dir.path()), NO_LINKS, "refused before any write");
 }
 
@@ -250,7 +261,9 @@ fn a_non_boolean_option_value_is_refused() {
 fn field_entries_comes_back_as_a_lua_sequence() {
     let (lua, dir) = setup(COOKFILE);
     let joined: String = lua
-        .load(r#"return table.concat(cook.cookfile.field_entries("Cookfile", "app", "links"), "|")"#)
+        .load(
+            r#"return table.concat(cook.cookfile.field_entries("Cookfile", "app", "links"), "|")"#,
+        )
         .eval()
         .unwrap();
     assert_eq!(joined, "\"mathlib\"");

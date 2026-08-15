@@ -5,20 +5,16 @@ fn test_recipe_construction() {
     let recipe = Recipe {
         name: "build".to_string(),
         deps: vec!["setup".to_string()],
-        ingredients: vec!["src/*.c".to_string()],
+        inputs: vec!["src/*.c".to_string()],
         excludes: vec![],
-        steps: vec![
-            Step::Cook {
-                step: CookStep {
-                    outputs: vec![OutputPattern::Quoted("build/obj/{stem}.o".to_string())],
-                    body: Some(Body::ShellBlock(
-                        vec!["gcc -c {in} -o {out}".to_string()],
-                    )),
-                    disposition: Disposition::default(),
-                },
-                line: 4,
+        steps: vec![Step::Cook {
+            step: CookStep {
+                outputs: vec![OutputPattern::Quoted("build/obj/{stem}.o".to_string())],
+                body: Some(Body::ShellBlock(vec!["gcc -c {in} -o {out}".to_string()])),
+                disposition: Disposition::default(),
             },
-        ],
+            line: 4,
+        }],
         line: 1,
     };
     assert_eq!(recipe.name, "build");
@@ -31,7 +27,7 @@ fn test_recipe_no_metadata() {
     let recipe = Recipe {
         name: "clean".to_string(),
         deps: vec![],
-        ingredients: vec![],
+        inputs: vec![],
         excludes: vec![],
         steps: vec![Step::Shell {
             command: "rm -rf build".to_string(),
@@ -41,7 +37,7 @@ fn test_recipe_no_metadata() {
         line: 1,
     };
     assert!(recipe.deps.is_empty());
-    assert!(recipe.ingredients.is_empty());
+    assert!(recipe.inputs.is_empty());
 }
 
 #[test]
@@ -93,7 +89,11 @@ fn test_cookfile_with_uses() {
         config_blocks: vec![],
         recipes: vec![],
         chores: vec![],
-        uses: vec![UseStatement { alias: "cpp".to_string(), target: "cpp".to_string(), line: 1 }],
+        uses: vec![UseStatement {
+            alias: "cpp".to_string(),
+            target: "cpp".to_string(),
+            line: 1,
+        }],
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
@@ -129,8 +129,16 @@ fn test_unnamed_config_block_construction() {
 fn test_cookfile_with_config_blocks() {
     let cookfile = Cookfile {
         config_blocks: vec![
-            ConfigBlock { name: None,                    body: "base".into(), line: 1 },
-            ConfigBlock { name: Some("release".into()),  body: "rel".into(),  line: 4 },
+            ConfigBlock {
+                name: None,
+                body: "base".into(),
+                line: 1,
+            },
+            ConfigBlock {
+                name: Some("release".into()),
+                body: "rel".into(),
+                line: 4,
+            },
         ],
         recipes: vec![],
         chores: vec![],
@@ -181,16 +189,33 @@ fn chore_carries_empty_params_by_default() {
 
 #[test]
 fn chore_param_variants_construct() {
-    let p_req = ChoreParam::Required { name: "target".into(), line: 1, col: 13 };
+    let p_req = ChoreParam::Required {
+        name: "target".into(),
+        line: 1,
+        col: 13,
+    };
     let p_def_str = ChoreParam::DefaultedString {
-        name: "host".into(), default: "prod".into(), line: 1, col: 20,
+        name: "host".into(),
+        default: "prod".into(),
+        line: 1,
+        col: 20,
     };
     let p_def_lua = ChoreParam::DefaultedLua {
-        name: "version".into(), default_lua: "cook.git.head_tag() or \"v0\"".into(),
-        line: 1, col: 27,
+        name: "version".into(),
+        default_lua: "cook.git.head_tag() or \"v0\"".into(),
+        line: 1,
+        col: 27,
     };
-    let p_var_plus = ChoreParam::VariadicPlus { name: "FILES".into(), line: 1, col: 36 };
-    let p_var_star = ChoreParam::VariadicStar { name: "EXTRAS".into(), line: 1, col: 44 };
+    let p_var_plus = ChoreParam::VariadicPlus {
+        name: "FILES".into(),
+        line: 1,
+        col: 36,
+    };
+    let p_var_star = ChoreParam::VariadicStar {
+        name: "EXTRAS".into(),
+        line: 1,
+        col: 44,
+    };
     for p in [p_req, p_def_str, p_def_lua, p_var_plus, p_var_star] {
         let _ = p.clone();
     }
@@ -205,12 +230,19 @@ fn test_cookfile_with_register_blocks_and_top_level_calls() {
         uses: vec![],
         imports: vec![],
         register_blocks: vec![
-            RegisterBlock { body: "a()".into(), line: 1 },
-            RegisterBlock { body: "b()".into(), line: 5 },
+            RegisterBlock {
+                body: "a()".into(),
+                line: 1,
+            },
+            RegisterBlock {
+                body: "b()".into(),
+                line: 5,
+            },
         ],
-        top_level_module_calls: vec![
-            TopLevelModuleCall { code: "cpp.bin(\"x\")".into(), line: 3 },
-        ],
+        top_level_module_calls: vec![TopLevelModuleCall {
+            code: "cpp.bin(\"x\")".into(),
+            line: 3,
+        }],
         probes: vec![],
     };
     assert_eq!(cookfile.register_blocks.len(), 2);
@@ -223,7 +255,7 @@ fn probe_ast_constructs() {
     let p = Probe {
         name: "services".to_string(),
         deps: vec!["cards".to_string()],
-        ingredients: vec!["data/services.json".to_string()],
+        inputs: vec!["data/services.json".to_string()],
         excludes: vec![],
         produce: ProbeProduce::Lua("return {}".to_string()),
         line: 1,
@@ -236,19 +268,37 @@ fn probe_ast_constructs() {
         commands: vec!["cat data/cards.json".to_string()],
         typing: ShellProduceType::Json,
     };
-    assert!(matches!(shell, ProbeProduce::Shell { typing: ShellProduceType::Json, .. }));
+    assert!(matches!(
+        shell,
+        ProbeProduce::Shell {
+            typing: ShellProduceType::Json,
+            ..
+        }
+    ));
 
     let shell_str = ProbeProduce::Shell {
         commands: vec!["hostname".to_string()],
         typing: ShellProduceType::String,
     };
-    assert!(matches!(shell_str, ProbeProduce::Shell { typing: ShellProduceType::String, .. }));
+    assert!(matches!(
+        shell_str,
+        ProbeProduce::Shell {
+            typing: ShellProduceType::String,
+            ..
+        }
+    ));
 
     let shell_lines = ProbeProduce::Shell {
         commands: vec!["ls data/".to_string()],
         typing: ShellProduceType::Lines,
     };
-    assert!(matches!(shell_lines, ProbeProduce::Shell { typing: ShellProduceType::Lines, .. }));
+    assert!(matches!(
+        shell_lines,
+        ProbeProduce::Shell {
+            typing: ShellProduceType::Lines,
+            ..
+        }
+    ));
 }
 
 #[test]

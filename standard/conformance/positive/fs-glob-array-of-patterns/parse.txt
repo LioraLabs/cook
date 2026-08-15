@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="list_sources" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local files = fs.glob({\"src/*.c\", \"src/legacy/*.c\"})\n        for _, f in ipairs(files) do\n          print(f)\n        end")

@@ -69,7 +69,7 @@ The Rust parser claims a Cook Standard version via the `pub const COOK_STANDARD_
 
 Language v2 draws the corpus boundary at `cs-standard/v0.18`: that in-progress
 tag must point at the integration commit containing the `gather` / `seal`
-corpus. Earlier tags remain frozen with `ingredients`; once that spelling is
+corpus. Earlier tags remain frozen with `inputs`; once that spelling is
 removed, `standard.against-tag` is not expected to pass across this boundary.
 
 **Bumping the claim.** When the parser catches up to a new cut, bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to match `standard/VERSION` in the same commit. Update the claim in `cli/crates/cook-lang/README.md` and `cli/crates/cook-lang/CONFORMANCE.md`'s "Pending CSes" section (the project root `README.md` is a product page and carries no version claim). The conformance harness should be green at that commit.

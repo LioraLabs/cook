@@ -22,7 +22,14 @@ fn unit_node(id: &str, recipe: Option<&str>, cache_key: Option<&str>) -> NodeDat
 #[test]
 fn facts_join_on_recipe_and_cache_key() {
     let mut a = Annotations::new();
-    a.insert("build", "step:0", UnitFacts { served: true, observed_ms: Some(90) });
+    a.insert(
+        "build",
+        "step:0",
+        UnitFacts {
+            served: true,
+            observed_ms: Some(90),
+        },
+    );
 
     let node = unit_node("unit:build:0", Some("build"), Some("step:0"));
     let f = a.for_node(&node).expect("joined");
@@ -35,7 +42,14 @@ fn facts_join_on_recipe_and_cache_key() {
 #[test]
 fn the_recipe_half_of_the_key_is_load_bearing() {
     let mut a = Annotations::new();
-    a.insert("build", "step:0", UnitFacts { served: true, observed_ms: None });
+    a.insert(
+        "build",
+        "step:0",
+        UnitFacts {
+            served: true,
+            observed_ms: None,
+        },
+    );
 
     let other = unit_node("unit:test:0", Some("test"), Some("step:0"));
     assert!(a.for_node(&other).is_none());
@@ -46,7 +60,14 @@ fn the_recipe_half_of_the_key_is_load_bearing() {
 #[test]
 fn file_nodes_carry_no_facts() {
     let mut a = Annotations::new();
-    a.insert("build", "step:0", UnitFacts { served: true, observed_ms: None });
+    a.insert(
+        "build",
+        "step:0",
+        UnitFacts {
+            served: true,
+            observed_ms: None,
+        },
+    );
 
     let file = NodeData {
         kind: "file".to_string(),
@@ -60,7 +81,14 @@ fn file_nodes_carry_no_facts() {
 #[test]
 fn a_unit_without_a_cache_key_is_unclassified() {
     let mut a = Annotations::new();
-    a.insert("build", "step:0", UnitFacts { served: false, observed_ms: None });
+    a.insert(
+        "build",
+        "step:0",
+        UnitFacts {
+            served: false,
+            observed_ms: None,
+        },
+    );
 
     let node = unit_node("unit:build:3", Some("build"), None);
     assert!(a.for_node(&node).is_none());

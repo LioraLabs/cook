@@ -55,11 +55,11 @@ Production names use `lower_snake_case`. Terminal classes defined by regular exp
 ### Example 2.4.1
 
 ```ebnf
-ingredients_step ::= "ingredients" ingredient+ NEWLINE
-ingredient       ::= STRING | "!" STRING
+gather_step ::= "gather" input+ NEWLINE
+input       ::= STRING | "!" STRING
 ```
 
-This defines `ingredients_step` as the keyword `ingredients` followed by one or more ingredients and a newline. Each ingredient is either a bare string (include) or `!` followed by a string (exclude).
+This defines `gather_step` as the keyword `gather` followed by one or more inputs and a newline. Each input is either a bare string (include) or `!` followed by a string (exclude).
 
 ## 2.5. Precedence on grammar disagreements [#notation.grammar-precedence]
 Where the normative prose in any chapter disagrees with a production in Appendix A, Appendix A is authoritative. The prose is then a defect in the Standard and MUST be corrected to match Appendix A.

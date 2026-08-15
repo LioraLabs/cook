@@ -25,15 +25,15 @@ fn cookfile_transitively_imports_via_tree(
     candidate_cookfile: &Path,
     target_dir: &Path,
 ) -> Result<bool, PipelineError> {
-    let target_canon = std::fs::canonicalize(target_dir)
-        .unwrap_or_else(|_| target_dir.to_path_buf());
+    let target_canon =
+        std::fs::canonicalize(target_dir).unwrap_or_else(|_| target_dir.to_path_buf());
 
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut stack: Vec<PathBuf> = vec![candidate_cookfile.to_path_buf()];
 
     while let Some(cookfile_path) = stack.pop() {
-        let cookfile_canon = std::fs::canonicalize(&cookfile_path)
-            .unwrap_or_else(|_| cookfile_path.clone());
+        let cookfile_canon =
+            std::fs::canonicalize(&cookfile_path).unwrap_or_else(|_| cookfile_path.clone());
         if !visited.insert(cookfile_canon.clone()) {
             continue;
         }
@@ -70,8 +70,8 @@ fn cookfile_transitively_imports_via_tree(
 /// sigil-anchored imports) and verify that every sigil-anchored import target
 /// canonicalises to a directory at or below `candidate_root`.
 fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, PipelineError> {
-    let root_canon = std::fs::canonicalize(candidate_root)
-        .unwrap_or_else(|_| candidate_root.to_path_buf());
+    let root_canon =
+        std::fs::canonicalize(candidate_root).unwrap_or_else(|_| candidate_root.to_path_buf());
     let entry = root_canon.join("Cookfile");
     if !entry.exists() {
         return Ok(true);
@@ -81,8 +81,8 @@ fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, Pip
     let mut stack: Vec<PathBuf> = vec![entry];
 
     while let Some(cookfile_path) = stack.pop() {
-        let cf_canon = std::fs::canonicalize(&cookfile_path)
-            .unwrap_or_else(|_| cookfile_path.clone());
+        let cf_canon =
+            std::fs::canonicalize(&cookfile_path).unwrap_or_else(|_| cookfile_path.clone());
         if !visited.insert(cf_canon.clone()) {
             continue;
         }
@@ -128,8 +128,8 @@ fn first_reachable_sigil_import(
     let mut stack: Vec<PathBuf> = vec![invoked_cookfile.to_path_buf()];
 
     while let Some(cookfile_path) = stack.pop() {
-        let cf_canon = std::fs::canonicalize(&cookfile_path)
-            .unwrap_or_else(|_| cookfile_path.clone());
+        let cf_canon =
+            std::fs::canonicalize(&cookfile_path).unwrap_or_else(|_| cookfile_path.clone());
         if !visited.insert(cf_canon.clone()) {
             continue;
         }
@@ -173,8 +173,7 @@ pub fn discover_entry_cookfile(
     stop_at: Option<&Path>,
 ) -> Result<PathBuf, PipelineError> {
     let start = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
-    let stop_canon =
-        stop_at.map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
+    let stop_canon = stop_at.map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
     if let Some(stop) = &stop_canon {
         if !start.starts_with(stop) {
             return Err(PipelineError::Workspace(format!(
@@ -218,9 +217,8 @@ pub fn resolve_workspace_root(
 ) -> Result<PathBuf, PipelineError> {
     // Rule 1: explicit override.
     if let Some(root) = override_root {
-        let root = std::fs::canonicalize(&root).map_err(|e| {
-            PipelineError::Workspace(format!("--root '{}': {e}", root.display()))
-        })?;
+        let root = std::fs::canonicalize(&root)
+            .map_err(|e| PipelineError::Workspace(format!("--root '{}': {e}", root.display())))?;
         let invoked_canon = std::fs::canonicalize(invoked_cookfile).map_err(|e| {
             PipelineError::Workspace(format!(
                 "cannot resolve {}: {e}",

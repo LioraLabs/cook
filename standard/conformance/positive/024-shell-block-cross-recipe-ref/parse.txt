@@ -5,14 +5,14 @@ Cookfile
   recipes:
     Recipe name="libmath" line=1
       deps: []
-      ingredients: ["src/math/add.c", "src/math/mul.c"]
+      inputs: ["src/math/add.c", "src/math/mul.c"]
       excludes: []
       steps:
         Gather
         Cook outputs=["build/libmath.a"] body=ShellBlock(["ar rcs $<out> $<in>"])
     Recipe name="app" line=7
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["build/bin/app"] body=ShellBlock(["gcc -o $<out> main.c $<libmath>"])

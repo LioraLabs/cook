@@ -6,7 +6,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::event::{NodeId, ProgressEvent, RecipeId, Stream, PROGRESS_SCHEMA_VERSION};
+use crate::event::{NodeId, PROGRESS_SCHEMA_VERSION, ProgressEvent, RecipeId, Stream};
 use crate::model::build::BuildState;
 use crate::render::json::event_to_wire;
 use crate::wire::WireLine;
@@ -52,7 +52,10 @@ impl LogStore {
 
         let events_writer = if config.events_jsonl {
             Some(BufWriter::new(
-                OpenOptions::new().create(true).append(true).open(build_dir.join("events.jsonl"))?
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(build_dir.join("events.jsonl"))?,
             ))
         } else {
             None
@@ -69,7 +72,9 @@ impl LogStore {
         })
     }
 
-    pub fn build_id(&self) -> &str { &self.build_id }
+    pub fn build_id(&self) -> &str {
+        &self.build_id
+    }
 
     pub fn record(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
         if let Some(w) = self.events_writer.as_mut() {
@@ -88,7 +93,13 @@ impl LogStore {
             w.write_all(b"\n")?;
         }
 
-        if let ProgressEvent::NodeOutput { recipe, node, line, stream } = event {
+        if let ProgressEvent::NodeOutput {
+            recipe,
+            node,
+            line,
+            stream,
+        } = event
+        {
             let key = (*recipe, *node);
             let bytes_now = *self.node_bytes.entry(key).or_insert(0);
             if bytes_now >= self.config.max_bytes_per_node {
@@ -102,14 +113,21 @@ impl LogStore {
                     .and_then(|x| x.nodes.get(node))
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| format!("node-{}", node.raw()));
-                let dir = self.root.join(&self.build_id).join("nodes").join(sanitize(rname));
+                let dir = self
+                    .root
+                    .join(&self.build_id)
+                    .join("nodes")
+                    .join(sanitize(rname));
                 fs::create_dir_all(&dir)?;
                 let path = dir.join(format!("{}.log", sanitize(&nname)));
                 let f = OpenOptions::new().create(true).append(true).open(path)?;
                 self.node_writers.insert(key, BufWriter::new(f));
             }
 
-            let tag = match stream { Stream::Stdout => "[out]", Stream::Stderr => "[err]" };
+            let tag = match stream {
+                Stream::Stdout => "[out]",
+                Stream::Stderr => "[err]",
+            };
             let record = format!("{tag} {line}\n");
             let writer = self.node_writers.get_mut(&key).unwrap();
             writer.write_all(record.as_bytes())?;
@@ -123,8 +141,12 @@ impl LogStore {
     }
 
     pub fn close(&mut self, success: bool) -> io::Result<()> {
-        if let Some(w) = self.events_writer.as_mut() { w.flush()?; }
-        for w in self.node_writers.values_mut() { w.flush()?; }
+        if let Some(w) = self.events_writer.as_mut() {
+            w.flush()?;
+        }
+        for w in self.node_writers.values_mut() {
+            w.flush()?;
+        }
 
         let manifest = format!(
             "schema_version = 1\nbuild_id = \"{}\"\nstarted_at = \"{}\"\nended_at = \"{}\"\nexit_code = {}\n",
@@ -139,14 +161,22 @@ impl LogStore {
 }
 
 fn new_build_id() -> String {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     let hash = format!("{:x}", ts & 0xfff);
     format!("{}-{hash}", current_date_string())
 }
 
 fn current_date_string() -> String {
     let now = time::OffsetDateTime::now_utc();
-    format!("{:04}-{:02}-{:02}", now.year(), u8::from(now.month()), now.day())
+    format!(
+        "{:04}-{:02}-{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    )
 }
 
 fn current_rfc3339() -> String {
@@ -157,7 +187,13 @@ fn current_rfc3339() -> String {
 
 fn sanitize(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -165,7 +201,12 @@ fn rotate(root: &Path, keep_builds: usize, max_total_bytes: u64) -> io::Result<(
     let mut entries: Vec<(PathBuf, SystemTime)> = fs::read_dir(root)?
         .filter_map(|r| r.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (e.path(), t)))
+        .filter_map(|e| {
+            e.metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| (e.path(), t))
+        })
         .collect();
     entries.sort_by_key(|(_, t)| *t);
 
@@ -175,10 +216,10 @@ fn rotate(root: &Path, keep_builds: usize, max_total_bytes: u64) -> io::Result<(
     }
 
     loop {
-        let total: u64 = entries.iter()
-            .map(|(p, _)| dir_size(p).unwrap_or(0))
-            .sum();
-        if total <= max_total_bytes || entries.is_empty() { break; }
+        let total: u64 = entries.iter().map(|(p, _)| dir_size(p).unwrap_or(0)).sum();
+        if total <= max_total_bytes || entries.is_empty() {
+            break;
+        }
         let (p, _) = entries.remove(0);
         let _ = fs::remove_dir_all(p);
     }

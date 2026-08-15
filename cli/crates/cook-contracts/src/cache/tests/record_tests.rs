@@ -62,12 +62,18 @@ fn no_declaration_means_never_cached() {
 /// kind later, without further change here.
 #[test]
 fn a_declaration_without_outputs_is_cached_by_result() {
-    assert_eq!(cacheability(Some(&meta("k", &[]))), Cacheability::ResultOnly);
+    assert_eq!(
+        cacheability(Some(&meta("k", &[]))),
+        Cacheability::ResultOnly
+    );
 }
 
 #[test]
 fn a_declaration_with_outputs_is_cached_by_artifact() {
-    assert_eq!(cacheability(Some(&meta("k", &["out.o"]))), Cacheability::Artifacts);
+    assert_eq!(
+        cacheability(Some(&meta("k", &["out.o"]))),
+        Cacheability::Artifacts
+    );
 }
 
 /// Absence of a declaration is the ONLY thing cacheability adds over
@@ -94,7 +100,10 @@ fn stored() -> Determinants {
 
 #[test]
 fn unmoved_determinants_permit_a_replay() {
-    assert_eq!(determinant_drift(&stored(), &Determinants::new(0xbeef, 0, 0x5ea1)), None);
+    assert_eq!(
+        determinant_drift(&stored(), &Determinants::new(0xbeef, 0, 0x5ea1)),
+        None
+    );
 }
 
 #[test]
@@ -135,7 +144,10 @@ fn an_observing_unit_obeys_the_same_determinant_rule() {
     let m = meta("k", &[]);
     assert_eq!(effect_kind(&m), EffectKind::Observed);
     let d = Determinants::new(m.command_hash, m.env_contribution, 0x5ea1);
-    assert_eq!(determinant_drift(&d, &Determinants::new(0xbeef, 0, 0x5ea1)), None);
+    assert_eq!(
+        determinant_drift(&d, &Determinants::new(0xbeef, 0, 0x5ea1)),
+        None
+    );
     assert_eq!(
         determinant_drift(&d, &Determinants::new(0xffff, 0, 0x5ea1)),
         Some(DeterminantDrift::CommandHash)
@@ -173,7 +185,7 @@ fn an_input_alone_is_keyable() {
 }
 
 /// The arm CS-0186 added, and the one with no coverage until now. A unit
-/// fanned out over `ingredients <probe>` may declare no file at all: its member
+/// fanned out over `gather <probe>` may declare no file at all: its member
 /// is an observable input (§17.1 observable 5), it reaches the key through the
 /// command hash, and editing one member must re-run that unit alone. Refusing
 /// this arm is what left a data-member `test` fan-out re-running every

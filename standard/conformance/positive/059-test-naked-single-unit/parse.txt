@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="check" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=ShellBlock(["cargo test"])

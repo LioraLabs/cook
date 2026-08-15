@@ -5,7 +5,7 @@
 //! cache key at all, look the key up, run `produce` on a miss, publish the
 //! result, and materialise the canonical local copy. Only step five differs
 //! between phases, and only in WHICH Lua VM runs the source: the register VM
-//! for an `ingredients <probe>` pre-pass, a worker VM for a sealed consumer.
+//! for an `inputs <probe>` pre-pass, a worker VM for a sealed consumer.
 //! That one difference is why the sequence was written twice; [`ProduceRunner`]
 //! makes it a parameter so it stops being a reason.
 //!
@@ -102,7 +102,7 @@ impl std::fmt::Display for ProbeError {
 /// Note for callers: "no backend" must mean genuinely no backend. COOK-359's
 /// root cause was a caller that passed `None` because nobody had wired the
 /// context, which silently converted every GET into a miss and made an
-/// `ingredients <probe>` driver re-produce on every invocation for the life of
+/// `inputs <probe>` driver re-produce on every invocation for the life of
 /// the feature.
 pub struct CacheAccess<'a> {
     pub backend: &'a dyn cook_cache::backend::CacheBackend,
@@ -207,7 +207,10 @@ pub fn lookup(
     // 1. Resolve declared inputs (env / tools / files / upstream fingerprints).
     let inputs =
         cook_cache::probe::resolve_probe_inputs(probe, ctx.working_dir, env_lookup, upstream_fps)
-            .map_err(|message| ProbeError::ResolveInputs { key: key.to_string(), message })?;
+            .map_err(|message| ProbeError::ResolveInputs {
+            key: key.to_string(),
+            message,
+        })?;
 
     // 2. Fingerprint. §22.5.4 sections 1-3 are always present; 4-7 are empty
     //    unless declared.
@@ -223,7 +226,11 @@ pub fn lookup(
         && probe.inputs.tools.is_empty()
         && probe.inputs.files.is_empty()
         && probe.inputs.requires.is_empty();
-    let reaches_keyless = probe.inputs.requires.iter().any(|k| keyless_upstreams.contains(k));
+    let reaches_keyless = probe
+        .inputs
+        .requires
+        .iter()
+        .any(|k| keyless_upstreams.contains(k));
     let keyless = declares_nothing || reaches_keyless;
 
     // 4. CS-0157 tool locations. Resolved before the hit/miss fork so both
@@ -353,7 +360,13 @@ pub fn lookup(
         None => None,
     };
 
-    Ok(Lookup { fingerprint, keyless, tool_paths, warnings, resolved })
+    Ok(Lookup {
+        fingerprint,
+        keyless,
+        tool_paths,
+        warnings,
+        resolved,
+    })
 }
 
 /// What [`record`] did.
@@ -445,7 +458,11 @@ pub fn record(
         ));
     }
 
-    Recorded { fingerprint: stored_fingerprint, warnings, published }
+    Recorded {
+        fingerprint: stored_fingerprint,
+        warnings,
+        published,
+    }
 }
 
 /// The candidate module-path sets to try, newest first.
@@ -493,7 +510,12 @@ fn fold_candidate(declared: &[u8; 32], working_dir: &Path, paths: &[String]) -> 
     }
     let hashed: Vec<(String, [u8; 32])> = paths
         .iter()
-        .map(|p| (p.clone(), cook_cache::hash_file_sha256(&working_dir.join(p))))
+        .map(|p| {
+            (
+                p.clone(),
+                cook_cache::hash_file_sha256(&working_dir.join(p)),
+            )
+        })
         .collect();
     cook_contracts::context::fold_module_sources(declared, &hashed)
 }
@@ -538,9 +560,13 @@ pub fn evaluate(
     let (bytes, module_paths, source) = match found.resolved.take() {
         Some((bytes, source)) => (bytes, Vec::new(), source),
         None => {
-            let produced = runner
-                .run(key, &probe.produce_source)
-                .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?;
+            let produced =
+                runner
+                    .run(key, &probe.produce_source)
+                    .map_err(|message| ProbeError::Produce {
+                        key: key.to_string(),
+                        message,
+                    })?;
             (produced.bytes, produced.module_paths, ValueSource::Produced)
         }
     };

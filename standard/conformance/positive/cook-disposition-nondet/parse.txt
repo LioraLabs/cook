@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="gen" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out.txt"] body=ShellBlock(["make-thing out.txt"]) disposition=[local=false pinned=false record=true seal=[]]

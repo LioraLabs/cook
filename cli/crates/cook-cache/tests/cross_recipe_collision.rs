@@ -1,7 +1,7 @@
 //! AC-Integ.2: Two recipes producing `build/main.o` from different
 //! sources/commands must produce different cloud keys.
 
-use cook_cache::backend::{cloud_key, CloudKeyInputs};
+use cook_cache::backend::{CloudKeyInputs, cloud_key};
 use cook_cache::store::CACHE_VERSION;
 
 #[test]
@@ -17,7 +17,7 @@ fn two_recipes_same_output_path_different_keys() {
     });
     let key_b = cloud_key(&CloudKeyInputs {
         schema_version: CACHE_VERSION,
-        recipe_namespace: "myproj/Cookfile::test",  // different recipe
+        recipe_namespace: "myproj/Cookfile::test", // different recipe
         command_hash: 0xAA,
         env_contribution: 0xCC,
         seal_contribution: 0,

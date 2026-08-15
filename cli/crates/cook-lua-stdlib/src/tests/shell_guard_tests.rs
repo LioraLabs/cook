@@ -18,7 +18,10 @@ fn confined_os_execute_raises() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(err.contains("shell escape hatch is disabled"), "missing guard text: {err}");
+    assert!(
+        err.contains("shell escape hatch is disabled"),
+        "missing guard text: {err}"
+    );
     assert!(err.contains("os.execute"), "missing api name: {err}");
 }
 
@@ -49,7 +52,10 @@ fn confined_io_popen_raises() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(err.contains("shell escape hatch is disabled"), "missing guard text: {err}");
+    assert!(
+        err.contains("shell escape hatch is disabled"),
+        "missing guard text: {err}"
+    );
     assert!(err.contains("io.popen"), "missing api name: {err}");
 }
 

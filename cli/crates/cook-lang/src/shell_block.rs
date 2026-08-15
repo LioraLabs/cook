@@ -59,7 +59,11 @@ pub(crate) fn collect_shell_block(
             let close_line = line_idx + 1; // 1-indexed
             push_segment(&mut commands, &raw_line[..close]);
             let tail = raw_line[close + 1..].trim().to_string();
-            return Ok((commands, tail, skip_past_line(tokens, token_pos, close_line)));
+            return Ok((
+                commands,
+                tail,
+                skip_past_line(tokens, token_pos, close_line),
+            ));
         }
         push_segment(&mut commands, raw_line);
         line_idx += 1;
@@ -80,9 +84,7 @@ pub(crate) fn reject_stray_tail(tail: &str, line: usize, context: &str) -> Resul
     }
     Err(ParseError::Parse {
         line,
-        message: format!(
-            "{context}: unexpected text after the closing '}}': `{tail}`"
-        ),
+        message: format!("{context}: unexpected text after the closing '}}': `{tail}`"),
     })
 }
 

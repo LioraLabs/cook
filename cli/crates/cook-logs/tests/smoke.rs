@@ -13,26 +13,32 @@ use std::collections::BTreeMap;
 fn public_surface_compiles() {
     // Just verify the public types are accessible and constructable.
     let mut nodes = BTreeMap::new();
-    nodes.insert(NodeId::new(0), NodeView {
-        name: "lvm.c".into(),
-        status: NodeStatus::Failed,
-        kind: NodeKind::Cooked,
-        started_at: None,
-        ended_at: None,
-        elapsed_ms: Some(1100),
-        skip_reason: None,
-        lines: vec![LogLine {
-            stream: Stream::Stderr,
-            ts: None,
-            text: "error: undeclared 'foo'".into(),
-        }],
-    });
+    nodes.insert(
+        NodeId::new(0),
+        NodeView {
+            name: "lvm.c".into(),
+            status: NodeStatus::Failed,
+            kind: NodeKind::Cooked,
+            started_at: None,
+            ended_at: None,
+            elapsed_ms: Some(1100),
+            skip_reason: None,
+            lines: vec![LogLine {
+                stream: Stream::Stderr,
+                ts: None,
+                text: "error: undeclared 'foo'".into(),
+            }],
+        },
+    );
     let mut recipes = BTreeMap::new();
-    recipes.insert(RecipeId::new(0), RecipeView {
-        name: "vm".into(),
-        status: Status::Failed,
-        nodes,
-    });
+    recipes.insert(
+        RecipeId::new(0),
+        RecipeView {
+            name: "vm".into(),
+            status: Status::Failed,
+            nodes,
+        },
+    );
     let view = BuildView {
         build_id: "2026-05-10-abc".into(),
         started_at: "2026-05-10T10:00:00Z".into(),

@@ -65,16 +65,14 @@ fn lua_to_json_inner(
         LuaValue::Nil => Ok(JsonValue::Null),
         LuaValue::Boolean(b) => Ok(JsonValue::Bool(*b)),
         LuaValue::Integer(i) => Ok(JsonValue::Number((*i).into())),
-        LuaValue::Number(n) => {
-            serde_json::Number::from_f64(*n)
-                .map(JsonValue::Number)
-                .ok_or_else(|| {
-                    format!(
-                        "non-serialisable value at .{} (non-finite number)",
-                        render_path(path)
-                    )
-                })
-        }
+        LuaValue::Number(n) => serde_json::Number::from_f64(*n)
+            .map(JsonValue::Number)
+            .ok_or_else(|| {
+                format!(
+                    "non-serialisable value at .{} (non-finite number)",
+                    render_path(path)
+                )
+            }),
         LuaValue::String(s) => match s.to_str() {
             Ok(utf8) => Ok(JsonValue::String(utf8.to_owned())),
             Err(_) => Err(format!(
@@ -133,9 +131,8 @@ fn table_to_json(
     let mut str_keys: Vec<String> = vec![];
     let mut other_keys = 0usize;
     for pair in t.clone().pairs::<LuaValue, LuaValue>() {
-        let (k, _) = pair.map_err(|e| {
-            format!("table iteration failed at .{}: {}", render_path(path), e)
-        })?;
+        let (k, _) =
+            pair.map_err(|e| format!("table iteration failed at .{}: {}", render_path(path), e))?;
         match k {
             LuaValue::Integer(i) => int_keys.push(i),
             LuaValue::String(s) => str_keys.push(s.to_string_lossy().to_owned()),
@@ -180,7 +177,9 @@ fn table_to_json(
         let mut map = JsonMap::new();
         for k in &str_keys {
             path.push(k.clone());
-            let v: LuaValue = t.get(k.as_str()).map_err(|e| format!("get failed: {}", e))?;
+            let v: LuaValue = t
+                .get(k.as_str())
+                .map_err(|e| format!("get failed: {}", e))?;
             let jv = lua_to_json_inner(&v, path, visited)?;
             path.pop();
             map.insert(k.clone(), jv);

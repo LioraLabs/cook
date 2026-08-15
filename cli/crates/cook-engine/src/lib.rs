@@ -167,14 +167,9 @@ pub enum EngineEvent {
         total_nodes: usize,
     },
     /// A recipe has been queued for registration.
-    RecipeQueued {
-        name: String,
-    },
+    RecipeQueued { name: String },
     /// A recipe has started executing its work nodes.
-    RecipeStarted {
-        name: String,
-        total_nodes: usize,
-    },
+    RecipeStarted { name: String, total_nodes: usize },
     /// A recipe completed all its work nodes successfully.
     RecipeCompleted {
         name: String,
@@ -274,10 +269,7 @@ pub enum EngineEvent {
         kind: NodeKind,
     },
     /// A work node was skipped because an upstream dependency failed.
-    NodeSkipped {
-        recipe: String,
-        node_name: String,
-    },
+    NodeSkipped { recipe: String, node_name: String },
     /// An interactive command is about to run on the main thread.
     InteractiveStart {
         recipe: String,
@@ -322,10 +314,7 @@ pub enum EngineEvent {
         stream: OutputStream,
     },
     /// The entire engine run has finished.
-    Finished {
-        elapsed: Duration,
-        success: bool,
-    },
+    Finished { elapsed: Duration, success: bool },
     /// A test unit has started executing.
     TestStarted {
         id: TestId,
@@ -461,10 +450,7 @@ pub enum EngineError {
 
     /// Registration (capture-mode Lua execution) failed.
     #[error("registration failed for recipe '{recipe}': {message}")]
-    RegistrationFailed {
-        recipe: String,
-        message: String,
-    },
+    RegistrationFailed { recipe: String, message: String },
 
     /// Cache I/O error.
     #[error("cache error: {0}")]
@@ -474,10 +460,7 @@ pub enum EngineError {
     /// path. Detected at plan time, before any work runs, to prevent silent
     /// races under `--jobs > 1`.
     #[error("output collision: {recipes:?} all declare output {path:?} with no dependency edge between them")]
-    OutputCollision {
-        path: PathBuf,
-        recipes: Vec<String>,
-    },
+    OutputCollision { path: PathBuf, recipes: Vec<String> },
 
     /// §22.1.2 terminal-output rule violation: a downstream recipe declares
     /// a literal `inputs[]` path that is matched by an upstream recipe's
@@ -541,8 +524,6 @@ pub enum EngineError {
 
 /// Reported commands carry codegen's `set -e` prelude; strip it for display.
 /// The one inverse lives beside compose() (COOK-391).
-
-
 
 #[cfg(test)]
 #[path = "tests/test_result_tests.rs"]

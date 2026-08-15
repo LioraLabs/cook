@@ -34,13 +34,13 @@ fn rejects_unclosed_block() {
     match err {
         ParseError::Parse { message, .. } => assert!(message.contains("unclosed")),
         _ => panic!("wrong error"),
-        }
     }
+}
 
-    #[test]
-    fn respects_nested_braces_in_content() {
-        // lines containing balanced braces don't prematurely close the block.
-        let src = "{\n    echo \"hello { world }\"\n    line2\n}\n";
+#[test]
+fn respects_nested_braces_in_content() {
+    // lines containing balanced braces don't prematurely close the block.
+    let src = "{\n    echo \"hello { world }\"\n    line2\n}\n";
     let (cmds, _) = run(src).expect("ok");
     assert_eq!(cmds.len(), 2);
 }
@@ -73,20 +73,20 @@ fn cs_0022_inline_block_no_close_collects_multiline() {
     match err {
         ParseError::Parse { message, .. } => assert!(message.contains("unclosed")),
         _ => panic!("wrong error"),
-        }
     }
+}
 
-    // ── CS-0035: heredoc state carries across shell-block lines ──
+// ── CS-0035: heredoc state carries across shell-block lines ──
 
-    #[test]
-    fn cs_0035_heredoc_with_brace_inside_body() {
-        // The `}` on line 3 is heredoc body, not the block close.
-        let src = "{\n    cat <<EOF\n    } not a closer\n    EOF\n    echo done\n}\n";
+#[test]
+fn cs_0035_heredoc_with_brace_inside_body() {
+    // The `}` on line 3 is heredoc body, not the block close.
+    let src = "{\n    cat <<EOF\n    } not a closer\n    EOF\n    echo done\n}\n";
     let (cmds, _) = run(src).expect("ok");
     assert_eq!(cmds.len(), 4);
     assert_eq!(cmds[0], "cat <<EOF");
     assert_eq!(cmds[1], "} not a closer");
-        assert_eq!(cmds[2], "EOF");
+    assert_eq!(cmds[2], "EOF");
     assert_eq!(cmds[3], "echo done");
 }
 

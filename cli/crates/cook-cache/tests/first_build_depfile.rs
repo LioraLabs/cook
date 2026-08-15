@@ -6,9 +6,9 @@
 //! subsequent builds generate a depfile and pick up header changes.
 
 use cook_cache::backend::{
-    cloud_key, get_bytes, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    ArtifactMeta, CloudKeyInputs, LocalBackend, cloud_key, get_bytes, put_bytes,
 };
-use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
+use cook_cache::store::{CACHE_VERSION, FileRecord, StepEntry};
 
 fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry {
     StepEntry {
@@ -146,5 +146,8 @@ fn header_change_after_pull_invalidates_correctly() {
         sorted_input_content_hashes: &h_fat,
     });
 
-    assert_ne!(key_thin, key_fat, "fattened input set → different cloud_key");
+    assert_ne!(
+        key_thin, key_fat,
+        "fattened input set → different cloud_key"
+    );
 }

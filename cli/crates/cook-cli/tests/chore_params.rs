@@ -48,10 +48,7 @@ fn run_cook_isolated(dir: &Path, args: &[&str]) -> std::process::Output {
     fs::create_dir_all(dir.join(".cook")).expect("mkdir .cook");
     fs::write(
         dir.join(".cook/cloud.toml"),
-        format!(
-            "[cache]\ncache_dir = \"{}\"\n",
-            dir.join("cache").display()
-        ),
+        format!("[cache]\ncache_dir = \"{}\"\n", dir.join("cache").display()),
     )
     .expect("write cloud.toml");
     run_cook_raw_env(dir, args, &[("COOK_NO_PUBLISH", "1")])
@@ -173,8 +170,7 @@ fn recipe_with_argv_errors() {
         "cook build foo should have failed (recipes take no params)\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("recipes do not take parameters")
-            || stderr.contains("recipe 'build'"),
+        stderr.contains("recipes do not take parameters") || stderr.contains("recipe 'build'"),
         "expected stderr to mention recipes-take-no-params\nstderr: {stderr}"
     );
 }
@@ -337,7 +333,10 @@ fn chore_lua_default_overridden_by_explicit_argv() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}");
     assert!(stdout.contains("hello alice"), "stdout: {stdout}");
-    assert!(!stdout.contains("fallback"), "stdout should not contain 'fallback': {stdout}");
+    assert!(
+        !stdout.contains("fallback"),
+        "stdout should not contain 'fallback': {stdout}"
+    );
 }
 
 /// `cook greet` (no argv) where the default expression calls `error("boom")`.
@@ -394,7 +393,11 @@ fn shell_step_substitutes_param_placeholders() {
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say", "hello"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("got: hello"), "stdout: {stdout}");
 }
 
@@ -412,7 +415,11 @@ fn shell_step_substitutes_variadic_placeholder_shell_quoted() {
     // Last arg has a space — verify quoting preserves it as one word.
     let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b lua"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("a.lua\n"), "stdout: {stdout}");
     assert!(stdout.contains("b lua\n"), "stdout: {stdout}");
 }
@@ -430,7 +437,10 @@ fn shell_step_with_unknown_sigil_in_chore_errors() {
     let out = run_cook_raw(tmp.path(), &["say", "hello"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
-    assert!(stderr.contains("unknown") || stderr.contains("placeholder"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("unknown") || stderr.contains("placeholder"),
+        "stderr: {stderr}"
+    );
 }
 
 // ── CS-0128: context-aware sigil interpolation quoting ───────────────────────
@@ -533,7 +543,11 @@ fn chore_param_exported_as_env_var_to_shell_child() {
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say", "production"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("env_target=production"), "stdout: {stdout}");
 }
 
@@ -549,7 +563,11 @@ fn variadic_param_exported_as_space_joined_env_var() {
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b.lua"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("env_files=a.lua b.lua"), "stdout: {stdout}");
 }
 
@@ -565,7 +583,11 @@ fn defaulted_param_env_var_uses_default_when_argv_absent() {
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("env=staging"), "stdout: {stdout}");
 }
 
@@ -597,7 +619,11 @@ fn preset_via_long_flag() {
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "--config", "rel"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("target=production"));
     assert!(stdout.contains("mode=rel"));
 }
@@ -610,7 +636,11 @@ fn preset_via_short_flag() {
         "config rel\n    var.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=$<MODE>\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "-c", "rel"]);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("target=production"));
     assert!(stdout.contains("mode=rel"));
@@ -622,10 +652,15 @@ fn end_of_options_separator_treats_at_as_literal() {
     fs::write(
         tmp.path().join("Cookfile"),
         "chore show target\n    > print(target)\n",
-    ).unwrap();
+    )
+    .unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "--", "@latest"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("@latest"), "stdout: {stdout}");
 }
 
@@ -635,11 +670,15 @@ fn two_presets_via_sigil_errors() {
     fs::write(
         tmp.path().join("Cookfile"),
         "config a\n\nconfig b\n\nchore noop\n    > print(\"ok\")\n",
-    ).unwrap();
+    )
+    .unwrap();
     let out = run_cook_raw(tmp.path(), &["noop", "@a", "@b"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
-    assert!(stderr.contains("multiple config presets"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("multiple config presets"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -648,11 +687,15 @@ fn mixed_sigil_and_flag_errors() {
     fs::write(
         tmp.path().join("Cookfile"),
         "config a\n\nchore noop\n    > print(\"ok\")\n",
-    ).unwrap();
+    )
+    .unwrap();
     let out = run_cook_raw(tmp.path(), &["noop", "@a", "--config", "a"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
-    assert!(stderr.contains("supply only one") || stderr.contains("multiple config presets"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("supply only one") || stderr.contains("multiple config presets"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -661,7 +704,8 @@ fn legacy_second_positional_emits_migration_hint() {
     fs::write(
         tmp.path().join("Cookfile"),
         "config release\n\nchore noop\n    > print(\"ok\")\n",
-    ).unwrap();
+    )
+    .unwrap();
     let out = run_cook_raw(tmp.path(), &["noop", "release"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
@@ -708,16 +752,28 @@ fn comprehensive_chore_params_smoke_defaults_fire() {
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
 
     // Execute-phase Lua (`>`) sees the param locals.
-    assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("register: target=production"),
+        "stdout: {stdout}"
+    );
     // Shell placeholders resolve through the unified sigil path; declared
     // params are quoted via cook.__quote_param. CS-0128: these sigils sit
     // inside a double-quoted region, so they expand to the bare (escaped)
     // value — no leaked single quotes.
-    assert!(stdout.contains("shell-sub: production prod v0 "), "stdout: {stdout}");
+    assert!(
+        stdout.contains("shell-sub: production prod v0 "),
+        "stdout: {stdout}"
+    );
     // Env-vars: defaults fire when argv is exhausted.
-    assert!(stdout.contains("env: production/prod/v0/"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("env: production/prod/v0/"),
+        "stdout: {stdout}"
+    );
     // Execute-phase Lua sees the prelude-injected locals.
-    assert!(stdout.contains("exec-lua: production prod v0 #extras=0"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("exec-lua: production prod v0 #extras=0"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -733,14 +789,18 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     ).unwrap();
 
     // argv: target, host, version, then two variadic elements.
-    let out = run_cook_raw(tmp.path(), &[
-        "demo", "production", "myhost", "v1.2.3", "a.lua", "b.lua",
-    ]);
+    let out = run_cook_raw(
+        tmp.path(),
+        &["demo", "production", "myhost", "v1.2.3", "a.lua", "b.lua"],
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
 
-    assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("register: target=production"),
+        "stdout: {stdout}"
+    );
     // Variadic placeholder expands per element; CS-0128: inside the
     // double-quoted region each element is emitted bare (escaped), joined by
     // single spaces.
@@ -749,8 +809,14 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
         "stdout: {stdout}"
     );
     // Variadic env-var is space-joined.
-    assert!(stdout.contains("env: production/myhost/v1.2.3/a.lua b.lua"), "stdout: {stdout}");
-    assert!(stdout.contains("exec-lua: production myhost v1.2.3 extras=a.lua,b.lua"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("env: production/myhost/v1.2.3/a.lua b.lua"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("exec-lua: production myhost v1.2.3 extras=a.lua,b.lua"),
+        "stdout: {stdout}"
+    );
 }
 
 /// Regression: a chore that depends on another paramless chore must run
@@ -933,7 +999,11 @@ fn chore_variadic_star_with_one_argv_binds_single_element_table() {
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["fmt", "main.lua"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("count=1"), "stdout: {stdout}");
     assert!(stdout.contains("first=main.lua"), "stdout: {stdout}");
 }

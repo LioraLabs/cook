@@ -127,13 +127,13 @@ For each recipe across the workspace, `pipeline::build_workspace_recipe_info` (o
 
 ```rust
 pub struct RecipeInfo {
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub serves: Vec<String>,
     pub requires: Vec<String>,
 }
 ```
 
-`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` creates edges, and `{NAME}` body references have already been merged into `requires` by codegen (next step).
+`inputs` / `serves` are recorded for introspection (`cook menu`, `cook why`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed input-serves matching. Only `requires` creates edges, and `{NAME}` body references have already been merged into `requires` by codegen (next step).
 
 ### 4.2 `RegistryEntry` map — `cli/crates/cook-engine/src/pipeline/registries.rs`
 
@@ -179,7 +179,7 @@ Load `.cook/cloud.toml` (default if absent), build an env-denylist, probe `Execu
 
 `dependency_edges_multi` builds an adjacency map from `requires` declarations only (`build_adjacency`, `analyzer.rs:55`) and merges per-target reachability sets. It performs a DFS topological reachability check; `GraphError::UnknownRecipe` and `GraphError::CycleDetected` surface up as `EngineError::UnknownRecipe` / `EngineError::CycleDetected`.
 
-The edges map is `BTreeMap<String, Vec<String>>`: recipe name → recipes it depends on. Only `requires` and codegen-emitted name-reference edges feed this map; ingredient-serves matching is gone (see § 4.1).
+The edges map is `BTreeMap<String, Vec<String>>`: recipe name → recipes it depends on. Only `requires` and codegen-emitted name-reference edges feed this map; input-serves matching is gone (see § 4.1).
 
 ### 6.3 Wave grouping — `wave_grouper::compute_waves` (`run.rs:449`)
 

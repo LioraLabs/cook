@@ -96,7 +96,7 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
 ///    Always `false` when `allow_exclude` is false; the caller may ignore.
 ///  * `leftover` — the unparsed remainder of the line where collection
 ///    stopped. For `cook`, this is the text starting at the body opener
-///    (`{` or `>{`). For `ingredients`, this is empty (no trailing clause).
+///    (`{` or `>{`). For `inputs`, this is empty (no trailing clause).
 ///  * `new_pos` — token-stream position pointing at the first token of the
 ///    line where collection stopped (e.g. the line containing the body
 ///    opener for `cook`, or the line that broke the pattern run). NOTE: this differs
@@ -106,7 +106,7 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
 ///
 /// The caller must inspect `leftover` to decide whether the stopping line
 /// is well-formed (e.g. begins with `{` or `>{` for cook, is empty for
-/// ingredients).
+/// inputs).
 pub(crate) fn collect_quoted_patterns_multiline(
     initial_text: &str,
     initial_line: usize,
@@ -154,7 +154,8 @@ pub(crate) fn collect_quoted_patterns_multiline(
             None => return Ok((patterns, excludes, String::new(), pos)),
         };
         let starts_pattern = next_line_text.starts_with('"')
-            || (allow_exclude && next_line_text.starts_with('!')
+            || (allow_exclude
+                && next_line_text.starts_with('!')
                 && next_line_text.get(1..2) == Some("\""));
         if !starts_pattern {
             return Ok((patterns, excludes, String::new(), pos));
@@ -169,10 +170,10 @@ pub(crate) fn collect_quoted_patterns_multiline(
     }
 }
 
-/// Parse an ingredients declaration. Patterns may span multiple physical
+/// Parse an inputs declaration. Patterns may span multiple physical
 /// lines as long as each continuation line begins with `"` or `!"`.
 /// Returns (includes, excludes, new_pos).
-pub(crate) fn parse_ingredients_line(
+pub(crate) fn parse_gather_line(
     text: &str,
     keyword: &str,
     line: usize,
@@ -180,10 +181,14 @@ pub(crate) fn parse_ingredients_line(
     current_pos: usize,
     source_lines: &[&str],
 ) -> Result<(Vec<String>, Vec<String>, usize), ParseError> {
-    let (patterns, excludes_flags, leftover, pos_after) =
-        collect_quoted_patterns_multiline(
-            text, line, tokens, current_pos, source_lines, /*allow_exclude=*/ true,
-        )?;
+    let (patterns, excludes_flags, leftover, pos_after) = collect_quoted_patterns_multiline(
+        text,
+        line,
+        tokens,
+        current_pos,
+        source_lines,
+        /*allow_exclude=*/ true,
+    )?;
     if !leftover.trim().is_empty() {
         return Err(ParseError::Parse {
             line,
@@ -193,16 +198,17 @@ pub(crate) fn parse_ingredients_line(
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     for (pat, is_exc) in patterns.into_iter().zip(excludes_flags.into_iter()) {
-        if is_exc { excludes.push(pat); } else { includes.push(pat); }
+        if is_exc {
+            excludes.push(pat);
+        } else {
+            includes.push(pat);
+        }
     }
     // Advance past every token on the line where collection stopped. Explicit
     // walk (matches the pattern used in `parse_cook_line`'s declaration-only
     // branch) so this stays correct if the lexer ever emits more than one
     // token per source line.
-    let stop_line = tokens
-        .get(pos_after)
-        .map(|t| t.line)
-        .unwrap_or(line);
+    let stop_line = tokens.get(pos_after).map(|t| t.line).unwrap_or(line);
     let mut pos = pos_after;
     while pos < tokens.len() && tokens[pos].line <= stop_line {
         pos += 1;
@@ -210,19 +216,18 @@ pub(crate) fn parse_ingredients_line(
     Ok((includes, excludes, pos))
 }
 
-
-/// Parse an `ingredients <probe>` member source (COOK-88). A bare probe key
+/// Parse an `inputs <probe>` member source (COOK-88). A bare probe key
 /// (`IDENT (":" IDENT)?`) used as an iteration driver; returns the desugared
 /// `MemberSourceStep`. The lexical discriminator (quote vs bare ident) is
 /// decided by the caller in `recipe.rs`.
-pub(crate) fn parse_ingredients_probe_source(
+pub(crate) fn parse_gather_probe_source(
     rest: &str,
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
     gather: bool,
 ) -> Result<(MemberSourceStep, usize), ParseError> {
-    // CS-0201: `-` is in PROBE_SEG. It was missing here, so `ingredients
+    // CS-0201: `-` is in PROBE_SEG. It was missing here, so `inputs
     // cc-version` scanned only `cc` and then reported the remainder as
     // "unexpected trailing content '-version'" — blaming the trailer for a
     // charset the declaration had already accepted.
@@ -232,7 +237,7 @@ pub(crate) fn parse_ingredients_probe_source(
     if end == 0 {
         return Err(ParseError::Parse {
             line,
-            message: "ingredients: expected a \"glob\" pattern or a probe key".to_string(),
+            message: "inputs: expected a \"glob\" pattern or a probe key".to_string(),
         });
     }
     let key = rest[..end].to_string();
@@ -252,7 +257,7 @@ pub(crate) fn parse_ingredients_probe_source(
     if !cook_contracts::probe_key::is_valid_bare(&key) {
         return Err(ParseError::Parse {
             line,
-            message: cook_contracts::probe_key::bare_key_error("ingredients", &key),
+            message: cook_contracts::probe_key::bare_key_error("inputs", &key),
         });
     }
     // CS-0197: quoted file globs MAY trail the probe key. Each is an
@@ -260,39 +265,49 @@ pub(crate) fn parse_ingredients_probe_source(
     // bare = the probe source, quoted = literal filesystem globs); they fold
     // into every member unit's declared inputs. Anything else trailing the
     // key is still an error.
-    let mut extra_ingredients: Vec<String> = Vec::new();
+    let mut extra_gather: Vec<String> = Vec::new();
     let mut leftover = rest[end..].trim();
     while !leftover.is_empty() {
         let Some(stripped) = leftover.strip_prefix('"') else {
             return Err(ParseError::Parse {
                 line,
                 message: format!(
-                    "ingredients: unexpected trailing content '{leftover}' after probe key                      (only quoted \"glob\" patterns may follow the source)"
+                    "inputs: unexpected trailing content '{leftover}' after probe key                      (only quoted \"glob\" patterns may follow the source)"
                 ),
             });
         };
         let Some(close) = stripped.find('"') else {
             return Err(ParseError::Parse {
                 line,
-                message: "ingredients: unterminated \" in trailing glob pattern".to_string(),
+                message: "inputs: unterminated \" in trailing glob pattern".to_string(),
             });
         };
         let pat = &stripped[..close];
         if pat.is_empty() {
             return Err(ParseError::Parse {
                 line,
-                message: "ingredients: empty trailing glob pattern".to_string(),
+                message: "inputs: empty trailing glob pattern".to_string(),
             });
         }
-        extra_ingredients.push(pat.to_string());
+        extra_gather.push(pat.to_string());
         leftover = stripped[close + 1..].trim();
     }
     let mut pos = current_pos + 1;
     while pos < tokens.len() && tokens[pos].line <= line {
         pos += 1;
     }
-    let source = if gather { MemberSource::GatherKey(key) } else { MemberSource::ProbeKey(key) };
-    Ok((MemberSourceStep { source, extra_ingredients }, pos))
+    let source = if gather {
+        MemberSource::GatherKey(key)
+    } else {
+        MemberSource::ProbeKey(key)
+    };
+    Ok((
+        MemberSourceStep {
+            source,
+            extra_gather,
+        },
+        pos,
+    ))
 }
 
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the
@@ -388,9 +403,7 @@ pub(crate) fn parse_cook_line(
         if leftover.starts_with('"') || leftover.starts_with('(') {
             return Err(ParseError::Parse {
                 line,
-                message:
-                    "cook (LUA_EXPR) form requires exactly one output"
-                        .to_string(),
+                message: "cook (LUA_EXPR) form requires exactly one output".to_string(),
             });
         }
 
@@ -398,7 +411,7 @@ pub(crate) fn parse_cook_line(
 
         if leftover.is_empty() {
             // Declaration-only Lua-expr cook step is meaningless: there's
-            // no body to evaluate, and the unit's ingredients can't drive
+            // no body to evaluate, and the unit's inputs can't drive
             // anything. Reject early — §8.4.2 implies a body-bearing step.
             return Err(ParseError::Parse {
                 line,
@@ -415,16 +428,17 @@ pub(crate) fn parse_cook_line(
             });
         }
 
-        let (body, tail, new_pos) = parse_body_payload(
-            leftover,
-            line,
-            tokens,
-            current_pos,
-            source_lines,
-            "cook",
-        )?;
+        let (body, tail, new_pos) =
+            parse_body_payload(leftover, line, tokens, current_pos, source_lines, "cook")?;
         let disposition = cook_disposition_from_tail(&tail, line)?;
-        return Ok((CookStep { outputs, body: Some(body), disposition }, new_pos));
+        return Ok((
+            CookStep {
+                outputs,
+                body: Some(body),
+                disposition,
+            },
+            new_pos,
+        ));
     }
 
     if !rest.starts_with('"') {
@@ -434,12 +448,15 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    let (output_strs, _excludes, leftover, pos_after_patterns) =
-        collect_quoted_patterns_multiline(
-            rest, line, tokens, current_pos, source_lines, /*allow_exclude=*/ false,
-        )?;
-    let outputs: Vec<OutputPattern> =
-        output_strs.into_iter().map(OutputPattern::Quoted).collect();
+    let (output_strs, _excludes, leftover, pos_after_patterns) = collect_quoted_patterns_multiline(
+        rest,
+        line,
+        tokens,
+        current_pos,
+        source_lines,
+        /*allow_exclude=*/ false,
+    )?;
+    let outputs: Vec<OutputPattern> = output_strs.into_iter().map(OutputPattern::Quoted).collect();
 
     let after_pattern = leftover.trim();
 
@@ -480,10 +497,26 @@ pub(crate) fn parse_cook_line(
     // After our multiline pattern walk, pos_after_patterns points at the
     // first token on the line where pattern collection stopped — which is
     // the line `leftover` came from. Read its line number off the token.
-    let body_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
+    let body_line = tokens
+        .get(pos_after_patterns)
+        .map(|t| t.line)
+        .unwrap_or(line);
 
-    let (body, tail, new_pos) =
-        parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
+    let (body, tail, new_pos) = parse_body_payload(
+        after_pattern,
+        body_line,
+        tokens,
+        pos_after_patterns,
+        source_lines,
+        "cook",
+    )?;
     let disposition = cook_disposition_from_tail(&tail, line)?;
-    Ok((CookStep { outputs, body: Some(body), disposition }, new_pos))
+    Ok((
+        CookStep {
+            outputs,
+            body: Some(body),
+            disposition,
+        },
+        new_pos,
+    ))
 }

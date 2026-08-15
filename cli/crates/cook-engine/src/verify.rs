@@ -62,13 +62,23 @@ pub struct VerifyReport {
 impl VerifyReport {
     /// 0 iff every unit verdict is_ok().
     pub fn exit_code(&self) -> i32 {
-        if self.units.iter().all(|u| u.verdict.is_ok()) { 0 } else { 1 }
+        if self.units.iter().all(|u| u.verdict.is_ok()) {
+            0
+        } else {
+            1
+        }
     }
     pub fn divergences(&self) -> usize {
-        self.units.iter().filter(|u| matches!(u.verdict, UnitVerdict::Divergence { .. })).count()
+        self.units
+            .iter()
+            .filter(|u| matches!(u.verdict, UnitVerdict::Divergence { .. }))
+            .count()
     }
     pub fn errors(&self) -> usize {
-        self.units.iter().filter(|u| matches!(u.verdict, UnitVerdict::Error { .. })).count()
+        self.units
+            .iter()
+            .filter(|u| matches!(u.verdict, UnitVerdict::Error { .. }))
+            .count()
     }
 }
 
@@ -171,7 +181,11 @@ pub fn rerun_outputs_in_sandbox(
             .unwrap_or_else(|| "signal".to_string());
         let detail = {
             let err = outcome.stderr_lossy();
-            let text = if err.trim().is_empty() { outcome.stdout_lossy() } else { err };
+            let text = if err.trim().is_empty() {
+                outcome.stdout_lossy()
+            } else {
+                err
+            };
             let text = text.trim();
             if text.is_empty() {
                 String::new()
@@ -253,8 +267,11 @@ pub fn verify_cache(
             let Some(entry) = recipe_cache.steps.get(&meta.cache_key) else {
                 continue; // not cached this run — nothing to verify
             };
-            let recorded: BTreeMap<String, u64> =
-                entry.outputs.iter().map(|f| (f.path.to_string(), f.hash)).collect();
+            let recorded: BTreeMap<String, u64> = entry
+                .outputs
+                .iter()
+                .map(|f| (f.path.to_string(), f.hash))
+                .collect();
 
             // R1 (CS-0164): config `var.*` values are never injected into a
             // step's process environment, so the determinism re-run must not

@@ -50,13 +50,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
+pub use cook_contracts::cache::step::{CACHE_VERSION, FileRecord, StepEntry};
 
 /// Default value used by `serde` when `schema_version` is absent from the
 /// TOML file. TOML is non-positional, so a missing key is plausible (e.g. a
 /// hand-edited or pre-v4 file). Defaulting to 1 ensures the exact-match
 /// version check refuses the file — 1 != CACHE_VERSION (currently 4).
-fn default_cache_schema() -> u32 { 1 }
+fn default_cache_schema() -> u32 {
+    1
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeCache {
@@ -246,7 +248,9 @@ pub fn sweep_superseded_indexes(cache_dir: &Path) {
     // CS-0186. Removed by name, never by pattern: this deletes a directory
     // tree, and the one it may delete is the one Cook wrote itself.
     let _ = std::fs::remove_dir_all(cache_dir.join("tests"));
-    let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {

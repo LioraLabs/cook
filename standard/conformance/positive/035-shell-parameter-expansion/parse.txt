@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="greet" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out.txt"] body=ShellBlock(["echo ${HOME:-fallback} >> $<out>", "echo ${USER%suffix} >> $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:greet:2"]]
@@ -15,6 +15,6 @@ Cookfile
   probes:
     Probe name="@seal:greet:2" line=2
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["src.txt"] excludes=[]

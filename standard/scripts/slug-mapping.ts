@@ -83,7 +83,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Chapter 8 — Step kinds ────────────────────────────────────────────────
   'sec-8':       'steps',
   'sec-8-1':     'steps.dispatch',
-  'sec-8-2':     'steps.ingredients',
+  'sec-8-2':     'steps.gather',
   'sec-8-3':     'steps.overview',
   'sec-8-4':     'steps.cook-single',
   'sec-8-4-1':   'steps.iteration-mode',

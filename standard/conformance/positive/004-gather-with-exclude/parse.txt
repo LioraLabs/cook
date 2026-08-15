@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="pack" line=1
       deps: []
-      ingredients: ["src/*.c"]
+      inputs: ["src/*.c"]
       excludes: ["src/excluded.c"]
       steps:
         Gather

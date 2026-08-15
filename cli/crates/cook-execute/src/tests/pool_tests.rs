@@ -19,7 +19,10 @@ fn dep_output_resolves_root_recipe() {
     lua.globals().set("cook", cook).unwrap();
     let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
     assert_eq!(s, "build/lib.txt");
-    let t: Vec<String> = lua.load(r#"return cook.dep_output_list("lib")"#).eval().unwrap();
+    let t: Vec<String> = lua
+        .load(r#"return cook.dep_output_list("lib")"#)
+        .eval()
+        .unwrap();
     assert_eq!(t, vec!["build/lib.txt".to_string()]);
 }
 
@@ -49,8 +52,13 @@ fn dep_output_nested_bare_ref_does_not_fall_back_to_root() {
     map.insert("lib".to_string(), vec!["build/root_lib.a".to_string()]);
     install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
     lua.globals().set("cook", cook).unwrap();
-    let r = lua.load(r#"return cook.dep_output("lib")"#).eval::<String>();
-    assert!(r.is_err(), "nested bare ref must not fall back to root recipe");
+    let r = lua
+        .load(r#"return cook.dep_output("lib")"#)
+        .eval::<String>();
+    assert!(
+        r.is_err(),
+        "nested bare ref must not fall back to root recipe"
+    );
 }
 
 #[test]
@@ -60,22 +68,27 @@ fn dep_output_unknown_recipe_errors() {
     let recipe = Arc::new(Mutex::new("app".to_string()));
     install_worker_dep_output_api(&lua, &cook, Arc::new(BTreeMap::new()), &recipe).unwrap();
     lua.globals().set("cook", cook).unwrap();
-    let r = lua.load(r#"return cook.dep_output("nope")"#).eval::<String>();
+    let r = lua
+        .load(r#"return cook.dep_output("nope")"#)
+        .eval::<String>();
     assert!(r.is_err(), "unknown recipe must raise a Lua error");
-    }
+}
 
-    #[test]
-    fn dep_output_empty_list_is_empty_string() {
-        let lua = unsafe { mlua::Lua::unsafe_new() };
-        let cook = lua.create_table().unwrap();
-        let recipe = Arc::new(Mutex::new("app".to_string()));
+#[test]
+fn dep_output_empty_list_is_empty_string() {
+    let lua = unsafe { mlua::Lua::unsafe_new() };
+    let cook = lua.create_table().unwrap();
+    let recipe = Arc::new(Mutex::new("app".to_string()));
     let mut map = BTreeMap::new();
     map.insert("lib".to_string(), Vec::<String>::new());
     install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
     lua.globals().set("cook", cook).unwrap();
     let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
     assert_eq!(s, "");
-    let t: Vec<String> = lua.load(r#"return cook.dep_output_list("lib")"#).eval().unwrap();
+    let t: Vec<String> = lua
+        .load(r#"return cook.dep_output_list("lib")"#)
+        .eval()
+        .unwrap();
     assert!(t.is_empty());
 }
 
@@ -97,7 +110,11 @@ fn test_pool_executes_shell_command() {
     });
 
     let result = rx.recv().unwrap();
-    assert!(result.success, "expected success, got error: {:?}", result.error);
+    assert!(
+        result.success,
+        "expected success, got error: {:?}",
+        result.error
+    );
     assert_eq!(result.id, 0);
     assert!(result.error.is_none());
 
@@ -232,7 +249,11 @@ fn test_pool_working_dir() {
     });
 
     let result = rx.recv().unwrap();
-    assert!(result.success, "expected success, got error: {:?}", result.error);
+    assert!(
+        result.success,
+        "expected success, got error: {:?}",
+        result.error
+    );
 
     pool.shutdown();
 }
@@ -261,7 +282,7 @@ fn test_pool_executes_lua_chunk_writing_multiple_outputs() {
                 dir.path().join("a.txt").to_string_lossy().into_owned(),
                 dir.path().join("b.txt").to_string_lossy().into_owned(),
             ],
-            ingredient_groups: vec![vec!["src.rs".to_string()]],
+            gather_groups: vec![vec!["src.rs".to_string()]],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -307,7 +328,10 @@ fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_co
             false
         )
     );
-    assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+    assert!(
+        err.contains("kaboom"),
+        "error must retain the message; got: {err}"
+    );
     assert_eq!(err, expected, "worker and shared Lua sanitation must agree");
     assert!(
         !err.contains("stack traceback"),
@@ -328,7 +352,10 @@ fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_co
 
     assert!(!result.success, "expected error() to fail the chunk");
     let err = result.error.as_deref().unwrap_or("");
-    assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+    assert!(
+        err.contains("kaboom"),
+        "error must retain the message; got: {err}"
+    );
     assert!(
         err.contains("stack traceback"),
         "COOK_BACKTRACE=1 must preserve the traceback; got: {err}"
@@ -355,21 +382,21 @@ fn test_pool_lua_chunk_sees_input_output_globals() {
             code: code.to_string(),
             inputs: vec!["hello".to_string()],
             outputs: vec![out_path.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
         },
         recipe_name: "r".to_string(),
-            working_dir: dir.path().to_path_buf(),
-            env_vars: HashMap::new(),
-            project_root: dir.path().to_path_buf(),
-        });
+        working_dir: dir.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir.path().to_path_buf(),
+    });
 
-        let result = rx.recv().unwrap();
-        assert!(
-            result.success,
-            "expected success, got error: {:?}",
+    let result = rx.recv().unwrap();
+    assert!(
+        result.success,
+        "expected success, got error: {:?}",
         result.error
     );
     assert_eq!(fs::read_to_string(&out_path).unwrap(), "hello");
@@ -399,7 +426,11 @@ fn test_pool_env_vars() {
     });
 
     let result = rx.recv().unwrap();
-    assert!(result.success, "expected success, got error: {:?}", result.error);
+    assert!(
+        result.success,
+        "expected success, got error: {:?}",
+        result.error
+    );
 
     pool.shutdown();
 }
@@ -435,18 +466,18 @@ fn test_pool_fs_api_uses_per_item_working_dir() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![out1.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
         },
         recipe_name: "r".to_string(),
-            working_dir: dir1.path().to_path_buf(),
-            env_vars: HashMap::new(),
-            project_root: dir1.path().to_path_buf(),
-        });
-        let r1 = rx.recv().unwrap();
-        assert!(r1.success, "first item failed: {:?}", r1.error);
+        working_dir: dir1.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir1.path().to_path_buf(),
+    });
+    let r1 = rx.recv().unwrap();
+    assert!(r1.success, "first item failed: {:?}", r1.error);
     assert_eq!(fs::read_to_string(&out1).unwrap(), "from-dir1");
 
     pool.submit(WorkItem {
@@ -456,18 +487,18 @@ fn test_pool_fs_api_uses_per_item_working_dir() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![out2.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
         },
         recipe_name: "r".to_string(),
-            working_dir: dir2.path().to_path_buf(),
-            env_vars: HashMap::new(),
-            project_root: dir2.path().to_path_buf(),
-        });
-        let r2 = rx.recv().unwrap();
-        assert!(r2.success, "second item failed: {:?}", r2.error);
+        working_dir: dir2.path().to_path_buf(),
+        env_vars: HashMap::new(),
+        project_root: dir2.path().to_path_buf(),
+    });
+    let r2 = rx.recv().unwrap();
+    assert!(r2.success, "second item failed: {:?}", r2.error);
     assert_eq!(
         fs::read_to_string(&out2).unwrap(),
         "from-dir2",
@@ -564,7 +595,10 @@ fn a_failing_command_reports_its_exit_code_on_the_result() {
     pool.submit(WorkItem {
         process_env_vars: HashMap::new(),
         id: 0,
-        payload: WorkPayload::Shell { cmd: "exit 7".to_string(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "exit 7".to_string(),
+            line: 1,
+        },
         recipe_name: "r".to_string(),
         working_dir: dir.path().to_path_buf(),
         env_vars: HashMap::new(),
@@ -600,7 +634,7 @@ fn run_lua_chunk_in_worker_at_line(line: usize, code: &str) -> WorkResult {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line,
@@ -633,8 +667,8 @@ fn a_failing_cook_sh_in_a_lua_body_reports_its_cookfile_line() {
 
     assert!(!result.success, "a failing cook.sh must fail the unit");
     let wire = result.error.expect("cook.sh failure reaches the result");
-    let failure = cook_contracts::CommandFailure::from_wire(&wire)
-        .expect("canonical command failure JSON");
+    let failure =
+        cook_contracts::CommandFailure::from_wire(&wire).expect("canonical command failure JSON");
     assert_eq!(failure.line(), 13, "wire: {wire}");
     assert_eq!(failure.command(), "false");
 }
@@ -662,8 +696,8 @@ fn a_failing_cook_sh_outside_a_cookfile_chunk_reports_no_line() {
     pool.shutdown();
 
     let wire = result.error.expect("cook.sh failure reaches the result");
-    let failure = cook_contracts::CommandFailure::from_wire(&wire)
-        .expect("canonical command failure JSON");
+    let failure =
+        cook_contracts::CommandFailure::from_wire(&wire).expect("canonical command failure JSON");
     assert_eq!(failure.line(), 0, "wire: {wire}");
 }
 
@@ -698,8 +732,7 @@ fn cook_interactive_from_execute_phase_raises_section_6_3_2_diagnostic() {
 
 #[test]
 fn cook_add_unit_from_execute_phase_raises_section_6_3_2_diagnostic() {
-    let result =
-        run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
+    let result = run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
     assert_register_only_diagnostic(&result, "add_unit");
 }
 
@@ -711,9 +744,8 @@ fn cook_step_group_from_execute_phase_raises_section_6_3_2_diagnostic() {
 
 #[test]
 fn cook_recipe_from_execute_phase_raises_section_6_3_2_diagnostic() {
-    let result =
-        run_lua_chunk_in_worker(r#"cook.recipe("inner", {}, function() end)"#);
-        assert_register_only_diagnostic(&result, "recipe");
+    let result = run_lua_chunk_in_worker(r#"cook.recipe("inner", {}, function() end)"#);
+    assert_register_only_diagnostic(&result, "recipe");
 }
 
 /// §22.5.2: cook.probe MUST raise a register-only-API diagnostic on the
@@ -762,7 +794,10 @@ fn every_register_only_guard_raises_and_says_how_to_fix_it() {
 
     for (call, door) in calls {
         let result = run_lua_chunk_in_worker(call);
-        assert!(!result.success, "{door} must fail on the worker VM; got success");
+        assert!(
+            !result.success,
+            "{door} must fail on the worker VM; got success"
+        );
         let err = result.error.as_deref().unwrap_or("");
         assert!(
             err.contains(&format!("{door}: register-only API")),
@@ -814,7 +849,7 @@ fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -833,8 +868,7 @@ fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
 /// resolves BY NAME. Through `cook_contracts::layout` so the next move of the
 /// tree root does not have to touch this suite (CS-0207).
 fn installed_share(dir: &std::path::Path) -> std::path::PathBuf {
-    cook_contracts::layout::modules_dir(dir)
-        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+    cook_contracts::layout::modules_dir(dir).join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
 }
 
 /// CS-0069: a module installed under `.cook/modules/share/lua/5.4/<name>/init.lua`
@@ -847,10 +881,7 @@ fn cook_load_module_resolves_share_lua_5_4_init() {
     let dir = TempDir::new().unwrap();
     let share_pkg = installed_share(dir.path()).join("share_only_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share path");
-    fs::write(
-        share_pkg.join("init.lua"),
-        "return { from_share = true }",
-    ).expect("write init.lua");
+    fs::write(share_pkg.join("init.lua"), "return { from_share = true }").expect("write init.lua");
 
     let code = r#"
             local m = cook.load_module("share_only_pkg")
@@ -874,7 +905,8 @@ fn cook_load_module_resolves_share_lua_5_4_flat() {
     fs::write(
         share_dir.join("share_flat_pkg.lua"),
         "return { kind = 'flat' }",
-    ).expect("write flat module");
+    )
+    .expect("write flat module");
 
     let code = r#"
             local m = cook.load_module("share_flat_pkg")
@@ -907,19 +939,18 @@ fn cook_load_module_ignores_the_retired_top_level_candidates() {
     fs::write(
         tree_root.join("dup_pkg.lua"),
         "return { from = 'tree-top' }",
-    ).expect("write tree-top decoy");
+    )
+    .expect("write tree-top decoy");
     // Decoy 2: the pre-CS-0207 root, which is never searched at all.
     fs::write(
         legacy_root.join("dup_pkg.lua"),
         "return { from = 'legacy' }",
-    ).expect("write legacy decoy");
+    )
+    .expect("write legacy decoy");
     // The only candidate: init.lua under share/lua/5.4/<name>/.
     let share_pkg = share_dir.join("dup_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share pkg");
-    fs::write(
-        share_pkg.join("init.lua"),
-        "return { from = 'share' }",
-    ).expect("write share module");
+    fs::write(share_pkg.join("init.lua"), "return { from = 'share' }").expect("write share module");
 
     let code = r#"
             local m = cook.load_module("dup_pkg")
@@ -1036,7 +1067,7 @@ fn cook_probes_get_returns_nil_for_stored_null_without_error() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1085,7 +1116,7 @@ fn cook_probes_get_reads_from_probe_value_store() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1110,7 +1141,10 @@ fn cook_probes_get_reads_from_probe_value_store() {
 #[test]
 fn cook_probes_set_on_execute_vm_raises_deprecation_error() {
     let result = run_lua_chunk_in_worker(r#"cook.probes.set("x", 1)"#);
-    assert!(!result.success, "expected cook.probes.set to fail on execute VM");
+    assert!(
+        !result.success,
+        "expected cook.probes.set to fail on execute VM"
+    );
     let err = result.error.as_deref().unwrap_or("");
     assert!(
         err.contains("cook.probes.set"),
@@ -1127,11 +1161,13 @@ fn cook_probes_set_on_execute_vm_raises_deprecation_error() {
 #[test]
 fn cook_cache_is_hard_error_with_did_you_mean() {
     let result = run_lua_chunk_in_worker(r#"return cook.cache.get("x")"#);
-    assert!(!result.success, "expected cook.cache.get to be a hard error");
-        let err = result.error.as_deref().unwrap_or("");
     assert!(
-        err.contains("cook.cache' was renamed to 'cook.probes'")
-            && err.contains("cook.probes.get"),
+        !result.success,
+        "expected cook.cache.get to be a hard error"
+    );
+    let err = result.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("cook.cache' was renamed to 'cook.probes'") && err.contains("cook.probes.get"),
         "rename diagnostic must name the new spelling; got: {err}"
     );
 }
@@ -1145,13 +1181,12 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
 
     // Pre-populate with scoped key format `"<label>:<key>"`.
     {
-        let bytes = cook_contracts::probe_value::encode_canonical_json(
-            &serde_json::json!("gcc-14"),
-        );
+        let bytes =
+            cook_contracts::probe_value::encode_canonical_json(&serde_json::json!("gcc-14"));
         pool.probe_value_store().insert("cc:compiler", bytes);
-        }
+    }
 
-        let code = r#"
+    let code = r#"
         local scoped = cook.probes.scope("cc")
         local v = scoped.get("compiler")
             assert(v == "gcc-14", "expected gcc-14, got "..tostring(v))
@@ -1164,7 +1199,7 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1187,11 +1222,16 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
 /// CS-0074: `cook.probes.scope(label).set` MUST raise on execute-phase VM.
 #[test]
 fn cook_probes_scope_set_on_execute_vm_raises_deprecation_error() {
-    let result = run_lua_chunk_in_worker(r#"
+    let result = run_lua_chunk_in_worker(
+        r#"
             local s = cook.probes.scope("foo")
             s.set("x", 1)
-        "#);
-    assert!(!result.success, "expected scoped cook.probes.set to fail on execute VM");
+        "#,
+    );
+    assert!(
+        !result.success,
+        "expected scoped cook.probes.set to fail on execute VM"
+    );
     let err = result.error.as_deref().unwrap_or("");
     assert!(
         err.contains("deprecated"),
@@ -1322,15 +1362,22 @@ fn probe_unit_produces_canonical_json_bytes() {
     let result = rx.recv().unwrap();
     pool.shutdown();
 
-    assert!(result.success, "probe dispatch must succeed; got error: {:?}", result.error);
+    assert!(
+        result.success,
+        "probe dispatch must succeed; got error: {:?}",
+        result.error
+    );
     assert!(result.probe_output.is_some(), "probe_output must be Some");
 
     let probe_output = result.probe_output.unwrap();
     assert_eq!(probe_output.key, "test:simple");
-    assert!(!probe_output.bytes.is_empty(), "probe bytes must be non-empty");
+    assert!(
+        !probe_output.bytes.is_empty(),
+        "probe bytes must be non-empty"
+    );
 
-    let decoded = cook_contracts::probe_value::decode_json(&probe_output.bytes)
-        .expect("must decode");
+    let decoded =
+        cook_contracts::probe_value::decode_json(&probe_output.bytes).expect("must decode");
     assert_eq!(
         decoded,
         serde_json::json!({"found": true, "paths": ["a", "b"]}),
@@ -1361,7 +1408,8 @@ fn probe_produce_can_call_codecs_on_worker_vm() {
                     local j = cook.json_decode('{"name":"foo","items":[1,2]}')
                     local y = cook.yaml_decode("word: hello\n")
                     return { name = j.name, second = j.items[2], word = y.word }
-                "#.into(),
+                "#
+            .into(),
             line: 1,
         },
         recipe_name: "probe_recipe".to_string(),
@@ -1373,10 +1421,17 @@ fn probe_produce_can_call_codecs_on_worker_vm() {
     let result = rx.recv().unwrap();
     pool.shutdown();
 
-    assert!(result.success, "codec probe must succeed; got: {:?}", result.error);
+    assert!(
+        result.success,
+        "codec probe must succeed; got: {:?}",
+        result.error
+    );
     let decoded = cook_contracts::probe_value::decode_json(&result.probe_output.unwrap().bytes)
         .expect("must decode");
-    assert_eq!(decoded, serde_json::json!({"name": "foo", "second": 2, "word": "hello"}));
+    assert_eq!(
+        decoded,
+        serde_json::json!({"name": "foo", "second": 2, "word": "hello"})
+    );
 }
 
 /// G1: a probe whose `produce` source raises a Lua error MUST fail the
@@ -1391,7 +1446,7 @@ fn probe_unit_lua_error_fails_with_key_in_diagnostic() {
         id: 0,
         payload: WorkPayload::Probe {
             key: "test:error".into(),
-                produce: r#"error("intentional probe failure")"#.into(),
+            produce: r#"error("intentional probe failure")"#.into(),
             line: 1,
         },
         recipe_name: "probe_recipe".to_string(),
@@ -1407,7 +1462,7 @@ fn probe_unit_lua_error_fails_with_key_in_diagnostic() {
     let err = result.error.as_deref().unwrap_or("");
     assert!(
         err.contains("test:error"),
-            "error must name the probe key; got: {err}"
+        "error must name the probe key; got: {err}"
     );
 }
 
@@ -1435,7 +1490,10 @@ fn probe_unit_non_serialisable_value_fails() {
     let result = rx.recv().unwrap();
     pool.shutdown();
 
-    assert!(!result.success, "probe returning non-serialisable value must fail");
+    assert!(
+        !result.success,
+        "probe returning non-serialisable value must fail"
+    );
     let err = result.error.as_deref().unwrap_or("");
     assert!(
         err.contains("test:bad_type"),

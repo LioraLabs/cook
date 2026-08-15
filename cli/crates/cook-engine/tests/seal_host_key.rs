@@ -48,17 +48,17 @@ fn write_fixture(wd: &Path, cache_dir: &Path) {
     lines { echo "$SIMHOST" }
 
 recipe shared
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/shared.txt" {
-        cp src/in.txt out/shared.txt
+        cp $<in> out/shared.txt
         echo ran >> out/shared.runlog
     }
 
 recipe hostdep
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     seal host
     cook "out/host.txt" {
-        printf 'built\n' > out/host.txt
+        : $<in>; printf 'built\n' > out/host.txt
         echo ran >> out/host.runlog
     }
 "#,
@@ -103,8 +103,16 @@ fn machine_independent_unit_hits_across_host_change_sealed_unit_misses() {
 
     // Run 1 (cold, SIMHOST=alpha): both units execute fresh.
     build(wd, "alpha");
-    assert_eq!(runs(wd, "shared.runlog"), 1, "run1: shared should build cold");
-    assert_eq!(runs(wd, "host.runlog"), 1, "run1: hostdep should build cold");
+    assert_eq!(
+        runs(wd, "shared.runlog"),
+        1,
+        "run1: shared should build cold"
+    );
+    assert_eq!(
+        runs(wd, "host.runlog"),
+        1,
+        "run1: hostdep should build cold"
+    );
 
     // Run 2 (warm, SIMHOST=alpha, nothing changed): BOTH hit — including the
     // sealed unit, because the host probe value is unchanged.

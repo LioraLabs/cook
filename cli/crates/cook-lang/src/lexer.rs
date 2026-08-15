@@ -3,18 +3,40 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Comment(String),
-    RecipeHeader { name: String, deps: Vec<String> },
-    ChoreHeader { name: String, params: Vec<crate::ast::ChoreParam>, deps: Vec<String> },
-    ConfigHeader { name: Option<String> },
+    RecipeHeader {
+        name: String,
+        deps: Vec<String>,
+    },
+    ChoreHeader {
+        name: String,
+        params: Vec<crate::ast::ChoreParam>,
+        deps: Vec<String>,
+    },
+    ConfigHeader {
+        name: Option<String>,
+    },
     /// `use` in either of its two forms (App. A.2, CS-0206). `alias` is the
     /// Lua identifier bound; `target` is the module name or the normalised
     /// tree-relative path resolution is given.
-    UseDecl { alias: String, target: String },
-    ImportDecl { name: String, path: String },
+    UseDecl {
+        alias: String,
+        target: String,
+    },
+    ImportDecl {
+        name: String,
+        path: String,
+    },
     RegisterHeader,
-    ProbeHeader { name: String, deps: Vec<String> },
-    FilesHeader { name: String },
-    ToolsHeader { name: String },
+    ProbeHeader {
+        name: String,
+        deps: Vec<String>,
+    },
+    FilesHeader {
+        name: String,
+    },
+    ToolsHeader {
+        name: String,
+    },
     LuaLine(String),
     LuaBlockOpen,
     InlineLuaLine(String),
@@ -58,15 +80,31 @@ pub enum LexError {
     #[error("line {line}: a run of three or more `>` characters at line start is reserved")]
     ReservedTripleArrow { line: usize },
     #[error("line {line}: 'use' {position} '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
-    InvalidUseName { name: String, position: UseNamePosition, line: usize },
+    InvalidUseName {
+        name: String,
+        position: UseNamePosition,
+        line: usize,
+    },
     #[error("line {line}: {message}")]
     InvalidUsePath { message: String, line: usize },
     #[error("line {line}: 'use {path}' derives the alias '{alias}', which is not a valid Lua identifier; give it one explicitly: 'use <alias> {path}'")]
-    UnusableDerivedAlias { path: String, alias: String, line: usize },
+    UnusableDerivedAlias {
+        path: String,
+        alias: String,
+        line: usize,
+    },
     #[error("line {line}: 'use {first} {second}': the second argument of a two-argument 'use' must be a path ending in '.lua'")]
-    UseSecondArgumentNotAPath { first: String, second: String, line: usize },
+    UseSecondArgumentNotAPath {
+        first: String,
+        second: String,
+        line: usize,
+    },
     #[error("line {line}: 'use {first} {second}': a module name takes no second argument; only a path form may be preceded by an alias")]
-    UseNameWithExtraArgument { first: String, second: String, line: usize },
+    UseNameWithExtraArgument {
+        first: String,
+        second: String,
+        line: usize,
+    },
     #[error("line {line}: 'use' takes at most two arguments — an optional alias and a path")]
     UseTooManyArguments { line: usize },
     #[error("line {line}: 'use {argument}': a `use` declaration takes no trailing comment; put the comment on its own line above")]
@@ -78,13 +116,32 @@ pub enum LexError {
     #[error("line {line}: chore name '{name}': dotted chore names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
     DottedDeclaredChoreName { name: String, line: usize },
     #[error("line {line}: chore '{chore}': duplicate parameter '{name}'")]
-    DuplicateChoreParam { line: usize, chore: String, name: String },
+    DuplicateChoreParam {
+        line: usize,
+        chore: String,
+        name: String,
+    },
     #[error("line {line}: chore '{chore}': required parameter '{required}' must precede defaulted parameter '{defaulted}'")]
-    RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
-    #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string")]
-    BadChoreParamDefault { line: usize, chore: String, name: String },
+    RequiredAfterDefaulted {
+        line: usize,
+        chore: String,
+        required: String,
+        defaulted: String,
+    },
+    #[error(
+        "line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string"
+    )]
+    BadChoreParamDefault {
+        line: usize,
+        chore: String,
+        name: String,
+    },
     #[error("line {line}: chore '{chore}': unclosed default for parameter '{name}' (expected closing '\"' or ')')")]
-    UnclosedChoreParamDefault { line: usize, chore: String, name: String },
+    UnclosedChoreParamDefault {
+        line: usize,
+        chore: String,
+        name: String,
+    },
     #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' or a config preset")]
     RecipeWithParams { line: usize, name: String },
     #[error("line {line}: expected a probe name after `probe`")]
@@ -96,15 +153,38 @@ pub enum LexError {
     #[error("line {line}: {kind} declaration requires a name")]
     MissingSetName { kind: &'static str, line: usize },
     #[error("line {line}: {kind} declaration '{name}' has unexpected trailing content")]
-    SetExtraTokens { kind: &'static str, name: String, line: usize },
-    #[error("line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter")]
-    VariadicNotLast { line: usize, chore: String, name: String },
+    SetExtraTokens {
+        kind: &'static str,
+        name: String,
+        line: usize,
+    },
+    #[error(
+        "line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter"
+    )]
+    VariadicNotLast {
+        line: usize,
+        chore: String,
+        name: String,
+    },
     #[error("line {line}: chore '{chore}': at most one variadic parameter permitted; found '{first}' and '{second}'")]
-    MultipleVariadics { line: usize, chore: String, first: String, second: String },
+    MultipleVariadics {
+        line: usize,
+        chore: String,
+        first: String,
+        second: String,
+    },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' cannot have a default; use '*{name}' for an optional variadic")]
-    VariadicWithDefault { line: usize, chore: String, name: String },
+    VariadicWithDefault {
+        line: usize,
+        chore: String,
+        name: String,
+    },
     #[error("line {line}: chore '{chore}': parameter name '{name}' contains '.'; parameter names must not contain '.'")]
-    DottedChoreParam { line: usize, chore: String, name: String },
+    DottedChoreParam {
+        line: usize,
+        chore: String,
+        name: String,
+    },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "env"];
@@ -133,7 +213,9 @@ fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
 /// class whether `@foo.bar` is a preset selector. A name this admits and the
 /// CLI refuses is a preset the user can declare and cannot select, so the
 /// class lives in `cook_contracts::naming` (COOK-421).
-use cook_contracts::naming::{is_bare_name_char as is_ident_char, is_bare_name_start as is_ident_start};
+use cook_contracts::naming::{
+    is_bare_name_char as is_ident_char, is_bare_name_start as is_ident_start,
+};
 
 /// One `PROBE_SEG` char (CS-0201). As [`is_ident_char`] but WITHOUT `.`.
 ///
@@ -200,9 +282,7 @@ fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError>
             args.push(after_quote[..end].to_string());
             rest = after_quote[end + 1..].trim_start();
         } else {
-            let end = rest
-                .find(|c: char| c.is_whitespace())
-                .unwrap_or(rest.len());
+            let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
             args.push(rest[..end].to_string());
             rest = rest[end..].trim_start();
         }
@@ -214,11 +294,9 @@ fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError>
 /// side. The two argument positions that can hold a path both need it, and the
 /// diagnostic MUST be the same at both — one refusal, one wording.
 fn normalised_use_path(raw: &str, line: usize) -> Result<String, LexError> {
-    cook_contracts::layout::normalise_use_path(raw).map_err(|rejection| {
-        LexError::InvalidUsePath {
-            message: cook_contracts::layout::use_path_rejected_message(raw, rejection),
-            line,
-        }
+    cook_contracts::layout::normalise_use_path(raw).map_err(|rejection| LexError::InvalidUsePath {
+        message: cook_contracts::layout::use_path_rejected_message(raw, rejection),
+        line,
     })
 }
 
@@ -242,11 +320,7 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
     // Positional, not by value: comparing the found comment against `args[0]`
     // by equality let `use #a #a` slip through, because the second `#a` IS
     // equal to the first.
-    if let Some((index, comment)) = args
-        .iter()
-        .enumerate()
-        .find(|(_, a)| a.starts_with('#'))
-    {
+    if let Some((index, comment)) = args.iter().enumerate().find(|(_, a)| a.starts_with('#')) {
         if index > 0 {
             return Err(LexError::UseTrailingComment {
                 argument: comment.clone(),
@@ -269,10 +343,12 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
         [only] => {
             let normalised = normalised_use_path(only, line)?;
             let alias = derived_alias(&normalised);
-            check_use_name(&alias, UseNamePosition::Alias, line).map_err(|_| LexError::UnusableDerivedAlias {
-                path: only.clone(),
-                alias: alias.clone(),
-                line,
+            check_use_name(&alias, UseNamePosition::Alias, line).map_err(|_| {
+                LexError::UnusableDerivedAlias {
+                    path: only.clone(),
+                    alias: alias.clone(),
+                    line,
+                }
             })?;
             Ok((alias, normalised))
         }
@@ -311,9 +387,7 @@ fn parse_name(text: &str, line: usize) -> Result<(String, &str), LexError> {
             .ok_or(LexError::UnterminatedString { line })?;
         Ok((rest[..end].to_string(), rest[end + 1..].trim_start()))
     } else {
-        let end = text
-            .find(|c: char| !is_ident_char(c))
-            .unwrap_or(text.len());
+        let end = text.find(|c: char| !is_ident_char(c)).unwrap_or(text.len());
         if end == 0 || !is_ident_start(text.as_bytes()[0] as char) {
             return Err(LexError::MissingRecipeName { line });
         }
@@ -504,8 +578,16 @@ fn parse_chore_params<'a>(
 
             // Push the variadic variant.
             match sigil {
-                '+' => params.push(ChoreParam::VariadicPlus { name: param_name.clone(), line, col: 0 }),
-                '*' => params.push(ChoreParam::VariadicStar { name: param_name.clone(), line, col: 0 }),
+                '+' => params.push(ChoreParam::VariadicPlus {
+                    name: param_name.clone(),
+                    line,
+                    col: 0,
+                }),
+                '*' => params.push(ChoreParam::VariadicStar {
+                    name: param_name.clone(),
+                    line,
+                    col: 0,
+                }),
                 _ => unreachable!(),
             }
 
@@ -614,7 +696,11 @@ fn parse_chore_params<'a>(
                     defaulted: defaulted_name,
                 });
             }
-            params.push(ChoreParam::Required { name: param_name, line, col: 0 });
+            params.push(ChoreParam::Required {
+                name: param_name,
+                line,
+                col: 0,
+            });
         }
     }
 
@@ -657,7 +743,9 @@ fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
     let mut end = n1;
     loop {
         let after = &s[end..];
-        let Some(rest) = after.strip_prefix(':') else { break };
+        let Some(rest) = after.strip_prefix(':') else {
+            break;
+        };
         if rest.is_empty() || !is_ident_start(rest.chars().next().unwrap_or('\0')) {
             break;
         }
@@ -683,10 +771,22 @@ fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
 
 fn parse_set_header(kind: &'static str, rest: &str, line: usize) -> Result<String, LexError> {
     let rest = rest.trim();
-    if rest.is_empty() { return Err(LexError::MissingSetName { kind, line }); }
-    let parsed = if rest.starts_with('"') { parse_name(rest, line) } else { scan_probe_ref(rest, line) };
-    let (name, tail) = parsed.map_err(|_| LexError::SetExtraTokens { kind, name: rest.to_string(), line })?;
-    if !tail.trim().is_empty() { return Err(LexError::SetExtraTokens { kind, name, line }); }
+    if rest.is_empty() {
+        return Err(LexError::MissingSetName { kind, line });
+    }
+    let parsed = if rest.starts_with('"') {
+        parse_name(rest, line)
+    } else {
+        scan_probe_ref(rest, line)
+    };
+    let (name, tail) = parsed.map_err(|_| LexError::SetExtraTokens {
+        kind,
+        name: rest.to_string(),
+        line,
+    })?;
+    if !tail.trim().is_empty() {
+        return Err(LexError::SetExtraTokens { kind, name, line });
+    }
     Ok(name)
 }
 
@@ -753,14 +853,20 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 // reserved reference (env.foo, foo.out) keeps its specific
                 // "reserved word" diagnostic rather than the generic dotted one.
                 check_reserved_recipe_name(&name, line_num)?;
-                return Err(LexError::DottedDeclaredRecipeName { name, line: line_num });
+                return Err(LexError::DottedDeclaredRecipeName {
+                    name,
+                    line: line_num,
+                });
             }
 
             // Recipes don't take parameters. Reject any token between the name
             // and the `:` (or end of header) that is not a dep list.
             let after_name_trimmed = after_name.trim_start();
             if !after_name_trimmed.is_empty() && !after_name_trimmed.starts_with(':') {
-                return Err(LexError::RecipeWithParams { line: line_num, name });
+                return Err(LexError::RecipeWithParams {
+                    line: line_num,
+                    name,
+                });
             }
 
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
@@ -783,7 +889,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 // CS-0132: see the recipe reduction above — reserved check is
                 // gated to the dotted path so undotted `chore name` is legal.
                 check_reserved_recipe_name(&name, line_num)?;
-                return Err(LexError::DottedDeclaredChoreName { name, line: line_num });
+                return Err(LexError::DottedDeclaredChoreName {
+                    name,
+                    line: line_num,
+                });
             }
 
             let (params, after_params) = parse_chore_params(after_name, &name, line_num)?;
@@ -814,15 +923,27 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             Token::RegisterHeader
         } else if !line.starts_with(|c: char| c.is_whitespace())
-            && (trimmed == "files" || trimmed.strip_prefix("files").is_some_and(|rest|
-                rest.starts_with(|c: char| c.is_whitespace()) || rest.starts_with('"') || rest.starts_with('.')))
+            && (trimmed == "files"
+                || trimmed.strip_prefix("files").is_some_and(|rest| {
+                    rest.starts_with(|c: char| c.is_whitespace())
+                        || rest.starts_with('"')
+                        || rest.starts_with('.')
+                }))
         {
-            Token::FilesHeader { name: parse_set_header("files", &trimmed["files".len()..], line_num)? }
+            Token::FilesHeader {
+                name: parse_set_header("files", &trimmed["files".len()..], line_num)?,
+            }
         } else if !line.starts_with(|c: char| c.is_whitespace())
-            && (trimmed == "tools" || trimmed.strip_prefix("tools").is_some_and(|rest|
-                rest.starts_with(|c: char| c.is_whitespace()) || rest.starts_with('"') || rest.starts_with('.')))
+            && (trimmed == "tools"
+                || trimmed.strip_prefix("tools").is_some_and(|rest| {
+                    rest.starts_with(|c: char| c.is_whitespace())
+                        || rest.starts_with('"')
+                        || rest.starts_with('.')
+                }))
         {
-            Token::ToolsHeader { name: parse_set_header("tools", &trimmed["tools".len()..], line_num)? }
+            Token::ToolsHeader {
+                name: parse_set_header("tools", &trimmed["tools".len()..], line_num)?,
+            }
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("probe")
             && trimmed.len() > 5
@@ -843,7 +964,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             } else if after_name.is_empty() {
                 vec![]
             } else {
-                return Err(LexError::ProbeExtraTokens { name, line: line_num });
+                return Err(LexError::ProbeExtraTokens {
+                    name,
+                    line: line_num,
+                });
             };
             Token::ProbeHeader { name, deps }
         } else if !line.starts_with(|c: char| c.is_whitespace())
@@ -880,7 +1004,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         } else {
             // Anything else: a Content line. Whether it dispatches inside a
             // recipe body (shell_command, interactive_command, module_call,
-            // ingredients_step, etc.) or is rejected at top level is the
+            // gather_step, etc.) or is rejected at top level is the
             // syntactic-layer's concern (§{grammar.overview}, §{grammar.step-dispatch}).
             Token::Content(trimmed.to_string())
         };

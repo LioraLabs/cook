@@ -8,10 +8,10 @@ use std::io::{self, Write};
 
 use crate::event::ProgressEvent;
 use crate::model::build::BuildState;
+use crate::render::Renderer;
 use crate::render::event_writer::{EventWriter, EventWriterOptions};
 use crate::render::snapshot::{StatusLineOptions, StatusSnapshot};
 use crate::render::status_line::StatusLine;
-use crate::render::Renderer;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InlineOptions {
@@ -36,7 +36,10 @@ impl InlineRenderer {
         } else {
             None
         };
-        Self { event_writer, status }
+        Self {
+            event_writer,
+            status,
+        }
     }
 }
 
@@ -64,11 +67,15 @@ impl Renderer for InlineRenderer {
         if let Some(s) = &self.status {
             match event {
                 ProgressEvent::InteractiveStart { .. } => s.hide(),
-                ProgressEvent::InteractiveEnd { is_terminal: false, .. } => {
+                ProgressEvent::InteractiveEnd {
+                    is_terminal: false, ..
+                } => {
                     s.update(StatusSnapshot::from_state(state));
                     s.show();
                 }
-                ProgressEvent::InteractiveEnd { is_terminal: true, .. } => {
+                ProgressEvent::InteractiveEnd {
+                    is_terminal: true, ..
+                } => {
                     s.hide();
                 }
                 ProgressEvent::Finished { .. } => s.hide(),

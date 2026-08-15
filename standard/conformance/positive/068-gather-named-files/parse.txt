@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="objects" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("sources")
@@ -16,6 +16,6 @@ Cookfile
   probes:
     Probe name="sources" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["src/*.c"] excludes=[]

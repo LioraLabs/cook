@@ -44,6 +44,7 @@ pub mod recipe_info;
 pub mod registers;
 pub mod workspace;
 
+pub use entry::{discover_entry_cookfile, resolve_workspace_root};
 pub use env::parse_cli_overrides;
 pub use error::PipelineError;
 pub use parse::{read_and_parse, validate_selected_config_workspace, ParsedCookfile};
@@ -51,7 +52,6 @@ pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{
     codegen_with_module_recipes, list_workspace_names, register_workspace, RegisterMode,
 };
-pub use entry::{discover_entry_cookfile, resolve_workspace_root};
 pub use workspace::{LoadedCookfile, Workspace};
 
 // The value handed across the boundary: the plan produces it, the engine's

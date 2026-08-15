@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="suite" line=1
       deps: []
-      ingredients: ["tests/*.sh"]
+      inputs: ["tests/*.sh"]
       excludes: []
       steps:
         Gather

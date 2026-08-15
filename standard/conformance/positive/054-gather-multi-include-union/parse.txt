@@ -5,21 +5,21 @@ Cookfile
   recipes:
     Recipe name="build" line=8
       deps: []
-      ingredients: ["src/*.c", "include/*.h"]
+      inputs: ["src/*.c", "include/*.h"]
       excludes: ["src/skip.c", "include/skip.h"]
       steps:
         Gather
         Cook outputs=["build/$<in.stem>.o"] body=ShellBlock(["touch $<out>"])
     Recipe name="show" line=12
       deps: []
-      ingredients: ["src/*.c", "include/*.h"]
+      inputs: ["src/*.c", "include/*.h"]
       excludes: []
       steps:
         Gather
         Cook outputs=["build/$<in.stem>.log"] body=ShellBlock(["echo \"$<in>\""])
     Recipe name="check" line=16
       deps: []
-      ingredients: ["tests/*.sh", "extra/*.sh"]
+      inputs: ["tests/*.sh", "extra/*.sh"]
       excludes: []
       steps:
         Gather

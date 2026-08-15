@@ -143,9 +143,9 @@ fn publish_off_serves_prepopulated_and_publishes_nothing() {
     let wd = tmp.path();
 
     let cookfile = r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#;
@@ -209,8 +209,7 @@ fn publish_off_serves_prepopulated_and_publishes_nothing() {
     // (3) No new artifacts uploaded: count must equal the seeded count.
     let count_after_fetch = artifact_file_count(cache.path());
     assert_eq!(
-        count_after_fetch,
-        count_after_seed,
+        count_after_fetch, count_after_seed,
         "phase2 (publish-off): artifact count in shared store MUST NOT grow — \
          publish is disabled, so no new artifact may be uploaded \
          (before={count_after_seed}, after={count_after_fetch})"
@@ -238,9 +237,9 @@ fn publish_off_fresh_build_succeeds_and_publishes_nothing() {
         cache.path(),
         &cloud_toml_publish_off(cache.path()),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,
@@ -304,10 +303,10 @@ fn publish_off_probe_build_succeeds_and_publishes_nothing() {
     { echo PUBOFF }
 
 recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     seal tag
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,

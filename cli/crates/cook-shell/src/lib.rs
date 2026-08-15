@@ -178,7 +178,9 @@ where
     V: AsRef<str>,
 {
     let mut cmd = std::process::Command::new("/bin/sh");
-    cmd.arg("-c").arg(spawn.command).current_dir(spawn.working_dir);
+    cmd.arg("-c")
+        .arg(spawn.command)
+        .current_dir(spawn.working_dir);
     for (k, v) in env_overlay {
         cmd.env(k.as_ref(), v.as_ref());
     }

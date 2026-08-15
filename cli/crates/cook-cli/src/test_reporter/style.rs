@@ -11,11 +11,7 @@
 
 /// Resolve whether to emit color, based on the cli flag, the env, and
 /// whether stdout is a terminal.
-pub fn resolve_color_choice(
-    cli_color: &str,
-    no_color_env: Option<&str>,
-    is_tty: bool,
-) -> bool {
+pub fn resolve_color_choice(cli_color: &str, no_color_env: Option<&str>, is_tty: bool) -> bool {
     match cli_color {
         "always" => true,
         "never" => false,
@@ -49,14 +45,30 @@ impl Style {
         }
     }
 
-    pub fn green(&self, s: &str) -> String { self.wrap("32", s) }
-    pub fn red(&self, s: &str) -> String { self.wrap("31", s) }
-    pub fn yellow(&self, s: &str) -> String { self.wrap("33", s) }
-    pub fn dim(&self, s: &str) -> String { self.wrap("2", s) }
-    pub fn bold(&self, s: &str) -> String { self.wrap("1", s) }
-    pub fn bold_red(&self, s: &str) -> String { self.wrap("1;31", s) }
-    pub fn bold_yellow(&self, s: &str) -> String { self.wrap("1;33", s) }
-    pub fn dim_cyan(&self, s: &str) -> String { self.wrap("2;36", s) }
+    pub fn green(&self, s: &str) -> String {
+        self.wrap("32", s)
+    }
+    pub fn red(&self, s: &str) -> String {
+        self.wrap("31", s)
+    }
+    pub fn yellow(&self, s: &str) -> String {
+        self.wrap("33", s)
+    }
+    pub fn dim(&self, s: &str) -> String {
+        self.wrap("2", s)
+    }
+    pub fn bold(&self, s: &str) -> String {
+        self.wrap("1", s)
+    }
+    pub fn bold_red(&self, s: &str) -> String {
+        self.wrap("1;31", s)
+    }
+    pub fn bold_yellow(&self, s: &str) -> String {
+        self.wrap("1;33", s)
+    }
+    pub fn dim_cyan(&self, s: &str) -> String {
+        self.wrap("2;36", s)
+    }
 }
 
 #[cfg(test)]

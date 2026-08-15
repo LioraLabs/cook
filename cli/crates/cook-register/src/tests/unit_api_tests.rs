@@ -4,10 +4,10 @@ use super::*;
 fn paths(inputs: &[cook_contracts::cache::DeclaredInput]) -> Vec<String> {
     inputs.iter().map(|e| e.path.clone()).collect()
 }
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::BodyCaptureState;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Convenience accessor used throughout the unit_api test module: borrow
 /// the body slot and panic if it's `None`. The slot is set to `Some(...)`
@@ -21,11 +21,11 @@ fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> 
 fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedBodySlot) {
     use std::sync::{Arc, Mutex};
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
-    let body_slot: SharedBodySlot =
-        Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs =
-        Arc::new(Mutex::new(BTreeMap::new()));
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     // Tests reference paths like "main.c" that don't exist; the
     // directory-rejection check skips non-existent paths, so any
     // working_dir is fine here.
@@ -43,14 +43,14 @@ fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedBodySlot) {
 
 fn fake_cache_ctx() -> std::sync::Arc<cook_cache::cache_ctx::CacheContext> {
     let dir = tempfile::tempdir().expect("tempdir");
-        let dir_path = dir.path().to_path_buf();
-        std::mem::forget(dir); // tests are short-lived; let the OS clean up
-        std::sync::Arc::new(cook_cache::cache_ctx::CacheContext {
-            denylist: std::sync::Arc::new(cook_cache::envkey::EnvDenylist::baseline()),
-            backend: std::sync::Arc::new(cook_cache::backend::LocalBackend::new(dir_path.clone())),
-            cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),
-            project_root: dir_path,
-            project_id: "test-project".to_string(),
+    let dir_path = dir.path().to_path_buf();
+    std::mem::forget(dir); // tests are short-lived; let the OS clean up
+    std::sync::Arc::new(cook_cache::cache_ctx::CacheContext {
+        denylist: std::sync::Arc::new(cook_cache::envkey::EnvDenylist::baseline()),
+        backend: std::sync::Arc::new(cook_cache::backend::LocalBackend::new(dir_path.clone())),
+        cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),
+        project_root: dir_path,
+        project_id: "test-project".to_string(),
         publish_enabled: true,
         replay_logs: false,
     })
@@ -60,14 +60,19 @@ fn fake_cache_ctx() -> std::sync::Arc<cook_cache::cache_ctx::CacheContext> {
 fn test_add_unit_basic() {
     let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "gcc -o main main.c",
                 inputs = {"main.c"},
                 output = "main",
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -96,40 +101,60 @@ fn test_add_unit_rejects_function_valued_command() {
     // no-op. It must now be a loud register-phase error.
     let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    let err = lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    let err = lua
+        .load(
+            r#"
             cook.add_unit({
                 command = function() return "echo hi" end,
                 inputs = {},
                 output = "out/x.txt",
             })
-        "#).exec().unwrap_err();
+        "#,
+        )
+        .exec()
+        .unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("`command` must be a string"), "got: {msg}");
-    assert!(msg.contains("function"), "error must name the received type; got: {msg}");
+    assert!(
+        msg.contains("function"),
+        "error must name the received type; got: {msg}"
+    );
 }
 
 #[test]
 fn test_add_unit_rejects_numeric_command() {
     let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    let err = lua.load(r#"cook.add_unit({ command = 42, output = "out/x.txt" })"#)
-        .exec().unwrap_err();
-    assert!(err.to_string().contains("`command` must be a string"), "got: {err}");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    let err = lua
+        .load(r#"cook.add_unit({ command = 42, output = "out/x.txt" })"#)
+        .exec()
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("`command` must be a string"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn test_add_unit_no_cache() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "echo hello",
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -140,14 +165,19 @@ fn test_add_unit_no_cache() {
 fn test_add_unit_interactive_flag() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "build/bin/lua -e 'print(1)'",
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -163,11 +193,16 @@ fn test_add_unit_interactive_flag() {
 fn test_add_unit_sequential_by_default() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({ command = "step1" })
             cook.add_unit({ command = "step2" })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -179,13 +214,18 @@ fn test_add_unit_sequential_by_default() {
 fn test_step_group_makes_parallel() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.step_group(function()
                 cook.add_unit({ command = "unit_a" })
                 cook.add_unit({ command = "unit_b" })
             end)
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -199,13 +239,18 @@ fn test_step_group_makes_parallel() {
 fn test_step_group_sequential_after() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.step_group(function()
                 cook.add_unit({ command = "parallel_unit" })
             end)
             cook.add_unit({ command = "sequential_unit" })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -217,7 +262,8 @@ fn test_step_group_sequential_after() {
 fn test_last_cook_step_outputs_tracked() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     lua.load(r#"
             -- First cook step (OneToOne, 2 outputs)
             cook.step_group(function()
@@ -239,7 +285,8 @@ fn test_last_cook_step_outputs_tracked() {
 fn test_no_output_step_group_does_not_overwrite_terminal() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     lua.load(r#"
             -- Cook step produces output
             cook.step_group(function()
@@ -259,14 +306,19 @@ fn test_no_output_step_group_does_not_overwrite_terminal() {
 fn test_add_unit_outputs_plural() {
     let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "split a.c",
                 inputs = {"a.c"},
                 outputs = {"a.o", "a.d"},
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -277,22 +329,30 @@ fn test_add_unit_outputs_plural() {
         vec!["a.o".to_string(), "a.d".to_string()]
     );
     // cache_key should embed context+env when they are non-zero
-    assert!(meta.cache_key.starts_with("a.o"), "cache_key starts with first output");
+    assert!(
+        meta.cache_key.starts_with("a.o"),
+        "cache_key starts with first output"
+    );
 }
 
 #[test]
 fn test_add_unit_outputs_and_output_conflict_errors() {
     let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    let result = lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 command = "split a.c",
                 inputs = {"a.c"},
                 output = "a.o",
                 outputs = {"a.o", "a.d"},
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
     assert!(
         result.is_err(),
         "expected error when both `output` and `outputs` are provided"
@@ -303,14 +363,15 @@ fn test_add_unit_outputs_and_output_conflict_errors() {
 fn test_add_unit_lua_code_one_to_one() {
     let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     lua.load(
         r#"
             cook.add_unit({
                 inputs = {"main.c"},
                 output = "main.o",
                 lua_code = "print('hi')",
-                ingredient_groups = {{"a.c", "b.c"}},
+                gather_groups = {{"a.c", "b.c"}},
             })
         "#,
     )
@@ -325,7 +386,7 @@ fn test_add_unit_lua_code_one_to_one() {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind: _,
             is_chore: _,
             line: _,
@@ -334,7 +395,7 @@ fn test_add_unit_lua_code_one_to_one() {
             assert_eq!(inputs, &vec!["main.c".to_string()]);
             assert_eq!(outputs, &vec!["main.o".to_string()]);
             assert_eq!(
-                ingredient_groups,
+                gather_groups,
                 &vec![vec!["a.c".to_string(), "b.c".to_string()]]
             );
         }
@@ -346,14 +407,15 @@ fn test_add_unit_lua_code_one_to_one() {
 fn test_add_unit_lua_code_multi_output_block_step() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     lua.load(
         r#"
             cook.add_unit({
                 inputs = {"src.rs"},
                 outputs = {"a.js", "a.wasm"},
                 lua_code = "os.execute('wasm-pack build')",
-                ingredient_groups = {{"src.rs"}},
+                gather_groups = {{"src.rs"}},
             })
         "#,
     )
@@ -367,18 +429,15 @@ fn test_add_unit_lua_code_multi_output_block_step() {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind: _,
             is_chore: _,
             line: _,
         } => {
             assert_eq!(code, "os.execute('wasm-pack build')");
             assert_eq!(inputs, &vec!["src.rs".to_string()]);
-            assert_eq!(
-                outputs,
-                &vec!["a.js".to_string(), "a.wasm".to_string()]
-            );
-            assert_eq!(ingredient_groups, &vec![vec!["src.rs".to_string()]]);
+            assert_eq!(outputs, &vec!["a.js".to_string(), "a.wasm".to_string()]);
+            assert_eq!(gather_groups, &vec![vec!["src.rs".to_string()]]);
         }
         other => panic!("expected LuaChunk, got {other:?}"),
     }
@@ -388,7 +447,8 @@ fn test_add_unit_lua_code_multi_output_block_step() {
 fn test_single_step_terminal_outputs() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     lua.load(r#"
             cook.step_group(function()
                 cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
@@ -428,16 +488,21 @@ fn add_unit_populates_consulted_env_from_keys_list() {
     .unwrap();
 
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "make all",
                 inputs = {"main.c"},
                 output = "main",
                 consulted_env_keys = {"FOO_TEST_VAR_X"},
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -448,7 +513,10 @@ fn add_unit_populates_consulted_env_from_keys_list() {
         "consulted_env must contain FOO_TEST_VAR_X=the-value (read from the var store)"
     );
     // env_contribution must be non-zero because a non-denylisted var was consulted
-    assert_ne!(meta.env_contribution, 0, "env_contribution must be non-zero");
+    assert_ne!(
+        meta.env_contribution, 0,
+        "env_contribution must be non-zero"
+    );
 }
 
 #[test]
@@ -462,12 +530,15 @@ fn add_unit_appends_resolved_dep_paths_to_input_paths() {
     lua.globals().set("cook", cook_table).unwrap();
 
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let terminal_outputs: SharedTerminalOutputs =
+        std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     terminal_outputs
-        .lock().unwrap()
+        .lock()
+        .unwrap()
         .insert("greet".into(), vec!["build/greet.o".into()]);
     terminal_outputs
-        .lock().unwrap()
+        .lock()
+        .unwrap()
         .insert("util".into(), vec!["build/util.o".into()]);
 
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -534,24 +605,40 @@ fn add_unit_appends_resolved_dep_paths_to_input_paths() {
 fn add_unit_inside_chore_marks_payload_is_chore_true() {
     let (lua, capture_state) = make_lua_with_unit_api("my_chore");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
     // COOK-386: the chore-active flag is host-side state set by the engine's
     // ChoreActiveGuard around a chore body; mirror that bracketing here.
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = true;
-    lua.load(r#"
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = true;
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "fzf --prompt='> '",
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
+        "#,
+    )
+    .exec()
+    .unwrap();
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
         WorkPayload::Interactive { is_chore, .. } => {
-            assert!(*is_chore, "unit emitted inside chore body must have is_chore=true");
+            assert!(
+                *is_chore,
+                "unit emitted inside chore body must have is_chore=true"
+            );
         }
         other => panic!("expected Interactive payload, got {other:?}"),
     }
@@ -561,22 +648,38 @@ fn add_unit_inside_chore_marks_payload_is_chore_true() {
 fn add_unit_inside_chore_marks_lua_chunk_is_chore_true() {
     let (lua, capture_state) = make_lua_with_unit_api("my_chore");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = true;
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = true;
+    lua.load(
+        r#"
             cook.add_unit({
                 lua_code = "print('hello from chore')",
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
+        "#,
+    )
+    .exec()
+    .unwrap();
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
         WorkPayload::LuaChunk { is_chore, .. } => {
-            assert!(*is_chore, "lua chunk emitted inside chore body must have is_chore=true");
+            assert!(
+                *is_chore,
+                "lua chunk emitted inside chore body must have is_chore=true"
+            );
         }
         other => panic!("expected LuaChunk payload, got {other:?}"),
     }
@@ -586,20 +689,28 @@ fn add_unit_inside_chore_marks_lua_chunk_is_chore_true() {
 fn add_unit_outside_chore_marks_payload_is_chore_false() {
     let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-    lua.load(r#"
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "build/bin/lua -e 'print(1)'",
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
     match &state.units[0].payload {
         WorkPayload::Interactive { is_chore, .. } => {
-            assert!(!*is_chore, "unit emitted outside chore must have is_chore=false");
+            assert!(
+                !*is_chore,
+                "unit emitted outside chore must have is_chore=false"
+            );
         }
         other => panic!("expected Interactive payload, got {other:?}"),
     }
@@ -609,16 +720,21 @@ fn add_unit_outside_chore_marks_payload_is_chore_false() {
 fn add_unit_reads_discovered_inputs_table() {
     let (lua, capture_state) = make_lua_with_unit_api("demo");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 inputs = { "src/a.c" },
                 output = "build/a.o",
                 command = "gcc -c src/a.c -o build/a.o",
                 discovered_inputs = { from = ".cook/deps/a.d", format = "make" },
             })
-        "#).exec().expect("exec");
+        "#,
+    )
+    .exec()
+    .expect("exec");
 
     let st = body_ref(&capture_state);
     let unit: &CapturedUnit = st.units.last().expect("one unit");
@@ -632,34 +748,54 @@ fn add_unit_reads_discovered_inputs_table() {
 fn add_unit_rejects_unsupported_discovered_inputs_format() {
     let (lua, _capture_state) = make_lua_with_unit_api("demo");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "x.d", format = "ninja" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
-    let err = result.expect_err("expected error for unsupported format").to_string();
-    assert!(err.contains("ninja"), "diagnostic must name the unsupported format; got: {err}");
-    assert!(err.contains("supported"), "diagnostic must say what is supported; got: {err}");
+    let err = result
+        .expect_err("expected error for unsupported format")
+        .to_string();
+    assert!(
+        err.contains("ninja"),
+        "diagnostic must name the unsupported format; got: {err}"
+    );
+    assert!(
+        err.contains("supported"),
+        "diagnostic must say what is supported; got: {err}"
+    );
 }
 
 #[test]
 fn add_unit_rejects_absolute_discovered_from() {
     let (lua, _capture_state) = make_lua_with_unit_api("demo");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "/etc/secrets.d", format = "make" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
-    let err = result.expect_err("expected error for absolute path").to_string();
+    let err = result
+        .expect_err("expected error for absolute path")
+        .to_string();
     assert!(
         err.contains("relative") || err.contains("absolute"),
         "diagnostic must mention 'relative' or 'absolute'; got: {err}"
@@ -670,17 +806,27 @@ fn add_unit_rejects_absolute_discovered_from() {
 fn add_unit_rejects_dotdot_discovered_from() {
     let (lua, _capture_state) = make_lua_with_unit_api("demo");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "../escape.d", format = "make" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
-    let err = result.expect_err("expected error for '..' path").to_string();
-    assert!(err.contains(".."), "diagnostic must contain '..'; got: {err}");
+    let err = result
+        .expect_err("expected error for '..' path")
+        .to_string();
+    assert!(
+        err.contains(".."),
+        "diagnostic must contain '..'; got: {err}"
+    );
 }
 
 /// Regression: `cook.add_unit` MUST reject directory inputs at register
@@ -693,9 +839,9 @@ fn add_unit_rejects_directory_input() {
     use std::sync::{Arc, Mutex};
 
     let tmp = tempfile::tempdir().expect("tempdir");
-        // Build a real directory the recipe will (mistakenly) declare as
-        // an input.
-        let upstream = tmp.path().join("upstream").join("lib");
+    // Build a real directory the recipe will (mistakenly) declare as
+    // an input.
+    let upstream = tmp.path().join("upstream").join("lib");
     std::fs::create_dir_all(&upstream).expect("mkdir upstream/lib");
     std::fs::write(upstream.join("a.txt"), b"a").expect("write a.txt");
 
@@ -704,23 +850,19 @@ fn add_unit_rejects_directory_input() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs =
-        Arc::new(Mutex::new(BTreeMap::new()));
+    let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     register_unit_api(
         &lua,
         capture_state.clone(),
         "vendor",
-            terminal_outputs,
-            tmp.path().to_path_buf(),
-        )
-        .unwrap();
-
-        lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value(
-            "__cook_cookfile_path",
-        "Cookfile".to_string(),
+        terminal_outputs,
+        tmp.path().to_path_buf(),
     )
-    .expect("set");
+    .unwrap();
+
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     let result = lua
         .load(
@@ -764,7 +906,7 @@ fn add_unit_accepts_file_inputs() {
     use std::sync::{Arc, Mutex};
 
     let tmp = tempfile::tempdir().expect("tempdir");
-        let src = tmp.path().join("upstream").join("lib");
+    let src = tmp.path().join("upstream").join("lib");
     std::fs::create_dir_all(&src).expect("mkdir upstream/lib");
     std::fs::write(src.join("a.txt"), b"a").expect("write a.txt");
     std::fs::write(src.join("b.txt"), b"b").expect("write b.txt");
@@ -774,23 +916,19 @@ fn add_unit_accepts_file_inputs() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs =
-        Arc::new(Mutex::new(BTreeMap::new()));
+    let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     register_unit_api(
         &lua,
         capture_state.clone(),
         "vendor",
-            terminal_outputs,
-            tmp.path().to_path_buf(),
-        )
-        .unwrap();
-
-        lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value(
-            "__cook_cookfile_path",
-        "Cookfile".to_string(),
+        terminal_outputs,
+        tmp.path().to_path_buf(),
     )
-    .expect("set");
+    .unwrap();
+
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     // Real file (exists) and a not-yet-built output (does not exist).
     lua.load(
@@ -815,7 +953,7 @@ fn add_unit_rejects_directory_in_outputs_plural() {
     use std::sync::{Arc, Mutex};
 
     let tmp = tempfile::tempdir().expect("tempdir");
-        let dir = tmp.path().join("build").join("artifacts");
+    let dir = tmp.path().join("build").join("artifacts");
     std::fs::create_dir_all(&dir).expect("mkdir build/artifacts");
 
     let lua = Lua::new();
@@ -823,8 +961,7 @@ fn add_unit_rejects_directory_in_outputs_plural() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs =
-        Arc::new(Mutex::new(BTreeMap::new()));
+    let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     register_unit_api(
         &lua,
         capture_state.clone(),
@@ -835,11 +972,8 @@ fn add_unit_rejects_directory_in_outputs_plural() {
     .unwrap();
 
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value(
-        "__cook_cookfile_path",
-        "Cookfile".to_string(),
-    )
-    .expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     let result = lua
         .load(
@@ -870,9 +1004,11 @@ fn add_unit_rejects_directory_in_outputs_plural() {
 fn add_unit_captures_probes_field() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "myapp.o",
                 inputs = { "myapp.c" },
@@ -880,16 +1016,17 @@ fn add_unit_captures_probes_field() {
                 probes = { "cc:zlib", "cc:compiler" },
                 command = "true",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
     let state = body_ref(&capture_state);
     let u = state.units.first().expect("one unit");
     assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
-    }
+}
 
-    /// CS-0152: a literal `cook.probes.get("key")` read inside a `lua_code`
+/// CS-0152: a literal `cook.probes.get("key")` read inside a `lua_code`
 /// unit body must be statically scanned and unioned into `probes` at
 /// capture time, so the probe is demand-scheduled ahead of the unit
 /// instead of reading nil at execute time.
@@ -897,15 +1034,18 @@ fn add_unit_captures_probes_field() {
 fn add_unit_lua_code_probe_get_call_captures_probes_field() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "u",
                 outputs = { "out.txt" },
                 lua_code = "local v = cook.probes.get(\"cc:zlib\")",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -920,7 +1060,8 @@ fn add_unit_lua_code_probe_get_call_captures_probes_field() {
 fn add_unit_lua_code_probe_get_unions_with_explicit_probes_without_dup() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     lua.load(r#"
             cook.add_unit({
@@ -936,23 +1077,26 @@ fn add_unit_lua_code_probe_get_unions_with_explicit_probes_without_dup() {
     let state = body_ref(&capture_state);
     let u = state.units.first().expect("one unit");
     assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
-    }
+}
 
-    /// A shell-command unit (no `lua_code`) must be unaffected by the new
-    /// scan — regression guard against the union firing on the wrong path.
-    #[test]
-    fn add_unit_shell_command_unit_unaffected_by_probe_scan() {
-        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+/// A shell-command unit (no `lua_code`) must be unaffected by the new
+/// scan — regression guard against the union firing on the wrong path.
+#[test]
+fn add_unit_shell_command_unit_unaffected_by_probe_scan() {
+    let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "u",
                 outputs = { "out.txt" },
                 command = "echo 'cook.probes.get(\"cc:zlib\")'",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -968,16 +1112,19 @@ fn add_unit_seal_field_sets_cache_meta_and_probes() {
     // sealed probes are materialised.
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "x.o",
                 outputs = { "x.o" },
                 command = "cc",
                 seal = { "host" },
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1005,18 +1152,24 @@ fn add_unit_local_pinned_disposition_booleans() {
     {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-        lua.load(r#"
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+            .expect("set");
+        lua.load(
+            r#"
                 cook.add_unit({
                     command = "echo local",
                     output = "out.txt",
                     sharing = "local",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
-        let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+        let cm = state.units[0]
+            .cache_meta
+            .as_ref()
+            .expect("cache_meta present");
         assert_eq!(
             cm.sharing,
             cook_contracts::Sharing::Local,
@@ -1028,18 +1181,24 @@ fn add_unit_local_pinned_disposition_booleans() {
     {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-        lua.load(r#"
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+            .expect("set");
+        lua.load(
+            r#"
                 cook.add_unit({
                     command = "echo pinned",
                     output = "out.txt",
                     sharing = "pinned",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
-        let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+        let cm = state.units[0]
+            .cache_meta
+            .as_ref()
+            .expect("cache_meta present");
         assert_eq!(
             cm.sharing,
             cook_contracts::Sharing::Pinned,
@@ -1051,17 +1210,23 @@ fn add_unit_local_pinned_disposition_booleans() {
     {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
-        lua.load(r#"
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+            .expect("set");
+        lua.load(
+            r#"
                 cook.add_unit({
                     command = "echo neither",
                     output = "out.txt",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
-        let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+        let cm = state.units[0]
+            .cache_meta
+            .as_ref()
+            .expect("cache_meta present");
         assert_eq!(
             cm.sharing,
             cook_contracts::Sharing::Shared,
@@ -1074,14 +1239,17 @@ fn add_unit_local_pinned_disposition_booleans() {
 fn add_unit_without_probes_defaults_to_empty() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 command = "echo hello",
                 cache = false,
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1094,28 +1262,39 @@ fn add_unit_without_probes_defaults_to_empty() {
 fn add_unit_probes_non_list_errors() {
     let (lua, _capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 command = "echo hello",
                 cache = false,
                 probes = "not-a-list",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     assert!(result.is_err(), "probes must be a list, not a string");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("probes"), "error must mention 'probes'; got: {err}");
+    assert!(
+        err.contains("probes"),
+        "error must mention 'probes'; got: {err}"
+    );
 }
 
 #[test]
 fn add_unit_legacy_requires_field_is_rejected() {
     let (lua, _capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 name = "u",
                 inputs = {}, outputs = {"out.txt"},
@@ -1123,7 +1302,9 @@ fn add_unit_legacy_requires_field_is_rejected() {
                 requires = { "cc:zlib" },
                 command = "true",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     assert!(result.is_err(), "legacy `requires` field must be rejected");
     let err = result.unwrap_err().to_string();
@@ -1141,9 +1322,12 @@ fn add_unit_legacy_requires_field_as_string_is_rejected() {
     // partial migrations undetected.
     let (lua, _capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let result = lua.load(r#"
+    let result = lua
+        .load(
+            r#"
             cook.add_unit({
                 name = "u",
                 inputs = {}, outputs = {"out.txt"},
@@ -1151,9 +1335,14 @@ fn add_unit_legacy_requires_field_as_string_is_rejected() {
                 requires = "cc:zlib",
                 command = "true",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
-    assert!(result.is_err(), "legacy `requires` field must be rejected even when non-table");
+    assert!(
+        result.is_err(),
+        "legacy `requires` field must be rejected even when non-table"
+    );
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("rename to `probes`"),
@@ -1175,16 +1364,19 @@ fn add_unit_legacy_requires_field_as_string_is_rejected() {
 fn add_unit_command_with_probe_template_keeps_its_command_and_gains_its_key() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "u",
                 inputs = {}, outputs = {"out.txt"},
                 cache = false,
                 command = "echo $<demo:k.v> > out.txt",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1226,14 +1418,17 @@ fn add_unit_command_with_probe_template_keeps_its_command_and_gains_its_key() {
 fn probe_reference_does_not_change_the_payload_kind() {
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({ name = "plain", inputs = {}, outputs = {"a.txt"},
                             cache = false, command = "echo plain > a.txt" })
             cook.add_unit({ name = "sigil", inputs = {}, outputs = {"b.txt"},
                             cache = false, command = "echo $<demo:k> > b.txt" })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1257,18 +1452,22 @@ fn probe_reference_does_not_change_the_payload_kind() {
 fn add_unit_command_with_file_ref_sigil_is_rejected() {
     let (lua, _capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    let err = lua.load(r#"
+    let err = lua
+        .load(
+            r#"
             cook.add_unit({
                 inputs = {}, outputs = {"out.txt"},
                 cache = false,
                 command = "render --tokens $<file:tokens.css> > out.txt",
             })
-        "#)
-    .exec()
-    .unwrap_err()
-    .to_string();
+        "#,
+        )
+        .exec()
+        .unwrap_err()
+        .to_string();
 
     assert!(
         err.contains("not supported in raw cook.add_unit command strings"),
@@ -1283,15 +1482,20 @@ fn add_unit_command_with_file_ref_sigil_is_rejected() {
 fn add_unit_retains_member_and_outputs() {
     let (lua, capture_state) = make_lua_with_unit_api("encode");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 output = "build/s1.mp4",
                 command = "echo hi",
                 member = "{\"id\":\"s1\"}",
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     let u = state.units.last().expect("a unit was captured");
@@ -1305,16 +1509,19 @@ fn add_unit_record_flag_threads_to_cache_meta() {
     // The register layer must read opts.record and set it on CacheMeta.
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "x.o",
                 outputs = { "x.o" },
                 command = "cc",
                 record = true,
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1333,15 +1540,18 @@ fn add_unit_record_defaults_false() {
     // COOK-163: when opts.record is absent, it defaults to false.
     let (lua, capture_state) = make_lua_with_unit_api("recipe");
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
-    lua.load(r#"
+    lua.load(
+        r#"
             cook.add_unit({
                 name = "x.o",
                 outputs = { "x.o" },
                 command = "cc",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1364,7 +1574,7 @@ fn add_unit_accepts_directory_output_trailing_slash() {
     use std::sync::{Arc, Mutex};
 
     let tmp = tempfile::tempdir().expect("tempdir");
-        // Simulate the "second build": pkg/ already exists on disk.
+    // Simulate the "second build": pkg/ already exists on disk.
     let pkg_dir = tmp.path().join("pkg");
     std::fs::create_dir_all(&pkg_dir).expect("mkdir pkg");
 
@@ -1373,8 +1583,7 @@ fn add_unit_accepts_directory_output_trailing_slash() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    let terminal_outputs: SharedTerminalOutputs =
-        Arc::new(Mutex::new(BTreeMap::new()));
+    let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     register_unit_api(
         &lua,
         capture_state.clone(),
@@ -1385,11 +1594,8 @@ fn add_unit_accepts_directory_output_trailing_slash() {
     .unwrap();
 
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value(
-        "__cook_cookfile_path",
-        "Cookfile".to_string(),
-    )
-    .expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     // pkg/ already exists as a directory; the trailing slash signals
     // CS-0119 directory-output semantics — must be accepted, not rejected.
@@ -1441,7 +1647,10 @@ fn add_test_is_removed_and_names_its_replacement() {
         .expect_err("cook.add_test must raise");
     let msg = err.to_string();
     assert!(msg.contains("was removed"), "got: {msg}");
-    assert!(msg.contains("step_kind = \"test\""), "must name the replacement: {msg}");
+    assert!(
+        msg.contains("step_kind = \"test\""),
+        "must name the replacement: {msg}"
+    );
     assert!(msg.contains("CS-0185"), "must cite the entry: {msg}");
     // Nothing was recorded on the way out.
     assert_eq!(body_ref(&slot).units.len(), 0);
@@ -1456,7 +1665,10 @@ fn a_test_unit_may_not_declare_outputs() {
         .load(r#"cook.add_unit({ step_kind = "test", command = "./run", output = "out.o" })"#)
         .exec()
         .expect_err("outputs on a test unit must be refused");
-    assert!(err.to_string().contains("declares no outputs"), "got: {err}");
+    assert!(
+        err.to_string().contains("declares no outputs"),
+        "got: {err}"
+    );
 }
 
 /// `suite` is removed, and passing it is an error rather than a silent no-op:
@@ -1468,7 +1680,10 @@ fn a_test_unit_may_not_declare_a_suite() {
         .load(r#"cook.add_unit({ step_kind = "test", command = "./run", suite = "x" })"#)
         .exec()
         .expect_err("suite must be refused");
-    assert!(err.to_string().contains("`suite` was removed"), "got: {err}");
+    assert!(
+        err.to_string().contains("`suite` was removed"),
+        "got: {err}"
+    );
 }
 
 /// COOK-360: a test unit INSIDE a step group. The equivalence work compared
@@ -1518,4 +1733,3 @@ fn a_test_unit_in_a_step_group_is_grouped_like_any_other_unit() {
 // uses the register-phase `cook.dep_output` surface, which this harness does
 // not bind; duplicating it here with a hand-set body field would test the
 // harness rather than the wiring.
-

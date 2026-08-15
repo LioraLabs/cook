@@ -161,9 +161,8 @@ pub fn wire_use_declarations(project_dir: &Path, names: &[String]) -> Result<(),
     let Some(source) = plan.source else {
         return Ok(());
     };
-    std::fs::write(&cookfile, source).map_err(|e| {
-        CookError::Other(format!("failed to write {}: {e}", cookfile.display()))
-    })?;
+    std::fs::write(&cookfile, source)
+        .map_err(|e| CookError::Other(format!("failed to write {}: {e}", cookfile.display())))?;
 
     if creating {
         let declared = plan
@@ -194,9 +193,7 @@ fn merge_gitignore(project_dir: &Path) -> Result<(), CookError> {
     let (content, said) = match merge_cook_gitignore_section(existing.as_deref()) {
         GitignoreMerge::Unchanged => return Ok(()),
         GitignoreMerge::Created(content) => (content, "Created .gitignore"),
-        GitignoreMerge::Appended(content) => {
-            (content, "Updated .gitignore with Cook entries")
-        }
+        GitignoreMerge::Appended(content) => (content, "Updated .gitignore with Cook entries"),
     };
     std::fs::write(&path, content)
         .map_err(|e| CookError::Other(format!("failed to write {}: {e}", path.display())))?;

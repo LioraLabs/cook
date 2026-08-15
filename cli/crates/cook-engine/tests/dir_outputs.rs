@@ -91,7 +91,10 @@ fn cache_hit_deletes_strays_from_directory_output() {
     );
     assert!(wd.join("out/a").exists(), "cold run must produce out/a");
     assert!(wd.join("out/b").exists(), "cold run must produce out/b");
-    assert!(wd.join("out/stamp").exists(), "cold run must produce out/stamp");
+    assert!(
+        wd.join("out/stamp").exists(),
+        "cold run must produce out/stamp"
+    );
     let stamp1 = fs::read(wd.join("out/stamp")).unwrap();
 
     // Drop a stray file into the output directory.
@@ -122,8 +125,14 @@ fn cache_hit_deletes_strays_from_directory_output() {
         !wd.join("out/STRAY.txt").exists(),
         "stray file must be deleted by the cache-hit reconciliation"
     );
-    assert!(wd.join("out/a").exists(), "out/a must survive the cache hit");
-    assert!(wd.join("out/b").exists(), "out/b must survive the cache hit");
+    assert!(
+        wd.join("out/a").exists(),
+        "out/a must survive the cache hit"
+    );
+    assert!(
+        wd.join("out/b").exists(),
+        "out/b must survive the cache hit"
+    );
     // Verify it really was a cache hit (command did not re-run).
     let stamp2 = fs::read(wd.join("out/stamp")).unwrap();
     assert_eq!(
@@ -176,10 +185,7 @@ fn rebuild_deletes_orphan_from_directory_output() {
         String::from_utf8_lossy(&out2.stdout),
         String::from_utf8_lossy(&out2.stderr),
     );
-    assert!(
-        wd.join("out/a").exists(),
-        "out/a must exist after rebuild"
-    );
+    assert!(wd.join("out/a").exists(), "out/a must exist after rebuild");
     assert!(
         !wd.join("out/b").exists(),
         "out/b is an orphan and must be deleted after the rebuild"

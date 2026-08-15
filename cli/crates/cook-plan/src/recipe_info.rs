@@ -1,6 +1,6 @@
 //! Build `RecipeInfo` maps for the analyzer.
 //!
-//! `RecipeInfo` is the analyzer's view of each recipe (ingredients, served
+//! `RecipeInfo` is the analyzer's view of each recipe (inputs, served
 //! outputs, explicit `requires` deps). In the unified register-phase + DAG
 //! model (SHI-222 Phase 5, CS-0077) the map is synthesised from a
 //! `RegisteredWorkspace` rather than from AST: Lua-registered recipes
@@ -21,8 +21,8 @@ use super::workspace::Workspace;
 ///
 /// `serves` is populated only for surface recipes whose units carry
 /// `terminal_outputs`; for dynamic recipes (e.g. `cook_cc.bin`) it is empty
-/// and they rely on declared `requires` instead. `ingredients` is intentionally
-/// empty — the analyzer-level inference that used to read ingredient lists is
+/// and they rely on declared `requires` instead. `inputs` is intentionally
+/// empty — the analyzer-level inference that used to read input lists is
 /// obsolete in the unified-DAG world (cross-recipe edges come from
 /// `RecipeUnits.dep_edges`, recorded directly by `cook.dep_output` /
 /// `cook.add_unit` during the register pass).
@@ -59,7 +59,7 @@ pub fn build_recipe_infos_from_registered(
         infos.insert(
             name.name.clone(),
             RecipeInfo {
-                ingredients: vec![],
+                inputs: vec![],
                 serves,
                 requires: name.requires.clone(),
                 orders,
@@ -78,8 +78,8 @@ pub fn build_recipe_infos_from_registered(
 /// the `registries` and `inferred_deps` paths that also walked `Workspace`
 /// directly are gone (COOK-423).
 pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path) -> String {
-    let root_dir = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
+    let root_dir =
+        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
     analyzer::find_full_prefix(&workspace.namespace_map, &root_dir, canonical_path)
 }
 

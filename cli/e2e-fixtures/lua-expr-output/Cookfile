@@ -5,8 +5,8 @@
 # every output lands in one directory. When the output path is a REWRITE of
 # the input path (keep the subtree, swap a prefix, swap an extension), the
 # template vocabulary can't express it. The §8.4.2 form replaces the quoted
-# pattern with a parenthesised Lua expression, evaluated once per ingredient
-# at register time with `input` bound to that ingredient's path.
+# pattern with a parenthesised Lua expression, evaluated once per input
+# at register time with `input` bound to that input's path.
 #
 #   translate — shell body. docs/en/guide/intro.md → build/fr/guide/intro.md:
 #               the nested subtree survives because the expression rewrites

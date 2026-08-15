@@ -51,12 +51,7 @@ fn renders_one_frame_with_failed_node_visible() {
     let frame = terminal
         .draw(|f| draw_frame(f, &mut state, &Theme::default()))
         .unwrap();
-    let content: String = frame
-        .buffer
-        .content()
-        .iter()
-        .map(|c| c.symbol())
-        .collect();
+    let content: String = frame.buffer.content().iter().map(|c| c.symbol()).collect();
     assert!(content.contains("lvm.c"), "tree pane should show node name");
     assert!(
         content.contains("error: undeclared"),
@@ -144,7 +139,10 @@ fn theme_from_name_resolves_both_documented_values_and_rejects_others() {
 
     let mono = Theme::from_name("mono").unwrap();
     assert_eq!(mono.accent, Color::Reset);
-    assert_eq!((mono.ok, mono.err, mono.warn), (Color::Reset, Color::Reset, Color::Reset));
+    assert_eq!(
+        (mono.ok, mono.err, mono.warn),
+        (Color::Reset, Color::Reset, Color::Reset)
+    );
 
     let err = Theme::from_name("solarized").unwrap_err();
     assert!(

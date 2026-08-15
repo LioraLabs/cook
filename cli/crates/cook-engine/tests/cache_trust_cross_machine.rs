@@ -39,24 +39,24 @@ const COOKFILE: &str = r#"probe host
     lines { echo "$SIMHOST" }
 
 recipe portable
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/portable.txt" {
-        cp src/in.txt out/portable.txt
+        cp $<in> out/portable.txt
         echo ran >> out/portable.runlog
     }
 
 recipe hostdep
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     seal host
     cook "out/host.txt" {
-        printf 'built\n' > out/host.txt
+        : $<in>; printf 'built\n' > out/host.txt
         echo ran >> out/host.runlog
     }
 
 recipe scratch
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/scratch.txt" {
-        printf 'scratch-only-marker\n' > out/scratch.txt
+        : $<in>; printf 'scratch-only-marker\n' > out/scratch.txt
         echo ran >> out/scratch.runlog
     } local
 
@@ -67,9 +67,9 @@ recipe generate
     } nondet
 
 recipe pin
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/pin.txt" {
-        cp src/in.txt out/pin.txt
+        cp $<in> out/pin.txt
         echo ran >> out/pin.runlog
     } pinned
 "#;
@@ -113,7 +113,9 @@ fn runs(wd: &Path, runlog: &str) -> usize {
 }
 
 fn gen_runs(wd: &Path) -> u64 {
-    fs::metadata(wd.join("out/gen.side")).map(|m| m.len()).unwrap_or(0)
+    fs::metadata(wd.join("out/gen.side"))
+        .map(|m| m.len())
+        .unwrap_or(0)
 }
 
 fn artifact_file_count(dir: &Path) -> usize {
@@ -185,8 +187,16 @@ fn cache_trust_v3_cross_machine_narrative() {
         build(wd, r, "alpha");
     }
     assert_eq!(runs(wd, "portable.runlog"), 1, "portable warm hit");
-    assert_eq!(runs(wd, "host.runlog"), 1, "hostdep warm hit (stable host value)");
-    assert_eq!(gen_runs(wd), 1, "record warm hit reuses recording, no re-generate");
+    assert_eq!(
+        runs(wd, "host.runlog"),
+        1,
+        "hostdep warm hit (stable host value)"
+    );
+    assert_eq!(
+        gen_runs(wd),
+        1,
+        "record warm hit reuses recording, no re-generate"
+    );
 
     // 4. Host change to SIMHOST=beta: portable HITS, hostdep MISSES + rebuilds.
     for r in ["portable", "hostdep"] {
@@ -220,7 +230,11 @@ fn cache_trust_v3_cross_machine_narrative() {
         !wd.join("out/pin.txt").exists(),
         "pinned cold-miss MUST NOT execute the unit"
     );
-    assert_eq!(runs(wd, "pin.runlog"), 0, "pinned cold-miss MUST NOT execute");
+    assert_eq!(
+        runs(wd, "pin.runlog"),
+        0,
+        "pinned cold-miss MUST NOT execute"
+    );
     assert!(
         combined.contains("pinned") || combined.contains("MUST NOT be rebuilt"),
         "pinned cold-miss error should name the pinned / fetch-only rule.\n{combined}"

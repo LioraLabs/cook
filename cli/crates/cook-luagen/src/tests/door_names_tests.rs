@@ -51,14 +51,20 @@ const UNSHARED: &[(&str, &str)] = &[
     ("recipe", "register-only dynamic registration"),
     ("probe", "register-only probe declaration"),
     ("passthrough", "register-only output passthrough (§5.4.1)"),
-    ("require_var", "register-only declared-variable read (§5.3.1)"),
-    ("resolve_ingredients", "register-only glob resolution"),
+    (
+        "require_var",
+        "register-only declared-variable read (§5.3.1)",
+    ),
+    ("resolve_gather", "register-only glob resolution"),
     // Both-phase doors this crate names in PROSE only — it does not emit
     // them, so it is not an end of the pair.
     ("sh", "named in doc comments; never emitted by this crate"),
     ("json_decode", "named in doc comments; never emitted"),
     ("probes", "a table, not a door; reached as cook.probes.get"),
-    ("env", "the pre-CS-0172 namespace, named only in historical comments"),
+    (
+        "env",
+        "the pre-CS-0172 namespace, named only in historical comments",
+    ),
 ];
 
 /// Every `cook.<ident>` spelling that appears anywhere in this crate's source.

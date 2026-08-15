@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook.add_unit({\n        inputs  = { \"src.c\" },\n        outputs = { \"build/**\", \"dist/*.js\" },\n        command = \"echo built\",\n    })"

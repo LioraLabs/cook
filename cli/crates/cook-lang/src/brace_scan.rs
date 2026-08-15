@@ -405,9 +405,17 @@ fn shell_context(prefix: &str, mut quote: Option<u8>) -> Option<QCtx> {
         } else if b == b'#' && quote.is_none() && (i == 0 || is_shell_word_break(bytes[i - 1])) {
             return None;
         } else if b == b'\'' && quote != Some(b'"') {
-            quote = if quote == Some(b'\'') { None } else { Some(b'\'') };
+            quote = if quote == Some(b'\'') {
+                None
+            } else {
+                Some(b'\'')
+            };
         } else if b == b'"' && quote != Some(b'\'') {
-            quote = if quote == Some(b'"') { None } else { Some(b'"') };
+            quote = if quote == Some(b'"') {
+                None
+            } else {
+                Some(b'"')
+            };
         }
     }
     Some(match quote {

@@ -3,8 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/lockfile/rock_tree")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lockfile/rock_tree")
 }
 
 fn sample_lockfile() -> Lockfile {
@@ -19,8 +18,7 @@ fn sample_lockfile() -> Lockfile {
         LockedModule {
             name: "luafilesystem".into(),
             version: "1.8.0-1".into(),
-            source: "https://luarocks.org/manifests/hisham/luafilesystem-1.8.0-1.src.rock"
-                .into(),
+            source: "https://luarocks.org/manifests/hisham/luafilesystem-1.8.0-1.src.rock".into(),
             integrity: "sha256-9b2c".into(),
             direct: false,
         },
@@ -30,7 +28,7 @@ fn sample_lockfile() -> Lockfile {
 #[test]
 fn round_trip_serialization() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("cook.lock");
+    let path = dir.path().join("cook.lock");
     let lock = sample_lockfile();
     write(&path, &lock).expect("write");
     let read_back = read(&path).expect("read");
@@ -40,7 +38,7 @@ fn round_trip_serialization() {
 #[test]
 fn schema_mismatch_rejected() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("cook.lock");
+    let path = dir.path().join("cook.lock");
     let mut f = std::fs::File::create(&path).expect("create");
     writeln!(f, "schema = 99").expect("write");
     let err = read(&path).expect_err("must fail");
@@ -52,8 +50,7 @@ fn integrity_match_ok() {
     // Use the fixture cache + a hash matching its on-disk content.
     // Compute the expected hash inline so the test is self-checking.
     let cache = fixture_root().join("lib/luarocks/cache");
-    let bytes = std::fs::read(cache.join("cook_smoke-0.1.0-1.src.rock"))
-        .expect("read fixture");
+    let bytes = std::fs::read(cache.join("cook_smoke-0.1.0-1.src.rock")).expect("read fixture");
     let mut h = Sha256::new();
     h.update(&bytes);
     let expected = format!("sha256-{}", B64.encode(h.finalize()));
@@ -92,11 +89,8 @@ fn introspect_closure_marks_direct_correctly() {
     let modules_dir = fixture_root();
     let lock = introspect_closure(&modules_dir, &manifest).expect("introspect");
     assert_eq!(lock.modules.len(), 2);
-    let by_name: std::collections::HashMap<&str, &LockedModule> = lock
-        .modules
-        .iter()
-        .map(|m| (m.name.as_str(), m))
-        .collect();
+    let by_name: std::collections::HashMap<&str, &LockedModule> =
+        lock.modules.iter().map(|m| (m.name.as_str(), m)).collect();
     assert!(by_name["cook_smoke"].direct);
     assert!(!by_name["luafilesystem"].direct);
     assert_eq!(by_name["cook_smoke"].version, "0.1.0-1");
@@ -109,8 +103,7 @@ fn introspect_closure_marks_direct_correctly() {
 #[test]
 fn introspect_empty_tree_yields_empty_lockfile() {
     let dir = tempfile::tempdir().expect("tempdir");
-        let lock = introspect_closure(dir.path(), &ManifestModules::default())
-            .expect("introspect");
+    let lock = introspect_closure(dir.path(), &ManifestModules::default()).expect("introspect");
     assert!(lock.modules.is_empty());
     assert_eq!(lock.schema, SCHEMA_VERSION);
 }
@@ -120,7 +113,7 @@ fn parse_rockspec_url_skips_description_url() {
     // Some rockspecs put a non-standard `url` inside `description` before
     // `source`. The scraper must skip past it and return the source url.
     let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("foo-1.0-1.rockspec");
+    let path = dir.path().join("foo-1.0-1.rockspec");
     std::fs::write(
         &path,
         r#"package = "foo"

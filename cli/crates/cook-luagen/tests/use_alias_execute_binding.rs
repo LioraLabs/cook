@@ -21,11 +21,7 @@ const GLUED: &str = r#"local greet = cook.load_module("greet"); greet."#;
 
 fn lua(src: &str) -> String {
     let cookfile = cook_lang::parse(src).expect("fixture must parse");
-    let names: BTreeSet<String> = cookfile
-        .recipes
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
+    let names: BTreeSet<String> = cookfile.recipes.iter().map(|r| r.name.clone()).collect();
     cook_luagen::generate_checked(&cookfile, &names)
         .expect("fixture must lower")
         .0
@@ -59,7 +55,7 @@ fn cook_step_multi_output_lua_body_binds_the_alias() {
 #[test]
 fn cook_step_many_to_one_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nrecipe a\n    ingredients \"src/*.js\"\n    cook \"dist/all.js\" >{ greet.say(inputs) }\n",
+        "use greet\n\nrecipe a\n    gather \"src/*.js\"\n    cook \"dist/all.js\" >{ greet.say(inputs) }\n",
         "cook many-to-one",
     );
 }
@@ -67,7 +63,7 @@ fn cook_step_many_to_one_lua_body_binds_the_alias() {
 #[test]
 fn cook_step_per_input_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nrecipe a\n    ingredients \"src/*.js\"\n    cook \"build/$<in.stem>.o\" >{ greet.say(input) }\n",
+        "use greet\n\nrecipe a\n    gather \"src/*.js\"\n    cook \"build/$<in.stem>.o\" >{ greet.say(input) }\n",
         "cook per-input",
     );
 }
@@ -75,7 +71,7 @@ fn cook_step_per_input_lua_body_binds_the_alias() {
 #[test]
 fn cook_step_member_fanout_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nprobe cards\n    json { cat cards.json }\n\nrecipe a\n    ingredients cards\n    cook \"o/$<in.id>.svg\" >{ greet.say(item) }\n",
+        "use greet\n\nprobe cards\n    json { cat cards.json }\n\nrecipe a\n    gather cards\n    cook \"o/$<in.id>.svg\" >{ greet.say(item) }\n",
         "cook member fan-out",
     );
 }
@@ -91,7 +87,7 @@ fn test_step_one_shot_lua_body_binds_the_alias() {
 #[test]
 fn test_step_one_to_one_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nrecipe a\n    ingredients \"t/*.lua\"\n    cook \"b/$<in.stem>\" { luac $<in> -o $<out> }\n    test >{ greet.say(input) }\n",
+        "use greet\n\nrecipe a\n    gather \"t/*.lua\"\n    cook \"b/$<in.stem>\" { luac $<in> -o $<out> }\n    test >{ greet.say(input) }\n",
         "test one-to-one",
     );
 }
@@ -99,7 +95,7 @@ fn test_step_one_to_one_lua_body_binds_the_alias() {
 #[test]
 fn test_step_many_to_one_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nrecipe a\n    ingredients \"t/*.lua\"\n    test >{ greet.say(inputs) }\n",
+        "use greet\n\nrecipe a\n    gather \"t/*.lua\"\n    test >{ greet.say(inputs) }\n",
         "test many-to-one",
     );
 }
@@ -107,7 +103,7 @@ fn test_step_many_to_one_lua_body_binds_the_alias() {
 #[test]
 fn test_step_member_fanout_lua_body_binds_the_alias() {
     assert_bound(
-        "use greet\n\nprobe cards\n    json { cat cards.json }\n\nrecipe a\n    ingredients cards\n    test >{ greet.say(item) }\n",
+        "use greet\n\nprobe cards\n    json { cat cards.json }\n\nrecipe a\n    gather cards\n    test >{ greet.say(item) }\n",
         "test member fan-out",
     );
 }
@@ -124,10 +120,7 @@ fn probe_lua_produce_body_binds_the_alias() {
 fn chore_lua_body_binds_the_alias() {
     // Already worked before CS-0205; pinned so the shared helper cannot regress
     // the one surface that was carrying the contract.
-    assert_bound(
-        "use greet\n\nchore c\n    > greet.say()\n",
-        "chore",
-    );
+    assert_bound("use greet\n\nchore c\n    > greet.say()\n", "chore");
 }
 
 #[test]
@@ -149,7 +142,7 @@ fn a_body_that_never_names_the_alias_gets_no_binding() {
 fn a_files_producer_keeps_its_sentinel_produce_verbatim() {
     // `@files-manifest` is compared by EQUALITY in cook-probe (`is_files_producer`).
     // A prelude glued onto it would route a synthesised producer to a worker VM.
-    let out = lua("use greet\n\nprobe srcs\n    files { \"src/*.ts\" }\n");
+    let out = lua("use greet\n\nfiles srcs\n    \"src/*.ts\"\n");
     let sentinel = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE;
     assert!(
         out.contains(&format!("produce = [[{sentinel}]]")),
@@ -163,7 +156,7 @@ fn a_tools_producer_keeps_its_sentinel_produce_verbatim() {
     // inherits the same hazard: `@tools-identity` is compared by EQUALITY in
     // cook-probe, and a prelude glued onto it would route a synthesised
     // producer to a worker VM — which would then die on a bare `@`.
-    let out = lua("use greet\n\nprobe toolchain\n    tools { cc }\n");
+    let out = lua("use greet\n\ntools toolchain\n    cc\n");
     let sentinel = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE;
     assert!(
         out.contains(&format!("produce = [[{sentinel}]]")),

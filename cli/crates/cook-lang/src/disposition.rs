@@ -108,7 +108,8 @@ pub(crate) fn removed_trailing_seal(step: &str, line: usize) -> ParseError {
 pub(crate) fn removed_unseal(line: usize) -> ParseError {
     ParseError::Parse {
         line,
-        message: "`unseal` was removed (CS-0225); do not put the ref in the recipe's `seal` step".to_string(),
+        message: "`unseal` was removed (CS-0225); do not put the ref in the recipe's `seal` step"
+            .to_string(),
     }
 }
 
@@ -132,24 +133,40 @@ pub(crate) struct SealOperands {
     pub inline_probe: Option<Probe>,
 }
 
-pub(crate) fn parse_seal_operands(text: &str, line: usize, owner: &str) -> Result<SealOperands, ParseError> {
+pub(crate) fn parse_seal_operands(
+    text: &str,
+    line: usize,
+    owner: &str,
+) -> Result<SealOperands, ParseError> {
     let mut operands = Vec::new();
     let mut start = None;
     let mut quoted = false;
     let mut escaped = false;
     for (i, ch) in text.char_indices() {
         if start.is_none() {
-            if ch.is_whitespace() { continue; }
+            if ch.is_whitespace() {
+                continue;
+            }
             start = Some(i);
         }
-        if quoted && escaped { escaped = false; }
-        else if quoted && ch == '\\' { escaped = true; }
-        else if ch == '"' { quoted = !quoted; }
-        else if ch.is_whitespace() && !quoted { operands.push(text[start.take().unwrap()..i].to_string()); }
+        if quoted && escaped {
+            escaped = false;
+        } else if quoted && ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            quoted = !quoted;
+        } else if ch.is_whitespace() && !quoted {
+            operands.push(text[start.take().unwrap()..i].to_string());
+        }
     }
-    if let Some(start) = start { operands.push(text[start..].to_string()); }
+    if let Some(start) = start {
+        operands.push(text[start..].to_string());
+    }
     if quoted {
-        return Err(ParseError::Parse { line, message: "seal: unterminated quoted file glob".into() });
+        return Err(ParseError::Parse {
+            line,
+            message: "seal: unterminated quoted file glob".into(),
+        });
     }
 
     let mut refs = Vec::new();
@@ -157,25 +174,52 @@ pub(crate) fn parse_seal_operands(text: &str, line: usize, owner: &str) -> Resul
     let mut excludes = Vec::new();
     for operand in operands {
         if let Some(quoted) = operand.strip_prefix('!') {
-            let inner = quoted.strip_prefix('"').and_then(|s| s.strip_suffix('"')).ok_or_else(|| ParseError::Parse {
-                line, message: "seal: `!` must be immediately followed by a quoted glob".into(),
-            })?;
-            if inner.is_empty() { return Err(ParseError::Parse { line, message: "seal: excluded file glob must not be empty".into() }); }
+            let inner = quoted
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .ok_or_else(|| ParseError::Parse {
+                    line,
+                    message: "seal: `!` must be immediately followed by a quoted glob".into(),
+                })?;
+            if inner.is_empty() {
+                return Err(ParseError::Parse {
+                    line,
+                    message: "seal: excluded file glob must not be empty".into(),
+                });
+            }
             excludes.push(inner.to_string());
         } else if let Some(inner) = operand.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-            if inner.is_empty() { return Err(ParseError::Parse { line, message: "seal: file glob must not be empty".into() }); }
+            if inner.is_empty() {
+                return Err(ParseError::Parse {
+                    line,
+                    message: "seal: file glob must not be empty".into(),
+                });
+            }
             globs.push(inner.to_string());
         } else {
             refs.extend(parse_seal_refs(&[operand], line)?);
         }
     }
     if globs.is_empty() && !excludes.is_empty() {
-        return Err(ParseError::Parse { line, message: "seal: an excluded glob requires a quoted include glob on the same line".into() });
+        return Err(ParseError::Parse {
+            line,
+            message: "seal: an excluded glob requires a quoted include glob on the same line"
+                .into(),
+        });
     }
-    let inline_probe = if globs.is_empty() { None } else {
+    let inline_probe = if globs.is_empty() {
+        None
+    } else {
         let name = format!("@seal:{owner}:{line}");
         refs.push(name.clone());
-        Some(Probe { name, deps: vec![], ingredients: vec![], excludes: vec![], produce: ProbeProduce::Files { globs, excludes }, line })
+        Some(Probe {
+            name,
+            deps: vec![],
+            inputs: vec![],
+            excludes: vec![],
+            produce: ProbeProduce::Files { globs, excludes },
+            line,
+        })
     };
     Ok(SealOperands { refs, inline_probe })
 }

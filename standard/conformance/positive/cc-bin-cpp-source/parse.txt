@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_cc.bin(\"hello_cpp\", { sources = { \"src/hello.cpp\" }, standard = \"c++17\" })"

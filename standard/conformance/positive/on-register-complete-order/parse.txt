@@ -5,14 +5,14 @@ Cookfile
   recipes:
     Recipe name="alpha" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="m.mark(\"alpha\")"
         Cook outputs=["build/alpha.out"] body=ShellBlock(["echo alpha > $<out>"])
     Recipe name="beta" line=7
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="m.mark(\"beta\")"

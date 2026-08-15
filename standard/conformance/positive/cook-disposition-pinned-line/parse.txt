@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["vendor.a"] body=ShellBlock(["ar rcs vendor.a obj.o"]) disposition=[local=false pinned=true record=false seal=[]]

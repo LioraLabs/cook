@@ -166,7 +166,10 @@ impl OutputLog {
             } else {
                 // `room` is non-zero, so this never asks the constructor for an
                 // empty chunk.
-                head.extend(OutputChunk::new(c.stream(), c.bytes()[..room as usize].to_vec()));
+                head.extend(OutputChunk::new(
+                    c.stream(),
+                    c.bytes()[..room as usize].to_vec(),
+                ));
                 head_used += room;
                 break;
             }

@@ -2,7 +2,11 @@ use super::*;
 
 fn captured(command: &str, dir: &Path) -> Outcome {
     run::<&str, &str>(
-        &Spawn { command, working_dir: dir, stdio: Stdio::Captured },
+        &Spawn {
+            command,
+            working_dir: dir,
+            stdio: Stdio::Captured,
+        },
         std::iter::empty(),
     )
     .expect("spawn")
@@ -25,7 +29,11 @@ fn a_silent_command_contributes_no_chunks() {
     let dir = tempfile::tempdir().unwrap();
     let o = captured("true", dir.path());
     assert!(o.success());
-    assert!(o.chunks().is_empty(), "expected no chunks, got {:?}", o.chunks());
+    assert!(
+        o.chunks().is_empty(),
+        "expected no chunks, got {:?}",
+        o.chunks()
+    );
 }
 
 #[test]
@@ -72,7 +80,9 @@ fn failure_carries_both_streams_and_none_on_success() {
     assert!(ok.failure(7, "echo fine").is_none());
 
     let bad = captured("echo OUT; echo ERR >&2; exit 2", dir.path());
-    let f = bad.failure(7, "the command").expect("a failed command has a failure");
+    let f = bad
+        .failure(7, "the command")
+        .expect("a failed command has a failure");
     assert_eq!(f.line(), 7);
     assert_eq!(f.exit_code(), 2);
     assert_eq!(f.command(), "the command");
@@ -103,17 +113,35 @@ fn the_overlay_accepts_the_map_types_the_callers_actually_hold() {
     // without the caller rebuilding its map.
     let dir = tempfile::tempdir().unwrap();
     let hash: std::collections::HashMap<String, String> =
-        [("COOK_SHELL_MAP_PROBE".to_string(), "h".to_string())].into_iter().collect();
+        [("COOK_SHELL_MAP_PROBE".to_string(), "h".to_string())]
+            .into_iter()
+            .collect();
     let btree: std::collections::BTreeMap<String, String> =
-        [("COOK_SHELL_MAP_PROBE".to_string(), "b".to_string())].into_iter().collect();
+        [("COOK_SHELL_MAP_PROBE".to_string(), "b".to_string())]
+            .into_iter()
+            .collect();
     let cmd = "printf '%s' \"$COOK_SHELL_MAP_PROBE\"";
 
-    let a = run(&Spawn { command: cmd, working_dir: dir.path(), stdio: Stdio::Captured }, &hash)
-        .expect("spawn");
+    let a = run(
+        &Spawn {
+            command: cmd,
+            working_dir: dir.path(),
+            stdio: Stdio::Captured,
+        },
+        &hash,
+    )
+    .expect("spawn");
     assert_eq!(a.stdout_lossy(), "h");
 
-    let b = run(&Spawn { command: cmd, working_dir: dir.path(), stdio: Stdio::Captured }, &btree)
-        .expect("spawn");
+    let b = run(
+        &Spawn {
+            command: cmd,
+            working_dir: dir.path(),
+            stdio: Stdio::Captured,
+        },
+        &btree,
+    )
+    .expect("spawn");
     assert_eq!(b.stdout_lossy(), "b");
 }
 
@@ -132,7 +160,11 @@ fn inherited_stdio_captures_nothing_but_still_reports_status() {
     // to attribute, and the exit status is the whole report.
     let dir = tempfile::tempdir().unwrap();
     let o = run::<&str, &str>(
-        &Spawn { command: "exit 5", working_dir: dir.path(), stdio: Stdio::Inherited },
+        &Spawn {
+            command: "exit 5",
+            working_dir: dir.path(),
+            stdio: Stdio::Inherited,
+        },
         std::iter::empty(),
     )
     .expect("spawn");
@@ -156,7 +188,11 @@ fn a_command_that_cannot_start_is_an_error_not_an_outcome() {
     // report a spawn problem rather than a build failure.
     let missing = Path::new("/definitely/not/a/directory/cook-shell-test");
     let e = run::<&str, &str>(
-        &Spawn { command: "true", working_dir: missing, stdio: Stdio::Captured },
+        &Spawn {
+            command: "true",
+            working_dir: missing,
+            stdio: Stdio::Captured,
+        },
         std::iter::empty(),
     );
     assert!(e.is_err());

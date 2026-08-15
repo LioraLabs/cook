@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="generate" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["src/parser.c"] body=ShellBlock(["tree-sitter generate"]) disposition=[local=false pinned=false record=false seal=["@seal:generate:5", "generate:tool"]]
@@ -15,11 +15,11 @@ Cookfile
   probes:
     Probe name="generate:tool" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Tools names=["tree-sitter", "pkg-config", "llvm-config"]
     Probe name="@seal:generate:5" line=5
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["grammar.js"] excludes=[]

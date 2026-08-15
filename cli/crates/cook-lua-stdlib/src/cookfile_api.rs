@@ -162,7 +162,10 @@ pub fn register_cookfile_api(
             let (full, source) = read_source(&sb, "cook.cookfile.append", &s.resolve(), &path)?;
             let edited = cook_cookfile::append_declaration(&source, &text);
             std::fs::write(&full, edited).map_err(|e| {
-                mlua::Error::runtime(format!("cook.cookfile.append: writing {}: {e}", full.display()))
+                mlua::Error::runtime(format!(
+                    "cook.cookfile.append: writing {}: {e}",
+                    full.display()
+                ))
             })?;
             Ok(true)
         })?,
@@ -180,8 +183,7 @@ pub fn register_cookfile_api(
     tbl.set(
         "find_call",
         lua.create_function(move |lua, (path, recipe): (String, String)| {
-            let (full, source) =
-                read_source(&sb, "cook.cookfile.find_call", &s.resolve(), &path)?;
+            let (full, source) = read_source(&sb, "cook.cookfile.find_call", &s.resolve(), &path)?;
             match cook_cookfile::find_call(&source, &recipe) {
                 Ok(call) => {
                     let t = lua.create_table()?;
@@ -218,9 +220,7 @@ pub fn register_cookfile_api(
                 let (full, source) =
                     read_source(&sb, "cook.cookfile.field_entries", &s.resolve(), &path)?;
                 match cook_cookfile::field_entries(&source, &recipe, &field) {
-                    Ok(Some(entries)) => {
-                        Ok(mlua::Value::Table(lua.create_sequence_from(entries)?))
-                    }
+                    Ok(Some(entries)) => Ok(mlua::Value::Table(lua.create_sequence_from(entries)?)),
                     Ok(None) => Ok(mlua::Value::Nil),
                     Err(e) => Err(mlua::Error::runtime(format!(
                         "cook.cookfile.field_entries: {}: {e}",

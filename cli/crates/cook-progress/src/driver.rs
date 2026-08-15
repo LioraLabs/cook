@@ -16,7 +16,11 @@ pub struct Driver {
 
 impl Driver {
     pub fn new(renderer: Box<dyn Renderer>, log_store: Option<LogStore>) -> Self {
-        Self { state: BuildState::new(), renderer, log_store }
+        Self {
+            state: BuildState::new(),
+            renderer,
+            log_store,
+        }
     }
 
     pub fn run(&mut self, rx: mpsc::Receiver<ProgressEvent>) -> io::Result<bool> {
@@ -32,7 +36,9 @@ impl Driver {
         }
         self.renderer.finish(&self.state)?;
         let success = self.state.finished.unwrap_or(false);
-        if let Some(store) = self.log_store.as_mut() { let _ = store.close(success); }
+        if let Some(store) = self.log_store.as_mut() {
+            let _ = store.close(success);
+        }
         Ok(success)
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use cook_lang::ast::{CookStep, OutputPattern, Body};
+use cook_lang::ast::{Body, CookStep, OutputPattern};
 
 fn step(outputs: &[&str], body: Option<Body>) -> CookStep {
     CookStep {

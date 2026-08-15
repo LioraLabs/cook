@@ -199,14 +199,21 @@ impl UiState {
                 }
             }
         }
-        self.search = Some(SearchState { pattern: pat, matches, cursor: 0, editing: false });
+        self.search = Some(SearchState {
+            pattern: pat,
+            matches,
+            cursor: 0,
+            editing: false,
+        });
         self.jump_to_current_match();
     }
 
     pub fn jump_to_next_match(&mut self, dir: i32) {
         let len_opt = self.search.as_ref().map(|s| s.matches.len());
         let Some(len) = len_opt else { return };
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         if let Some(s) = self.search.as_mut() {
             let len_i = len as i32;
             s.cursor = ((s.cursor as i32 + dir).rem_euclid(len_i)) as usize;
@@ -215,12 +222,18 @@ impl UiState {
     }
 
     fn jump_to_current_match(&mut self) {
-        let target = self.search.as_ref()
+        let target = self
+            .search
+            .as_ref()
             .and_then(|s| s.matches.get(s.cursor).copied());
-        let Some((rid, nid, line_idx)) = target else { return };
-        if let Some(pos) = self.flat.iter().position(|r| {
-            matches!(r, FlatRow::Node(r1, n1) if *r1 == rid && *n1 == nid)
-        }) {
+        let Some((rid, nid, line_idx)) = target else {
+            return;
+        };
+        if let Some(pos) = self
+            .flat
+            .iter()
+            .position(|r| matches!(r, FlatRow::Node(r1, n1) if *r1 == rid && *n1 == nid))
+        {
             self.selected = pos;
         }
         self.scroll_y = line_idx as u16;

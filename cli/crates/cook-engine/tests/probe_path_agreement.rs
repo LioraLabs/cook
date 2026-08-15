@@ -1,7 +1,7 @@
 //! COOK-359: the two probe-evaluation paths must agree.
 //!
 //! Probe evaluation is implemented twice — `cook-register`'s
-//! `evaluate_prepass_probe` (which feeds an `ingredients <probe>` fan-out) and
+//! `evaluate_prepass_probe` (which feeds an `gather <probe>` fan-out) and
 //! `cook-engine`'s executor G4 path (which feeds sealed consumers). Both do the
 //! same thing around a different Lua VM: resolve inputs, compute a fingerprint,
 //! cache GET, run the producer on a miss, cache PUT, write
@@ -57,7 +57,7 @@ fn cook_binary() -> std::path::PathBuf {
 /// happens to change anyway. The runlogs sit outside `out/` so the orphaned-
 /// output sweeper leaves them alone.
 const COOKFILE: &str = r#"probe keyed:items
-    ingredients "src/dep.txt"
+    seal "src/dep.txt"
     json {
         echo ran >> keyed.runlog
         printf '["a"]\n'
@@ -74,7 +74,7 @@ recipe sealed_keyed
     cook "out/sealed_keyed.txt" { echo built > $<out> }
 
 recipe fanned_keyed
-    ingredients keyed:items
+    gather keyed:items
     cook "out/fk-$<in>.txt" { echo '$<in>' > $<out> }
 
 recipe sealed_keyless
@@ -82,7 +82,7 @@ recipe sealed_keyless
     cook "out/sealed_keyless.txt" { echo built > $<out> }
 
 recipe fanned_keyless
-    ingredients keyless:items
+    gather keyless:items
     cook "out/fl-$<in>.txt" { echo '$<in>' > $<out> }
 "#;
 
@@ -101,14 +101,21 @@ fn arm() -> Arm {
     fs::create_dir_all(wd.join(".cook")).unwrap();
     fs::write(
         wd.join(".cook/cloud.toml"),
-        format!("[cache]\ncache_dir = {:?}\n", cache.path().to_string_lossy()),
+        format!(
+            "[cache]\ncache_dir = {:?}\n",
+            cache.path().to_string_lossy()
+        ),
     )
     .unwrap();
     fs::create_dir_all(wd.join("src")).unwrap();
     fs::create_dir_all(wd.join("out")).unwrap();
     fs::write(wd.join("src/dep.txt"), "dep-content\n").unwrap();
     fs::write(wd.join("Cookfile"), COOKFILE).unwrap();
-    Arm { _tmp: tmp, _cache: cache, wd }
+    Arm {
+        _tmp: tmp,
+        _cache: cache,
+        wd,
+    }
 }
 
 fn build(wd: &Path, recipe: &str) {
@@ -150,10 +157,8 @@ const RUNS: usize = 3;
 
 #[test]
 fn keyed_probe_costs_the_same_on_both_paths() {
-    let (sealed_runs, sealed_value) =
-        measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
-    let (fanned_runs, fanned_value) =
-        measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
+    let (sealed_runs, sealed_value) = measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
+    let (fanned_runs, fanned_value) = measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
 
     // §22.5.8: a keyed probe whose declared inputs have not moved is served
     // from cache, so the producer runs exactly once across the whole series.
@@ -163,7 +168,7 @@ fn keyed_probe_costs_the_same_on_both_paths() {
     );
     assert_eq!(
         fanned_runs, 1,
-        "ingredients <probe> path: keyed probe producer ran {fanned_runs}x in \
+        "gather <probe> path: keyed probe producer ran {fanned_runs}x in \
          {RUNS} runs, expected 1 — the register pre-pass is not consulting the \
          cache (COOK-359)",
     );
@@ -182,10 +187,8 @@ fn keyed_probe_costs_the_same_on_both_paths() {
 
 #[test]
 fn keyless_probe_reproduces_on_both_paths() {
-    let (sealed_runs, _) =
-        measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
-    let (fanned_runs, _) =
-        measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
+    let (sealed_runs, _) = measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
+    let (fanned_runs, _) = measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
 
     // CS-0178: a probe declaring no inputs has no cache key and MUST re-produce
     // on every invocation in which it is reached. Turning the pre-pass cache on
@@ -198,7 +201,7 @@ fn keyless_probe_reproduces_on_both_paths() {
     );
     assert_eq!(
         fanned_runs, RUNS,
-        "ingredients <probe> path: keyless probe producer ran {fanned_runs}x in \
+        "gather <probe> path: keyless probe producer ran {fanned_runs}x in \
          {RUNS} runs, expected {RUNS} (CS-0178)",
     );
 }

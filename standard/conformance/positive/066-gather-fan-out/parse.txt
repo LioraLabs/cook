@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="objects" line=1
       deps: []
-      ingredients: ["src/*.c"]
+      inputs: ["src/*.c"]
       excludes: []
       steps:
         Gather

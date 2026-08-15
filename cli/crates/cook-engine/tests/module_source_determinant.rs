@@ -123,7 +123,11 @@ fn editing_a_module_rebuilds_the_body_that_loaded_it() {
 
     write_helper(wd, "REVISED");
     build(wd, "emit");
-    assert_eq!(runs(wd, "runlog"), 2, "the module moved, so the body must run");
+    assert_eq!(
+        runs(wd, "runlog"),
+        2,
+        "the module moved, so the body must run"
+    );
     assert_eq!(
         fs::read_to_string(wd.join("out.txt")).unwrap(),
         "REVISED",
@@ -132,7 +136,7 @@ fn editing_a_module_rebuilds_the_body_that_loaded_it() {
 }
 
 /// The same rule through the probe fingerprint. The probe declares an
-/// ingredient so it is keyed at all (CS-0178 keylessness would otherwise make
+/// input so it is keyed at all (CS-0178 keylessness would otherwise make
 /// it re-produce every run and prove nothing), and the consumer seals on it so
 /// a changed value reaches the consumer's key.
 #[test]
@@ -146,7 +150,7 @@ fn editing_a_module_reproduces_the_probe_that_loaded_it() {
     fs::write(
         wd.join("Cookfile"),
         "probe mod:answer\n\
-         \x20   ingredients \"seed.txt\"\n\
+         \x20   seal \"seed.txt\"\n\
          \x20   >{ cook.sh(\"echo ran >> probelog\"); local h = cook.load_module(\"helper\"); return h.value() }\n\
          \n\
          recipe emit\n\
@@ -156,7 +160,10 @@ fn editing_a_module_reproduces_the_probe_that_loaded_it() {
     .unwrap();
 
     build(wd, "emit");
-    assert_eq!(fs::read_to_string(wd.join("out.txt")).unwrap().trim(), "ORIGINAL");
+    assert_eq!(
+        fs::read_to_string(wd.join("out.txt")).unwrap().trim(),
+        "ORIGINAL"
+    );
     assert_eq!(runs(wd, "probelog"), 1);
 
     // The probe's own cache must still work: a settled run re-produces nothing.
@@ -169,7 +176,11 @@ fn editing_a_module_reproduces_the_probe_that_loaded_it() {
 
     write_helper(wd, "REVISED");
     build(wd, "emit");
-    assert_eq!(runs(wd, "probelog"), 2, "the module moved, so produce must run");
+    assert_eq!(
+        runs(wd, "probelog"),
+        2,
+        "the module moved, so produce must run"
+    );
     assert_eq!(
         fs::read_to_string(wd.join("out.txt")).unwrap().trim(),
         "REVISED",
@@ -219,7 +230,10 @@ fn a_shared_store_does_not_carry_a_result_across_differing_modules() {
     // Same Cookfile, same declared inputs, same command text, different module.
     // Before CS-0204 this composed A's key and was served A's artifact.
     let (_b, b_runs) = machine("BETA");
-    assert_eq!(b_runs, 1, "a differing module must not be served A's answer");
+    assert_eq!(
+        b_runs, 1,
+        "a differing module must not be served A's answer"
+    );
 
     // Same module content as A: the fold must let this one reuse A's entry.
     let (_c, c_runs) = machine("ALPHA");
@@ -235,12 +249,13 @@ fn a_shared_store_does_not_carry_a_result_across_differing_modules() {
 #[test]
 fn a_shared_verdict_is_reused_only_across_matching_modules() {
     let store = tempfile::tempdir().unwrap();
-    // `ingredients` gives the test unit something to key on: an output-less
+    // `inputs` gives the test unit something to key on: an output-less
     // unit that declares nothing has nothing whose movement could invalidate
     // it, so §17.4 rule 1 refuses it a key entirely (CS-0186).
     let cookfile = "recipe check\n\
-                    \x20   ingredients \"seed.txt\"\n\
+                    \x20   gather \"seed.txt\"\n\
                     \x20   test >{\n\
+                    \x20       local _ = input\n\
                     \x20       local h = cook.load_module(\"helper\")\n\
                     \x20       cook.sh(\"echo ran >> runlog\")\n\
                     \x20       assert(h.value() ~= nil)\n\

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out/app"] body=ShellBlock(["touch out/app"])

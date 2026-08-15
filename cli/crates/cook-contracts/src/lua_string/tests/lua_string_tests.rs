@@ -64,7 +64,10 @@ fn output_carries_no_raw_control_bytes_or_bare_quotes() {
 
 #[test]
 fn multibyte_text_is_untouched() {
-    assert_eq!(escape_double_quoted("caf\u{e9} \u{1f600}"), "caf\u{e9} \u{1f600}");
+    assert_eq!(
+        escape_double_quoted("caf\u{e9} \u{1f600}"),
+        "caf\u{e9} \u{1f600}"
+    );
 }
 
 // ---------------------------------------------------------------------------

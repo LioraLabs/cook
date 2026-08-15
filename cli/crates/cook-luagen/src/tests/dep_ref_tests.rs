@@ -17,7 +17,7 @@ fn make_recipe(name: &str, steps: Vec<Step>) -> Recipe {
     Recipe {
         name: name.to_string(),
         deps: vec![],
-        ingredients: vec![],
+        inputs: vec![],
         excludes: vec![],
         steps,
         line: 1,
@@ -55,7 +55,10 @@ fn test_parse_dep_token_plain_recipe() {
     let result = parse_dep_token("libmath", &names);
     assert_eq!(
         result,
-        Some(DepRef { recipe_name: "libmath".to_string(), accessor: None })
+        Some(DepRef {
+            recipe_name: "libmath".to_string(),
+            accessor: None
+        })
     );
 }
 
@@ -81,7 +84,10 @@ fn test_parse_dep_token_dotted_recipe_name() {
     let result = parse_dep_token("backend.build", &names);
     assert_eq!(
         result,
-        Some(DepRef { recipe_name: "backend.build".to_string(), accessor: None })
+        Some(DepRef {
+            recipe_name: "backend.build".to_string(),
+            accessor: None
+        })
     );
 }
 
@@ -111,14 +117,14 @@ fn test_extract_dep_refs_from_cook_step() {
     recipe_names.insert("libmath".to_string());
     recipe_names.insert("libstr".to_string());
 
-        let recipe = make_recipe(
-            "app",
+    let recipe = make_recipe(
+        "app",
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
-                body: Some(Body::ShellBlock(
-                    vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
-                )),
+                body: Some(Body::ShellBlock(vec![
+                    "gcc -o $<out> $<in> $<libmath> $<libstr>".to_string(),
+                ])),
                 disposition: Default::default(),
             },
             line: 2,
@@ -127,20 +133,28 @@ fn test_extract_dep_refs_from_cook_step() {
 
     let refs = extract_dep_refs(&recipe, &recipe_names);
     assert_eq!(refs.len(), 2);
-    assert!(refs.contains(&DepRef { recipe_name: "libmath".to_string(), accessor: None }));
-    assert!(refs.contains(&DepRef { recipe_name: "libstr".to_string(), accessor: None }));
-    }
+    assert!(refs.contains(&DepRef {
+        recipe_name: "libmath".to_string(),
+        accessor: None
+    }));
+    assert!(refs.contains(&DepRef {
+        recipe_name: "libstr".to_string(),
+        accessor: None
+    }));
+}
 
-    #[test]
-    fn test_extract_dep_refs_from_output_pattern() {
-        let mut recipe_names = BTreeSet::new();
-        recipe_names.insert("protos".to_string());
+#[test]
+fn test_extract_dep_refs_from_output_pattern() {
+    let mut recipe_names = BTreeSet::new();
+    recipe_names.insert("protos".to_string());
 
     let recipe = make_recipe(
         "app",
         vec![Step::Cook {
             step: CookStep {
-                outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.pb.cc".to_string())],
+                outputs: vec![OutputPattern::Quoted(
+                    "build/$<protos.stem>.pb.cc".to_string(),
+                )],
                 body: None,
                 disposition: Default::default(),
             },
@@ -163,12 +177,18 @@ fn cs_0022_in_and_out_are_not_dep_refs() {
     let mut names = BTreeSet::new();
     names.insert("libmath".to_string());
 
-    assert!(parse_dep_token("in.stem", &names).is_none(),
-        "in.stem is an own-input accessor, not a dep ref");
-    assert!(parse_dep_token("out.dir", &names).is_none(),
-            "out.dir is an output accessor, not a dep ref");
-    assert!(parse_dep_token("out_1.stem", &names).is_none(),
-        "out_1.stem is a multi-output accessor, not a dep ref");
+    assert!(
+        parse_dep_token("in.stem", &names).is_none(),
+        "in.stem is an own-input accessor, not a dep ref"
+    );
+    assert!(
+        parse_dep_token("out.dir", &names).is_none(),
+        "out.dir is an output accessor, not a dep ref"
+    );
+    assert!(
+        parse_dep_token("out_1.stem", &names).is_none(),
+        "out_1.stem is a multi-output accessor, not a dep ref"
+    );
     assert_eq!(
         parse_dep_token("libmath.stem", &names).map(|d| d.recipe_name),
         Some("libmath".to_string()),
@@ -211,19 +231,25 @@ fn test_extract_recipe_names_with_imports_no_imports_equals_local() {
 fn parse_dep_token_strips_bracket_index_for_recipe_member() {
     let mut names = BTreeSet::new();
     names.insert("render".to_string());
-        // COOK-221 / CS-0137: the per-member spelling is `[in]`.
-        assert_eq!(
-            parse_dep_token("render[in]", &names),
-        Some(DepRef { recipe_name: "render".to_string(), accessor: None })
-        );
-        // bare recipe still works
-        assert_eq!(
-            parse_dep_token("render", &names),
-        Some(DepRef { recipe_name: "render".to_string(), accessor: None })
-        );
-        // the removed `[]` spelling contributes no edge (the resolver rejects
-        // the placeholder with a did-you-mean before any unit registers)
-        assert_eq!(parse_dep_token("render[]", &names), None);
+    // COOK-221 / CS-0137: the per-member spelling is `[in]`.
+    assert_eq!(
+        parse_dep_token("render[in]", &names),
+        Some(DepRef {
+            recipe_name: "render".to_string(),
+            accessor: None
+        })
+    );
+    // bare recipe still works
+    assert_eq!(
+        parse_dep_token("render", &names),
+        Some(DepRef {
+            recipe_name: "render".to_string(),
+            accessor: None
+        })
+    );
+    // the removed `[]` spelling contributes no edge (the resolver rejects
+    // the placeholder with a did-you-mean before any unit registers)
+    assert_eq!(parse_dep_token("render[]", &names), None);
     // `[in]` on a non-recipe is not a dep
     assert_eq!(parse_dep_token("notarecipe[in]", &names), None);
 }
@@ -246,7 +272,10 @@ fn cs_0210_a_qualified_name_under_a_builtin_looking_alias_is_a_dep() {
 
         assert_eq!(
             parse_dep_token(&qualified, &names),
-            Some(DepRef { recipe_name: qualified.clone(), accessor: None }),
+            Some(DepRef {
+                recipe_name: qualified.clone(),
+                accessor: None
+            }),
             "$<{qualified}> names a recipe in scope, so it establishes an edge"
         );
     }
@@ -277,16 +306,41 @@ fn cs_0210_dep_extraction_agrees_with_the_resolver() {
     .collect();
 
     let idents = [
-        "in", "out", "in.stem", "out.dir", "out_1", "out_0", "out_1.stem", "out_1.bogus",
-        "libmath", "libmath.stem", "libmath.bogus", "protos.name", "backend.build",
-        "backend.build.stem", "in.foo", "out.foo", "env.foo", "env.HOME", "CC", "var.CC",
-        "libmath[in]", "libmath[]", "libmath[x]", "notarecipe[in]", "sys:os", "file:a.txt",
-        "stem", "libmath.", ".stem", "a:b.foo", "a:b.stem",
+        "in",
+        "out",
+        "in.stem",
+        "out.dir",
+        "out_1",
+        "out_0",
+        "out_1.stem",
+        "out_1.bogus",
+        "libmath",
+        "libmath.stem",
+        "libmath.bogus",
+        "protos.name",
+        "backend.build",
+        "backend.build.stem",
+        "in.foo",
+        "out.foo",
+        "env.foo",
+        "env.HOME",
+        "CC",
+        "var.CC",
+        "libmath[in]",
+        "libmath[]",
+        "libmath[x]",
+        "notarecipe[in]",
+        "sys:os",
+        "file:a.txt",
+        "stem",
+        "libmath.",
+        ".stem",
+        "a:b.foo",
+        "a:b.stem",
     ];
 
     for ident in idents {
-        let from_deps = parse_dep_token(ident, &names)
-            .map(|d| (d.recipe_name, d.accessor));
+        let from_deps = parse_dep_token(ident, &names).map(|d| (d.recipe_name, d.accessor));
         let from_resolver =
             crate::resolver::recipe_ref(ident, &names).map(|r| (r.name, r.accessor));
         assert_eq!(
@@ -308,7 +362,7 @@ fn cs_0022_shell_block_dep_ref_extraction() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                 body: Some(Body::ShellBlock(vec![
-                    "gcc -o $<out> main.c $<libmath>".to_string(),
+                    "gcc -o $<out> main.c $<libmath>".to_string()
                 ])),
                 disposition: Default::default(),
             },
@@ -318,7 +372,8 @@ fn cs_0022_shell_block_dep_ref_extraction() {
 
     let refs = extract_dep_refs(&recipe, &recipe_names);
     assert!(
-        refs.iter().any(|r| r.recipe_name == "libmath" && r.accessor.is_none()),
+        refs.iter()
+            .any(|r| r.recipe_name == "libmath" && r.accessor.is_none()),
         "shell block must contribute its $<libmath> reference to the dep graph; got: {:?}",
         refs
     );

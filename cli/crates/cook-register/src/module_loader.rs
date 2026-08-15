@@ -125,7 +125,7 @@ impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
 /// seal keys), and every term of the declaration is already a determinant, so
 /// a module that changes what a maker emits already busts the unit's key.
 ///
-/// The reason is the `ingredients <probe>` pre-pass: it runs a probe's
+/// The reason is the `inputs <probe>` pre-pass: it runs a probe's
 /// `produce` source on THIS VM (`cook_probe::eval::ProduceRunner`), and a
 /// probe's value is keyed by a fingerprint that folds no module source at all.
 /// The pre-pass snapshots this observer around the run and folds what it saw
@@ -158,7 +158,7 @@ pub fn register_module_loader(
 // ---------------------------------------------------------------------------
 
 /// COOK-64 §22.5.10: register-phase store of resolved member-source probe
-/// values, keyed by probe key. COOK-190 / §22.5.10: for an `ingredients
+/// values, keyed by probe key. COOK-190 / §22.5.10: for an `inputs
 /// <probe>` source ref resolved as a `key:field` selector, the pre-pass also
 /// stashes the selected array under the verbatim ref (e.g. `"cards:list"`)
 /// alongside the whole value stored under the bare probe key — a source ref
@@ -175,7 +175,7 @@ pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 /// `label:`-prefixed) key. Three steps, in order (CS-0219):
 ///
 /// 1. The register-phase probe-value store, if the key is already there —
-///    put there by the `ingredients <probe>` pre-pass, or by an earlier read
+///    put there by the `inputs <probe>` pre-pass, or by an earlier read
 ///    through step 2.
 /// 2. Otherwise, if the key names a probe DECLARED in this pass, resolve it
 ///    now: run the same `cook_probe::eval` sequence the pre-pass and the
@@ -202,7 +202,9 @@ fn probes_get(
         // hit, not only before resolution — a key some earlier body already
         // resolved is just as far outside this probe's fingerprint chain as an
         // unresolved one.
-        resolver.check_produce_read(key).map_err(|e| LuaError::runtime(e.to_string()))?;
+        resolver
+            .check_produce_read(key)
+            .map_err(|e| LuaError::runtime(e.to_string()))?;
         if let Some(val) = resolver.store().borrow().get(key) {
             return crate::probe_value::json_to_lua(lua, val);
         }
@@ -220,9 +222,7 @@ fn probes_get(
     let state = state.borrow();
     let module_name = state
         .active_module()
-        .ok_or_else(|| {
-            LuaError::runtime("cook.probes.get called outside of a module context")
-        })?
+        .ok_or_else(|| LuaError::runtime("cook.probes.get called outside of a module context"))?
         .to_string();
     match state.caches.get(&module_name).and_then(|c| c.get(key)) {
         Some(val) => json_to_lua_value(lua, val.clone()),
@@ -239,9 +239,7 @@ fn probes_set(state: &SharedModuleLoaderState, key: &str, value: &LuaValue) -> L
     let mut state = state.borrow_mut();
     let module_name = state
         .active_module()
-        .ok_or_else(|| {
-            LuaError::runtime("cook.probes.set called outside of a module context")
-        })?
+        .ok_or_else(|| LuaError::runtime("cook.probes.set called outside of a module context"))?
         .to_string();
     if let Some(cache) = state.caches.get_mut(&module_name) {
         cache.set(key, json_val);
@@ -268,9 +266,8 @@ pub fn register_cache_api(
     let prepass_subst = prepass.clone();
     let resolver_subst = resolver.clone();
     let subst_fn = lua.create_function(move |lua, ident: String| {
-        let r = cook_contracts::sigil::probe_ref(&ident).ok_or_else(|| {
-            LuaError::runtime(format!("$<{ident}>: not a probe-value reference"))
-        })?;
+        let r = cook_contracts::sigil::probe_ref(&ident)
+            .ok_or_else(|| LuaError::runtime(format!("$<{ident}>: not a probe-value reference")))?;
         // CS-0219: resolve on demand, exactly as a `cook.probes.get` read does.
         // Reading the store alone made this succeed or fail on whether some
         // unrelated recipe registered earlier and happened to have read the
@@ -290,8 +287,7 @@ pub fn register_cache_api(
                 r.key()
             ))
         })?;
-        cook_contracts::sigil::subst::substitute(value, r.path(), &ident)
-            .map_err(LuaError::runtime)
+        cook_contracts::sigil::subst::substitute(value, r.path(), &ident).map_err(LuaError::runtime)
     })?;
     cook.set(cook_contracts::registration::PROBE_SUBST_NAME, subst_fn)?;
 

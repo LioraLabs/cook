@@ -9,11 +9,11 @@ Cookfile
   probes:
     Probe name="services_raw" line=1
       deps: ["@seal:services_raw:2"]
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Json commands=["cat data/services.json"]
     Probe name="@seal:services_raw:2" line=2
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["data/services.json"] excludes=[]

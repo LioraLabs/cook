@@ -40,12 +40,8 @@ pub fn reachable_from(
     deps: &BTreeMap<String, Vec<String>>,
     seeds: impl IntoIterator<Item = String>,
 ) -> std::collections::BTreeSet<String> {
-    let mut reachable: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
-    let mut stack: Vec<String> = seeds
-        .into_iter()
-        .filter(|s| deps.contains_key(s))
-        .collect();
+    let mut reachable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut stack: Vec<String> = seeds.into_iter().filter(|s| deps.contains_key(s)).collect();
     while let Some(node) = stack.pop() {
         if !reachable.insert(node.clone()) {
             continue;

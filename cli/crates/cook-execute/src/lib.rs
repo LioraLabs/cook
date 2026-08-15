@@ -15,4 +15,4 @@
 mod pool;
 pub(crate) mod probe_value;
 
-pub use pool::{WorkerPool, WorkItem, WorkResult, ProbeOutput, WorkerDepOutputs};
+pub use pool::{ProbeOutput, WorkItem, WorkResult, WorkerDepOutputs, WorkerPool};

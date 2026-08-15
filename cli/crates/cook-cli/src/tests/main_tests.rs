@@ -71,10 +71,9 @@ fn every_global_flag_clap_declares_is_peeled_by_partition_argv() {
     for line in cli_src.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("#[arg(") || pending.is_some() {
-            let attr = pending.take().map_or_else(
-                || trimmed.to_string(),
-                |prev| format!("{prev} {trimmed}"),
-            );
+            let attr = pending
+                .take()
+                .map_or_else(|| trimmed.to_string(), |prev| format!("{prev} {trimmed}"));
             // An `#[arg(...)]` may wrap across lines; accumulate until balanced.
             if attr.matches('(').count() > attr.matches(')').count() {
                 pending = Some(attr);
@@ -146,7 +145,11 @@ fn a_preset_selector_needs_a_declarable_name() {
 
     let mut g = crate::cli::Globals::default();
     let p = partition_argv(&["@fast.v2".to_string()], "build", &mut g).unwrap();
-    assert_eq!(p.preset.as_deref(), Some("fast.v2"), "a declarable name selects a preset");
+    assert_eq!(
+        p.preset.as_deref(),
+        Some("fast.v2"),
+        "a declarable name selects a preset"
+    );
     assert!(p.argv.is_empty());
 }
 
@@ -157,6 +160,10 @@ fn the_why_path_strips_the_same_shapes_and_no_others() {
     assert_eq!(strip_preset_sigil("@fast.v2"), "fast.v2");
     assert_eq!(strip_preset_sigil("@_x-1"), "_x-1");
     for verbatim in ["@9x", "@-x", "@", "@a/b", "plain"] {
-        assert_eq!(strip_preset_sigil(verbatim), verbatim, "{verbatim} passes through");
+        assert_eq!(
+            strip_preset_sigil(verbatim),
+            verbatim,
+            "{verbatim} passes through"
+        );
     }
 }

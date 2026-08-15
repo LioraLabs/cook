@@ -103,7 +103,7 @@ Say you're handed a pile of SVGs and you need a PNG sprite sheet.
 
 ```cook
 recipe sprite-sheet
-    ingredients "images/*.svg"
+    gather "images/*.svg"
     cook "build/sprites/$<in.stem>.png" {
         rsvg-convert $<in> -o $<out>
     }
@@ -132,13 +132,13 @@ probe platforms
     json { echo '[ {"name":"web","level":"9"}, {"name":"desktop","level":"0"} ]' }
 
 recipe ship
-    ingredients platforms
+    gather platforms
     cook "build/$<in.name>/game.zip" {
         zip -$<in.level> -j $<out> $<sprite-sheet>
     }
 ```
 
-`ingredients platforms` points at a **probe**: a named, cached value the
+`gather platforms` points at a **probe**: a named, cached value the
 graph can see. The recipe runs once per record, fields addressable as
 `$<in.name>`; add a record and exactly one new unit builds, delete one and
 cook sweeps the orphaned bundle. And `$<sprite-sheet>` reaches across
@@ -213,7 +213,7 @@ probe compiler
     tools { cc }
 
 recipe app
-    ingredients "src/*.c"
+    gather "src/*.c"
     seal compiler
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
 ```
@@ -241,7 +241,7 @@ shell, with the unit's resolved I/O in scope:
 
 ```cook
 recipe upper
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     cook "build/$<in.stem>.txt" >{
         local text = fs.read(input)
         fs.write(output, text:upper())
@@ -278,7 +278,7 @@ cook
   source, `cook init`.
 - [Your first recipe](document.md#your-first-recipe): a Cookfile from zero;
   register, then execute.
-- [Ingredients and the cook step](document.md#ingredients-and-the-cook-step):
+- [Gather and the cook step](document.md#gather-and-the-cook-step):
   globs, placeholders, fan-out and gather.
 - [Connecting recipes](document.md#connecting-recipes): `$<recipe>` references
   that declare the read and record the edge; the colon for pure ordering.
@@ -297,7 +297,7 @@ cook
 - [Probes](document.md#probes-and-data-driven-fan-out): named, cached values
   the graph can see: strings, JSON, tool identities, environment.
 - [The `files` producer](document.md#caching-and-cache-trust): a sealable
-  per-file manifest for inputs your ingredients line can't hold.
+  per-file manifest for inputs your `gather` line can't hold.
 
 **The cache**
 

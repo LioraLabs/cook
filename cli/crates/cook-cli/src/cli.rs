@@ -142,7 +142,7 @@ pub enum Cmd {
     /// reports byte-divergence under a matching key.
     Cache(CacheArgs),
 
-    /// Watch ingredients and re-run on change.
+    /// Watch inputs and re-run on change.
     Serve(ServeArgs),
 
     /// Print transpiled Lua for the current Cookfile (file-level, not recipe-scoped).

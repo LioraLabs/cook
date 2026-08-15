@@ -6,8 +6,7 @@ use tempfile::TempDir;
 /// tree root does not have to touch this suite (CS-0207 moved it from
 /// `cook_modules/` to `.cook/modules/`).
 fn installed_share(dir: &std::path::Path) -> std::path::PathBuf {
-    cook_contracts::layout::modules_dir(dir)
-        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+    cook_contracts::layout::modules_dir(dir).join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
 }
 
 fn setup_with_module(
@@ -17,13 +16,19 @@ fn setup_with_module(
     let dir = TempDir::new().unwrap();
     let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
-    std::fs::write(modules_dir.join(format!("{}.lua", module_name)), module_code).unwrap();
+    std::fs::write(
+        modules_dir.join(format!("{}.lua", module_name)),
+        module_code,
+    )
+    .unwrap();
 
     let lua = Lua::new();
     let cook = lua.create_table().unwrap();
     lua.globals().set("cook", cook).unwrap();
 
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state.clone(), cook_lua_stdlib::ModuleObserver::new()).unwrap();
     register_cache_api(
         &lua,
@@ -42,8 +47,7 @@ fn setup_with_module(
 
 #[test]
 fn test_load_module_returns_table() {
-    let (lua, _dir, _) =
-        setup_with_module("test_mod", "local m = {} m.value = 42 return m");
+    let (lua, _dir, _) = setup_with_module("test_mod", "local m = {} m.value = 42 return m");
     let result: i32 = lua
         .load(r#"local m = cook.load_module("test_mod") return m.value"#)
         .eval()
@@ -71,7 +75,9 @@ fn test_load_module_not_found() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
     let result = lua.load(r#"cook.load_module("nonexistent")"#).exec();
     assert!(result.is_err());
@@ -92,7 +98,9 @@ fn test_load_module_init_lua() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
     let result: bool = lua
         .load(r#"local m = cook.load_module("mymod") return m.from_init"#)
@@ -107,10 +115,7 @@ fn test_load_module_memoized_returns_same_table() {
     // value without re-evaluating the module file. We verify by mutating
     // the table after first load and observing the mutation on the second
     // load (which would be reset if the file were re-evaluated).
-    let (lua, _dir, _) = setup_with_module(
-        "test_mod",
-        "local m = {} m.value = 1 return m",
-    );
+    let (lua, _dir, _) = setup_with_module("test_mod", "local m = {} m.value = 1 return m");
     let result: i32 = lua
         .load(
             r#"local a = cook.load_module("test_mod")
@@ -120,7 +125,10 @@ fn test_load_module_memoized_returns_same_table() {
         )
         .eval()
         .unwrap();
-    assert_eq!(result, 99, "memoization must return the same table instance");
+    assert_eq!(
+        result, 99,
+        "memoization must return the same table instance"
+    );
 }
 
 #[test]
@@ -173,7 +181,9 @@ fn test_load_module_cycle_two_modules_raises() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let err = lua
@@ -211,7 +221,9 @@ fn test_load_module_self_cycle_raises() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let err = lua
@@ -230,17 +242,15 @@ fn test_load_module_recovers_after_error() {
     let dir = TempDir::new().unwrap();
     let modules_dir = installed_share(dir.path());
     std::fs::create_dir_all(&modules_dir).unwrap();
-    std::fs::write(
-        modules_dir.join("boom.lua"),
-        r#"error("intentional")"#,
-    )
-    .unwrap();
+    std::fs::write(modules_dir.join("boom.lua"), r#"error("intentional")"#).unwrap();
 
     let lua = Lua::new();
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state.clone(), cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let _ = lua.load(r#"cook.load_module("boom")"#).exec();
@@ -344,10 +354,9 @@ fn cook_cache_is_hard_error_with_did_you_mean() {
         .load(r#"return cook.cache.get("x")"#)
         .exec()
         .expect_err("cook.cache.get must be a hard error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("cook.cache' was renamed to 'cook.probes'")
-            && msg.contains("cook.probes.get"),
+    let msg = err.to_string();
+    assert!(
+        msg.contains("cook.cache' was renamed to 'cook.probes'") && msg.contains("cook.probes.get"),
         "rename diagnostic must name the new spelling; got: {msg}"
     );
 }
@@ -367,7 +376,9 @@ fn test_load_module_resolves_share_lua_flat() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let tag: String = lua
@@ -392,7 +403,9 @@ fn test_load_module_resolves_share_lua_init() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let tag: String = lua
@@ -427,7 +440,9 @@ fn test_retired_top_level_candidates_are_not_resolved() {
     lua.globals()
         .set("cook", lua.create_table().unwrap())
         .unwrap();
-    let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+    let state = Rc::new(RefCell::new(ModuleLoaderState::new(
+        dir.path().to_path_buf(),
+    )));
     register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
 
     let tag: String = lua

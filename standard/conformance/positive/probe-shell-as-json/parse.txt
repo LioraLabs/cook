@@ -9,11 +9,11 @@ Cookfile
   probes:
     Probe name="cards" line=1
       deps: ["@seal:cards:2"]
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Json commands=["cat data/cards.json"]
     Probe name="@seal:cards:2" line=2
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["data/cards.json"] excludes=[]

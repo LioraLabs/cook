@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=13
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("cc-version")
@@ -16,21 +16,21 @@ Cookfile
   probes:
     Probe name="cc-version" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["echo one"]
     Probe name="demo:cc-version" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["echo \"$PATH\""]
     Probe name="cc:find:raylib" line=7
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["echo \"$PATH\""]
     Probe name="odd+spelling" line=10
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["echo \"$PATH\""]

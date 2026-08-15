@@ -182,7 +182,10 @@ pub fn scrub(text: &str, what: Scrub) -> String {
     let mut i = 0;
 
     fn blank(out: &mut Vec<u8>, span: &[u8]) {
-        out.extend(span.iter().map(|byte| if *byte == b'\n' { b'\n' } else { b' ' }));
+        out.extend(
+            span.iter()
+                .map(|byte| if *byte == b'\n' { b'\n' } else { b' ' }),
+        );
     }
 
     while i < bytes.len() {
@@ -258,7 +261,10 @@ fn string_span(bytes: &[u8], at: usize) -> Option<(std::ops::Range<usize>, usize
     if bytes[at] != b'r' || (at > 0 && is_ident_char(bytes[at - 1])) {
         return None;
     }
-    let hashes = bytes[at + 1..].iter().take_while(|byte| **byte == b'#').count();
+    let hashes = bytes[at + 1..]
+        .iter()
+        .take_while(|byte| **byte == b'#')
+        .count();
     if bytes.get(at + 1 + hashes) != Some(&b'"') {
         return None;
     }
@@ -338,9 +344,10 @@ fn use_keyword_at(text: &str, at: usize) -> Option<usize> {
         return None;
     }
     let after = at + 3;
-    (bytes.get(after).is_some_and(|byte| byte.is_ascii_whitespace())).then(|| {
-        after + text[after..].len() - text[after..].trim_start().len()
-    })
+    (bytes
+        .get(after)
+        .is_some_and(|byte| byte.is_ascii_whitespace()))
+    .then(|| after + text[after..].len() - text[after..].trim_start().len())
 }
 
 fn statement_end(text: &str, from: usize) -> usize {
@@ -427,7 +434,10 @@ fn split_top_level(members: &str) -> Vec<&str> {
         }
     }
     out.push(&members[start..]);
-    out.into_iter().map(str::trim).filter(|m| !m.is_empty()).collect()
+    out.into_iter()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .collect()
 }
 
 /// The `a::b::c` chain starting at `at`, and the offset just past it.
@@ -477,7 +487,11 @@ struct LineIndex<'a> {
 
 impl<'a> LineIndex<'a> {
     fn new(text: &'a str) -> Self {
-        Self { text, at: 0, line: 1 }
+        Self {
+            text,
+            at: 0,
+            line: 1,
+        }
     }
 
     fn line(&mut self, offset: usize) -> usize {
@@ -577,7 +591,10 @@ pub fn verdict(waivers: &Waivers, findings: &[Finding]) -> Option<String> {
     let file = relative(&waivers.path, &workspace_root());
 
     let mut report = String::new();
-    for (key, finding) in found.iter().filter(|(key, _)| !waivers.entries.contains_key(**key)) {
+    for (key, finding) in found
+        .iter()
+        .filter(|(key, _)| !waivers.entries.contains_key(**key))
+    {
         let _ = writeln!(report, "\n  NEW  {}", finding.detail);
         for site in &finding.sites {
             let _ = writeln!(report, "         {site}");
@@ -593,7 +610,11 @@ pub fn verdict(waivers: &Waivers, findings: &[Finding]) -> Option<String> {
             })
         );
     }
-    for key in waivers.entries.keys().filter(|key| !found.contains_key(key.as_str())) {
+    for key in waivers
+        .entries
+        .keys()
+        .filter(|key| !found.contains_key(key.as_str()))
+    {
         let _ = writeln!(
             report,
             "\n  GONE {key}\n       This waiver no longer matches anything in the tree. Delete \
@@ -758,10 +779,9 @@ pub fn declared_dependencies(manifest: &str) -> Vec<String> {
 
 #[test]
 fn cook_contracts_dependencies_are_allowlisted() {
-    let manifest = std::fs::read_to_string(
-        workspace_root().join("crates/cook-contracts/Cargo.toml"),
-    )
-    .expect("read cook-contracts manifest");
+    let manifest =
+        std::fs::read_to_string(workspace_root().join("crates/cook-contracts/Cargo.toml"))
+            .expect("read cook-contracts manifest");
     let declared = declared_dependencies(&manifest);
     let allowed: BTreeSet<&str> = ALLOWED_DEPENDENCIES.into_iter().collect();
 
@@ -878,7 +898,10 @@ fn every_crate_is_placed_in_a_stratum() {
         .flat_map(|(_, members)| members.iter().copied())
         .filter(|krate| !workspace_root().join("crates").join(krate).is_dir())
         .collect();
-    assert!(phantom.is_empty(), "STRATA names crates that do not exist: {phantom:?}");
+    assert!(
+        phantom.is_empty(),
+        "STRATA names crates that do not exist: {phantom:?}"
+    );
 }
 
 #[test]
@@ -958,7 +981,10 @@ fn no_item_is_reached_through_another_crates_re_export() {
                 .or_insert(finding);
         }
     }
-    enforce("re-export-tunnels", &findings.into_values().collect::<Vec<_>>());
+    enforce(
+        "re-export-tunnels",
+        &findings.into_values().collect::<Vec<_>>(),
+    );
 }
 
 // ------------------------------------------ tier 2: cross-crate duplicates
@@ -1170,7 +1196,10 @@ pub fn cross_crate_clones(corpus: &[Source]) -> Vec<Finding> {
         let key: Vec<String> = sites.keys().cloned().collect();
         let group = groups.entry(key).or_default();
         for (path, (_, line)) in sites {
-            group.entry(path).and_modify(|at| *at = (*at).min(line)).or_insert(line);
+            group
+                .entry(path)
+                .and_modify(|at| *at = (*at).min(line))
+                .or_insert(line);
         }
     }
 
@@ -1178,7 +1207,10 @@ pub fn cross_crate_clones(corpus: &[Source]) -> Vec<Finding> {
         .into_iter()
         .map(|(paths, lines)| Finding {
             key: paths.join(" == "),
-            sites: lines.iter().map(|(path, line)| format!("{path}:{line}")).collect(),
+            sites: lines
+                .iter()
+                .map(|(path, line)| format!("{path}:{line}"))
+                .collect(),
             detail: format!(
                 "{} tokens or more of identical code in {} files across crates; the copy that \
                  is not edited is the one that goes wrong",
@@ -1306,7 +1338,8 @@ fn an_unwaived_finding_fails_and_the_report_says_how_to_waive_it() {
 
 #[test]
 fn a_waived_finding_passes() {
-    let waivers = waivers_from(r#"{"key": "alpha", "why": "the edge is refused; agreement test in x"}"#);
+    let waivers =
+        waivers_from(r#"{"key": "alpha", "why": "the edge is refused; agreement test in x"}"#);
     assert!(verdict(&waivers, &[finding("alpha")]).is_none());
 }
 
@@ -1453,8 +1486,14 @@ fn an_edge_that_does_not_descend_a_stratum_is_caught() {
         "an external dependency must not be mistaken for a workspace edge"
     );
 
-    assert!(descends_a_stratum("cook-cli", "cook-plan"), "the surface may reach down");
-    assert!(!descends_a_stratum("cook-plan", "cook-cli"), "the inversion must be refused");
+    assert!(
+        descends_a_stratum("cook-cli", "cook-plan"),
+        "the surface may reach down"
+    );
+    assert!(
+        !descends_a_stratum("cook-plan", "cook-cli"),
+        "the inversion must be refused"
+    );
     assert!(
         !descends_a_stratum("cook-engine", "cook-plan"),
         "a sideways edge between peers must be refused: two crates in one stratum that reach \
@@ -1464,15 +1503,22 @@ fn an_edge_that_does_not_descend_a_stratum_is_caught() {
 
 #[test]
 fn a_re_export_tunnel_is_caught_and_a_direct_reach_is_not() {
-    let members: BTreeSet<String> =
-        ["cook-cli", "cook-engine", "cook-cache"].iter().map(|s| s.to_string()).collect();
+    let members: BTreeSet<String> = ["cook-cli", "cook-engine", "cook-cache"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let tunnel = Source {
         krate: "cook-cli".to_string(),
         path: "crates/cook-cli/src/x.rs".to_string(),
         text: "use cook_engine::cook_cache::parse_size;\n".to_string(),
     };
     let findings = re_export_tunnels(&tunnel, &members);
-    assert_eq!(findings.len(), 1, "{:?}", findings.iter().map(|f| &f.key).collect::<Vec<_>>());
+    assert_eq!(
+        findings.len(),
+        1,
+        "{:?}",
+        findings.iter().map(|f| &f.key).collect::<Vec<_>>()
+    );
     assert_eq!(findings[0].key, "cook-cli -> cook_engine::cook_cache");
 
     let direct = Source {
@@ -1499,7 +1545,10 @@ fn a_literal_in_two_crates_is_caught_and_one_crate_is_not() {
             .collect::<Vec<_>>()
     };
 
-    assert_eq!(shared("let x = \"registration_v2\";\n"), ["registration_v2"]);
+    assert_eq!(
+        shared("let x = \"registration_v2\";\n"),
+        ["registration_v2"]
+    );
     assert!(
         duplicate_literals(&[
             source("cook-a", "let x = \"registration_v2\";\n"),
@@ -1509,15 +1558,19 @@ fn a_literal_in_two_crates_is_caught_and_one_crate_is_not() {
         "one literal per crate is not a shared decision"
     );
     assert!(
-        duplicate_literals(&[source("cook-a", "let x = \"a\";\n"), source("cook-b", "let y = \"a\";\n")])
-            .is_empty(),
+        duplicate_literals(&[
+            source("cook-a", "let x = \"a\";\n"),
+            source("cook-b", "let y = \"a\";\n")
+        ])
+        .is_empty(),
         "below the length floor a match is a coincidence"
     );
     // Twice in ONE crate is that crate's business.
-    assert!(
-        duplicate_literals(&[source("cook-a", "let x = \"registration_v2\"; let y = \"registration_v2\";\n")])
-            .is_empty()
-    );
+    assert!(duplicate_literals(&[source(
+        "cook-a",
+        "let x = \"registration_v2\"; let y = \"registration_v2\";\n"
+    )])
+    .is_empty());
     // Comments and doc comments are not code.
     assert!(shared("// let x = \"registration_v2\";\n").is_empty());
     // The exclusions, which must not need a waiver.
@@ -1545,9 +1598,15 @@ fn a_literal_is_read_as_written_including_its_escapes_and_raw_form() {
             .collect::<Vec<_>>()
     };
     assert_eq!(literals("let x = \"a\\\"b\";\n"), ["a\\\"b"]);
-    assert_eq!(literals("let x = r#\"raw \"quoted\" text\"#;\n"), ["raw \"quoted\" text"]);
+    assert_eq!(
+        literals("let x = r#\"raw \"quoted\" text\"#;\n"),
+        ["raw \"quoted\" text"]
+    );
     // A quote character must not open a literal and swallow the rest of the file.
-    assert_eq!(literals("let q = '\"'; let after = \"visible\";\n"), ["visible"]);
+    assert_eq!(
+        literals("let q = '\"'; let after = \"visible\";\n"),
+        ["visible"]
+    );
 }
 
 /// A run of code long enough and spread out enough to count as a clone.
@@ -1576,16 +1635,23 @@ fn a_run_of_code_copied_across_crates_is_caught_and_one_crate_is_not() {
         "a copied body across crates must be one finding, got {:?}",
         findings.iter().map(|f| &f.key).collect::<Vec<_>>()
     );
-    assert_eq!(findings[0].key, "crates/cook-a/src/lib.rs == crates/cook-b/src/lib.rs");
+    assert_eq!(
+        findings[0].key,
+        "crates/cook-a/src/lib.rs == crates/cook-b/src/lib.rs"
+    );
 
     assert!(
-        cross_crate_clones(&[source("cook-a", &format!("{body}{}", copied_body("again")))]).is_empty(),
+        cross_crate_clones(&[source("cook-a", &format!("{body}{}", copied_body("again")))])
+            .is_empty(),
         "a crate repeating itself is that crate's business"
     );
     assert!(
         cross_crate_clones(&[
             source("cook-a", &body),
-            source("cook-b", &copied_body("collect").replace("item.enabled", "item.ready")),
+            source(
+                "cook-b",
+                &copied_body("collect").replace("item.enabled", "item.ready")
+            ),
         ])
         .is_empty(),
         "an edited copy is no longer an exact run; this rule catches copies before they \

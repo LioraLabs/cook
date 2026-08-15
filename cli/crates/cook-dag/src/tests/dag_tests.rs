@@ -44,7 +44,6 @@ fn linear_chain_a_b_c() {
 
     // Complete c -> nothing new.
     assert!(dag.complete(c).is_empty());
-
 }
 
 // ── diamond pattern ────────────────────────────────────────────────
@@ -76,7 +75,6 @@ fn diamond_a_bc_d() {
     // Complete c -> d is now ready.
     assert_eq!(dag.complete(c), vec![d]);
     assert_eq!(dag.node(d).remaining_deps(), 0);
-
 }
 
 // ── parallel roots ─────────────────────────────────────────────────
@@ -144,7 +142,10 @@ fn add_node_rejects_self_reference() {
     let err = dag.add_node("a", &[0]).unwrap_err();
     assert!(matches!(
         err,
-        DagError::DependencyOutOfRange { dep_id: 0, num_nodes: 0 }
+        DagError::DependencyOutOfRange {
+            dep_id: 0,
+            num_nodes: 0
+        }
     ));
 }
 

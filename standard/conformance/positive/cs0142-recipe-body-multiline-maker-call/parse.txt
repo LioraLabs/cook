@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="idLib" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_cc.lib({ sources = srcs(\"neo/idlib\"),\n                  includes = {\"neo\",\"neo/idlib\"},\n                  test = {\"neo/idlib/tests\"},\n                  seal = {\"neo/idlib/gen\"},\n                  needs = {\"sdl2\"} })"

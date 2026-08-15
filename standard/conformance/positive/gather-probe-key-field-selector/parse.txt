@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build_cards" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("ns:cards:items")
@@ -16,6 +16,6 @@ Cookfile
   probes:
     Probe name="ns:cards" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Json commands=["cat data/cards.json"]

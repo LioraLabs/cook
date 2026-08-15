@@ -23,56 +23,56 @@ fn test_split_recipe_name_single_dot() {
 
 fn dummy_project_root() -> std::path::PathBuf {
     let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().to_path_buf();
-        std::mem::forget(dir);
-        path
-    }
+    let path = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    path
+}
 
-    /// Build an empty `RegisteredWorkspace` for tests that exercise the
-    /// pre-DAG-build entry paths (empty targets, finished-event emission).
-    fn empty_registered_workspace() -> RegisteredWorkspace {
-        RegisteredWorkspace {
-            warnings: Vec::new(),
-            names: Vec::new(),
-            units_by_recipe: BTreeMap::new(),
-            probes: BTreeMap::new(),
-            working_dir_by_prefix: BTreeMap::new(),
-            alias_dirs_by_prefix: BTreeMap::new(),
-            terminal_outputs: BTreeMap::new(),
-        }
+/// Build an empty `RegisteredWorkspace` for tests that exercise the
+/// pre-DAG-build entry paths (empty targets, finished-event emission).
+fn empty_registered_workspace() -> RegisteredWorkspace {
+    RegisteredWorkspace {
+        warnings: Vec::new(),
+        names: Vec::new(),
+        units_by_recipe: BTreeMap::new(),
+        probes: BTreeMap::new(),
+        working_dir_by_prefix: BTreeMap::new(),
+        alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
     }
+}
 
-    #[test]
-    fn test_run_empty_reachable_returns_ok_with_no_results() {
-        // Empty reachable set: no DAG to walk, no synthetic lifecycle events.
-        // run() should short-circuit cleanly and emit Finished{success:true}.
-        let ws = empty_registered_workspace();
-        let edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let reachable: BTreeSet<String> = BTreeSet::new();
-        let result = run(
-            &dummy_project_root(),
-            &ws,
-            &edges,
-            &reachable,
-            1,
-            &[],
-            false,
-            false,
+#[test]
+fn test_run_empty_reachable_returns_ok_with_no_results() {
+    // Empty reachable set: no DAG to walk, no synthetic lifecycle events.
+    // run() should short-circuit cleanly and emit Finished{success:true}.
+    let ws = empty_registered_workspace();
+    let edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let reachable: BTreeSet<String> = BTreeSet::new();
+    let result = run(
+        &dummy_project_root(),
+        &ws,
+        &edges,
+        &reachable,
+        1,
+        &[],
         false,
-            |_| {},
-        );
-        assert!(result.is_ok());
-        assert!(result.unwrap().test_results.is_empty());
-    }
+        false,
+        false,
+        |_| {},
+    );
+    assert!(result.is_ok());
+    assert!(result.unwrap().test_results.is_empty());
+}
 
-    #[test]
-    fn test_run_unknown_recipe_in_reachable() {
-        // A name present in `reachable` but absent from
-        // `registered_workspace.units_by_recipe` must surface as
-        // `UnknownRecipe(name)`.
-        let ws = empty_registered_workspace();
-        let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        edges.insert("missing".into(), vec![]);
+#[test]
+fn test_run_unknown_recipe_in_reachable() {
+    // A name present in `reachable` but absent from
+    // `registered_workspace.units_by_recipe` must surface as
+    // `UnknownRecipe(name)`.
+    let ws = empty_registered_workspace();
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    edges.insert("missing".into(), vec![]);
     let reachable: BTreeSet<String> = ["missing"].iter().map(|s| s.to_string()).collect();
     let result = run(
         &dummy_project_root(),
@@ -168,10 +168,8 @@ fn test_toposort_reachable_diamond() {
     edges.insert("b".into(), vec!["a".into()]);
     edges.insert("c".into(), vec!["a".into()]);
     edges.insert("d".into(), vec!["b".into(), "c".into()]);
-    let reachable: BTreeSet<String> =
-        ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
-    let order = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
-        .expect("toposort");
+    let reachable: BTreeSet<String> = ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
+    let order = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable).expect("toposort");
     let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
     assert!(pos("a") < pos("b"));
     assert!(pos("a") < pos("c"));
@@ -184,10 +182,9 @@ fn test_toposort_reachable_detects_cycle() {
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
     edges.insert("a".into(), vec!["b".into()]);
     edges.insert("b".into(), vec!["a".into()]);
-    let reachable: BTreeSet<String> =
-        ["a", "b"].iter().map(|s| s.to_string()).collect();
-    let result = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
-        .map_err(EngineError::from);
+    let reachable: BTreeSet<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+    let result =
+        cook_contracts::unit_graph::toposort_recipes(&edges, &reachable).map_err(EngineError::from);
     assert!(result.is_err());
     match result.unwrap_err() {
         EngineError::CycleDetected(msg) => {
@@ -219,8 +216,8 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let result = cook_contracts::unit_graph::toposort_recipes(&edges, &reachable)
-        .map_err(EngineError::from);
+    let result =
+        cook_contracts::unit_graph::toposort_recipes(&edges, &reachable).map_err(EngineError::from);
     match result.unwrap_err() {
         EngineError::CycleDetected(msg) => {
             assert!(msg.contains("\"a\""), "missing cycle node 'a': {msg}");

@@ -1,8 +1,8 @@
 CS-0089 — Lua-expression output for `cook` step (§8.4.2).
 
 Pins the canonical §8.4.2 surface: a one-to-one `cook_step` whose output
-slot is a parenthesised Lua expression evaluated per-ingredient with
-`input` bound to the current ingredient's path.
+slot is a parenthesised Lua expression evaluated per-input with
+`input` bound to the current input's path.
 
 **Status (COOK-59 Task 2 landed).** This fixture now parses cleanly. Task
 2 added the `OutputPattern::Quoted | OutputPattern::LuaExpr` AST split in

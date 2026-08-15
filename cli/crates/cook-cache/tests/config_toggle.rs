@@ -5,9 +5,9 @@
 use std::collections::BTreeMap;
 
 use cook_cache::backend::{
-    cloud_key, get_bytes, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    ArtifactMeta, CloudKeyInputs, LocalBackend, cloud_key, get_bytes, put_bytes,
 };
-use cook_cache::envkey::{env_contribution, EnvDenylist};
+use cook_cache::envkey::{EnvDenylist, env_contribution};
 use cook_cache::store::CACHE_VERSION;
 
 fn key_for(env_contrib: u64) -> [u8; 32] {

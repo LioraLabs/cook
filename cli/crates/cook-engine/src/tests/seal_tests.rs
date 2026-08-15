@@ -17,7 +17,10 @@ fn seal_contribution_depends_on_value() {
     let store2 = ProbeValueStore::new();
     store2.insert("host", b"\"aarch64-darwin\"\n".to_vec());
     let b = seal_contribution(&s, &store2);
-    assert_ne!(a, b, "different sealed host value must change the contribution");
+    assert_ne!(
+        a, b,
+        "different sealed host value must change the contribution"
+    );
 }
 
 #[test]
@@ -32,7 +35,10 @@ fn seal_contribution_order_insensitive() {
     let mut s2 = BTreeSet::new();
     s2.insert("b".to_string());
     s2.insert("a".to_string());
-    assert_eq!(seal_contribution(&s1, &store), seal_contribution(&s2, &store));
+    assert_eq!(
+        seal_contribution(&s1, &store),
+        seal_contribution(&s2, &store)
+    );
 }
 
 #[test]

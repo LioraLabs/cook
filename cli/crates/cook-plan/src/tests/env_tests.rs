@@ -8,11 +8,8 @@ use super::*;
 
 #[test]
 fn test_parse_cli_overrides_splits_on_first_equals() {
-    let map = parse_cli_overrides(&[
-        "MODE=release".to_string(),
-        "FLAGS=-DA=1 -DB=2".to_string(),
-    ])
-    .unwrap();
+    let map = parse_cli_overrides(&["MODE=release".to_string(), "FLAGS=-DA=1 -DB=2".to_string()])
+        .unwrap();
     assert_eq!(map.get("MODE").unwrap(), "release");
     // Only the FIRST '=' separates; the rest belongs to the value.
     assert_eq!(map.get("FLAGS").unwrap(), "-DA=1 -DB=2");

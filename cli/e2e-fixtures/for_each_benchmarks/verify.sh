@@ -1,5 +1,5 @@
 #!/bin/bash
-# verify.sh — assert §8.3 ingredients <probe>, two tiers:
+# verify.sh — assert §8.3 inputs <probe>, two tiers:
 #   1. codegen shape via `cook emit-lua` (parse + codegen, no execution).
 #   2. execution (COOK-64): run every recipe, assert outputs, and prove the
 #      §22.5.9 / §17.1 per-member cache — editing one member re-runs only its
@@ -41,7 +41,7 @@ assert_contains() {
     fi
 }
 
-echo "ingredients <probe> codegen assertions (cook emit-lua):"
+echo "inputs <probe> codegen assertions (cook emit-lua):"
 
 # cards_cook — probe source, cook fan-out, $<in.FIELD>.
 assert_contains "cards_cook: probe member source"      'local _items = cook.probes.get("cards")'
@@ -86,7 +86,7 @@ assert_file_eq() {
 }
 
 echo
-echo "ingredients <probe> execution assertions (cook <recipe>):"
+echo "inputs <probe> execution assertions (cook <recipe>):"
 
 # Clean slate: wipe local build + cache so the first run is a real miss.
 rm -rf build .cook

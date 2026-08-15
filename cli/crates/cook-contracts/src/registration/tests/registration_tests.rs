@@ -4,8 +4,14 @@ use super::*;
 /// the constant, never a re-spelling of it.
 #[test]
 fn a_door_call_is_qualified_and_takes_one_string_argument() {
-    assert_eq!(door_call("load_module", "greet"), "cook.load_module(\"greet\")");
-    assert_eq!(door_call(PROBE_SUBST_NAME, "$<k>"), "cook.__probe_subst(\"$<k>\")");
+    assert_eq!(
+        door_call("load_module", "greet"),
+        "cook.load_module(\"greet\")"
+    );
+    assert_eq!(
+        door_call(PROBE_SUBST_NAME, "$<k>"),
+        "cook.__probe_subst(\"$<k>\")"
+    );
 }
 
 /// The argument goes through the one Lua string-literal law (COOK-398), so a
@@ -20,7 +26,10 @@ fn a_door_call_escapes_its_argument() {
 #[test]
 fn the_probe_subst_call_names_the_installed_helper() {
     assert!(probe_subst_call("$<k>").contains(PROBE_SUBST_NAME));
-    assert_eq!(probe_subst_call("$<k:field>"), "cook.__probe_subst(\"$<k:field>\")");
+    assert_eq!(
+        probe_subst_call("$<k:field>"),
+        "cook.__probe_subst(\"$<k:field>\")"
+    );
 }
 
 // ------------------------------------------------ the two VMs' door names
@@ -51,7 +60,11 @@ fn no_two_doors_share_a_name() {
         CONFIG_DISPATCH_NAME,
     ];
     let unique: std::collections::BTreeSet<&str> = doors.iter().copied().collect();
-    assert_eq!(unique.len(), doors.len(), "two doors share a name: {doors:?}");
+    assert_eq!(
+        unique.len(),
+        doors.len(),
+        "two doors share a name: {doors:?}"
+    );
 }
 
 /// `dep_output_list` is not `dep_output` with a suffix by accident: an emitter
@@ -59,7 +72,10 @@ fn no_two_doors_share_a_name() {
 /// door on any rename. Pinned because `door_call` makes composing them cheap.
 #[test]
 fn a_door_call_composes_each_name_verbatim() {
-    assert_eq!(door_call(DEP_OUTPUT_NAME, "lib"), "cook.dep_output(\"lib\")");
+    assert_eq!(
+        door_call(DEP_OUTPUT_NAME, "lib"),
+        "cook.dep_output(\"lib\")"
+    );
     assert_eq!(
         door_call(DEP_OUTPUT_LIST_NAME, "lib"),
         "cook.dep_output_list(\"lib\")"

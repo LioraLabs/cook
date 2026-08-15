@@ -24,14 +24,26 @@ fn test_indented_comment() {
 fn test_recipe_header() {
     let tokens = tokenize(r#"recipe "build""#).unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::RecipeHeader { name: "build".to_string(), deps: vec![] });
+    assert_eq!(
+        tokens[0].value,
+        Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
 fn test_recipe_header_extra_spaces() {
     let tokens = tokenize(r#"recipe   "build""#).unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::RecipeHeader { name: "build".to_string(), deps: vec![] });
+    assert_eq!(
+        tokens[0].value,
+        Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
@@ -141,7 +153,13 @@ recipe "build"
         tokens[0].value,
         Token::Comment(" header comment".to_string())
     );
-    assert_eq!(tokens[1].value, Token::RecipeHeader { name: "build".to_string(), deps: vec![] });
+    assert_eq!(
+        tokens[1].value,
+        Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec![]
+        }
+    );
     assert_eq!(
         tokens[2].value,
         Token::Content("gcc -o main main.c".to_string())
@@ -152,8 +170,8 @@ recipe "build"
 fn test_indented_recipe_is_content() {
     // CS-0019 (E.5): the `recipe` keyword is recognised only at column 0.
     let tokens = tokenize("    recipe inner").unwrap();
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].value, Token::Content("recipe inner".to_string()));
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].value, Token::Content("recipe inner".to_string()));
 }
 
 #[test]
@@ -186,7 +204,10 @@ fn test_recipe_bare_name() {
     assert_eq!(tokens.len(), 1);
     assert_eq!(
         tokens[0].value,
-        Token::RecipeHeader { name: "build".to_string(), deps: vec![] }
+        Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec![]
+        }
     );
 }
 
@@ -305,7 +326,13 @@ fn test_config_header_not_keyword_prefix() {
 fn test_use_decl() {
     let tokens = tokenize(r#"use "cpp""#).unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
+    assert_eq!(
+        tokens[0].value,
+        Token::UseDecl {
+            alias: "cpp".to_string(),
+            target: "cpp".to_string()
+        }
+    );
 }
 
 #[test]
@@ -318,7 +345,13 @@ fn test_use_prefix_is_content() {
 fn test_use_bare_name() {
     let tokens = tokenize("use cpp").unwrap();
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].value, Token::UseDecl { alias: "cpp".to_string(), target: "cpp".to_string() });
+    assert_eq!(
+        tokens[0].value,
+        Token::UseDecl {
+            alias: "cpp".to_string(),
+            target: "cpp".to_string()
+        }
+    );
 }
 
 #[test]
@@ -338,7 +371,7 @@ fn test_use_name_with_dash_rejected() {
     // CS-0035: hyphens are rejected — `foo-bar` is not a Lua identifier
     // and avoids the silent `foo-bar` ↔ `foo_bar` collision in codegen.
     let result = tokenize("use foo-bar");
-        assert!(result.is_err(), "expected error for use name with dash");
+    assert!(result.is_err(), "expected error for use name with dash");
     assert!(matches!(
         result.unwrap_err(),
         LexError::InvalidUseName { line: 1, .. }
@@ -371,7 +404,10 @@ fn test_use_name_underscore_accepted() {
     let tokens = tokenize("use my_module").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { alias: "my_module".to_string(), target: "my_module".to_string() }
+        Token::UseDecl {
+            alias: "my_module".to_string(),
+            target: "my_module".to_string()
+        }
     );
 }
 
@@ -380,7 +416,10 @@ fn test_use_name_leading_underscore_accepted() {
     let tokens = tokenize("use _private").unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::UseDecl { alias: "_private".to_string(), target: "_private".to_string() }
+        Token::UseDecl {
+            alias: "_private".to_string(),
+            target: "_private".to_string()
+        }
     );
 }
 
@@ -390,7 +429,9 @@ fn test_config_bare_name() {
     assert_eq!(tokens.len(), 1);
     assert_eq!(
         tokens[0].value,
-        Token::ConfigHeader { name: Some("debug".to_string()) }
+        Token::ConfigHeader {
+            name: Some("debug".to_string())
+        }
     );
 }
 
@@ -472,7 +513,9 @@ fn test_named_config_keyword_tokenizes() {
     assert_eq!(tokens.len(), 1);
     assert_eq!(
         tokens[0].value,
-        Token::ConfigHeader { name: Some("release".to_string()) }
+        Token::ConfigHeader {
+            name: Some("release".to_string())
+        }
     );
 }
 
@@ -480,16 +523,20 @@ fn test_named_config_keyword_tokenizes() {
 fn test_config_prefix_not_a_token() {
     // "configure" starts with "config" but is a bareword command
     let tokens = tokenize("configure --prefix=/usr").unwrap();
-        assert!(!matches!(tokens[0].value, Token::ConfigHeader { .. }));
-    }
+    assert!(!matches!(tokens[0].value, Token::ConfigHeader { .. }));
+}
 
-    #[test]
-    fn test_chore_header_bare_name() {
-        let tokens = tokenize("chore clean").unwrap();
+#[test]
+fn test_chore_header_bare_name() {
+    let tokens = tokenize("chore clean").unwrap();
     assert_eq!(tokens.len(), 1);
     assert_eq!(
         tokens[0].value,
-        Token::ChoreHeader { name: "clean".to_string(), params: vec![], deps: vec![] },
+        Token::ChoreHeader {
+            name: "clean".to_string(),
+            params: vec![],
+            deps: vec![]
+        },
     );
 }
 
@@ -498,7 +545,11 @@ fn test_chore_header_quoted_name() {
     let tokens = tokenize(r#"chore "play""#).unwrap();
     assert_eq!(
         tokens[0].value,
-        Token::ChoreHeader { name: "play".to_string(), params: vec![], deps: vec![] },
+        Token::ChoreHeader {
+            name: "play".to_string(),
+            params: vec![],
+            deps: vec![]
+        },
     );
 }
 
@@ -518,13 +569,16 @@ fn test_chore_header_with_deps() {
 #[test]
 fn test_chore_prefix_is_content() {
     let tokens = tokenize("chores_cleanup").unwrap();
-    assert_eq!(tokens[0].value, Token::Content("chores_cleanup".to_string()));
+    assert_eq!(
+        tokens[0].value,
+        Token::Content("chores_cleanup".to_string())
+    );
 }
 
 #[test]
 fn test_indented_chore_is_content() {
     let tokens = tokenize("    chore inner").unwrap();
-        assert_eq!(tokens[0].value, Token::Content("chore inner".to_string()));
+    assert_eq!(tokens[0].value, Token::Content("chore inner".to_string()));
 }
 
 #[test]
@@ -535,20 +589,28 @@ fn former_reserved_words_allowed_as_chore_params() {
         assert!(
             crate::parse(&input).is_ok(),
             "chore param named '{}' must parse (CS-0132), got err",
-                word
-            );
-        }
+            word
+        );
     }
+}
 
-    #[test]
-    fn former_reserved_words_allowed_as_undotted_decl_names() {
-        // CS-0132: the reserved-segment ban no longer applies to undotted
-        // recipe/chore DECLARATION names.
-        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
-        let recipe = format!("recipe {}\n    ingredients \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
-        assert!(crate::parse(&recipe).is_ok(), "recipe named '{}' must parse (CS-0132)", word);
+#[test]
+fn former_reserved_words_allowed_as_undotted_decl_names() {
+    // CS-0132: the reserved-segment ban no longer applies to undotted
+    // recipe/chore DECLARATION names.
+    for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+        let recipe = format!("recipe {}\n    gather \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
+        assert!(
+            crate::parse(&recipe).is_ok(),
+            "recipe named '{}' must parse (CS-0132)",
+            word
+        );
         let chore = format!("chore {}\n    > do_thing()\n", word);
-        assert!(crate::parse(&chore).is_ok(), "chore named '{}' must parse (CS-0132)", word);
+        assert!(
+            crate::parse(&chore).is_ok(),
+            "chore named '{}' must parse (CS-0132)",
+            word
+        );
     }
 }
 
@@ -570,7 +632,7 @@ fn dotted_env_decl_name_still_reserved_diagnostic() {
 #[test]
 fn recipe_named_all_is_allowed() {
     // all is no longer a reserved recipe segment.
-    let src = "recipe all\n    ingredients \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
+    let src = "recipe all\n    gather \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
     assert!(crate::parse(src).is_ok(), "recipe all must parse");
 }
 
@@ -579,8 +641,12 @@ fn test_dotted_declared_recipe_name_rejected() {
     let input = "recipe backend.build\n    echo hi\n";
     let result = tokenize(input);
     match result {
-        Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 }) if name == "backend.build" => {}
-        other => panic!("expected DottedDeclaredRecipeName for 'backend.build', got: {:?}", other),
+        Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 })
+            if name == "backend.build" => {}
+        other => panic!(
+            "expected DottedDeclaredRecipeName for 'backend.build', got: {:?}",
+            other
+        ),
     }
 }
 
@@ -589,8 +655,12 @@ fn test_dotted_declared_recipe_name_quoted_rejected() {
     let input = "recipe \"backend.build\"\n    echo hi\n";
     let result = tokenize(input);
     match result {
-        Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 }) if name == "backend.build" => {}
-        other => panic!("expected DottedDeclaredRecipeName for quoted 'backend.build', got: {:?}", other),
+        Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 })
+            if name == "backend.build" => {}
+        other => panic!(
+            "expected DottedDeclaredRecipeName for quoted 'backend.build', got: {:?}",
+            other
+        ),
     }
 }
 
@@ -600,7 +670,10 @@ fn test_dotted_declared_chore_name_rejected() {
     let result = tokenize(input);
     match result {
         Err(LexError::DottedDeclaredChoreName { ref name, line: 1 }) if name == "tools.fmt" => {}
-        other => panic!("expected DottedDeclaredChoreName for 'tools.fmt', got: {:?}", other),
+        other => panic!(
+            "expected DottedDeclaredChoreName for 'tools.fmt', got: {:?}",
+            other
+        ),
     }
 }
 
@@ -610,18 +683,22 @@ fn test_undotted_recipe_with_dotted_dep_accepted() {
     // remain legal because they resolve through `import` aliases.
     let input = "recipe ship: backend.build frontend.build\n    echo deploy\n";
     let result = tokenize(input);
-    assert!(result.is_ok(), "expected ok for undotted recipe with dotted deps, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected ok for undotted recipe with dotted deps, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_register_header_bare() {
     let tokens = tokenize("register").unwrap();
-        assert_eq!(tokens[0].value, Token::RegisterHeader);
-    }
+    assert_eq!(tokens[0].value, Token::RegisterHeader);
+}
 
-    #[test]
-    fn test_register_header_with_trailing_whitespace() {
-        let tokens = tokenize("register   ").unwrap();
+#[test]
+fn test_register_header_with_trailing_whitespace() {
+    let tokens = tokenize("register   ").unwrap();
     assert_eq!(tokens[0].value, Token::RegisterHeader);
 }
 
@@ -641,7 +718,7 @@ fn test_register_header_with_tab_separator() {
 #[test]
 fn test_indented_register_is_content() {
     let tokens = tokenize("    register").unwrap();
-        assert_eq!(tokens[0].value, Token::Content("register".to_string()));
+    assert_eq!(tokens[0].value, Token::Content("register".to_string()));
 }
 
 #[test]
@@ -654,7 +731,10 @@ fn test_indented_register_keyword_with_arg_is_content() {
 fn test_register_prefix_is_content() {
     // `registers_cleanup` starts with `register` but is a bareword.
     let tokens = tokenize("registers_cleanup").unwrap();
-    assert_eq!(tokens[0].value, Token::Content("registers_cleanup".to_string()));
+    assert_eq!(
+        tokens[0].value,
+        Token::Content("registers_cleanup".to_string())
+    );
 }
 
 #[test]
@@ -668,48 +748,75 @@ fn test_register_underscore_is_content() {
 #[test]
 fn probe_header_bare_name() {
     let t = tokenize("probe cards").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader { name: "cards".into(), deps: vec![] });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cards".into(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
 fn probe_header_module_prefixed_name() {
     let t = tokenize("probe cc:zlib").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader { name: "cc:zlib".into(), deps: vec![] });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cc:zlib".into(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
 fn probe_header_dep_list() {
     let t = tokenize("probe cards: services_raw other").unwrap();
-        assert_eq!(t[0].value, Token::ProbeHeader {
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
             name: "cards".into(),
-        deps: vec!["services_raw".into(), "other".into()],
-        });
-    }
+            deps: vec!["services_raw".into(), "other".into()],
+        }
+    );
+}
 
-    #[test]
-    fn probe_header_prefixed_name_and_dep() {
-        let t = tokenize("probe cc:zlib: cc:compiler").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
-        });
-    }
+#[test]
+fn probe_header_prefixed_name_and_dep() {
+    let t = tokenize("probe cc:zlib: cc:compiler").unwrap();
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cc:zlib".into(),
+            deps: vec!["cc:compiler".into()],
+        }
+    );
+}
 
-    #[test]
-    fn probe_header_hyphenated_bare_name() {
-        // COOK-71 sub-gap 1: a hyphen in a bare probe key must tokenise as one name.
-        let t = tokenize("probe demo:cc-version").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "demo:cc-version".into(), deps: vec![],
-    });
+#[test]
+fn probe_header_hyphenated_bare_name() {
+    // COOK-71 sub-gap 1: a hyphen in a bare probe key must tokenise as one name.
+    let t = tokenize("probe demo:cc-version").unwrap();
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "demo:cc-version".into(),
+            deps: vec![],
+        }
+    );
 }
 
 #[test]
 fn probe_header_hyphenated_bare_dep() {
     // COOK-71 sub-gap 2 (bare arm): a hyphenated upstream key in the dep list.
     let t = tokenize("probe x: demo:cc-path").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "x".into(), deps: vec!["demo:cc-path".into()],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "x".into(),
+            deps: vec!["demo:cc-path".into()],
+        }
+    );
 }
 
 #[test]
@@ -726,9 +833,13 @@ fn probe_header_dotted_bare_name_stops_at_the_dot() {
     );
     // The quoted form remains the escape hatch for exactly this spelling.
     let t = tokenize("probe \"cc:zlib.dev\"").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "cc:zlib.dev".into(), deps: vec![],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cc:zlib.dev".into(),
+            deps: vec![],
+        }
+    );
 }
 
 #[test]
@@ -736,26 +847,37 @@ fn probe_header_quoted_hyphenated_dep() {
     // COOK-71 sub-gap 2 (quoted arm): the dep list gains the STRING escape hatch
     // already blessed by App. A.3.2 L168 (probe_ref ::= BARE_PROBE_KEY | STRING).
     let t = tokenize("probe x: \"demo:cc-path\"").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "x".into(), deps: vec!["demo:cc-path".into()],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "x".into(),
+            deps: vec!["demo:cc-path".into()],
+        }
+    );
 }
 
 #[test]
 fn probe_header_mixed_bare_and_quoted_deps() {
     let t = tokenize("probe x: alpha \"cc:beta-1\" gamma").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "x".into(),
-        deps: vec!["alpha".into(), "cc:beta-1".into(), "gamma".into()],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "x".into(),
+            deps: vec!["alpha".into(), "cc:beta-1".into(), "gamma".into()],
+        }
+    );
 }
 
 #[test]
 fn probe_header_quoted_name() {
     let t = tokenize("probe \"cc:zlib\": cc:compiler").unwrap();
-        assert_eq!(t[0].value, Token::ProbeHeader {
-            name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cc:zlib".into(),
+            deps: vec!["cc:compiler".into()],
+        }
+    );
 }
 
 #[test]
@@ -772,19 +894,37 @@ fn probe_name_accepts_three_or_more_segments() {
     // spelled on the surface or sealed. A cap one of two declaration paths
     // enforces is an obstacle rather than a rule.
     let t = tokenize("probe a:b:c").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader { name: "a:b:c".into(), deps: vec![] });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "a:b:c".into(),
+            deps: vec![]
+        }
+    );
 
     let t = tokenize("probe cc:find:raylib").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader { name: "cc:find:raylib".into(), deps: vec![] });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "cc:find:raylib".into(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
 fn probe_name_accepts_hyphens_in_every_segment() {
     // The COOK-408 case: declarable and sigil-referenceable, but `seal` and
-    // `ingredients` rejected it, so the key could be neither pinned nor
+    // `inputs` rejected it, so the key could be neither pinned nor
     // consumed.
     let t = tokenize("probe demo:cc-version").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader { name: "demo:cc-version".into(), deps: vec![] });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "demo:cc-version".into(),
+            deps: vec![]
+        }
+    );
 }
 
 #[test]
@@ -798,16 +938,25 @@ fn probe_quoted_name_extra_token_rejected() {
     // quoted name with trailing non-colon garbage -> ProbeExtraTokens
     let err = tokenize("probe \"foo\" extra").unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("probe"), "message should mention probe, got: {msg}");
-    assert!(!msg.contains("recipe"), "probe error must not say 'recipe', got: {msg}");
+    assert!(
+        msg.contains("probe"),
+        "message should mention probe, got: {msg}"
+    );
+    assert!(
+        !msg.contains("recipe"),
+        "probe error must not say 'recipe', got: {msg}"
+    );
 }
 
 #[test]
 fn probe_missing_colon_before_deps_rejected() {
     // `probe foo bar` (no colon) -> ProbeExtraTokens, not a recipe error
     let err = tokenize("probe foo bar").unwrap_err();
-        let msg = format!("{err}");
-    assert!(!msg.contains("recipe"), "probe error must not say 'recipe', got: {msg}");
+    let msg = format!("{err}");
+    assert!(
+        !msg.contains("recipe"),
+        "probe error must not say 'recipe', got: {msg}"
+    );
 }
 
 #[test]
@@ -815,9 +964,13 @@ fn probe_dep_list_accepts_multi_segment_keys() {
     // CS-0201: a dep names a probe, so it takes the same grammar the
     // declaration does. Modules depend on `cc:find:<name>` routinely.
     let t = tokenize("probe good: a:b:c").unwrap();
-    assert_eq!(t[0].value, Token::ProbeHeader {
-        name: "good".into(), deps: vec!["a:b:c".into()],
-    });
+    assert_eq!(
+        t[0].value,
+        Token::ProbeHeader {
+            name: "good".into(),
+            deps: vec!["a:b:c".into()],
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -894,8 +1047,14 @@ fn the_name_form_is_unchanged() {
 #[test]
 fn containment_violations_are_refused_with_their_own_reasons() {
     for (src, needle) in [
-        ("use ../shared/helpers.lua\n", "'..' segments are not permitted"),
-        ("use /opt/cook/helpers.lua\n", "absolute paths are not permitted"),
+        (
+            "use ../shared/helpers.lua\n",
+            "'..' segments are not permitted",
+        ),
+        (
+            "use /opt/cook/helpers.lua\n",
+            "absolute paths are not permitted",
+        ),
         // The sigil must report as a sigil, not as the absolute path it also
         // is: the remedy is different.
         ("use //lua/helpers.lua\n", "'//' workspace-root sigil"),
@@ -903,10 +1062,7 @@ fn containment_violations_are_refused_with_their_own_reasons() {
     ] {
         let err = use_error(src).to_string();
         assert!(err.contains(needle), "{src:?} -> {err}");
-        assert!(matches!(
-            use_error(src),
-            LexError::InvalidUsePath { .. }
-        ));
+        assert!(matches!(use_error(src), LexError::InvalidUsePath { .. }));
     }
 }
 
@@ -965,5 +1121,8 @@ fn a_trailing_comment_is_refused_by_name_not_as_an_extra_argument() {
     // counting `#` as an argument.
     let err = use_error("use cpp # the C module\n");
     assert!(matches!(err, LexError::UseTrailingComment { .. }));
-    assert!(err.to_string().contains("takes no trailing comment"), "{err}");
+    assert!(
+        err.to_string().contains("takes no trailing comment"),
+        "{err}"
+    );
 }

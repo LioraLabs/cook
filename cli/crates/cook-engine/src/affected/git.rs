@@ -19,7 +19,9 @@ pub enum GitError {
     NotAGitRepo(PathBuf),
     #[error("git ref '{reference}' not found: {stderr}")]
     RefNotFound { reference: String, stderr: String },
-    #[error("no merge-base between '{reference}' and HEAD (shallow clone? try `git fetch --deepen`)")]
+    #[error(
+        "no merge-base between '{reference}' and HEAD (shallow clone? try `git fetch --deepen`)"
+    )]
     NoMergeBase { reference: String },
     #[error("git executable not found on PATH")]
     GitNotInstalled,
@@ -29,15 +31,15 @@ pub enum GitError {
 
 /// Return the set of changed paths (repo-relative) since `since_ref`,
 /// including working-tree changes (staged + unstaged + untracked-non-ignored).
-pub fn changed_paths(
-    project_root: &Path,
-    since_ref: &str,
-) -> Result<BTreeSet<PathBuf>, GitError> {
+pub fn changed_paths(project_root: &Path, since_ref: &str) -> Result<BTreeSet<PathBuf>, GitError> {
     ensure_inside_work_tree(project_root)?;
     let merge_base = resolve_merge_base(project_root, since_ref)?;
 
     let mut set = BTreeSet::new();
-    set.extend(diff_name_only(project_root, &format!("{merge_base}..HEAD"))?);
+    set.extend(diff_name_only(
+        project_root,
+        &format!("{merge_base}..HEAD"),
+    )?);
     set.extend(diff_name_only(project_root, "HEAD")?);
     set.extend(ls_untracked(project_root)?);
     Ok(set)
@@ -60,9 +62,7 @@ fn run_git(project_root: &Path, args: &[&str]) -> Result<std::process::Output, G
 
 fn ensure_inside_work_tree(project_root: &Path) -> Result<(), GitError> {
     let out = run_git(project_root, &["rev-parse", "--is-inside-work-tree"])?;
-    if !out.status.success()
-        || String::from_utf8_lossy(&out.stdout).trim() != "true"
-    {
+    if !out.status.success() || String::from_utf8_lossy(&out.stdout).trim() != "true" {
         return Err(GitError::NotAGitRepo(project_root.to_path_buf()));
     }
     Ok(())
@@ -96,7 +96,10 @@ fn diff_name_only(project_root: &Path, range: &str) -> Result<BTreeSet<PathBuf>,
     // diverges from workspace-root-relative whenever the workspace lives
     // inside a larger git repository (COOK-274). `ls_untracked` needs no
     // flag; `ls-files` is cwd-relative by default.
-    let out = run_git(project_root, &["diff", "--relative", "--name-only", "-z", range])?;
+    let out = run_git(
+        project_root,
+        &["diff", "--relative", "--name-only", "-z", range],
+    )?;
     if !out.status.success() {
         // diff against HEAD on a brand-new repo with no commits yet returns
         // non-zero; treat as empty rather than error.

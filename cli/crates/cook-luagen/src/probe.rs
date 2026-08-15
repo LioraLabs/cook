@@ -12,8 +12,9 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         ProbeProduce::Files { globs, excludes } if probe.name.starts_with("@seal:") => {
             let local = format!("_cook_inline_seal_{}", probe.line);
             out.push_str(&format!(
-                "local {local} = cook.resolve_ingredients({{{}}}, {{{}}})\n",
-                quoted_list(globs), quoted_list(excludes),
+                "local {local} = cook.resolve_gather({{{}}}, {{{}}})\n",
+                quoted_list(globs),
+                quoted_list(excludes),
             ));
             out.push_str(&format!(
                 "if #{local} == 0 then error(\"seal: quoted file determinant on line {} matched no files\", 0) end\n",
@@ -33,9 +34,9 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         lua_string::escape_double_quoted(&probe.name)
     ));
     out.push_str("  inputs = {\n");
-    if !probe.ingredients.is_empty() || !probe.excludes.is_empty() {
+    if !probe.inputs.is_empty() || !probe.excludes.is_empty() {
         let inc = probe
-            .ingredients
+            .inputs
             .iter()
             .map(|s| lua_string::literal(s))
             .collect::<Vec<_>>()
@@ -47,7 +48,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
-            "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
+            "    files = cook.resolve_gather({{{}}}, {{{}}}),\n",
             inc, exc
         ));
     }
@@ -71,14 +72,15 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         // CS-0148: `files { … }` declares its glob set as `inputs.files` —
         // register-time glob resolution, each file's content hash folding into
         // the fingerprint. The parser guarantees a `files` probe has no
-        // `ingredients` line, so this is the only `files =` emission.
+        // `inputs` line, so this is the only `files =` emission.
         ProbeProduce::Files { globs, excludes } => {
             if let Some(local) = &inline_files {
                 out.push_str(&format!("    files = {local},\n"));
             } else {
                 out.push_str(&format!(
-                    "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
-                    quoted_list(globs), quoted_list(excludes),
+                    "    files = cook.resolve_gather({{{}}}, {{{}}}),\n",
+                    quoted_list(globs),
+                    quoted_list(excludes),
                 ));
             }
         }

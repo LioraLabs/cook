@@ -9,6 +9,6 @@ Cookfile
   probes:
     Probe name="x" line=1
       deps: ["demo:cc-path"]
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Lua("return 1")

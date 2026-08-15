@@ -72,7 +72,7 @@ means something other than what the author wrote.
 It does not parse: it takes a `cook_lang::ast::Cookfile` and a set of in-scope
 recipe names. It does not run Lua; it has no mlua dependency and never
 evaluates what it emits. It does not schedule, cache, spawn, or resolve globs:
-`cook.resolve_ingredients`, `cook.dep_output`, `cook.prior_outputs`, and
+`cook.resolve_gather`, `cook.dep_output`, `cook.prior_outputs`, and
 `cook.probes.get` are calls it writes, not work it does. It does not decide
 what a probe value means, quote a shell argument, or own any wire format; those
 are `cook-probe`, `cook-register`, and `cook-contracts` respectively.

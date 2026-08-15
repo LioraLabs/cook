@@ -104,12 +104,13 @@ fn register_phase_wire_is_decoded_not_printed() {
         cook_contracts::CapturedStream::from_bytes(b""),
         cook_contracts::CapturedStream::from_bytes(b""),
     );
-    let e = cook_plan::PipelineError::Other(format!(
-        "lua error: runtime error: {}",
-        failure.to_wire()
-    ));
+    let e =
+        cook_plan::PipelineError::Other(format!("lua error: runtime error: {}", failure.to_wire()));
     let err = pipeline_error_to_cook_error(e);
-    assert_eq!(err.to_string(), "Cookfile:2: command failed (exit 1): false");
+    assert_eq!(
+        err.to_string(),
+        "Cookfile:2: command failed (exit 1): false"
+    );
     assert_eq!(err.code(), "command-failed");
 }
 

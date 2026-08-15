@@ -7,7 +7,7 @@
 -- test unit (cook.add_unit, step_kind = "test", §22.4) on the enclosing recipe, so `cook test`
 -- reports it and an unchanged corpus does not re-scan. `suite` defaults to the
 -- enclosing recipe's qualified name, and the normative glob set stays the
--- module's business — the recipe declares no ingredients.
+-- module's business — the recipe declares no inputs.
 --
 -- `against_tag` used to live here as a shell pipeline assembled with
 -- table.concat and handed to cook.exec. It is now scripts/against-tag.sh,

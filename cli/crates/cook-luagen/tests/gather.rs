@@ -11,7 +11,7 @@ fn gather_is_the_existing_register_time_driver_not_a_unit() {
     let body = "\n    cook \"build/$<in.stem>.o\" { cp $<in> $<out> }\n";
     assert_eq!(
         lower(&format!("recipe r\n    gather \"src/*.c\"{body}")),
-        lower(&format!("recipe r\n    ingredients \"src/*.c\"{body}")),
+        lower(&format!("recipe r\n    gather \"src/*.c\"{body}")),
     );
 }
 
@@ -19,7 +19,7 @@ fn gather_is_the_existing_register_time_driver_not_a_unit() {
 fn data_member_requires_single_quotes_in_shell_bodies() {
     for reference in ["$<in>", "\"$<in>\""] {
         let source = format!(
-            "probe rows\n    json {{ echo '[{{\"name\":\"auth\"}}]' }}\n\nrecipe r\n    ingredients rows\n    cook \"out/$<in.name>\" {{ echo {reference} > $<out> }}\n"
+            "probe rows\n    json {{ echo '[{{\"name\":\"auth\"}}]' }}\n\nrecipe r\n    gather rows\n    cook \"out/$<in.name>\" {{ echo {reference} > $<out> }}\n"
         );
         let cookfile = cook_lang::parse(&source).unwrap();
         let names = extract_recipe_names(&cookfile);
@@ -31,7 +31,7 @@ fn data_member_requires_single_quotes_in_shell_bodies() {
     }
 
     lower(
-        "probe rows\n    json { echo '[{\"name\":\"auth\"}]' }\n\nrecipe r\n    ingredients rows\n    cook \"out/$<in.name>\" { echo '$<in>' > $<out> }\n",
+        "probe rows\n    json { echo '[{\"name\":\"auth\"}]' }\n\nrecipe r\n    gather rows\n    cook \"out/$<in.name>\" { echo '$<in>' > $<out> }\n",
     );
 
     for body in [
@@ -41,7 +41,7 @@ fn data_member_requires_single_quotes_in_shell_bodies() {
         "cook \"out/$<in.name>\" { echo $<in.name> $<rows:value> > $<out> }",
     ] {
         lower(&format!(
-            "probe rows\n    json {{ echo '[{{\"name\":\"auth\"}}]' }}\n\nrecipe r\n    ingredients rows\n    {body}\n"
+            "probe rows\n    json {{ echo '[{{\"name\":\"auth\"}}]' }}\n\nrecipe r\n    gather rows\n    {body}\n"
         ));
     }
 }

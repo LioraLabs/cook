@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        --[[\n            here is a } in a block comment\n            and another } here\n        ]]\n        local x = 1")

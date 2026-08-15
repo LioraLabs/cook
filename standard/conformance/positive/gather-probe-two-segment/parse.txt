@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="stamps" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("cards:list")
@@ -16,6 +16,6 @@ Cookfile
   probes:
     Probe name="cards:list" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["printf \"alpha\\nbeta\\ngamma\\n\""]

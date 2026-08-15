@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="consume" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("records")
@@ -16,6 +16,6 @@ Cookfile
   probes:
     Probe name="records" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Json commands=["printf '[{\"id\":\"a\"}]'"]

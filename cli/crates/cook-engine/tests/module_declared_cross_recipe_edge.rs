@@ -192,7 +192,10 @@ recipe consumer : producer
 
     let (ok, combined) = run_cook(wd, "consumer");
 
-    assert!(ok, "dep-list edge MUST schedule producer then consumer:\n{combined}");
+    assert!(
+        ok,
+        "dep-list edge MUST schedule producer then consumer:\n{combined}"
+    );
     assert_eq!(
         combined.matches("queued").count(),
         2,

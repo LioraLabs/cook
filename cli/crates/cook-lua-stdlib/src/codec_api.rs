@@ -29,8 +29,8 @@ pub fn register_codec_api(lua: &Lua, cook: &LuaTable) -> LuaResult<()> {
     // cook.yaml_decode(yaml_string) -> lua table
     // Parse YAML into serde_json::Value (serde_yaml supports this) to reuse json_to_lua_value.
     let yaml_decode = lua.create_function(|lua, s: String| {
-        let val: serde_json::Value = serde_yml::from_str(&s)
-            .map_err(|e| LuaError::runtime(format!("yaml error: {e}")))?;
+        let val: serde_json::Value =
+            serde_yml::from_str(&s).map_err(|e| LuaError::runtime(format!("yaml error: {e}")))?;
         json_to_lua_value(lua, val)
     })?;
     cook.set("yaml_decode", yaml_decode)?;

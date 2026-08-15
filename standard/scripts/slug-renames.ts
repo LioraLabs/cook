@@ -12,7 +12,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // language by a prior CS entry).
 
   // COOK-372: the `for_each` keyword was removed by the v1.0 language cut
-  // (CS-0131) and §22.5.10's heading was retitled to `ingredients <probe>`
+  // (CS-0131) and §22.5.10's heading was retitled to `gather <probe>`
   // then, but the slug kept the retired keyword's name. It is the stable
   // cross-reference target for data-member fan-out, so every clause citing
   // the section inherited a name the language no longer has.
@@ -107,7 +107,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.lua-steps':               'steps.lua',
   'recipes.shell-steps':             'steps.shell',
   'recipes.module-call-steps':       'toplevel.module-call',
-  'recipes.ingredients':             'steps.ingredients',
+  'recipes.ingredients':             'steps.gather',
   'recipes.step-kinds':              'steps.overview',
   'recipes.iteration-mode-plate-test':'steps.iteration-mode-plate-test',
   'recipes.iteration-mode':          'steps.iteration-mode',

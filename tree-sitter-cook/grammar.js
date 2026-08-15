@@ -268,7 +268,7 @@ module.exports = grammar({
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body ::= (ingredients_step | seal_step)? producer NEWLINE
+    //   probe_body ::= seal_step? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
     //                | exec_lua_block
     //
@@ -280,14 +280,6 @@ module.exports = grammar({
     // itself contains no `shell_command`, so it terminates naturally at
     // the next column-0 top-level item once `producer` closes.
     //
-    // CS-0148: a `files` producer MUST NOT combine with a preceding
-    // `ingredients_step` (§22.5.2, A-grammar A.3.2). This is encoded
-    // syntactically, not just semantically: the `files` form is a
-    // separate first alternative of the top-level choice below, so an
-    // `ingredients` line followed by `files { … }` cannot reduce through
-    // that branch (no `ingredients_step` slot precedes it) and instead
-    // falls into the `producer` branch, where `files` is not a valid
-    // producer keyword — producing an ERROR node.
     probe: ($) =>
       seq(
         $.probe_header,
@@ -295,7 +287,7 @@ module.exports = grammar({
         repeat(choice($._newline, $.comment)),
         seq(
           optional(seq(
-            choice($.ingredients_step, $.seal_step),
+            $.seal_step,
             repeat(choice($._newline, $.comment)),
           )),
           $.producer,
@@ -404,7 +396,6 @@ module.exports = grammar({
         seq(
           $._recipe_indent,
           choice(
-            $.ingredients_step,
             $.gather_step,
             $.seal_step,
             $.cook_step,
@@ -417,8 +408,7 @@ module.exports = grammar({
       ),
 
     // App. A.4 + CS-0078 multi-line patterns:
-    //   ingredients_step ::= "ingredients" (ingredient+ | probe_ref) NEWLINE
-    //   ingredient       ::= STRING | "!" STRING
+    //   input       ::= STRING | "!" STRING
     // CONT is an external token (_step_continuation_newline) emitted only
     // when the next line begins with `"` or `!"`; otherwise the declaration
     // terminates and the next line dispatches per App. A.4's priority order.
@@ -427,30 +417,12 @@ module.exports = grammar({
     // segment cap, so `ns:cards:items` lexes as one key; whether a
     // trailing segment selects a field is resolved at register time, not
     // in the grammar.
-    ingredients_step: ($) =>
-      choice(
-        seq(
-          "ingredients",
-          choice($.string, $.ingredient_exclude),
-          repeat(seq(
-            optional($._step_continuation_newline),
-            choice($.string, $.ingredient_exclude),
-          )),
-          $._newline,
-        ),
-        seq(
-          "ingredients",
-          field("probe", alias($._bare_probe_key, $.identifier)),
-          $._newline,
-        ),
-      ),
-
     gather_step: ($) =>
       choice(
         seq(
           "gather",
-          choice($.string, $.ingredient_exclude),
-          repeat(seq(optional($._step_continuation_newline), choice($.string, $.ingredient_exclude))),
+          choice($.string, $.gather_exclude),
+          repeat(seq(optional($._step_continuation_newline), choice($.string, $.gather_exclude))),
           $._newline,
         ),
         seq(
@@ -461,13 +433,13 @@ module.exports = grammar({
         ),
       ),
 
-    ingredient_exclude: ($) => seq("!", $.string),
+    gather_exclude: ($) => seq("!", $.string),
 
     // Appendix A recipe-level determinant set.
     seal_step: ($) =>
       seq(
         "seal",
-        repeat1(choice($._disposition_ref, $.ingredient_exclude)),
+        repeat1(choice($._disposition_ref, $.gather_exclude)),
         $._newline,
       ),
 
@@ -508,7 +480,7 @@ module.exports = grammar({
     share_mod: ($) => choice("local", "pinned", "nondet"),
 
     // §8.4.2 (CS-0089): `cook (LUA_EXPR)` — a parenthesised Lua expression
-    // in the output slot, evaluated once per ingredient at register time.
+    // in the output slot, evaluated once per input at register time.
     // Balanced-paren interior with single-level quoted-string opacity
     // (mirrors the §7.1.1 chore-param scanner; Lua long-brackets are NOT
     // handled, per the documented v1 limitation in §8.4.2).

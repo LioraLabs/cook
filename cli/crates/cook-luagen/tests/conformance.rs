@@ -28,9 +28,7 @@ fn corpus_root() -> PathBuf {
 fn case_dirs(sub: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let dir = corpus_root().join(sub);
-    for entry in fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e))
-    {
+    for entry in fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e)) {
         let entry = entry.unwrap();
         let path = entry.path();
         if path.is_dir() {

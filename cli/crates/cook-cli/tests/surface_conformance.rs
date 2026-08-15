@@ -131,7 +131,10 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
     fs::create_dir_all(proj.join(".cook")).expect("mkdir .cook");
     fs::write(
         proj.join(".cook/cloud.toml"),
-        format!("[cache]\ncache_dir = \"{}\"\n", tmp.path().join("cache").display()),
+        format!(
+            "[cache]\ncache_dir = \"{}\"\n",
+            tmp.path().join("cache").display()
+        ),
     )
     .expect("write cloud.toml");
 
@@ -278,7 +281,11 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
             if prev.is_none() || now.is_none() {
                 return Err(format!(
                     "{label}: `changed` path never produced: {p} ({})\n--- output ---\n{combined}",
-                    if prev.is_none() { "prev missing" } else { "now missing" }
+                    if prev.is_none() {
+                        "prev missing"
+                    } else {
+                        "now missing"
+                    }
                 ));
             }
             if prev == &now {

@@ -24,7 +24,7 @@ needs, before anything is spent producing outputs.
   import was added elsewhere.
 - **Edges come only from what was declared.** The analyzer builds the recipe
   graph from `requires` and from fine-grained per-unit references; path-string
-  equality between an ingredient and another recipe's output is opaque and
+  equality between an input and another recipe's output is opaque and
   creates no edge (§10.6). Reads that race writes are the walk's plan-rejection
   diagnostics, not silently inferred orderings.
 - **Recipe metadata comes from registration, not from the AST.** `RecipeInfo`

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="gen" line=1
       deps: []
-      ingredients: ["src/module.idl"]
+      inputs: ["src/module.idl"]
       excludes: []
       steps:
         Gather

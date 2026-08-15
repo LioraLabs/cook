@@ -16,13 +16,21 @@ fn cook_binary() -> std::path::PathBuf {
     path.pop();
     path.pop();
     path.push("cook");
-    assert!(path.exists(), "cook binary not found — cargo build --bin cook");
+    assert!(
+        path.exists(),
+        "cook binary not found — cargo build --bin cook"
+    );
     path
 }
 
-const COOKFILE: &str = "recipe build\n    ingredients \"src.txt\"\n    cook \"out/app.txt\" { sed 's/^/[app] /' src.txt > $<out> }\n";
+const COOKFILE: &str = "recipe build\n    gather \"src.txt\"\n    cook \"out/app.txt\" { sed 's/^/[app] /' $<in> > $<out> }\n";
 
-fn mk_checkout(root: &Path, name: &str, shared_store: &Path, project: Option<&str>) -> std::path::PathBuf {
+fn mk_checkout(
+    root: &Path,
+    name: &str,
+    shared_store: &Path,
+    project: Option<&str>,
+) -> std::path::PathBuf {
     let dir = root.join(name);
     fs::create_dir_all(dir.join(".cook")).unwrap();
     let project_line = project
@@ -30,7 +38,10 @@ fn mk_checkout(root: &Path, name: &str, shared_store: &Path, project: Option<&st
         .unwrap_or_default();
     fs::write(
         dir.join(".cook/cloud.toml"),
-        format!("{project_line}[cache]\ncache_dir = \"{}\"\n", shared_store.display()),
+        format!(
+            "{project_line}[cache]\ncache_dir = \"{}\"\n",
+            shared_store.display()
+        ),
     )
     .unwrap();
     fs::write(dir.join("Cookfile"), COOKFILE).unwrap();

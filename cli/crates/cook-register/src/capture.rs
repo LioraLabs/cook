@@ -1,12 +1,11 @@
 use mlua::prelude::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use cook_contracts::{
-    CapturedUnit, DepKind, WorkPayload,
-    REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
+    CapturedUnit, DepKind, WorkPayload, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
 };
 
 use crate::{RecipeKind, SharedBodySlot};
@@ -47,17 +46,21 @@ pub use cook_contracts::registration::MemberSourceDescriptor;
 /// Returns `None` when the field is absent (a non-member-fanout recipe).
 fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDescriptor>> {
     use cook_contracts::registration::{
-        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE,
-        MEMBER_SOURCE_REF_KEY,
+        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_KEY,
+        MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
     };
     let Some(t) = meta.get::<Option<LuaTable>>(MEMBER_SOURCE_FIELD)? else {
         return Ok(None);
     };
     let kind: String = t.get(MEMBER_SOURCE_KIND_KEY)?;
     Ok(Some(if kind == MEMBER_SOURCE_KIND_PROBE {
-        MemberSourceDescriptor::Probe { source_ref: t.get(MEMBER_SOURCE_REF_KEY)? }
+        MemberSourceDescriptor::Probe {
+            source_ref: t.get(MEMBER_SOURCE_REF_KEY)?,
+        }
     } else if kind == MEMBER_SOURCE_KIND_GATHER {
-        MemberSourceDescriptor::Gather { source_ref: t.get(MEMBER_SOURCE_REF_KEY)? }
+        MemberSourceDescriptor::Gather {
+            source_ref: t.get(MEMBER_SOURCE_REF_KEY)?,
+        }
     } else {
         return Err(mlua::Error::runtime(format!(
             "cook.__register_surface: unknown {MEMBER_SOURCE_FIELD} kind '{kind}'"
@@ -71,7 +74,7 @@ pub use cook_contracts::registration::ChoreParamMeta;
 
 #[derive(Debug)]
 pub struct RegisteredMetadata {
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub excludes: Vec<String>,
     pub requires: Vec<String>,
     /// Ordered list of declared chore parameters. Empty for normal
@@ -86,7 +89,7 @@ pub struct RegisteredMetadata {
     pub origin: Option<String>,
 }
 
-/// Parse the (ingredients, excludes, requires) string-list fields from a
+/// Parse the (inputs, excludes, requires) string-list fields from a
 /// Lua metadata table. Missing or non-table values yield empty vectors;
 /// individual non-string entries are silently skipped (matches the historical
 /// inline parser in `cook.recipe`).
@@ -95,11 +98,11 @@ pub struct RegisteredMetadata {
 /// `cook.__register_surface_chore` so the three registration paths see
 /// identical metadata semantics.
 fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec<String>)> {
-    let mut ingredients = Vec::new();
-    if let Ok(t) = meta.get::<LuaTable>("ingredients") {
+    let mut inputs = Vec::new();
+    if let Ok(t) = meta.get::<LuaTable>("inputs") {
         for pair in t.sequence_values::<String>() {
             if let Ok(s) = pair {
-                ingredients.push(s);
+                inputs.push(s);
             }
         }
     }
@@ -119,7 +122,7 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
             }
         }
     }
-    Ok((ingredients, excludes, requires))
+    Ok((inputs, excludes, requires))
 }
 
 /// Uniform register-phase type error for a `cook.recipe` field: a
@@ -182,7 +185,12 @@ fn parse_origin_meta(api: &str, meta: &LuaTable) -> LuaResult<Option<String>> {
             }
             Ok(Some(s))
         }
-        other => Err(recipe_type_err(api, "origin", "a string", other.type_name())),
+        other => Err(recipe_type_err(
+            api,
+            "origin",
+            "a string",
+            other.type_name(),
+        )),
     }
 }
 
@@ -303,7 +311,10 @@ fn parse_chore_params_meta(lua: &Lua, meta: &LuaTable) -> LuaResult<Vec<ChorePar
                 let serial = next_lua_default_serial();
                 let key_name = format!("__cook_chore_default:{}:{}", name, serial);
                 lua.set_named_registry_value(&key_name, func)?;
-                out.push(ChoreParamMeta::DefaultedLua { name, default_key_name: key_name });
+                out.push(ChoreParamMeta::DefaultedLua {
+                    name,
+                    default_key_name: key_name,
+                });
             }
             "variadic_plus" => {
                 out.push(ChoreParamMeta::VariadicPlus { name });
@@ -338,10 +349,10 @@ pub fn install_cook_api(
     // cook.recipe(name, metadata, fn) — the public API.
     // Always tagged Dynamic; chores cannot be registered through this path.
     let recipes_clone = recipes.clone();
-    let recipe_fn =
-        lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+    let recipe_fn = lua.create_function(
+        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
-            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let origin = parse_origin_meta("cook.recipe", &meta)?;
             let line = caller_line_in_cookfile(lua).unwrap_or(0);
 
@@ -349,7 +360,7 @@ pub fn install_cook_api(
                 name,
                 function: key,
                 metadata: RegisteredMetadata {
-                    ingredients,
+                    inputs,
                     excludes,
                     requires,
                     params: vec![],
@@ -362,7 +373,8 @@ pub fn install_cook_api(
                 member_source: None,
             });
             Ok(())
-        })?;
+        },
+    )?;
     cook.set("recipe", recipe_fn)?;
 
     // cook.chore(name, meta, fn) — the public module-facing API (CS-0176).
@@ -387,14 +399,14 @@ pub fn install_cook_api(
     // of this closure alone would catch.
     let recipes_dyn_chore = recipes.clone();
     let chore_module_state = module_state.clone();
-    let chore_pub_fn =
-        lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+    let chore_pub_fn = lua.create_function(
+        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             {
                 let state = chore_module_state.borrow();
                 validate_chore_namespace(&name, state.current_module.as_deref())?;
             }
             let key = lua.create_registry_value(func)?;
-            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let params = parse_chore_params_meta(lua, &meta)?;
             let origin = parse_origin_meta("cook.chore", &meta)?;
             let line = caller_line_in_cookfile(lua).unwrap_or(0);
@@ -403,7 +415,7 @@ pub fn install_cook_api(
                 name,
                 function: key,
                 metadata: RegisteredMetadata {
-                    ingredients,
+                    inputs,
                     excludes,
                     requires,
                     params,
@@ -415,7 +427,8 @@ pub fn install_cook_api(
                 member_source: None,
             });
             Ok(())
-        })?;
+        },
+    )?;
     cook.set("chore", chore_pub_fn)?;
 
     // cook.__register_surface(name, meta, body) — codegen-private API.
@@ -439,13 +452,13 @@ pub fn install_cook_api(
             // `cook.__register_surface` call without the field would land 0,
             // matching the legacy `cook.recipe` "no line info" sentinel.
             let line: usize = meta.get("__line").unwrap_or(0);
-            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let member_source = parse_member_source_meta(&meta)?;
             recipes_surface.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
                 metadata: RegisteredMetadata {
-                    ingredients,
+                    inputs,
                     excludes,
                     requires,
                     params: vec![],
@@ -467,20 +480,20 @@ pub fn install_cook_api(
     //
     // Same shape as `cook.__register_surface` but tagged `RecipeKind::Chore`.
     // Emitted by `cook-luagen` for surface `chore NAME` blocks. Chores have
-    // no `ingredients`/`excludes` (parser guarantees), but the helper parses
+    // no `inputs`/`excludes` (parser guarantees), but the helper parses
     // them defensively to keep one code path for metadata extraction.
     let recipes_chore = recipes.clone();
     let chore_fn = lua.create_function(
         move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
             let line: usize = meta.get("__line").unwrap_or(0);
-            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let params = parse_chore_params_meta(lua, &meta)?;
             recipes_chore.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
                 metadata: RegisteredMetadata {
-                    ingredients,
+                    inputs,
                     excludes,
                     requires,
                     params,
@@ -503,9 +516,9 @@ pub fn install_cook_api(
     let body_slot_exec = body_slot.clone();
     let exec_fn = lua.create_function(move |_, (cmd, line): (String, usize)| {
         let mut slot = body_slot_exec.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook.exec called outside a recipe body")
-        })?;
+        let body = slot
+            .as_mut()
+            .ok_or_else(|| mlua::Error::runtime("cook.exec called outside a recipe body"))?;
         if body.inside_layer {
             body.layer_commands.push((cmd, line));
         } else {
@@ -533,9 +546,9 @@ pub fn install_cook_api(
     let body_slot_i = body_slot.clone();
     let interactive_capture_fn = lua.create_function(move |_, (cmd, line): (String, usize)| {
         let mut slot = body_slot_i.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook.interactive called outside a recipe body")
-        })?;
+        let body = slot
+            .as_mut()
+            .ok_or_else(|| mlua::Error::runtime("cook.interactive called outside a recipe body"))?;
         let unit = CapturedUnit {
             payload: WorkPayload::Interactive {
                 cmd: cmd.clone(),
@@ -554,7 +567,10 @@ pub fn install_cook_api(
         body.units.push(unit);
         Ok("".to_string())
     })?;
-    cook.set(cook_contracts::registration::INTERACTIVE_NAME, interactive_capture_fn)?;
+    cook.set(
+        cook_contracts::registration::INTERACTIVE_NAME,
+        interactive_capture_fn,
+    )?;
 
     // cook.sh(cmd) — capture mode: inside a layer it captures like exec;
     // outside a layer it actually executes (user-facing utility that returns stdout).
@@ -683,7 +699,10 @@ pub fn install_cook_api(
                 ))),
             }
         })?;
-    cook.set(cook_contracts::registration::QUOTE_PARAM_NAME, quote_param_fn)?;
+    cook.set(
+        cook_contracts::registration::QUOTE_PARAM_NAME,
+        quote_param_fn,
+    )?;
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)
@@ -739,7 +758,11 @@ fn run_shell_command(
     _recipe_name: &str,
 ) -> mlua::Result<String> {
     let outcome = cook_shell::run(
-        &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir: wd,
+            stdio: cook_shell::Stdio::Captured,
+        },
         env,
     )
     .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;

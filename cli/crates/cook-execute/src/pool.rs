@@ -44,7 +44,6 @@ pub struct WorkItem {
     pub project_root: PathBuf,
 }
 
-
 /// Payload returned by a completed probe unit (§22.5). `bytes` contains the
 /// canonical-JSON-serialised return value of the `produce` Lua function
 /// (§22.5.5, CS-0102).
@@ -169,7 +168,14 @@ impl WorkerPool {
             threads.push(handle);
         }
 
-        (WorkerPool { threads, queue: shared, probe_store }, rx)
+        (
+            WorkerPool {
+                threads,
+                queue: shared,
+                probe_store,
+            },
+            rx,
+        )
     }
 
     /// Return a clone of the `ProbeValueStore` so the engine scheduler
@@ -250,7 +256,8 @@ fn worker_loop(
     // this worker, but needs interior mutability for closures).
     let current_recipe: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let current_working_dir: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(PathBuf::new()));
-    let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let current_env_vars: Arc<Mutex<HashMap<String, String>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     // R1 (CS-0164): the child-process env subset (chore-param exports). Kept
     // separate from `current_env_vars` (the full `cook.env` lookup map) so a
     // config `var.*` value never reaches a spawned step's environment.
@@ -282,8 +289,19 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_process_env_vars, &current_recipe, &current_output, &current_capture, &probe_store, &dep_outputs, &module_observer)
-        .expect("failed to register cook table");
+    register_worker_cook_table(
+        &lua,
+        &current_working_dir,
+        &current_env_vars,
+        &current_process_env_vars,
+        &current_recipe,
+        &current_output,
+        &current_capture,
+        &probe_store,
+        &dep_outputs,
+        &module_observer,
+    )
+    .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
     // so each call sees the *current* work item's working_dir, not the
@@ -356,8 +374,9 @@ fn worker_loop(
                     *env = work.env_vars.clone();
                 }
                 {
-                    let mut penv =
-                        current_process_env_vars.lock().expect("process_env_vars lock");
+                    let mut penv = current_process_env_vars
+                        .lock()
+                        .expect("process_env_vars lock");
                     *penv = work.process_env_vars.clone();
                 }
                 // CS-0188: start this unit's output empty. The worker VM is
@@ -433,7 +452,13 @@ fn worker_loop(
                     // R1: shell/test steps spawn with the process-env subset,
                     // NOT the full config lookup map. `cook.env` reads (Lua
                     // bodies) still see the full map via `current_env_vars`.
-                    execute_work_item(&lua, &probe_store, &work, &work.working_dir, &work.process_env_vars)
+                    execute_work_item(
+                        &lua,
+                        &probe_store,
+                        &work,
+                        &work.working_dir,
+                        &work.process_env_vars,
+                    )
                 }));
                 let mut result = match result {
                     Ok(r) => r,
@@ -442,9 +467,7 @@ fn worker_loop(
                         WorkResult {
                             id: work_id,
                             success: false,
-                            error: Some(format!(
-                                "[{recipe_name}] worker panic: {msg}"
-                            )),
+                            error: Some(format!("[{recipe_name}] worker panic: {msg}")),
                             exit_code: None,
                             node_name,
                             output_lines: Vec::new(),
@@ -490,9 +513,7 @@ fn worker_loop(
                         // a probe that FAILED produced no value, so nothing
                         // consumed its stdout and all of it is diagnostic.
                         if result.probe_output.is_some() {
-                            chunks.retain(|c| {
-                                c.stream() == cook_contracts::OutputStream::Stderr
-                            });
+                            chunks.retain(|c| c.stream() == cook_contracts::OutputStream::Stderr);
                         }
                         let direct = std::mem::take(&mut result.output_lines);
                         result.output_lines = chunks;
@@ -917,7 +938,10 @@ fn install_execute_phase_cook_probes(
         move |lua, key: &str| match store_for_get.get(key) {
             Some(bytes) => {
                 let jv = store_for_get.read_view(key, &bytes).map_err(|e| {
-                    mlua::Error::runtime(format!("cook.probes.get('{}'): decode failed: {}", key, e))
+                    mlua::Error::runtime(format!(
+                        "cook.probes.get('{}'): decode failed: {}",
+                        key, e
+                    ))
                 })?;
                 crate::probe_value::json_to_lua(lua, &jv)
             }
@@ -952,13 +976,12 @@ fn install_execute_phase_cook_probes(
 /// definition. So CS-0200 withdrew the execute-phase surface rather than
 /// implementing it, and this refuses it by name — the same treatment CS-0074
 /// gave `cook.probes.set`, for the same reason.
-fn install_execute_phase_cook_export(
-    lua: &mlua::Lua,
-    cook: &mlua::Table,
-) -> mlua::Result<()> {
-    let export_fn = lua.create_function(|_, (_name, _info): (String, mlua::Value)| -> mlua::Result<()> {
-        Err(export_register_only_error("cook.export"))
-    })?;
+fn install_execute_phase_cook_export(lua: &mlua::Lua, cook: &mlua::Table) -> mlua::Result<()> {
+    let export_fn = lua.create_function(
+        |_, (_name, _info): (String, mlua::Value)| -> mlua::Result<()> {
+            Err(export_register_only_error("cook.export"))
+        },
+    )?;
     cook.set("export", export_fn)?;
 
     let import_fn = lua.create_function(|_, _name: String| -> mlua::Result<mlua::Value> {
@@ -1113,7 +1136,11 @@ fn run_shell_in_worker(
     // `cook-shell` (the register-phase caller deliberately does not disarm).
     cook_cache::statmemo::disarm();
     let outcome = cook_shell::run(
-        &cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured },
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir: wd,
+            stdio: cook_shell::Stdio::Captured,
+        },
         env_vars,
     )
     .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
@@ -1187,14 +1214,20 @@ fn execute_work_item(
     let node_name = work.payload.display_name();
 
     match &work.payload {
-        WorkPayload::Shell { cmd, line } => {
-            execute_shell(probe_store, work.id, cmd, *line, working_dir, env_vars, node_name)
-        }
+        WorkPayload::Shell { cmd, line } => execute_shell(
+            probe_store,
+            work.id,
+            cmd,
+            *line,
+            working_dir,
+            env_vars,
+            node_name,
+        ),
         WorkPayload::LuaChunk {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind: _,
             // is_chore is consumed by the engine's chore-window dispatch
             // before the item ever reaches the worker pool.
@@ -1206,24 +1239,22 @@ fn execute_work_item(
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             &work.recipe_name,
             node_name,
             *line,
         ),
-        WorkPayload::Interactive { .. } => {
-            WorkResult {
-                id: work.id,
-                success: false,
-                error: Some("BUG: interactive step dispatched to worker pool".to_string()),
-                exit_code: None,
-                node_name,
-                output_lines: Vec::new(),
-                probe_output: None,
-                module_inputs: Vec::new(),
-                duration: Duration::ZERO,
-            }
-        }
+        WorkPayload::Interactive { .. } => WorkResult {
+            id: work.id,
+            success: false,
+            error: Some("BUG: interactive step dispatched to worker pool".to_string()),
+            exit_code: None,
+            node_name,
+            output_lines: Vec::new(),
+            probe_output: None,
+            module_inputs: Vec::new(),
+            duration: Duration::ZERO,
+        },
         WorkPayload::Probe { key, produce, line } => {
             execute_probe(lua, work.id, key, produce, *line, node_name)
         }
@@ -1234,7 +1265,10 @@ fn execute_work_item(
         _ => WorkResult {
             id: work.id,
             success: false,
-            error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
+            error: Some(format!(
+                "BUG: unknown WorkPayload variant dispatched to worker pool: {:?}",
+                work.payload
+            )),
             exit_code: None,
             node_name,
             output_lines: Vec::new(),
@@ -1360,7 +1394,9 @@ fn execute_probe(
                     key,
                     cook_contracts::lua_error::sanitize(
                         &e.to_string(),
-                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
+                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV)
+                            .map(|v| v == "1")
+                            .unwrap_or(false),
                     )
                 )),
                 exit_code: None,
@@ -1414,7 +1450,7 @@ fn execute_lua_chunk(
     code: &str,
     inputs: &[String],
     outputs: &[String],
-    ingredient_groups: &[Vec<String>],
+    gather_groups: &[Vec<String>],
     recipe_name: &str,
     node_name: String,
     line: usize,
@@ -1437,8 +1473,8 @@ fn execute_lua_chunk(
         globals.set("input", inputs.first().map(|s| s.as_str()).unwrap_or(""))?;
         globals.set("output", outputs.first().map(|s| s.as_str()).unwrap_or(""))?;
 
-        // Set input_1, input_2, ... for each ingredient group
-        for (i, group) in ingredient_groups.iter().enumerate() {
+        // Set input_1, input_2, ... for each input group
+        for (i, group) in gather_groups.iter().enumerate() {
             let table = lua.create_table()?;
             for (j, path) in group.iter().enumerate() {
                 table.set(j + 1, path.as_str())?;
@@ -1508,7 +1544,9 @@ fn execute_lua_chunk(
                 "[{recipe_name}] {}",
                 cook_contracts::lua_error::sanitize(
                     &e.to_string(),
-                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
+                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV)
+                        .map(|v| v == "1")
+                        .unwrap_or(false),
                 )
             )),
             exit_code: None,

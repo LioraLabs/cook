@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="mods" line=6
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_modgraph.compile_all(\"scan:mods\")"
@@ -15,6 +15,6 @@ Cookfile
   probes:
     Probe name="scan:mods" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Lines commands=["cat imports.txt"]

@@ -23,7 +23,7 @@ fn project() -> TempDir {
     fs::write(dir.path().join("src/b.txt"), "world\n").unwrap();
     fs::write(
         dir.path().join("Cookfile"),
-        "recipe build\n    ingredients \"src/*.txt\"\n    \
+        "recipe build\n    gather \"src/*.txt\"\n    \
          cook \"out/$<in.stem>.up\" { tr 'a-z' 'A-Z' < $<in> > $<out> }\n",
     )
     .unwrap();
@@ -72,7 +72,10 @@ fn dump_renders_the_index_as_parseable_toml() {
             step.get("command_hash").and_then(|v| v.as_str()).is_some(),
             "step {key} is missing command_hash"
         );
-        let inputs = step.get("inputs").and_then(|v| v.as_array()).expect("inputs");
+        let inputs = step
+            .get("inputs")
+            .and_then(|v| v.as_array())
+            .expect("inputs");
         let rec = inputs.first().expect("at least one input record");
         assert!(rec.get("path").and_then(|v| v.as_str()).is_some());
         assert!(rec.get("mtime").and_then(|v| v.as_integer()).is_some());
@@ -112,7 +115,10 @@ fn dump_of_an_unbuilt_recipe_fails_clearly() {
     // No build has run, so there is no index at all.
     let out = run(dir.path(), &["cache", "dump", "build"]);
 
-    assert!(!out.status.success(), "must not exit 0 with nothing to show");
+    assert!(
+        !out.status.success(),
+        "must not exit 0 with nothing to show"
+    );
     assert!(
         out.stdout.is_empty(),
         "must not print a misleading empty document"

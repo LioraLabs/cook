@@ -39,7 +39,7 @@ pub struct DagData {
 #[derive(Serialize, Clone)]
 pub struct NodeData {
     pub id: String,
-    pub kind: String,       // "file" or "unit"
+    pub kind: String, // "file" or "unit"
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipe: Option<String>,
@@ -122,7 +122,6 @@ impl EdgeKind {
             EdgeKind::UnitOrder => "unit_order",
         }
     }
-
 }
 
 #[derive(Serialize, Clone)]
@@ -238,7 +237,11 @@ pub fn build_dag_data(
             let Some(from) = origin_node_id(&graph.nodes[from_idx].origin) else {
                 continue;
             };
-            edges.push(EdgeData { from, to: to.clone(), kind: edge_kind(kind) });
+            edges.push(EdgeData {
+                from,
+                to: to.clone(),
+                kind: edge_kind(kind),
+            });
         }
     }
 
@@ -335,8 +338,7 @@ fn build_nodes(
         // key "rust.build", cache_meta name "build") loading under the
         // qualified key would silently miss the index and render every node
         // as never-cached.
-        let cache_index_name =
-            cook_contracts::cache::recipe_cache_index_name(ru, recipe_name);
+        let cache_index_name = cook_contracts::cache::recipe_cache_index_name(ru, recipe_name);
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
         for (unit_idx, unit) in ru.units.iter().enumerate() {
@@ -362,7 +364,10 @@ fn build_nodes(
                 _ => unit.payload.display_name(),
             };
 
-            let output = unit.cache_meta.as_ref().and_then(|m| m.output_paths.first().cloned());
+            let output = unit
+                .cache_meta
+                .as_ref()
+                .and_then(|m| m.output_paths.first().cloned());
 
             let label = if let Some(ref out) = output {
                 Path::new(out)
@@ -409,16 +414,15 @@ fn build_nodes(
             // --- File nodes + file→unit edges ---
             if let Some(meta) = &unit.cache_meta {
                 // Issue 4: Use pre-loaded recipe cache for staleness checks.
-                let cache_entry = recipe_cache.as_ref().map(|cache| {
-                    cache.steps.get(&meta.cache_key).cloned()
-                });
+                let cache_entry = recipe_cache
+                    .as_ref()
+                    .map(|cache| cache.steps.get(&meta.cache_key).cloned());
 
                 // Issue 3: Deduplicate the declared entries before iterating
                 // to avoid duplicate edges. A pattern entry is drawn as what it
                 // is — the declaration — rather than as its expansion: the
                 // graph reports what the unit declared (§17.1.1.2).
-                let unique_paths: BTreeSet<&String> =
-                    meta.inputs.iter().map(|e| &e.path).collect();
+                let unique_paths: BTreeSet<&String> = meta.inputs.iter().map(|e| &e.path).collect();
 
                 for path in unique_paths {
                     // An input that another unit produces is an intermediate
@@ -452,7 +456,10 @@ fn build_nodes(
                             path,
                             &ru.working_dir,
                             cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
-                                e.inputs.iter().find(|r| &*r.path == path.as_str()).map(|r| (r.mtime, r.hash))
+                                e.inputs
+                                    .iter()
+                                    .find(|r| &*r.path == path.as_str())
+                                    .map(|r| (r.mtime, r.hash))
                             }),
                         );
 
@@ -539,7 +546,6 @@ fn build_nodes(
                     }
                 }
             }
-
         }
     }
 
@@ -550,11 +556,7 @@ fn build_nodes(
 ///
 /// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
 /// Returns `true` if the file appears modified or cannot be read.
-fn compute_file_modified(
-    rel_path: &str,
-    working_dir: &Path,
-    cached: Option<(u64, u64)>,
-) -> bool {
+fn compute_file_modified(rel_path: &str, working_dir: &Path, cached: Option<(u64, u64)>) -> bool {
     let abs = working_dir.join(rel_path);
     let Some((cached_mtime, cached_hash)) = cached else {
         // No cache entry → treat as modified (needs build).

@@ -258,7 +258,10 @@ recipe consumer : producer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "consumer");
-    assert!(ok, "a dep-list edge orders producer first — MUST NOT fire:\n{combined}");
+    assert!(
+        ok,
+        "a dep-list edge orders producer first — MUST NOT fire:\n{combined}"
+    );
     assert!(
         tmp.path().join("out.bin").exists(),
         "the build MUST actually run:\n{combined}"
@@ -317,7 +320,7 @@ recipe consumer : middle
 fn sigil_edge_does_not_fire() {
     let tmp = setup(
         r#"recipe producer
-    ingredients "src.c"
+    gather "src.c"
     cook "build/gen.a" {
         mkdir -p build
         cp $<in> $<out>
@@ -331,7 +334,10 @@ recipe consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "consumer");
-    assert!(ok, "a $<sigil> edge orders producer first — MUST NOT fire:\n{combined}");
+    assert!(
+        ok,
+        "a $<sigil> edge orders producer first — MUST NOT fire:\n{combined}"
+    );
     assert!(
         tmp.path().join("out.bin").exists(),
         "the build MUST actually run:\n{combined}"
@@ -412,7 +418,10 @@ recipe consumer
 
     // The run still fails — but on the honest `cp: cannot stat`, at execution
     // time, NOT on a §16.1.2 plan-time rejection.
-    assert!(!ok, "consumer still fails: nothing schedules producer:\n{combined}");
+    assert!(
+        !ok,
+        "consumer still fails: nothing schedules producer:\n{combined}"
+    );
     assert!(
         !combined.contains("producer"),
         "§16.1.2 is CLOSURE-scoped: with only `consumer` in the closure the \
@@ -442,7 +451,10 @@ fn same_recipe_output_then_input_does_not_fire() {
     );
 
     let (ok, combined) = run_cook(tmp.path(), "solo");
-    assert!(ok, "a recipe reading its own output MUST NOT fire:\n{combined}");
+    assert!(
+        ok,
+        "a recipe reading its own output MUST NOT fire:\n{combined}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +546,10 @@ recipe all: producer consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "all");
-    assert!(ok, "naming the producer MUST repair the example:\n{combined}");
+    assert!(
+        ok,
+        "naming the producer MUST repair the example:\n{combined}"
+    );
     assert_eq!(
         fs::read_to_string(tmp.path().join("out.bin")).unwrap(),
         "a",
@@ -543,13 +558,13 @@ recipe all: producer consumer
 }
 
 // ---------------------------------------------------------------------------
-// The narrowed scope — `ingredients` literals are NOT covered (Note 16.1.2.2)
+// The narrowed scope — `inputs` literals are NOT covered (Note 16.1.2.2)
 // ---------------------------------------------------------------------------
 
-/// **§16.1.2 does not cover `ingredients`-sourced literals, and this pins that
+/// **§16.1.2 does not cover `inputs`-sourced literals, and this pins that
 /// exclusion as deliberate.**
 ///
-/// An `ingredients` pattern is a filesystem glob resolved against disk at
+/// An `inputs` pattern is a filesystem glob resolved against disk at
 /// register time (§21.2.1); a literal is just a glob with no metacharacters.
 /// On a COLD build `build/gen.a` does not exist, so the pattern matches ZERO
 /// files, contributes no input entry, and there is nothing for the rule to
@@ -567,7 +582,7 @@ recipe all: producer consumer
 /// no edge is inferred from this path match, which is what the
 /// `raw_path_cross_recipe_edge.rs` tripwire guards.
 #[test]
-fn ingredients_sourced_literal_is_not_covered_on_cold_build() {
+fn gather_sourced_literal_is_not_covered_on_cold_build() {
     let tmp = setup(
         r#"recipe producer
         cook.add_unit({
@@ -577,7 +592,7 @@ fn ingredients_sourced_literal_is_not_covered_on_cold_build() {
         })
 
 recipe consumer
-    ingredients "build/gen.a"
+    gather "build/gen.a"
     cook "out.bin" { cp $<in> $<out> }
 
 recipe all : producer consumer
@@ -585,10 +600,13 @@ recipe all : producer consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "all");
-    assert!(!ok, "the cold build still fails on its own terms:\n{combined}");
+    assert!(
+        !ok,
+        "the cold build still fails on its own terms:\n{combined}"
+    );
     assert!(
         !combined.contains("read-after-write with no ordering edge"),
-        "§16.1.2 MUST NOT claim to cover an `ingredients`-sourced literal: on \
+        "§16.1.2 MUST NOT claim to cover an `inputs`-sourced literal: on \
          a cold build the glob matches 0 files and no input entry exists. If \
          this fires, the rule's scope changed and Note 16.1.2.2 / CS-0144 are \
          now wrong:\n{combined}"

@@ -214,13 +214,18 @@ fn globals_apply_without_subcommand() {
 fn old_flag_form_rejected() {
     // Sanity: --test should no longer parse as a built-in invocation.
     let result = Cli::try_parse_from(["cook", "--test"]);
-    assert!(result.is_err(), "--test should be rejected after the redesign");
+    assert!(
+        result.is_err(),
+        "--test should be rejected after the redesign"
+    );
 }
 
 #[test]
 fn logs_no_args_means_latest() {
     let cli = parse(&["logs"]);
-    let Some(Cmd::Logs(a)) = &cli.cmd else { panic!("expected Logs command") };
+    let Some(Cmd::Logs(a)) = &cli.cmd else {
+        panic!("expected Logs command")
+    };
     assert!(a.build_id.is_none());
     assert!(!a.last_failed);
     assert!(a.nth.is_none());
@@ -229,21 +234,27 @@ fn logs_no_args_means_latest() {
 #[test]
 fn logs_build_id_positional() {
     let cli = parse(&["logs", "2026-05-10-abc"]);
-    let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+    let Some(Cmd::Logs(a)) = &cli.cmd else {
+        panic!()
+    };
     assert_eq!(a.build_id.as_deref(), Some("2026-05-10-abc"));
 }
 
 #[test]
 fn logs_nth_flag() {
     let cli = parse(&["logs", "-n", "3"]);
-    let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+    let Some(Cmd::Logs(a)) = &cli.cmd else {
+        panic!()
+    };
     assert_eq!(a.nth, Some(3));
 }
 
 #[test]
 fn logs_last_failed_flag() {
     let cli = parse(&["logs", "--last-failed"]);
-    let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+    let Some(Cmd::Logs(a)) = &cli.cmd else {
+        panic!()
+    };
     assert!(a.last_failed);
 }
 
@@ -269,7 +280,12 @@ fn parses_affected_subcommand_with_since() {
 
 #[test]
 fn parses_affected_subcommand_with_recipe_and_json() {
-    let cli = parse(&["affected", "--since=origin/main", "--recipe=build", "--json"]);
+    let cli = parse(&[
+        "affected",
+        "--since=origin/main",
+        "--recipe=build",
+        "--json",
+    ]);
     match cli.cmd {
         Some(Cmd::Affected(args)) => {
             assert_eq!(args.recipe.as_deref(), Some("build"));
@@ -283,7 +299,9 @@ fn parses_affected_subcommand_with_recipe_and_json() {
 fn cache_verify_subcommand_defaults() {
     let cli = parse(&["cache", "verify"]);
     match cli.cmd {
-        Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+        Some(Cmd::Cache(CacheArgs {
+            cmd: CacheCmd::Verify(a),
+        })) => {
             assert!(a.recipe.is_none());
             assert!(!a.json);
         }
@@ -295,7 +313,9 @@ fn cache_verify_subcommand_defaults() {
 fn cache_verify_recipe_and_json() {
     let cli = parse(&["cache", "verify", "build", "--json"]);
     match cli.cmd {
-        Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+        Some(Cmd::Cache(CacheArgs {
+            cmd: CacheCmd::Verify(a),
+        })) => {
             assert_eq!(a.recipe.as_deref(), Some("build"));
             assert!(a.json);
         }
@@ -307,7 +327,9 @@ fn cache_verify_recipe_and_json() {
 fn cache_gc_subcommand_parses_max_size_and_dry_run() {
     let cli = parse(&["cache", "gc", "--max-size", "1GB", "--dry-run"]);
     match cli.cmd {
-        Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Gc(a) })) => {
+        Some(Cmd::Cache(CacheArgs {
+            cmd: CacheCmd::Gc(a),
+        })) => {
             assert_eq!(a.max_size.as_deref(), Some("1GB"));
             assert!(a.older_than.is_none());
             assert!(a.dry_run);

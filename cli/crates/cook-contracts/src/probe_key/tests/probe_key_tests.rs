@@ -110,6 +110,9 @@ mod scoped_keys {
         let msg = scope_label_error("a:b").expect("colon label must be refused");
         assert!(msg.contains("cook.probes.scope"), "names the API: {msg}");
         assert!(msg.contains("'a:b'"), "names the label: {msg}");
-        assert!(msg.contains("must not contain ':'"), "names the rule: {msg}");
+        assert!(
+            msg.contains("must not contain ':'"),
+            "names the rule: {msg}"
+        );
     }
 }

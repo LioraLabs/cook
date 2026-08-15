@@ -109,7 +109,7 @@ fn record_warm_hit_does_not_rerun_producer() {
 
 /// Scenario B: changing a SEALED determinant re-keys the unit and forces a
 /// re-generate, even for a `record` unit. A `knob` probe reads `knob.txt`
-/// (declared as an ingredient so a content change re-runs the probe); `seal knob`
+/// (declared as an input so a content change re-runs the probe); `seal knob`
 /// folds its value into the unit's single cache key.
 #[test]
 fn record_sealed_determinant_change_regenerates() {
@@ -121,7 +121,7 @@ fn record_sealed_determinant_change_regenerates() {
     fs::write(
         wd.join("Cookfile"),
         r#"probe knob
-    ingredients "knob.txt"
+    seal "knob.txt"
     { cat knob.txt }
 
 recipe build
@@ -150,7 +150,7 @@ recipe build
         "run2: sealed knob unchanged ⇒ key unchanged ⇒ record hit, no re-run"
     );
 
-    // Run 3 (knob = "b"): the probe re-runs (its ingredient changed), its value
+    // Run 3 (knob = "b"): the probe re-runs (its input changed), its value
     // changes, `seal knob` folds the new value into the key — the key changes, so
     // the record unit MUST re-generate.
     fs::write(wd.join("knob.txt"), "b").unwrap();

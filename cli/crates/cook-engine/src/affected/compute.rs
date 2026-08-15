@@ -34,8 +34,7 @@ pub fn compute_affected(
     // `Shell` payloads, where the recipe-level `inputs = {...}` declaration
     // is propagated for cache-key derivation). Union both so a recipe with
     // only shell steps is still affected when its declared inputs change.
-    let changed_strs: BTreeSet<&str> =
-        changed_paths.iter().filter_map(|p| p.to_str()).collect();
+    let changed_strs: BTreeSet<&str> = changed_paths.iter().filter_map(|p| p.to_str()).collect();
 
     // Owner-directory normalisation (COOK-274). An imported recipe's declared
     // inputs are recorded relative to its own Cookfile's directory, while
@@ -103,7 +102,11 @@ pub fn compute_affected(
                 }
             }
             if let Some(cm) = &unit.cache_meta {
-                if cm.inputs.iter().any(|i| input_matches(&i.path, rel_dir.as_ref())) {
+                if cm
+                    .inputs
+                    .iter()
+                    .any(|i| input_matches(&i.path, rel_dir.as_ref()))
+                {
                     direct_hits.insert(name.clone());
                     break 'recipe;
                 }
@@ -120,7 +123,10 @@ pub fn compute_affected(
     let mut rev_edges: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (recipe, deps) in edges {
         for dep in deps {
-            rev_edges.entry(dep.as_str()).or_default().push(recipe.as_str());
+            rev_edges
+                .entry(dep.as_str())
+                .or_default()
+                .push(recipe.as_str());
         }
     }
 

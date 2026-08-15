@@ -62,7 +62,10 @@ fn why_unit(dir: &Path, target: &str) -> (String, String, String) {
     assert_eq!(units.len(), 1, "expected exactly one unit, got: {v}");
     (
         units[0]["key"].as_str().expect("key").to_string(),
-        units[0]["cache_key"].as_str().expect("cache_key").to_string(),
+        units[0]["cache_key"]
+            .as_str()
+            .expect("cache_key")
+            .to_string(),
         units[0]["status"].as_str().expect("status").to_string(),
     )
 }
@@ -104,7 +107,10 @@ fn single_project_invoked_from_nested_subdir() {
 
     let out = run_cook(&root.join("src/deeper"), &["build"]);
     assert_ok(&out, "cook build from nested subdir");
-    assert!(root.join("build/out.txt").exists(), "output at Cookfile dir");
+    assert!(
+        root.join("build/out.txt").exists(),
+        "output at Cookfile dir"
+    );
     assert!(
         !root.join("src/deeper/build").exists(),
         "no stray output at cwd"
@@ -136,7 +142,10 @@ fn workspace_three_invocation_points_share_one_cache_key() {
 
     // ...and observe a local hit from inside the member subtree.
     let (_, _, status_nested) = why_unit(&member_src, "build");
-    assert_eq!(status_nested, "local_hit", "warm cache visible from nested cwd");
+    assert_eq!(
+        status_nested, "local_hit",
+        "warm cache visible from nested cwd"
+    );
 }
 
 /// (iii) Reserved `//` target syntax is rejected with a clear diagnostic.
@@ -156,7 +165,11 @@ fn double_slash_target_rejected() {
 fn walk_up_does_not_escape_cookroot_boundary() {
     let tmp = TempDir::new().expect("tempdir");
     let outer = tmp.path();
-    write(outer, "Cookfile", "recipe build\n    cook \"d.txt\" { echo DECOY > $<out> }\n");
+    write(
+        outer,
+        "Cookfile",
+        "recipe build\n    cook \"d.txt\" { echo DECOY > $<out> }\n",
+    );
     std::fs::create_dir_all(outer.join("proj/sub")).unwrap();
     write(outer, "proj/.cookroot", "");
 
@@ -187,7 +200,10 @@ fn explicit_file_flag_disables_discovery() {
     std::fs::create_dir_all(root.join("tools")).unwrap();
 
     let out = run_cook(&root.join("tools"), &["-f", "Cookfile", "check"]);
-    assert!(!out.status.success(), "explicit -f Cookfile in a bare dir must error");
+    assert!(
+        !out.status.success(),
+        "explicit -f Cookfile in a bare dir must error"
+    );
 }
 
 /// §20.2.2 negative: the enclosing workspace's alias namespace does not

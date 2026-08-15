@@ -41,19 +41,18 @@ fn combined(out: &std::process::Output) -> String {
 
 #[test]
 fn lua_body_test_passes() {
-    let dir = write_cookfile(
-        "recipe check\n    test >{\n        assert(1 + 1 == 2)\n    }\n",
-    );
+    let dir = write_cookfile("recipe check\n    test >{\n        assert(1 + 1 == 2)\n    }\n");
     let out = run_recipe(dir.path(), "check");
     let c = combined(&out);
-    assert!(out.status.success(), "a passing lua-body test must exit 0.\n{c}");
+    assert!(
+        out.status.success(),
+        "a passing lua-body test must exit 0.\n{c}"
+    );
 }
 
 #[test]
 fn lua_body_test_failure_exits_one() {
-    let dir = write_cookfile(
-        "recipe check\n    test >{\n        error(\"boom\")\n    }\n",
-    );
+    let dir = write_cookfile("recipe check\n    test >{\n        error(\"boom\")\n    }\n");
     let out = run_recipe(dir.path(), "check");
     let c = combined(&out);
     assert_eq!(

@@ -44,7 +44,10 @@ fn make_populated_cache() -> RecipeCache {
 /// require renaming the test that guards it.
 #[test]
 fn cache_version_is_the_shared_record_schema_version() {
-    assert_eq!(CACHE_VERSION, cook_contracts::cache::record::RECORD_SCHEMA_VERSION);
+    assert_eq!(
+        CACHE_VERSION,
+        cook_contracts::cache::record::RECORD_SCHEMA_VERSION
+    );
 }
 
 #[test]
@@ -76,7 +79,9 @@ fn saved_index_is_a_binary_idx_file() {
     // file must still guarantee is the magic and version in its header, so a
     // foreign file is never mistaken for an index.
     let dir = tempfile::tempdir().expect("tempdir");
-    make_populated_cache().save(dir.path(), "my_recipe").expect("save");
+    make_populated_cache()
+        .save(dir.path(), "my_recipe")
+        .expect("save");
     let path = dir.path().join("my_recipe.idx");
     let bytes = std::fs::read(&path).expect("read");
     assert_eq!(&bytes[0..8], b"COOKIDX\0");
@@ -84,8 +89,14 @@ fn saved_index_is_a_binary_idx_file() {
         u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
         CACHE_VERSION
     );
-    assert!(!dir.path().join("my_recipe.idx.tmp").exists(), "tmp renamed away");
-    assert!(!dir.path().join("my_recipe.toml").exists(), "no TOML written");
+    assert!(
+        !dir.path().join("my_recipe.idx.tmp").exists(),
+        "tmp renamed away"
+    );
+    assert!(
+        !dir.path().join("my_recipe.toml").exists(),
+        "no TOML written"
+    );
 }
 
 #[test]
@@ -138,7 +149,9 @@ fn load_corrupted_returns_none() {
 fn load_truncated_returns_none() {
     // A crash mid-write must degrade to a cache miss, not a build failure.
     let dir = tempfile::tempdir().expect("tempdir");
-    make_populated_cache().save(dir.path(), "torn").expect("save");
+    make_populated_cache()
+        .save(dir.path(), "torn")
+        .expect("save");
     let path = dir.path().join("torn.idx");
     let bytes = std::fs::read(&path).expect("read");
     std::fs::write(&path, &bytes[..bytes.len() - 12]).expect("truncate");
@@ -151,7 +164,9 @@ fn load_wrong_schema_version_returns_none() {
     // future cook's index are equally unreadable.
     let dir = tempfile::tempdir().expect("tempdir");
     for version in [CACHE_VERSION - 1, CACHE_VERSION + 1] {
-        make_populated_cache().save(dir.path(), "versioned").expect("save");
+        make_populated_cache()
+            .save(dir.path(), "versioned")
+            .expect("save");
         let path = dir.path().join("versioned.idx");
         let mut bytes = std::fs::read(&path).expect("read");
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
@@ -211,7 +226,10 @@ fn sweep_removes_superseded_indexes_only() {
     ] {
         assert!(!d.join(gone).exists(), "{gone} should have been swept");
     }
-    assert!(d.join("cook_cc.json").is_file(), "module state must survive");
+    assert!(
+        d.join("cook_cc.json").is_file(),
+        "module state must survive"
+    );
     assert!(d.join("live.idx").is_file(), "the live index must survive");
     assert!(
         !d.join("tests").exists(),

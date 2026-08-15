@@ -5,14 +5,14 @@ Cookfile
   recipes:
     Recipe name="headers" line=1
       deps: []
-      ingredients: ["include/a.h", "include/b.h"]
+      inputs: ["include/a.h", "include/b.h"]
       excludes: []
       steps:
         Gather
         Cook outputs=["build/include/$<in.stem>.h"] body=ShellBlock(["cp $<in> $<out>"])
     Recipe name="list_headers" line=5
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["build/$<headers.stem>.listed"] body=ShellBlock(["echo $<in> > $<out>"])

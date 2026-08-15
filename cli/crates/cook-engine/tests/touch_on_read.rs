@@ -56,9 +56,9 @@ fn cook_binary() -> PathBuf {
 
 /// Deterministic declared output; undeclared runlog for the rebuild counter.
 const COOKFILE: &str = r#"recipe build
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/hello.txt" {
-        printf 'hello-deterministic\n' > out/hello.txt
+        : $<in>; printf 'hello-deterministic\n' > out/hello.txt
         echo ran >> out/build.runlog
     }
 "#;
@@ -130,8 +130,7 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 /// with `.meta.json` / `.provenance.json` bolted on via `with_extension`. So a
 /// CAS blob is exactly the extension-less 62-char file name.
 fn is_blob(p: &Path) -> bool {
-    p.extension().is_none()
-        && p.file_name().map(|n| n.len() == 62).unwrap_or(false)
+    p.extension().is_none() && p.file_name().map(|n| n.len() == 62).unwrap_or(false)
 }
 
 fn mtime(p: &Path) -> FileTime {
@@ -179,7 +178,9 @@ fn touch_on_read_fires_e2e_and_is_inert() {
         })
         .collect();
     assert!(
-        sidecars.iter().any(|(p, _, _)| p.to_string_lossy().ends_with(".meta.json")),
+        sidecars
+            .iter()
+            .any(|(p, _, _)| p.to_string_lossy().ends_with(".meta.json")),
         "expected at least one .meta.json sidecar alongside the blobs"
     );
 

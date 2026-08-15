@@ -45,17 +45,15 @@ fn glob_one_pattern(
     let full_pattern = full_pattern_path.to_string_lossy().to_string();
     let policy = sandbox.resolve();
     let mut paths: Vec<String> = Vec::new();
-    for entry in glob::glob(&full_pattern)
-        .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
+    for entry in
+        glob::glob(&full_pattern).map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
     {
         let path = match entry {
             Ok(p) => p,
             Err(_) => continue,
         };
         let lossy = path.to_string_lossy().to_string();
-        if policy.resolve("fs.glob", working_dir, &lossy).is_ok()
-            && !resolves_to_directory(&path)
-        {
+        if policy.resolve("fs.glob", working_dir, &lossy).is_ok() && !resolves_to_directory(&path) {
             paths.push(lossy);
         }
     }
@@ -145,9 +143,9 @@ pub fn register_fs_api_with_sandbox(
                 LuaValue::Table(t) => {
                     let mut v: Vec<String> = Vec::new();
                     for entry in t.sequence_values::<LuaValue>() {
-                        let val = entry.map_err(|e| mlua::Error::runtime(
-                            format!("fs.glob: array iteration failed: {e}")
-                        ))?;
+                        let val = entry.map_err(|e| {
+                            mlua::Error::runtime(format!("fs.glob: array iteration failed: {e}"))
+                        })?;
                         match val {
                             LuaValue::String(ls) => v.push(ls.to_str()?.to_string()),
                             other => {

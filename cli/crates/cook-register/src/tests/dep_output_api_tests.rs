@@ -11,10 +11,11 @@ fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> 
 
 fn setup_lua() -> (Lua, SharedTerminalOutputs, SharedBodySlot) {
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
     let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
-    let body_slot: SharedBodySlot =
-        Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
     (lua, terminal_outputs, body_slot)
 }
 
@@ -25,7 +26,15 @@ fn test_dep_output_returns_space_joined() {
         "protos".into(),
         vec!["gen/foo.pb.o".into(), "gen/bar.pb.o".into()],
     );
-    register_dep_output_api(&lua, outputs, cs, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: String = lua
         .load(r#"return cook.dep_output("protos")"#)
         .eval()
@@ -37,9 +46,18 @@ fn test_dep_output_returns_space_joined() {
 fn test_dep_output_list_returns_table() {
     let (lua, outputs, cs) = setup_lua();
     outputs
-        .lock().unwrap()
+        .lock()
+        .unwrap()
         .insert("libmath".into(), vec!["build/lib/libmath.a".into()]);
-    register_dep_output_api(&lua, outputs, cs, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: Vec<String> = lua
         .load(r#"return cook.dep_output_list("libmath")"#)
         .eval()
@@ -50,7 +68,15 @@ fn test_dep_output_list_returns_table() {
 #[test]
 fn test_dep_output_unknown_recipe_errors() {
     let (lua, outputs, cs) = setup_lua();
-    register_dep_output_api(&lua, outputs, cs, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result = lua
         .load(r#"return cook.dep_output("nonexistent")"#)
         .eval::<String>();
@@ -61,9 +87,18 @@ fn test_dep_output_unknown_recipe_errors() {
 fn test_dep_output_accumulates_dep_ref() {
     let (lua, outputs, cs) = setup_lua();
     outputs
-        .lock().unwrap()
+        .lock()
+        .unwrap()
         .insert("libmath".into(), vec!["libmath.a".into()]);
-    register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs.clone(),
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     lua.load(r#"cook.dep_output("libmath")"#).exec().unwrap();
     // dep_output accumulates in step_group_dep_refs, not dep_edges directly.
     // Actual edge recording happens in cook.add_unit().
@@ -77,13 +112,26 @@ fn test_dep_output_accumulates_dep_ref() {
 fn test_dep_output_deduplicates_refs() {
     let (lua, outputs, cs) = setup_lua();
     outputs
-        .lock().unwrap()
+        .lock()
+        .unwrap()
         .insert("libmath".into(), vec!["libmath.a".into()]);
-    register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
-    lua.load(r#"
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs.clone(),
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    lua.load(
+        r#"
             cook.dep_output("libmath")
             cook.dep_output("libmath")
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
     let state = body_ref(&cs);
     // Should not duplicate
     assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
@@ -97,31 +145,52 @@ fn test_dep_output_deduplicates_refs() {
 #[test]
 fn test_dep_order_accumulates_ref_without_input_paths() {
     let (lua, outputs, cs) = setup_lua();
-    register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs.clone(),
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     lua.load(r#"cook.dep_order("libmath")"#).exec().unwrap();
     let state = body_ref(&cs);
     assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
     assert!(
         state.step_group_dep_input_paths.is_empty(),
         "dep_order must not fold any path into the cache-input accumulator"
-        );
-        // No direct dep_edges yet — add_unit creates them.
-        assert!(state.dep_edges.is_empty());
-    }
+    );
+    // No direct dep_edges yet — add_unit creates them.
+    assert!(state.dep_edges.is_empty());
+}
 
-    /// COOK-297: dep_order and dep_output share one ref namespace — naming
-    /// the same recipe through both accumulates a single ref.
-    #[test]
-    fn test_dep_order_dedupes_against_dep_output() {
-        let (lua, outputs, cs) = setup_lua();
-        outputs
-            .lock().unwrap()
-            .insert("libmath".into(), vec!["libmath.a".into()]);
-    register_dep_output_api(&lua, outputs, cs.clone(), BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
-    lua.load(r#"
+/// COOK-297: dep_order and dep_output share one ref namespace — naming
+/// the same recipe through both accumulates a single ref.
+#[test]
+fn test_dep_order_dedupes_against_dep_output() {
+    let (lua, outputs, cs) = setup_lua();
+    outputs
+        .lock()
+        .unwrap()
+        .insert("libmath".into(), vec!["libmath.a".into()]);
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs.clone(),
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    lua.load(
+        r#"
             cook.dep_output("libmath")
             cook.dep_order("libmath")
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
     let state = body_ref(&cs);
     assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
 }
@@ -141,9 +210,14 @@ fn test_dep_order_same_cookfile_uses_self_prefix() {
         BTreeMap::new(),
     )
     .unwrap();
-    lua.load(r#"cook.dep_order("local_recipe")"#).exec().unwrap();
+    lua.load(r#"cook.dep_order("local_recipe")"#)
+        .exec()
+        .unwrap();
     let state = body_ref(&cs);
-    assert_eq!(state.step_group_dep_refs, vec!["queue.local_recipe".to_string()]);
+    assert_eq!(
+        state.step_group_dep_refs,
+        vec!["queue.local_recipe".to_string()]
+    );
 }
 
 /// COOK-297: dep_order outside a recipe body raises, mirroring dep_output.
@@ -151,7 +225,15 @@ fn test_dep_order_same_cookfile_uses_self_prefix() {
 fn test_dep_order_outside_body_errors() {
     let (lua, outputs, _) = setup_lua();
     let empty_slot: SharedBodySlot = Rc::new(RefCell::new(None));
-    register_dep_output_api(&lua, outputs, empty_slot, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        empty_slot,
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let res = lua.load(r#"cook.dep_order("libmath")"#).exec();
     assert!(res.is_err(), "dep_order outside a recipe body must raise");
 }
@@ -159,14 +241,22 @@ fn test_dep_order_outside_body_errors() {
 #[test]
 fn test_dep_output_rewrites_qualified_paths_with_alias_dir() {
     let (lua, outputs, cs) = setup_lua();
-    outputs.lock().unwrap().insert(
-        "lib.lib_build".into(),
-        vec!["build/lib.o".into()],
-    );
+    outputs
+        .lock()
+        .unwrap()
+        .insert("lib.lib_build".into(), vec!["build/lib.o".into()]);
     let mut alias_dirs = BTreeMap::new();
     alias_dirs.insert("lib".to_string(), PathBuf::from("lib"));
 
-    register_dep_output_api(&lua, outputs, cs, alias_dirs, String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        alias_dirs,
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: String = lua
         .load(r#"return cook.dep_output("lib.lib_build")"#)
         .eval()
@@ -177,11 +267,19 @@ fn test_dep_output_rewrites_qualified_paths_with_alias_dir() {
 #[test]
 fn test_dep_output_unqualified_no_rewrite() {
     let (lua, outputs, cs) = setup_lua();
-    outputs.lock().unwrap().insert(
-        "local_recipe".into(),
-        vec!["build/local.o".into()],
-    );
-    register_dep_output_api(&lua, outputs, cs, BTreeMap::new(), String::new(), BTreeMap::new()).unwrap();
+    outputs
+        .lock()
+        .unwrap()
+        .insert("local_recipe".into(), vec!["build/local.o".into()]);
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        BTreeMap::new(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: String = lua
         .load(r#"return cook.dep_output("local_recipe")"#)
         .eval()
@@ -192,14 +290,22 @@ fn test_dep_output_unqualified_no_rewrite() {
 #[test]
 fn test_dep_output_sigil_alias_with_dotdot() {
     let (lua, outputs, cs) = setup_lua();
-    outputs.lock().unwrap().insert(
-        "core.core_lib".into(),
-        vec!["build/core.o".into()],
-    );
+    outputs
+        .lock()
+        .unwrap()
+        .insert("core.core_lib".into(), vec!["build/core.o".into()]);
     let mut alias_dirs = BTreeMap::new();
     alias_dirs.insert("core".to_string(), PathBuf::from("../../core/lib"));
 
-    register_dep_output_api(&lua, outputs, cs, alias_dirs, String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        alias_dirs,
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: String = lua
         .load(r#"return cook.dep_output("core.core_lib")"#)
         .eval()
@@ -217,7 +323,15 @@ fn test_dep_output_list_rewrites_qualified_paths() {
     let mut alias_dirs = BTreeMap::new();
     alias_dirs.insert("lib".to_string(), PathBuf::from("lib"));
 
-    register_dep_output_api(&lua, outputs, cs, alias_dirs, String::new(), BTreeMap::new()).unwrap();
+    register_dep_output_api(
+        &lua,
+        outputs,
+        cs,
+        alias_dirs,
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
     let result: Vec<String> = lua
         .load(r#"return cook.dep_output_list("lib.lib_build")"#)
         .eval()
@@ -315,10 +429,10 @@ fn test_dep_output_diamond_resolves_to_canonical_importee_prefix() {
 #[test]
 fn test_dep_output_same_cookfile_uses_self_prefix() {
     let (lua, outputs, cs) = setup_lua();
-    outputs.lock().unwrap().insert(
-        "queue.local_recipe".into(),
-        vec!["build/local.bin".into()],
-    );
+    outputs
+        .lock()
+        .unwrap()
+        .insert("queue.local_recipe".into(), vec!["build/local.bin".into()]);
 
     register_dep_output_api(
         &lua,
@@ -335,24 +449,39 @@ fn test_dep_output_same_cookfile_uses_self_prefix() {
         .unwrap();
     assert_eq!(result, "build/local.bin");
     let state = body_ref(&cs);
-    assert_eq!(state.step_group_dep_refs, vec!["queue.local_recipe".to_string()]);
+    assert_eq!(
+        state.step_group_dep_refs,
+        vec!["queue.local_recipe".to_string()]
+    );
 }
 
 #[test]
 fn test_dep_output_member_returns_member_output() {
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
     let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     {
         let mut m = member_outputs.lock().unwrap();
         let mut render = BTreeMap::new();
-        render.insert("{\"id\":\"s1\"}".to_string(), vec!["build/s1.silent.mp4".to_string()]);
+        render.insert(
+            "{\"id\":\"s1\"}".to_string(),
+            vec!["build/s1.silent.mp4".to_string()],
+        );
         m.insert("render".to_string(), render);
-        }
-        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-        register_member_output_api(&lua, member_outputs, body_slot, String::new(), BTreeMap::new()).unwrap();
-        let got: String = lua
-            .load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
+    }
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    register_member_output_api(
+        &lua,
+        member_outputs,
+        body_slot,
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let got: String = lua
+        .load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
         .eval()
         .unwrap();
     assert_eq!(got, "build/s1.silent.mp4");
@@ -361,15 +490,26 @@ fn test_dep_output_member_returns_member_output() {
 #[test]
 fn test_dep_output_member_missing_member_errors() {
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
     let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     {
         let mut m = member_outputs.lock().unwrap();
         m.insert("render".to_string(), BTreeMap::new()); // recipe known, no members
-        }
-        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-        register_member_output_api(&lua, member_outputs, body_slot, String::new(), BTreeMap::new()).unwrap();
-        let res = lua.load(r#"return cook.dep_output_member("render", "{\"id\":\"nope\"}")"#).eval::<String>();
+    }
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    register_member_output_api(
+        &lua,
+        member_outputs,
+        body_slot,
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let res = lua
+        .load(r#"return cook.dep_output_member("render", "{\"id\":\"nope\"}")"#)
+        .eval::<String>();
     assert!(res.is_err());
 }
 
@@ -380,44 +520,56 @@ fn test_dep_output_member_missing_member_errors() {
 #[test]
 fn test_dep_output_member_records_dep_ref_and_input_path() {
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
     let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     {
         let mut m = member_outputs.lock().unwrap();
         let mut render = BTreeMap::new();
-        render.insert("{\"id\":\"s1\"}".to_string(), vec!["build/s1.silent.mp4".to_string()]);
+        render.insert(
+            "{\"id\":\"s1\"}".to_string(),
+            vec!["build/s1.silent.mp4".to_string()],
+        );
         m.insert("render".to_string(), render);
-        }
-        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-        register_member_output_api(&lua, member_outputs, body_slot.clone(), String::new(), BTreeMap::new()).unwrap();
-        lua.load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
+    }
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    register_member_output_api(
+        &lua,
+        member_outputs,
+        body_slot.clone(),
+        String::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    lua.load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
         .eval::<String>()
         .unwrap();
     let state = body_ref(&body_slot);
     assert_eq!(state.step_group_dep_refs, vec!["render".to_string()]);
-        // COOK-96: the member's path lands in the per-unit buffer (drained by the
-        // next add_unit), NOT the step-group-wide accumulator — this is what keeps
-        // each fan-out member's fingerprint isolated. The recipe-level ref above
-        // stays step-group-wide (the ordering edge IS shared across members).
-        assert_eq!(
-            state.pending_member_dep_input_paths,
-            vec!["build/s1.silent.mp4".to_string()]
+    // COOK-96: the member's path lands in the per-unit buffer (drained by the
+    // next add_unit), NOT the step-group-wide accumulator — this is what keeps
+    // each fan-out member's fingerprint isolated. The recipe-level ref above
+    // stays step-group-wide (the ordering edge IS shared across members).
+    assert_eq!(
+        state.pending_member_dep_input_paths,
+        vec!["build/s1.silent.mp4".to_string()]
     );
     assert!(
         state.step_group_dep_input_paths.is_empty(),
         "member paths must not leak into the step-group-wide accumulator"
-        );
-    }
-
-    /// Empty self-prefix and empty alias map (entry-point Cookfile, no imports):
-    /// the local name is the global key directly.
-    #[test]
-    fn test_dep_output_empty_qualified_prefix_no_translation() {
-        let (lua, outputs, cs) = setup_lua();
-        outputs.lock().unwrap().insert(
-            "local_recipe".into(),
-        vec!["build/local.bin".into()],
     );
+}
+
+/// Empty self-prefix and empty alias map (entry-point Cookfile, no imports):
+/// the local name is the global key directly.
+#[test]
+fn test_dep_output_empty_qualified_prefix_no_translation() {
+    let (lua, outputs, cs) = setup_lua();
+    outputs
+        .lock()
+        .unwrap()
+        .insert("local_recipe".into(), vec!["build/local.bin".into()]);
 
     register_dep_output_api(
         &lua,

@@ -34,8 +34,9 @@ joins the header dependency list (`probe NAME: a b`) in `inputs.requires`.
 Quoted operands desugar to an anonymous `files` probe whose key joins that same
 list; `!"…"` excludes matches with the same adjacency rule as a top-level
 `files` declaration. Thus file contents fold into this probe's fingerprint
-without becoming its producer or iteration source. The legacy `ingredients` spelling remains accepted
-during migration and is mutually exclusive with `seal`.
+without becoming its producer or iteration source. Probe bodies use `seal` for
+determinants; `gather` is a recipe iteration declaration and is not admitted
+here.
 
 A **producer** has no introducer keyword: the producer KIND leads, and the
 braces are that kind's body. Since CS-0226 there are four forms — a bare shell
@@ -107,7 +108,7 @@ the offending line:
 
 Each segment of a bare probe key is `[A-Za-z_][A-Za-z0-9_-]*` (§A.3.2 `PROBE_SEG`, CS-0201), so `demo:cc-version` is a single two-segment key and `cc:find:raylib` a three-segment one; there is no cap on segment count. `.` is not admitted, because it is member access in a probe reference. The quoted `STRING` form denotes the same key and is the escape hatch for any spelling the bare form cannot express.
 
-A conforming implementation MUST accept both spellings wherever a probe key is named: this declaration, a dependency-list entry, a `seal` ref (§{steps.disposition}), and an `ingredients` probe source (§{cat.probes.member-source}). Before CS-0201 they disagreed — `seal` and `ingredients` admitted neither `-` nor `.`, `seal` refused the quoted form outright, and both capped segments — so a key this section blessed could be declared and referenced from a command and then neither pinned nor consumed.
+A conforming implementation MUST accept both spellings wherever a probe key is named: this declaration, a dependency-list entry, a `seal` ref (§{steps.disposition}), and  a `gather` probe source (§{cat.probes.member-source}). Before CS-0201 they disagreed — `seal` and `gather` admitted neither `-` nor `.`, `seal` refused the quoted form outright, and both capped segments — so a key this section blessed could be declared and referenced from a command and then neither pinned nor consumed.
 
 A shell-block producer (`{ … }`, `json { … }`, `lines { … }`) and the Lua-block
 producer (`>{ … }`) reuse the `body ::= exec_lua_block | shell_block` grammar of
@@ -178,10 +179,10 @@ follow lower to the same probe-value model:
   conforming implementation MUST reject an empty body.
 - `files NAME` (top-level declaration, CS-0148/CS-0222): the indented body is a
   whitespace-separated LIST of quoted glob patterns following
-  `ingredients` pattern syntax (`!"…"` excludes; §{steps.ingredients}), NOT a
+  `gather` pattern syntax (`!"…"` excludes; §{steps.gather}), NOT a
   shell or Lua body. The glob set is the declaration's **file-input fingerprint
   set**: it resolves to a concrete file set whose per-file content hashes
-  populate `inputs.files` (§{cat.probes.inputs}), exactly as an `ingredients`
+  populate `inputs.files` (§{cat.probes.inputs}), exactly as  a `gather`
   line would. The probe value is a JSON object keyed by each resolved file's
   workspace-relative path, each entry the lowercase-hex content hash of that
   file — the same hashes the fingerprint's FILES section folds, so the re-run
@@ -195,11 +196,11 @@ follow lower to the same probe-value model:
   as a sealable determinant when they are not the consuming recipe's
   iteration driver. It is **seal-only** for that reason: the value is a JSON
   object keyed by path, so a `files` probe can never resolve to the array an
-  `ingredients <probe>` driver iterates (§{cat.probes.member-source}), and naming
+  `gather <probe>` driver iterates (§{cat.probes.member-source}), and naming
   one in driver position MUST be rejected. A conforming implementation SHOULD
   say so in terms of the declaration kind rather than reporting only the JSON
   shape, since the fix is to attach the probe with `seal` and give the recipe
-  its own `ingredients` glob to iterate. A conforming implementation MUST reject
+  its own `gather` glob to iterate. A conforming implementation MUST reject
   an empty or unquoted top-level `files` body.
 
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
@@ -220,7 +221,7 @@ declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
-the header dependency list becomes `inputs.requires`; `ingredients` (globs and
+the header dependency list becomes `inputs.requires`; `gather` (globs and
 `!` excludes) is resolved at register time to the concrete file set populating
 `inputs.files` (§{cat.probes.inputs}); and the declaration becomes the
 `opts.produce` Lua source string — a `>{ … }` block verbatim, a shell block
@@ -228,7 +229,7 @@ wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
 one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
 → `cook.json_decode`). A top-level `tools` declaration becomes an
 `inputs.tools` determinant declaration. A `files` glob list lowers to
-`inputs.files` (register-time glob resolution, as for `ingredients`) with the
+`inputs.files` (register-time glob resolution, as for `gather`) with the
 reserved `opts.produce` string `"@files-manifest"` — not executable Lua (a bare
 `@` is a Lua syntax error, so no hand-written produce body collides with it);
 the engine intercepts that sentinel and synthesises the value directly from the
@@ -364,9 +365,9 @@ Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` pl
 
 The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
-These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including bodies of `ingredients <probe>` fan-out recipes), to chore `shell_command` steps (§{chores.default-interactive}, CS-0193), and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; this closes a prior defect where the reference implementation emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
+These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including bodies of `gather <probe>` fan-out recipes), to chore `shell_command` steps (§{chores.default-interactive}, CS-0193), and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; this closes a prior defect where the reference implementation emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
 
-The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `ingredients <probe>` fan-out recipes (§{steps.ingredients}).
+The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `gather <probe>` fan-out recipes (§{steps.gather}).
 
 > **Withdrawn (CS-0188).** CS-0127 added here that the rewrite "turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy (§{lua.fs-sandbox}), not a default one." The clause was about the chunk, and it goes with the chunk. It narrows nothing on the way out: the Lua sandbox confines what Lua may do, never what a command spawned through `/bin/sh` may do, so a probe-referencing command was no more confined than the plain command beside it. CS-0135's rule that every step kind is sandboxed identically is unaffected, and where an implementation still produces a chunk for its own reasons, §{lua.fs-sandbox} governs it as it governs any other.
 
@@ -465,23 +466,23 @@ probe cycle detected: cc:a -> cc:b -> cc:a
 
 The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
 
-## 22.5.10. Probe values as `ingredients <probe>` sources [#cat.probes.member-source]
+## 22.5.10. Probe values as `gather <probe>` sources [#cat.probes.member-source]
 
-An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of an `ingredients <probe>` declaration (§{steps.ingredients}): `ingredients <key>` registers one work unit per array element, and `ingredients <key>:<field>` iterates the array at the named field. A fan-out `cook` step MAY declare multiple output templates; each member's unit registers **every** declared output (§{steps.cook-multi} applies per member — CS-0150 pins this after the reference implementation registered only the first template, leaving the rest undeclared side effects that stale-output reconciliation later swept). This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
+An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of  a `gather <probe>` declaration (§{steps.gather}): `gather <key>` registers one work unit per array element, and `gather <key>:<field>` iterates the array at the named field. A fan-out `cook` step MAY declare multiple output templates; each member's unit registers **every** declared output (§{steps.cook-multi} applies per member — CS-0150 pins this after the reference implementation registered only the first template, leaving the rest undeclared side effects that stale-output reconciliation later swept). This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
 **Source-ref resolution.** A probe key is itself at most two `:`-separated segments (§{cat.probes.decl}; `ns:name` is the canonical naming), so a multi-segment source ref is lexically ambiguous between a probe key and a `<key>:<field>` selector. A conforming implementation MUST resolve the ref against the set of declared probes once registration-time declarations are known: a declared probe whose key equals the entire ref wins; otherwise the segment after the final `:` is a field selector and the remaining prefix MUST name a declared probe. A ref that names no declared probe under either interpretation MUST be rejected with a register-phase diagnostic naming the full ref. A source ref of four or more segments is malformed and MUST be rejected at parse time.
 
-**Two-category discriminator (normative; CS-0131).** In `ingredients` position the bare-vs-quoted distinction is load-bearing and MUST NOT be flattened: a bare `ingredients cards` names a probe key (a namespace identifier — the fan-out member source of this section), whereas a double-quoted `ingredients "cards"` is a literal filesystem glob (§8). The two forms are NOT interchangeable — and it is exactly the discriminator that lets them compose (CS-0197): `ingredients cards "src/*.txt"` is a member source followed by literal glob patterns.
+**Two-category discriminator (normative; CS-0131).** In `gather` position the bare-vs-quoted distinction is load-bearing and MUST NOT be flattened: a bare `gather cards` names a probe key (a namespace identifier — the fan-out member source of this section), whereas a double-quoted `gather "cards"` is a literal filesystem glob (§8). The two forms are NOT interchangeable — and it is exactly the discriminator that lets them compose (CS-0197): `gather cards "src/*.txt"` is a member source followed by literal glob patterns.
 
-**Member file inputs (CS-0197).** Quoted glob patterns MAY trail the probe source. Each resolves at register time under the ordinary ingredient-resolution rules (§{lua.recipe-ingredient-resolution}) — once per step, not per member — and the resolved file set becomes part of **every member unit's declared inputs**, content-hashed into each member's key (§{exec.cache.single-key}). This is the surface for "each member's body reads these files": before CS-0197 a member-fanout unit was keyed on its member and its command text alone, a body reading `src/$<in.id>.txt` read a file that was in no key, and no spelling could declare it — the mixed form was a parse error. The declaration is deliberately coarse: an edit to any matched file re-keys every member. A per-member declaration (member accessors resolving inside the pattern) is reserved for a future amendment; refusing a body that reads outside its declared set is likewise out of scope, per §{exec.cache.single-key}'s rule that the engine infers no determinant of its own. This is the general law: a double-quoted operand is a literal filesystem string (paths, globs, output patterns); a bare operand is a namespace identifier (module name, probe key, recipe dependency). It differs from the `probe_name` / `probe_ref` positions, where bare and `STRING` denote the *same* probe key and are interchangeable — there the quotes are only an escape hatch for un-spellable characters, not a category switch.
+**Member file inputs (CS-0197).** Quoted glob patterns MAY trail the probe source. Each resolves at register time under the ordinary input-resolution rules (§{lua.recipe-input-resolution}) — once per step, not per member — and the resolved file set becomes part of **every member unit's declared inputs**, content-hashed into each member's key (§{exec.cache.single-key}). This is the surface for "each member's body reads these files": before CS-0197 a member-fanout unit was keyed on its member and its command text alone, a body reading `src/$<in.id>.txt` read a file that was in no key, and no spelling could declare it — the mixed form was a parse error. The declaration is deliberately coarse: an edit to any matched file re-keys every member. A per-member declaration (member accessors resolving inside the pattern) is reserved for a future amendment; refusing a body that reads outside its declared set is likewise out of scope, per §{exec.cache.single-key}'s rule that the engine infers no determinant of its own. This is the general law: a double-quoted operand is a literal filesystem string (paths, globs, output patterns); a bare operand is a namespace identifier (module name, probe key, recipe dependency). It differs from the `probe_name` / `probe_ref` positions, where bare and `STRING` denote the *same* probe key and are interchangeable — there the quotes are only an escape hatch for un-spellable characters, not a category switch.
 
-An `ingredients <probe>` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
+A `gather <probe>` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
 
 The whole-member reference `$<in>` renders records as canonical JSON. In a shell body it MUST be enclosed in single quotes. Bare JSON is subject to shell brace expansion, while double quotes do not protect the JSON's own quote characters; an implementation MUST reject either form before registration, naming the reference, source line, and single-quote fix. Member-field references are outside this rule because their values need not be composite.
 
-**Pre-pass evaluation.** A probe that feeds an `ingredients <probe>` source MUST be evaluated **before unit registration completes**, because the fan-out cardinality — the number of units the consuming recipe produces — is the length of the probe's array value. A conforming implementation MUST resolve every such probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers that recipe's per-member units, then register the units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
+**Pre-pass evaluation.** A probe that feeds  a `gather <probe>` source MUST be evaluated **before unit registration completes**, because the fan-out cardinality — the number of units the consuming recipe produces — is the length of the probe's array value. A conforming implementation MUST resolve every such probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers that recipe's per-member units, then register the units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
 
-**Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a probe feeding an `ingredients <probe>` source MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.
+**Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a probe feeding  a `gather <probe>` source MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.
 
 **Register-phase reads (CS-0219).** `cook.probes.get(key)` (§{lua.both}) invoked from register-phase Lua — a recipe body, a `register` block, a module body — MUST answer with the resolved value of the probe `key` declares, when `key` names a probe declared in this pass. Resolution follows this section's rules exactly: the same `produce`-or-cache sequence of §{cat.probes.exec}, the same fingerprint, the same published value. A key that was already resolved (by the pre-pass above, or by an earlier read) MUST be answered from the resolved value rather than re-produced; a probe MUST NOT be produced more than once per invocation. A key naming **no** declared probe is outside this rule and retains the meaning §{lua.api-overview} gives it.
 
@@ -496,23 +497,23 @@ Three constraints keep that true:
 - **A `produce` body registers nothing.** Evaluating a `produce` source MUST NOT register work units, and MUST NOT be able to reach the enclosing recipe body's capture state. A body-scope register API called from inside `produce` MUST raise that API's ordinary outside-a-recipe-body error (§{lua.add-unit}, §{lua.cook-exec}), exactly as it does when the same probe is resolved before any body runs. Otherwise a recipe's unit set would depend on whether the probe was answered from cache, which is registration output as a function of something other than registration input.
 - **Static inputs.** The static-input rule below binds **every** probe the register phase resolves, by whichever route it was reached, **including one first resolved by a `cook.on_register_complete` callback** (§{lua.cook-on-register-complete}) — so an implementation checking the rule mid-pass MUST re-check it after the callback queue drains. A read is not an exemption from it.
 
-**Static-input rule.** A probe resolved during the register phase — as an `ingredients <probe>` source, as a transitive `inputs.requires` of one, or by a register-phase `cook.probes.get` read — MUST be statically evaluable: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files`, `env`, and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
+**Static-input rule.** A probe resolved during the register phase — as  a `gather <probe>` source, as a transitive `inputs.requires` of one, or by a register-phase `cook.probes.get` read — MUST be statically evaluable: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files`, `env`, and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
 
 ```
 probe '<key>' is resolved at register phase but depends on build artifact '<path>'; a register-resolved probe must be statically evaluable
 ```
 
-The diagnostic is worded for the rule rather than for one route into it: a probe reached only by a register-phase read has no `ingredients <probe>` source to name, and naming one reported a declaration the Cookfile need not contain.
+The diagnostic is worded for the rule rather than for one route into it: a probe reached only by a register-phase read has no `gather <probe>` source to name, and naming one reported a declaration the Cookfile need not contain.
 
 Iterating over artifacts produced earlier in the same build (the codegen-then-process pattern) would require interleaving execution and registration; it is reserved for a future amendment.
 
 **Probe-value references in output patterns (CS-0195).** A fan-out `cook` step's output pattern MAY contain a `$<key:…>` probe-value reference. An output path must be known when the unit registers, so the reference resolves at register time, against the pre-pass store this section already requires to be populated — and it renders by §{cat.probes.templates}'s rules exactly: a string verbatim, a number as its canonical JSON token, a boolean as its literal, while `null`, arrays, objects, absent members, and every mis-typed addressing step are **register-phase** diagnostics naming the placeholder. A composite has no defined rendering in a filesystem path any more than in a command; before CS-0195 the reference implementation rendered Lua's `tostring` here, so a table-valued reference put a heap address — different bytes every run — into a *declared output path*, which then entered the unit's identity. Note the distinction from member references: `$<in.FIELD>` naming a nested member value renders it as canonical key-sorted JSON (§9.3, COOK-302), because a member field is data the pattern iterates over; a probe reference addresses configuration, and addressing a composite where a path segment is expected is an authoring error, stated as such.
 
-**Non-array value.** An `ingredients <probe>` source whose resolved probe value (or selected field) is not an array-shaped table (§{cat.probes.values}) MUST surface a register-phase diagnostic naming the probe key and the resolved value's shape.
+**Non-array value.** A `gather <probe>` source whose resolved probe value (or selected field) is not an array-shaped table (§{cat.probes.values}) MUST surface a register-phase diagnostic naming the probe key and the resolved value's shape.
 
-**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's accessor-bearing (fan-out) steps (§{steps.ingredients}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed. A literal-output `cook_step` in the same recipe is not member-iterated: it gathers the preceding step's collected outputs per §{steps.iteration-mode} (CS-0155).
+**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's accessor-bearing (fan-out) steps (§{steps.gather}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed. A literal-output `cook_step` in the same recipe is not member-iterated: it gathers the preceding step's collected outputs per §{steps.iteration-mode} (CS-0155).
 
-> **Note (informative).** An implementation must learn a recipe's `ingredients <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__member_source` descriptor naming the probe key (and optional field), whose shape and key spellings live in `cook_contracts::registration` so the codegen emitter and the register-phase parser share one declaration (COOK-390) — so the pre-pass resolves the probe from the recipe header without first executing the body. Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
+> **Note (informative).** An implementation must learn a recipe's `gather <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__member_source` descriptor naming the probe key (and optional field), whose shape and key spellings live in `cook_contracts::registration` so the codegen emitter and the register-phase parser share one declaration (COOK-390) — so the pre-pass resolves the probe from the recipe header without first executing the body. Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
 ## 22.5.11. Implementation status (CS-0074) (informative) [#cat.probes.impl-status]
 

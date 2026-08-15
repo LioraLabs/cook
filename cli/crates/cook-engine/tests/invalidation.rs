@@ -4,7 +4,7 @@
 //! Before the fix, the upfront test fingerprint hashed no file content at
 //! all (`cook_outputs`/`dep_outputs` were stubbed empty), so a broken
 //! source still replayed a stale `ok (cached)` result. The fingerprint now
-//! hashes the test's transitive source closure: its own ingredients plus
+//! hashes the test's transitive source closure: its own gather plus
 //! every predecessor unit's declared inputs and unit identity, EXCLUDING
 //! predecessor-produced artifacts (stale at fingerprint time) so the
 //! fingerprint is stable across the edit→rebuild boundary.
@@ -42,22 +42,22 @@ fn write_fixture(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe lib
-    ingredients "src/lib.txt"
+    gather "src/lib.txt"
     cook "build/lib.txt" {
         mkdir -p build
-        cp src/lib.txt build/lib.txt
+        cp $<in> build/lib.txt
     }
 
 recipe unit_direct
-    ingredients "src/lib.txt"
-    test { grep -qx ok src/lib.txt }
+    gather "src/lib.txt"
+    test { grep -qx ok $<in> }
 
 recipe consumer
     test { grep -qx ok $<lib> }
 
 recipe untouched
-    ingredients "src/other.txt"
-    test { grep -qx stable src/other.txt }
+    gather "src/other.txt"
+    test { grep -qx stable $<in> }
 "#,
     )
     .unwrap();

@@ -1,20 +1,20 @@
-# §8.3 `ingredients <probe>` Benchmarks (COOK-63 / CS-0091)
+# §8.3 `inputs <probe>` Benchmarks (COOK-63 / CS-0091)
 
-Concrete coverage of Cook's **data-driven fan-out**: the `ingredients <probe>`
-form, the data-member counterpart to `ingredients "glob"`. Where `ingredients
-"glob"` drives one work unit per filesystem path, `ingredients <probe>` drives
+Concrete coverage of Cook's **data-driven fan-out**: the `inputs <probe>`
+form, the data-member counterpart to `inputs "glob"`. Where `inputs
+"glob"` drives one work unit per filesystem path, `inputs <probe>` drives
 one unit per **data member** — a record or scalar — with the current member
 bound as `item`.
 
 ## Surface forms
 
-An `ingredients <probe>` line names exactly one **probe source** (Cook Standard
+An `inputs <probe>` line names exactly one **probe source** (Cook Standard
 §8.3):
 
 | Source | Meaning | Member typing |
 |---|---|---|
-| `ingredients <probe>` | An array-shaped probe value (§22.5.9) | each array element is a record/scalar |
-| `ingredients <probe>:<field>` | The array at the probe value's named field | each element of that array |
+| `inputs <probe>` | An array-shaped probe value (§22.5.9) | each array element is a record/scalar |
+| `inputs <probe>:<field>` | The array at the probe value's named field | each element of that array |
 
 The current member is available as:
 

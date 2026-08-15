@@ -105,7 +105,7 @@ const ROUND_BYTES: u64 = SOURCE_COUNT as u64 * OUTPUT_BYTES;
 /// `tr` sees an escaped NUL, which is the byte `head -c … /dev/zero`
 /// produces.
 const COOKFILE: &str = r#"recipe build
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     cook "out/$<in.stem>.bin" { head -c 100000 /dev/zero | tr "\\0" "x" > $<out>; cat $<in> >> $<out> }
 "#;
 
@@ -121,7 +121,7 @@ const COOKFILE: &str = r#"recipe build
 ///     `seq 1 1000` is ~4.9 kB of deterministic bytes: comfortably over the
 ///     1 kB budget test 6 configures, byte-identical run to run, and free of
 ///     any shell escaping the Cookfile parser would have to survive. It
-///     declares `ingredients "seed.txt"` because CS-0178 gives a probe with no
+///     declares `gather "seed.txt"` because CS-0178 gives a probe with no
 ///     declared inputs no cache key: such a probe skips the PUT alongside the
 ///     GET, so it would publish nothing, leave the store empty, and make both
 ///     of test 6's preconditions unsatisfiable. The declaration is what makes
@@ -134,7 +134,7 @@ const COOKFILE: &str = r#"recipe build
 ///
 /// The probe is reached via `probes = {…}` on `cook.add_unit`, which is the
 /// EXECUTE-phase probe path. That is load-bearing rather than stylistic:
-/// `ingredients <probe>` fan-out would drive the register-phase pre-pass
+/// `gather <probe>` fan-out would drive the register-phase pre-pass
 /// instead, whose CAS writes sit outside the publish counter entirely
 /// (COOK-339) — leaving `published_count == 0`, short-circuiting the check at
 /// step 1, and testing nothing.
@@ -142,8 +142,11 @@ const COOKFILE: &str = r#"recipe build
 /// `file` is the control: one ~113 kB plain-file output, `kind: None`, the one
 /// thing an all-exempt store lacks. Running it on the same fixture, with the
 /// same config, is what proves `auto_gc = true` was genuinely live.
-const EXEMPT_COOKFILE: &str = r#"probe big
-    ingredients "seed.txt"
+const EXEMPT_COOKFILE: &str = r#"files big-input
+    "seed.txt"
+
+probe big
+    seal big-input
     { seq 1 1000 }
 
 recipe check
@@ -202,7 +205,7 @@ impl Fixture {
     }
 
     /// Rewrite every source with `round`'s marker. Round 1 also creates
-    /// them; the `ingredients "src/*.txt"` glob is resolved at registration,
+    /// them; the `gather "src/*.txt"` glob is resolved at registration,
     /// so this must run before the first invocation. Keep `round` a single
     /// digit so every object is exactly the same size.
     fn touch_sources(&self, round: u32) {
@@ -426,7 +429,10 @@ fn warn_only_is_the_default_and_never_shrinks_the_store() {
     let absent = warn_only_rounds(None);
     let explicit_false = warn_only_rounds(Some(false));
 
-    for (label, observed) in [("auto_gc absent", &absent), ("auto_gc = false", &explicit_false)] {
+    for (label, observed) in [
+        ("auto_gc absent", &absent),
+        ("auto_gc = false", &explicit_false),
+    ] {
         let warnings: Vec<bool> = observed.iter().map(|(w, _)| *w).collect();
         assert_eq!(
             warnings,
@@ -565,7 +571,10 @@ fn a_settled_no_op_build_neither_warns_nor_walks_the_store() {
     // Identical build, nothing changed: every unit is a cache hit, nothing is
     // published, and the check must not run at all.
     let second = fx.run(&["build"]);
-    assert!(second.status.success(), "settled rebuild failed: {second:?}");
+    assert!(
+        second.status.success(),
+        "settled rebuild failed: {second:?}"
+    );
     let stderr = stderr_of(&second);
     assert_silent(&stderr, "a settled no-op build");
 }
@@ -588,9 +597,17 @@ fn no_auto_gc_disables_the_sweep_but_keeps_the_warning() {
     // The same suppression reached three ways. The third is `partition_argv`'s
     // path: a global flag positioned AFTER the recipe name.
     let variants: [(&str, &[&str], &[(&str, &str)]); 3] = [
-        ("--no-auto-gc before the recipe", &["--no-auto-gc", "build"], &[]),
+        (
+            "--no-auto-gc before the recipe",
+            &["--no-auto-gc", "build"],
+            &[],
+        ),
         ("COOK_NO_AUTO_GC=1", &["build"], &[("COOK_NO_AUTO_GC", "1")]),
-        ("--no-auto-gc after the recipe", &["build", "--no-auto-gc"], &[]),
+        (
+            "--no-auto-gc after the recipe",
+            &["build", "--no-auto-gc"],
+            &[],
+        ),
     ];
 
     for (round, (label, args, envs)) in (3u32..).zip(variants) {
@@ -722,9 +739,9 @@ fn auto_gc_true_warns_when_the_sweep_can_only_find_exempt_kinds() {
     let fx = Fixture::with_cookfile(EXEMPT_COOKFILE, "1kB", Some(true));
 
     // `probe big`'s declared input. Written outside `src/`, so it stays clear of
-    // the fan-out fixture's `ingredients "src/*.txt"` glob and its
+    // the fan-out fixture's `gather "src/*.txt"` glob and its
     // `SOURCE_COUNT` accounting. It must exist before the first invocation
-    // because a probe's `ingredients` glob resolves at registration.
+    // because a probe's `inputs` glob resolves at registration.
     fs::write(fx.project_dir.join("seed.txt"), "seed\n").unwrap();
 
     let out = fx.run(&["check"]);
@@ -747,8 +764,8 @@ fn auto_gc_true_warns_when_the_sweep_can_only_find_exempt_kinds() {
     // the run takes.
     assert_eq!(
         fx.kinds(),
-        BTreeMap::from([("probe_value".to_string(), 1usize)]),
-        "precondition: the store must hold exactly one object, of an exempt kind; \
+        BTreeMap::from([("probe_value".to_string(), 2usize)]),
+        "precondition: the store must hold only objects of an exempt kind; \
          a non-exempt object would give the sweep a victim and test the wrong arm"
     );
 
@@ -789,7 +806,7 @@ fn auto_gc_true_warns_when_the_sweep_can_only_find_exempt_kinds() {
     // control's plain file left the probe value exactly where it was.
     assert_eq!(
         fx.kinds(),
-        BTreeMap::from([("probe_value".to_string(), 1usize)]),
+        BTreeMap::from([("probe_value".to_string(), 2usize)]),
         "the sweep must have evicted the non-exempt object and spared the exempt one"
     );
     assert_eq!(

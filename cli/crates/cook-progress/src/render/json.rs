@@ -7,12 +7,12 @@
 use std::io::{self, Write};
 
 use serde_json::Value;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::event::{ProgressEvent, SkipReason, PROGRESS_SCHEMA_VERSION};
-use crate::wire::{WireEvent, WireLine, WireRecipeEntry};
+use crate::event::{PROGRESS_SCHEMA_VERSION, ProgressEvent, SkipReason};
 use crate::model::build::BuildState;
 use crate::render::Renderer;
+use crate::wire::{WireEvent, WireLine, WireRecipeEntry};
 
 pub struct JsonWriter<W: Write + Send> {
     out: W,
@@ -20,7 +20,12 @@ pub struct JsonWriter<W: Write + Send> {
 }
 
 impl<W: Write + Send> JsonWriter<W> {
-    pub fn new(out: W) -> Self { Self { out, schema_version: PROGRESS_SCHEMA_VERSION } }
+    pub fn new(out: W) -> Self {
+        Self {
+            out,
+            schema_version: PROGRESS_SCHEMA_VERSION,
+        }
+    }
 
     fn now_rfc3339() -> String {
         OffsetDateTime::now_utc()
@@ -34,10 +39,18 @@ fn duration_ms(d: std::time::Duration) -> u64 {
 }
 
 fn recipe_name(state: &BuildState, id: crate::event::RecipeId) -> String {
-    state.recipes.get(&id).map(|r| r.name.clone()).unwrap_or_else(|| format!("recipe#{}", id.raw()))
+    state
+        .recipes
+        .get(&id)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| format!("recipe#{}", id.raw()))
 }
 
-fn node_name(state: &BuildState, recipe: crate::event::RecipeId, node: crate::event::NodeId) -> String {
+fn node_name(
+    state: &BuildState,
+    recipe: crate::event::RecipeId,
+    node: crate::event::NodeId,
+) -> String {
     state
         .recipes
         .get(&recipe)
@@ -52,35 +65,54 @@ fn node_name(state: &BuildState, recipe: crate::event::RecipeId, node: crate::ev
 /// ~40 hand-spelled `json!` key literals died with it).
 pub(crate) fn event_to_wire(state: &BuildState, event: &ProgressEvent) -> WireEvent {
     match event {
-        ProgressEvent::BuildStarted { recipes, total_nodes } => WireEvent::BuildStarted {
-            recipes: recipes.iter().map(|r| WireRecipeEntry {
-                name: r.name.clone(),
-                deps: r.deps.iter().map(|d| recipe_name(state, *d)).collect(),
-                expected_nodes: r.expected_nodes,
-            }).collect(),
+        ProgressEvent::BuildStarted {
+            recipes,
+            total_nodes,
+        } => WireEvent::BuildStarted {
+            recipes: recipes
+                .iter()
+                .map(|r| WireRecipeEntry {
+                    name: r.name.clone(),
+                    deps: r.deps.iter().map(|d| recipe_name(state, *d)).collect(),
+                    expected_nodes: r.expected_nodes,
+                })
+                .collect(),
             total_nodes: *total_nodes,
         },
         ProgressEvent::RecipeStarted { recipe } => WireEvent::RecipeStarted {
             recipe: recipe_name(state, *recipe),
         },
-        ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, kind } => {
-            WireEvent::RecipeCompleted {
-                recipe: recipe_name(state, *recipe),
-                elapsed_ms: duration_ms(*elapsed),
-                cached: *cached,
-                total: *total,
-                kind: *kind,
-            }
-        }
-        ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => {
-            WireEvent::RecipeFailed {
-                recipe: recipe_name(state, *recipe),
-                elapsed_ms: duration_ms(*elapsed),
-                completed: *completed,
-                total: *total,
-            }
-        }
-        ProgressEvent::RecipeSkipped { recipe, elapsed, skipped, completed, total } => {
+        ProgressEvent::RecipeCompleted {
+            recipe,
+            elapsed,
+            cached,
+            total,
+            kind,
+        } => WireEvent::RecipeCompleted {
+            recipe: recipe_name(state, *recipe),
+            elapsed_ms: duration_ms(*elapsed),
+            cached: *cached,
+            total: *total,
+            kind: *kind,
+        },
+        ProgressEvent::RecipeFailed {
+            recipe,
+            elapsed,
+            completed,
+            total,
+        } => WireEvent::RecipeFailed {
+            recipe: recipe_name(state, *recipe),
+            elapsed_ms: duration_ms(*elapsed),
+            completed: *completed,
+            total: *total,
+        },
+        ProgressEvent::RecipeSkipped {
+            recipe,
+            elapsed,
+            skipped,
+            completed,
+            total,
+        } => {
             WireEvent::RecipeSkipped {
                 recipe: recipe_name(state, *recipe),
                 elapsed_ms: duration_ms(*elapsed),
@@ -93,18 +125,31 @@ pub(crate) fn event_to_wire(state: &BuildState, event: &ProgressEvent) -> WireEv
                 reason: SkipReason::UpstreamFailed,
             }
         }
-        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind, cause, cache_key } => {
-            WireEvent::NodeStarted {
-                recipe: recipe_name(state, *recipe),
-                node: node_name(state, *recipe, *node),
-                artifact: artifact.as_ref().map(|p| p.display().to_string()),
-                fallback_label: fallback_label.clone(),
-                kind: *kind,
-                cause: cause.clone(),
-                cache_key: cache_key.clone(),
-            }
-        }
-        ProgressEvent::NodeCompleted { recipe, node, elapsed, kind, cache_key } => {
+        ProgressEvent::NodeStarted {
+            recipe,
+            node,
+            name: _,
+            artifact,
+            fallback_label,
+            kind,
+            cause,
+            cache_key,
+        } => WireEvent::NodeStarted {
+            recipe: recipe_name(state, *recipe),
+            node: node_name(state, *recipe, *node),
+            artifact: artifact.as_ref().map(|p| p.display().to_string()),
+            fallback_label: fallback_label.clone(),
+            kind: *kind,
+            cause: cause.clone(),
+            cache_key: cache_key.clone(),
+        },
+        ProgressEvent::NodeCompleted {
+            recipe,
+            node,
+            elapsed,
+            kind,
+            cache_key,
+        } => {
             WireEvent::NodeCompleted {
                 recipe: recipe_name(state, *recipe),
                 node: node_name(state, *recipe, *node),
@@ -116,47 +161,75 @@ pub(crate) fn event_to_wire(state: &BuildState, event: &ProgressEvent) -> WireEv
                 cache_key: cache_key.clone(),
             }
         }
-        ProgressEvent::NodeFailed { recipe, node, elapsed, error } => WireEvent::NodeFailed {
+        ProgressEvent::NodeFailed {
+            recipe,
+            node,
+            elapsed,
+            error,
+        } => WireEvent::NodeFailed {
             recipe: recipe_name(state, *recipe),
             node: node_name(state, *recipe, *node),
             elapsed_ms: duration_ms(*elapsed),
             error: error.clone(),
         },
-        ProgressEvent::NodeCacheHit { recipe, node, name: _, artifact, kind } => {
-            WireEvent::NodeCacheHit {
-                recipe: recipe_name(state, *recipe),
-                node: node_name(state, *recipe, *node),
-                artifact: artifact.as_ref().map(|p| p.display().to_string()),
-                kind: *kind,
-            }
-        }
-        ProgressEvent::NodeSkipped { recipe, node, name: _, reason } => WireEvent::NodeSkipped {
+        ProgressEvent::NodeCacheHit {
+            recipe,
+            node,
+            name: _,
+            artifact,
+            kind,
+        } => WireEvent::NodeCacheHit {
+            recipe: recipe_name(state, *recipe),
+            node: node_name(state, *recipe, *node),
+            artifact: artifact.as_ref().map(|p| p.display().to_string()),
+            kind: *kind,
+        },
+        ProgressEvent::NodeSkipped {
+            recipe,
+            node,
+            name: _,
+            reason,
+        } => WireEvent::NodeSkipped {
             recipe: recipe_name(state, *recipe),
             node: node_name(state, *recipe, *node),
             reason: *reason,
         },
-        ProgressEvent::NodeOutput { recipe, node, line, stream } => WireEvent::NodeOutput {
+        ProgressEvent::NodeOutput {
+            recipe,
+            node,
+            line,
+            stream,
+        } => WireEvent::NodeOutput {
             recipe: recipe_name(state, *recipe),
             node: node_name(state, *recipe, *node),
             stream: *stream,
             line: line.clone(),
         },
-        ProgressEvent::InteractiveStart { recipe, node, name: _, chore_step_count } => {
-            WireEvent::InteractiveStart {
-                recipe: recipe_name(state, *recipe),
-                node: node_name(state, *recipe, *node),
-                chore_step_count: *chore_step_count,
-            }
-        }
-        ProgressEvent::InteractiveEnd { recipe, node, name: _, elapsed, success, is_terminal: _, failed_step } => {
-            WireEvent::InteractiveEnd {
-                recipe: recipe_name(state, *recipe),
-                node: node_name(state, *recipe, *node),
-                elapsed_ms: duration_ms(*elapsed),
-                success: *success,
-                failed_step: *failed_step,
-            }
-        }
+        ProgressEvent::InteractiveStart {
+            recipe,
+            node,
+            name: _,
+            chore_step_count,
+        } => WireEvent::InteractiveStart {
+            recipe: recipe_name(state, *recipe),
+            node: node_name(state, *recipe, *node),
+            chore_step_count: *chore_step_count,
+        },
+        ProgressEvent::InteractiveEnd {
+            recipe,
+            node,
+            name: _,
+            elapsed,
+            success,
+            is_terminal: _,
+            failed_step,
+        } => WireEvent::InteractiveEnd {
+            recipe: recipe_name(state, *recipe),
+            node: node_name(state, *recipe, *node),
+            elapsed_ms: duration_ms(*elapsed),
+            success: *success,
+            failed_step: *failed_step,
+        },
         ProgressEvent::Finished { success } => WireEvent::Finished { success: *success },
     }
 }
@@ -211,7 +284,10 @@ impl std::fmt::Display for SchemaCheckError {
         match self {
             Self::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
             Self::NotAnObject => write!(f, "events.jsonl line is not a JSON object"),
-            Self::MissingVersion => write!(f, "events.jsonl line missing required `v` schema-version field"),
+            Self::MissingVersion => write!(
+                f,
+                "events.jsonl line missing required `v` schema-version field"
+            ),
             Self::Unsupported { found, max_known } => write!(
                 f,
                 "events.jsonl schema version {found} exceeds maximum supported version {max_known}; upgrade required"
@@ -230,8 +306,8 @@ impl std::error::Error for SchemaCheckError {}
 /// `ProgressEvent`. Lines whose `v` is at or below `PROGRESS_SCHEMA_VERSION`
 /// are accepted (additive-only evolution within a major version).
 pub fn check_schema_version(line: &str) -> Result<u32, SchemaCheckError> {
-    let value: Value = serde_json::from_str(line)
-        .map_err(|e| SchemaCheckError::InvalidJson(e.to_string()))?;
+    let value: Value =
+        serde_json::from_str(line).map_err(|e| SchemaCheckError::InvalidJson(e.to_string()))?;
     let obj = value.as_object().ok_or(SchemaCheckError::NotAnObject)?;
     let v = obj
         .get("v")

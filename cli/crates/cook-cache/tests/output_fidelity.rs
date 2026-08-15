@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
+    ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend, artifact_key, cloud_key, put_bytes,
 };
-use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
-use cook_cache::check::{needs_rebuild_cook, RebuildResult, RestoreCtx};
+use cook_cache::check::{RebuildResult, RestoreCtx, needs_rebuild_cook};
+use cook_cache::store::{CACHE_VERSION, FileRecord, StepEntry};
 
 /// Seed a single artifact under `cloud_k` at `idx`/`path` with the given body,
 /// kind, target and mode. Returns the artifact body's xxh3_64 (the value a
@@ -167,12 +167,19 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
         false,
     );
 
-    assert_eq!(result, RebuildResult::Skip, "all outputs must restore cleanly");
+    assert_eq!(
+        result,
+        RebuildResult::Skip,
+        "all outputs must restore cleanly"
+    );
 
     // File: regular file, exact mode bits, exact content.
     let tool = wd.join("bin/tool");
     let tool_meta = std::fs::symlink_metadata(&tool).expect("bin/tool exists");
-    assert!(tool_meta.file_type().is_file(), "bin/tool must be a regular file");
+    assert!(
+        tool_meta.file_type().is_file(),
+        "bin/tool must be a regular file"
+    );
     assert_eq!(
         tool_meta.permissions().mode() & 0o777,
         0o755,

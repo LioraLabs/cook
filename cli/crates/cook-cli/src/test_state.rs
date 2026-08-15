@@ -14,11 +14,11 @@
 //! `load_failed_set` returns the subset of TestIds whose last-run outcome was
 //! `failed`, `blocked`, or `timed_out` — the set `--rerun-failed` should re-run.
 
+use crate::iso8601::now_iso8601;
+use cook_engine::{TestId, TestOutcome, TestResult};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
-use cook_engine::{TestId, TestOutcome, TestResult};
-use crate::iso8601::now_iso8601;
 
 const STATE_FILE: &str = ".cook/test-state.json";
 const SCHEMA_VERSION: u32 = 1;

@@ -2,7 +2,9 @@ use super::*;
 
 fn setup() -> (Lua, SharedExportStore) {
     let lua = Lua::new();
-    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    lua.globals()
+        .set("cook", lua.create_table().unwrap())
+        .unwrap();
     let store: SharedExportStore = Rc::new(RefCell::new(BTreeMap::new()));
     register_export_api(&lua, store.clone()).unwrap();
     (lua, store)
@@ -11,9 +13,11 @@ fn setup() -> (Lua, SharedExportStore) {
 #[test]
 fn test_export_and_import_lua() {
     let (lua, _) = setup();
-    lua.load(r#"cook.export("mylib", { includes = { "include/" }, lib_path = "build/libmylib.a" })"#)
-        .exec()
-        .unwrap();
+    lua.load(
+        r#"cook.export("mylib", { includes = { "include/" }, lib_path = "build/libmylib.a" })"#,
+    )
+    .exec()
+    .unwrap();
     let result: String = lua
         .load(r#"local info = cook.import("mylib") return info.lib_path"#)
         .eval()

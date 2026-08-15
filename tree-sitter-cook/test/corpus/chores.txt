@@ -21,7 +21,7 @@ chore shell commands may begin with recipe keywords
 chore keyword-tools
     cook dinner
     test -f dinner
-    ingredients list --verbose
+    gather list --verbose
     seal package
     unseal package
     recipe dinner
@@ -59,14 +59,14 @@ chore rejects recipe step forms
 ==================
 
 chore bad
-    ingredients "src/*"
+    gather "src/*"
     cook "out"
 
 chore bad-test
     test { true }
 
-chore bad-probe-ingredients
-    ingredients cards:items
+chore bad-probe-gather
+    gather cards:items
 
 chore bad-lua-output
     cook (foo) { echo nope }

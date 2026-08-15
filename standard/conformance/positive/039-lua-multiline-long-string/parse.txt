@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local s = [[\n            this string contains a } brace\n            and another } here\n        ]]\n        print(s)")

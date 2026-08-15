@@ -51,7 +51,7 @@ pub enum WorkPayload {
         code: String,
         inputs: Vec<String>,
         outputs: Vec<String>,
-        ingredient_groups: Vec<Vec<String>>,
+        gather_groups: Vec<Vec<String>>,
         /// Originating step kind, used by the execute-phase worker
         /// to pick a [`crate::StepKind`]-appropriate sandbox policy
         /// (CS-0045). Older code paths that did not yet plumb the

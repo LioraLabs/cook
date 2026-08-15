@@ -27,7 +27,10 @@ argparse    = ">=0.7"
     );
     let (m, r) = parse_cook_toml(f.path()).expect("parse");
     assert_eq!(m.modules.get("cook_smoke").map(String::as_str), Some("*"));
-    assert_eq!(m.modules.get("lua-cjson").map(String::as_str), Some("2.1.*"));
+    assert_eq!(
+        m.modules.get("lua-cjson").map(String::as_str),
+        Some("2.1.*")
+    );
     assert_eq!(m.modules.get("argparse").map(String::as_str), Some(">=0.7"));
     assert_eq!(m.modules.len(), 3);
     assert_eq!(r, ManifestRegistry::default());

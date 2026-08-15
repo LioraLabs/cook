@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="art" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         MemberSource source=GatherKey("cards")

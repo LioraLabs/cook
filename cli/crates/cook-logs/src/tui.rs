@@ -60,10 +60,7 @@ fn print_logs_fallback(view: &BuildView) -> Result<(), ViewerError> {
         .map_err(|e| ViewerError::TerminalInit(e.to_string()))
 }
 
-fn write_logs_fallback<W: std::io::Write>(
-    view: &BuildView,
-    out: &mut W,
-) -> std::io::Result<()> {
+fn write_logs_fallback<W: std::io::Write>(view: &BuildView, out: &mut W) -> std::io::Result<()> {
     writeln!(out, "build {} (exit {:?})", view.build_id, view.exit_code)?;
     for recipe in view.recipes.values() {
         writeln!(out, "  {} [{:?}]", recipe.name, recipe.status)?;
@@ -120,12 +117,15 @@ pub fn run_with_backend<B: Backend>(
                     if let Some((rid, nid)) = state.selected_node() {
                         if let Some(recipe) = state.view.recipes.get(&rid) {
                             if let Some(node) = recipe.nodes.get(&nid) {
-                                let text = node.lines.iter()
+                                let text = node
+                                    .lines
+                                    .iter()
                                     .map(|l| l.text.clone())
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 use base64::Engine;
-                                let payload = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                                let payload = base64::engine::general_purpose::STANDARD
+                                    .encode(text.as_bytes());
                                 // OSC 52: ESC ] 52 ; c ; <base64> BEL
                                 let _ = std::io::Write::write_all(
                                     &mut std::io::stdout(),

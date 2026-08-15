@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\", { cmake = true, version = \">=3.2\" })\n        -- cmake-compat reports skip on opts.version; chain falls through.")

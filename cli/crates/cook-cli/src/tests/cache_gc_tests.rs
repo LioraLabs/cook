@@ -36,7 +36,9 @@ fn plan(
     count_before: usize,
 ) -> EvictPlan {
     EvictPlan {
-        victims: (0..victim_count).map(|i| dummy_candidate(i as u8)).collect(),
+        victims: (0..victim_count)
+            .map(|i| dummy_candidate(i as u8))
+            .collect(),
         freed_bytes,
         total_before,
         total_after,
@@ -191,7 +193,11 @@ fn sweep_dry_run_returns_none_outcome_and_deletes_nothing_on_disk() {
     let policy = EvictPolicy::manual(Some(0), None);
     let result = sweep(&store, &[candidate.clone()], &policy, 0, true).unwrap();
 
-    assert_eq!(result.plan.victims.len(), 1, "the policy must have chosen a victim");
+    assert_eq!(
+        result.plan.victims.len(),
+        1,
+        "the policy must have chosen a victim"
+    );
     assert!(result.outcome.is_none());
     assert!(
         blob_path(&store, candidate.key).exists(),

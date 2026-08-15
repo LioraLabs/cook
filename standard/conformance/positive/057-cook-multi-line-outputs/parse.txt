@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="maps" line=1
       deps: []
-      ingredients: ["src/*.map"]
+      inputs: ["src/*.map"]
       excludes: []
       steps:
         Gather

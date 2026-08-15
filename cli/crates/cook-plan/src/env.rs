@@ -25,9 +25,7 @@ use super::error::PipelineError;
 /// run, so an explicit CLI override wins over a config-block default
 /// regardless of how the block was authored. Overriding a name no config
 /// block declared is an error, raised at that point (§5.3.1).
-pub fn parse_cli_overrides(
-    overrides: &[String],
-) -> Result<HashMap<String, String>, PipelineError> {
+pub fn parse_cli_overrides(overrides: &[String]) -> Result<HashMap<String, String>, PipelineError> {
     let mut map = HashMap::new();
     for set_arg in overrides {
         if let Some(eq_pos) = set_arg.find('=') {

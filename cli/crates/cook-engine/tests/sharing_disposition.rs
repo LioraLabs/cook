@@ -136,9 +136,9 @@ fn unannotated_unit_publishes_then_fetches_by_key() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,
@@ -146,7 +146,11 @@ fn unannotated_unit_publishes_then_fetches_by_key() {
 
     // Run 1 (cold both stores): the unit builds.
     build(wd, "make");
-    assert_eq!(runs(wd, "art.runlog"), 1, "run1: unannotated unit builds cold");
+    assert_eq!(
+        runs(wd, "art.runlog"),
+        1,
+        "run1: unannotated unit builds cold"
+    );
     assert!(wd.join("out/art.txt").exists(), "run1: output produced");
 
     // The shared store received the published artifact.
@@ -200,9 +204,9 @@ fn local_unit_does_not_publish_to_shared_store() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     } local
 "#,
@@ -210,8 +214,15 @@ fn local_unit_does_not_publish_to_shared_store() {
 
     // The unit runs and local caching still works.
     build(wd, "make");
-    assert_eq!(runs(wd, "art.runlog"), 1, "local unit builds (local cache on)");
-    assert!(wd.join("out/art.txt").exists(), "local unit produces its output");
+    assert_eq!(
+        runs(wd, "art.runlog"),
+        1,
+        "local unit builds (local cache on)"
+    );
+    assert!(
+        wd.join("out/art.txt").exists(),
+        "local unit produces its output"
+    );
 
     // Nothing was published: the shared store has no artifact files.
     assert_eq!(
@@ -234,9 +245,9 @@ fn pinned_unit_cold_miss_is_hard_error() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     } pinned
 "#,

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\", { cmake = true })\n        if not r.found then return end")

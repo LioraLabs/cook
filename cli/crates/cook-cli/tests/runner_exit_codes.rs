@@ -83,15 +83,26 @@ fn skipped_upstream_recipe_reports_skipped() {
     );
     let out = run_recipe(dir.path(), "report");
     let c = combined(&out);
-    assert_eq!(out.status.code(), Some(1), "upstream failure must exit 1.\n{c}");
-    assert!(c.contains("counts"), "failed upstream recipe should be shown.\n{c}");
-    assert!(c.contains("FAILED"), "failed upstream recipe should render FAILED.\n{c}");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "upstream failure must exit 1.\n{c}"
+    );
+    assert!(
+        c.contains("counts"),
+        "failed upstream recipe should be shown.\n{c}"
+    );
+    assert!(
+        c.contains("FAILED"),
+        "failed upstream recipe should render FAILED.\n{c}"
+    );
     assert!(
         c.contains("report") && c.contains("skipped"),
         "dependent recipe should render skipped.\n{c}"
     );
     assert!(
-        !c.lines().any(|line| line.contains("report") && line.contains("done")),
+        !c.lines()
+            .any(|line| line.contains("report") && line.contains("done")),
         "dependent recipe must not render done.\n{c}"
     );
     assert!(

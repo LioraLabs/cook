@@ -102,7 +102,11 @@ fn test_loose_shell_after_module_call_rejected() {
     let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n    echo done\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("loose shell commands are not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -111,7 +115,11 @@ fn test_non_module_dot_loose_shell_rejected() {
     let source = "recipe build\n    ./run.sh\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("loose shell commands are not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -142,7 +150,7 @@ fn test_minimal_recipe() {
     assert_eq!(result.recipes.len(), 1);
     assert_eq!(result.recipes[0].name, "build");
     assert!(result.recipes[0].deps.is_empty());
-    assert!(result.recipes[0].ingredients.is_empty());
+    assert!(result.recipes[0].inputs.is_empty());
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
         Step::InlineLua { code, line } => {
@@ -162,19 +170,19 @@ fn test_recipe_with_deps() {
 }
 
 #[test]
-fn test_recipe_with_ingredients() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook.log(\"hi\")\n";
+fn test_recipe_with_gather() {
+    let source = "recipe \"lib\"\n    gather \"lib/*.c\" \"include/*.h\"\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(
-        recipe.ingredients,
+        recipe.inputs,
         vec!["lib/*.c".to_string(), "include/*.h".to_string()]
     );
 }
 
 #[test]
-fn test_duplicate_ingredients_error() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    ingredients \"include/*.h\"\n";
+fn test_duplicate_gather_error() {
+    let source = "recipe \"lib\"\n    gather \"lib/*.c\"\n    gather \"include/*.h\"\n";
     let result = parse(source);
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
@@ -183,11 +191,11 @@ fn test_duplicate_ingredients_error() {
 
 #[test]
 fn test_cook_step_shell() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" {\n        gcc -c {in} -o {out}\n    }\n";
+    let source = "recipe \"lib\"\n    gather \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" {\n        gcc -c {in} -o {out}\n    }\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
-    assert_eq!(recipe.steps.len(), 1);
-    match &recipe.steps[0] {
+    assert_eq!(recipe.steps.len(), 2);
+    match &recipe.steps[1] {
         Step::Cook { step, line } => {
             assert_eq!(*line, 3);
             assert_eq!(step.outputs[0].as_str(), "build/obj/{stem}.o");
@@ -202,9 +210,9 @@ fn test_cook_step_shell() {
 
 #[test]
 fn test_cook_step_many_to_one() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" {\n        ar rcs {out} {all}\n    }\n";
+    let source = "recipe \"lib\"\n    gather \"lib/*.c\"\n    cook \"build/lib.a\" {\n        ar rcs {out} {all}\n    }\n";
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         Step::Cook { step, .. } => {
             assert_eq!(step.outputs[0].as_str(), "build/lib.a");
             assert_eq!(
@@ -222,17 +230,21 @@ fn cs0133_body_less_cook_rejected() {
     // (the §8.4.2 "decl + following shell_command" vaporware pattern) is a
     // parse error, converting the former silent 0-node registration + OneShot
     // runtime trap into a compile-time diagnostic.
-    let source = "recipe \"build\"\n    ingredients \"src/*.c\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
+    let source = "recipe \"build\"\n    gather \"src/*.c\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
     let err = parse(source).expect_err("body-less cook must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("declaration-only cook steps were removed"), "got: {}", msg);
+    assert!(
+        msg.contains("declaration-only cook steps were removed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
 fn test_cook_step_lua_block() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\n";
+    let source = "recipe \"lib\"\n    gather \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\n";
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         Step::Cook { step, .. } => {
             assert_eq!(step.outputs[0].as_str(), "build/obj/{stem}.o");
             match &step.body {
@@ -252,7 +264,7 @@ fn test_mixed_steps() {
     // line auto-classifies as register-phase InlineLua and can sit between
     // two cook steps.
     let source = r#"recipe "lib": "setup"
-    ingredients "lib/*.c" "include/*.h"
+    gather "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" {
         gcc -c {in} -o {out}
     }
@@ -264,11 +276,14 @@ fn test_mixed_steps() {
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string()]);
-    assert_eq!(recipe.ingredients, vec!["lib/*.c".to_string(), "include/*.h".to_string()]);
-    assert_eq!(recipe.steps.len(), 3);
-    assert!(matches!(&recipe.steps[0], Step::Cook { .. }));
-    assert!(matches!(&recipe.steps[1], Step::InlineLua { .. }));
-    assert!(matches!(&recipe.steps[2], Step::Cook { .. }));
+    assert_eq!(
+        recipe.inputs,
+        vec!["lib/*.c".to_string(), "include/*.h".to_string()]
+    );
+    assert_eq!(recipe.steps.len(), 4);
+    assert!(matches!(&recipe.steps[1], Step::Cook { .. }));
+    assert!(matches!(&recipe.steps[2], Step::InlineLua { .. }));
+    assert!(matches!(&recipe.steps[3], Step::Cook { .. }));
 }
 
 #[test]
@@ -285,7 +300,11 @@ fn test_execute_lua_line_in_recipe_rejected() {
 "#;
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("execute-phase `>` Lua is not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("execute-phase `>` Lua is not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -343,7 +362,11 @@ fn test_execute_lua_block_in_recipe_rejected() {
     let source = "recipe \"r\"\n    >{\n        cook.sh(\"echo hi\")\n    }\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("execute-phase `>{ … }` Lua block is not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("execute-phase `>{ … }` Lua block is not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -352,7 +375,11 @@ fn test_loose_shell_in_recipe_rejected() {
     let source = "recipe \"r\"\n    gcc -o main main.c\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("loose shell commands are not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -361,7 +388,11 @@ fn test_at_prefix_in_recipe_rejected() {
     let source = "recipe \"r\"\n    @./bin/app\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("`@` interactive prefix was removed"), "got: {}", msg);
+    assert!(
+        msg.contains("`@` interactive prefix was removed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -388,7 +419,7 @@ fn test_task_runner_no_metadata() {
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert!(recipe.deps.is_empty());
-    assert!(recipe.ingredients.is_empty());
+    assert!(recipe.inputs.is_empty());
     assert_eq!(recipe.steps.len(), 1);
 }
 
@@ -468,11 +499,11 @@ fn test_lua_block_brace_in_comment() {
 #[test]
 fn test_strip_keyword() {
     use crate::cook_line::strip_keyword;
-    assert_eq!(strip_keyword("ingredients \"a\"", "ingredients"), Some("\"a\""));
+    assert_eq!(strip_keyword("gather \"a\"", "gather"), Some("\"a\""));
     assert_eq!(strip_keyword("cook \"x\"", "cook"), Some("\"x\""));
     assert_eq!(strip_keyword("plate \"x\"", "plate"), Some("\"x\""));
     assert_eq!(strip_keyword("cooking", "cook"), None);
-    assert_eq!(strip_keyword("ingredient", "ingredients"), None);
+    assert_eq!(strip_keyword("input", "inputs"), None);
 }
 
 #[test]
@@ -533,7 +564,10 @@ config "debug"
     let result = parse(source);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("config blocks must appear before recipes"), "got: {err}");
+    assert!(
+        err.contains("config blocks must appear before recipes"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -572,27 +606,31 @@ fn test_empty_interactive_step_errors() {
     let result = parse(source);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("`@` interactive prefix was removed"), "got: {err}");
+    assert!(
+        err.contains("`@` interactive prefix was removed"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn test_at_in_cook_body_is_not_interactive() {
     let source = r#"recipe "build"
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/{stem}.o" {
         @gcc -c {in} -o {out}
     }
 "#;
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
-        Step::Cook { step, .. } => {
-            match &step.body {
-                Some(Body::ShellBlock(cmds)) => {
-                    assert!(cmds[0].starts_with('@'), "@ should be preserved in shell block");
-                }
-                other => panic!("expected ShellBlock using clause, got {:?}", other),
+    match &result.recipes[0].steps[1] {
+        Step::Cook { step, .. } => match &step.body {
+            Some(Body::ShellBlock(cmds)) => {
+                assert!(
+                    cmds[0].starts_with('@'),
+                    "@ should be preserved in shell block"
+                );
             }
-        }
+            other => panic!("expected ShellBlock using clause, got {:?}", other),
+        },
         other => panic!("expected Cook step, got {:?}", other),
     }
 }
@@ -627,9 +665,9 @@ fn test_parse_use_with_configs() {
 
 #[test]
 fn test_test_step_basic() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./{in} }\n";
+    let source = "recipe r\n    gather \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./{in} }\n";
     let cookfile = parse(source).expect("should parse");
-    match &cookfile.recipes[0].steps[1] {
+    match &cookfile.recipes[0].steps[2] {
         Step::Test { step, .. } => {
             assert!(matches!(step.body, Body::ShellBlock(_)));
         }
@@ -640,12 +678,16 @@ fn test_test_step_basic() {
 #[test]
 fn test_test_step_shell_body_with_dep_ref() {
     // CS-0135: test steps carry only a body (no as/timeout/should_fail).
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./$<in> }\n";
+    let source = "recipe r\n    gather \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./$<in> }\n";
     let cookfile = parse(source).expect("should parse");
-    match &cookfile.recipes[0].steps[1] {
+    match &cookfile.recipes[0].steps[2] {
         Step::Test { step, .. } => match &step.body {
             Body::ShellBlock(lines) => {
-                assert!(lines.iter().any(|l| l.contains("$<in>")), "lines: {:?}", lines);
+                assert!(
+                    lines.iter().any(|l| l.contains("$<in>")),
+                    "lines: {:?}",
+                    lines
+                );
             }
             other => panic!("expected ShellBlock, got {:?}", other),
         },
@@ -657,10 +699,14 @@ fn test_test_step_shell_body_with_dep_ref() {
 fn test_test_step_should_fail_removed() {
     // CS-0135: `should_fail` was removed in v1.0; trailing content after a
     // test body's closing `}` is a parse error with a did-you-mean hint.
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { x } should_fail\n";
+    let source = "recipe r\n    gather \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { x } should_fail\n";
     let err = parse(source).expect_err("should_fail modifier must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("should_fail was removed in v1.0"), "got: {}", msg);
+    assert!(
+        msg.contains("should_fail was removed in v1.0"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -708,46 +754,46 @@ import backend ./services/b
     assert!(result.is_err());
 }
 
-// ── Ingredient exclusion ──────────────────────────────────────────
+// ── Input exclusion ──────────────────────────────────────────
 
 #[test]
-fn test_ingredients_with_excludes() {
+fn test_gather_with_excludes() {
     let source = r#"recipe build
-    ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
+    gather "src/*.c" !"src/lua.c" !"src/luac.c"
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
-    assert_eq!(recipe.ingredients, vec!["src/*.c"]);
+    assert_eq!(recipe.inputs, vec!["src/*.c"]);
     assert_eq!(recipe.excludes, vec!["src/lua.c", "src/luac.c"]);
 }
 
 #[test]
-fn test_ingredients_excludes_only() {
+fn test_gather_excludes_only() {
     let source = r#"recipe build
-    ingredients !"src/test.c"
+    gather !"src/test.c"
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
-    assert!(recipe.ingredients.is_empty());
+    assert!(recipe.inputs.is_empty());
     assert_eq!(recipe.excludes, vec!["src/test.c"]);
 }
 
 #[test]
-fn test_ingredients_no_excludes() {
+fn test_gather_no_excludes() {
     let source = r#"recipe build
-    ingredients "src/*.c" "include/*.h"
+    gather "src/*.c" "include/*.h"
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
-    assert_eq!(recipe.ingredients, vec!["src/*.c", "include/*.h"]);
+    assert_eq!(recipe.inputs, vec!["src/*.c", "include/*.h"]);
     assert!(recipe.excludes.is_empty());
 }
 
 #[test]
 fn test_multi_output_lua_block() {
-    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" >{\n        sh(\"cmd\")\n    }\n";
+    let source = "recipe \"wasm\"\n    gather \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" >{\n        sh(\"cmd\")\n    }\n";
     let result = crate::parse(source).expect("should parse");
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         crate::ast::Step::Cook { step, .. } => {
             let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
             assert_eq!(outs, vec!["a.js", "b.wasm"]);
@@ -759,9 +805,9 @@ fn test_multi_output_lua_block() {
 
 #[test]
 fn test_single_output_shell_block() {
-    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"bin/out\" {\n        cmd1\n        cmd2\n    }\n";
+    let source = "recipe \"x\"\n    gather \"src/*\"\n    cook \"bin/out\" {\n        cmd1\n        cmd2\n    }\n";
     let result = crate::parse(source).expect("should parse");
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         crate::ast::Step::Cook { step, .. } => {
             let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
             assert_eq!(outs, vec!["bin/out"]);
@@ -778,9 +824,9 @@ fn test_single_output_shell_block() {
 
 #[test]
 fn test_multi_output_shell_block() {
-    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\n";
+    let source = "recipe \"wasm\"\n    gather \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\n";
     let result = crate::parse(source).expect("should parse");
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         crate::ast::Step::Cook { step, .. } => {
             let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
             assert_eq!(outs, vec!["a.js", "b.wasm"]);
@@ -806,7 +852,11 @@ fn test_chore_basic() {
     assert_eq!(cookfile.chores[0].name, "clean");
     assert_eq!(cookfile.chores[0].steps.len(), 1);
     match &cookfile.chores[0].steps[0] {
-        Step::Shell { command, interactive, .. } => {
+        Step::Shell {
+            command,
+            interactive,
+            ..
+        } => {
             assert_eq!(command, "rm -rf build");
             assert!(*interactive, "chore shell step must be default-interactive");
         }
@@ -821,7 +871,11 @@ fn test_chore_at_prefix_rejected() {
     let input = "chore deploy\n    @rsync -av out/\n";
     let err = parse(input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("`@` interactive prefix was removed"), "got: {}", msg);
+    assert!(
+        msg.contains("`@` interactive prefix was removed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -849,7 +903,13 @@ fn test_chore_keeps_execute_lua() {
     let cookfile = parse(input).expect("chore should parse");
     let steps = &cookfile.chores[0].steps;
     assert_eq!(steps.len(), 3);
-    assert!(matches!(&steps[0], Step::Shell { interactive: true, .. }));
+    assert!(matches!(
+        &steps[0],
+        Step::Shell {
+            interactive: true,
+            ..
+        }
+    ));
     assert!(matches!(&steps[1], Step::Lua { .. }));
     assert!(matches!(&steps[2], Step::LuaBlock { .. }));
 }
@@ -862,13 +922,17 @@ fn test_chore_with_deps() {
 }
 
 #[test]
-fn test_chore_with_ingredients_rejected() {
-    let input = "chore clean\n    ingredients \"build/*\"\n";
+fn test_chore_with_gather_rejected() {
+    let input = "chore clean\n    gather \"build/*\"\n";
     let result = parse(input);
     assert!(result.is_err());
     let err = result.unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("'ingredients' is not allowed in a chore"), "got: {}", msg);
+    assert!(
+        msg.contains("'gather' is not allowed in a chore"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -877,7 +941,11 @@ fn test_chore_with_cook_rejected() {
     let result = parse(input);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("'cook' is not allowed in a chore"), "got: {}", msg);
+    assert!(
+        msg.contains("'cook' is not allowed in a chore"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -918,10 +986,14 @@ fn test_use_after_chore_rejected() {
 
 #[test]
 fn test_multi_output_string_form_rejected() {
-    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
+    let source = "recipe \"x\"\n    gather \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
     let msg = format!("{}", err);
-    assert!(msg.contains("using") && msg.contains("not supported"), "expected using-keyword diagnostic, got: {}", msg);
+    assert!(
+        msg.contains("using") && msg.contains("not supported"),
+        "expected using-keyword diagnostic, got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -932,8 +1004,14 @@ fn test_using_string_form_rejected_with_migration_diagnostic() {
     let err = parse(src).expect_err("the using keyword must be rejected");
     match err {
         ParseError::Parse { message, .. } => {
-            assert!(message.contains("using"), "diagnostic should name the keyword, got: {message}");
-            assert!(message.contains("not supported"), "diagnostic should reject the keyword, got: {message}");
+            assert!(
+                message.contains("using"),
+                "diagnostic should name the keyword, got: {message}"
+            );
+            assert!(
+                message.contains("not supported"),
+                "diagnostic should reject the keyword, got: {message}"
+            );
         }
         e => panic!("expected ParseError::Parse, got {:?}", e),
     }
@@ -947,15 +1025,13 @@ fn cs_0022_one_line_shell_block_parses() {
     let src = "recipe build\n    cook \"build/{in.stem}.o\" { gcc -c {in} -o {out} }\n";
     let cookfile = parse(src).expect("one-line shell block should parse");
     match &cookfile.recipes[0].steps[0] {
-        Step::Cook { step, .. } => {
-            match &step.body {
-                Some(Body::ShellBlock(cmds)) => {
-                    assert_eq!(cmds.len(), 1, "expected 1 command, got {:?}", cmds);
-                    assert_eq!(cmds[0], "gcc -c {in} -o {out}");
-                }
-                other => panic!("expected ShellBlock, got {:?}", other),
+        Step::Cook { step, .. } => match &step.body {
+            Some(Body::ShellBlock(cmds)) => {
+                assert_eq!(cmds.len(), 1, "expected 1 command, got {:?}", cmds);
+                assert_eq!(cmds[0], "gcc -c {in} -o {out}");
             }
-        }
+            other => panic!("expected ShellBlock, got {:?}", other),
+        },
         other => panic!("expected Cook step, got {:?}", other),
     }
 }
@@ -964,19 +1040,17 @@ fn cs_0022_one_line_shell_block_parses() {
 fn cs_0022_one_line_shell_block_with_placeholder_braces() {
     // Placeholders like {in} and {out} inside the one-line block must not
     // confuse the brace-depth tracker.
-    let src = "recipe build\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}.o\" { {CC} -c {in} -o {out} }\n";
+    let src = "recipe build\n    gather \"src/*.c\"\n    cook \"build/{in.stem}.o\" { {CC} -c {in} -o {out} }\n";
     let cookfile = parse(src).expect("one-line shell block with placeholders should parse");
-    match &cookfile.recipes[0].steps[0] {
-        Step::Cook { step, .. } => {
-            match &step.body {
-                Some(Body::ShellBlock(cmds)) => {
-                    assert_eq!(cmds.len(), 1);
-                    assert!(cmds[0].contains("{CC}"), "got: {:?}", cmds);
-                    assert!(cmds[0].contains("{in}"), "got: {:?}", cmds);
-                }
-                other => panic!("expected ShellBlock, got {:?}", other),
+    match &cookfile.recipes[0].steps[1] {
+        Step::Cook { step, .. } => match &step.body {
+            Some(Body::ShellBlock(cmds)) => {
+                assert_eq!(cmds.len(), 1);
+                assert!(cmds[0].contains("{CC}"), "got: {:?}", cmds);
+                assert!(cmds[0].contains("{in}"), "got: {:?}", cmds);
             }
-        }
+            other => panic!("expected ShellBlock, got {:?}", other),
+        },
         other => panic!("expected Cook step, got {:?}", other),
     }
 }
@@ -987,14 +1061,20 @@ fn cs_0022_one_line_shell_block_followed_by_more_steps() {
     // subsequent steps parse correctly.
     let src = "recipe build\n    cook \"build/app\" { gcc main.c -o {out} }\n    test { ./{in} }\n";
     let cookfile = parse(src).expect("should parse");
-    assert_eq!(cookfile.recipes[0].steps.len(), 2, "should have cook + test");
+    assert_eq!(
+        cookfile.recipes[0].steps.len(),
+        2,
+        "should have cook + test"
+    );
     assert!(matches!(&cookfile.recipes[0].steps[0], Step::Cook { .. }));
-    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Test { step, .. } if matches!(step.body, Body::ShellBlock(_))));
+    assert!(
+        matches!(&cookfile.recipes[0].steps[1], Step::Test { step, .. } if matches!(step.body, Body::ShellBlock(_)))
+    );
 }
 
 #[test]
 fn test_test_string_form_rejected() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test \"./{out}\"\n";
+    let source = "recipe r\n    gather \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test \"./{out}\"\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
@@ -1006,9 +1086,9 @@ fn test_test_string_form_rejected() {
 
 #[test]
 fn test_test_lua_block_parses() {
-    let source = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test >{\n        cook.sh(\"strip \" .. input)\n    }\n";
+    let source = "recipe r\n    gather \"src/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test >{\n        cook.sh(\"strip \" .. input)\n    }\n";
     let cookfile = parse(source).expect("should parse");
-    match &cookfile.recipes[0].steps[1] {
+    match &cookfile.recipes[0].steps[2] {
         Step::Test { step, .. } => assert!(matches!(step.body, Body::LuaBlock(_))),
         other => panic!("expected Test Lua, got {:?}", other),
     }
@@ -1044,7 +1124,10 @@ fn test_parse_import_rejects_embedded_dotdot() {
 fn test_parse_import_rejects_absolute_path() {
     let src = "import bad /tmp/x\nrecipe \"x\"\n";
     let result = crate::parse(src);
-    assert!(result.is_err(), "expected parse error for absolute import path");
+    assert!(
+        result.is_err(),
+        "expected parse error for absolute import path"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("absolute paths are not permitted"),
@@ -1238,11 +1321,14 @@ recipe emit
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => match step.body.as_ref().unwrap() {
             Body::ShellBlock(lines) => {
-                assert_eq!(lines, &vec![
-                    "cat <<'END' > out.txt".to_string(),
-                    "} stays literal".to_string(),
-                    "END".to_string(),
-                ]);
+                assert_eq!(
+                    lines,
+                    &vec![
+                        "cat <<'END' > out.txt".to_string(),
+                        "} stays literal".to_string(),
+                        "END".to_string(),
+                    ]
+                );
             }
             other => panic!("expected ShellBlock, got {:?}", other),
         },
@@ -1311,9 +1397,13 @@ recipe foo
 recipe foo
     cook.log(\"b\")
 ";
-    let err = parse(src).expect_err("expected duplicate-recipe rejection").to_string();
+    let err = parse(src)
+        .expect_err("expected duplicate-recipe rejection")
+        .to_string();
     assert!(
-        err.contains("recipe 'foo'") && err.contains("duplicate declaration") && err.contains("line 1"),
+        err.contains("recipe 'foo'")
+            && err.contains("duplicate declaration")
+            && err.contains("line 1"),
         "diagnostic should name the colliding name and the prior declaration line; got: {err}"
     );
 }
@@ -1327,9 +1417,13 @@ chore tidy
 chore tidy
     echo second
 ";
-    let err = parse(src).expect_err("expected duplicate-chore rejection").to_string();
+    let err = parse(src)
+        .expect_err("expected duplicate-chore rejection")
+        .to_string();
     assert!(
-        err.contains("chore 'tidy'") && err.contains("duplicate declaration") && err.contains("line 1"),
+        err.contains("chore 'tidy'")
+            && err.contains("duplicate declaration")
+            && err.contains("line 1"),
         "diagnostic should name the colliding name and the prior declaration line; got: {err}"
     );
 }
@@ -1343,7 +1437,9 @@ recipe play
 chore play
     echo c
 ";
-    let err = parse(src).expect_err("expected recipe-vs-chore collision rejection").to_string();
+    let err = parse(src)
+        .expect_err("expected recipe-vs-chore collision rejection")
+        .to_string();
     // Second declaration is the chore; diagnostic names it as the duplicate
     // and points back at the recipe's line 1.
     assert!(
@@ -1361,7 +1457,9 @@ chore play
 recipe play
     echo r
 ";
-    let err = parse(src).expect_err("expected chore-vs-recipe collision rejection").to_string();
+    let err = parse(src)
+        .expect_err("expected chore-vs-recipe collision rejection")
+        .to_string();
     assert!(
         err.contains("recipe 'play'") && err.contains("chore at line 1"),
         "diagnostic should identify the new recipe and the prior chore line; got: {err}"
@@ -1377,7 +1475,9 @@ recipe \"build\"
 recipe build
     cook.log(\"b\")
 ";
-    let err = parse(src).expect_err("expected duplicate rejection across quote forms").to_string();
+    let err = parse(src)
+        .expect_err("expected duplicate rejection across quote forms")
+        .to_string();
     assert!(
         err.contains("recipe 'build'") && err.contains("duplicate declaration"),
         "got: {err}"
@@ -1434,8 +1534,11 @@ fn test_parse_register_with_name_rejected() {
     let source = "register foo\n    a()\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("register") && msg.contains("no name"),
-        "expected 'register'+'no name' diagnostic, got: {}", msg);
+    assert!(
+        msg.contains("register") && msg.contains("no name"),
+        "expected 'register'+'no name' diagnostic, got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -1454,7 +1557,9 @@ fn test_parse_top_level_module_call_single_line() {
     let source = "use cook_cc\ncook_cc.bin(\"game\", {})\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.top_level_module_calls.len(), 1);
-    assert!(cookfile.top_level_module_calls[0].code.starts_with("cook_cc.bin"));
+    assert!(cookfile.top_level_module_calls[0]
+        .code
+        .starts_with("cook_cc.bin"));
 }
 
 #[test]
@@ -1481,8 +1586,11 @@ fn test_parse_top_level_colon_call_rejected() {
     let source = "use cook_cc\ncook_cc:bin(\"x\", {})\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("unexpected content"),
-        "expected top-level Content rejection, got: {}", msg);
+    assert!(
+        msg.contains("unexpected content"),
+        "expected top-level Content rejection, got: {}",
+        msg
+    );
 }
 
 // ── In-body module_call dispatch REMOVED (SHI-216 §3.9 amendment) ─────
@@ -1517,8 +1625,11 @@ fn test_parse_register_inside_recipe_body_rejected() {
     let source = "recipe build\n    register foo\n        cook_cc.bin(\"x\", {})\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("register") && msg.contains("top-level only"),
-        "expected '`register` blocks are top-level only' diagnostic, got: {}", msg);
+    assert!(
+        msg.contains("register") && msg.contains("top-level only"),
+        "expected '`register` blocks are top-level only' diagnostic, got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -1556,8 +1667,11 @@ fn test_parse_register_inside_chore_body_rejected() {
     let source = "chore clean\n    register foo\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("register") && msg.contains("top-level only"),
-        "expected diagnostic, got: {}", msg);
+    assert!(
+        msg.contains("register") && msg.contains("top-level only"),
+        "expected diagnostic, got: {}",
+        msg
+    );
 }
 
 // ── COOK-63: member-source data-member iteration (§8.2) ──────────
@@ -1575,41 +1689,49 @@ fn first_member_source(c: &Cookfile) -> &MemberSourceStep {
 }
 
 #[test]
-fn member_source_trailing_globs_parse_into_extra_ingredients() {
+fn member_source_trailing_globs_parse_into_extra_gather() {
     // CS-0197: quoted globs after the probe key declare per-member file
     // inputs. Bare = probe source, quoted = literal globs (§22.5.10).
-    let source = "recipe r\n    ingredients cases \"src/*.txt\" \"extra/*.h\"\n    cook \"b/$<in.id>\" { y }\n";
+    let source =
+        "recipe r\n    gather cases \"src/*.txt\" \"extra/*.h\"\n    cook \"b/$<in.id>\" { y }\n";
     let c = parse(source).expect("mixed source + globs parses");
     let ms = first_member_source(&c);
-    assert_eq!(ms.source, MemberSource::ProbeKey("cases".to_string()));
-    assert_eq!(ms.extra_ingredients, vec!["src/*.txt".to_string(), "extra/*.h".to_string()]);
+    assert_eq!(ms.source, MemberSource::GatherKey("cases".to_string()));
+    assert_eq!(
+        ms.extra_gather,
+        vec!["src/*.txt".to_string(), "extra/*.h".to_string()]
+    );
 }
 
 #[test]
-fn member_source_without_globs_has_empty_extra_ingredients() {
-    let source = "recipe r\n    ingredients cases\n    cook \"b/$<in.id>\" { y }\n";
+fn member_source_without_globs_has_empty_extra_gather() {
+    let source = "recipe r\n    gather cases\n    cook \"b/$<in.id>\" { y }\n";
     let c = parse(source).expect("bare source parses");
-    assert!(first_member_source(&c).extra_ingredients.is_empty());
+    assert!(first_member_source(&c).extra_gather.is_empty());
 }
 
 #[test]
 fn gather_bare_source_uses_the_shared_member_source() {
-    let c = parse("recipe r\n    gather sites \"extra/*.h\"\n    cook \"b/$<in.stem>\" { y }\n").expect("named gather parses");
+    let c = parse("recipe r\n    gather sites \"extra/*.h\"\n    cook \"b/$<in.stem>\" { y }\n")
+        .expect("named gather parses");
     let ms = first_member_source(&c);
     assert_eq!(ms.source, MemberSource::GatherKey("sites".to_string()));
-    assert_eq!(ms.extra_ingredients, vec!["extra/*.h".to_string()]);
+    assert_eq!(ms.extra_gather, vec!["extra/*.h".to_string()]);
 }
 
 #[test]
 fn member_source_unquoted_trailing_content_still_errors() {
-    let source = "recipe r\n    ingredients cases src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
+    let source = "recipe r\n    gather cases src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
     let err = parse(source).expect_err("unquoted trailing content");
-    assert!(err.to_string().contains("unexpected trailing content"), "{err}");
+    assert!(
+        err.to_string().contains("unexpected trailing content"),
+        "{err}"
+    );
 }
 
 #[test]
 fn member_source_unterminated_trailing_glob_errors() {
-    let source = "recipe r\n    ingredients cases \"src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
+    let source = "recipe r\n    gather cases \"src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
     let err = parse(source).expect_err("unterminated glob");
     assert!(err.to_string().contains("unterminated"), "{err}");
 }
@@ -1624,35 +1746,54 @@ fn for_each_keyword_no_longer_recognized() {
 // ── COOK-67 Task 4 / COOK-174: leading-kind producer typing ─────────
 
 fn probe_of(src: &str) -> crate::ast::Probe {
-    crate::parse(src).unwrap().probes.into_iter().next().unwrap()
+    crate::parse(src)
+        .unwrap()
+        .probes
+        .into_iter()
+        .next()
+        .unwrap()
 }
 
 #[test]
 fn produce_shell_default_is_string() {
     let p = probe_of("probe x\n    { cat data.json }\n");
-    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
-        typing: crate::ast::ShellProduceType::String, .. }));
+    assert!(matches!(
+        p.produce,
+        crate::ast::ProbeProduce::Shell {
+            typing: crate::ast::ShellProduceType::String,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn produce_shell_json() {
     let p = probe_of("probe x\n    json { cat data.json }\n");
-    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
-        typing: crate::ast::ShellProduceType::Json, .. }));
+    assert!(matches!(
+        p.produce,
+        crate::ast::ProbeProduce::Shell {
+            typing: crate::ast::ShellProduceType::Json,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn produce_shell_lines() {
     let p = probe_of("probe x\n    lines { git tag --list }\n");
-    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
-        typing: crate::ast::ShellProduceType::Lines, .. }));
+    assert!(matches!(
+        p.produce,
+        crate::ast::ProbeProduce::Shell {
+            typing: crate::ast::ShellProduceType::Lines,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn produce_json_on_lua_block_is_error() {
     let err = crate::parse("probe x\n    json >{ return {} }\n").unwrap_err();
-    assert!(format!("{err}").contains("shell block"),
-        "got: {err}");
+    assert!(format!("{err}").contains("shell block"), "got: {err}");
 }
 
 // ── COOK-164 / COOK-174: tools name-list producer ───────────────
@@ -1661,14 +1802,20 @@ fn produce_json_on_lua_block_is_error() {
 fn produce_tools_parses_name_list() {
     let cf = parse("tools toolchain\n    cc ld\n").unwrap();
     let p = &cf.probes[0];
-    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
+    assert_eq!(
+        p.produce,
+        crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()])
+    );
 }
 
 #[test]
 fn produce_tools_accepts_whitespace_separators() {
     let cf = parse("tools toolchain\n    cc ld   ar\n").unwrap();
     let p = &cf.probes[0];
-    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()]));
+    assert_eq!(
+        p.produce,
+        crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()])
+    );
 }
 
 #[test]
@@ -1676,7 +1823,10 @@ fn produce_envs_names_shell_probe_replacement() {
     let err = parse("probe sdk\n    envs { SDKROOT, CC }\n").unwrap_err();
     let message = err.to_string();
     assert!(message.contains("removed"), "got: {message}");
-    assert!(message.contains("lines { echo \"$SDKROOT\"; echo \"$CC\" }"), "got: {message}");
+    assert!(
+        message.contains("lines { echo \"$SDKROOT\"; echo \"$CC\" }"),
+        "got: {message}"
+    );
 }
 
 #[test]
@@ -1738,37 +1888,17 @@ fn produce_files_lua_block_is_error() {
 }
 
 #[test]
-fn produce_files_with_ingredients_line_is_error() {
-    let err = parse(
-        "probe srcs\n    ingredients \"other/*.c\"\n    files { \"src/*.ts\" }\n",
-    )
-    .unwrap_err();
-    assert!(format!("{err}").contains("top-level"), "got: {err}");
-}
-
-// ── COOK-67 Task 3: probe declaration parser ────────────────────────
-
-#[test]
-fn parse_probe_lua_block_with_deps_and_ingredients() {
-    let src = "probe services: cards services_raw\n    ingredients \"data/services.json\"\n    >{\n        return {}\n    }\n";
-    let cf = crate::parse(src).unwrap();
-    assert_eq!(cf.probes.len(), 1);
-    let p = &cf.probes[0];
-    assert_eq!(p.name, "services");
-    assert_eq!(p.deps, vec!["cards", "services_raw"]);
-    assert_eq!(p.ingredients, vec!["data/services.json"]);
-    assert!(matches!(&p.produce, crate::ast::ProbeProduce::Lua(code) if code.contains("return {}")));
-}
-
-#[test]
 fn parse_probe_seal_adds_fingerprint_refs() {
     let src = "probe services\n    seal \"data/services.json\" !\"data/generated/**\"\n    json { cat data/services.json }\n";
     let cf = crate::parse(src).unwrap();
     assert_eq!(cf.probes[0].deps, vec!["@seal:services:2"]);
-    assert_eq!(cf.probes[1].produce, crate::ast::ProbeProduce::Files {
-        globs: vec!["data/services.json".into()],
-        excludes: vec!["data/generated/**".into()],
-    });
+    assert_eq!(
+        cf.probes[1].produce,
+        crate::ast::ProbeProduce::Files {
+            globs: vec!["data/services.json".into()],
+            excludes: vec!["data/generated/**".into()],
+        }
+    );
 }
 
 #[test]
@@ -1778,14 +1908,6 @@ fn parse_probe_terminates_at_next_recipe() {
     assert_eq!(cf.probes.len(), 1);
     assert_eq!(cf.recipes.len(), 1);
     assert_eq!(cf.recipes[0].name, "build");
-}
-
-#[test]
-fn parse_probe_shell_block_default() {
-    let src = "probe cards\n    ingredients \"data/cards.json\"\n    { cat data/cards.json }\n";
-    let cf = crate::parse(src).unwrap();
-    let p = &cf.probes[0];
-    assert!(matches!(&p.produce, crate::ast::ProbeProduce::Shell { typing: crate::ast::ShellProduceType::String, .. }));
 }
 
 #[test]
@@ -1812,26 +1934,10 @@ fn parse_err(src: &str) -> String {
 }
 
 #[test]
-fn probe_missing_produce_rejected() {
-    // Real message: "probe '{name}' has no producer"
-    let msg = parse_err("probe x\n    ingredients \"a\"\n");
-    assert!(msg.contains("no producer"), "got: {msg}");
-}
-
-#[test]
 fn probe_two_produce_rejected() {
     // Real message: "probe: at most one producer per probe"
     let msg = parse_err("probe x\n    >{ return 1 }\n    >{ return 2 }\n");
     assert!(msg.contains("at most one producer"), "got: {msg}");
-}
-
-#[test]
-fn probe_two_ingredients_rejected() {
-    // Real message: "probe: at most one `ingredients` per probe"
-    let msg = parse_err(
-        "probe x\n    ingredients \"a\"\n    ingredients \"b\"\n    >{ return 1 }\n",
-    );
-    assert!(msg.contains("at most one `ingredients`"), "got: {msg}");
 }
 
 #[test]
@@ -1842,19 +1948,14 @@ fn probe_two_seals_rejected() {
 }
 
 #[test]
-fn probe_ingredients_after_produce_rejected() {
-    // Real message: "probe: `ingredients` must appear before the producer"
-    let msg = parse_err("probe x\n    >{ return 1 }\n    ingredients \"a\"\n");
-    assert!(msg.contains("must appear before the producer"), "got: {msg}");
-}
-
-#[test]
 fn probe_seal_after_produce_rejected() {
     let msg = parse_err("probe x\n    >{ return 1 }\n    seal a\n");
-    assert!(msg.contains("must appear before the producer"), "got: {msg}");
+    assert!(
+        msg.contains("must appear before the producer"),
+        "got: {msg}"
+    );
     assert!(msg.contains("probe 'x'"), "got: {msg}");
 }
-
 
 #[test]
 fn probe_unexpected_step_rejected() {
@@ -1862,10 +1963,7 @@ fn probe_unexpected_step_rejected() {
     // producer; it is not a valid producer opener (`{`/`>{`/json/lines/...), so
     // it is rejected by the body-payload dispatch.
     let msg = parse_err("probe x\n    cook \"out\" { true }\n");
-    assert!(
-        msg.contains("shell block"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("shell block"), "got: {msg}");
 }
 
 #[test]
@@ -1891,89 +1989,87 @@ fn probe_json_on_lua_block_rejected() {
     assert!(msg.contains("shell block"), "got: {msg}");
 }
 
-// ── COOK-88: ingredients <probe> member source ──────────────────────
+// ── COOK-88: gather <probe> member source ──────────────────────
 
 #[test]
-fn ingredients_probe_desugars_to_member_source() {
-    let source = "recipe render\n    ingredients cardprobe\n    cook \"build/$<in.name>.png\" { gen \"$<in.name>\" $<out> }\n";
+fn gather_probe_desugars_to_member_source() {
+    let source = "recipe render\n    gather cardprobe\n    cook \"build/$<in.name>.png\" { gen \"$<in.name>\" $<out> }\n";
     let c = parse(source).unwrap();
     let fe = first_member_source(&c);
-    assert_eq!(fe.source, MemberSource::ProbeKey("cardprobe".to_string()));
-    assert!(c.recipes[0].ingredients.is_empty());
+    assert_eq!(fe.source, MemberSource::GatherKey("cardprobe".to_string()));
+    assert!(c.recipes[0].inputs.is_empty());
 }
 
 #[test]
-fn ingredients_probe_field_selector_parses() {
-    let source = "recipe r\n    ingredients catalog:items\n    cook \"$<in.id>\" { x }\n";
+fn gather_probe_field_selector_parses() {
+    let source = "recipe r\n    gather catalog:items\n    cook \"$<in.id>\" { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(
         first_member_source(&c).source,
-        MemberSource::ProbeKey("catalog:items".to_string())
+        MemberSource::GatherKey("catalog:items".to_string())
     );
 }
 
 #[test]
-fn ingredients_two_segment_probe_key_parses_whole_ref() {
+fn gather_two_segment_probe_key_parses_whole_ref() {
     // COOK-190: `ns:name` is the canonical probe naming; the ref must land
     // in the AST verbatim, not truncated at the colon.
-    let source = "recipe stamps\n    ingredients cards:list\n    cook \"out/$<in>.stamp\" { echo \"$<in>\" > $<out> }\n";
+    let source = "recipe stamps\n    gather cards:list\n    cook \"out/$<in>.stamp\" { echo \"$<in>\" > $<out> }\n";
     let c = parse(source).unwrap();
     assert_eq!(
         first_member_source(&c).source,
-        MemberSource::ProbeKey("cards:list".to_string())
+        MemberSource::GatherKey("cards:list".to_string())
     );
 }
 
 #[test]
-fn ingredients_three_segment_ref_parses_whole_ref() {
+fn gather_three_segment_ref_parses_whole_ref() {
     // Two-segment key + one `:field` selector = three segments, the maximum.
-    let source = "recipe r\n    ingredients ns:name:items\n    cook \"$<in.id>\" { x }\n";
+    let source = "recipe r\n    gather ns:name:items\n    cook \"$<in.id>\" { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(
         first_member_source(&c).source,
-        MemberSource::ProbeKey("ns:name:items".to_string())
+        MemberSource::GatherKey("ns:name:items".to_string())
     );
 }
 
-
 #[test]
-fn ingredients_trailing_colon_ref_rejected() {
-    let msg = parse_err("recipe r\n    ingredients cards:\n    cook \"x\" { y }\n");
+fn gather_trailing_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    gather cards:\n    cook \"x\" { y }\n");
     assert!(msg.contains("malformed probe key"), "got: {msg}");
 }
 
 #[test]
-fn ingredients_leading_colon_ref_rejected() {
-    let msg = parse_err("recipe r\n    ingredients :cards\n    cook \"x\" { y }\n");
+fn gather_leading_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    gather :cards\n    cook \"x\" { y }\n");
     assert!(msg.contains("malformed probe key"), "got: {msg}");
 }
 
 #[test]
-fn ingredients_mixing_glob_then_probe_is_rejected() {
-    let source = "recipe r\n    ingredients \"a.json\"\n    ingredients cardprobe\n    cook \"x\" { y }\n";
+fn gather_mixing_glob_then_probe_is_rejected() {
+    let source = "recipe r\n    gather \"a.json\"\n    gather cardprobe\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
     assert!(format!("{err:?}").contains("mix"));
 }
 
 #[test]
-fn ingredients_probe_with_trailing_content_is_rejected() {
-    let source = "recipe r\n    ingredients cardprobe extra\n    cook \"x\" { y }\n";
+fn gather_probe_with_trailing_content_is_rejected() {
+    let source = "recipe r\n    gather cardprobe extra\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
     assert!(format!("{err:?}").contains("trailing"));
 }
 
 #[test]
-fn ingredients_probe_then_glob_is_rejected() {
-    let source = "recipe r\n    ingredients cardprobe\n    ingredients \"*.c\"\n    cook \"x\" { y }\n";
+fn gather_probe_then_glob_is_rejected() {
+    let source = "recipe r\n    gather cardprobe\n    gather \"*.c\"\n    cook \"x\" { y }\n";
     assert!(parse(source).is_err());
 }
 
 #[test]
-fn ingredients_probe_declared_twice_is_rejected() {
-    let source = "recipe r\n    ingredients cardprobe\n    ingredients other\n    cook \"x\" { y }\n";
+fn gather_probe_declared_twice_is_rejected() {
+    let source = "recipe r\n    gather cardprobe\n    gather other\n    cook \"x\" { y }\n";
     assert!(parse(source).is_err());
 }
-
 
 // ── CS-0099: the `using` keyword is removed; the body opener follows the
 // output pattern(s) directly: `cook "out" { … }` / `cook "out" >{ … }`.
@@ -1996,9 +2092,9 @@ fn cs0099_cook_shell_block_one_line() {
 
 #[test]
 fn cs0099_cook_shell_block_multiline() {
-    let src = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" {\n        ar rcs {out} {all}\n    }\n";
+    let src = "recipe \"lib\"\n    gather \"lib/*.c\"\n    cook \"build/lib.a\" {\n        ar rcs {out} {all}\n    }\n";
     let result = parse(src).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         Step::Cook { step, .. } => {
             assert_eq!(
                 step.body,
@@ -2011,9 +2107,9 @@ fn cs0099_cook_shell_block_multiline() {
 
 #[test]
 fn cs0099_cook_lua_block() {
-    let src = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\n";
+    let src = "recipe \"lib\"\n    gather \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\n";
     let result = parse(src).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         Step::Cook { step, .. } => match &step.body {
             Some(Body::LuaBlock(code)) => {
                 assert!(code.contains("cook.sh"), "code was: {}", code);
@@ -2026,9 +2122,9 @@ fn cs0099_cook_lua_block() {
 
 #[test]
 fn cs0099_cook_multi_output_lua_block() {
-    let src = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" >{\n        sh(\"cmd\")\n    }\n";
+    let src = "recipe \"wasm\"\n    gather \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" >{\n        sh(\"cmd\")\n    }\n";
     let result = parse(src).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.recipes[0].steps[1] {
         Step::Cook { step, .. } => {
             assert_eq!(step.outputs.len(), 2);
             assert!(matches!(step.body, Some(crate::ast::Body::LuaBlock(_))));
@@ -2073,7 +2169,12 @@ fn cs0133_cook_no_body_rejected_bare() {
     // guarantee: a body is now mandatory.
     let src = "recipe \"build\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
     let err = parse(src).expect_err("body-less cook must be rejected");
-    assert!(err.to_string().contains("declaration-only cook steps were removed"), "got: {}", err);
+    assert!(
+        err.to_string()
+            .contains("declaration-only cook steps were removed"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
@@ -2104,7 +2205,8 @@ fn cs0099_lua_expr_using_rejected_with_migration_diagnostic() {
 #[test]
 fn cs0099_register_block_body_still_rejected() {
     // App. A.4: `>>{` is not a valid cook body, with or without `using`.
-    let src = "recipe \"r\"\n    cook \"out\" >>{\n        cook.add_unit({command = \"x\"})\n    }\n";
+    let src =
+        "recipe \"r\"\n    cook \"out\" >>{\n        cook.add_unit({command = \"x\"})\n    }\n";
     let err = parse(src).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains(">{"), "got: {}", msg);
@@ -2159,7 +2261,7 @@ fn disp_recipe_seal_applies_to_test_only_recipe() {
 #[test]
 fn seal_baseline_reaches_both_cook_and_test() {
     let cf = parse(
-        "recipe build\n    ingredients \"a.c\"\n    seal toolchain\n\
+        "recipe build\n    gather \"a.c\"\n    seal toolchain\n\
          \x20   cook \"x.o\" { cc -c $<in> }\n    test { ./x.o }\n",
     )
     .unwrap();
@@ -2170,10 +2272,8 @@ fn seal_baseline_reaches_both_cook_and_test() {
 /// A trailing `seal` on a test adds to the baseline; the tail is additive.
 #[test]
 fn test_trailing_seal_adds_to_baseline() {
-    let err = parse(
-        "recipe verify\n    ingredients \"a.c\"\n    seal a\n    test { true } seal b c\n",
-    )
-    .unwrap_err();
+    let err = parse("recipe verify\n    gather \"a.c\"\n    seal a\n    test { true } seal b c\n")
+        .unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }
 
@@ -2182,7 +2282,7 @@ fn test_trailing_seal_adds_to_baseline() {
 #[test]
 fn test_trailing_unseal_removes_from_baseline() {
     let err = parse(
-        "recipe verify\n    ingredients \"a.c\"\n    seal a b\n    test { true } unseal a seal c\n",
+        "recipe verify\n    gather \"a.c\"\n    seal a b\n    test { true } unseal a seal c\n",
     )
     .unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
@@ -2192,7 +2292,7 @@ fn test_trailing_unseal_removes_from_baseline() {
 #[test]
 fn test_unseal_is_per_unit_only() {
     let err = parse(
-        "recipe verify\n    ingredients \"a.c\"\n    seal a\n\
+        "recipe verify\n    gather \"a.c\"\n    seal a\n\
          \x20   test { one } unseal a\n    test { two }\n    cook \"x.o\" { cc }\n",
     )
     .unwrap_err();
@@ -2202,17 +2302,15 @@ fn test_unseal_is_per_unit_only() {
 /// The baseline is declarative: a `seal` after the test still applies to it.
 #[test]
 fn test_seal_baseline_is_order_independent() {
-    let cf = parse(
-        "recipe verify\n    ingredients \"a.c\"\n    test { true }\n    seal host\n",
-    )
-    .unwrap();
+    let cf =
+        parse("recipe verify\n    gather \"a.c\"\n    test { true }\n    seal host\n").unwrap();
     assert!(first_test_seal(&cf).contains("host"));
 }
 
 /// A test that seals nothing keeps an empty effective set (no accidental fold).
 #[test]
 fn test_without_seal_has_empty_set() {
-    let cf = parse("recipe verify\n    ingredients \"a.c\"\n    test { true }\n").unwrap();
+    let cf = parse("recipe verify\n    gather \"a.c\"\n    test { true }\n").unwrap();
     assert!(first_test_seal(&cf).is_empty());
 }
 
@@ -2220,17 +2318,14 @@ fn test_without_seal_has_empty_set() {
 #[test]
 fn test_bare_seal_rejected() {
     for src in [
-        "recipe v\n    ingredients \"a.c\"\n    test { true } seal\n",
-        "recipe v\n    ingredients \"a.c\"\n    test { true } unseal\n",
+        "recipe v\n    gather \"a.c\"\n    test { true } seal\n",
+        "recipe v\n    gather \"a.c\"\n    test { true } unseal\n",
     ] {
         let err = parse(src).expect_err("bare seal/unseal must be rejected");
         let ParseError::Parse { message, .. } = err else {
             panic!("expected ParseError::Parse");
         };
-        assert!(
-            message.contains("CS-0225"),
-            "got: {message}"
-        );
+        assert!(message.contains("CS-0225"), "got: {message}");
     }
 }
 
@@ -2239,7 +2334,7 @@ fn test_bare_seal_rejected() {
 #[test]
 fn test_share_mod_rejected() {
     for kw in ["local", "pinned", "nondet"] {
-        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {kw}\n");
+        let src = format!("recipe v\n    gather \"a.c\"\n    test {{ true }} {kw}\n");
         let err = parse(&src).expect_err("share_mod must be rejected on a test");
         let ParseError::Parse { message, .. } = err else {
             panic!("expected ParseError::Parse");
@@ -2260,7 +2355,7 @@ fn test_removed_modifiers_keep_migration_diagnostics() {
         ("timeout", "timeout was removed in v1.0"),
         ("as \"name\"", "as was removed in v1.0"),
     ] {
-        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {kw}\n");
+        let src = format!("recipe v\n    gather \"a.c\"\n    test {{ true }} {kw}\n");
         let err = parse(&src).expect_err("removed modifier must be rejected");
         let ParseError::Parse { message, .. } = err else {
             panic!("expected ParseError::Parse");
@@ -2272,7 +2367,7 @@ fn test_removed_modifiers_keep_migration_diagnostics() {
 /// Unrecognised trailing content still reports the generic diagnostic.
 #[test]
 fn test_unknown_trailing_content_rejected() {
-    let err = parse("recipe v\n    ingredients \"a.c\"\n    test { true } wat\n")
+    let err = parse("recipe v\n    gather \"a.c\"\n    test { true } wat\n")
         .expect_err("unknown trailing token must be rejected");
     let ParseError::Parse { message, .. } = err else {
         panic!("expected ParseError::Parse");
@@ -2291,7 +2386,7 @@ fn test_seal_ref_validation_matches_cook() {
     // form is the escape hatch at every site, and the segment cap is gone.
     // What is still malformed is an empty segment and a dotted bare key.
     for bad in ["seal :host", "seal host:", "seal cc.version"] {
-        let src = format!("recipe v\n    ingredients \"a.c\"\n    test {{ true }} {bad}\n");
+        let src = format!("recipe v\n    gather \"a.c\"\n    test {{ true }} {bad}\n");
         let err = parse(&src).expect_err("malformed probe ref must be rejected");
         let ParseError::Parse { message, .. } = err else {
             panic!("expected ParseError::Parse");
@@ -2303,10 +2398,8 @@ fn test_seal_ref_validation_matches_cook() {
 /// A module-prefixed probe ref (`cc:toolchain`) is admitted on a test tail.
 #[test]
 fn test_seal_accepts_module_prefixed_ref() {
-    let err = parse(
-        "recipe v\n    ingredients \"a.c\"\n    test { true } seal cc:toolchain\n",
-    )
-    .unwrap_err();
+    let err =
+        parse("recipe v\n    gather \"a.c\"\n    test { true } seal cc:toolchain\n").unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }
 
@@ -2319,10 +2412,7 @@ fn recipe_level_unseal_still_rejected_mentions_test() {
     let ParseError::Parse { message, .. } = err else {
         panic!("expected ParseError::Parse");
     };
-    assert!(
-        message.contains("CS-0225"),
-        "got: {message}"
-    );
+    assert!(message.contains("CS-0225"), "got: {message}");
 }
 
 #[test]
@@ -2350,15 +2440,21 @@ fn disp_recipe_seal_order_independent() {
 
 #[test]
 fn disp_recipe_seal_stacks_additively() {
-    let cf = parse("recipe build\n    seal host\n    seal gpu driver\n    cook \"x.o\" { cc }\n").unwrap();
-    let got: Vec<&str> = first_cook_disposition(&cf).seal.iter().map(|s| s.as_str()).collect();
+    let cf = parse("recipe build\n    seal host\n    seal gpu driver\n    cook \"x.o\" { cc }\n")
+        .unwrap();
+    let got: Vec<&str> = first_cook_disposition(&cf)
+        .seal
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     assert_eq!(got, vec!["driver", "gpu", "host"]); // sorted, deduped
 }
 
 #[test]
 fn disp_trailing_seal_unseal() {
     // base {a,b} ∪ trailing {c} − trailing unseal {a} = {b,c}
-    let err = parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap_err();
+    let err =
+        parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }
 
@@ -2370,7 +2466,10 @@ fn cs0225_removed_seal_tails_name_the_recipe_level_step() {
     ] {
         let err = parse(src).expect_err("trailing seal must be rejected");
         let msg = err.to_string();
-        assert!(msg.contains("`seal` was removed as a trailing modifier (CS-0225)"), "got: {msg}");
+        assert!(
+            msg.contains("`seal` was removed as a trailing modifier (CS-0225)"),
+            "got: {msg}"
+        );
         assert!(msg.contains("recipe-level `seal` step"), "got: {msg}");
     }
 }
@@ -2385,7 +2484,10 @@ fn cs0225_removed_unseal_says_to_omit_the_recipe_seal() {
         let err = parse(src).expect_err("unseal must be rejected");
         let msg = err.to_string();
         assert!(msg.contains("`unseal` was removed (CS-0225)"), "got: {msg}");
-        assert!(msg.contains("do not put the ref in the recipe's `seal` step"), "got: {msg}");
+        assert!(
+            msg.contains("do not put the ref in the recipe's `seal` step"),
+            "got: {msg}"
+        );
     }
 }
 
@@ -2399,7 +2501,9 @@ fn disp_trailing_local_pinned_nondet() {
         first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } pinned\n").unwrap()).sharing,
         cook_contracts::Sharing::Pinned
     );
-    assert!(first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } nondet\n").unwrap()).record);
+    assert!(
+        first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } nondet\n").unwrap()).record
+    );
 }
 
 #[test]
@@ -2412,8 +2516,14 @@ fn disp_trailing_seal_then_share_mod() {
 fn cs0133_body_less_cook_with_trailing_mod_rejected() {
     // CS-0133: a clean cook_mods tail (`local`) no longer keeps a body-less
     // cook alive — the modifier annotated a unit that never registered.
-    let err = parse("recipe r\n    cook \"x\" local\n").expect_err("body-less cook + mod must be rejected");
-    assert!(err.to_string().contains("declaration-only cook steps were removed"), "got: {}", err);
+    let err = parse("recipe r\n    cook \"x\" local\n")
+        .expect_err("body-less cook + mod must be rejected");
+    assert!(
+        err.to_string()
+            .contains("declaration-only cook steps were removed"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
@@ -2427,7 +2537,10 @@ fn disp_multi_output_unit_one_disposition() {
 #[test]
 fn disp_unannotated_cook_has_default_disposition() {
     let cf = parse("recipe build\n    cook \"x.o\" { cc -c x.c }\n").unwrap();
-    assert_eq!(*first_cook_disposition(&cf), crate::ast::Disposition::default());
+    assert_eq!(
+        *first_cook_disposition(&cf),
+        crate::ast::Disposition::default()
+    );
 }
 
 // negative paths
@@ -2466,16 +2579,17 @@ fn disp_bare_trailing_seal_rejected() {
     assert!(parse("recipe r\n    cook \"x\" { c } unseal\n").is_err());
 }
 
-
-
-
 #[test]
 fn disp_bare_local_line_is_rejected_loose_shell() {
     // CS-0134: recipe-body `local` on its own line is not a disposition and not
     // a module call, so it is rejected as loose shell.
     let err = parse("recipe r\n    cook \"x\" { c }\n    local\n").unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
+    assert!(
+        msg.contains("loose shell commands are not allowed"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
@@ -2492,7 +2606,10 @@ fn test_config_bare_value_quoted_gets_did_you_mean() {
     let err = parse(src).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("line 2"), "got: {msg}");
-    assert!(msg.contains("config values are Lua assignments"), "got: {msg}");
+    assert!(
+        msg.contains("config values are Lua assignments"),
+        "got: {msg}"
+    );
     assert!(msg.contains("OUTDIR = \"build\""), "got: {msg}");
 }
 
@@ -2533,10 +2650,13 @@ fn disp_seal_accepts_inline_files_and_multi_segment_keys() {
         format!("{seals:?}").contains("@seal:build:2"),
         "inline files probe must enter the seal set: {seals:?}"
     );
-    assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files {
-        globs: vec!["src/**".into()],
-        excludes: vec!["src/generated/**".into()],
-    });
+    assert_eq!(
+        cf.probes[0].produce,
+        crate::ast::ProbeProduce::Files {
+            globs: vec!["src/**".into()],
+            excludes: vec!["src/generated/**".into()],
+        }
+    );
 }
 
 #[test]
@@ -2547,7 +2667,10 @@ fn inline_seal_rejects_malformed_file_operands_and_reserved_keys() {
         ("!\"src/**\"", "requires a quoted include"),
         ("\"src/**\" !\"\"", "must not be empty"),
     ] {
-        let err = parse(&format!("recipe build\n    seal {seal}\n    test {{ true }}\n")).unwrap_err();
+        let err = parse(&format!(
+            "recipe build\n    seal {seal}\n    test {{ true }}\n"
+        ))
+        .unwrap_err();
         assert!(format!("{err}").contains(message), "{seal}: {err}");
     }
 
@@ -2556,7 +2679,7 @@ fn inline_seal_rejects_malformed_file_operands_and_reserved_keys() {
 }
 
 /// CS-0201: the segment cap is gone everywhere. It was enforced on the surface
-/// declaration and by `seal`/`ingredients`, and ignored by `cook.probe()`, so
+/// declaration and by `seal`/`inputs`, and ignored by `cook.probe()`, so
 /// modules mint `cc:find:raylib` as their ordinary case and it could be
 /// neither declared on the surface nor sealed.
 #[test]
@@ -2566,7 +2689,7 @@ fn multi_segment_probe_keys_parse_at_every_site() {
         "    lines { echo a }\n",
         "\n",
         "recipe build\n",
-        "    ingredients cc:find:raylib\n",
+        "    gather cc:find:raylib\n",
         "    seal cc:find:raylib\n",
         "    cook \"o-$<in>.txt\" {\n",
         "        echo hi > $<out>\n",
@@ -2582,10 +2705,20 @@ fn top_level_files_and_tools_desugar_to_probes() {
         "files app:src\n    \"src/**/*.rs\"\n    \"Cargo.toml\" !\"src/generated/**\"\n",
         "tools app:toolchain\n    cargo rustc\n",
         "recipe after\n    seal app:src app:toolchain\n    cook \"after\" { touch $<out> }\n",
-    )).unwrap();
+    ))
+    .unwrap();
     assert_eq!(cf.probes.len(), 2);
-    assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files { globs: vec!["src/**/*.rs".into(), "Cargo.toml".into()], excludes: vec!["src/generated/**".into()] });
-    assert_eq!(cf.probes[1].produce, crate::ast::ProbeProduce::Tools(vec!["cargo".into(), "rustc".into()]));
+    assert_eq!(
+        cf.probes[0].produce,
+        crate::ast::ProbeProduce::Files {
+            globs: vec!["src/**/*.rs".into(), "Cargo.toml".into()],
+            excludes: vec!["src/generated/**".into()]
+        }
+    );
+    assert_eq!(
+        cf.probes[1].produce,
+        crate::ast::ProbeProduce::Tools(vec!["cargo".into(), "rustc".into()])
+    );
 }
 
 #[test]
@@ -2598,8 +2731,18 @@ fn top_level_files_and_tools_commit_as_keywords() {
 
 #[test]
 fn probe_body_files_and_tools_name_top_level_replacement() {
-    for source in ["probe srcs\n    files { \"src/**\" }\n", "probe toolchain\n    tools { cc }\n"] {
+    for source in [
+        "probe srcs\n    files { \"src/**\" }\n",
+        "probe toolchain\n    tools { cc }\n",
+    ] {
         let err = parse(source).unwrap_err().to_string();
         assert!(err.contains("top-level"), "got: {err}");
     }
+}
+
+#[test]
+fn cs0229_ingredients_is_a_removed_keyword() {
+    let err = parse("recipe old\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n")
+        .expect_err("the old input keyword must be rejected");
+    assert!(err.to_string().contains("`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants"), "got: {err}");
 }

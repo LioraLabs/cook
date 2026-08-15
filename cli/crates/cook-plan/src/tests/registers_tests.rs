@@ -21,28 +21,22 @@ fn workspace_of_one(dir: &Path, lua_source: &str) -> Workspace {
 }
 
 #[test]
-fn register_workspace_preserves_ingredient_warning_order() {
+fn register_workspace_preserves_gather_warning_order() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = workspace_of_one(
         dir.path(),
         r#"
-                cook.recipe("first", {ingredients = {"a.none"}, excludes = {}}, function() end)
-                cook.recipe("second", {ingredients = {"b.none"}, excludes = {}}, function() end)
+                cook.recipe("first", {inputs = {"a.none"}, excludes = {}}, function() end)
+                cook.recipe("second", {inputs = {"b.none"}, excludes = {}}, function() end)
             "#,
     );
-    let registered = register_workspace(
-        &workspace,
-        None,
-        &[],
-        RegisterMode::Enumerate,
-        None,
-    )
-    .unwrap();
+    let registered =
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None).unwrap();
     assert_eq!(
         registered.warnings,
         vec![
-            "ingredient \"a.none\" matched 0 files (recipe first)",
-            "ingredient \"b.none\" matched 0 files (recipe second)",
+            "input \"a.none\" matched 0 files (recipe first)",
+            "input \"b.none\" matched 0 files (recipe second)",
         ]
     );
 }
@@ -115,9 +109,9 @@ fn codegen_with_module_recipes_discovers_dynamic_recipe_workspace_of_one() {
     assert!(ws.root.lua_source.contains("cook.require_var(\"gen\")"));
     // Simulate a module-registered recipe: append a dynamic registration
     // to the discovery Lua (list_names sees it; bodies never run).
-    ws.root.lua_source.push_str(
-        "\ncook.recipe(\"gen\", {requires = {}}, function() end)\n",
-    );
+    ws.root
+        .lua_source
+        .push_str("\ncook.recipe(\"gen\", {requires = {}}, function() end)\n");
     codegen_with_module_recipes(&mut ws, None, &[]).unwrap();
     assert!(
         ws.root.lua_source.contains("cook.dep_output(\"gen\")"),
@@ -201,9 +195,9 @@ fn cache_meta_is_invocation_independent_across_entry_points() {
 
     // (ii) Entry = the member Cookfile itself (invoked inside apps/rust);
     //      it registers as the workspace-of-one root under prefix "".
-    let ws_member =
-        Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
-    let reg_member = register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None).unwrap();
+    let ws_member = Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
+    let reg_member =
+        register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None).unwrap();
 
     let meta_of = |reg: &RegisteredWorkspace, key: &str| {
         reg.units_by_recipe
@@ -315,16 +309,11 @@ fn register_workspace_qualifies_recipe_units_deps() {
     )
     .unwrap();
 
-    let workspace = Workspace::load(
-        &dir.path().join("Cookfile"),
-        dir.path(),
-        &[],
-    )
-    .expect("workspace loads");
+    let workspace =
+        Workspace::load(&dir.path().join("Cookfile"), dir.path(), &[]).expect("workspace loads");
 
     let registered =
-        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None)
-            .expect("register");
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None).expect("register");
 
     let use_units = registered
         .units_by_recipe
@@ -404,7 +393,10 @@ fn chore_reachable_across_a_cookfile_boundary_registers_its_units() {
         &workspace,
         None,
         &[],
-        RegisterMode::Dispatch { name: "a", argv: &[] },
+        RegisterMode::Dispatch {
+            name: "a",
+            argv: &[],
+        },
         None,
     )
     .expect("register");
@@ -424,7 +416,10 @@ fn chore_unreachable_across_a_cookfile_boundary_stays_speculative() {
         &workspace,
         None,
         &[],
-        RegisterMode::Dispatch { name: "a", argv: &[] },
+        RegisterMode::Dispatch {
+            name: "a",
+            argv: &[],
+        },
         None,
     )
     .expect("register");
@@ -464,7 +459,10 @@ fn a_speculatively_skipped_chore_keeps_its_registration() {
         &workspace,
         None,
         &[],
-        RegisterMode::Dispatch { name: "a", argv: &[] },
+        RegisterMode::Dispatch {
+            name: "a",
+            argv: &[],
+        },
         None,
     )
     .expect("register");

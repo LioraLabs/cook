@@ -24,8 +24,12 @@ pub const PROGRESS_SCHEMA_VERSION: u32 = 1;
 pub struct RecipeId(u32);
 
 impl RecipeId {
-    pub fn new(raw: u32) -> Self { Self(raw) }
-    pub fn raw(self) -> u32 { self.0 }
+    pub fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+    pub fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// Opaque node identifier. Unique within a recipe.
@@ -33,8 +37,12 @@ impl RecipeId {
 pub struct NodeId(u32);
 
 impl NodeId {
-    pub fn new(raw: u32) -> Self { Self(raw) }
-    pub fn raw(self) -> u32 { self.0 }
+    pub fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+    pub fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// Why a node was skipped.

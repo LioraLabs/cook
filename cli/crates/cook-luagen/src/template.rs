@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use cook_contracts::lua_string;
-use cook_contracts::registration::{door_call, DEP_OUTPUT_MEMBER_NAME, DEP_OUTPUT_NAME, MEMBER_TO_STRING_NAME};
+use cook_contracts::registration::{
+    door_call, DEP_OUTPUT_MEMBER_NAME, DEP_OUTPUT_NAME, MEMBER_TO_STRING_NAME,
+};
 use cook_contracts::ACCESSORS;
 use cook_lang::ast::Body;
 
@@ -111,7 +113,7 @@ pub(crate) enum ProbeLowering {
 /// `$<in.FIELD>` bind the current data member (`item`); every other sigil
 /// resolves through the normal closed-set [`resolve`] against `ctx` — so
 /// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
-/// ingredient-driven body. `$<in>` is rejected when `ctx.mode` is `OneShot`
+/// input-driven body. `$<in>` is rejected when `ctx.mode` is `OneShot`
 /// (a member-fanout body has no path-input source).
 ///
 /// `probe_lowering` selects how a probe-value reference lowers: `LiteralSigil`
@@ -199,15 +201,10 @@ impl ConsultedEnv {
         if self.keys.is_empty() {
             return "{}".to_string();
         }
-        let parts: Vec<String> = self
-            .keys
-            .iter()
-            .map(|k| lua_string::literal(k))
-            .collect();
+        let parts: Vec<String> = self.keys.iter().map(|k| lua_string::literal(k)).collect();
         format!("{{{}}}", parts.join(", "))
     }
 }
-
 
 // ─── New sigil-based substitution engine ────────────────────────────────────
 
@@ -310,15 +307,16 @@ fn resolved_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             consulted_env.record(&key);
-            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
+            Ok(format!(
+                "cook.require_var(\"{}\")",
+                lua_string::escape_double_quoted(&key)
+            ))
         }
         // CS-0195: probe-value reference — one substitution helper, backed by
         // the CS-0192 law over the pre-pass store. Scalars render as their
         // canonical JSON token; composites/null/absent raise register-phase
         // diagnostics instead of interpolating a Lua heap address.
-        Resolved::ProbeRef { .. } => {
-            Ok(cook_contracts::registration::probe_subst_call(ident))
-        }
+        Resolved::ProbeRef { .. } => Ok(cook_contracts::registration::probe_subst_call(ident)),
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_member_fanout_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
@@ -351,7 +349,10 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         // a nested table value, and the bare string form for a scalar.
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {
-            let record = format!("cook.member_to_string(item[\"{}\"])", lua_string::escape_double_quoted(&field));
+            let record = format!(
+                "cook.member_to_string(item[\"{}\"])",
+                lua_string::escape_double_quoted(&field)
+            );
             if cook_contracts::accessor::ACCESSORS.contains(&field.as_str()) {
                 format!("(type(item) == \"string\" and path.{field}(item) or {record})")
             } else {
@@ -488,14 +489,15 @@ fn output_pattern_ident_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             out.record(&key);
-            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
+            Ok(format!(
+                "cook.require_var(\"{}\")",
+                lua_string::escape_double_quoted(&key)
+            ))
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
         // CS-0195: same helper as resolved_to_lua — one renderer per ident.
-        Resolved::ProbeRef { .. } => {
-            Ok(cook_contracts::registration::probe_subst_call(ident))
-        }
+        Resolved::ProbeRef { .. } => Ok(cook_contracts::registration::probe_subst_call(ident)),
         // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns
         // have no fan-out body context and `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
@@ -531,7 +533,9 @@ pub(crate) enum PlateTestMode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlateTestModeError {
-    #[error("body contains both per-item and batched references — `{0}` and `{1}` cannot both appear")]
+    #[error(
+        "body contains both per-item and batched references — `{0}` and `{1}` cannot both appear"
+    )]
     Mixed(&'static str, &'static str),
 }
 
@@ -583,8 +587,14 @@ fn lua_has_free_identifier(code: &str, name: &str) -> bool {
 #[derive(Debug, thiserror::Error)]
 pub enum PlateTestPlaceholderError {
     #[error("`{token}` is not valid in {mode_name} mode (line text: `{line}`)")]
-    BadPlaceholder { token: String, mode_name: String, line: String },
-    #[error("`{token}` is not valid in a plate or test body — plate and test steps declare no outputs")]
+    BadPlaceholder {
+        token: String,
+        mode_name: String,
+        line: String,
+    },
+    #[error(
+        "`{token}` is not valid in a plate or test body — plate and test steps declare no outputs"
+    )]
     OutForbidden { token: String },
     #[error("bare path-accessor `$<{accessor}>` is no longer valid; use `$<in.{accessor}>`")]
     BareAccessor { accessor: String },
@@ -648,9 +658,10 @@ fn validate_sigil_token(
     match crate::resolver::resolve(ident, &ctx) {
         // §5.4 firewall: a plate/test step has no output pattern, so it can
         // never name `NAME` as an iteration driver.
-        Resolved::Recipe { name, accessor: Some(accessor) } => {
-            Err(PlateTestPlaceholderError::LibAccessor { name, accessor })
-        }
+        Resolved::Recipe {
+            name,
+            accessor: Some(accessor),
+        } => Err(PlateTestPlaceholderError::LibAccessor { name, accessor }),
         // `$<in>` / `$<in.ACCESSOR>` need a per-item source.
         Resolved::Builtin(BuiltinKind::In | BuiltinKind::InAccessor(_))
             if mode != PlateTestMode::OneToOne =>

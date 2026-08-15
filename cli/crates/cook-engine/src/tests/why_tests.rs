@@ -33,7 +33,10 @@ fn ours() -> UnitDeterminants {
 #[test]
 fn diff_names_only_the_command_hash_when_that_is_all_that_differs() {
     let diffs = diff_against_manifest(&ours(), &manifest(2));
-    assert_eq!(diffs, vec![DeterminantDiff::CommandHash { ours: 1, theirs: 2 }]);
+    assert_eq!(
+        diffs,
+        vec![DeterminantDiff::CommandHash { ours: 1, theirs: 2 }]
+    );
 }
 
 #[test]
@@ -42,11 +45,14 @@ fn diff_names_a_sealed_probe_value_difference() {
     o.command_hash = 2;
     o.sealed_probes.insert("host".into(), "\"aarch64\"".into());
     let diffs = diff_against_manifest(&o, &manifest(2));
-    assert_eq!(diffs, vec![DeterminantDiff::Probe {
-        key: "host".into(),
-        ours: Some("\"aarch64\"".into()),
-        theirs: Some("\"x86_64\"".into()),
-    }]);
+    assert_eq!(
+        diffs,
+        vec![DeterminantDiff::Probe {
+            key: "host".into(),
+            ours: Some("\"aarch64\"".into()),
+            theirs: Some("\"x86_64\"".into()),
+        }]
+    );
 }
 
 #[test]

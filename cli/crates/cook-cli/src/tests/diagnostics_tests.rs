@@ -29,7 +29,10 @@ fn backtrace_optin_keeps_traceback() {
 
 #[test]
 fn plain_messages_pass_through() {
-    assert_eq!(sanitize_error("recipe not found: zzz", false), "recipe not found: zzz");
+    assert_eq!(
+        sanitize_error("recipe not found: zzz", false),
+        "recipe not found: zzz"
+    );
 }
 
 #[test]

@@ -8,7 +8,6 @@
   "register"
   "use"
   "import"
-  "ingredients"
   "gather"
   "cook"
   "test"
@@ -119,16 +118,10 @@
 (cook_step
   outputs: (string) @string.special)
 
-(ingredients_step
-  (string) @string)
-
-(ingredients_step
-  probe: (identifier) @variable)
-
-(ingredient_exclude
+(gather_exclude
   "!" @operator)
 
-(ingredient_exclude
+(gather_exclude
   (string) @string)
 
 (seal_step

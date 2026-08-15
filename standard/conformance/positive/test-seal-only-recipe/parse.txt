@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="verify" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=ShellBlock(["./run.sh"]) seal=["@seal:verify:2", "host"]
@@ -15,6 +15,6 @@ Cookfile
   probes:
     Probe name="@seal:verify:2" line=2
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["src/*.c"] excludes=[]

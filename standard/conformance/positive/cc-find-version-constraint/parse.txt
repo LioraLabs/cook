@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local r = cook_cc.find(\"zlib\", { version = \">=1.2,<2.0\" })\n        if not r.found then error(\"expected zlib hit\") end")

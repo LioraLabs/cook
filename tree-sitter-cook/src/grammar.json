@@ -744,17 +744,8 @@
                   "type": "SEQ",
                   "members": [
                     {
-                      "type": "CHOICE",
-                      "members": [
-                        {
-                          "type": "SYMBOL",
-                          "name": "ingredients_step"
-                        },
-                        {
-                          "type": "SYMBOL",
-                          "name": "seal_step"
-                        }
-                      ]
+                      "type": "SYMBOL",
+                      "name": "seal_step"
                     },
                     {
                       "type": "REPEAT",
@@ -1091,10 +1082,6 @@
               "members": [
                 {
                   "type": "SYMBOL",
-                  "name": "ingredients_step"
-                },
-                {
-                  "type": "SYMBOL",
                   "name": "gather_step"
                 },
                 {
@@ -1127,96 +1114,6 @@
         }
       ]
     },
-    "ingredients_step": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "ingredients"
-            },
-            {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "string"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "ingredient_exclude"
-                }
-              ]
-            },
-            {
-              "type": "REPEAT",
-              "content": {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "CHOICE",
-                    "members": [
-                      {
-                        "type": "SYMBOL",
-                        "name": "_step_continuation_newline"
-                      },
-                      {
-                        "type": "BLANK"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "CHOICE",
-                    "members": [
-                      {
-                        "type": "SYMBOL",
-                        "name": "string"
-                      },
-                      {
-                        "type": "SYMBOL",
-                        "name": "ingredient_exclude"
-                      }
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "type": "SYMBOL",
-              "name": "_newline"
-            }
-          ]
-        },
-        {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "ingredients"
-            },
-            {
-              "type": "FIELD",
-              "name": "probe",
-              "content": {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_bare_probe_key"
-                },
-                "named": true,
-                "value": "identifier"
-              }
-            },
-            {
-              "type": "SYMBOL",
-              "name": "_newline"
-            }
-          ]
-        }
-      ]
-    },
     "gather_step": {
       "type": "CHOICE",
       "members": [
@@ -1236,7 +1133,7 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "ingredient_exclude"
+                  "name": "gather_exclude"
                 }
               ]
             },
@@ -1266,7 +1163,7 @@
                       },
                       {
                         "type": "SYMBOL",
-                        "name": "ingredient_exclude"
+                        "name": "gather_exclude"
                       }
                     ]
                   }
@@ -1331,7 +1228,7 @@
         }
       ]
     },
-    "ingredient_exclude": {
+    "gather_exclude": {
       "type": "SEQ",
       "members": [
         {
@@ -1362,7 +1259,7 @@
               },
               {
                 "type": "SYMBOL",
-                "name": "ingredient_exclude"
+                "name": "gather_exclude"
               }
             ]
           }

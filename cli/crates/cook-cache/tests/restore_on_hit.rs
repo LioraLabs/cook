@@ -7,14 +7,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
+    ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend, artifact_key, cloud_key, put_bytes,
 };
-use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
+use cook_cache::store::{CACHE_VERSION, FileRecord, StepEntry};
 use cook_cache::{
-    check::{needs_rebuild_cook, RebuildResult, RestoreCtx},
     RebuildReason,
+    check::{RebuildResult, RestoreCtx, needs_rebuild_cook},
 };
-use filetime::{set_file_mtime, FileTime};
+use filetime::{FileTime, set_file_mtime};
 
 fn write(p: &std::path::Path, bytes: &[u8]) {
     std::fs::write(p, bytes).expect("write");
@@ -80,8 +80,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         mode: ArtifactMeta::default_mode(),
         target: None,
     };
-    put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta)
-        .expect("seed put");
+    put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta).expect("seed put");
 
     // Simulate variant-toggle drift: overwrite with stale bytes, and force a
     // distinct mtime so the cache's mtime fast-path doesn't short-circuit
@@ -289,7 +288,10 @@ fn restore_rejects_tampered_backend_bytes() {
         matches!(result, RebuildResult::Rebuild(RebuildReason::OutputChanged)),
         "tampered backend bytes must be rejected: got {result:?}"
     );
-    assert!(updated.is_none(), "rebuild path must not return an updated entry");
+    assert!(
+        updated.is_none(),
+        "rebuild path must not return an updated entry"
+    );
 
     // The on-disk file MUST NOT be overwritten with the tampered bytes.
     let on_disk = std::fs::read(wd.join("out.o")).expect("read out.o");

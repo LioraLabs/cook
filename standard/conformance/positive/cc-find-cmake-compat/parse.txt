@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\")\n        if not r.found then return end\n        for _, a in ipairs(r.tried) do\n            if a.strategy == \"cmake-compat\" then break end\n        end")

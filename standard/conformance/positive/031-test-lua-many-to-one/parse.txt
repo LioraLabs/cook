@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="integration" line=1
       deps: []
-      ingredients: ["tests/*.lua"]
+      inputs: ["tests/*.lua"]
       excludes: []
       steps:
         Gather

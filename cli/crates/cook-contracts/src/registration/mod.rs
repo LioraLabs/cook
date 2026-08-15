@@ -269,7 +269,7 @@ pub const MEMBER_SOURCE_KIND_GATHER: &str = "gather";
 /// type stays (it is the parser's), but emitter and consumer now share THIS
 /// declaration and the key constants above.
 ///
-/// - `Probe { source_ref }` — `ingredients <ref>`, the ref verbatim (`key`
+/// - `Probe { source_ref }` — `inputs <ref>`, the ref verbatim (`key`
 ///   or `key:field`; a probe key may itself be two-segment `ns:name`).
 ///   Resolution against the probe registry happens in the register
 ///   pre-pass (COOK-190); the body reads the resolved member array via
@@ -354,7 +354,10 @@ pub enum ChoreParamMeta {
     ///
     /// Named registry keys use a unique string per registration pass;
     /// the key is `"__cook_chore_default:<chore>:<param>:<serial>"`.
-    DefaultedLua { name: String, default_key_name: String },
+    DefaultedLua {
+        name: String,
+        default_key_name: String,
+    },
     /// A one-or-more variadic — collects all remaining argv into a Lua sequence;
     /// zero remaining argv is an error.
     VariadicPlus { name: String },

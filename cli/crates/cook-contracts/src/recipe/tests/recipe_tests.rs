@@ -13,8 +13,16 @@ fn set(names: &[&str]) -> std::collections::BTreeSet<String> {
 
 #[test]
 fn a_seed_reaches_itself_and_its_transitive_requires() {
-    let g = graph(&[("app", &["lib"]), ("lib", &["gen"]), ("gen", &[]), ("other", &[])]);
-    assert_eq!(reachable_from(&g, ["app".to_string()]), set(&["app", "lib", "gen"]));
+    let g = graph(&[
+        ("app", &["lib"]),
+        ("lib", &["gen"]),
+        ("gen", &[]),
+        ("other", &[]),
+    ]);
+    assert_eq!(
+        reachable_from(&g, ["app".to_string()]),
+        set(&["app", "lib", "gen"])
+    );
 }
 
 #[test]
@@ -41,7 +49,13 @@ fn a_cycle_terminates() {
 
 #[test]
 fn many_seeds_union_their_closures() {
-    let g = graph(&[("a", &["x"]), ("b", &["y"]), ("x", &[]), ("y", &[]), ("z", &[])]);
+    let g = graph(&[
+        ("a", &["x"]),
+        ("b", &["y"]),
+        ("x", &[]),
+        ("y", &[]),
+        ("z", &[]),
+    ]);
     assert_eq!(
         reachable_from(&g, ["a".to_string(), "b".to_string()]),
         set(&["a", "b", "x", "y"])

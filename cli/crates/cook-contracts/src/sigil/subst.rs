@@ -56,9 +56,9 @@ pub fn substitute(root: &JsonValue, path: &[Seg], ident: &str) -> Result<String,
     for seg in path {
         value = match seg {
             Seg::Field(name) => match value {
-                JsonValue::Object(map) => map.get(name).ok_or_else(|| {
-                    format!("$<{ident}>: the value has no member '{name}'")
-                })?,
+                JsonValue::Object(map) => map
+                    .get(name)
+                    .ok_or_else(|| format!("$<{ident}>: the value has no member '{name}'"))?,
                 other => {
                     return Err(format!(
                         "$<{ident}>: cannot address member '{name}' of {} {} value",
@@ -69,15 +69,13 @@ pub fn substitute(root: &JsonValue, path: &[Seg], ident: &str) -> Result<String,
             },
             Seg::Index(idx) => {
                 // §22.5.7 defines `[i]` as a one-based array element.
-                let i: usize = idx.parse().map_err(|_| {
-                    format!("$<{ident}>: `[{idx}]` is not a numeric index")
-                })?;
+                let i: usize = idx
+                    .parse()
+                    .map_err(|_| format!("$<{ident}>: `[{idx}]` is not a numeric index"))?;
                 match value {
                     JsonValue::Array(items) => {
                         if i == 0 {
-                            return Err(format!(
-                                "$<{ident}>: `[0]` — array indices are one-based"
-                            ));
+                            return Err(format!("$<{ident}>: `[0]` — array indices are one-based"));
                         }
                         items.get(i - 1).ok_or_else(|| {
                             format!(

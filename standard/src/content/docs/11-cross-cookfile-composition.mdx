@@ -34,7 +34,7 @@ A conforming implementation MUST reject an `import` declaration for which:
 
 A conforming implementation MUST treat tree-relative and sigil-anchored imports uniformly for the purposes of qualified name references (§{comp.qualified-refs}), dependency implications (§{xref.dep-implications}), and duplicate-alias detection (§{comp.duplicates-and-cycles}). The two shapes differ only in their resolution rule.
 
-An `import` declaration does NOT bring a Lua value into scope under `<name>`. The alias `<name>` is reserved for cross-Cookfile recipe references of the form `<name>.<recipe>` that appear in dependency lists (§{steps.ingredients}), not for Lua expressions. A Cookfile loaded by `import` is parsed independently; its own `use` and `import` declarations are resolved relative to its own directory, not the importer's directory.
+An `import` declaration does NOT bring a Lua value into scope under `<name>`. The alias `<name>` is reserved for cross-Cookfile recipe references of the form `<name>.<recipe>` that appear in dependency lists (§{steps.gather}), not for Lua expressions. A Cookfile loaded by `import` is parsed independently; its own `use` and `import` declarations are resolved relative to its own directory, not the importer's directory.
 
 A conforming implementation MUST reject a Cookfile in which two `import` declarations share the same `<name>` (App. A.2, duplicate-import clause; see also §{comp.duplicates-and-cycles}).
 

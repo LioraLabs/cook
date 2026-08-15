@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="translate" line=1
       deps: []
-      ingredients: ["docs/en/**/*.md"]
+      inputs: ["docs/en/**/*.md"]
       excludes: []
       steps:
         Gather

@@ -193,11 +193,7 @@ pub fn build_config_sandbox_env(
 /// The `host` table: `env` / `read` accessor functions (recording on call) plus
 /// `os` / `arch` fields resolved through a `__index` metamethod so a field read
 /// is recorded too.
-fn build_host_table(
-    lua: &Lua,
-    working_dir: &Path,
-    reads: &SharedHostReads,
-) -> LuaResult<LuaTable> {
+fn build_host_table(lua: &Lua, working_dir: &Path, reads: &SharedHostReads) -> LuaResult<LuaTable> {
     let host = lua.create_table()?;
 
     // host.env(name, default) — raw field; records the read on call.
@@ -205,17 +201,15 @@ fn build_host_table(
         let sink = reads.clone();
         host.set(
             "env",
-            lua.create_function(
-                move |_, (name, default): (String, Option<String>)| {
-                    let value = std::env::var(&name).ok().or(default);
-                    sink.borrow_mut().push(HostRead {
-                        kind: HostReadKind::Env,
-                        key: name,
-                        value: value.clone().unwrap_or_default(),
-                    });
-                    Ok(value)
-                },
-            )?,
+            lua.create_function(move |_, (name, default): (String, Option<String>)| {
+                let value = std::env::var(&name).ok().or(default);
+                sink.borrow_mut().push(HostRead {
+                    kind: HostReadKind::Env,
+                    key: name,
+                    value: value.clone().unwrap_or_default(),
+                });
+                Ok(value)
+            })?,
         )?;
     }
 
@@ -234,9 +228,8 @@ fn build_host_table(
                         wd.join(p)
                     }
                 };
-                let contents = std::fs::read_to_string(&target).map_err(|e| {
-                    mlua::Error::runtime(format!("host.read({path:?}): {e}"))
-                })?;
+                let contents = std::fs::read_to_string(&target)
+                    .map_err(|e| mlua::Error::runtime(format!("host.read({path:?}): {e}")))?;
                 sink.borrow_mut().push(HostRead {
                     kind: HostReadKind::Read,
                     key: path,
