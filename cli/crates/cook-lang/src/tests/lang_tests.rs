@@ -2118,18 +2118,17 @@ fn seal_baseline_reaches_both_cook_and_test() {
     assert!(first_test_seal(&cf).contains("toolchain"));
 }
 
-/// A trailing `seal` on a test adds to the baseline; the tail is additive.
+/// CS-0225 rejects a trailing `seal` on a test.
 #[test]
-fn test_trailing_seal_adds_to_baseline() {
+fn test_trailing_seal_is_rejected() {
     let err = parse("recipe verify\n    gather \"a.c\"\n    seal a\n    test { true } seal b c\n")
         .unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }
 
-/// `effective(unit) = (baseline ∪ trailing seals) − trailing unseals`, on a
-/// test exactly as on a cook (§8.4.3 rule 4).
+/// CS-0225 rejects a trailing `unseal` on a test.
 #[test]
-fn test_trailing_unseal_removes_from_baseline() {
+fn test_trailing_unseal_is_rejected() {
     let err = parse(
         "recipe verify\n    gather \"a.c\"\n    seal a b\n    test { true } unseal a seal c\n",
     )
@@ -2137,9 +2136,9 @@ fn test_trailing_unseal_removes_from_baseline() {
     assert!(err.to_string().contains("CS-0225"));
 }
 
-/// An `unseal` on one test MUST NOT leak to a sibling test or cook unit.
+/// A removed `unseal` is rejected before it can affect any sibling unit.
 #[test]
-fn test_unseal_is_per_unit_only() {
+fn test_unseal_is_rejected_before_sibling_units() {
     let err = parse(
         "recipe verify\n    gather \"a.c\"\n    seal a\n\
          \x20   test { one } unseal a\n    test { two }\n    cook \"x.o\" { cc }\n",
@@ -2156,14 +2155,14 @@ fn test_seal_baseline_is_order_independent() {
     assert!(first_test_seal(&cf).contains("host"));
 }
 
-/// A test that seals nothing keeps an empty effective set (no accidental fold).
+/// A test in an unsealed recipe keeps an empty recipe seal set.
 #[test]
 fn test_without_seal_has_empty_set() {
     let cf = parse("recipe verify\n    gather \"a.c\"\n    test { true }\n").unwrap();
     assert!(first_test_seal(&cf).is_empty());
 }
 
-/// Bare trailing `seal`/`unseal` on a test is rejected (§8.4.3 rule 4).
+/// Bare trailing `seal`/`unseal` on a test is rejected by CS-0225.
 #[test]
 fn test_bare_seal_rejected() {
     for src in [
@@ -2181,8 +2180,7 @@ fn test_bare_seal_rejected() {
     }
 }
 
-/// CS-0159: a test takes the INPUT half of the tail only — `share_mod`
-/// states a fact about an output artifact, and a test produces none.
+/// A test admits no tail; output dispositions apply only to producing units.
 #[test]
 fn test_share_mod_rejected() {
     for kw in ["local", "pinned", "nondet"] {
@@ -2230,13 +2228,9 @@ fn test_unknown_trailing_content_rejected() {
     );
 }
 
-/// Seal-ref validation is shared with the cook path: the quoted form and a
-/// third `:IDENT` segment are rejected on a test tail too.
+/// Removed test seal tails are rejected before their refs are interpreted.
 #[test]
-fn test_seal_ref_validation_matches_cook() {
-    // CS-0201: `seal "host"` and `seal a:b:c` are both VALID now — the quoted
-    // form is the escape hatch at every site, and the segment cap is gone.
-    // What is still malformed is an empty segment and a dotted bare key.
+fn test_removed_seal_tail_does_not_parse_refs() {
     for bad in ["seal :host", "seal host:", "seal cc.version"] {
         let src = format!("recipe v\n    gather \"a.c\"\n    test {{ true }} {bad}\n");
         let err = parse(&src).expect_err("malformed probe ref must be rejected");
@@ -2247,18 +2241,17 @@ fn test_seal_ref_validation_matches_cook() {
     }
 }
 
-/// A module-prefixed probe ref (`cc:toolchain`) is admitted on a test tail.
+/// A module-prefixed ref does not make a removed test seal tail valid.
 #[test]
-fn test_seal_accepts_module_prefixed_ref() {
+fn test_removed_seal_tail_rejects_module_prefixed_ref() {
     let err =
         parse("recipe v\n    gather \"a.c\"\n    test { true } seal cc:toolchain\n").unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }
 
-/// Recipe-level `unseal` stays rejected, and the diagnostic now names both
-/// step kinds that accept the trailing form.
+/// Recipe-level `unseal` stays rejected by CS-0225.
 #[test]
-fn recipe_level_unseal_still_rejected_mentions_test() {
+fn recipe_level_unseal_still_rejected() {
     let err = parse("recipe v\n    seal a\n    unseal a\n    test { true }\n")
         .expect_err("recipe-level unseal must be rejected");
     let ParseError::Parse { message, .. } = err else {
@@ -2301,8 +2294,7 @@ fn disp_recipe_seal_stacks_additively() {
 }
 
 #[test]
-fn disp_trailing_seal_unseal() {
-    // base {a,b} ∪ trailing {c} − trailing unseal {a} = {b,c}
+fn disp_removed_trailing_seal_unseal_is_rejected() {
     let err = parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap_err();
     assert!(err.to_string().contains("CS-0225"));
 }

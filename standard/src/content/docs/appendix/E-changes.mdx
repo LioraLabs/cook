@@ -3109,10 +3109,27 @@ anonymous determinant cannot collide with a quoted probe key.
 not a universe: it names the determinant set directly. Inline tool identity is
 also unnecessary; authors seal a top-level `tools` declaration by name.
 
-**Conformance.** `seal-inline-files` pins the recipe baseline reaching both a
+**Conformance.** `070-seal-inline-files` pins the recipe baseline reaching both a
 producing unit and a test unit; `probe-seal` pins the probe-body position. The
 CLI probe test edits the inline-sealed file and proves the sourceless recipe
 unit misses without gaining an iteration source.
+
+## CS-0226 — remove the `envs` probe producer [#changes.cs-0226]
+
+**Date:** 2026-08-14
+**Version:** v0.18
+**Sections affected:** §{decl.config}, §{steps.cook-disposition}, §{xref.var-namespace}, §{mods.authoring.probes}, §{mods.authoring.seal}, §{exec.cache.lua-variable-reads}, §{cat.probes.decl}, §{cat.probes.exec}, and §{grammar-appendix.probe}.
+
+**Summary.** Removes `envs { NAME, … }` from the probe-body grammar. An
+unconsumed ambient variable is now observed by an ordinary named shell probe,
+for example `lines { echo "$NAME" }`, and that probe is sealed by name. The
+replacement preserves grouping, naming, and shareability without a dedicated
+producer kind. A source-less observation probe re-runs whenever reached under
+CS-0178, while an unchanged value preserves consumer cache hits; changing the
+environment changes the sealed consumer key. The removed spelling receives a
+CS-0226 diagnostic naming the shell-probe replacement. No cache-version bump:
+existing Cookfiles fail at parse time and migrated probes produce a new source
+string and therefore new keys.
 
 ## CS-0225 — collapse the seal surface to one tier [#changes.cs-0225]
 

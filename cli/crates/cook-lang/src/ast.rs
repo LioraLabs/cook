@@ -292,15 +292,13 @@ pub struct CookStep {
 pub struct TestStep {
     pub body: Body,
     /// Effective `seal` refs — sorted, de-duplicated bare probe keys. Folded
-    /// from the recipe-level `seal` baseline plus this test's trailing
-    /// recipe-level `seal` set (§8.4.3). A test unit is a cacheable
+    /// from the recipe-level `seal` set (§8.4.3). A test unit is a cacheable
     /// unit, so it keys on its sealed probes' values exactly as a `cook`
     /// unit does (§17.4 rule 1).
     ///
     /// Unlike [`CookStep`], a test carries no `share_mod` — `local` /
     /// `pinned` / `nondet` state facts about an *output artifact*, and a test
-    /// produces a pass/fail record rather than artifacts. The test tail is
-    /// therefore the input half of `cook_mods` only.
+    /// produces a pass/fail record rather than artifacts. Tests admit no tail.
     pub seal: BTreeSet<String>,
 }
 
