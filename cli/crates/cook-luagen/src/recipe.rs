@@ -1258,13 +1258,13 @@ pub fn generate_with_names(
 ///
 /// Member-materialisation is structurally correct here; the demand-driven
 /// probe pre-pass (§22.5.10) and the per-member fingerprint fold (§17) are the
-/// COOK-64 runtime slice. The `$(cmd)` and `(LUA_EXPR)` sources were removed
-/// in COOK-97 — only `ProbeKey` remains.
+/// COOK-64 runtime slice. Retained sources are named probes and named files
+/// manifests; command and anonymous-Lua sources are removed.
 ///
-/// COOK-190: the ref passes through verbatim. Probe keys are canonically
-/// two-segment (`ns:name`, §22.5.2), so `a:b` is ambiguous between a
-/// two-segment key and a `key:field` selector — resolvable only against the
-/// probe registry, which exists at register time, not codegen time. The
+/// The ref passes through verbatim. Probe keys admit unlimited segments, so
+/// the final colon is ambiguous between a key segment and a `key:field`
+/// selector — resolvable only against the probe registry, which exists at
+/// register time, not codegen time. The
 /// register pre-pass (§22.5.10) resolves the ref (exact key match wins, else
 /// the trailing segment is a field selector) and stores the member array
 /// under the verbatim ref, where this lookup finds it.

@@ -785,7 +785,7 @@ fn probe_name_accepts_three_or_more_segments() {
 #[test]
 fn probe_name_accepts_hyphens_in_every_segment() {
     // The COOK-408 case: declarable and sigil-referenceable, but `seal` and
-    // `inputs` rejected it, so the key could be neither pinned nor
+    // `gather` rejected it, so the key could be neither pinned nor
     // consumed.
     let t = tokenize("probe demo:cc-version").unwrap();
     assert_eq!(t[0].value, Token::ProbeHeader { name: "demo:cc-version".into(), deps: vec![] });

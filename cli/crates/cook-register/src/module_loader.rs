@@ -125,7 +125,7 @@ impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
 /// seal keys), and every term of the declaration is already a determinant, so
 /// a module that changes what a maker emits already busts the unit's key.
 ///
-/// The reason is the `inputs <probe>` pre-pass: it runs a probe's
+/// The reason is the `gather <probe>` pre-pass: it runs a probe's
 /// `produce` source on THIS VM (`cook_probe::eval::ProduceRunner`), and a
 /// probe's value is keyed by a fingerprint that folds no module source at all.
 /// The pre-pass snapshots this observer around the run and folds what it saw
@@ -158,7 +158,7 @@ pub fn register_module_loader(
 // ---------------------------------------------------------------------------
 
 /// COOK-64 §22.5.10: register-phase store of resolved member-source probe
-/// values, keyed by probe key. COOK-190 / §22.5.10: for an `inputs
+/// values, keyed by probe key. COOK-190 / §22.5.10: for a `gather
 /// <probe>` source ref resolved as a `key:field` selector, the pre-pass also
 /// stashes the selected array under the verbatim ref (e.g. `"cards:list"`)
 /// alongside the whole value stored under the bare probe key — a source ref
@@ -175,7 +175,7 @@ pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 /// `label:`-prefixed) key. Three steps, in order (CS-0219):
 ///
 /// 1. The register-phase probe-value store, if the key is already there —
-///    put there by the `inputs <probe>` pre-pass, or by an earlier read
+///    put there by the `gather <probe>` pre-pass, or by an earlier read
 ///    through step 2.
 /// 2. Otherwise, if the key names a probe DECLARED in this pass, resolve it
 ///    now: run the same `cook_probe::eval` sequence the pre-pass and the

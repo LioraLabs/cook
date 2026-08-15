@@ -3346,7 +3346,7 @@ fn member_fanout_cook_fans_out_per_member() {
     );
     assert!(
         lua.contains("cook.add_unit({inputs = {}, output = _cook_out, command = "),
-        "missing inputs-probe add_unit, got:\n{lua}"
+        "missing gather-probe add_unit, got:\n{lua}"
     );
 }
 
@@ -3456,7 +3456,7 @@ fn member_fanout_test_fans_out_per_member() {
 
 #[test]
 fn member_fanout_surface_carries_source_metadata() {
-    // COOK-64: the register pre-pass learns a recipe's inputs-probe-feeding
+    // COOK-64: the register pre-pass learns a recipe's gather-probe-feeding
     // probe from `__member_source` on the surface meta — without running the body.
     let probe = generate(
         &cook_lang::parse("recipe a\n    gather cards\n    cook \"o/$<in.id>\" { x $<out> }\n")
@@ -3487,7 +3487,7 @@ fn member_fanout_unit_folds_member_into_fingerprint() {
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(
         lua.contains("member = cook.member_to_string(item)"),
-        "inputs-probe cook unit should carry member, got:\n{lua}"
+        "gather-probe cook unit should carry member, got:\n{lua}"
     );
 }
 

@@ -776,7 +776,7 @@ pub fn register_unit_api(
         // member, because the member is an observable input (§17.1 observable
         // 5) and is already folded into `command_hash` above. Before CS-0186
         // that case was refused along with the source-less one, so a `test`
-        // fanned out over `inputs <probe>` re-ran on every invocation
+        // fanned out over `gather <probe>` re-ran on every invocation
         // while its `cook` sibling over the same source cached per member.
         //
         // This is the DECLARED half of the rule. The engine asks it again when

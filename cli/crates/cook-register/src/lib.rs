@@ -203,20 +203,6 @@ pub enum RegisterError {
     )]
     MemberSourceNotArray { selector: String, shape: String },
 
-    /// COOK-353: a `gather <probe>` source named a `files { … }` probe.
-    /// A `files` producer's value is a MAP of path → content hash (§22.5.2), so
-    /// it can never be the array a `gather <probe>` driver iterates. The
-    /// generic non-array diagnostic is technically correct here but unhelpful:
-    /// it reports a shape mismatch when the real answer is that this producer
-    /// kind is seal-only. Named separately so the fix can be stated.
-    #[error(
-        "gather <probe> source '{key}' names a `files {{ … }}` probe, whose value is a \
-         map of path to content hash — not the array a gather <probe> driver iterates \
-         (§22.5.2, §22.5.10). A `files` probe is a sealable DETERMINANT, not a driver: attach \
-         it with `seal {key}` and give the recipe its own `gather \"glob\"` to iterate."
-    )]
-    MemberSourceFilesProbe { key: String },
-
     /// COOK-64 §22.5.10: a `gather <probe>`-feeding probe declares a file input that
     /// is produced by a recipe in this Cookfile — i.e. a build artifact. An
     /// `gather <probe>` source MUST be statically evaluable (it is resolved before

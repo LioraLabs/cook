@@ -233,7 +233,7 @@ fn format_step(step: &Step) -> String {
             }
             s
         }
-        // §8.x: gather <probe> desugar node — probe-key source only (COOK-97).
+        // §8.x: gather desugar node — named probe or named files source.
         Step::MemberSource { step, .. } => format!(
             "MemberSource source={}",
             match &step.source {

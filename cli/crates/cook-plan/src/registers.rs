@@ -241,7 +241,7 @@ pub fn register_workspace(
     env_overrides: &[String],
     mode: RegisterMode<'_>,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
-    // Backend for the `inputs <probe>` pre-pass only — see
+    // Backend for the `gather <probe>` pre-pass only — see
     // `register_cookfile`'s parameter of the same name (COOK-359).
 ) -> Result<RegisteredWorkspace, PipelineError> {
     let shared_outputs: SharedTerminalOutputs =

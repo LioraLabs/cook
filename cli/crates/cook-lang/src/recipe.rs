@@ -343,7 +343,7 @@ pub(crate) fn parse_recipe(
     let mut inputs = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
-    // §{steps.inputs}: glob-pattern `inputs` and `inputs <probe>`
+    // §{steps.gather}: glob-pattern `gather` and `gather <probe>`
     // (probe member source) are mutually exclusive within a recipe, and at most
     // one probe source is allowed per recipe.
     let mut member_source_seen = false;
@@ -422,7 +422,7 @@ pub(crate) fn parse_recipe(
                     continue;
                 }
                 // COOK-171: `seal` is a recipe-body step (a determinant input
-                // stream, sibling of `inputs`). It contributes to the
+                // stream, sibling of `gather`). It contributes to the
                 // recipe-level baseline applied to every cook at finalize.
                 if let Some(rest) = strip_keyword(text, "seal") {
                     if rest.trim().is_empty() {
@@ -455,7 +455,7 @@ pub(crate) fn parse_recipe(
                     if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message: "a recipe may declare at most one `inputs <probe>` source"
+                            message: "a recipe may declare at most one `gather <probe>` source"
                                 .to_string(),
                         });
                     }
@@ -465,7 +465,7 @@ pub(crate) fn parse_recipe(
                         if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "duplicate 'inputs' line".to_string(),
+                                message: "duplicate 'gather' line".to_string(),
                             });
                         }
                         let (inc, exc, new_pos) =
@@ -480,7 +480,7 @@ pub(crate) fn parse_recipe(
                         if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "inputs: cannot mix glob patterns with a probe source"
+                                message: "gather: cannot mix glob patterns with a probe source"
                                     .to_string(),
                             });
                         }

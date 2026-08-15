@@ -302,10 +302,9 @@ pub struct TestStep {
     pub seal: BTreeSet<String>,
 }
 
-/// The source of a member-source step's data members. Only a probe-key source
-/// remains after COOK-97: the `$(cmd)` shell-capture and `(LUA_EXPR)` reserved
-/// forms have been removed. CS-0091 / COOK-62 introduced the node; COOK-97
-/// drops the non-probe variants.
+/// The source of a member-source step's data members. Retained descriptors
+/// name probes or named files manifests; command and anonymous-Lua sources
+/// are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemberSource {
     /// A probe key, optionally selecting a nested array field (`cards`,
@@ -316,16 +315,15 @@ pub enum MemberSource {
     GatherKey(String),
 }
 
-/// A member-source step — the internal `inputs <probe>` desugar node (§8.2).
-/// At most one per recipe; mutually exclusive with `inputs`. The current
-/// member binds as `$<in>` / `$<in.field>`. Source is always a `ProbeKey`
-/// (the `$(cmd)` shell-capture and `(LUA_EXPR)` anonymous-source forms were
-/// removed in COOK-97; see §8.2 and CS-0097).
+/// A member-source step — the internal `gather <probe>` desugar node (§8.2).
+/// At most one per recipe; mutually exclusive with glob-pattern `gather`. The current
+/// member binds as `$<in>` / `$<in.field>`. Retained sources are named probes
+/// and named files manifests; command and anonymous-Lua sources are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberSourceStep {
     pub source: MemberSource,
     /// CS-0197: quoted file globs trailing the probe key
-    /// (`inputs cases "src/*.txt"`). Resolved at register time like
+    /// (`gather cases "src/*.txt"`). Resolved at register time like
     /// ordinary recipe inputs and folded into EVERY member unit's
     /// declared inputs — the coarse-grained answer to "what does each
     /// member's body read"; per-member precision is a future amendment.

@@ -810,7 +810,7 @@ pub fn execute_dag(
         // a hit for a unit with nothing whose movement could invalidate it.
         //
         // The member arm is why the predicate is not just an input check. A
-        // fan-out unit over `inputs <probe>` may declare no file by design
+        // fan-out unit over `gather <probe>` may declare no file by design
         // and is keyed on its member, which reaches the key through `command_hash`.
         if !cook_contracts::cache::record::has_something_to_key_on(
             meta.output_paths.len(),

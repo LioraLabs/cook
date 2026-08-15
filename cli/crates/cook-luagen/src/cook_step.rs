@@ -594,7 +594,7 @@ pub(crate) fn generate_member_fanout_cook_step(
     let multi = out_exprs.len() > 1;
     let out_field = if multi { "outputs = _cook_outs" } else { "output = _cook_out" };
 
-    // CS-0197: trailing quoted globs on `inputs <probe>` resolve ONCE at
+    // CS-0197: trailing quoted globs on `gather <probe>` resolve ONCE at
     // register time (outside the member loop — same files for every member,
     // same resolution rule as ordinary recipe inputs) and become each
     // member unit's declared inputs. Without them the field stays the empty

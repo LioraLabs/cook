@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 const steps = readFileSync(new URL('../../content/docs/08-step-kinds.mdx', import.meta.url), 'utf8');
 const grammar = readFileSync(new URL('../../content/docs/appendix/A-grammar.mdx', import.meta.url), 'utf8');
 const cache = readFileSync(new URL('../../content/docs/17-cache.mdx', import.meta.url), 'utf8');
+const probes = readFileSync(new URL('../../content/docs/22-probe-units.mdx', import.meta.url), 'utf8');
+const modules = readFileSync(new URL('../../content/docs/12-modules.mdx', import.meta.url), 'utf8');
 const changes = readFileSync(new URL('../../content/docs/appendix/E-changes.mdx', import.meta.url), 'utf8');
 
 const section = (document: string, start: string, end: string) => {
@@ -30,7 +32,7 @@ const expectSevenRuleDispatch = (dispatch: string) => {
   ]);
 };
 
-const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cache, changesDoc = changes } = {}) => {
+const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cache, probesDoc = probes, modulesDoc = modules, changesDoc = changes } = {}) => {
     const disposition = section(stepsDoc, '### 8.4.3. Cook-step disposition', '## 8.5. `cook`');
     const testSteps = section(stepsDoc, '## 8.6. `test` step', '## 8.7.');
     const gatheredInputs = section(stepsDoc, '## 8.2. Gathered inputs', '## 8.3.');
@@ -88,6 +90,27 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     expect(cs0226.slice(cs0226.indexOf('\n')).match(/\bCS-0226\b/g)).toHaveLength(1);
     expect(changesDoc).toContain('`probe-seal` pins the probe-body position');
     expect(changesDoc).toContain('`070-seal-inline-files` pins the recipe baseline');
+
+    const declarations = section(probesDoc, '- `files NAME`', 'The `json` and `lines` kinds');
+    expect(normalize(declarations)).toContain('both a sealable determinant and a named `gather NAME` source');
+    expect(normalize(declarations)).toContain('manifest keys become the gathered members');
+    expect(declarations).not.toMatch(/\bseal-only\b/i);
+
+    const memberSources = section(probesDoc, '## 22.5.10.', '## 22.5.11.');
+    expect(normalize(memberSources)).toContain('There is no segment-count limit');
+    expect(memberSources).not.toMatch(/(?:at most two|four or more segments)/i);
+
+    const moduleKeys = section(modulesDoc, '### 12.7.6. Probe-key naming', '### 12.7.7.');
+    expect(normalize(moduleKeys)).toContain('`PROBE_SEG (":" PROBE_SEG)*`, with no segment-count limit');
+    expect(moduleKeys).not.toMatch(/at most two/i);
+
+    expect(changesDoc.match(/^## CS-0230\b/gm)).toHaveLength(1);
+    const cs0230 = section(changesDoc, '## CS-0230 —', '## CS-0229 —');
+    expect(normalize(cs0230)).toMatch(/named `files` declarations.*`gather` sources.*manifest keys/i);
+    expect(normalize(cs0230)).toMatch(/unlimited.*segment/i);
+    expect(cs0230).toContain('`068-gather-named-files`');
+    const versions = section(changesDoc, '## Versions', '- **v0.17**');
+    expect(versions.match(/\bCS-0230\b/g)).toHaveLength(1);
 };
 
 describe('Language v2 Standard contract', () => {
@@ -164,5 +187,13 @@ describe('Language v2 Standard contract', () => {
       const headingMutation = changes.replace('producer [#changes.cs-0226]', `producer${suffix} [#changes.cs-0226]`);
       expect(() => assertContract({ changesDoc: headingMutation })).toThrow();
     }
+  });
+
+  it('pins named-files gather, unlimited source refs, and one CS-0230 entry', () => {
+    expect(() => assertContract({ probesDoc: probes.replace('both a sealable determinant and a named `gather NAME` source', 'seal-only') })).toThrow();
+    expect(() => assertContract({ probesDoc: probes.replace('There is no segment-count limit', 'A source ref of four or more segments is malformed') })).toThrow();
+    expect(() => assertContract({ modulesDoc: modules.replace('with no segment-count limit', 'with at most two segments') })).toThrow();
+    expect(() => assertContract({ changesDoc: changes.replace('## CS-0229 —', '## CS-0230 — duplicate\n\n## CS-0229 —') })).toThrow();
+    expect(() => assertContract({ changesDoc: changes.replace(/## CS-0230 —[\s\S]*?(?=## CS-0229 —)/, '') })).toThrow();
   });
 });

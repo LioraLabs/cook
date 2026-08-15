@@ -178,7 +178,7 @@ fn test_duplicate_gather_error() {
     let result = parse(source);
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("duplicate"), "error was: {}", msg);
+    assert!(msg.contains("duplicate 'gather' line"), "error was: {msg}");
 }
 
 #[test]
@@ -1878,13 +1878,12 @@ fn gather_two_segment_probe_key_parses_whole_ref() {
 }
 
 #[test]
-fn gather_three_segment_ref_parses_whole_ref() {
-    // Two-segment key + one `:field` selector = three segments, the maximum.
-    let source = "recipe r\n    gather ns:name:items\n    cook \"$<in.id>\" { x }\n";
+fn gather_multi_segment_ref_parses_whole_ref() {
+    let source = "recipe r\n    gather org:team:catalog:release:items\n    cook \"$<in.id>\" { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(
         first_member_source(&c).source,
-        MemberSource::GatherKey("ns:name:items".to_string())
+        MemberSource::GatherKey("org:team:catalog:release:items".to_string())
     );
 }
 
@@ -1904,7 +1903,9 @@ fn gather_leading_colon_ref_rejected() {
 fn gather_mixing_glob_then_probe_is_rejected() {
     let source = "recipe r\n    gather \"a.json\"\n    gather cardprobe\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
-    assert!(format!("{err:?}").contains("mix"));
+    let message = err.to_string();
+    assert!(message.contains("gather"), "got: {message}");
+    assert!(message.contains("probe source"), "got: {message}");
 }
 
 #[test]
@@ -1923,7 +1924,24 @@ fn gather_probe_then_glob_is_rejected() {
 #[test]
 fn gather_probe_declared_twice_is_rejected() {
     let source = "recipe r\n    gather cardprobe\n    gather other\n    cook \"x\" { y }\n";
-    assert!(parse(source).is_err());
+    let message = parse(source).unwrap_err().to_string();
+    assert!(message.contains("gather <probe>"), "got: {message}");
+}
+
+#[test]
+fn gather_probe_errors_use_the_current_surface_name() {
+    for source in [
+        "recipe r\n    gather\n    cook \"x\" { y }\n",
+        "recipe r\n    gather :cards\n    cook \"x\" { y }\n",
+        "recipe r\n    gather cards extra\n    cook \"x\" { y }\n",
+        "recipe r\n    gather cards \"unterminated\n    cook \"x\" { y }\n",
+        "recipe r\n    gather cards \"\"\n    cook \"x\" { y }\n",
+    ] {
+        let message = parse(source).unwrap_err().to_string();
+        assert!(message.contains("gather"), "got: {message}");
+        assert!(!message.contains("inputs <probe>"), "got: {message}");
+        assert!(!message.contains("inputs:"), "got: {message}");
+    }
 }
 
 // ── CS-0099: the `using` keyword is removed; the body opener follows the
@@ -2490,7 +2508,7 @@ fn inline_seal_rejects_malformed_file_operands_and_reserved_keys() {
 }
 
 /// CS-0201: the segment cap is gone everywhere. It was enforced on the surface
-/// declaration and by `seal`/`inputs`, and ignored by `cook.probe()`, so
+/// declaration and by `seal`/`gather`, and ignored by `cook.probe()`, so
 /// modules mint `cc:find:raylib` as their ordinary case and it could be
 /// neither declared on the surface nor sealed.
 #[test]

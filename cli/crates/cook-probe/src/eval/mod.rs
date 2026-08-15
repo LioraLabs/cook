@@ -5,7 +5,7 @@
 //! cache key at all, look the key up, run `produce` on a miss, publish the
 //! result, and materialise the canonical local copy. Only step five differs
 //! between phases, and only in WHICH Lua VM runs the source: the register VM
-//! for an `inputs <probe>` pre-pass, a worker VM for a sealed consumer.
+//! for a `gather <probe>` pre-pass, a worker VM for a sealed consumer.
 //! That one difference is why the sequence was written twice; [`ProduceRunner`]
 //! makes it a parameter so it stops being a reason.
 //!
@@ -102,7 +102,7 @@ impl std::fmt::Display for ProbeError {
 /// Note for callers: "no backend" must mean genuinely no backend. COOK-359's
 /// root cause was a caller that passed `None` because nobody had wired the
 /// context, which silently converted every GET into a miss and made an
-/// `inputs <probe>` driver re-produce on every invocation for the life of
+/// `gather <probe>` driver re-produce on every invocation for the life of
 /// the feature.
 pub struct CacheAccess<'a> {
     pub backend: &'a dyn cook_cache::backend::CacheBackend,

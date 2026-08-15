@@ -193,15 +193,10 @@ follow lower to the same probe-value model:
   missing-file fold. Adding, removing, or editing a matched file changes the
   value and therefore the key of every unit that seals this probe — `files` is
   the file-set twin of `tools`, and the idiomatic way to name a set of files
-  as a sealable determinant when they are not the consuming recipe's
-  iteration driver. It is **seal-only** for that reason: the value is a JSON
-  object keyed by path, so a `files` probe can never resolve to the array an
-  `gather <probe>` driver iterates (§{cat.probes.member-source}), and naming
-  one in driver position MUST be rejected. A conforming implementation SHOULD
-  say so in terms of the declaration kind rather than reporting only the JSON
-  shape, since the fix is to attach the probe with `seal` and give the recipe
-  its own `gather` glob to iterate. A conforming implementation MUST reject
-  an empty or unquoted top-level `files` body.
+  as both a sealable determinant and a named `gather NAME` source. In gather
+  position its manifest keys become the gathered members; each path is bound
+  as the member while the hashes remain the determinant value. A conforming
+  implementation MUST reject an empty or unquoted top-level `files` body.
 
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
 implementation MUST reject either applied to a `>{ … }` Lua-block producer with a
@@ -470,7 +465,7 @@ The diagnostic MUST render the full cycle path. The order in which nodes are lis
 
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of  a `gather <probe>` declaration (§{steps.gather}): `gather <key>` registers one work unit per array element, and `gather <key>:<field>` iterates the array at the named field. A fan-out `cook` step MAY declare multiple output templates; each member's unit registers **every** declared output (§{steps.cook-multi} applies per member — CS-0150 pins this after the reference implementation registered only the first template, leaving the rest undeclared side effects that stale-output reconciliation later swept). This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
-**Source-ref resolution.** A probe key is itself at most two `:`-separated segments (§{cat.probes.decl}; `ns:name` is the canonical naming), so a multi-segment source ref is lexically ambiguous between a probe key and a `<key>:<field>` selector. A conforming implementation MUST resolve the ref against the set of declared probes once registration-time declarations are known: a declared probe whose key equals the entire ref wins; otherwise the segment after the final `:` is a field selector and the remaining prefix MUST name a declared probe. A ref that names no declared probe under either interpretation MUST be rejected with a register-phase diagnostic naming the full ref. A source ref of four or more segments is malformed and MUST be rejected at parse time.
+**Source-ref resolution.** There is no segment-count limit. A multi-segment source ref is lexically ambiguous between a probe key and a `<key>:<field>` selector. A conforming implementation MUST resolve the ref against the set of declared probes once registration-time declarations are known: a declared probe whose key equals the entire ref wins; otherwise the segment after the final `:` is a field selector and the remaining prefix MUST name a declared probe. A ref that names no declared probe under either interpretation MUST be rejected with a register-phase diagnostic naming the full ref.
 
 **Two-category discriminator (normative; CS-0131).** In `gather` position the bare-vs-quoted distinction is load-bearing and MUST NOT be flattened: a bare `gather cards` names a probe key (a namespace identifier — the fan-out member source of this section), whereas a double-quoted `gather "cards"` is a literal filesystem glob (§8). The two forms are NOT interchangeable — and it is exactly the discriminator that lets them compose (CS-0197): `gather cards "src/*.txt"` is a member source followed by literal glob patterns.
 

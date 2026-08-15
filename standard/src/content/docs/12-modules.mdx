@@ -230,7 +230,7 @@ This subsection constrains a module's *choice* of what to seal; the seal surface
 
 ### 12.7.6. Probe-key naming [#mods.authoring.probe-keys]
 
-A probe-value placeholder splits on `.` to separate the probe key from a field selector (`$<key.field>`, §{cat.probes.templates}). A module that derives a probe key from arbitrary text — a package name, a target label — MUST sanitise that text to the `PROBE_SEG` character set (§{cat.probes.decl}) so a stray `.` cannot be misread as a field selector; this is the sanctioned pattern behind the `cc` module's key derivation. A bare probe key is at most two colon-separated segments (`PROBE_SEG:PROBE_SEG`); the quoted-string key form (§{cat.probes.decl}) is the escape hatch for a spelling outside `PROBE_SEG`.
+A probe-value placeholder splits on `.` to separate the probe key from a field selector (`$<key.field>`, §{cat.probes.templates}). A module that derives a probe key from arbitrary text — a package name, a target label — MUST sanitise every segment to the `PROBE_SEG` character set (§{cat.probes.decl}) so a stray `.` cannot be misread as a field selector; this is the sanctioned pattern behind the `cc` module's key derivation. A bare probe key is `PROBE_SEG (":" PROBE_SEG)*`, with no segment-count limit; the quoted-string key form (§{cat.probes.decl}) is the escape hatch for a spelling outside `PROBE_SEG`.
 
 ### 12.7.7. Publishing a blessed module [#mods.authoring.publishing]
 

@@ -102,7 +102,7 @@ pub fn cacheability(meta: Option<&CacheMeta>) -> Cacheability {
 /// the absence of one.
 ///
 /// Stated over all four terms rather than over inputs alone because a unit
-/// fanned out over `inputs <probe>` may declare no file by design: its
+/// fanned out over `gather <probe>` may declare no file by design: its
 /// member is an observable input (§17.1 observable 5) and is what it is keyed
 /// on. A non-empty seal is likewise an observable input: its materialised
 /// probe values move the unit's key (CS-0223).

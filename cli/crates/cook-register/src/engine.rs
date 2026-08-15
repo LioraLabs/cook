@@ -321,7 +321,7 @@ pub fn register_cookfile(
     let prepass_store: crate::module_loader::SharedPrepassStore =
         Rc::new(RefCell::new(BTreeMap::new()));
     // CS-0219: one owner for register-phase probe resolution. The pre-pass
-    // below fills it for `inputs <probe>` drivers; a register-phase
+    // below fills it for `gather <probe>` drivers; a register-phase
     // `cook.probes.get` read fills it on demand for whatever a body asks for.
     let probe_resolver = Rc::new(RegisterProbeResolver::new(
         probe_registry.clone(),
@@ -1860,7 +1860,7 @@ fn local_topological_sort(
 ///
 /// Every probe-sourced member source opens its body with
 /// `local _items = cook.probes.get("<ref>")`, `<ref>` being the verbatim
-/// `inputs <ref>` source ref carried by codegen. That value does not
+/// `gather <ref>` source ref carried by codegen. That value does not
 /// exist until the feeding probe runs, and probes normally run as DAG nodes
 /// in the execute phase — far too late for register-time fan-out. So we
 /// evaluate every member-source probe (and its transitive probe
@@ -1878,8 +1878,8 @@ fn local_topological_sort(
 /// the generated body actually reads. When no `CacheContext` is wired
 /// (tests / `list_names`), `produce` runs uncached.
 ///
-/// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
-/// were removed in COOK-97.
+/// Both retained member-source descriptors name probes and require this
+/// pre-pass; `Gather` additionally admits named files manifests.
 fn run_member_source_prepass(
     lua: &Lua,
     member_source_drivers: &[(String, crate::capture::MemberSourceDescriptor)],
@@ -1971,17 +1971,6 @@ fn run_member_source_prepass(
                 .keys().cloned().map(serde_json::Value::String).collect();
             files_members.push(((*source_ref).to_string(), serde_json::Value::Array(paths)));
         } else if !matches!(resolved_value, serde_json::Value::Array(_)) {
-            // COOK-353: name the `files` case specifically. Its value is a map
-            // by construction, so "got map/record" describes the symptom while
-            // the cause is that the author reached for a driver where this
-            // producer kind only ever works as a seal.
-            if field.is_none()
-                && files_source
-            {
-                return Err(RegisterError::MemberSourceFilesProbe {
-                    key: (*key).to_string(),
-                });
-            }
             return Err(RegisterError::MemberSourceNotArray {
                 selector,
                 shape: json_shape(resolved_value).to_string(),
@@ -2008,10 +1997,9 @@ fn run_member_source_prepass(
     Ok(())
 }
 
-/// COOK-190 / §22.5.10: resolve an `inputs <probe>` source ref against
-/// the probe registry. Probe keys are canonically two-segment (`ns:name`),
-/// so a `:` in the ref is ambiguous between a two-segment key and a
-/// `key:field` selector. A declared probe whose key equals the entire ref
+/// Resolve a `gather <probe>` source ref against the probe registry. Keys
+/// admit any number of segments, so the final `:` may separate either key
+/// segments or a `key:field` selector. A declared probe whose key equals the entire ref
 /// wins; otherwise the segment after the final `:` is a field selector on
 /// the remaining (declared) key. `None` when neither interpretation names a
 /// declared probe.
@@ -2032,7 +2020,7 @@ fn resolve_probe_ref<'a>(
 /// Everything the register phase needs to turn a declared probe key into a
 /// materialised value, and the record of which keys it has (CS-0219).
 ///
-/// One owner for two callers that used to be one. The `inputs <probe>`
+/// One owner for two callers that used to be one. The `gather <probe>`
 /// pre-pass resolves the probes a reachable recipe's fan-out cardinality
 /// depends on, before any body runs; a register-phase `cook.probes.get` read
 /// resolves whichever probe a body actually asks for, at the moment it asks.
@@ -2382,7 +2370,7 @@ fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_j
 /// could only ever have observed a stale or absent file.
 ///
 /// `resolved` is every key the register phase materialised, whether reached as
-/// an `inputs <probe>` fan-out driver, as a transitive `inputs.requires`
+/// a `gather <probe>` fan-out driver, as a transitive `inputs.requires`
 /// of one, or by a register-phase `cook.probes.get` read (CS-0219). Checking
 /// the drivers alone would leave the read as a hole in the rule, and the rule
 /// is what lets cook resolve the whole graph before the first command runs.

@@ -2044,8 +2044,7 @@ recipe build_catalog
 #[test]
 fn member_fanout_two_segment_probe_key_fans_out() {
     let dir = TempDir::new().unwrap();
-    // COOK-190: `ns:name` is the canonical probe naming; a two-segment key
-    // in gather position must resolve to the declared probe, not
+    // An exact multi-segment key in gather position must resolve to the declared probe, not
     // truncate to probe `cards` + field selector `list`.
     let cookfile = r#"
 register
@@ -2069,8 +2068,8 @@ recipe stamps
 #[test]
 fn member_fanout_two_segment_key_with_field_selector_fans_out() {
     let dir = TempDir::new().unwrap();
-    // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
-    // trailing `:items` field selector. The pre-pass resolves via the final
+    // The exact `ns:cards:items` key is absent, so the pre-pass resolves the
+    // final `:items` as a field selector on `ns:cards`. It resolves via the final
     // colon (no probe `ns:cards:items` is declared) and stashes the selected
     // array under the verbatim ref.
     let cookfile = r#"
@@ -4459,20 +4458,8 @@ fn cook_chore_body_gets_chore_unit_semantics() {
     );
 }
 
-/// COOK-353: a `files { … }` probe used as an `gather <probe>` source.
-///
-/// Two defects sat on top of each other. The `files` producer lowers to the
-/// reserved `@files-manifest` sentinel, which is deliberately not valid Lua;
-/// the executor intercepts it but the `gather <probe>` PRE-PASS did not,
-/// so the sentinel reached the register VM and the combination died with
-/// `syntax error: unexpected symbol near '@'` — an implementation detail
-/// leaking as a parse error.
-///
-/// With the sentinel intercepted, the real answer surfaces: a `files` probe's
-/// value is a MAP of path → content hash, so it can never be the array a
-/// driver iterates. That is a legitimate rejection, but the generic
-/// `MemberSourceNotArray` reports a shape mismatch when the actionable fact is that
-/// this producer kind is seal-only.
+/// A named files manifest is both sealable and gatherable. Gather iterates its
+/// path keys and each member unit declares the corresponding file input.
 #[test]
 fn named_files_gather_fans_out_and_declares_each_member_path() {
     let dir = TempDir::new().unwrap();

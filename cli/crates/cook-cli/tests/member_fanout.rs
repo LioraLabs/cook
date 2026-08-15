@@ -155,7 +155,7 @@ recipe gen
     );
 }
 
-/// COOK-190: a two-segment probe key (`ns:name`) consumed in inputs
+/// An exact multi-segment probe key (`ns:name`) consumed by gather
 /// position — the issue's exact repro shape, native `probe` DSL. Must fan
 /// out one unit per member and stay per-member cached on a second run.
 #[test]
