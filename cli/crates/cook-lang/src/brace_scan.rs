@@ -25,6 +25,8 @@
 //!
 //! See standard § 2.9 (Brace-balanced blocks).
 
+use cook_contracts::quoting::QCtx;
+
 /// Stateful brace-balance scanner for Lua block bodies.
 ///
 /// Carries state across lines so that multi-line Lua long strings (`[[ … ]]`,
@@ -371,6 +373,48 @@ impl ShellScanner {
 
 fn is_shell_word_break(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b';' | b'&' | b'|' | b'(' | b')')
+}
+
+/// Return executable placeholder occurrences and their shell quote contexts,
+/// excluding comments and heredoc bodies where the shell treats text as data.
+pub fn shell_placeholder_contexts(lines: &[String]) -> Vec<(String, QCtx)> {
+    let mut scanner = ShellScanner::new();
+    let mut found = Vec::new();
+    for line in lines {
+        if scanner.pending_heredocs.is_empty() {
+            for span in cook_contracts::sigil::scan(line) {
+                if let Some(ctx) = shell_context(&line[..span.range.start], scanner.in_quote) {
+                    found.push((span.ident, ctx));
+                }
+            }
+        }
+        let mut depth = 1;
+        scanner.scan_impl(line, &mut depth, false);
+    }
+    found
+}
+
+fn shell_context(prefix: &str, mut quote: Option<u8>) -> Option<QCtx> {
+    let bytes = prefix.as_bytes();
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if escaped {
+            escaped = false;
+        } else if b == b'\\' && quote != Some(b'\'') {
+            escaped = true;
+        } else if b == b'#' && quote.is_none() && (i == 0 || is_shell_word_break(bytes[i - 1])) {
+            return None;
+        } else if b == b'\'' && quote != Some(b'"') {
+            quote = if quote == Some(b'\'') { None } else { Some(b'\'') };
+        } else if b == b'"' && quote != Some(b'\'') {
+            quote = if quote == Some(b'"') { None } else { Some(b'"') };
+        }
+    }
+    Some(match quote {
+        Some(b'\'') => QCtx::Single,
+        Some(b'"') => QCtx::Double,
+        _ => QCtx::Bare,
+    })
 }
 
 /// Read a heredoc delimiter at `bytes[i..]`. The delimiter may be:

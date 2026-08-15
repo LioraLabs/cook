@@ -9,7 +9,7 @@ Cookfile
       excludes: []
       steps:
         MemberSource source=ProbeKey("ns:cards:items")
-        Cook outputs=["out/$<in.id>.json"] body=ShellBlock(["render \"$<in>\" $<out>"])
+        Cook outputs=["out/$<in.id>.json"] body=ShellBlock(["render '$<in>' $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

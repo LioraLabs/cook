@@ -3,4 +3,4 @@ probe ns:cards
 
 recipe build_cards
     ingredients ns:cards:items
-    cook "out/$<in.id>.json" { render "$<in>" $<out> }
+    cook "out/$<in.id>.json" { render '$<in>' $<out> }

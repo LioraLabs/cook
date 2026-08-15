@@ -4,4 +4,4 @@ probe target_list
 
 recipe targets
     ingredients target_list
-    cook "out/$<in>.cfg" { printf 'target=%s nonce=%s\n' "$<in>" "$(date +%s%N)" > $<out> }
+    cook "out/$<in>.cfg" { printf 'target=%s nonce=%s\n' '$<in>' "$(date +%s%N)" > $<out> }

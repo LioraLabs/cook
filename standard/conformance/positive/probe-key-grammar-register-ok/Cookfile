@@ -14,5 +14,5 @@ recipe build
     ingredients cc-version
     seal demo:cc-version cc:find:raylib "odd+spelling"
     cook "out/$<in>.stamp" {
-        echo "$<in>" > $<out>
+        echo '$<in>' > $<out>
     }

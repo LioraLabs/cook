@@ -42,7 +42,7 @@ probe target_count: target_list
 # Consume a probe as an iteration source: one unit per member.
 recipe targets
     ingredients target_list
-    cook "out/$<in>.cfg" { printf 'target = %s\n' "$<in>" > $<out> }
+    cook "out/$<in>.cfg" { printf 'target = %s\n' '$<in>' > $<out> }
 
 chore clean
     rm -rf out

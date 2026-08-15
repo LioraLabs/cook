@@ -9,7 +9,7 @@ Cookfile
       excludes: []
       steps:
         MemberSource source=ProbeKey("cards:list")
-        Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo \"member: $<in>\" > $<out>"])
+        Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo 'member: $<in>' > $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

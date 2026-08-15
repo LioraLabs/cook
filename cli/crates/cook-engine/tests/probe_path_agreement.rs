@@ -75,7 +75,7 @@ recipe sealed_keyed
 
 recipe fanned_keyed
     ingredients keyed:items
-    cook "out/fk-$<in>.txt" { echo "$<in>" > $<out> }
+    cook "out/fk-$<in>.txt" { echo '$<in>' > $<out> }
 
 recipe sealed_keyless
     seal keyless:items
@@ -83,7 +83,7 @@ recipe sealed_keyless
 
 recipe fanned_keyless
     ingredients keyless:items
-    cook "out/fl-$<in>.txt" { echo "$<in>" > $<out> }
+    cook "out/fl-$<in>.txt" { echo '$<in>' > $<out> }
 "#;
 
 /// A workspace with its own shared store, so one arm can never warm another's

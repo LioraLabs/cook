@@ -3,4 +3,4 @@ probe cards:list
 
 recipe stamps
     ingredients cards:list
-    cook "out/$<in>.stamp" { echo "member: $<in>" > $<out> }
+    cook "out/$<in>.stamp" { echo 'member: $<in>' > $<out> }

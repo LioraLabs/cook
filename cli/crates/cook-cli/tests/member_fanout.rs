@@ -180,8 +180,8 @@ recipe stamps
     ingredients cards:list
     cook "out/$<in>.stamp" {{
         mkdir -p out
-        echo "$<in>" >> ran.log
-        echo "member: $<in>" > $<out>
+        echo '$<in>' >> ran.log
+        echo 'member: $<in>' > $<out>
     }}
 "#
     );

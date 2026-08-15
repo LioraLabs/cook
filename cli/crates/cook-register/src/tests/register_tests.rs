@@ -2048,7 +2048,7 @@ recipe stamps
     ingredients cards:list
     cook "out/$<in>.stamp" {
         mkdir -p out
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -2102,7 +2102,7 @@ recipe stamps
     ingredients cards:list
     cook "out/$<in>.stamp" {
         mkdir -p out
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -2117,7 +2117,7 @@ fn member_fanout_undeclared_two_segment_ref_error_names_full_ref() {
 recipe stamps
     ingredients nope:list
     cook "out/$<in>.stamp" {
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");

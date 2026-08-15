@@ -18,6 +18,8 @@ pub(crate) mod shell_block;
 /// catches up to a new cut. See `cli/crates/cook-lang/CONFORMANCE.md`.
 pub const COOK_STANDARD_VERSION: &str = "0.18";
 
+pub use brace_scan::shell_placeholder_contexts;
+
 use ast::*;
 use lexer::*;
 use recipe::{parse_chore, parse_config_block_lua, parse_recipe, parse_register_block_lua};

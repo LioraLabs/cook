@@ -127,6 +127,22 @@ fn validate_gather_usage(
 
         let has_member_driver = recipe.steps.iter()
             .any(|step| matches!(step, Step::MemberSource { .. }));
+        if has_member_driver {
+            for step in &recipe.steps {
+                let (body, line) = match step {
+                    Step::Cook { step, line } => (step.body.as_ref(), *line),
+                    Step::Test { step, line } => (Some(&step.body), *line),
+                    _ => continue,
+                };
+                if body.is_some_and(has_unsafe_whole_member_ref) {
+                    return Err(CodegenError::GatherUsage {
+                        recipe: recipe.name.clone(),
+                        message: "$<in> in a data fan-out shell body must be enclosed in single quotes",
+                        line,
+                    });
+                }
+            }
+        }
         let mut preceding_cook = false;
         let mut unbacked_input_line = None;
         for step in &recipe.steps {
@@ -153,6 +169,12 @@ fn validate_gather_usage(
         }
     }
     Ok(())
+}
+
+fn has_unsafe_whole_member_ref(body: &Body) -> bool {
+    let Body::ShellBlock(lines) = body else { return false };
+    cook_lang::shell_placeholder_contexts(lines).into_iter()
+        .any(|(ident, ctx)| ident == "in" && ctx != cook_contracts::quoting::QCtx::Single)
 }
 
 fn step_names_input(step: &Step) -> bool {
