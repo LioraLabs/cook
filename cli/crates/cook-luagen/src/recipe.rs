@@ -27,6 +27,8 @@ use crate::test_step;
 /// - `$<lib.ACCESSOR>` inside a cook-step body (rejected)
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
+    #[error("line {line}: recipe '{recipe}': {message}")]
+    GatherUsage { recipe: String, message: &'static str, line: usize },
     #[error(
         "line {line}: recipe '{referrer}': '{referent}.{accessor}' appears in {surface} but \
          '{referent}' is not named as an iteration driver in this step's output pattern"
@@ -96,9 +98,79 @@ pub fn generate_checked(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(String, Vec<String>), CodegenError> {
+    validate_gather_usage(cookfile, recipe_names)?;
     validate_accessor_placement(cookfile, recipe_names)?;
     let warnings = warn_empty_output_refs(cookfile, recipe_names);
     Ok((generate_with_names(cookfile, recipe_names)?, warnings))
+}
+
+fn validate_gather_usage(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), CodegenError> {
+    for recipe in &cookfile.recipes {
+        let gather_line = recipe.steps.iter().find_map(|step| match step {
+            Step::Gather { line } => Some(*line),
+            _ => None,
+        });
+        let names_input = recipe.steps.iter().any(step_names_input);
+
+        if let Some(line) = gather_line {
+            if !names_input {
+                return Err(CodegenError::GatherUsage {
+                    recipe: recipe.name.clone(),
+                    message: "the command never names the gathered files; seal them instead",
+                    line,
+                });
+            }
+        }
+
+        let has_member_driver = recipe.steps.iter()
+            .any(|step| matches!(step, Step::MemberSource { .. }));
+        let mut preceding_cook = false;
+        let mut unbacked_input_line = None;
+        for step in &recipe.steps {
+            if step_names_input(step) {
+                let dep_driver = matches!(step, Step::Cook { step, .. } if step.outputs.iter().any(|output| {
+                    matches!(
+                        crate::template::output_pattern_kind_with_recipes(output.as_str(), recipe_names),
+                        crate::template::OutputPatternKind::DepDriven { .. }
+                    )
+                }));
+                if !preceding_cook && !has_member_driver && !dep_driver {
+                    unbacked_input_line = Some(step_line(step));
+                    break;
+                }
+            }
+            preceding_cook |= matches!(step, Step::Cook { .. });
+        }
+        if gather_line.is_none() && recipe.ingredients.is_empty() && unbacked_input_line.is_some() {
+            return Err(CodegenError::GatherUsage {
+                recipe: recipe.name.clone(),
+                message: "nothing gathers what this command references",
+                line: unbacked_input_line.unwrap_or(recipe.line),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn step_names_input(step: &Step) -> bool {
+    let shell_names_input = |text: &str| sigil::scan(text).iter()
+        .any(|span| crate::resolver::is_own_input_ref(&span.ident));
+    let body_names_input = |body: &Body| match body {
+        Body::ShellBlock(lines) => lines.iter().any(|line| shell_names_input(line)),
+        Body::LuaBlock(code) => crate::lua_scan::free_identifier_occurs(code, "input")
+            || crate::lua_scan::free_identifier_occurs(code, "inputs"),
+    };
+
+    match step {
+        Step::Cook { step, .. } => step.outputs.iter().any(|output| {
+            !output.is_lua_expr() && shell_names_input(output.as_str())
+        }) || step.body.as_ref().is_some_and(body_names_input),
+        Step::Test { step, .. } => body_names_input(&step.body),
+        _ => false,
+    }
 }
 
 /// Detect references whose referent has an empty output list and return one
@@ -1090,6 +1162,11 @@ pub fn generate_with_names(
                         // consumed above into `local _items`; it emits no step
                         // of its own here.
                         Step::MemberSource { .. } => {
+                            i += 1;
+                        }
+                        // `gather` is a register-time driver marker. Its paths
+                        // already lower through `recipe.ingredients` above.
+                        Step::Gather { .. } => {
                             i += 1;
                         }
                         // `Step` is `#[non_exhaustive]`. Future step kinds added by

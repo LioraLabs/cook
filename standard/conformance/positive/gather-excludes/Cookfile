@@ -1,0 +1,3 @@
+recipe objects
+    gather "src/*.c" !"src/generated.c"
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }

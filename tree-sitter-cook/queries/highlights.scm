@@ -9,6 +9,7 @@
   "use"
   "import"
   "ingredients"
+  "gather"
   "cook"
   "test"
   "seal"

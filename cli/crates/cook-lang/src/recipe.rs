@@ -463,7 +463,8 @@ pub(crate) fn parse_recipe(
                             .to_string(),
                     });
                 }
-                if let Some(rest) = strip_keyword(text, "ingredients") {
+                let gather = strip_keyword(text, "gather");
+                if let Some(rest) = gather.or_else(|| strip_keyword(text, "ingredients")) {
                     if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
@@ -473,6 +474,13 @@ pub(crate) fn parse_recipe(
                         });
                     }
                     let head = rest.trim_start();
+                    if gather.is_some() && !head.starts_with('"') && !head.starts_with('!') {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "gather accepts only quoted paths and !\"exclude\" items"
+                                .to_string(),
+                        });
+                    }
                     if head.starts_with('"') || head.starts_with('!') {
                         // Glob ingredients (existing path).
                         if !ingredients.is_empty() || !excludes.is_empty() {
@@ -485,6 +493,9 @@ pub(crate) fn parse_recipe(
                             parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
                         ingredients = inc;
                         excludes = exc;
+                        if gather.is_some() {
+                            steps.push(Step::Gather { line: tok.line });
+                        }
                         pos = new_pos;
                         continue;
                     } else {

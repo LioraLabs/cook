@@ -1,0 +1,3 @@
+recipe consume
+    gather records
+    cook "out.txt" { printf '%s\n' "$<in>" > out.txt }

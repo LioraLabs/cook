@@ -364,6 +364,25 @@
     }
   },
   {
+    "type": "gather_step",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ingredient_exclude",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "glob_pattern",
     "named": true,
     "fields": {},
@@ -668,6 +687,10 @@
         },
         {
           "type": "explicit_recipe_header",
+          "named": true
+        },
+        {
+          "type": "gather_step",
           "named": true
         },
         {
@@ -1160,6 +1183,10 @@
   },
   {
     "type": "files",
+    "named": false
+  },
+  {
+    "type": "gather",
     "named": false
   },
   {

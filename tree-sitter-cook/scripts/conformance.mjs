@@ -29,6 +29,10 @@ const REPO = dirname(HERE);
 const PARSER_LIB = join(REPO, 'build', 'parser', 'cook.so');
 
 const SEMANTIC_ONLY_NEGATIVES = new Map([
+  ['command-input-without-gather',
+   'CS-0224: own-input reference without a driver — whole-recipe codegen rejection, not syntactic'],
+  ['gather-command-does-not-name-input',
+   'CS-0224: gather with no own-input reference — whole-recipe codegen rejection, not syntactic'],
   ['003-use-after-recipe',
    'top-level ordering rule (App. A.2) — semantic, not syntactic'],
   ['004-duplicate-ingredients',

@@ -203,6 +203,7 @@ fn repr_body(body: &Body) -> String {
 
 fn format_step(step: &Step) -> String {
     match step {
+        Step::Gather { .. } => "Gather".to_string(),
         Step::Shell { command, interactive, .. } => {
             format!("Shell interactive={} command={}", interactive, repr(command))
         }

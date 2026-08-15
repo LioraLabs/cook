@@ -423,6 +423,7 @@ module.exports = grammar({
           $._recipe_indent,
           choice(
             $.ingredients_step,
+            $.gather_step,
             $.seal_step,
             $.cook_step,
             $.test_step,
@@ -460,6 +461,17 @@ module.exports = grammar({
           field("probe", alias($._bare_probe_key, $.identifier)),
           $._newline,
         ),
+      ),
+
+    gather_step: ($) =>
+      seq(
+        "gather",
+        choice($.string, $.ingredient_exclude),
+        repeat(seq(
+          optional($._step_continuation_newline),
+          choice($.string, $.ingredient_exclude),
+        )),
+        $._newline,
       ),
 
     ingredient_exclude: ($) => seq("!", $.string),

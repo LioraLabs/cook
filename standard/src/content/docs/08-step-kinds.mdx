@@ -13,13 +13,14 @@ CS-0134 makes the recipe body **purely declarative**. A `LuaBlockOpen` (`>{`) or
 
 A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 
-1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
-2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
-3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
-4. Prefix `cook` + separator → `cook_step`.
-5. Prefix `test` + separator → `test_step`.
-6. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
-7. Otherwise → REJECTED.
+1. Prefix `gather` + separator (space, tab, or end of token) → `gather_step`.
+2. Prefix `ingredients` + separator → `ingredients_step`.
+3. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
+4. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
+5. Prefix `cook` + separator → `cook_step`.
+6. Prefix `test` + separator → `test_step`.
+7. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
+8. Otherwise → REJECTED.
 
 Prior to CS-0072 (Cook Standard v0.9), this cascade already included the rule-6 module-call classification. CS-0072 removed it from the recipe-body cascade, forcing authors to reach for the `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) prefix to get register-phase Lua inside a recipe body. **CS-0134 REINSTATES rule 6 above, reversing the CS-0072 recipe-body removal**, while simultaneously retiring `>>` / `>>{` from the language entirely (§{lexical.line-prefixes}). The equivalent top-level dispatch of §{toplevel.module-call} is unaffected by this reinstatement.
 
@@ -64,6 +65,23 @@ The `cook-lang` parser test `test_empty_interactive_step_errors` pinned rejectio
 The reference parser at `cli/crates/cook-lang` enforces the CS-0134 cascade in `parse_recipe`'s step-dispatch loop (informative); `parse_chore`'s step-dispatch loop keeps the `>`/`>{` steps and loose (implicitly-interactive) shell commands a chore body admits, but — like every other context — no longer accepts an `@` line (CS-0134).
 
 ## 8.2. Ingredients [#steps.ingredients]
+A `gather_step` is introduced by `gather` followed by one or more quoted
+`ingredient` items. It resolves the same include-minus-exclude path set as the
+quoted `ingredients` form and supplies that set as the recipe's register-time
+driver; it is not a work unit and adds no DAG node. `ingredients` remains an
+accepted compatibility spelling. [added CS-0224]
+
+`gather` says what the recipe's command text names. A recipe containing
+`gather` MUST name its gathered set from at least one `cook` or `test` step,
+through `$<in>`, `$<in.ACCESSOR>`, or the corresponding execute-Lua `input` /
+`inputs` binding. Otherwise the implementation MUST reject it at load time
+with a diagnostic stating that the command never names the gathered files and
+directing the author to `seal` them instead. Conversely, a recipe with no
+gather, legacy `ingredients`, probe-member source, or dependency-output driver
+MUST reject such an own-input reference with a diagnostic stating that nothing
+gathers what the command references. Both predicates are static and MUST NOT
+consult the filesystem. [added CS-0224]
+
 A recipe body MAY contain at most one `ingredients_step` (§{grammar-appendix.recipes}, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.
 
 The `ingredients_step` is introduced by the keyword `ingredients` followed by one or more `ingredient` items (§{grammar-appendix.steps}, `ingredients_step`). Each item is either:
@@ -94,10 +112,11 @@ An `ingredients` argument is any iterable source. A quoted token (`"glob"` / `!"
 The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 8.3. Step kinds — overview [#steps.overview]
-A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, CS-0134 requires a conforming implementation to recognise exactly the following five step kinds — all of them register-phase:
+A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, a conforming implementation recognises the following six step kinds — all of them register-phase:
 
 | § | Step kind | Introduced by | Phase |
 |---|---|---|---|
+| §{steps.ingredients} | `gather_step` | keyword `gather` | register |
 | §{steps.ingredients} | `ingredients_step` | keyword `ingredients` | register |
 | §{steps.cook-disposition.seal} | `seal_step` | keyword `seal` | register |
 | §{steps.cook-single}, §{steps.cook-multi} | `cook_step`           | keyword `cook` | register |
@@ -174,14 +193,18 @@ A `cook_step`'s **iteration mode** is determined by its output pattern list, bef
 
 | Output pattern shape | Mode | Driver | Units produced |
 |---|---|---|---|
-| At least one output contains `$<in.ACCESSOR>` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§{steps.ingredients}) | One per input |
-| At least one output contains `$<lib.ACCESSOR>` (dep-driven accessor, §{xref.dep-driven}) | **One-to-one over dep outputs** | `lib`'s output list (§{xref.dep-recipe-output}) | One per `lib` output |
+| At least one output contains an accessor for its current driver (`$<in.ACCESSOR>` or `$<lib.ACCESSOR>`) | **One-to-one over driver outputs** | The gathered input set or `lib`'s output list (§{xref.dep-driven}) | One per driver output |
 | All outputs are literal (no accessor placeholders) | **Many-to-one** (the "one" refers to *one unit*, not one output) | None — one unit runs with the full input list visible | Exactly one |
 | The recipe carries an `ingredients <probe>` source (§{steps.ingredients}) | **One-to-one over data members** | The probe's resolved member list | One per member |
 
 A conforming implementation MUST reject, with a load-time diagnostic, a `cook_step` whose output patterns mix iteration sources — that is, where two outputs select different drivers (one bears `$<in.ACCESSOR>` while another bears `$<libmath.ACCESSOR>`, or one bears `$<in.ACCESSOR>` while another is literal). All output patterns of a single `cook_step` MUST share one driver.
 
 The iteration mode determines the number of work units produced; it is orthogonal to the `cook_step`'s declared output count. Each mode admits any number of declared outputs (one or more), as detailed in §{steps.cook-multi}.
+
+`gather` does not select cardinality. An accessor-bearing output fans out; an
+all-literal output remains many-to-one. Thus `gather "src/*.c"` followed by a
+literal-output step produces exactly one unit whose `$<in>` is the complete
+gathered set. [added CS-0224]
 
 When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}), the output-pattern rule of this section selects between two modes (CS-0155; before that amendment every step was member-iterated "regardless of its output-pattern accessors", which left literal-output steps registering one colliding unit per member over raw record text):
 

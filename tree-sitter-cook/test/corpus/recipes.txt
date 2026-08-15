@@ -65,6 +65,37 @@ recipe lib: setup
       (string))))
 
 ================
+Recipe with gather
+================
+
+recipe lib
+    gather "lib/*.c" !"lib/generated.c"
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (gather_step
+      (string)
+      (ingredient_exclude
+        (string)))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
 Recipe with cook step
 ================
 
@@ -237,10 +268,26 @@ recipe deep
 ---
 
 (source_file
-  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
-  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
-  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
-  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier))))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier)))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier)))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier)))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier))))
 
 ================
 Ingredients quoted continuation
@@ -254,8 +301,12 @@ recipe pack
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
-    (ingredients_step (string) (ingredient_exclude (string)))))
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string)
+      (ingredient_exclude
+        (string)))))
 
 ================
 Malformed ingredient selectors
@@ -271,10 +322,17 @@ recipe quoted-selector
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
-    (ingredients_step probe: (identifier) (ERROR)))
-  (recipe (explicit_recipe_header name: (identifier)))
-  (ERROR (string) (lua_code)))
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier)
+      (ERROR)))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)))
+  (ERROR
+    (string)
+    (lua_code)))
 
 ================
 Seal accepts a multi-segment key and the quoted form (CS-0201)
@@ -287,8 +345,11 @@ recipe pinned-seal
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
-    (seal_step (identifier) (string))))
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (identifier)
+      (string))))
 
 ================
 Cook step (multi-line outputs, CS-0078)
@@ -581,6 +642,7 @@ recipe mux
         (placeholder
           (placeholder_ident))
         (shell_content)))))
+
 ================
 Recipe-body module call
 ================
@@ -609,9 +671,13 @@ recipe package
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
-    (seal_step (identifier) (identifier))
-    (seal_step (identifier))))
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))
+    (seal_step
+      (identifier))))
 
 ================
 Cook disposition groups and final share modifier
@@ -626,16 +692,31 @@ recipe package
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
+    (explicit_recipe_header
+      name: (identifier))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
+      body: (shell_block
+        (shell_content))
       (cook_mods
-        (seal_group (identifier) (identifier))
-        (unseal_group (identifier))
+        (seal_group
+          (identifier)
+          (identifier))
+        (unseal_group
+          (identifier))
         (share_mod)))
-    (cook_step outputs: (string) body: (shell_block (shell_content)) (cook_mods (share_mod)))
-    (cook_step outputs: (string) body: (shell_block (shell_content)) (cook_mods (share_mod)))))
+    (cook_step
+      outputs: (string)
+      body: (shell_block
+        (shell_content))
+      (cook_mods
+        (share_mod)))
+    (cook_step
+      outputs: (string)
+      body: (shell_block
+        (shell_content))
+      (cook_mods
+        (share_mod)))))
 
 ================
 Disposition refs accept the quoted form (CS-0201)
@@ -648,8 +729,10 @@ recipe ok
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
-    (seal_step (string))))
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (string))))
 
 ================
 Disposition refs accept a multi-segment key (CS-0201)
@@ -662,12 +745,15 @@ recipe ok
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
+    (explicit_recipe_header
+      name: (identifier))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
+      body: (shell_block
+        (shell_content))
       (cook_mods
-        (seal_group (identifier))))))
+        (seal_group
+          (identifier))))))
 
 ================
 Share modifier is unique and final
@@ -680,11 +766,14 @@ recipe bad
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
+    (explicit_recipe_header
+      name: (identifier))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
-      (cook_mods (share_mod))
+      body: (shell_block
+        (shell_content))
+      (cook_mods
+        (share_mod))
       (ERROR))))
 
 ================
@@ -733,13 +822,19 @@ recipe package
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
+    (explicit_recipe_header
+      name: (identifier))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
+      body: (shell_block
+        (shell_content))
       (cook_mods
-        (seal_group (identifier) (identifier))
-        (unseal_group (identifier) (identifier))))))
+        (seal_group
+          (identifier)
+          (identifier))
+        (unseal_group
+          (identifier)
+          (identifier))))))
 
 ================
 Cook disposition group mixes bare and prefixed refs in both orders
@@ -753,17 +848,24 @@ recipe package
 
 (source_file
   (recipe
-    (explicit_recipe_header name: (identifier))
+    (explicit_recipe_header
+      name: (identifier))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
+      body: (shell_block
+        (shell_content))
       (cook_mods
-        (seal_group (identifier) (identifier))))
+        (seal_group
+          (identifier)
+          (identifier))))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content))
+      body: (shell_block
+        (shell_content))
       (cook_mods
-        (seal_group (identifier) (identifier))))))
+        (seal_group
+          (identifier)
+          (identifier))))))
 
 ================
 Module call: a long-bracket string is opaque (CS-0208)
@@ -783,7 +885,8 @@ recipe app
       (module_call_text))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content)))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Module call: a long-bracket comment ends at its closer (CS-0208)
@@ -803,7 +906,8 @@ recipe app
       (module_call_text))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content)))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Module call: a multi-line long-bracket string spans newlines (CS-0208)
@@ -827,4 +931,5 @@ recipe app
       (module_call_text))
     (cook_step
       outputs: (string)
-      body: (shell_block (shell_content)))))
+      body: (shell_block
+        (shell_content)))))

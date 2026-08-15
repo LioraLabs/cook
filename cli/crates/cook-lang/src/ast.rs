@@ -310,6 +310,10 @@ pub struct MemberSourceStep {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Step {
+    /// Register-time file driver introduced by `gather`. The resolved paths
+    /// stay on [`Recipe::ingredients`]; this marker preserves the spelling
+    /// long enough for whole-recipe static validation.
+    Gather { line: usize },
     Shell { command: String, line: usize, interactive: bool },
     /// Execute-phase Lua line (`>` prefix). Coalesced into a body unit by
     /// codegen; runs on the worker VM at execute time.
