@@ -23,10 +23,12 @@ use cook_cache::{
     backend::LocalBackend, cache_ctx::CacheContext, cloud_backend::CloudBackend,
     cloud_config::CloudConfig, ThreadSafeCacheManager,
 };
-use cook_cache::{CacheBackend, EnvDenylist};
 use cook_contracts::{RecipeUnits, WorkPayload};
+use cook_cache::{CacheBackend, EnvDenylist};
 
-use crate::{dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace};
+use crate::{
+    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace,
+};
 
 // ---------------------------------------------------------------------------
 // TestScope — how to scope a `cook test` invocation
@@ -292,7 +294,9 @@ where
         total_nodes,
     });
     for name in &topo_order {
-        on_event(EngineEvent::RecipeQueued { name: name.clone() });
+        on_event(EngineEvent::RecipeQueued {
+            name: name.clone(),
+        });
     }
 
     // 4. Synthetic lifecycle events for zero-unit recipes (meta-targets that
@@ -538,6 +542,7 @@ fn collect_output_glob_warnings_for_recipe(
         .collect()
 }
 
+
 /// Sweep stale outputs for every reached recipe (§17.7).
 ///
 /// Builds the cross-recipe *live* output set (every output declared by any
@@ -657,18 +662,12 @@ pub fn cache_managers_for_cli(
                 .cloned()
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             let cache_dir = cook_contracts::layout::cache_dir(&wd);
-            (
-                name.clone(),
-                Arc::new(ThreadSafeCacheManager::new(cache_dir)),
-            )
+            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
         })
         .collect()
 }
 
-pub(crate) fn build_cache_ctx(
-    project_root: &Path,
-    no_publish: bool,
-) -> Result<Arc<CacheContext>, EngineError> {
+pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();

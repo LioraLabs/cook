@@ -3,8 +3,9 @@
 //! after a header content edit triggers InputChanged.
 
 use cook_cache::store::{FileRecord, StepEntry};
-use cook_cache::{RebuildReason, RebuildResult, needs_rebuild_cook};
 use cook_contracts::DiscoveredInputs;
+use cook_cache::{needs_rebuild_cook, RebuildReason, RebuildResult};
+
 
 fn fr(wd: &std::path::Path, rel: &str) -> FileRecord {
     FileRecord {

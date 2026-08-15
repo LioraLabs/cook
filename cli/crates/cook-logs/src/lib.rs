@@ -12,8 +12,8 @@ pub use state::{Filter, Focus, UiState};
 pub use theme::Theme;
 pub use tui::{run, run_with_backend};
 
-use cook_progress::log_reader::{self, BuildSummary};
 use std::path::Path;
+use cook_progress::log_reader::{self, BuildSummary};
 
 pub fn cmd_logs(
     project_root: &Path,
@@ -51,26 +51,26 @@ pub enum BuildSelector {
     LastFailed,
 }
 
-fn resolve_selector(builds: &[BuildSummary], sel: &BuildSelector) -> Result<String, ViewerError> {
+fn resolve_selector(
+    builds: &[BuildSummary],
+    sel: &BuildSelector,
+) -> Result<String, ViewerError> {
     match sel {
-        BuildSelector::Latest => {
-            builds
-                .first()
-                .map(|b| b.build_id.clone())
-                .ok_or_else(|| ViewerError::BuildNotFound {
-                    requested: "latest".to_string(),
-                    nearby: Vec::new(),
-                })
-        }
+        BuildSelector::Latest => builds
+            .first()
+            .map(|b| b.build_id.clone())
+            .ok_or_else(|| ViewerError::BuildNotFound {
+                requested: "latest".to_string(),
+                nearby: Vec::new(),
+            }),
         BuildSelector::Nth(n) => {
             let idx = n.saturating_sub(1);
-            builds
-                .get(idx)
-                .map(|b| b.build_id.clone())
-                .ok_or_else(|| ViewerError::BuildNotFound {
+            builds.get(idx).map(|b| b.build_id.clone()).ok_or_else(|| {
+                ViewerError::BuildNotFound {
                     requested: format!("nth={n}"),
                     nearby: nearby_ids(builds),
-                })
+                }
+            })
         }
         BuildSelector::ByBuildId(id) => {
             if builds.iter().any(|b| &b.build_id == id) {

@@ -162,7 +162,9 @@ fn map_ureq_error(err: ureq::Error, ctx: &str) -> BackendError {
             let body = response.into_string().unwrap_or_else(|_| "<no body>".into());
             map_status_error(status, ctx, body, retry_after)
         }
-        ureq::Error::Transport(t) => BackendError::Transient(format!("{ctx}: transport: {t}")),
+        ureq::Error::Transport(t) => {
+            BackendError::Transient(format!("{ctx}: transport: {t}"))
+        }
     }
 }
 
@@ -320,18 +322,19 @@ fn put_headers(req: ureq::Request, auth: &str, meta: &ArtifactMeta) -> ureq::Req
         .set("X-Cook-Output-Path", &meta.output_path)
         .set("X-Cook-Mode", &meta.mode.to_string())
         .set("X-Cook-Kind", meta.kind.as_deref().unwrap_or(""))
-        .set(
-            "X-Cook-Symlink-Target",
-            meta.target.as_deref().unwrap_or(""),
-        )
+        .set("X-Cook-Symlink-Target", meta.target.as_deref().unwrap_or(""))
 }
 
 /// Parse `X-Cook-Content-Hash` from a response. The header is REQUIRED on
 /// `200 OK` per CS-0058 §3.2.4; missing or malformed → `Other`.
 fn parse_content_hash(response: &ureq::Response) -> BackendResult<[u8; 32]> {
-    let h = response.header("X-Cook-Content-Hash").ok_or_else(|| {
-        BackendError::Other("malformed response: missing X-Cook-Content-Hash header".into())
-    })?;
+    let h = response
+        .header("X-Cook-Content-Hash")
+        .ok_or_else(|| {
+            BackendError::Other(
+                "malformed response: missing X-Cook-Content-Hash header".into(),
+            )
+        })?;
     let mut out = [0u8; 32];
     hex::decode_to_slice(h, &mut out).map_err(|e| {
         BackendError::Other(format!(
@@ -548,7 +551,11 @@ impl CacheBackend for CloudBackend {
     /// diagnostic data (a `provenance.json` sidecar). The cloud backend has
     /// no manifest endpoint yet (producer-attestation upload is deferred to
     /// M2); this is a no-op so a manifest never blocks a build.
-    fn put_manifest(&self, _key: &CloudKey, _manifest: &DeterminantManifest) -> BackendResult<()> {
+    fn put_manifest(
+        &self,
+        _key: &CloudKey,
+        _manifest: &DeterminantManifest,
+    ) -> BackendResult<()> {
         Ok(())
     }
 

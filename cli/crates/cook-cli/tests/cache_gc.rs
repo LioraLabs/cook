@@ -139,14 +139,7 @@ impl Fixture {
         kind: Option<&str>,
         recipe_namespace: &str,
     ) -> [u8; 32] {
-        seed_object(
-            &self.cache_dir,
-            counter,
-            size,
-            age_secs,
-            kind,
-            recipe_namespace,
-        )
+        seed_object(&self.cache_dir, counter, size, age_secs, kind, recipe_namespace)
     }
 
     /// Every `Command` this file spawns goes through here (or
@@ -335,10 +328,7 @@ fn parse_free_line(text: &str) -> (usize, String) {
     let (n, size) = rest
         .split_once(" objects, ")
         .unwrap_or_else(|| panic!("could not parse free line: {line:?}"));
-    (
-        n.parse().expect("object count is a number"),
-        size.to_string(),
-    )
+    (n.parse().expect("object count is a number"), size.to_string())
 }
 
 /// Parse the transition line's object counts out of `"Store: X -> Y (N
@@ -373,15 +363,7 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     // Five plain-file (kind = None) blobs, 1,000,000 bytes each, staggered
     // oldest-to-newest. Total file bytes: 5,000,000.
     let file_keys: Vec<[u8; 32]> = (0..5)
-        .map(|i| {
-            fx.seed(
-                i,
-                1_000_000,
-                (5 - i) as u64 * 1000,
-                None,
-                "/Cookfile::build",
-            )
-        })
+        .map(|i| fx.seed(i, 1_000_000, (5 - i) as u64 * 1000, None, "/Cookfile::build"))
         .collect();
 
     // One object of every size-sweep-exempt kind, each small and old — old
@@ -400,13 +382,7 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
         .iter()
         .enumerate()
         .map(|(i, kind)| {
-            fx.seed(
-                100 + i as u32,
-                10_000,
-                50_000,
-                Some(kind),
-                "/Cookfile::exempt",
-            )
+            fx.seed(100 + i as u32, 10_000, 50_000, Some(kind), "/Cookfile::exempt")
         })
         .collect();
 
@@ -464,13 +440,7 @@ fn a_manifest_gating_recent_artifacts_survives_the_size_sweep() {
     // The manifest: small (9,000 bytes) and the OLDEST object in the store
     // (100,000s old) — exactly the shape a naive byte-hungry LRU would take
     // first.
-    let manifest_key = fx.seed(
-        0,
-        9_000,
-        100_000,
-        Some("discovered_input_sets"),
-        "/Cookfile::cc",
-    );
+    let manifest_key = fx.seed(0, 9_000, 100_000, Some("discovered_input_sets"), "/Cookfile::cc");
 
     // Two large, RECENT file objects the manifest is the only route to the
     // full keys of (in the real depfile-unit shape this test models, not
@@ -502,11 +472,7 @@ fn a_manifest_gating_recent_artifacts_survives_the_size_sweep() {
 
     // The manifest — blob, .meta.json, AND .provenance.json — survives
     // untouched, even though it was the single oldest object in the store.
-    assert_object_present(
-        &fx.cache_dir,
-        &manifest_key,
-        "discovered_input_sets manifest",
-    );
+    assert_object_present(&fx.cache_dir, &manifest_key, "discovered_input_sets manifest");
 
     // The older file was the one evicted; the newer file survives.
     assert_object_absent(&fx.cache_dir, &file_a, "older file");
@@ -584,13 +550,7 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
 
     // 4 file objects, 1,000,000 bytes each, staggered oldest-to-newest.
     for i in 0..4 {
-        fx.seed(
-            i,
-            1_000_000,
-            (4 - i) as u64 * 1000,
-            None,
-            "/Cookfile::build",
-        );
+        fx.seed(i, 1_000_000, (4 - i) as u64 * 1000, None, "/Cookfile::build");
     }
 
     let before_snapshot = snapshot_files(&fx.cache_dir);

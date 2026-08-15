@@ -4,13 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::state::{Focus, UiState};
 
-pub enum Action {
-    Continue,
-    Quit,
-    Reload,
-    SwitchBuild(String),
-    YankSelectedLog,
-}
+pub enum Action { Continue, Quit, Reload, SwitchBuild(String), YankSelectedLog }
 
 pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
     if state.picker.is_some() {
@@ -49,26 +43,13 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
             state.scroll_y = state.scroll_y.saturating_add(10); Action::Continue
         }
         (KeyCode::PageUp, _) | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-            state.scroll_y = state.scroll_y.saturating_sub(10);
-            Action::Continue
+            state.scroll_y = state.scroll_y.saturating_sub(10); Action::Continue
         }
-        (KeyCode::Char('f'), _) => {
-            state.cycle_filter();
-            Action::Continue
-        }
-        (KeyCode::Char('t'), _) => {
-            state.show_timestamps = !state.show_timestamps;
-            Action::Continue
-        }
-        (KeyCode::Char('w'), _) => {
-            state.soft_wrap = !state.soft_wrap;
-            Action::Continue
-        }
+        (KeyCode::Char('f'), _) => { state.cycle_filter(); Action::Continue }
+        (KeyCode::Char('t'), _) => { state.show_timestamps = !state.show_timestamps; Action::Continue }
+        (KeyCode::Char('w'), _) => { state.soft_wrap = !state.soft_wrap; Action::Continue }
         (KeyCode::Char('b'), _) => {
-            state.picker = Some(crate::state::PickerState {
-                builds: vec![],
-                cursor: 0,
-            });
+            state.picker = Some(crate::state::PickerState { builds: vec![], cursor: 0 });
             Action::Continue
         }
         (KeyCode::Char('r'), _) => Action::Reload,
@@ -100,9 +81,7 @@ fn move_selection(state: &mut UiState, delta: i32) -> Action {
 fn handle_picker(state: &mut UiState, key: KeyEvent) -> Action {
     // Defensive: this is only called when picker is Some(_).
     let target_id = {
-        let Some(p) = state.picker.as_mut() else {
-            return Action::Continue;
-        };
+        let Some(p) = state.picker.as_mut() else { return Action::Continue };
         match key.code {
             KeyCode::Esc => { state.picker = None; return Action::Continue; }
             KeyCode::Down | KeyCode::Char('j') => {

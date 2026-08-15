@@ -42,7 +42,9 @@ pub enum ModulesCmd {
         names: Vec<String>,
     },
     /// Drop modules from cook.toml and prune .cook/modules.
-    Remove { names: Vec<String> },
+    Remove {
+        names: Vec<String>,
+    },
     /// Bump every dep within manifest constraints, or one named dep.
     Update {
         /// Optional rock name. With no arg, updates every dep.
@@ -116,7 +118,9 @@ fn run_inner(args: ModulesArgs) -> Result<()> {
         ModulesCmd::Remove { names } => {
             remove_named(&driver, &manifest, &cook_toml, &lockfile_path, &names)
         }
-        ModulesCmd::Update { name } => update_one_or_all(&driver, &manifest, &lockfile_path, name),
+        ModulesCmd::Update { name } => {
+            update_one_or_all(&driver, &manifest, &lockfile_path, name)
+        }
         ModulesCmd::List => list_installed(&lockfile_path),
         ModulesCmd::Search { query } => {
             for hit in driver.search(&query)? {

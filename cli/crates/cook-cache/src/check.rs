@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use cook_contracts::cache::cas::artifact_kind;
-use cook_contracts::cache::record::{DeterminantDrift, Determinants, determinant_drift};
+use cook_contracts::cache::record::{determinant_drift, DeterminantDrift, Determinants};
 
-use cook_contracts::cache::step::{CACHE_VERSION, FileRecord, StepEntry};
+use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_contracts::hash_str;
 
 /// COOK-360: the judge half of observe / judge / repair reports which
@@ -143,13 +143,10 @@ impl RebuildReason {
             RebuildReason::SealChanged => Some("seal changed".into()),
             RebuildReason::OutputMissing => Some("output missing (not restorable)".into()),
             RebuildReason::OutputChanged => Some("output drifted (not restorable)".into()),
-            RebuildReason::InputsChanged {
-                changed,
-                added,
-                removed,
-            } => {
-                let rest =
-                    |skip: &[String]| changed.len() + added.len() + removed.len() - skip.len();
+            RebuildReason::InputsChanged { changed, added, removed } => {
+                let rest = |skip: &[String]| {
+                    changed.len() + added.len() + removed.len() - skip.len()
+                };
                 if !changed.is_empty() {
                     Some(capped("changed", changed, rest(changed)))
                 } else if !added.is_empty() {
@@ -233,19 +230,9 @@ fn check_inputs(
         let cached_set: std::collections::BTreeSet<&str> = cached_paths.iter().copied().collect();
         let current_set: std::collections::BTreeSet<&str> =
             current_input_paths.iter().copied().collect();
-        let added = current_set
-            .difference(&cached_set)
-            .map(|s| s.to_string())
-            .collect();
-        let removed = cached_set
-            .difference(&current_set)
-            .map(|s| s.to_string())
-            .collect();
-        return Err(RebuildReason::InputsChanged {
-            changed: Vec::new(),
-            added,
-            removed,
-        });
+        let added = current_set.difference(&cached_set).map(|s| s.to_string()).collect();
+        let removed = cached_set.difference(&current_set).map(|s| s.to_string()).collect();
+        return Err(RebuildReason::InputsChanged { changed: Vec::new(), added, removed });
     }
 
     let mut updated = cached_inputs.to_vec();
@@ -344,11 +331,7 @@ pub fn needs_rebuild_cook(
     // (restore), which is why those halves stay in this crate and this rule
     // does not.
     if let Some(drift) = determinant_drift(
-        &Determinants::new(
-            entry.command_hash,
-            entry.env_contribution,
-            entry.seal_contribution,
-        ),
+        &Determinants::new(entry.command_hash, entry.env_contribution, entry.seal_contribution),
         &Determinants::new(command_hash, env_contribution, seal_contribution),
     ) {
         return (RebuildResult::Rebuild(drift_reason(drift)), None);
@@ -998,12 +981,9 @@ pub fn fetch_by_key(
     // empty candidate: a depfile unit is a spawned compile, a module-loading
     // unit is a Lua body. The product is therefore linear in the real world
     // and bounded in the pathological one.
-    let pairs = candidates.into_iter().flat_map(|d| {
-        module_candidates
-            .iter()
-            .cloned()
-            .map(move |m| (d.clone(), m))
-    });
+    let pairs = candidates
+        .into_iter()
+        .flat_map(|d| module_candidates.iter().cloned().map(move |m| (d.clone(), m)));
     for (set, module_set) in pairs {
         let mut full_hashes: Vec<u64> = sorted_input_content_hashes.to_vec();
         if !set.is_empty() || !module_set.is_empty() {

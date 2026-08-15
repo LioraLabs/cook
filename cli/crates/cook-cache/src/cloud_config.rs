@@ -12,7 +12,7 @@ use serde::Deserialize;
 // two consumers — this file and `cook cache gc --max-size` — so they live in
 // `cook_contracts::size`. Imported rather than re-exported: a courier is how
 // `cook-cli` came to read them as `cook_engine::cook_cache::parse_size`.
-use cook_contracts::size::{SIZE_LITERAL_HELP, parse_size};
+use cook_contracts::size::{parse_size, SIZE_LITERAL_HELP};
 
 /// serde default for `CloudSection::publish` — absent key means "publish".
 fn default_true() -> bool {

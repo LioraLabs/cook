@@ -1,7 +1,7 @@
 //! Failure / blocked detail rendering, per §3.3 of the test-runner output design.
 
-use crate::test_reporter::style::Style;
 use cook_engine::{TestOutcome, TestResult};
+use crate::test_reporter::style::Style;
 
 const STDOUT_STDERR_LINE_CAP: usize = 10_000;
 
@@ -21,15 +21,11 @@ pub fn render(
         .filter(|r| matches!(r.outcome, TestOutcome::Blocked))
         .collect();
     failed.sort_by(|a, b| {
-        sort_key(a)
-            .cmp(&sort_key(b))
+        sort_key(a).cmp(&sort_key(b))
             .then_with(|| a.id.0.cmp(&b.id.0))
     });
-    blocked.sort_by(|a, b| {
-        label_for_id(&a.id.0)
-            .cmp(&label_for_id(&b.id.0))
-            .then_with(|| a.id.0.cmp(&b.id.0))
-    });
+    blocked.sort_by(|a, b| label_for_id(&a.id.0).cmp(&label_for_id(&b.id.0))
+        .then_with(|| a.id.0.cmp(&b.id.0)));
 
     let mut out = String::new();
     if failed.is_empty() && blocked.is_empty() {

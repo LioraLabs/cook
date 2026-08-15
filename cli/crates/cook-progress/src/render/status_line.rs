@@ -1,14 +1,14 @@
 //! Sticky bottom-of-terminal status line — threading + I/O.
 
 use std::io::{self, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 
-use crate::render::snapshot::{StatusLineOptions, StatusSnapshot, render_status_line};
+use crate::render::snapshot::{render_status_line, StatusLineOptions, StatusSnapshot};
 
 /// Tick interval for the status-line repaint thread. ~10 Hz.
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -68,12 +68,7 @@ impl StatusLine {
             let _ = writer.clear_line();
         });
 
-        Self {
-            snapshot,
-            visible,
-            shutdown,
-            thread: Some(thread),
-        }
+        Self { snapshot, visible, shutdown, thread: Some(thread) }
     }
 
     pub fn update(&self, snap: StatusSnapshot) {

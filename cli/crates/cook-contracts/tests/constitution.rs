@@ -182,10 +182,7 @@ pub fn scrub(text: &str, what: Scrub) -> String {
     let mut i = 0;
 
     fn blank(out: &mut Vec<u8>, span: &[u8]) {
-        out.extend(
-            span.iter()
-                .map(|byte| if *byte == b'\n' { b'\n' } else { b' ' }),
-        );
+        out.extend(span.iter().map(|byte| if *byte == b'\n' { b'\n' } else { b' ' }));
     }
 
     while i < bytes.len() {
@@ -341,10 +338,9 @@ fn use_keyword_at(text: &str, at: usize) -> Option<usize> {
         return None;
     }
     let after = at + 3;
-    (bytes
-        .get(after)
-        .is_some_and(|byte| byte.is_ascii_whitespace()))
-    .then(|| after + text[after..].len() - text[after..].trim_start().len())
+    (bytes.get(after).is_some_and(|byte| byte.is_ascii_whitespace())).then(|| {
+        after + text[after..].len() - text[after..].trim_start().len()
+    })
 }
 
 fn statement_end(text: &str, from: usize) -> usize {
@@ -481,11 +477,7 @@ struct LineIndex<'a> {
 
 impl<'a> LineIndex<'a> {
     fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            at: 0,
-            line: 1,
-        }
+        Self { text, at: 0, line: 1 }
     }
 
     fn line(&mut self, offset: usize) -> usize {
@@ -766,9 +758,10 @@ pub fn declared_dependencies(manifest: &str) -> Vec<String> {
 
 #[test]
 fn cook_contracts_dependencies_are_allowlisted() {
-    let manifest =
-        std::fs::read_to_string(workspace_root().join("crates/cook-contracts/Cargo.toml"))
-            .expect("read cook-contracts manifest");
+    let manifest = std::fs::read_to_string(
+        workspace_root().join("crates/cook-contracts/Cargo.toml"),
+    )
+    .expect("read cook-contracts manifest");
     let declared = declared_dependencies(&manifest);
     let allowed: BTreeSet<&str> = ALLOWED_DEPENDENCIES.into_iter().collect();
 
@@ -965,10 +958,7 @@ fn no_item_is_reached_through_another_crates_re_export() {
                 .or_insert(finding);
         }
     }
-    enforce(
-        "re-export-tunnels",
-        &findings.into_values().collect::<Vec<_>>(),
-    );
+    enforce("re-export-tunnels", &findings.into_values().collect::<Vec<_>>());
 }
 
 // ------------------------------------------ tier 2: cross-crate duplicates

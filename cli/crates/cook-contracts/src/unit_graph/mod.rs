@@ -65,8 +65,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::unit::DepKind;
 use crate::{CapturedUnit, RecipeUnits, WorkPayload};
+use crate::unit::DepKind;
 
 /// Where a graph node came from, in terms a caller that holds the original
 /// `RecipeUnits` slice can resolve: a captured unit is `(recipe, unit_idx)`;
@@ -147,7 +147,10 @@ pub enum UnitGraphError {
     /// message can name it; the inner error says which of the two ways it
     /// failed. Registration diagnoses this first — see [`resolve_after`] — so
     /// reaching it here means a producer of `RecipeUnits` skipped that check.
-    After { recipe: String, source: AfterError },
+    After {
+        recipe: String,
+        source: AfterError,
+    },
 }
 
 /// The two ways a `cook.add_unit` `after` entry (§22.1.3, CS-0219) can fail to

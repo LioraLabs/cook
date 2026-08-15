@@ -218,8 +218,9 @@ pub fn resolve_workspace_root(
 ) -> Result<PathBuf, PipelineError> {
     // Rule 1: explicit override.
     if let Some(root) = override_root {
-        let root = std::fs::canonicalize(&root)
-            .map_err(|e| PipelineError::Workspace(format!("--root '{}': {e}", root.display())))?;
+        let root = std::fs::canonicalize(&root).map_err(|e| {
+            PipelineError::Workspace(format!("--root '{}': {e}", root.display()))
+        })?;
         let invoked_canon = std::fs::canonicalize(invoked_cookfile).map_err(|e| {
             PipelineError::Workspace(format!(
                 "cannot resolve {}: {e}",

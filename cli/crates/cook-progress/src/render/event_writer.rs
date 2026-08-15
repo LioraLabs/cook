@@ -28,7 +28,7 @@ use std::time::Duration;
 use crate::event::{NodeKind, ProgressEvent, RecipeId, SkipReason, Stream};
 use crate::model::build::BuildState;
 use crate::naming::{display_recipe_name, is_internal_recipe, probe_module};
-use crate::style::{LineKind, format_verb, verb_for};
+use crate::style::{format_verb, verb_for, LineKind};
 
 /// Indent for stderr lines below a `Failed` verb line. 12-col verb + 1 sep + 2 indent = 15 spaces.
 const STDERR_INDENT: &str = "               ";
@@ -50,12 +50,7 @@ pub struct EventWriterOptions {
 
 impl Default for EventWriterOptions {
     fn default() -> Self {
-        Self {
-            colored: true,
-            quiet: false,
-            verbose: false,
-            cached_inline_threshold: 8,
-        }
+        Self { colored: true, quiet: false, verbose: false, cached_inline_threshold: 8 }
     }
 }
 
@@ -156,16 +151,8 @@ impl EventWriter {
                 Ok(false)
             }
 
-            ProgressEvent::NodeCompleted {
-                recipe,
-                node,
-                elapsed,
-                kind,
-                cache_key: _,
-            } => {
-                if self.opts.quiet {
-                    return Ok(false);
-                }
+            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind, cache_key: _ } => {
+                if self.opts.quiet { return Ok(false); }
                 let nname = node_display(state, *recipe, *node);
                 if !self.opts.verbose && let Some(module) = probe_module(&nname) {
                     let buf = self.buffers.entry(*recipe).or_default();
@@ -185,12 +172,7 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::NodeFailed {
-                recipe,
-                node,
-                elapsed,
-                error,
-            } => {
+            ProgressEvent::NodeFailed { recipe, node, elapsed, error } => {
                 self.flush_recipe(out, state, *recipe, false)?;
                 let rname = recipe_name(state, *recipe);
                 let nname = node_display(state, *recipe, *node);
@@ -220,34 +202,18 @@ impl EventWriter {
                 }
             },
 
-            ProgressEvent::NodeOutput {
-                recipe,
-                node,
-                line,
-                stream,
-            } => {
-                if !self.opts.verbose {
-                    return Ok(false);
-                }
+            ProgressEvent::NodeOutput { recipe, node, line, stream } => {
+                if !self.opts.verbose { return Ok(false); }
                 let rname = recipe_name(state, *recipe);
                 // Same label as the completion line (own full output path,
                 // or a clean fallback) — not the raw node name/command text.
                 let nlabel = node_display(state, *recipe, *node);
-                let tag = match stream {
-                    Stream::Stderr => " (stderr)",
-                    _ => "",
-                };
+                let tag = match stream { Stream::Stderr => " (stderr)", _ => "" };
                 writeln!(out, "[{rname}/{nlabel}]{tag} {line}")?;
                 Ok(true)
             }
 
-            ProgressEvent::RecipeCompleted {
-                recipe,
-                elapsed,
-                cached,
-                total,
-                kind,
-            } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, kind } => {
                 let probes_ran = self.flush_probes(out, state, *recipe)?;
                 if *total == 0 { return Ok(false); }
                 let internal = raw_recipe_name(state, *recipe)
@@ -287,12 +253,7 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::RecipeFailed {
-                recipe,
-                elapsed,
-                completed,
-                total,
-            } => {
+            ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => {
                 self.flush_recipe(out, state, *recipe, true)?;
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::RecipeFailed, NodeKind::Cooked);
@@ -386,13 +347,7 @@ impl EventWriter {
     /// Called on evidence of real work (or a failure) so held output lands
     /// in front of the line that triggered it. `terminal` marks the recipe's
     /// last flush, which also reports the collapsed-line count.
-    fn flush_recipe<W: Write>(
-        &mut self,
-        out: &mut W,
-        state: &BuildState,
-        recipe: RecipeId,
-        terminal: bool,
-    ) -> io::Result<()> {
+    fn flush_recipe<W: Write>(&mut self, out: &mut W, state: &BuildState, recipe: RecipeId, terminal: bool) -> io::Result<()> {
         self.flush_probes(out, state, recipe)?;
         self.flush_cached(out, recipe, terminal)
     }
@@ -400,15 +355,8 @@ impl EventWriter {
     /// Print the grouped `Resolved <module> toolchain` line if any of the
     /// recipe's probes actually ran; a fully-cached probe set stays silent.
     /// Returns how many probes ran (consumed either way).
-    fn flush_probes<W: Write>(
-        &mut self,
-        out: &mut W,
-        state: &BuildState,
-        recipe: RecipeId,
-    ) -> io::Result<usize> {
-        let Some(buf) = self.buffers.get_mut(&recipe) else {
-            return Ok(0);
-        };
+    fn flush_probes<W: Write>(&mut self, out: &mut W, state: &BuildState, recipe: RecipeId) -> io::Result<usize> {
+        let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(0) };
         let (ran, cached) = (buf.probes_ran, buf.probes_cached);
         let elapsed = buf.probes_elapsed;
         let module = buf.probe_module.take().unwrap_or_default();
@@ -432,15 +380,8 @@ impl EventWriter {
     /// Print a recipe's held cached lines, up to the per-recipe threshold;
     /// overflow accumulates and is reported once, on the `terminal` flush,
     /// as `… (N more cached)`.
-    fn flush_cached<W: Write>(
-        &mut self,
-        out: &mut W,
-        recipe: RecipeId,
-        terminal: bool,
-    ) -> io::Result<()> {
-        let Some(buf) = self.buffers.get_mut(&recipe) else {
-            return Ok(());
-        };
+    fn flush_cached<W: Write>(&mut self, out: &mut W, recipe: RecipeId, terminal: bool) -> io::Result<()> {
+        let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(()) };
         let held = std::mem::take(&mut buf.cached);
         let allowance = self.opts.cached_inline_threshold.saturating_sub(buf.cached_printed);
         buf.cached_printed += held.len().min(allowance);

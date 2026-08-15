@@ -1,7 +1,7 @@
 //! Summary line + footer rendering, per §3.4 of the test-runner output design.
 
-use crate::test_reporter::style::Style;
 use std::time::Duration;
+use crate::test_reporter::style::Style;
 
 #[derive(Default)]
 pub struct Tally {

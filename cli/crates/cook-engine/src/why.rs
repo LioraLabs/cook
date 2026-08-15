@@ -28,54 +28,25 @@ pub enum CacheStatus {
     /// CS-0173: reserved for an input **no unit in the closure produces**. An
     /// input that is merely not restored yet is resolved from its producer
     /// instead; one whose producer rebuilds is `ForcedByUpstream`.
-    MissingInput {
-        path: String,
-    },
+    MissingInput { path: String },
     /// CS-0173: an input to this unit is an output of a unit that will itself
     /// rebuild, so the bytes this unit would consume do not exist yet in their
     /// final form and cannot be known without running the producer. No key is
     /// computable, so none is reported.
-    ForcedByUpstream {
-        producer: String,
-        path: String,
-    },
+    ForcedByUpstream { producer: String, path: String },
 }
 
 /// One determinant difference found when diffing consumer determinants against a
 /// producer manifest on a shared miss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeterminantDiff {
-    CommandHash {
-        ours: u64,
-        theirs: u64,
-    },
-    EnvContribution {
-        ours: u64,
-        theirs: u64,
-    },
-    SealContribution {
-        ours: u64,
-        theirs: u64,
-    },
-    Input {
-        path: String,
-        ours: Option<u64>,
-        theirs: Option<u64>,
-    },
-    Env {
-        key: String,
-        ours: Option<String>,
-        theirs: Option<String>,
-    },
-    Probe {
-        key: String,
-        ours: Option<String>,
-        theirs: Option<String>,
-    },
-    OutputPaths {
-        ours: Vec<String>,
-        theirs: Vec<String>,
-    },
+    CommandHash { ours: u64, theirs: u64 },
+    EnvContribution { ours: u64, theirs: u64 },
+    SealContribution { ours: u64, theirs: u64 },
+    Input { path: String, ours: Option<u64>, theirs: Option<u64> },
+    Env { key: String, ours: Option<String>, theirs: Option<String> },
+    Probe { key: String, ours: Option<String>, theirs: Option<String> },
+    OutputPaths { ours: Vec<String>, theirs: Vec<String> },
 }
 
 /// CS-0173: what one declared output will contain by the time a downstream unit
@@ -127,43 +98,22 @@ pub fn diff_against_manifest(
 ) -> Vec<DeterminantDiff> {
     let mut out = Vec::new();
     if ours.command_hash != theirs.command_hash {
-        out.push(DeterminantDiff::CommandHash {
-            ours: ours.command_hash,
-            theirs: theirs.command_hash,
-        });
+        out.push(DeterminantDiff::CommandHash { ours: ours.command_hash, theirs: theirs.command_hash });
     }
     if ours.env_contribution != theirs.env_contribution {
-        out.push(DeterminantDiff::EnvContribution {
-            ours: ours.env_contribution,
-            theirs: theirs.env_contribution,
-        });
+        out.push(DeterminantDiff::EnvContribution { ours: ours.env_contribution, theirs: theirs.env_contribution });
     }
     if ours.seal_contribution != theirs.seal_contribution {
-        out.push(DeterminantDiff::SealContribution {
-            ours: ours.seal_contribution,
-            theirs: theirs.seal_contribution,
-        });
+        out.push(DeterminantDiff::SealContribution { ours: ours.seal_contribution, theirs: theirs.seal_contribution });
     }
     diff_map_u64(&ours.inputs, &theirs.inputs, |path, o, t| {
-        out.push(DeterminantDiff::Input {
-            path,
-            ours: o,
-            theirs: t,
-        });
+        out.push(DeterminantDiff::Input { path, ours: o, theirs: t });
     });
     diff_map_str(&ours.consulted_env, &theirs.consulted_env, |key, o, t| {
-        out.push(DeterminantDiff::Env {
-            key,
-            ours: o,
-            theirs: t,
-        });
+        out.push(DeterminantDiff::Env { key, ours: o, theirs: t });
     });
     diff_map_str(&ours.sealed_probes, &theirs.sealed_probes, |key, o, t| {
-        out.push(DeterminantDiff::Probe {
-            key,
-            ours: o,
-            theirs: t,
-        });
+        out.push(DeterminantDiff::Probe { key, ours: o, theirs: t });
     });
     if ours.output_paths != theirs.output_paths {
         out.push(DeterminantDiff::OutputPaths {
@@ -456,8 +406,11 @@ fn resolve_unit_determinants(
 fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> String {
     let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
     sorted.sort();
-    let recipe_namespace =
-        cook_cache::recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
+    let recipe_namespace = cook_cache::recipe_namespace(
+        &meta.project_id,
+        &meta.cookfile_path,
+        &meta.recipe_name,
+    );
     let k = cook_cache::cloud_key(&cook_cache::CloudKeyInputs {
         schema_version: crate::executor::cache_version(),
         recipe_namespace: &recipe_namespace,
@@ -545,7 +498,9 @@ fn classify(
     use cook_contracts::cache::record::{effect_kind, EffectKind};
     if effect_kind(meta) == EffectKind::Observed {
         let shared = decode_key_hex(key_hex)
-            .and_then(|k| cook_cache::shared_observation(cache_ctx.backend.as_ref(), &k))
+            .and_then(|k| {
+                cook_cache::shared_observation(cache_ctx.backend.as_ref(), &k)
+            })
             .is_some();
         return Classification {
             status: if local_hit {
@@ -760,8 +715,11 @@ fn local_step_hit(
     };
     // Resolved by the same call `check_node_cache` makes, so the query judges
     // the unit against the set the build would (§17.1.1.2).
-    let resolved_inputs =
-        cook_cache::resolve_declared_inputs(&meta.inputs, &meta.consumes, &node.working_dir);
+    let resolved_inputs = cook_cache::resolve_declared_inputs(
+        &meta.inputs,
+        &meta.consumes,
+        &node.working_dir,
+    );
     let input_refs: Vec<&str> = resolved_inputs.iter().map(|s| s.as_str()).collect();
     // I2: for glob outputs the raw pattern strings don't exist on disk; passing
     // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror

@@ -284,10 +284,7 @@ fn sentence_about(output: &str, name: &str) -> String {
     let needle = format!("recipe '{name}'");
     output
         .lines()
-        .find_map(|line| {
-            line.find(&needle)
-                .map(|at| line[at..].trim_end().to_string())
-        })
+        .find_map(|line| line.find(&needle).map(|at| line[at..].trim_end().to_string()))
         .unwrap_or_else(|| {
             panic!("no diagnostic mentioning `{needle}` in the run's output:\n{output}")
         })

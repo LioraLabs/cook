@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::{FileRecord, StepEntry, hash_file, stat_mtime};
 use cook_contracts::CacheMeta;
+use crate::{hash_file, stat_mtime, FileRecord, StepEntry};
 
 use crate::store::RecipeCache;
 
@@ -16,14 +16,11 @@ pub fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileR
         let abs = working_dir.join(rel);
         let mtime = stat_mtime(&abs).ok_or_else(|| rel.clone())?;
         let hash = hash_file(&abs).ok_or_else(|| rel.clone())?;
-        out.push(FileRecord {
-            path: rel.as_str().into(),
-            mtime,
-            hash,
-        });
+        out.push(FileRecord { path: rel.as_str().into(), mtime, hash });
     }
     Ok(out)
 }
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
@@ -32,6 +29,7 @@ pub enum RecordError {
     #[error("cache record skipped: output file missing or unreadable: {0}")]
     UnreadableFile(String),
 }
+
 
 /// Outcome of a single keyed step lookup against a recipe index.
 ///
@@ -173,14 +171,16 @@ impl ThreadSafeCacheManager {
     /// This is the per-work-node hot path (COOK-306). `output_base` is the
     /// unit's first declared output path, used only to attribute a miss to a
     /// changed env value — see [`StepLookup::env_moved_key`].
-    pub fn lookup_step(&self, recipe_name: &str, cache_key: &str, output_base: &str) -> StepLookup {
+    pub fn lookup_step(
+        &self,
+        recipe_name: &str,
+        cache_key: &str,
+        output_base: &str,
+    ) -> StepLookup {
         let mut caches = self.caches.lock().unwrap();
         let cache = Self::resolve(&mut caches, &self.cache_dir, recipe_name);
         if let Some(entry) = cache.steps.get(cache_key) {
-            return StepLookup {
-                entry: Some(entry.clone()),
-                env_moved_key: false,
-            };
+            return StepLookup { entry: Some(entry.clone()), env_moved_key: false };
         }
         let prefix = format!("{output_base}@");
         let env_moved_key = cache.steps.contains_key(output_base)
@@ -190,10 +190,7 @@ impl ThreadSafeCacheManager {
                 .take_while(|(k, _)| k.starts_with(&prefix))
                 .next()
                 .is_some();
-        StepLookup {
-            entry: None,
-            env_moved_key,
-        }
+        StepLookup { entry: None, env_moved_key }
     }
 
     pub fn record_completion(
@@ -222,7 +219,10 @@ impl ThreadSafeCacheManager {
             // Append the depfile as an implicit output. If the file is
             // missing on disk post-execution, skip silently — the engine's
             // augmentation block (Task 10) handles the warning.
-            if let Ok(records) = collect_records(&[di.from.clone()], working_dir) {
+            if let Ok(records) = collect_records(
+                &[di.from.clone()],
+                working_dir,
+            ) {
                 if let Some(rec) = records.into_iter().next() {
                     new_outputs.push(rec);
                 }

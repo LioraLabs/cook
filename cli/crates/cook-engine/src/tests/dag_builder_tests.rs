@@ -445,10 +445,7 @@ fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
         "message must hint at the cook.require_recipe fix: {msg}"
     );
     match err {
-        EngineError::DanglingDepEdge {
-            referring_recipe,
-            dep_name,
-        } => {
+        EngineError::DanglingDepEdge { referring_recipe, dep_name } => {
             assert_eq!(referring_recipe, "app");
             assert_eq!(dep_name, "libmath");
         }
@@ -497,8 +494,9 @@ fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
 
     // noop must be passed ahead of app to respect the topo-order
     // contract build_dag relies on for recipe_leaves.
-    let dag = build_dag(vec![noop, app])
-        .expect("an in-closure zero-unit dep must not diagnose — Some(empty) is legitimate");
+    let dag = build_dag(vec![noop, app]).expect(
+        "an in-closure zero-unit dep must not diagnose — Some(empty) is legitimate",
+    );
     // Only app's single unit produces a node; noop contributes none.
     assert_eq!(dag.len(), 1);
     assert_eq!(
@@ -1067,7 +1065,7 @@ fn test_output_collision_dep_related_recipes_allowed() {
 
 #[test]
 fn unreached_probe_is_pruned_from_dag() {
-    use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+    use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
 
     let probe_payload = WorkPayload::Probe {
         key: "k:unused".to_string(),
@@ -1130,7 +1128,7 @@ fn unreached_probe_is_pruned_from_dag() {
 
 #[test]
 fn probe_chain_keeps_upstream_when_downstream_consumed() {
-    use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+    use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
 
     let probe_a_payload = WorkPayload::Probe {
         key: "k:a".to_string(),
@@ -1180,10 +1178,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
             test_name: None,
     };
     let consumer = CapturedUnit {
-        payload: WorkPayload::Shell {
-            cmd: "echo".to_string(),
-            line: 3,
-        },
+        payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 3 },
         cache_meta: None,
         dep_kind: DepKind::Sequential,
         probes: vec!["k:b".to_string()],
@@ -1317,12 +1312,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
     };
     let dag = build_dag(vec![ru]).expect("no collision");
     let probe_nodes = (0..dag.len())
-        .filter(|i| {
-            matches!(
-                dag.node(*i).payload().payload,
-                Some(WorkPayload::Probe { .. })
-            )
-        })
+        .filter(|i| matches!(dag.node(*i).payload().payload, Some(WorkPayload::Probe { .. })))
         .count();
     assert_eq!(probe_nodes, 0, "unreferenced top-level probe must not be synthesised");
 }
@@ -1722,7 +1712,7 @@ fn non_probe_units_around_probes_keep_barrier() {
 
 #[test]
 fn multi_recipe_wave_prunes_independently() {
-    use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+    use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
 
     fn make_recipe(name: &str, has_consumer: bool) -> RecipeUnits {
         let probe_meta = ProbeUnit {
@@ -1748,10 +1738,7 @@ fn multi_recipe_wave_prunes_independently() {
             after: Vec::new(),
         }];
         units.push(CapturedUnit {
-            payload: WorkPayload::Shell {
-                cmd: "echo".to_string(),
-                line: 2,
-            },
+            payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 2 },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: if has_consumer { vec!["k:p".to_string()] } else { vec![] },

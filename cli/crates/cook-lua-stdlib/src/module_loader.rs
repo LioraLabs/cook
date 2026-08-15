@@ -136,7 +136,9 @@ pub fn install_module_loader(
         let cached: Option<(LuaValue, Option<std::path::PathBuf>)> = {
             let c = core.borrow();
             match c.loaded.get(&memo_key) {
-                Some(key) => Some((lua.registry_value(key)?, c.paths.get(&memo_key).cloned())),
+                Some(key) => {
+                    Some((lua.registry_value(key)?, c.paths.get(&memo_key).cloned()))
+                }
                 None => None,
             }
         };
@@ -185,7 +187,9 @@ pub fn install_module_loader(
             // a rule whose failure mode is a silent wrong cache is the wrong
             // one.
             let contained = match (cwd.canonicalize(), candidate.canonicalize()) {
-                (Ok(root), Ok(target)) => cook_contracts::layout::path_is_contained(&root, &target),
+                (Ok(root), Ok(target)) => {
+                    cook_contracts::layout::path_is_contained(&root, &target)
+                }
                 _ => false,
             };
             if !contained {
@@ -296,10 +300,7 @@ pub fn install_module_loader(
     // COMPOSES `cook.load_module("…")` into every `use` binding it emits, and a
     // rename on either side would leave the alias binding through something
     // this loader (and therefore the CS-0204 observer inside it) never sees.
-    cook.set(
-        cook_contracts::module_binding::LOAD_MODULE_FN,
-        load_module_fn,
-    )?;
+    cook.set(cook_contracts::module_binding::LOAD_MODULE_FN, load_module_fn)?;
     Ok(())
 }
 

@@ -33,12 +33,7 @@ pub struct PlainRenderer<W: Write + Send> {
 }
 
 impl<W: Write + Send> PlainRenderer<W> {
-    pub fn new(out: W) -> Self {
-        Self {
-            out,
-            buffers: BTreeMap::new(),
-        }
-    }
+    pub fn new(out: W) -> Self { Self { out, buffers: BTreeMap::new() } }
 
     fn name(&self, state: &BuildState, recipe: RecipeId) -> String {
         self.raw_name(state, recipe)
@@ -64,9 +59,7 @@ impl<W: Write + Send> PlainRenderer<W> {
     /// One row for the recipe's probes, only if any actually ran; a
     /// fully-cached probe set stays silent. Returns how many probes ran.
     fn flush_probes(&mut self, state: &BuildState, recipe: RecipeId) -> io::Result<usize> {
-        let Some(buf) = self.buffers.get_mut(&recipe) else {
-            return Ok(0);
-        };
+        let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(0) };
         let (ran, cached) = (buf.probes_ran, buf.probes_cached);
         let elapsed = buf.probes_elapsed;
         let module = buf.probe_module.take().unwrap_or_default();
@@ -84,9 +77,7 @@ impl<W: Write + Send> PlainRenderer<W> {
     }
 
     fn flush_cached(&mut self, recipe: RecipeId) -> io::Result<()> {
-        let Some(buf) = self.buffers.get_mut(&recipe) else {
-            return Ok(());
-        };
+        let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(()) };
         let held = std::mem::take(&mut buf.cached_rows);
         for row in held {
             writeln!(self.out, "{row}")?;
@@ -99,15 +90,8 @@ impl<W: Write + Send> PlainRenderer<W> {
     /// `set -e`-prefixed multi-line command text) when the node is present
     /// in state; a placeholder on a lookup miss, so the label is never
     /// blank (the `report/` bug).
-    fn node_display(
-        &self,
-        state: &BuildState,
-        recipe: &RecipeId,
-        node: &crate::event::NodeId,
-    ) -> String {
-        state
-            .recipes
-            .get(recipe)
+    fn node_display(&self, state: &BuildState, recipe: &RecipeId, node: &crate::event::NodeId) -> String {
+        state.recipes.get(recipe)
             .and_then(|r| r.nodes.get(node))
             .map(|n| n.display())
             .unwrap_or_else(|| "?".to_string())
@@ -163,12 +147,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 };
                 writeln!(self.out, "  {:24} done     {:24} {}", name, detail, fmt_secs(*elapsed))?;
             }
-            ProgressEvent::RecipeFailed {
-                recipe,
-                elapsed,
-                completed,
-                total,
-            } => {
+            ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => {
                 self.flush_recipe(state, *recipe)?;
                 let name = self.name(state, *recipe);
                 writeln!(self.out, "  {:24} FAILED   ({}/{} steps) {}", name, completed, total, fmt_secs(*elapsed))?;
@@ -186,13 +165,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 writeln!(self.out, "  {}/{:40}rebuild ({cause})", rname, nname)?;
             }
             ProgressEvent::NodeStarted { .. } => {}
-            ProgressEvent::NodeCompleted {
-                recipe,
-                node,
-                elapsed,
-                kind: _,
-                cache_key: _,
-            } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _, cache_key: _ } => {
                 let nname = self.node_display(state, recipe, node);
                 if let Some(module) = probe_module(&nname) {
                     let module = module.to_string();
@@ -206,12 +179,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 let rname = self.name(state, *recipe);
                 writeln!(self.out, "  {}/{:40}{}", rname, nname, fmt_secs(*elapsed))?;
             }
-            ProgressEvent::NodeFailed {
-                recipe,
-                node,
-                elapsed,
-                error,
-            } => {
+            ProgressEvent::NodeFailed { recipe, node, elapsed, error } => {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
                 let nname = self.node_display(state, recipe, node);
@@ -249,12 +217,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                     reason.as_str()
                 )?;
             }
-            ProgressEvent::NodeOutput {
-                recipe,
-                node,
-                line,
-                stream,
-            } => {
+            ProgressEvent::NodeOutput { recipe, node, line, stream } => {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
                 // Same label as the completion line (own full output path,

@@ -176,13 +176,11 @@ fn static_glob_filters_out_directories() {
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     got.sort();
     assert_eq!(got, vec!["a.txt".to_string(), "b.txt".to_string()]);
@@ -208,13 +206,11 @@ fn static_glob_filters_symlink_to_directory() {
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     got.sort();
     assert_eq!(got, vec!["a.txt".to_string()]);
@@ -239,13 +235,11 @@ fn static_glob_keeps_symlink_to_file() {
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     got.sort();
     assert_eq!(got, vec!["link.txt".to_string(), "real.txt".to_string()]);
@@ -352,13 +346,11 @@ fn static_glob_array_concatenates_in_call_order() {
     let got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     assert_eq!(got, vec!["x.txt".to_string(), "y.txt".to_string()]);
 }
@@ -381,13 +373,11 @@ fn static_glob_array_order_follows_pattern_order() {
     let got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     assert_eq!(got, vec!["y.txt".to_string(), "x.txt".to_string()]);
 }
@@ -410,13 +400,11 @@ fn static_glob_array_filters_directories_per_pattern() {
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     got.sort();
     // `legacy/` is a sub-directory and MUST be filtered out per CS-0064;
@@ -452,13 +440,11 @@ fn static_glob_string_form_unchanged() {
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
-        .map(|p| {
-            std::path::Path::new(&p)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| std::path::Path::new(&p)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned())
         .collect();
     got.sort();
     assert_eq!(got, vec!["a.txt".to_string(), "b.txt".to_string()]);

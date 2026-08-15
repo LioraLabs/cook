@@ -6,7 +6,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::event::{NodeId, PROGRESS_SCHEMA_VERSION, ProgressEvent, RecipeId, Stream};
+use crate::event::{NodeId, ProgressEvent, RecipeId, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::build::BuildState;
 use crate::render::json::event_to_wire;
 use crate::wire::WireLine;
@@ -52,10 +52,7 @@ impl LogStore {
 
         let events_writer = if config.events_jsonl {
             Some(BufWriter::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(build_dir.join("events.jsonl"))?,
+                OpenOptions::new().create(true).append(true).open(build_dir.join("events.jsonl"))?
             ))
         } else {
             None
@@ -91,13 +88,7 @@ impl LogStore {
             w.write_all(b"\n")?;
         }
 
-        if let ProgressEvent::NodeOutput {
-            recipe,
-            node,
-            line,
-            stream,
-        } = event
-        {
+        if let ProgressEvent::NodeOutput { recipe, node, line, stream } = event {
             let key = (*recipe, *node);
             let bytes_now = *self.node_bytes.entry(key).or_insert(0);
             if bytes_now >= self.config.max_bytes_per_node {
@@ -118,10 +109,7 @@ impl LogStore {
                 self.node_writers.insert(key, BufWriter::new(f));
             }
 
-            let tag = match stream {
-                Stream::Stdout => "[out]",
-                Stream::Stderr => "[err]",
-            };
+            let tag = match stream { Stream::Stdout => "[out]", Stream::Stderr => "[err]" };
             let record = format!("{tag} {line}\n");
             let writer = self.node_writers.get_mut(&key).unwrap();
             writer.write_all(record.as_bytes())?;
@@ -169,13 +157,7 @@ fn current_rfc3339() -> String {
 
 fn sanitize(name: &str) -> String {
     name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
         .collect()
 }
 
@@ -183,12 +165,7 @@ fn rotate(root: &Path, keep_builds: usize, max_total_bytes: u64) -> io::Result<(
     let mut entries: Vec<(PathBuf, SystemTime)> = fs::read_dir(root)?
         .filter_map(|r| r.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .filter_map(|e| {
-            e.metadata()
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .map(|t| (e.path(), t))
-        })
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (e.path(), t)))
         .collect();
     entries.sort_by_key(|(_, t)| *t);
 

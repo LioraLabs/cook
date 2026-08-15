@@ -7,14 +7,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cook_cache::backend::{
-    ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend, artifact_key, cloud_key, put_bytes,
+    artifact_key, cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
 };
-use cook_cache::store::{CACHE_VERSION, FileRecord, StepEntry};
+use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_cache::{
+    check::{needs_rebuild_cook, RebuildResult, RestoreCtx},
     RebuildReason,
-    check::{RebuildResult, RestoreCtx, needs_rebuild_cook},
 };
-use filetime::{FileTime, set_file_mtime};
+use filetime::{set_file_mtime, FileTime};
 
 fn write(p: &std::path::Path, bytes: &[u8]) {
     std::fs::write(p, bytes).expect("write");

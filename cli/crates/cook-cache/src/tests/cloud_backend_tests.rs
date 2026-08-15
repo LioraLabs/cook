@@ -433,9 +433,9 @@ fn cloud_backend_retry_after_http_date_falls_through_to_none() {
     let backend = make_backend(&server.url(), 5);
     match backend.get(&k) {
         Err(BackendError::QuotaExceeded(None)) => {}
-        Err(other) => {
-            panic!("HTTP-date form must map to QuotaExceeded(None) (terminal), got {other:?}")
-        }
+        Err(other) => panic!(
+            "HTTP-date form must map to QuotaExceeded(None) (terminal), got {other:?}"
+        ),
         Ok(_) => panic!("expected error, got success"),
     }
     m.assert();

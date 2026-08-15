@@ -19,8 +19,8 @@
 //! first line, so a body's line 1 is still line 1 of the chunk and no emission
 //! site has to compensate for the prelude's height (§{exec.diag}).
 
-use cook_contracts::module_binding;
 use cook_lang::ast::UseStatement;
+use cook_contracts::module_binding;
 
 use crate::lua_scan::free_identifier_occurs;
 

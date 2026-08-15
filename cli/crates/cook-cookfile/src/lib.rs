@@ -190,11 +190,7 @@ fn locate_recipe(tree: &Tree, source: &str, recipe: &str) -> Option<Range<usize>
 /// one such call. A recipe holding several is not a target recipe, and
 /// editing its first call is no more arbitrary than any other choice — the
 /// caller gets the callee back and can reject what it did not expect.
-fn locate_call_within<'t>(
-    tree: &'t Tree,
-    source: &str,
-    within: Range<usize>,
-) -> Option<ModuleCall> {
+fn locate_call_within<'t>(tree: &'t Tree, source: &str, within: Range<usize>) -> Option<ModuleCall> {
     let mut calls = Vec::new();
     nodes_of_kind(tree.root_node(), "module_call_text", &mut calls);
     for node in calls {
@@ -762,14 +758,16 @@ pub fn splice_into_field(
     absent: AbsentField,
 ) -> Result<String, EditError> {
     let tree = parse(source)?;
-    let recipe_span =
-        locate_recipe(&tree, source, recipe).ok_or_else(|| EditError::RecipeNotFound {
+    let recipe_span = locate_recipe(&tree, source, recipe).ok_or_else(|| {
+        EditError::RecipeNotFound {
             recipe: recipe.to_string(),
-        })?;
-    let call =
-        locate_call_within(&tree, source, recipe_span).ok_or_else(|| EditError::NoModuleCall {
+        }
+    })?;
+    let call = locate_call_within(&tree, source, recipe_span).ok_or_else(|| {
+        EditError::NoModuleCall {
             recipe: recipe.to_string(),
-        })?;
+        }
+    })?;
 
     let call_text = &source[call.span.clone()];
     let interior = match locate_field_interior(call_text, field) {
@@ -787,13 +785,14 @@ pub fn splice_into_field(
                     entry: entry.to_string(),
                 });
             }
-            let table =
-                locate_argument_table(call_text).ok_or_else(|| EditError::NoArgumentTable {
+            let table = locate_argument_table(call_text).ok_or_else(|| {
+                EditError::NoArgumentTable {
                     recipe: recipe.to_string(),
                     callee: call.callee.clone(),
                     field: field.to_string(),
                     entry: entry.to_string(),
-                })?;
+                }
+            })?;
             let edits = create_field_edits(&call_text[table.clone()], field, entry);
             return Ok(apply(source, call.span.start + table.start, edits));
         }
@@ -1143,10 +1142,11 @@ pub fn ensure_use(source: &str, module: &str) -> Result<UseEdit, EditError> {
 /// before editing.
 pub fn find_call(source: &str, recipe: &str) -> Result<ModuleCall, EditError> {
     let tree = parse(source)?;
-    let recipe_span =
-        locate_recipe(&tree, source, recipe).ok_or_else(|| EditError::RecipeNotFound {
+    let recipe_span = locate_recipe(&tree, source, recipe).ok_or_else(|| {
+        EditError::RecipeNotFound {
             recipe: recipe.to_string(),
-        })?;
+        }
+    })?;
     locate_call_within(&tree, source, recipe_span).ok_or_else(|| EditError::NoModuleCall {
         recipe: recipe.to_string(),
     })

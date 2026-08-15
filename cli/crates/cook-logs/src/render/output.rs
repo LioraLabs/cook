@@ -37,15 +37,9 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
 }
 
 fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
-    let Some((rid, nid)) = state.selected_node() else {
-        return vec![];
-    };
-    let Some(recipe) = state.view.recipes.get(&rid) else {
-        return vec![];
-    };
-    let Some(node) = recipe.nodes.get(&nid) else {
-        return vec![];
-    };
+    let Some((rid, nid)) = state.selected_node() else { return vec![] };
+    let Some(recipe) = state.view.recipes.get(&rid) else { return vec![] };
+    let Some(node) = recipe.nodes.get(&nid) else { return vec![] };
 
     let mut lines: Vec<Line<'a>> = Vec::with_capacity(node.lines.len() + 2);
     let label = format!(
@@ -104,11 +98,8 @@ fn render_line<'a>(log: &'a LogLine, state: &UiState, theme: &Theme) -> Line<'a>
 }
 
 fn ts_to_short(ts: &Option<String>) -> String {
-    let Some(s) = ts else {
-        return "--:--:--.---".into();
-    };
-    s.split('T')
-        .nth(1)
+    let Some(s) = ts else { return "--:--:--.---".into() };
+    s.split('T').nth(1)
         .map(|t| t.trim_end_matches('Z').to_string())
         .unwrap_or_else(|| s.clone())
 }

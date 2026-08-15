@@ -6,9 +6,9 @@
 //! subsequent builds generate a depfile and pick up header changes.
 
 use cook_cache::backend::{
-    ArtifactMeta, CloudKeyInputs, LocalBackend, cloud_key, get_bytes, put_bytes,
+    cloud_key, get_bytes, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
 };
-use cook_cache::store::{CACHE_VERSION, FileRecord, StepEntry};
+use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 
 fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry {
     StepEntry {

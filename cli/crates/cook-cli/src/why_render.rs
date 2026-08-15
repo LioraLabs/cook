@@ -129,9 +129,7 @@ pub(crate) fn render_why_plain(
         // "absent from the shared store tier".
         let status = match &u.status {
             CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
-            CacheStatus::PinnedColdMiss => {
-                "MISS (local), MISS (shared) — pinned, fetch-only".to_string()
-            }
+            CacheStatus::PinnedColdMiss => "MISS (local), MISS (shared) — pinned, fetch-only".to_string(),
             // CS-0173: name the upstream, not the symptom. This unit does not
             // "miss" in any cache sense; it has no key yet to hit or miss with.
             CacheStatus::ForcedByUpstream { producer, .. } => {
@@ -226,11 +224,10 @@ pub(crate) fn render_why_plain(
                 }
             }
             None => {
-                if matches!(
-                    u.status,
-                    CacheStatus::SharedMiss | CacheStatus::PinnedColdMiss
-                ) {
-                    s.push_str("  shared-miss diff: no producer manifest published for this key\n");
+                if matches!(u.status, CacheStatus::SharedMiss | CacheStatus::PinnedColdMiss) {
+                    s.push_str(
+                        "  shared-miss diff: no producer manifest published for this key\n",
+                    );
                 }
             }
         }
@@ -409,14 +406,8 @@ pub(crate) fn why_unit_json(
     };
 
     let mut obj = serde_json::Map::new();
-    obj.insert(
-        "recipe".to_string(),
-        serde_json::Value::String(u.recipe_name.clone()),
-    );
-    obj.insert(
-        "cache_key".to_string(),
-        serde_json::Value::String(u.cache_key.clone()),
-    );
+    obj.insert("recipe".to_string(), serde_json::Value::String(u.recipe_name.clone()));
+    obj.insert("cache_key".to_string(), serde_json::Value::String(u.cache_key.clone()));
     // CS-0173: a forced unit has no computable key, and the wire format says so
     // with null rather than an empty string, so a consumer cannot mistake
     // "not computable" for "computed, and it is the empty key".
@@ -429,18 +420,12 @@ pub(crate) fn why_unit_json(
         },
     );
     obj.insert("line".to_string(), serde_json::json!(u.line));
-    obj.insert(
-        "status".to_string(),
-        serde_json::Value::String(status_str.to_string()),
-    );
+    obj.insert("status".to_string(), serde_json::Value::String(status_str.to_string()));
     for (k, v) in status_obj {
         obj.insert(k, v);
     }
     // COOK-276: explicit per-tier answers alongside the legacy single status.
-    obj.insert(
-        "local_hit".to_string(),
-        serde_json::Value::Bool(u.local_hit),
-    );
+    obj.insert("local_hit".to_string(), serde_json::Value::Bool(u.local_hit));
     obj.insert(
         "shared_present".to_string(),
         match u.shared_present {
@@ -448,10 +433,7 @@ pub(crate) fn why_unit_json(
             None => serde_json::Value::Null,
         },
     );
-    obj.insert(
-        "disposition".to_string(),
-        serde_json::Value::String(disposition.to_string()),
-    );
+    obj.insert("disposition".to_string(), serde_json::Value::String(disposition.to_string()));
     obj.insert("determinants".to_string(), determinants);
     obj.insert("manifest_diff".to_string(), manifest_diff);
     // CS-0174: local-tier attribution, the counterpart of `manifest_diff`.

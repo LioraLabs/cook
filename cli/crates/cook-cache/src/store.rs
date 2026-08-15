@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub use cook_contracts::cache::step::{CACHE_VERSION, FileRecord, StepEntry};
+pub use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
 
 /// Default value used by `serde` when `schema_version` is absent from the
 /// TOML file. TOML is non-positional, so a missing key is plausible (e.g. a
@@ -246,9 +246,7 @@ pub fn sweep_superseded_indexes(cache_dir: &Path) {
     // CS-0186. Removed by name, never by pattern: this deletes a directory
     // tree, and the one it may delete is the one Cook wrote itself.
     let _ = std::fs::remove_dir_all(cache_dir.join("tests"));
-    let Ok(entries) = std::fs::read_dir(cache_dir) else {
-        return;
-    };
+    let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {

@@ -218,7 +218,9 @@ pub fn register_cookfile_api(
                 let (full, source) =
                     read_source(&sb, "cook.cookfile.field_entries", &s.resolve(), &path)?;
                 match cook_cookfile::field_entries(&source, &recipe, &field) {
-                    Ok(Some(entries)) => Ok(mlua::Value::Table(lua.create_sequence_from(entries)?)),
+                    Ok(Some(entries)) => {
+                        Ok(mlua::Value::Table(lua.create_sequence_from(entries)?))
+                    }
                     Ok(None) => Ok(mlua::Value::Nil),
                     Err(e) => Err(mlua::Error::runtime(format!(
                         "cook.cookfile.field_entries: {}: {e}",

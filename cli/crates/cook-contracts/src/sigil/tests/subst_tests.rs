@@ -6,8 +6,8 @@
 
 use serde_json::json;
 
-use crate::sigil::probe_ref;
 use crate::sigil::subst::substitute;
+use crate::sigil::probe_ref;
 
 /// Parse `ident`, walk its path over `value`, render.
 fn subst(value: serde_json::Value, ident: &str) -> Result<String, String> {
@@ -44,12 +44,7 @@ fn float_renders_as_shortest_round_trip() {
 fn number_token_matches_canonical_bytes() {
     // The invariant the spec states: the token substituted into the command
     // and the token inside the value's canonical bytes are the same bytes.
-    for v in [
-        json!(42),
-        json!(3.0_f64),
-        json!(0.1_f64 + 0.2_f64),
-        json!(-0.0_f64),
-    ] {
+    for v in [json!(42), json!(3.0_f64), json!(0.1_f64 + 0.2_f64), json!(-0.0_f64)] {
         let rendered = subst(v.clone(), "v:n").unwrap();
         let canonical = crate::probe_value::encode_canonical_json(&v);
         let canonical = std::str::from_utf8(&canonical).unwrap().trim_end();

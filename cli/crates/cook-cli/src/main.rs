@@ -79,8 +79,11 @@ fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookE
         return Ok(()); // nearest Cookfile is cwd — identical to today
     }
     let cwd = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
-    let found = cook_plan::discover_entry_cookfile(&cwd, cli.globals.root.as_deref())
-        .map_err(|e| CookError::Other(e.to_string()))?;
+    let found = cook_plan::discover_entry_cookfile(
+        &cwd,
+        cli.globals.root.as_deref(),
+    )
+    .map_err(|e| CookError::Other(e.to_string()))?;
     cli.globals.file = found;
     Ok(())
 }
@@ -197,12 +200,7 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
     let mut merged = globals.clone();
     let partitioned = partition_argv(rest, &recipe, &mut merged)?;
 
-    cmd_run(
-        &merged,
-        &recipe,
-        &partitioned.argv,
-        partitioned.preset.as_deref(),
-    )
+    cmd_run(&merged, &recipe, &partitioned.argv, partitioned.preset.as_deref())
 }
 
 /// Result of partitioning a recipe's positional argv into the runtime-meaningful
@@ -264,9 +262,9 @@ fn partition_argv(
         }
         // --config NAME / -c NAME (two-token form)
         if tok == "--config" || tok == "-c" {
-            let next = iter
-                .next()
-                .ok_or_else(|| CookError::Other(format!("'{tok}' requires an argument")))?;
+            let next = iter.next().ok_or_else(|| {
+                CookError::Other(format!("'{tok}' requires an argument"))
+            })?;
             if preset.is_some() {
                 return Err(CookError::Other(format!(
                     "chore '{recipe}': multiple config presets supplied; use only one of '@PRESET' or '--config PRESET'"

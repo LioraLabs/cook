@@ -122,6 +122,7 @@ impl EdgeKind {
             EdgeKind::UnitOrder => "unit_order",
         }
     }
+
 }
 
 #[derive(Serialize, Clone)]
@@ -237,11 +238,7 @@ pub fn build_dag_data(
             let Some(from) = origin_node_id(&graph.nodes[from_idx].origin) else {
                 continue;
             };
-            edges.push(EdgeData {
-                from,
-                to: to.clone(),
-                kind: edge_kind(kind),
-            });
+            edges.push(EdgeData { from, to: to.clone(), kind: edge_kind(kind) });
         }
     }
 
@@ -412,9 +409,9 @@ fn build_nodes(
             // --- File nodes + file→unit edges ---
             if let Some(meta) = &unit.cache_meta {
                 // Issue 4: Use pre-loaded recipe cache for staleness checks.
-                let cache_entry = recipe_cache
-                    .as_ref()
-                    .map(|cache| cache.steps.get(&meta.cache_key).cloned());
+                let cache_entry = recipe_cache.as_ref().map(|cache| {
+                    cache.steps.get(&meta.cache_key).cloned()
+                });
 
                 // Issue 3: Deduplicate the declared entries before iterating
                 // to avoid duplicate edges. A pattern entry is drawn as what it
@@ -542,6 +539,7 @@ fn build_nodes(
                     }
                 }
             }
+
         }
     }
 
@@ -552,7 +550,11 @@ fn build_nodes(
 ///
 /// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
 /// Returns `true` if the file appears modified or cannot be read.
-fn compute_file_modified(rel_path: &str, working_dir: &Path, cached: Option<(u64, u64)>) -> bool {
+fn compute_file_modified(
+    rel_path: &str,
+    working_dir: &Path,
+    cached: Option<(u64, u64)>,
+) -> bool {
     let abs = working_dir.join(rel_path);
     let Some((cached_mtime, cached_hash)) = cached else {
         // No cache entry → treat as modified (needs build).

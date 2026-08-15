@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::event::NodeKind;
 use crate::model::build::BuildState;
 use crate::model::node::NodeStatus;
-use crate::style::{LineKind, VERB_COL_WIDTH, format_verb, verb_for};
+use crate::style::{format_verb, verb_for, LineKind, VERB_COL_WIDTH};
+use crate::event::NodeKind;
 
 #[derive(Debug, Clone)]
 pub struct StatusSnapshot {
@@ -35,10 +35,7 @@ pub struct StatusLineOptions {
 
 impl Default for StatusLineOptions {
     fn default() -> Self {
-        Self {
-            colored: true,
-            min_nodes: 5,
-        }
+        Self { colored: true, min_nodes: 5 }
     }
 }
 
@@ -59,12 +56,7 @@ impl StatusSnapshot {
         let mut running: Vec<RunningEntry> = state.recipes.values()
             .flat_map(|r| r.nodes.values())
             .filter(|n| n.status == NodeStatus::Running)
-            .filter_map(|n| {
-                n.started_at.map(|t| RunningEntry {
-                    started_at: t,
-                    display: n.display(),
-                })
-            })
+            .filter_map(|n| n.started_at.map(|t| RunningEntry { started_at: t, display: n.display() }))
             .collect();
         running.sort_by_key(|e| e.started_at);
         Self {
@@ -88,10 +80,7 @@ pub fn render_status_line(snap: &StatusSnapshot, opts: StatusLineOptions, cols: 
     if snap.total_nodes < opts.min_nodes { return String::new(); }
     if snap.running.is_empty() { return String::new(); }
 
-    let verb = format_verb(
-        verb_for(LineKind::StatusBar, NodeKind::Cooked),
-        opts.colored,
-    );
+    let verb = format_verb(verb_for(LineKind::StatusBar, NodeKind::Cooked), opts.colored);
     let counter = format!("{}/{}", snap.done_nodes, snap.total_nodes);
     let elapsed = fmt_elapsed(snap.started_at.elapsed());
 

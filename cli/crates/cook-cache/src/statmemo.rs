@@ -69,8 +69,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// Two-level so a lookup allocates nothing: the outer key is the unit's
 /// working directory (`&Path` borrows from `PathBuf`), the inner key the

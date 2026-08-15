@@ -4,12 +4,15 @@
 //! Expectation: needs_rebuild_cook with restore_ctx restores both
 //! files and returns Skip.
 
-use cook_cache::{RebuildResult, RestoreCtx, needs_rebuild_cook};
 use cook_cache::{
-    backend::{ArtifactMeta, CloudKeyInputs, LocalBackend, artifact_key, cloud_key, put_bytes},
-    store::{CACHE_VERSION, FileRecord, StepEntry},
+    backend::{
+        artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    },
+    store::{FileRecord, StepEntry, CACHE_VERSION},
 };
 use cook_contracts::DiscoveredInputs;
+use cook_cache::{needs_rebuild_cook, RebuildResult, RestoreCtx};
+
 
 #[test]
 fn missing_outputs_and_depfile_are_both_restored() {

@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cook_cache::backend::{ArtifactMeta, CloudKeyInputs, LocalBackend, cloud_key, put_bytes};
+use cook_cache::backend::{cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend};
 use cook_cache::store::CACHE_VERSION;
 
 const RECIPE_NS: &str = "proj/Cookfile::build";

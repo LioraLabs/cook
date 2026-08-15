@@ -1,6 +1,6 @@
 use super::*;
-use std::time::Duration;
 use tempfile::tempdir;
+use std::time::Duration;
 
 fn mk(id: &str, outcome: TestOutcome) -> TestResult {
     TestResult {

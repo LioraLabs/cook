@@ -9,8 +9,8 @@ use std::path::Path;
 use cook_contracts::{ProbeInputs, ProbeUnit};
 
 use crate::eval::{
-    evaluate, probe_artifact_meta, CacheAccess, EvalCtx, Evaluated, ProbeError, ProduceRunner,
-    Produced,
+    evaluate, probe_artifact_meta, CacheAccess, EvalCtx, Evaluated, ProbeError, Produced,
+    ProduceRunner,
 };
 
 /// Counts executions so a test can assert that `produce` did NOT run, which is
@@ -23,10 +23,7 @@ struct CountingRunner {
 
 impl CountingRunner {
     fn new(value: &str) -> Self {
-        Self {
-            value: value.as_bytes().to_vec(),
-            runs: RefCell::new(0),
-        }
+        Self { value: value.as_bytes().to_vec(), runs: RefCell::new(0) }
     }
     fn runs(&self) -> usize {
         *self.runs.borrow()
@@ -36,10 +33,7 @@ impl CountingRunner {
 impl ProduceRunner for CountingRunner {
     fn run(&self, _key: &str, _source: &str) -> Result<Produced, String> {
         *self.runs.borrow_mut() += 1;
-        Ok(Produced {
-            bytes: self.value.clone(),
-            module_paths: Vec::new(),
-        })
+        Ok(Produced { bytes: self.value.clone(), module_paths: Vec::new() })
     }
 }
 
@@ -74,23 +68,11 @@ fn declares_nothing(key: &str) -> ProbeUnit {
 }
 
 fn declares_file(key: &str, path: &str) -> ProbeUnit {
-    probe(
-        key,
-        ProbeInputs {
-            files: vec![path.to_string()],
-            ..Default::default()
-        },
-    )
+    probe(key, ProbeInputs { files: vec![path.to_string()], ..Default::default() })
 }
 
 fn declares_tools(key: &str, tool: &str) -> ProbeUnit {
-    probe(
-        key,
-        ProbeInputs {
-            tools: vec![tool.to_string()],
-            ..Default::default()
-        },
-    )
+    probe(key, ProbeInputs { tools: vec![tool.to_string()], ..Default::default() })
 }
 
 fn backend(root: &Path) -> cook_cache::backend::LocalBackend {
@@ -113,11 +95,7 @@ fn eval_cached(
 ) -> Result<Evaluated, ProbeError> {
     let ctx = EvalCtx {
         working_dir: wd,
-        cache: Some(CacheAccess {
-            backend: be,
-            project_root: wd,
-            publish_enabled: publish,
-        }),
+        cache: Some(CacheAccess { backend: be, project_root: wd, publish_enabled: publish }),
     };
     evaluate(unit, &ctx, runner, &no_env, upstream_fps, keyless_upstreams)
 }
@@ -246,21 +224,11 @@ fn cs0148_a_files_producer_is_synthesised_and_never_reaches_a_vm() {
     let mut unit = declares_file("ns:manifest", "a.txt");
     unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
 
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
     // COOK-353: the sentinel is deliberately not valid Lua, so a path that
     // tried to run it would die on a bare `@`. PoisonRunner proves no path does.
-    let out = evaluate(
-        &unit,
-        &ctx,
-        &PoisonRunner,
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
-    )
-    .unwrap();
+    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .unwrap();
 
     let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
     assert!(
@@ -275,22 +243,12 @@ fn cs0214_a_tools_producer_is_synthesised_from_the_hashes_its_fingerprint_folded
     let mut unit = declares_tools("ns:tc", "sh");
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
 
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
     // Before CS-0214 this producer was a Lua program shelling out to
     // `command -v` and `sha256sum`. PoisonRunner proves no VM is reached now,
     // which is also what makes the producer work on a host with no coreutils.
-    let out = evaluate(
-        &unit,
-        &ctx,
-        &PoisonRunner,
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
-    )
-    .unwrap();
+    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .unwrap();
 
     let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
     let hash = value
@@ -330,9 +288,10 @@ fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
     // failure has to come from ahead of it.
     let store = tempfile::tempdir().unwrap();
     let be = backend(store.path());
-    let inputs =
-        cook_cache::probe::resolve_probe_inputs(&unit, tmp.path(), &no_env, &BTreeMap::new())
-            .unwrap();
+    let inputs = cook_cache::probe::resolve_probe_inputs(
+        &unit, tmp.path(), &no_env, &BTreeMap::new(),
+    )
+    .unwrap();
     let fingerprint = cook_cache::compute_probe_fingerprint(&inputs);
     let value = br#"{"cook-no-such-tool-COOK-416":{"hash":"00"}}"#;
     let mut meta = probe_artifact_meta("ns:tc", value.len());
@@ -375,18 +334,8 @@ fn cs0214_a_tools_probe_whose_binary_cannot_be_read_fails_rather_than_recording_
 
     let mut unit = declares_tools("ns:tc", &tool.to_string_lossy());
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
-    let result = evaluate(
-        &unit,
-        &ctx,
-        &PoisonRunner,
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
-    );
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let result = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
 
     // Root can read a mode-0111 file, so the unreadable state is not
     // constructible when the suite runs as root. The rule still holds there:
@@ -452,30 +401,23 @@ fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
 #[test]
 fn cs0102_the_canonical_local_copy_is_written_with_the_value_bytes() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
     let out = evaluate(
         &declares_nothing("ns:local"), &ctx, &CountingRunner::new("[1]"),
         &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap();
 
-    let path = tmp
-        .path()
-        .join(".cook/probes")
-        .join(cook_contracts::probe::value::probe_file_name("ns:local"));
+    let path = tmp.path().join(".cook/probes").join(
+        cook_contracts::probe::value::probe_file_name("ns:local"),
+    );
     assert_eq!(std::fs::read(&path).unwrap(), out.bytes);
 }
 
 #[test]
 fn a_produce_failure_names_the_probe() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
     let err = evaluate(
         &declares_nothing("ns:bad"), &ctx, &FailingRunner,
         &no_env, &BTreeMap::new(), &BTreeSet::new(),
@@ -493,10 +435,7 @@ fn a_missing_upstream_fingerprint_is_a_resolve_error() {
         "ns:downstream",
         ProbeInputs { requires: vec!["ns:absent".to_string()], ..Default::default() },
     );
-    let ctx = EvalCtx {
-        working_dir: tmp.path(),
-        cache: None,
-    };
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
     let err = evaluate(
         &unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
@@ -510,9 +449,7 @@ fn file_count(dir: &Path) -> usize {
     let mut count = 0;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(p) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&p) else {
-            continue;
-        };
+        let Ok(rd) = std::fs::read_dir(&p) else { continue };
         for entry in rd.flatten() {
             let path = entry.path();
             if path.is_dir() {

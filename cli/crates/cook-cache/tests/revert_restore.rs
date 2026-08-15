@@ -19,12 +19,12 @@ use cook_cache::backend::{
     put_bytes,
 };
 use cook_cache::store::CACHE_VERSION;
+use cook_contracts::DiscoveredInputs;
 use cook_cache::{
     CacheBackend, DISCOVERED_INPUT_SETS_INDEX, DISCOVERED_INPUT_SETS_PATH,
     DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH, RestoreCtx, fetch_by_key,
     read_discovered_input_sets,
 };
-use cook_contracts::DiscoveredInputs;
 
 const RECIPE_NS: &str = "proj/Cookfile::build";
 const CMD_HASH: u64 = 0x0C;
@@ -93,7 +93,11 @@ fn put_json_artifact(backend: &LocalBackend, key: &[u8; 32], idx: u32, path: &st
     put_bytes(backend, &artifact_k, json, &mut meta).expect("seed manifest");
 }
 
-fn put_determinant_manifest(backend: &LocalBackend, key: &[u8; 32], output_paths: Vec<String>) {
+fn put_determinant_manifest(
+    backend: &LocalBackend,
+    key: &[u8; 32],
+    output_paths: Vec<String>,
+) {
     let manifest = DeterminantManifest {
         schema_version: CACHE_VERSION,
         recipe_namespace: RECIPE_NS.to_string(),
@@ -147,11 +151,7 @@ fn revert_restores_despite_stale_caller_output_names() {
     // Artifacts of the ORIGINAL build under the full key: file, then depfile.
     put_artifact(&backend, &full_key, 0, "build/chunk-orig.txt", b"ORIG");
     put_artifact(&backend, &full_key, 1, "deps.d", DEPFILE_BYTES);
-    put_determinant_manifest(
-        &backend,
-        &full_key,
-        vec!["build/chunk-orig.txt".to_string()],
-    );
+    put_determinant_manifest(&backend, &full_key, vec!["build/chunk-orig.txt".to_string()]);
 
     // Consumer tree in the reverted state.
     let wd_dir = tempfile::tempdir().expect("wd");
@@ -159,10 +159,7 @@ fn revert_restores_despite_stale_caller_output_names() {
     std::fs::write(wd.join("main.src"), MAIN_SRC).unwrap();
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
 
-    let ctx = RestoreCtx {
-        backend: &backend,
-        recipe_namespace: RECIPE_NS,
-    };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
     let outcome = fetch_by_key(
         &ctx,
         CMD_HASH,
@@ -232,10 +229,7 @@ fn revert_restores_older_discovered_set() {
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
     std::fs::write(wd.join("header_b.h"), header_b).unwrap();
 
-    let ctx = RestoreCtx {
-        backend: &backend,
-        recipe_namespace: RECIPE_NS,
-    };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
     let outcome = fetch_by_key(
         &ctx,
         CMD_HASH,
@@ -288,10 +282,7 @@ fn v1_single_set_manifest_still_recovers() {
     std::fs::write(wd.join("main.src"), MAIN_SRC).unwrap();
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
 
-    let ctx = RestoreCtx {
-        backend: &backend,
-        recipe_namespace: RECIPE_NS,
-    };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
     // No determinant manifest seeded → falls back to the caller's output
     // list, exactly the pre-COOK-278 behaviour.
     let outcome = fetch_by_key(

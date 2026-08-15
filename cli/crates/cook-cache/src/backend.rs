@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 
 pub use crate::cas_backend::{
-    ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend, CloudKey,
-    CloudKeyInputs, DeterminantManifest, EvictCandidate, artifact_key, cloud_key,
+    artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
+    CloudKey, CloudKeyInputs, DeterminantManifest, EvictCandidate,
 };
 pub use cook_contracts::evict::{
-    DEFAULT_LOW_WATER, EvictPlan, EvictPolicy, SIZE_SWEEP_EXEMPT_KINDS, is_size_sweep_exempt,
-    plan_eviction,
+    is_size_sweep_exempt, plan_eviction, EvictPlan, EvictPolicy, DEFAULT_LOW_WATER,
+    SIZE_SWEEP_EXEMPT_KINDS,
 };
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
@@ -97,7 +97,10 @@ impl<R: Read> Read for VerifyingReader<R> {
 /// The streaming verification is enforced inside the returned reader, so
 /// `read_to_end` here surfaces any tampering as an `io::Error` (mapped to
 /// `BackendError::Other` for the trait's error type).
-pub fn get_bytes(backend: &dyn CacheBackend, key: &CloudKey) -> BackendResult<Option<Vec<u8>>> {
+pub fn get_bytes(
+    backend: &dyn CacheBackend,
+    key: &CloudKey,
+) -> BackendResult<Option<Vec<u8>>> {
     let Some(mut reader) = backend.get(key)? else {
         return Ok(None);
     };
@@ -191,10 +194,7 @@ fn touch_on_read(path: &std::path::Path) {
 }
 
 impl CacheBackend for LocalBackend {
-    fn batch_query(
-        &self,
-        keys: &[CloudKey],
-    ) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
+    fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
         let mut hits = std::collections::BTreeSet::new();
         for k in keys {
             if self.path_for(k).exists() {
@@ -236,7 +236,7 @@ impl CacheBackend for LocalBackend {
                 return Err(BackendError::Other(format!(
                     "read meta {}: {e}",
                     meta_path.display()
-                )));
+                )))
             }
         };
         let meta: ArtifactMeta = match serde_json::from_slice(&meta_bytes) {
@@ -302,10 +302,7 @@ impl CacheBackend for LocalBackend {
         // correctness consequence.
         touch_on_read(&path);
 
-        Ok(Some((
-            Box::new(VerifyingReader::new(file, meta.content_hash)),
-            meta,
-        )))
+        Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))
     }
 
     fn put(
@@ -470,9 +467,8 @@ impl CacheBackend for LocalBackend {
             .map_err(|e| BackendError::Other(format!("serialize meta: {e}")))?;
         std::fs::write(&meta_tmp, &meta_bytes)
             .map_err(|e| BackendError::Other(format!("write meta {}: {e}", meta_tmp.display())))?;
-        std::fs::rename(&meta_tmp, &meta_path).map_err(|e| {
-            BackendError::Other(format!("rename meta {}: {e}", meta_path.display()))
-        })?;
+        std::fs::rename(&meta_tmp, &meta_path)
+            .map_err(|e| BackendError::Other(format!("rename meta {}: {e}", meta_path.display())))?;
         Ok(())
     }
 
@@ -494,7 +490,11 @@ impl CacheBackend for LocalBackend {
             .map_err(|e| BackendError::Other(format!("root {}: {e}", self.root.display())))
     }
 
-    fn put_manifest(&self, key: &CloudKey, manifest: &DeterminantManifest) -> BackendResult<()> {
+    fn put_manifest(
+        &self,
+        key: &CloudKey,
+        manifest: &DeterminantManifest,
+    ) -> BackendResult<()> {
         let path = self.path_for(key).with_extension("provenance.json");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -585,7 +585,7 @@ impl LocalBackend {
                 return Err(BackendError::Other(format!(
                     "read_dir {}: {e}",
                     self.root.display()
-                )));
+                )))
             }
         };
 

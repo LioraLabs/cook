@@ -26,32 +26,18 @@ fn node_output_is_written_with_stream_tag() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: crate::event::NodeKind::Cooked,
-        cause: None,
-        cache_key: None,
-    });
-    store
-        .record(
-            &state,
-            &ProgressEvent::NodeOutput {
-                recipe: RecipeId::new(0),
-                node: NodeId::new(0),
-                line: "warning".into(),
-                stream: Stream::Stderr,
-            },
-        )
-        .unwrap();
+            cause: None,
+            cache_key: None,
+        });
+    store.record(&state, &ProgressEvent::NodeOutput {
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        line: "warning".into(), stream: Stream::Stderr,
+    }).unwrap();
     store.close(true).unwrap();
 
-    let log = fs::read_to_string(
-        tmp.path()
-            .join(".cook")
-            .join("logs")
-            .join(store.build_id())
-            .join("nodes")
-            .join("lib")
-            .join("lvm.c.log"),
-    )
-    .unwrap();
+    let log = fs::read_to_string(tmp.path()
+        .join(".cook").join("logs").join(store.build_id())
+        .join("nodes").join("lib").join("lvm.c.log")).unwrap();
     assert!(log.contains("[err] warning"), "got: {log}");
 }
 
@@ -128,20 +114,13 @@ fn recipe_and_node_names_are_sanitized_into_paths() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "../../root".into(), artifact: None, fallback_label: "x".into(),
         kind: crate::event::NodeKind::Cooked,
-        cause: None,
-        cache_key: None,
-    });
-    store
-        .record(
-            &state,
-            &ProgressEvent::NodeOutput {
-                recipe: RecipeId::new(0),
-                node: NodeId::new(0),
-                line: "hi".into(),
-                stream: Stream::Stdout,
-            },
-        )
-        .unwrap();
+            cause: None,
+            cache_key: None,
+        });
+    store.record(&state, &ProgressEvent::NodeOutput {
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        line: "hi".into(), stream: Stream::Stdout,
+    }).unwrap();
     store.close(true).unwrap();
 
     // Nothing was written outside the build directory.
@@ -173,8 +152,8 @@ fn recipe_and_node_names_are_sanitized_into_paths() {
 /// `+00:00`) is not ours to choose.
 #[test]
 fn every_timestamp_this_crate_writes_is_one_cook_logs_can_read_back() {
-    use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
 
     // Fixed instants, so this cannot flake on a clock: the epoch, a leap day,
     // a whole second, a sub-second, and an end-of-year rollover.

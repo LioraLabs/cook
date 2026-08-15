@@ -31,8 +31,8 @@
 
 pub mod codec_api;
 pub mod cookfile_api;
-pub mod fs_api;
 pub mod json_codec;
+pub mod fs_api;
 pub mod member_api;
 pub mod module_loader;
 pub mod module_observer;
@@ -49,23 +49,23 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub use codec_api::{json_to_lua_value, register_codec_api};
-pub use cookfile_api::register_cookfile_api;
-pub use fs_api::register_fs_api_with_sandbox;
-pub use json_codec::{json_to_lua, lua_to_json};
-pub use member_api::install_member_to_string;
 pub use module_loader::{
     install_module_loader, install_renamed_cache_stub, refresh_package_search_paths,
     ModuleLoadHooks, NoHooks,
 };
 pub use module_observer::{install_require_observer, ModuleObserver};
+pub use json_codec::{json_to_lua, lua_to_json};
+pub use member_api::install_member_to_string;
+pub use probes_api::install_probes_api;
+pub use var_proxy::install_var_proxy;
+pub use cookfile_api::register_cookfile_api;
+pub use fs_api::register_fs_api_with_sandbox;
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
-pub use probes_api::install_probes_api;
+pub use tools_api::register_tools_api;
 pub use sandbox::{SandboxPolicy, SandboxSource};
 pub use shell_guard::install_shell_escape_guards;
 pub use source_line::caller_line_in_source;
-pub use tools_api::register_tools_api;
-pub use var_proxy::install_var_proxy;
 
 /// Source of the working directory used to resolve relative paths in
 /// `fs.*` calls.

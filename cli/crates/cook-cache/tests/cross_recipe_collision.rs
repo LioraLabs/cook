@@ -1,7 +1,7 @@
 //! AC-Integ.2: Two recipes producing `build/main.o` from different
 //! sources/commands must produce different cloud keys.
 
-use cook_cache::backend::{CloudKeyInputs, cloud_key};
+use cook_cache::backend::{cloud_key, CloudKeyInputs};
 use cook_cache::store::CACHE_VERSION;
 
 #[test]

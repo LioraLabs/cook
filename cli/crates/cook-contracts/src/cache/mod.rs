@@ -1,8 +1,8 @@
 //! Cache metadata and sharing disposition.
 
+pub mod observation;
 pub mod cas;
 pub mod local_key;
-pub mod observation;
 pub mod record;
 pub mod step;
 
@@ -41,18 +41,12 @@ pub struct DeclaredInput {
 impl DeclaredInput {
     /// A file the unit reads.
     pub fn path(p: impl Into<String>) -> Self {
-        Self {
-            path: p.into(),
-            kind: InputKind::Path,
-        }
+        Self { path: p.into(), kind: InputKind::Path }
     }
 
     /// A pattern whose expansion the unit reads.
     pub fn pattern(p: impl Into<String>) -> Self {
-        Self {
-            path: p.into(),
-            kind: InputKind::Pattern,
-        }
+        Self { path: p.into(), kind: InputKind::Pattern }
     }
 
     pub fn is_pattern(&self) -> bool {

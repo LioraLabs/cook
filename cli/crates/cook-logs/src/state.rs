@@ -199,12 +199,7 @@ impl UiState {
                 }
             }
         }
-        self.search = Some(SearchState {
-            pattern: pat,
-            matches,
-            cursor: 0,
-            editing: false,
-        });
+        self.search = Some(SearchState { pattern: pat, matches, cursor: 0, editing: false });
         self.jump_to_current_match();
     }
 
@@ -222,14 +217,10 @@ impl UiState {
     fn jump_to_current_match(&mut self) {
         let target = self.search.as_ref()
             .and_then(|s| s.matches.get(s.cursor).copied());
-        let Some((rid, nid, line_idx)) = target else {
-            return;
-        };
-        if let Some(pos) = self
-            .flat
-            .iter()
-            .position(|r| matches!(r, FlatRow::Node(r1, n1) if *r1 == rid && *n1 == nid))
-        {
+        let Some((rid, nid, line_idx)) = target else { return };
+        if let Some(pos) = self.flat.iter().position(|r| {
+            matches!(r, FlatRow::Node(r1, n1) if *r1 == rid && *n1 == nid)
+        }) {
             self.selected = pos;
         }
         self.scroll_y = line_idx as u16;

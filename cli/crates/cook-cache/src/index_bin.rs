@@ -70,8 +70,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use cook_contracts::cache::step::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_contracts::cache::observation::Observation;
-use cook_contracts::cache::step::{CACHE_VERSION, FileRecord, StepEntry};
 
 use crate::store::RecipeCache;
 
@@ -396,11 +396,7 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         // Arc clone: a refcount bump, not an allocation. This is the line the
         // whole interning design exists for.
         let path = paths.get(path_id).ok_or(DecodeError::BadReference)?;
-        records.push(FileRecord {
-            path: Arc::clone(path),
-            mtime,
-            hash,
-        });
+        records.push(FileRecord { path: Arc::clone(path), mtime, hash });
     }
 
     let step_keys = r.string_table()?;
@@ -472,11 +468,7 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         globs.insert(key, members[start..end].iter().cloned().collect());
     }
 
-    Ok(RecipeCache {
-        schema_version,
-        globs,
-        steps,
-    })
+    Ok(RecipeCache { schema_version, globs, steps })
 }
 
 fn slice_records(

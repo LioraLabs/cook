@@ -6,10 +6,10 @@ pub mod live;
 pub mod style;
 pub mod summary;
 
-use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
+use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
 pub struct Reporter {
     started: std::time::Instant,
     verbose: bool,
@@ -30,8 +30,11 @@ impl Reporter {
     pub fn new(globals: &crate::cli::Globals) -> Self {
         let no_color_env = std::env::var("NO_COLOR").ok();
         let is_tty = std::io::stdout().is_terminal();
-        let colored =
-            style::resolve_color_choice(globals.color.as_str(), no_color_env.as_deref(), is_tty);
+        let colored = style::resolve_color_choice(
+            globals.color.as_str(),
+            no_color_env.as_deref(),
+            is_tty,
+        );
         Self {
             started: std::time::Instant::now(),
             verbose: globals.verbose,
@@ -63,25 +66,16 @@ impl Reporter {
 
     pub fn on_event(&mut self, evt: EngineEvent) {
         match evt {
-            EngineEvent::TestStarted {
-                id,
-                recipe,
-                name: _,
-                line,
-                iteration_item,
-            } => {
+            EngineEvent::TestStarted { id, recipe, name: _, line, iteration_item } => {
                 if !self.header_printed {
                     println!("{}", self.style.bold("running tests"));
                     self.header_printed = true;
                 }
-                self.label_meta.insert(
-                    id.0.clone(),
-                    LabelMeta {
-                        recipe: recipe.clone(),
-                        line,
-                        iteration_item: iteration_item.clone(),
-                    },
-                );
+                self.label_meta.insert(id.0.clone(), LabelMeta {
+                    recipe: recipe.clone(),
+                    line,
+                    iteration_item: iteration_item.clone(),
+                });
                 if self.verbose {
                     println!("    test {} ...", self.label_for(&id.0));
                 }
@@ -243,8 +237,8 @@ pub fn write_json_sidecar(
     report_json_path: Option<&std::path::Path>,
     results: &[TestResult],
 ) -> std::io::Result<()> {
-    use crate::iso8601::now_iso8601;
     use serde_json::json;
+    use crate::iso8601::now_iso8601;
 
     let path = report_json_path
         .map(|p| p.to_path_buf())
@@ -313,7 +307,10 @@ pub fn write_json_sidecar(
 /// - `Failed`   → `<testcase><failure .../></testcase>`
 /// - `TimedOut` → `<testcase><failure message="timed out" .../></testcase>`
 /// - `Blocked`  → `<testcase><skipped .../></testcase>`
-pub fn write_junit_sidecar(path: &std::path::Path, results: &[TestResult]) -> std::io::Result<()> {
+pub fn write_junit_sidecar(
+    path: &std::path::Path,
+    results: &[TestResult],
+) -> std::io::Result<()> {
     let mut by_recipe: BTreeMap<String, Vec<&TestResult>> = BTreeMap::new();
     for r in results {
         by_recipe.entry(recipe_of(&r.id)).or_default().push(r);
