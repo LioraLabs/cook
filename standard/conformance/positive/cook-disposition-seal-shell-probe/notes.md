@@ -1,4 +1,4 @@
-# cook-disposition-seal-envs-probe
+# cook-disposition-seal-shell-probe
 
 Pins the Session-3 decision (§8.4.3): a seal ref is always a probe name, and
 an unconsumed-environment determinant folds by declaring an ordinary shell probe

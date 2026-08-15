@@ -1,0 +1,6 @@
+files sources
+    "src/*.c"
+
+recipe objects
+    gather "include/*.h" sources
+    cook "build/x.o" { cc -c '$<in>' -o $<out> }

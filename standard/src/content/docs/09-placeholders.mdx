@@ -79,7 +79,7 @@ A conforming implementation MUST reject the following shapes with a load-time di
 - `$<out_N>` in a single-output step (use plain `$<out>`).
 - `$<out_N>` for `N` greater than the step's declared output count.
 - `$<stem>`, `$<name>`, `$<ext>`, or `$<dir>` as a bare sigil (i.e. with no `NAME.` prefix). These bare accessors have no special meaning at the placeholder layer; the correct spelling is `$<in.stem>` etc. The diagnostic MUST name the new form. (A bare `$<stem>` would otherwise resolve through §{xref.resolution} to `cook.require_var("stem")`, which is a confusing failure mode.)
-- `$<in>` used outside any iteration driver — when no `gather_step` is present in the recipe, there is no iteration item to bind. The diagnostic MUST state that `$<in>` requires  a `gather` source.
+- `$<in>` used outside any iteration driver — when no `gather_step` is present in the recipe, there is no iteration item to bind. The diagnostic MUST state that `$<in>` requires a `gather` source.
 - A literal `PATH` that names no regular file, or a glob `PATH` matching no files, MUST produce a load-time diagnostic naming the placeholder (mirrors §{xref.resolution} step 4 — no silent empty expansion).
 
 ### Example 9.3.1

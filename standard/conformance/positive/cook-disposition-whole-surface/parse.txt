@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      inputs: ["src/*.c"]
+      excludes: []
+      steps:
+        Gather
+        Cook outputs=["bin/app", "bin/app.map"] body=ShellBlock(["cc $<in> -Wl,-Map=bin/app.map -o bin/app"]) disposition=[local=false pinned=false record=false seal=["flags", "toolchain"]]
+        Cook outputs=["bin/app.dbg"] body=ShellBlock(["cc -g $<in> -o $<out>"]) disposition=[local=true pinned=false record=false seal=["flags", "toolchain"]]
+        Cook outputs=["bin/plugin"] body=ShellBlock(["cc -shared $<in> -o $<out>"]) disposition=[local=false pinned=false record=false seal=["flags", "toolchain"]]
+        Cook outputs=["gen/ver.h"] body=ShellBlock(["date > $<out>"]) disposition=[local=false pinned=false record=true seal=["flags", "toolchain"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

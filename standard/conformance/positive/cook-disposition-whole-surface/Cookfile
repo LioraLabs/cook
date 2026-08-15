@@ -1,0 +1,7 @@
+recipe build
+    gather "src/*.c"
+    seal toolchain flags
+    cook "bin/app" "bin/app.map" { cc $<in> -Wl,-Map=bin/app.map -o bin/app }
+    cook "bin/app.dbg" { cc -g $<in> -o $<out> } local
+    cook "bin/plugin"  { cc -shared $<in> -o $<out> }
+    cook "gen/ver.h"   { date > $<out> } nondet

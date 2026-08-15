@@ -124,12 +124,20 @@ end)
 
 **Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `$<ADB>` and `$<PACKAGE>` env placeholders in chore bodies for `devices` / `logs` / `uninstall`.
 
-## D.9. No multi-line continuation for `gather` lists [#pre-v1.multi-line-gather]
+## D.9. No multi-line continuation for input lists [#pre-v1.multi-line-gather]
 
-**Resolved by CS-0222 and CS-0229.** Named determinant sets use an indented
-multi-line `files NAME` body. The former list surface was subsequently removed;
-`gather` remains solely the recipe iteration driver. The motivating case and
-all proposed continuation forms are therefore closed rather than deferred.
+**Resolved by CS-0078, then CS-0222 and CS-0229.** The original concern — a long
+input list has to fit on one physical line — was closed by CS-0078, which added
+the `STEP_CONTINUATION_NEWLINE` token: successive quoted patterns and
+`!`-prefixed excludes may sit on their own indented lines and still belong to
+one declaration. That is live surface on `gather`, pinned by
+`standard/conformance/positive/058-multi-line-gather`.
+
+The list *surface* then moved. CS-0222 gave named determinant sets an indented
+multi-line `files NAME` body, and CS-0229 removed `ingredients`; `gather`
+remains solely the recipe iteration driver. Both halves are therefore closed
+rather than deferred: continuation exists, and the list forms that motivated the
+item are declared elsewhere.
 
 ## D.10. `{NAME}` body-ref → wave-edge inference is not uniform across CLI commands [#pre-v1.inferred-deps-asymmetry]
 

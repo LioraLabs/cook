@@ -94,7 +94,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     expect(gatheredInputs).toContain('[added CS-0224]');
     for (const summary of [gatheredInputs, appSteps]) expectBareGatherUnion(summary);
     expect(cacheIdentity).not.toMatch(/test\s*\{[^}]*\}\s+seal\b/);
-    expect(disposition).toContain('`cook-disposition-seal-envs-probe`');
+    expect(disposition).toContain('`cook-disposition-seal-shell-probe`');
     expect(disposition).toContain('A change to `toolchain` therefore re-runs both tests');
 
     expectSevenRuleDispatch(stepsDispatch);
@@ -230,7 +230,7 @@ describe('Language v2 Standard contract', () => {
 
   it('retains canonical citations, toolchain invalidation, and one entry-body token', () => {
     for (const [document, replacement, field] of [
-      [steps, '`cook-disposition-seal-envs-probe`', 'stepsDoc'],
+      [steps, '`cook-disposition-seal-shell-probe`', 'stepsDoc'],
       [steps, '[added CS-0224]', 'stepsDoc'],
       [steps, 'A change to `toolchain` therefore re-runs both tests', 'stepsDoc'],
       [changes, '`probe-seal` pins the probe-body position', 'changesDoc'],
