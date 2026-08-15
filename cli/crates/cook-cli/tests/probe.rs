@@ -87,7 +87,11 @@ fn inline_file_seal_invalidates_without_fanout() {
 fn inline_seal_resolution_errors_name_the_attempted_reading() {
     let tmp = TempDir::new().unwrap();
     for (operand, message) in [
-        ("missing_key", "lists probe key 'missing_key'"),
+        // COOK-484 / CS-0235 §8.4.3.1 rule 4: the bare-ref failure names the
+        // `seal` step, not the consumer `probes` list its key is unioned into.
+        // This test's own name asked for that reading; it had been pinned to
+        // the §22.5.6 sentence, which is about a `cook.add_unit` field.
+        ("missing_key", "seal: 'missing_key' does not name"),
         ("\"missing/**\"", "quoted file determinant"),
     ] {
         fs::write(

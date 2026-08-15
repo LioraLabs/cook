@@ -112,6 +112,36 @@ pub(crate) fn removed_unseal(line: usize) -> ParseError {
     }
 }
 
+/// CS-0226, CS-0235: the one removed-`envs` diagnostic, for both positions the
+/// keyword used to occupy — the probe producer (§22.5.2) and the recipe body
+/// (§8.1 cascade rule 3). `spelling` is the form the author wrote, since the two
+/// positions spell the construct differently (`envs { A, B }` vs `envs A B`);
+/// everything the diagnostic has to get RIGHT — the change ID and the
+/// replacement rendered from the author's own names — is shared, so the two
+/// cannot drift into saying different things about one removal.
+///
+/// An empty `names` falls back to the Standard's own example, `echo "$NAME"`
+/// (§22.5.2), which is also what the operand list renders to when it cannot be
+/// parsed at all.
+pub(crate) fn removed_envs(spelling: &str, names: &[String], line: usize) -> ParseError {
+    let replacement = if names.is_empty() {
+        "echo \"$NAME\"".to_string()
+    } else {
+        names
+            .iter()
+            .map(|name| format!("echo \"${name}\""))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    ParseError::Parse {
+        line,
+        message: format!(
+            "`{spelling}` was removed (CS-0226); use an ordinary shell probe: \
+             `lines {{ {replacement} }}`"
+        ),
+    }
+}
+
 /// Validate bare probe-key operands for `seal`.
 pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String>, ParseError> {
     let mut out = Vec::new();

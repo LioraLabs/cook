@@ -54,6 +54,12 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   // phase resolving the entry against the recipe's unit list.
   ['after-unit-registered-later',
    'CS-0219: `after` names a later-registered unit — register-phase rejection, not syntactic'],
+  // CS-0235: `seal no-such-decl` is a well-formed seal step; whether the ref
+  // names a declaration is answered against the probe registry at end of
+  // register pass. Its twin `recipe-envs-removed` is deliberately absent from
+  // this list — a removed keyword IS a shape the grammar refuses.
+  ['seal-ref-undeclared',
+   'CS-0235: seal ref names no declaration — register-phase rejection, not syntactic'],
   // CS-0206: the `use` path form. SIX of its eight negatives ARE syntactic and
   // are deliberately absent from this list — `..`, a leading `/`, the `//`
   // sigil and a third argument are all shapes the token cannot take, and

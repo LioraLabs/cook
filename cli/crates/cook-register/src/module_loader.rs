@@ -245,6 +245,40 @@ fn probes_set(state: &SharedModuleLoaderState, key: &str, value: &LuaValue) -> L
     Ok(())
 }
 
+/// CS-0235: the refusal §{xref.position-independence} requires when a
+/// probe-value reference reaches an output pattern and no probe answers it.
+///
+/// An output pattern is lowered at register time because the path has to be
+/// known before the unit can be registered, so this position genuinely cannot
+/// wait for the probe's value the way a command body can. That is what the
+/// author needs to hear. What they used to hear instead was that the value was
+/// "not materialised in the register pre-pass" — three pieces of implementation
+/// vocabulary for a Cookfile that has none of them, and a sentence which, on
+/// the reading that actually happens, is a typo report: `$<in:stem>` is
+/// `$<in.stem>` with one wrong character, and the colon is what turned a member
+/// accessor into a probe key. The four §{xref.path-accessors} accessors are a
+/// closed set, so recognising that case costs one lookup and turns the
+/// diagnostic into the fix.
+fn unresolved_output_pattern_ref(ident: &str, key: &str) -> String {
+    // The accessor-typo shape: `$<X:acc>` where `acc` is a path accessor and
+    // the whole thing keyed as one probe key, i.e. nothing followed the
+    // accessor. `$<cc:ver.path>` keys on `cc:ver` and is not this case.
+    if let Some((head, tail)) = key.split_once(':') {
+        if matches!(tail, "stem" | "name" | "ext" | "dir") && !head.is_empty() {
+            return format!(
+                "$<{ident}>: no probe named '{key}' — did you mean `$<{head}.{tail}>`? \
+                 A `.` reads a path accessor of `{head}`; a `:` names a probe key."
+            );
+        }
+    }
+    format!(
+        "$<{ident}>: no probe named '{key}' is available here. An output path must be \
+         known before its unit is registered, so an output pattern can only reference a \
+         probe that is resolved by then — one this recipe gathers from, or one its \
+         `produce` can be run for at register phase."
+    )
+}
+
 pub fn register_cache_api(
     lua: &Lua,
     state: SharedModuleLoaderState,
@@ -277,14 +311,9 @@ pub fn register_cache_api(
                 .map_err(|e| LuaError::runtime(e.to_string()))?;
         }
         let store = prepass_subst.borrow();
-        let value = store.get(r.key()).ok_or_else(|| {
-            LuaError::runtime(format!(
-                "$<{ident}>: probe '{}' is not materialised in the register \
-                 pre-pass; an output-pattern reference can only name a \
-                 member-source probe the pre-pass resolved",
-                r.key()
-            ))
-        })?;
+        let value = store
+            .get(r.key())
+            .ok_or_else(|| LuaError::runtime(unresolved_output_pattern_ref(&ident, r.key())))?;
         cook_contracts::sigil::subst::substitute(value, r.path(), &ident)
             .map_err(LuaError::runtime)
     })?;

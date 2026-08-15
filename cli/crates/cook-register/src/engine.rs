@@ -1393,22 +1393,9 @@ impl BodyDriver {
             for (idx, unit) in body.units.iter().enumerate() {
                 for key in &unit.probes {
                     if !registered_keys.contains(key.as_str()) {
-                        let unit_name = unit
-                            .cache_meta
-                            .as_ref()
-                            .and_then(|m| m.output_paths.first())
-                            .map(|p| p.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let unit_label = if unit_name.is_empty() {
-                            format!("<unit-{}>", idx)
-                        } else {
-                            unit_name
-                        };
-                        return Err(RegisterError::Lua(mlua::Error::runtime(format!(
-                            "unit '{}' lists probe key '{}' in `probes` but no such probe was declared",
-                            unit_label, key
-                        ))));
+                        return Err(RegisterError::Lua(mlua::Error::runtime(
+                            unresolved_probe_key_message(unit, idx, key),
+                        )));
                     }
                 }
             }
@@ -1854,6 +1841,49 @@ fn local_topological_sort(
         visit(name, deps, &mut state, &mut order, &mut path)?;
     }
     Ok(order)
+}
+
+/// The end-of-pass resolution failure for a probe key a unit consumes, told in
+/// terms of the surface that put the key there (CS-0235).
+///
+/// A unit's `probes` list is a confluence: it holds what `cook.add_unit`'s
+/// `probes` field named, plus the recipe's `seal` refs (unioned in so a sealed
+/// probe is scheduled ahead of the unit exactly as a consumed one is), plus
+/// keys scanned out of `$<key>` sigils and literal `cook.probes.get` reads. Only
+/// the first of those is a `probes` list the author wrote, so only the first
+/// gets §22.5.6 rule 1's mandated sentence about one. A `seal` ref that resolves
+/// to nothing gets §8.4.3.1 rule 4's sentence instead, naming the step the
+/// author actually wrote and the declaration kinds a ref may name.
+///
+/// The provenance is still on the unit — `CacheMeta.seal_keys` is the seal set
+/// as declared, before the union — so one branch here answers for every caller
+/// rather than each surface carrying its own copy of the check.
+fn unresolved_probe_key_message(
+    unit: &cook_contracts::unit::CapturedUnit,
+    idx: usize,
+    key: &str,
+) -> String {
+    let sealed = unit
+        .cache_meta
+        .as_ref()
+        .is_some_and(|m| m.seal_keys.contains(key));
+    if sealed {
+        return format!(
+            "seal: '{key}' does not name a probe, or a top-level `files` or `tools` declaration"
+        );
+    }
+    let unit_name = unit
+        .cache_meta
+        .as_ref()
+        .and_then(|m| m.output_paths.first())
+        .map(|p| p.as_str())
+        .unwrap_or("");
+    let unit_label = if unit_name.is_empty() {
+        format!("<unit-{idx}>")
+    } else {
+        unit_name.to_string()
+    };
+    format!("unit '{unit_label}' lists probe key '{key}' in `probes` but no such probe was declared")
 }
 
 /// COOK-64 §22.5.10: the member-source register pre-pass.

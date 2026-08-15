@@ -359,6 +359,45 @@ fn test_loose_shell_in_recipe_rejected() {
 }
 
 #[test]
+fn test_envs_in_recipe_body_rejected_as_removed() {
+    // COOK-484 / CS-0235: §8.1 cascade rule 3 — a removed keyword in recipe-body
+    // position gets its own removal diagnostic, never rule 7's loose-shell one,
+    // whose "move it into a cook body or a chore" advice is wrong here.
+    let source = "recipe \"r\"\n    envs CC CFLAGS\n    cook \"out\" { echo hi }\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("`envs` was removed (CS-0226)"),
+        "must name the removal and its change ID; got: {}",
+        msg
+    );
+    assert!(
+        msg.contains("lines { echo \"$CC\"; echo \"$CFLAGS\" }"),
+        "must render the replacement from the author's own names; got: {}",
+        msg
+    );
+    assert!(
+        !msg.contains("loose shell commands"),
+        "must not fall through to the rule-7 diagnostic; got: {}",
+        msg
+    );
+}
+
+#[test]
+fn test_envs_without_separator_is_not_the_removed_keyword() {
+    // COOK-484: rule 3 requires a separator. `envs_from_file` is an ordinary
+    // loose-shell line and keeps the rule-7 diagnostic.
+    let source = "recipe \"r\"\n    envs_from_file build.env\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("loose shell commands are not allowed"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
 fn test_at_prefix_in_recipe_rejected() {
     // CS-0134: the `@` interactive prefix was removed from the language.
     let source = "recipe \"r\"\n    @./bin/app\n";

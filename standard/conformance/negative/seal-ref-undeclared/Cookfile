@@ -1,0 +1,4 @@
+recipe build
+    gather "src/*.c"
+    seal no-such-decl
+    cook "$<in.stem>.o" { cc -c $<in> -o $<out> }

@@ -349,6 +349,8 @@ A conforming implementation MUST, after the register pass completes:
 
 The relative order of `cook.probe` and `cook.add_unit` calls within one register pass is unconstrained; resolution is deferred to end-of-pass.
 
+Rule 1's sentence is mandated **for the `probes` field**, and only for it: it names the field the caller filled in, which is why it is useful to the caller who filled it in. Where an implementation routes some other surface's refs through this same resolution — a recipe's `seal` set is the case that arises, since a sealed probe must be scheduled ahead of the unit exactly as a consumed one is — the ref MUST NOT inherit this sentence. It gets its own surface's diagnostic (§{steps.cook-disposition.seal} rule 4), because an author who wrote `seal` never wrote a `probes` list and cannot act on advice about one. (CS-0235.)
+
 ## 22.5.7. Command-template desugaring [#cat.probes.templates]
 
 Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and MUST substitute each one with the referenced probe's resolved value before the command runs. A probe's value is execute-phase (§{exec.cache.single-key}), so the substitution is too; the unit's command text carries its placeholders unsubstituted until then.

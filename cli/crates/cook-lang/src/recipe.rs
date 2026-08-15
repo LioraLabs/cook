@@ -443,6 +443,21 @@ pub(crate) fn parse_recipe(
                 if strip_keyword(text, "unseal").is_some() {
                     return Err(removed_unseal(tok.line));
                 }
+                // CS-0226 removed `envs`; CS-0235 gives the recipe-body position
+                // the same named removal diagnostic the probe-producer position
+                // already had. Without this branch the line fell through to the
+                // rule-7 loose-shell rejection, whose advice — move it into a
+                // `cook` body or a chore — is wrong for a keyword no position
+                // accepts. Operands are the names, however the author separated
+                // them, so the replacement names them back.
+                if let Some(rest) = strip_keyword(text, "envs") {
+                    let names: Vec<String> = rest
+                        .split(|c: char| c == ',' || c.is_whitespace() || c == '{' || c == '}')
+                        .filter(|t| !t.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    return Err(crate::disposition::removed_envs("envs", &names, tok.line));
+                }
                 if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse {
                         line: tok.line,

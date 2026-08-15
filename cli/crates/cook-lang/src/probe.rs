@@ -390,19 +390,8 @@ pub(crate) fn parse_producer(
 ) -> Result<(ProbeProduce, usize), ParseError> {
     let text = text.trim_start();
     if let Some(tail) = strip_keyword(text, "envs") {
-        let replacement = parse_source_name_list(tail, line, "envs")
-            .map(|names| {
-                names
-                    .iter()
-                    .map(|name| format!("echo \"${name}\""))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })
-            .unwrap_or_else(|_| "echo \"$NAME\"".into());
-        return Err(ParseError::Parse {
-            line,
-            message: format!("`envs {{ … }}` was removed (CS-0226); use an ordinary shell probe: `lines {{ {replacement} }}`"),
-        });
+        let names = parse_source_name_list(tail, line, "envs").unwrap_or_default();
+        return Err(crate::disposition::removed_envs("envs { … }", &names, line));
     }
     // Typed shell producers: the braces hold a shell block, typed.
     if let Some(tail) = strip_keyword(text, "json") {

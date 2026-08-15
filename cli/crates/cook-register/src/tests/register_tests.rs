@@ -1257,6 +1257,103 @@ end)
     );
 }
 
+/// COOK-484: register a unit whose output pattern substitutes `ident`, through
+/// the same `cook.__probe_subst` door codegen emits, and return the refusal.
+fn probe_subst_refusal(ident: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = format!(
+        r#"
+cook.recipe("build", {{}}, function()
+    cook.add_unit({{
+        command = "true",
+        outputs = {{ cook.{subst}("{ident}") .. ".o" }},
+    }})
+end)
+"#,
+        subst = cook_contracts::registration::PROBE_SUBST_NAME,
+    );
+    let result = register_cookfile(rt, &lua_src, None);
+    result
+        .err()
+        .expect("an unresolvable probe reference in an output pattern must fail")
+        .to_string()
+}
+
+#[test]
+fn output_pattern_accessor_typo_offers_the_dot_form() {
+    // COOK-484 / CS-0235: `$<in:stem>` is a colon where a dot was meant, so it
+    // parses as a probe reference and is refused at register time (§10.2.4).
+    // The refusal must be about the reference the author wrote, not about the
+    // pre-pass that could not answer it.
+    let msg = probe_subst_refusal("in:stem");
+    assert!(
+        msg.contains("no probe named 'in:stem'"),
+        "must name the reference, not the pre-pass; got: {msg}"
+    );
+    assert!(
+        msg.contains("$<in.stem>"),
+        "must offer the accessor form the author meant; got: {msg}"
+    );
+    assert!(
+        !msg.contains("pre-pass") && !msg.contains("materialis"),
+        "must not leak register-phase internals; got: {msg}"
+    );
+}
+
+#[test]
+fn output_pattern_unknown_probe_says_why_the_position_cannot_wait() {
+    // COOK-484: the same refusal for a genuine unknown key carries no
+    // did-you-mean — `nope` is not one of the four §10.3 path accessors — but
+    // must still say why an output pattern is the position that cannot defer.
+    let msg = probe_subst_refusal("cc:nope");
+    assert!(msg.contains("no probe named 'cc:nope'"), "got: {msg}");
+    assert!(!msg.contains("did you mean"), "no hint is owed here; got: {msg}");
+    assert!(
+        msg.contains("output path"),
+        "must say why this position cannot wait for execute phase; got: {msg}"
+    );
+}
+
+#[test]
+fn unresolved_seal_ref_speaks_seal_not_the_probes_field() {
+    // COOK-484 / CS-0235: §8.4.3.1 rule 4. A recipe's `seal` refs are unioned
+    // into the unit's consumer `probes` list so a sealed probe is scheduled
+    // ahead of the unit; the resolution failure MUST NOT inherit §22.5.6
+    // rule 1's sentence, which describes a `cook.add_unit` field the author
+    // never wrote. The unit caches (the surface shape — a seal is only
+    // meaningful to a key), which is what carries `CacheMeta.seal_keys`, the
+    // provenance the diagnostic branches on.
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.add_unit({
+        command = "true",
+        outputs = {"build/myapp.o"},
+        seal = {"no-such-decl"},
+    })
+end)
+"#;
+
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "unknown seal ref must fail");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("seal: 'no-such-decl' does not name"),
+        "must name the `seal` step and quote the ref; got: {err}"
+    );
+    assert!(
+        err.contains("probe") && err.contains("files") && err.contains("tools"),
+        "must name the declaration kinds a ref may resolve to; got: {err}"
+    );
+    assert!(
+        !err.contains("`probes`"),
+        "must not leak the internal consumer field; got: {err}"
+    );
+}
+
 #[test]
 fn resolved_probes_key_succeeds() {
     let dir = TempDir::new().unwrap();

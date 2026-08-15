@@ -1,0 +1,1 @@
+seal: 'no-such-decl' does not name a probe, or a top-level `files` or `tools` declaration

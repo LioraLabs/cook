@@ -1,0 +1,4 @@
+recipe build
+    gather "src/*.c"
+    envs CC CFLAGS
+    cook "$<in.stem>.o" { $CC $CFLAGS -c $<in> -o $<out> }
