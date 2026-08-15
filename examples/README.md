@@ -8,7 +8,7 @@ environment, and never does the same work twice.
 
 | # | example | you learn |
 |---|---------|-----------|
-| 01 | [hello-cook](01-hello-cook/) | a recipe, ingredients, one fan-out `cook` step; the second run is free |
+| 01 | [hello-cook](01-hello-cook/) | a recipe, `gather`, one fan-out `cook` step; the second run is free |
 | 02 | [pipeline](02-pipeline/) | multi-stage: fan-out → many-to-one (`$<in>` collects) → multi-output; edits rebuild exactly what they invalidate |
 | 03 | [chores-and-config](03-chores-and-config/) | uncached parameterized chores; config blocks, `@preset` overlays, `--set`; env vars as cache keys |
 | 04 | [probes](04-probes/) | computed values the cache can see: shell/lines/json/Lua producers, probe chains, fan-out over members |

@@ -1,5 +1,5 @@
 recipe build
-    ingredients "palette.txt"
+    seal "palette.txt"
     cook "build/theme.css" {
         mkdir -p build
         sed 's/^/--/' palette.txt > $<out>

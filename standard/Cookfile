@@ -26,17 +26,12 @@ recipe lint
 # harvests `[#slug]` anchors from the .mdx files themselves, so retitling a
 # section re-runs this.
 #
-# Declared as ingredients rather than sealed on a `files` probe, which is the
-# shape `ts.test` uses and `ts.rust` does not. The body names no $<in>, so this
-# stays a single unit either way; the difference is that a seal-only test unit
-# re-runs every build, and this one has 58 tests and a node start-up to amortise.
-probe vitest:tools
-    tools { node pnpm }
+# These files determine the one test unit; the body does not iterate them.
+tools vitest:tools
+    node pnpm
 
 recipe vitest: ts.wasm
-    ingredients "src/plugins/**/*.ts" "scripts/*.ts"
-        "src/content/docs/**/*.mdx"
-        "package.json" "pnpm-lock.yaml" "vitest.config.ts"
+    seal "src/plugins/**/*.ts" "scripts/*.ts" "src/content/docs/**/*.mdx" "package.json" "pnpm-lock.yaml" "vitest.config.ts"
     seal vitest:tools
     test { pnpm vitest run }
 

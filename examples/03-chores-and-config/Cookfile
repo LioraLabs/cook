@@ -27,7 +27,7 @@ config release
     var.MODE = "release"
 
 recipe build
-    ingredients "src/hello.c.in"
+    gather "src/hello.c.in"
     cook "out/hello.c" { sed "s/@MODE@/$<MODE>/" $<in> > $<out> }
 
 # Chores: uncached, parameterized, run-every-time.
