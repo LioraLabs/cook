@@ -78,10 +78,23 @@ DAG node.
 through `$<in>`, `$<in.ACCESSOR>`, or the corresponding execute-Lua `input` /
 `inputs` binding. Otherwise the implementation MUST reject it at load time
 with a diagnostic stating that the command never names the gathered files and
-directing the author to `seal` them instead. Conversely, a recipe with no
-`gather` or dependency-output driver MUST reject such an own-input reference
-with a diagnostic stating that nothing gathers what the command references.
-Both predicates are static and MUST NOT consult the filesystem. [added CS-0224]
+directing the author to `seal` them instead. Conversely, a recipe that
+establishes no **input source** MUST reject such an own-input reference with a
+diagnostic stating that nothing gathers what the command references. A source
+is established by any of: a `gather_step`, in either its quoted-glob or its
+bare-source-name form (this section); a dep-driven output pattern, where a
+`$<lib.ACCESSOR>` in the step's own output list makes `lib`'s output list the
+source (§{xref.dep-driven}); or a preceding `cook_step` in the same recipe,
+whose collected outputs are the source under the chained-step rule
+(§{steps.iteration-mode}, §{steps.iteration-mode-plate-test}). With none of
+them present there is nothing for the reference to name. Establishing a source
+is a separate question from consuming it one member at a time:
+§{steps.iteration-mode} decides cardinality from the output patterns alone, so
+a many-to-one step whose `$<in>` is the whole collected set has a source and no
+iteration item, and is admitted here. Both predicates are static and MUST NOT
+consult the filesystem. (CS-0237 restates the converse over the whole source
+set; naming only `gather` and the dep-driven pattern rejected a corpus case a
+conforming implementation accepts.) [added CS-0224]
 
 A recipe body MAY contain at most one `gather_step` (§{grammar-appendix.recipes}, "At-most-one-gather rule"). A second `gather` line within the same recipe body MUST be rejected.
 
@@ -96,13 +109,13 @@ The `gather_step` is introduced by the keyword `gather` and takes one of **two f
 
 A conforming implementation MUST accept a `gather` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
 
-**Form 2 — named-source form.** A single bare `probe_ref` naming a `files` declaration or an ordinary probe, optionally followed by quoted glob patterns. The bare source alone supplies the recipe's **members**; the trailing globs declare **per-member file inputs** (CS-0197, §{cat.probes.member-source}) and MUST NOT be read as adding members. They are not `input` items of Form 1 and the set-difference rule above does not apply to them: each resolves once per step, not per member, and the resolved set joins every member unit's declared inputs. Note 8.2.1 states what a bare source may name and what each form's members bind to. Three constraints are normative, and a conforming implementation MUST reject each violation at parse time:
+**Form 2 — named-source form.** A single bare `probe_ref` naming a `files` declaration or an ordinary probe, optionally followed by quoted glob patterns. The bare source alone supplies the recipe's **members**; the trailing globs declare **per-member file inputs** (CS-0197, §{cat.probes.member-source}) and MUST NOT be read as adding members. They are not `input` items of Form 1 and the set-difference rule above does not apply to them: each resolves once per step, not per member, and the resolved set joins every member unit's declared inputs. Note 8.2.1 states which sources a bare name selects and what each form's members bind to. Three constraints are normative, and a conforming implementation MUST reject each violation at parse time:
 
 1. **At most one bare source.** `gather a b` is rejected. Arity is one, not `+`.
 2. **The bare source comes first.** A quoted item MUST NOT precede it: `gather "include/*.h" sources` is rejected.
-3. **Only plain globs may trail it.** The trailing items are `STRING*`, so an exclusion is not admitted there: `gather sources !"include/bad.h"` is rejected.
+3. **Only plain globs MAY trail it.** The trailing items are `STRING*`, so an exclusion is not admitted there: `gather sources !"include/bad.h"` is rejected.
 
-The two forms are alternatives of one production, not mutually exclusive vocabularies: a named source with trailing globs — `gather sources "include/*.h"` — is Form 2 and is well-formed, pinned by `standard/conformance/positive/068-gather-named-files`. What a recipe may not do is mix the arms in the other direction, per constraints 2 and 3 above.
+The two forms are alternatives of one production, not mutually exclusive vocabularies: a named source with trailing globs — `gather sources "include/*.h"` — is Form 2 and is well-formed, pinned by `standard/conformance/positive/068-gather-named-files`. What a recipe cannot do is mix the arms in the other direction, per constraints 2 and 3 above.
 
 The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by §{recipes} and is resolved by the execution model (§{exec.phases}).
 
@@ -118,7 +131,7 @@ The input set is every `.c` file in `src/` and every `.h` file in `include/`, mi
 
 ### Note 8.2.1 — overload rule
 
-A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. A bare source may be followed by quoted glob patterns, which declare per-member file inputs rather than adding members (§8.2, Form 2; CS-0197); it may not be preceded by a quoted item, repeated, or followed by an exclusion. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. A bare source MAY be followed by quoted glob patterns, which declare per-member file inputs rather than adding members (§8.2, Form 2; CS-0197); it MUST NOT be preceded by a quoted item, repeated, or followed by an exclusion. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
 
 The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_gather_with_excludes` and `test_gather_excludes_only`.
 

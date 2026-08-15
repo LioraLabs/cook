@@ -42,6 +42,21 @@ const expectSevenRuleDispatch = (dispatch: string) => {
   ]);
 };
 
+// COOK-492 — §8.2's CS-0224 converse must name every way a recipe establishes an
+// input source, not just `gather` and the dep-driven pattern. Omitting the
+// preceding-`cook_step` source made §8.2 reject `positive/071-chained-cook-input-no-gather`,
+// which the corpus requires be accepted and `codegen_positive_conformance_corpus`
+// sweeps through `generate_checked`. Having a source stays a separate question
+// from iterating one (§8.4.1), which is what CS-0224 exists to keep apart.
+const expectWholeSourceSetConverse = (summary: string) => {
+  const normalized = normalize(summary);
+  expect(normalized).toMatch(/preceding `cook_step`.*collected outputs/i);
+  expect(normalized).toMatch(/dep-driven output pattern/i);
+  expect(normalized).toMatch(/nothing gathers what the command references/i);
+  expect(normalized).toMatch(/separate question|not the same question/i);
+  expect(normalized).not.toMatch(/no `gather` or dependency-output driver/i);
+};
+
 const expectGatherCardinality = (summary: string) => {
   const normalized = normalize(summary);
   expect(normalized).toMatch(/gather source supplies .*members/i);
@@ -93,6 +108,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     expect(gatheredInputs).not.toContain('CS-0226');
     expect(gatheredInputs).toContain('[added CS-0224]');
     for (const summary of [gatheredInputs, appSteps]) expectBareGatherUnion(summary);
+    expectWholeSourceSetConverse(gatheredInputs);
     expect(cacheIdentity).not.toMatch(/test\s*\{[^}]*\}\s+seal\b/);
     expect(disposition).toContain('`cook-disposition-seal-shell-probe`');
     expect(disposition).toContain('A change to `toolchain` therefore re-runs both tests');
@@ -254,6 +270,20 @@ describe('Language v2 Standard contract', () => {
     expect(() => assertContract({ modulesDoc: modules.replace('with no segment-count limit', 'with at most two segments') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace('## CS-0229 —', '## CS-0230 — duplicate\n\n## CS-0229 —') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace(/## CS-0230 —[\s\S]*?(?=## CS-0229 —)/, '') })).toThrow();
+  });
+
+  it('rejects a §8.2 converse that narrows the input-source set', () => {
+    // COOK-492 — the pre-CS-0237 sentence, restored verbatim.
+    const narrowed = steps.replace(
+      /Conversely, a recipe that\s+establishes[\s\S]*?\[added CS-0224\]/,
+      'Conversely, a recipe with no `gather` or dependency-output driver MUST reject such an own-input\nreference with a diagnostic stating that nothing gathers what the command references.\nBoth predicates are static and MUST NOT consult the filesystem. [added CS-0224]',
+    );
+    expect(() => assertContract({ stepsDoc: narrowed })).toThrow();
+
+    // Naming the third source but re-conflating it with cardinality is the
+    // other half of the defect, and is rejected too.
+    const conflated = steps.replace('is a separate question from', 'is another name for');
+    expect(() => assertContract({ stepsDoc: conflated })).toThrow();
   });
 
   it('rejects the three retired §22 probe claims', () => {
