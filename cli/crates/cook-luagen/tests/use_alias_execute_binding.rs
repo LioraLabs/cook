@@ -150,13 +150,13 @@ fn a_files_producer_keeps_its_sentinel_produce_verbatim() {
     let sentinel = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE;
     assert!(
         out.contains(&format!("produce = [[{sentinel}]]")),
-        "files producer must keep the reserved sentinel verbatim:\n{out}"
+        "files declaration must keep the reserved sentinel verbatim:\n{out}"
     );
 }
 
 #[test]
 fn a_tools_producer_keeps_its_sentinel_produce_verbatim() {
-    // CS-0214 gives `tools { }` the same interception as `files { }`, so it
+    // CS-0214 gives top-level `tools` the same interception as top-level `files`, so it
     // inherits the same hazard: `@tools-identity` is compared by EQUALITY in
     // cook-probe, and a prelude glued onto it would route a synthesised
     // producer to a worker VM — which would then die on a bare `@`.
@@ -164,7 +164,7 @@ fn a_tools_producer_keeps_its_sentinel_produce_verbatim() {
     let sentinel = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE;
     assert!(
         out.contains(&format!("produce = [[{sentinel}]]")),
-        "tools producer must keep the reserved sentinel verbatim:\n{out}"
+        "tools declaration must keep the reserved sentinel verbatim:\n{out}"
     );
 }
 

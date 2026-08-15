@@ -236,7 +236,7 @@ impl FileIdentity {
 ///
 /// Its predecessor memoised for the life of the process, justified by "one run
 /// = one process". That justification does not hold: probe units are DAG nodes
-/// evaluated inside `execute_dag`, so a `tools { }` input can name a binary an
+/// evaluated inside `execute_dag`, so a top-level `tools` declaration can name a binary an
 /// upstream node rebuilt earlier in the same run, and an execute-phase module
 /// can call `cook.tools.id` on one. Serving the pre-build hash there folds a
 /// tool that no longer exists into a probe fingerprint, and into any sealed

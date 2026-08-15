@@ -1,7 +1,7 @@
 #!/bin/bash
 # verify.sh — COOK-277 regression: canonical tool identity (CS-0157/CS-0158).
 #
-# A `tools { }` probe's sealed value is the binary's content hash only:
+# A top-level `tools` declaration's sealed value is the binary's content hash only:
 #   [relocated] identical bytes at a different PATH location keep the key —
 #               pre-fix, the embedded path re-keyed every sealing unit and
 #               heterogeneous fleets could never share sealed artifacts.

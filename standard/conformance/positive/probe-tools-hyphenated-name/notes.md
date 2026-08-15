@@ -6,4 +6,4 @@ the list took the narrow `IDENT` and none of these parsed, which left
 native probe surface.
 
 The `[A-Za-z_]` head is unchanged, so `probe-as-tools-bad-name`
-(`tools { cc --version }`) stays a rejection.
+(a `tools NAME` body containing `cc --version`) stays a rejection.

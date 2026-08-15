@@ -61,7 +61,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
     }
-    // `tools { … }` declares named tools as probe inputs so the fingerprint
+    // A top-level `tools NAME` declaration records its named tools as probe inputs so the fingerprint
     // machinery folds each binary hash into the probe fingerprint. This
     // is what makes the hash/value the re-run trigger — the produce body only
     // computes the VALUE; the determinant lives in these declared inputs.
@@ -69,7 +69,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         ProbeProduce::Tools(names) => {
             out.push_str(&format!("    tools = {{{}}},\n", quoted_list(names)));
         }
-        // CS-0148: `files { … }` declares its glob set as `inputs.files` —
+        // CS-0148: a top-level `files NAME` declaration records its glob set as `inputs.files` —
         // register-time glob resolution, each file's content hash folding into
         // the fingerprint. The parser guarantees a `files` probe has no
         // second file-set declaration, so this is the only `files =` emission.
@@ -111,7 +111,7 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         // CS-0205: a probe's `produce` body is execute-phase Lua like any
         // other, so a `use` alias it names is bound the same way. The other
         // arms are generated Lua that can never name a user alias, and the
-        // `files { }` and `tools { }` arms MUST stay byte-identical to their
+        // Top-level `files` and `tools` declaration arms MUST stay byte-identical to their
         // reserved sentinels — `cook-probe` compares them by equality to
         // intercept the producer.
         ProbeProduce::Lua(code) => crate::use_prelude::with_execute_prelude(uses, code),

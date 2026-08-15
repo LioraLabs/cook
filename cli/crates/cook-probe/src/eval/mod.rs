@@ -20,7 +20,7 @@
 //!   * The caller owns scheduling, the VM, event emission, and diagnostics. It
 //!     is handed [`Evaluated`] and decides what to say about it.
 //!
-//! Producer-kind interception lives here on purpose. COOK-353 was a `files { }`
+//! Declaration-value interception lives here on purpose. COOK-353 was a top-level `files`
 //! probe whose reserved `@files-manifest` sentinel the executor intercepted and
 //! the pre-pass did not, so the sentinel reached the register VM and died as a
 //! Lua syntax error on a bare `@`. A new producer kind can now only be taught
@@ -180,8 +180,8 @@ pub struct Lookup {
     pub tool_paths: BTreeMap<String, String>,
     pub warnings: Vec<String>,
     /// `Some` when the value is already determined without running a VM:
-    /// either the cache served it, or the producer kind is synthesised
-    /// (CS-0148 `files { }`, CS-0214 `tools { }`). `None` means the caller
+    /// either the cache served it, or a top-level `files`/`tools` declaration's
+    /// value is synthesised. `None` means the caller
     /// must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
@@ -239,7 +239,7 @@ pub fn lookup(
         }
     }
 
-    // 4b. CS-0214 §22.5.2: a `tools { }` producer fails, by name, when it
+    // 4b. CS-0214: a top-level `tools` declaration fails, by name, when it
     //     cannot obtain a declared tool's identity. The rule used to live
     //     inside the emitted produce body, which put it behind the cache: a
     //     stored value could serve a probe whose tool had since been
@@ -267,14 +267,14 @@ pub fn lookup(
             let Some(path) = tool_paths.get(name) else {
                 return Err(ProbeError::Produce {
                     key: key.to_string(),
-                    message: format!("tools probe: '{name}' not found on PATH"),
+                    message: format!("tools declaration: '{name}' not found on PATH"),
                 });
             };
             if digest == &[0u8; 32] {
                 return Err(ProbeError::Produce {
                     key: key.to_string(),
                     message: format!(
-                        "tools probe: '{name}' resolved to {path} but its bytes \
+                        "tools declaration: '{name}' resolved to {path} but its bytes \
                          could not be read, so it has no identity to record"
                     ),
                 });
@@ -589,12 +589,12 @@ pub fn evaluate(
     })
 }
 
-/// CS-0148: a `files { }` producer is intercepted, never run.
+/// CS-0148: a top-level `files` declaration's value is synthesised, never run.
 fn is_files_manifest(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
 }
 
-/// CS-0214: a `tools { }` producer is intercepted, never run.
+/// CS-0214: a top-level `tools` declaration's value is synthesised, never run.
 fn is_tools_identity(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE
 }

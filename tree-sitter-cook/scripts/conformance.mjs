@@ -235,7 +235,7 @@ async function parseCase(file) {
     /\((?:ERROR|MISSING)\b/.test(output) ||
     // tree-sitter renders an inserted token through an alias as a zero-width
     // named node rather than spelling `MISSING` (for example the required
-    // identifier in `tools {}`). It is still parser recovery, not acceptance.
+    // identifier in a top-level `tools` declaration). It is still parser recovery, not acceptance.
     /\([^\n]* \[(\d+), (\d+)\] - \[\1, \2\]\)/.test(output);
   const classify = (stdout, stderr, code = 0, message = '') => {
     const output = stdout + stderr;

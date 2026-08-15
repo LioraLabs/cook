@@ -52,8 +52,8 @@ other's object files.
 So before you share, name your real determinants:
 
 ```
-probe compiler
-    tools { cc }
+tools compiler
+    cc
 
 recipe app
     gather "src/*.c"
@@ -61,7 +61,7 @@ recipe app
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
 ```
 
-A `tools { cc }` probe resolves `cc` on `PATH` and records a SHA-256 of the
+A top-level `tools compiler` declaration resolves `cc` on `PATH` and records a SHA-256 of the
 executable's **contents** — not its path, not a `--version` string. `seal compiler`
 folds that identity into each unit's key, so a teammate on a different compiler
 gets a clean miss instead of your bytes.
@@ -73,7 +73,7 @@ Two consequences worth internalizing:
   hits.
 - **It hashes the binary you named, not its closure.** On a distro where
   `/usr/bin/gcc` is a thin driver, `cc1plus` can change underneath a
-  byte-identical driver, and `tools { cc }` will not notice. On Nix-style
+  byte-identical driver, and a `tools compiler` declaration naming `cc` will not notice. On Nix-style
   toolchains, where the thing on `PATH` is a wrapper with the store path of the
   real compiler baked into it, hashing those bytes captures the closure
   transitively — the probe is at its most trustworthy exactly there.

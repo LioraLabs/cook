@@ -1837,7 +1837,7 @@ pub fn execute_dag(
 
                             // A value already in hand: the cache served it, or
                             // the producer kind is synthesised (CS-0148
-                            // `files { }`, CS-0214 `tools { }`). Either way no
+                            // top-level `files`/`tools` declarations). Either way no
                             // worker is involved, so the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
@@ -1851,8 +1851,8 @@ pub fn execute_dag(
                                     // CS-0204: no VM ran on either arm of this
                                     // branch. A cache hit's identity is already
                                     // the folded one `lookup` settled on; a
-                                    // synthesised value (`files { }`,
-                                    // `tools { }`) comes from the declared
+                                    // synthesised value (top-level `files` or
+                                    // `tools`) comes from the declared
                                     // FILES / TOOLS section and loads nothing.
                                     &[],
                                 );
@@ -1971,7 +1971,7 @@ pub fn execute_dag(
                             // "fingerprint resolution failed" into the middle of
                             // it, which was true of the one error `lookup` could
                             // return when it was written and false of the
-                            // CS-0214 one it can return now (a `tools { }` name
+                            // CS-0214 one it can return now (a top-level `tools` name
                             // that does not resolve on PATH is a statement about
                             // the host, not about a fingerprint).
                             let err_msg = e.to_string();

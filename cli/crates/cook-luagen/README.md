@@ -87,7 +87,7 @@ pre-pass for probe key-versus-field resolution, COOK-190).
 ## Boundary history
 
 - **`probe::lower_produce` used to author probe semantics as program text.**
-  Its `tools { }` arm emitted Lua that shelled out to `command -v` and
+  Its top-level `tools` declaration arm emitted Lua that shelled out to `command -v` and
   `sha256sum … | cut -d' ' -f1` to build `{ NAME = { hash = … } }` — a second
   implementation of an identity the probe's own fingerprint already computed
   in Rust, in a different language, with a different resolver, at a different
@@ -96,7 +96,7 @@ pre-pass for probe key-versus-field resolution, COOK-190).
   coreutils. CS-0214 retired it: the arm now emits the reserved
   `@tools-identity` sentinel and the engine synthesises the value from the
   same `inputs.tools` pairs the fingerprint folds, exactly as CS-0148 did for
-  `files { }`.
+  top-level `files` declarations.
 
   The general lesson is the one the crate's charter already states: when this
   crate would have to *decide* what a value is, the emission is a declaration

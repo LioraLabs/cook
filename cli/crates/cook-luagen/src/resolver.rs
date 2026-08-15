@@ -126,8 +126,8 @@ pub enum ResolveError {
     /// the same reasoning CS-0172 applied to the retired `env.` prefix.
     #[error(
         "placeholder $<file:{path}>: the `file:` prefix is retired (CS-0187). \
-         Declare the file as an input instead: a `files {{ \"{path}\" }}` probe \
-         sealed on the unit that reads it (`seal <probe>`) makes its content a \
+         Declare `files NAME` with `\"{path}\"`, then seal `NAME` on the unit \
+         that reads it; this makes the file content a \
          cache determinant, and the step body names the path directly."
     )]
     RetiredFilePrefix { path: String },

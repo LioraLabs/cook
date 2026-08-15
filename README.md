@@ -67,8 +67,8 @@ cook_pnpm.workspace({
     },
 })
 
-probe rust:sources
-    files { "Cargo.toml", "Cargo.lock", "crates/**/*" }
+files rust:sources
+    "Cargo.toml" "Cargo.lock" "crates/**/*"
 
 # Cargo stays Cargo; its workspace joins the same dependency graph.
 recipe rust-bins
@@ -209,8 +209,8 @@ determinants that make that reuse safe.
 
 Need the compiler in the key? Say so:
 ```cook
-probe compiler
-    tools { cc }
+tools compiler
+    cc
 
 recipe app
     gather "src/*.c"
@@ -218,7 +218,7 @@ recipe app
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
 ```
 
-`probe compiler` identifies the resolved `cc` tool. `seal compiler` includes
+`tools compiler` identifies the resolved `cc` tool. `seal compiler` includes
 that identity in each unit's key, so cached objects are reused only when the
 compiler matches. The local cache and the shared store are addressed by that
 same key, so a teammate or CI runner reuses your artifact when its declared

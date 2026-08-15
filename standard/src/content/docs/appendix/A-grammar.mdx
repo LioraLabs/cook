@@ -137,7 +137,6 @@ probe_body       ::= seal_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
                    | exec_lua_block
 TOOL_NAME        ::= /[A-Za-z_][A-Za-z0-9_.\-]*/ /* CS-0201: its own production; keeps `.` */
-glob_list        ::= "{" ( glob_pattern ((WS | ",") WS* glob_pattern)* )? "}"
 glob_pattern     ::= "!"? STRING
 ```
 
@@ -150,8 +149,8 @@ glob_pattern     ::= "!"? STRING
 **Source-list kinds (normative).** The `tools` declaration takes bare tool names
 and the `files` declaration takes quoted glob patterns with optional `!` exclude
 prefixes (`gather` pattern syntax, §{steps.gather}). A conforming
-implementation MUST reject an empty list (a `glob_list` MUST contain at least
-one include pattern), a tool entry that is not a `TOOL_NAME`, a glob entry that
+implementation MUST reject a declaration with no entries and a `files`
+declaration with no include pattern, a tool entry that is not a `TOOL_NAME`, a glob entry that
 is not a quoted `STRING`, and a body (in particular a `>{ … }`
 `exec_lua_block`) supplied where a name or glob list is required
 (§{cat.probes.decl}). Both list forms are written on a single physical line
@@ -346,7 +345,7 @@ MODULE_CALL_TEXT      ::= /* see § 4.11 */
 
 **`BARE_IDENTIFIER` and `TOOL_NAME` are one character class (informative).** The two productions are spelled with identical regexes and are separate only because they are reached from different places — `TOOL_NAME` got its own name at CS-0201, when `PROBE_SEG` dropped the `.` and it did not. Nothing in this Standard permits them to diverge, and an implementation that lets them is one where a name a Cookfile declares is a name some other surface refuses.
 
-The reference implementation reads the class from one place, `cook_contracts::naming`, at every site that needs it: the lexer that parses `recipe NAME` / `chore NAME` / `config NAME`, the `tools { … }` validator that enforces `TOOL_NAME`, and the CLI's `@PRESET` argv recognition. It was written out at five sites until COOK-421, and the pair that mattered was the lexer's and the CLI's — a preset is declared in a Cookfile and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use, in either direction.
+The reference implementation reads the class from one place, `cook_contracts::naming`, at every site that needs it: the lexer that parses `recipe NAME` / `chore NAME` / `config NAME`, the top-level `tools NAME` body validator that enforces `TOOL_NAME`, and the CLI's `@PRESET` argv recognition. It was written out at five sites until COOK-421, and the pair that mattered was the lexer's and the CLI's — a preset is declared in a Cookfile and selected on the command line, so a spelling one end admits and the other refuses is a preset the user can name and cannot use, in either direction.
 
 **Placeholder shape.** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{phl.cook-step}. The single recognised form is the strict sigil `$<IDENT>`, normatively defined in §{phl.token} (CS-0033). Its production is reproduced here for reference in the context of surrounding grammar productions:
 

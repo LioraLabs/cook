@@ -353,35 +353,11 @@ module.exports = grammar({
         $._newline,
       ),
 
-    tool_name_list: ($) =>
-      seq(
-        "{",
-        alias($._tool_name, $.identifier),
-        repeat(seq(optional(","), alias($._tool_name, $.identifier))),
-        "}",
-      ),
-
     // TOOL_NAME is its own production (CS-0201) and keeps the dot: an
     // executable name can carry one (`python3.11`) and is never
     // member-accessed, so the probe-key ambiguity does not arise. No
     // module-prefix colon: a tool name has no namespace.
     _tool_name: ($) => token(/[A-Za-z_][A-Za-z0-9_.-]*/),
-
-    // A.3.2 `glob_list` — same brace shape as `name_list` (comma/whitespace
-    // separated, single physical line), holding quoted glob patterns with
-    // an optional `!` exclude prefix instead of bare IDENTs. Mirrors
-    // `name_list`'s convention of requiring the first entry syntactically
-    // (an empty `{}` MISSES the first `glob_pattern`, matching how an
-    // empty `tools {}` is rejected above): the A-grammar prose
-    // (§22.5.2) requires a conforming implementation to reject an empty
-    // `glob_list`.
-    glob_list: ($) =>
-      seq(
-        "{",
-        $.glob_pattern,
-        repeat(seq(optional(","), $.glob_pattern)),
-        "}",
-      ),
 
     glob_pattern: ($) =>
       choice(

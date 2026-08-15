@@ -561,15 +561,15 @@ recipe misc
     cook "build/blurb.txt"   { llm gen > $<out> } nondet # non-reproducible; reuse the recording
 ```
 
-Sealing composes with the `files` producer to solve a common bind: a recipe
+Sealing composes with a top-level `files` declaration to solve a common bind: a recipe
 whose `gather` line is already an iteration driver (a probe fan-out) has
 no place to declare the *other* files its command reads. Name them as a
-`files` probe and seal it: every unit's key now carries each file's hash, and
+`files` declaration and seal it: every unit's key now carries each file's hash, and
 `cook why` attributes a miss to the exact file that changed:
 
 ```
-probe sources
-    files { "packages/*/src/*.ts" "packages/*/tsconfig.json" }
+files sources
+    "packages/*/src/*.ts" "packages/*/tsconfig.json"
 
 recipe typecheck
     gather packages                # the fan-out driver occupies this slot

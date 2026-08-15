@@ -2492,7 +2492,7 @@ fn disp_seal_accepts_inline_files_and_multi_segment_keys() {
     let seals = &cf.recipes[0].steps;
     assert!(
         format!("{seals:?}").contains("@seal:build:2"),
-        "inline files probe must enter the seal set: {seals:?}"
+        "inline file seal must enter the seal set: {seals:?}"
     );
     assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files {
         globs: vec!["src/**".into()],
@@ -2565,6 +2565,20 @@ fn probe_body_files_and_tools_name_top_level_replacement() {
     ] {
         let err = parse(source).unwrap_err().to_string();
         assert!(err.contains("top-level"), "got: {err}");
+    }
+}
+
+#[test]
+fn lower_producer_parser_rejects_removed_files_and_tools_forms() {
+    for source in ["files { \"src/**\" }", "tools { cc }"] {
+        let err = crate::probe::parse_producer(source, 1, &[], 0, &[])
+            .expect_err("lower producer helper must reject removed forms");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "line 1: probe: expected `>{{ Lua block }}` or `{{ shell block }}`, found: {source}"
+            )
+        );
     }
 }
 

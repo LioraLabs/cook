@@ -144,7 +144,7 @@ fn same_relative_path_in_two_working_dirs_does_not_alias() {
 // -------------------------------------------------------------------------
 
 /// The finding this memo was rewritten for. A probe unit is a DAG node
-/// evaluated inside `execute_dag`, so a `tools { }` input can name a binary
+/// evaluated inside `execute_dag`, so a top-level `tools` declaration can name a binary
 /// that an upstream node rebuilt minutes earlier in the same process; the same
 /// goes for a module calling `cook.tools.id` from an execute-phase body. The
 /// old memo answered from its first read forever, so the rebuilt tool was

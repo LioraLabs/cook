@@ -162,13 +162,13 @@ pub enum ProbeProduce {
         commands: Vec<String>,
         typing: ShellProduceType,
     },
-    /// `tools { cc, ld }` — the brace content is a LIST of bare tool names
+    /// A top-level `tools NAME` declaration — its body is a list of tool names
     /// (NOT a shell body). Each is PATH-resolved and its binary hashed; the
     /// value is `{ NAME = { path, hash }, … }`. The hash is both the value and
     /// the re-run trigger (COOK-164).
     Tools(Vec<String>),
-    /// `files { "src/*.ts" !"src/gen/*.ts" }` — the brace content is a LIST of
-    /// quoted glob patterns (NOT a shell body), `!"…"` excluding, following
+    /// A top-level `files NAME` declaration (or inline file seal) — its body is
+    /// a list of quoted glob patterns, `!"…"` excluding, following
     /// quoted `gather` pattern syntax. The expanded file set self-fingerprints
     /// and the value is `{ [path] = content_hash, … }` — per-file identity as
     /// a sealable determinant (CS-0148); the glob set is also its file-input

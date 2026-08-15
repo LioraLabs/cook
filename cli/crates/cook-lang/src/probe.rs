@@ -32,7 +32,7 @@ pub(crate) fn parse_probe(
             Token::Comment(_) | Token::Blank => { pos += 1; }
             Token::LuaBlockOpen => {
                 // A bare `>{ … }` line is the Lua producer (§22.5.2). Unlike the
-                // shell/`json`/`lines`/`tools`/`envs` forms (which lex as
+                // shell/`json`/`lines`/retired `envs` forms (which lex as
                 // `Content`), `>{` lexes as its own opener token whose remaining
                 // line content the lexer dropped — recover it from the source so
                 // both the inline `>{ … }` and multi-line forms parse uniformly
@@ -346,58 +346,6 @@ fn parse_files_glob_list(
     Ok((globs, excludes))
 }
 
-/// Finish a `files` producer: reject a `>{ … }` Lua block (a glob list, not a
-/// body), parse the brace glob list, and advance past this physical line.
-fn finish_files_list(
-    tail: &str,
-    line: usize,
-    tokens: &[Located<Token>],
-    current_pos: usize,
-) -> Result<(ProbeProduce, usize), ParseError> {
-    let t = tail.trim_start();
-    if t.starts_with('>') {
-        return Err(ParseError::Parse {
-            line,
-            message: "files: `{ \"glob\", … }` is a GLOB LIST, not a body; a `>{ … }` Lua block is not valid here"
-                .into(),
-        });
-    }
-    let (globs, excludes) = parse_files_glob_list(t, line, true)?;
-    let mut new_pos = current_pos + 1;
-    while new_pos < tokens.len() && tokens[new_pos].line <= line {
-        new_pos += 1;
-    }
-    Ok((ProbeProduce::Files { globs, excludes }, new_pos))
-}
-
-/// Finish a `tools` producer: reject a `>{ … }` Lua block (a body, not a
-/// name list), parse the brace name list, and advance the token cursor past this
-/// physical line.
-fn finish_source_list(
-    tail: &str,
-    line: usize,
-    tokens: &[Located<Token>],
-    current_pos: usize,
-    kind: &str,
-) -> Result<(ProbeProduce, usize), ParseError> {
-    let t = tail.trim_start();
-    if t.starts_with('>') {
-        return Err(ParseError::Parse {
-            line,
-            message: format!(
-                "{kind}: `{{ name, … }}` is a NAME LIST, not a body; a `>{{ … }}` Lua block is not valid here"
-            ),
-        });
-    }
-    let names = parse_source_name_list(t, line, kind)?;
-    // The list is a single physical line: advance past every token on `line`.
-    let mut new_pos = current_pos + 1;
-    while new_pos < tokens.len() && tokens[new_pos].line <= line {
-        new_pos += 1;
-    }
-    Ok((ProbeProduce::Tools(names), new_pos))
-}
-
 /// Finish a `json`/`lines` typed shell producer. The leading keyword has already
 /// been stripped; the remainder MUST be a `{ … }` shell block. A `>{ … }` Lua
 /// block is rejected — `json`/`lines` type a shell block's stdout, and a Lua
@@ -429,13 +377,10 @@ fn finish_typed_shell(
 ///   { … }            shell block  -> string (stdout, one trailing newline trimmed)
 ///   json  { … }      shell block  -> parsed + validated JSON
 ///   lines { … }      shell block  -> array of stdout lines
-///   tools { cc, ld } name list    -> cached toolset fingerprint
-///   files { "a/*.c" } glob list   -> per-file content-hash manifest (CS-0148)
 ///   >{ … }           Lua block    -> structured value (the block's `return`)
 ///
-/// `json`/`lines`/`tools`/`files` are contextual keywords, valid only in this
-/// probe-body position. A bare `{ … }`/`>{ … }` opener never matches a leading
-/// keyword, so detection is unambiguous.
+/// `json` and `lines` are contextual keywords in this probe-body position. A
+/// bare `{ … }`/`>{ … }` opener never matches either keyword.
 pub(crate) fn parse_producer(
     text: &str,
     line: usize,
@@ -444,10 +389,6 @@ pub(crate) fn parse_producer(
     source_lines: &[&str],
 ) -> Result<(ProbeProduce, usize), ParseError> {
     let text = text.trim_start();
-    // Name-list producers: the braces hold a NAME LIST, not a body.
-    if let Some(tail) = strip_keyword(text, "tools") {
-        return finish_source_list(tail, line, tokens, current_pos, "tools");
-    }
     if let Some(tail) = strip_keyword(text, "envs") {
         let replacement = parse_source_name_list(tail, line, "envs")
             .map(|names| {
@@ -462,10 +403,6 @@ pub(crate) fn parse_producer(
             line,
             message: format!("`envs {{ … }}` was removed (CS-0226); use an ordinary shell probe: `lines {{ {replacement} }}`"),
         });
-    }
-    // Glob-list producer: the braces hold a quoted GLOB LIST, not a body.
-    if let Some(tail) = strip_keyword(text, "files") {
-        return finish_files_list(tail, line, tokens, current_pos);
     }
     // Typed shell producers: the braces hold a shell block, typed.
     if let Some(tail) = strip_keyword(text, "json") {

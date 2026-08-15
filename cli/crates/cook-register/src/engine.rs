@@ -1967,7 +1967,7 @@ fn run_member_source_prepass(
             r.probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
         });
         if *gather && files_source {
-            let paths = resolved_value.as_object().expect("files producer yields a manifest")
+            let paths = resolved_value.as_object().expect("files declaration yields a manifest")
                 .keys().cloned().map(serde_json::Value::String).collect();
             files_members.push(((*source_ref).to_string(), serde_json::Value::Array(paths)));
         } else if !matches!(resolved_value, serde_json::Value::Array(_)) {
@@ -2225,7 +2225,7 @@ impl RegisterProbeResolver {
         // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
         // call the executor makes, so the two phases cannot drift again: the
         // fingerprint, the CS-0178 keylessness rule, the cache lookup and
-        // publish, the CS-0148 `files { }` interception, and the CS-0102 local
+        // publish, the CS-0148 top-level `files` value synthesis, and the CS-0102 local
         // copy all have one implementation. The register VM is the only
         // phase-specific part, and it is the parameter.
         let eval_ctx = cook_probe::eval::EvalCtx {
