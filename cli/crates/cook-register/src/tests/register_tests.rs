@@ -4462,29 +4462,51 @@ fn cook_chore_body_gets_chore_unit_semantics() {
 /// `MemberSourceNotArray` reports a shape mismatch when the actionable fact is that
 /// this producer kind is seal-only.
 #[test]
-fn files_probe_as_member_source_names_the_seal_only_kind() {
+fn named_files_gather_fans_out_and_declares_each_member_path() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(dir.path().join("src/a.txt"), "a\n").unwrap();
 
     let cookfile = r#"
-probe sites
-    files { "src/*.txt" }
+files sites
+    "src/*.txt"
 
 recipe grade
-    ingredients sites
-    cook "build/$<in>.out" { echo x > $<out> }
+    gather sites
+    cook "build/$<in.stem>.out" { echo x > $<out> }
+    cook "build/manifest.txt" { cat '$<in>' > $<out> }
 "#;
-    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
-    assert!(
-        matches!(err, RegisterError::MemberSourceFilesProbe { ref key } if key == "sites"),
-        "expected MemberSourceFilesProbe for 'sites', got {err:?}"
-    );
-    let rendered = err.to_string();
-    assert!(
-        rendered.contains("seal sites"),
-        "diagnostic must name the fix, got: {rendered}"
-    );
+    let registered = register_surface(dir.path(), cookfile).expect("named files gather registers");
+    let units = &registered.units_by_recipe["grade"].units;
+    assert_eq!(units.len(), 2);
+    assert_eq!(units[0].member.as_deref(), Some("src/a.txt"));
+    assert_eq!(units[0].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("src/a.txt")]);
+    assert_eq!(units[1].member, None);
+    assert_eq!(units[1].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("build/a.out")]);
+}
+
+#[test]
+fn gather_array_probe_keeps_record_members_and_trailing_inputs() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("shared.txt"), "shared\n").unwrap();
+    let registered = register_surface(dir.path(), r#"
+probe records
+    json { printf '[{"id":"a"},{"id":"b"}]' }
+
+recipe consume
+    gather records "shared.txt"
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
+"#).expect("array probe gather registers");
+    let units = &registered.units_by_recipe["consume"].units;
+    assert_eq!(units.len(), 2);
+    assert_eq!(units.iter().map(|u| u.member.as_deref().unwrap()).collect::<Vec<_>>(),
+        vec![r#"{"id":"a"}"#, r#"{"id":"b"}"#]);
+    for unit in units {
+        assert_eq!(unit.cache_meta.as_ref().unwrap().inputs,
+            vec![cook_contracts::cache::DeclaredInput::path("shared.txt")]);
+    }
 }
 
 // -----------------------------------------------------------------------

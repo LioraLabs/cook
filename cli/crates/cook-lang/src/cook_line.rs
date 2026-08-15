@@ -219,6 +219,7 @@ pub(crate) fn parse_ingredients_probe_source(
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
+    gather: bool,
 ) -> Result<(MemberSourceStep, usize), ParseError> {
     // CS-0201: `-` is in PROBE_SEG. It was missing here, so `ingredients
     // cc-version` scanned only `cc` and then reported the remainder as
@@ -289,7 +290,8 @@ pub(crate) fn parse_ingredients_probe_source(
     while pos < tokens.len() && tokens[pos].line <= line {
         pos += 1;
     }
-    Ok((MemberSourceStep { source: MemberSource::ProbeKey(key), extra_ingredients }, pos))
+    let source = if gather { MemberSource::GatherKey(key) } else { MemberSource::ProbeKey(key) };
+    Ok((MemberSourceStep { source, extra_ingredients }, pos))
 }
 
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the

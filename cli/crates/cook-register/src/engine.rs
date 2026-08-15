@@ -1096,6 +1096,7 @@ impl BodyDriver {
             params_meta,
             source_line,
             skip_member_fanout_body,
+            file_member_source,
             origin,
         ): (
             LuaRegistryKey,
@@ -1105,6 +1106,7 @@ impl BodyDriver {
             String,
             Vec<crate::capture::ChoreParamMeta>,
             usize,
+            bool,
             bool,
             Option<String>,
         );
@@ -1125,7 +1127,19 @@ impl BodyDriver {
                 && matches!(
                     recipe.member_source,
                     Some(crate::capture::MemberSourceDescriptor::Probe { .. })
+                        | Some(crate::capture::MemberSourceDescriptor::Gather { .. })
                 );
+            file_member_source = match &recipe.member_source {
+                Some(crate::capture::MemberSourceDescriptor::Gather { source_ref }) => {
+                    let probes = self.probe_registry.borrow();
+                    resolve_probe_ref(source_ref, &probes).is_some_and(|(key, field)| {
+                        field.is_none() && probes.probes.get(key).is_some_and(|r| {
+                            r.probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+                        })
+                    })
+                }
+                _ => false,
+            };
 
             // Run recipe context setup (ingredient resolution).
             setup_recipe_context(lua, recipe, &builder.working_dir, &builder.workspace_root, &builder.ingredient_warnings)?;
@@ -1370,6 +1384,10 @@ impl BodyDriver {
         for unit in &mut body.units {
             if let Some(meta) = unit.cache_meta.as_mut() {
                 meta.recipe_name = name.to_string();
+                if let (true, Some(path)) = (file_member_source, unit.member.clone()) {
+                    let input = cook_contracts::cache::DeclaredInput::path(path);
+                    if !meta.inputs.contains(&input) { meta.inputs.push(input); }
+                }
             }
         }
 
@@ -1890,11 +1908,15 @@ fn run_member_source_prepass(
     // driver's body — which would call `cook.probes.get` on an unevaluated probe
     // — is skipped rather than erroring.
     let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
-    let drivers: Vec<(&str, &str)> = member_source_drivers
+    let drivers: Vec<(&str, &str, bool)> = member_source_drivers
         .iter()
         .filter(|(name, _)| driver_reachable(name))
-        .map(|(name, MemberSourceDescriptor::Probe { source_ref })| {
-            (name.as_str(), source_ref.as_str())
+        .map(|(name, source)| {
+            let (source_ref, gather) = match source {
+                MemberSourceDescriptor::Probe { source_ref } => (source_ref, false),
+                MemberSourceDescriptor::Gather { source_ref } => (source_ref, true),
+            };
+            (name.as_str(), source_ref.as_str(), gather)
         })
         .collect();
     if drivers.is_empty() {
@@ -1904,10 +1926,10 @@ fn run_member_source_prepass(
     // COOK-190: resolve each ref against the registry (exact key match wins,
     // else trailing `:field` selector). A ref that names no declared probe
     // under either interpretation is rejected, naming the full ref.
-    let mut resolved: Vec<(&str, &str, Option<&str>)> = Vec::new();
-    for (recipe, source_ref) in &drivers {
+    let mut resolved: Vec<(&str, &str, Option<&str>, bool)> = Vec::new();
+    for (recipe, source_ref, gather) in &drivers {
         match resolve_probe_ref(source_ref, probe_registry) {
-            Some((key, field)) => resolved.push((source_ref, key, field)),
+            Some((key, field)) => resolved.push((source_ref, key, field, *gather)),
             None => {
                 return Err(RegisterError::MemberSourceProbeUndeclared {
                     recipe: (*recipe).to_string(),
@@ -1923,7 +1945,7 @@ fn run_member_source_prepass(
     //
     // The registry borrow above is released for the duration: a `produce` body
     // runs author Lua on this VM, and that Lua may declare or read probes.
-    let keys: Vec<String> = resolved.iter().map(|(_, k, _)| (*k).to_string()).collect();
+    let keys: Vec<String> = resolved.iter().map(|(_, k, _, _)| (*k).to_string()).collect();
     drop(probe_registry_guard);
     for key in &keys {
         resolver.resolve(lua, key)?;
@@ -1932,7 +1954,8 @@ fn run_member_source_prepass(
 
     // §22.5.10 non-array diagnostic: a driver's resolved source must be a
     // sequence. With a `:field` selector, the named field must be the array.
-    for (source_ref, key, field) in &resolved {
+    let mut files_members = Vec::new();
+    for (source_ref, key, field, gather) in &resolved {
         let store = prepass_store.borrow();
         let value = store.get(*key).expect("driver probe evaluated above");
         let (resolved_value, selector): (&serde_json::Value, String) = match field {
@@ -1947,16 +1970,20 @@ fn run_member_source_prepass(
             },
             None => (value, (*source_ref).to_string()),
         };
-        if !matches!(resolved_value, serde_json::Value::Array(_)) {
+        let files_source = field.is_none() && probe_registry.probes.get(*key).is_some_and(|r| {
+            r.probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+        });
+        if *gather && files_source {
+            let paths = resolved_value.as_object().expect("files producer yields a manifest")
+                .keys().cloned().map(serde_json::Value::String).collect();
+            files_members.push(((*source_ref).to_string(), serde_json::Value::Array(paths)));
+        } else if !matches!(resolved_value, serde_json::Value::Array(_)) {
             // COOK-353: name the `files` case specifically. Its value is a map
             // by construction, so "got map/record" describes the symptom while
             // the cause is that the author reached for a driver where this
             // producer kind only ever works as a seal.
             if field.is_none()
-                && probe_registry.probes.get(*key).is_some_and(|r| {
-                    r.probe.produce_source
-                        == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
-                })
+                && files_source
             {
                 return Err(RegisterError::MemberSourceFilesProbe {
                     key: (*key).to_string(),
@@ -1968,11 +1995,12 @@ fn run_member_source_prepass(
             });
         }
     }
+    prepass_store.borrow_mut().extend(files_members);
 
     // COOK-190: the body reads `cook.probes.get("<verbatim ref>")`. For a
     // `key:field` selector, stash the selected array under the verbatim ref
     // (validated array-shaped by the diagnostic loop above).
-    for (source_ref, key, field) in &resolved {
+    for (source_ref, key, field, _) in &resolved {
         let Some(f) = field else { continue };
         let items = {
             let store = prepass_store.borrow();

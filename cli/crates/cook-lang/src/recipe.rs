@@ -453,13 +453,6 @@ pub(crate) fn parse_recipe(
                         });
                     }
                     let head = rest.trim_start();
-                    if gather.is_some() && !head.starts_with('"') && !head.starts_with('!') {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message: "gather accepts only quoted paths and !\"exclude\" items"
-                                .to_string(),
-                        });
-                    }
                     if head.starts_with('"') || head.starts_with('!') {
                         // Glob ingredients (existing path).
                         if !ingredients.is_empty() || !excludes.is_empty() {
@@ -487,7 +480,7 @@ pub(crate) fn parse_recipe(
                             });
                         }
                         let (fe, new_pos) =
-                            crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos)?;
+                            crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos, gather.is_some())?;
                         member_source_seen = true;
                         steps.push(Step::MemberSource { step: fe, line: tok.line });
                         pos = new_pos;

@@ -446,14 +446,19 @@ module.exports = grammar({
       ),
 
     gather_step: ($) =>
-      seq(
-        "gather",
-        choice($.string, $.ingredient_exclude),
-        repeat(seq(
-          optional($._step_continuation_newline),
+      choice(
+        seq(
+          "gather",
           choice($.string, $.ingredient_exclude),
-        )),
-        $._newline,
+          repeat(seq(optional($._step_continuation_newline), choice($.string, $.ingredient_exclude))),
+          $._newline,
+        ),
+        seq(
+          "gather",
+          field("source", alias($._bare_probe_key, $.identifier)),
+          repeat(seq(optional($._step_continuation_newline), $.string)),
+          $._newline,
+        ),
       ),
 
     ingredient_exclude: ($) => seq("!", $.string),

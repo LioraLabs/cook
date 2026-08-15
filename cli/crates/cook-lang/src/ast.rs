@@ -285,6 +285,9 @@ pub enum MemberSource {
     /// A probe key, optionally selecting a nested array field (`cards`,
     /// `cards:items`). The probe's value MUST be an array (§22.5.10).
     ProbeKey(String),
+    /// A bare source spelled with `gather`; registration accepts an array
+    /// probe or a named `files` declaration.
+    GatherKey(String),
 }
 
 /// A member-source step — the internal `ingredients <probe>` desugar node (§8.2).

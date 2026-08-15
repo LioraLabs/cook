@@ -253,6 +253,7 @@ pub const MEMBER_SOURCE_REF_KEY: &str = "ref";
 
 /// The only kind value since COOK-97 removed `Shell`/`Lua`.
 pub const MEMBER_SOURCE_KIND_PROBE: &str = "probe";
+pub const MEMBER_SOURCE_KIND_GATHER: &str = "gather";
 
 /// The data source of a member-fanout recipe, as carried on the register
 /// surface meta by `cook-luagen` and parsed back by `cook-register`'s
@@ -272,6 +273,7 @@ pub const MEMBER_SOURCE_KIND_PROBE: &str = "probe";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemberSourceDescriptor {
     Probe { source_ref: String },
+    Gather { source_ref: String },
 }
 
 // ---------------------------------------------------------------------------

@@ -96,6 +96,36 @@ recipe lib
         (shell_content)))))
 
 ================
+Recipe gathering a named source
+================
+
+recipe lib
+    gather sources "include/*.h"
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (gather_step
+      source: (identifier)
+      (string))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
 Recipe with cook step
 ================
 

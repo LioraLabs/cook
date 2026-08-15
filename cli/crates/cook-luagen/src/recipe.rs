@@ -1247,6 +1247,9 @@ fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
                 lua_string::escape_double_quoted(k)
             ));
         }
+        MemberSource::GatherKey(k) => {
+            out.push_str(&format!("    local _items = cook.probes.get(\"{}\")\n", lua_string::escape_double_quoted(k)));
+        }
     }
 }
 
@@ -1613,7 +1616,7 @@ fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>)
 fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
     use cook_contracts::registration::{
         MemberSourceDescriptor, MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_KEY,
-        MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
+        MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
     };
     let step = recipe.steps.iter().find_map(|s| match s {
         Step::MemberSource { step, .. } => Some(step),
@@ -1625,6 +1628,7 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
         MemberSource::ProbeKey(k) => MemberSourceDescriptor::Probe {
             source_ref: k.clone(),
         },
+        MemberSource::GatherKey(k) => MemberSourceDescriptor::Gather { source_ref: k.clone() },
     };
     let body = match &descriptor {
         MemberSourceDescriptor::Probe { source_ref } => format!(
@@ -1632,6 +1636,11 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
             MEMBER_SOURCE_KIND_KEY,
             MEMBER_SOURCE_KIND_PROBE,
             MEMBER_SOURCE_REF_KEY,
+            lua_string::escape_double_quoted(source_ref)
+        ),
+        MemberSourceDescriptor::Gather { source_ref } => format!(
+            "{} = \"{}\", {} = \"{}\"", MEMBER_SOURCE_KIND_KEY,
+            MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_REF_KEY,
             lua_string::escape_double_quoted(source_ref)
         ),
     };

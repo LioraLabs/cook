@@ -47,7 +47,7 @@ pub use cook_contracts::registration::MemberSourceDescriptor;
 /// Returns `None` when the field is absent (a non-member-fanout recipe).
 fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDescriptor>> {
     use cook_contracts::registration::{
-        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE,
+        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE,
         MEMBER_SOURCE_REF_KEY,
     };
     let Some(t) = meta.get::<Option<LuaTable>>(MEMBER_SOURCE_FIELD)? else {
@@ -56,6 +56,8 @@ fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDes
     let kind: String = t.get(MEMBER_SOURCE_KIND_KEY)?;
     Ok(Some(if kind == MEMBER_SOURCE_KIND_PROBE {
         MemberSourceDescriptor::Probe { source_ref: t.get(MEMBER_SOURCE_REF_KEY)? }
+    } else if kind == MEMBER_SOURCE_KIND_GATHER {
+        MemberSourceDescriptor::Gather { source_ref: t.get(MEMBER_SOURCE_REF_KEY)? }
     } else {
         return Err(mlua::Error::runtime(format!(
             "cook.__register_surface: unknown {MEMBER_SOURCE_FIELD} kind '{kind}'"

@@ -238,6 +238,7 @@ fn format_step(step: &Step) -> String {
             "MemberSource source={}",
             match &step.source {
                 MemberSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
+                MemberSource::GatherKey(k) => format!("GatherKey({})", repr(k)),
             },
         ),
         // CS-0159: render the effective seal set only when non-empty, so

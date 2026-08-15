@@ -187,7 +187,7 @@ ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref STRING* ) NEWL
                              declared inputs; see §22.5.10 */
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
-gather_step           ::= "gather" ingredient+ NEWLINE  /* CS-0224 */
+gather_step           ::= "gather" (ingredient+ | probe_ref STRING*) NEWLINE  /* CS-0224, CS-0226 */
 
 seal_step             ::= "seal" probe_ref+ NEWLINE
                           /* recipe-body determinant input stream; see §8.4.3 */

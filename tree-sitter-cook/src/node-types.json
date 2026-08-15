@@ -343,10 +343,21 @@
   {
     "type": "gather_step",
     "named": true,
-    "fields": {},
+    "fields": {
+      "source": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
-      "required": true,
+      "required": false,
       "types": [
         {
           "type": "ingredient_exclude",

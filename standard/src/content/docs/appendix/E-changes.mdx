@@ -3080,6 +3080,16 @@ No `CACHE_VERSION` bump. Units that used the surface lose input records, which i
 
 **Conformance.** `probe-seal` pins the positive AST and register shape; `probe-two-seals` and `probe-seal-after-producer` pin the cardinality and ordering diagnostics. The CLI probe test edits a sealed file declaration and proves the dependent probe re-evaluates.
 
+## CS-0226 — gather a named file set or array probe [#changes.cs-0226]
+
+`gather NAME` uses the existing member-source path for either a top-level
+`files` declaration or an array-valued probe. Files declarations project their
+manifest keys to path members and each member unit declares its own path as an
+input; array probes retain the existing record and `<key>:<field>` semantics.
+Quoted globs may trail either source and fold into every member unit. This keeps
+the two gather hard errors and member shell-safety validation on the shared
+`MemberSource` lowering, and no reserved producer sentinel reaches author Lua.
+
 ## CS-0225 — collapse the seal surface to one tier [#changes.cs-0225]
 
 **Date:** 2026-08-14

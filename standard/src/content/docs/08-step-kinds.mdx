@@ -65,11 +65,14 @@ The `cook-lang` parser test `test_empty_interactive_step_errors` pinned rejectio
 The reference parser at `cli/crates/cook-lang` enforces the CS-0134 cascade in `parse_recipe`'s step-dispatch loop (informative); `parse_chore`'s step-dispatch loop keeps the `>`/`>{` steps and loose (implicitly-interactive) shell commands a chore body admits, but — like every other context — no longer accepts an `@` line (CS-0134).
 
 ## 8.2. Ingredients [#steps.ingredients]
-A `gather_step` is introduced by `gather` followed by one or more quoted
-`ingredient` items. It resolves the same include-minus-exclude path set as the
-quoted `ingredients` form and supplies that set as the recipe's register-time
-driver; it is not a work unit and adds no DAG node. `ingredients` remains an
-accepted compatibility spelling. [added CS-0224]
+A `gather_step` is introduced by `gather` followed by either one or more quoted
+`ingredient` items or one bare source name. Quoted items resolve the same
+include-minus-exclude path set as the quoted `ingredients` form. A bare name
+selects a top-level `files` declaration or an array-valued probe (including the
+existing `<key>:<field>` selection); quoted globs MAY trail it and are inputs of
+every member unit. A files-backed gather binds each matched path as `$<in>` and
+declares that path as the member unit's input. It is not a work unit and adds no
+DAG node. `ingredients` remains an accepted compatibility spelling. [amended CS-0226]
 
 `gather` says what the recipe's command text names. A recipe containing
 `gather` MUST name its gathered set from at least one `cook` or `test` step,

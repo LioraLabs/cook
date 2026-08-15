@@ -1593,6 +1593,14 @@ fn member_source_without_globs_has_empty_extra_ingredients() {
 }
 
 #[test]
+fn gather_bare_source_uses_the_shared_member_source() {
+    let c = parse("recipe r\n    gather sites \"extra/*.h\"\n    cook \"b/$<in.stem>\" { y }\n").expect("named gather parses");
+    let ms = first_member_source(&c);
+    assert_eq!(ms.source, MemberSource::GatherKey("sites".to_string()));
+    assert_eq!(ms.extra_ingredients, vec!["extra/*.h".to_string()]);
+}
+
+#[test]
 fn member_source_unquoted_trailing_content_still_errors() {
     let source = "recipe r\n    ingredients cases src/*.txt\n    cook \"b/$<in.id>\" { y }\n";
     let err = parse(source).expect_err("unquoted trailing content");

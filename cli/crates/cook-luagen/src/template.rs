@@ -351,7 +351,12 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         // a nested table value, and the bare string form for a scalar.
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {
-            format!("cook.member_to_string(item[\"{}\"])", lua_string::escape_double_quoted(&field))
+            let record = format!("cook.member_to_string(item[\"{}\"])", lua_string::escape_double_quoted(&field));
+            if cook_contracts::accessor::ACCESSORS.contains(&field.as_str()) {
+                format!("(type(item) == \"string\" and path.{field}(item) or {record})")
+            } else {
+                record
+            }
         }
     }
 }
