@@ -117,7 +117,7 @@ pub(crate) fn generate_test_step(
     // would be a reclassification. CS-0186 withdraws that: in one-to-one mode
     // the item IS what the unit reads (`test { ./$<in> }` runs one binary), so
     // declaring it is the declaration being accurate. The exclusion cost §8.6's
-    // own Example 8.6.1 any reuse at all — both units of `inputs "src/*.c"`
+    // own Example 8.6.1 any reuse at all — both units of `gather "src/*.c"`
     // → `cook "build/$<in.stem>"` → `test { ./$<in> }` recorded all four paths,
     // so editing one source re-ran the whole fan-out.
     //

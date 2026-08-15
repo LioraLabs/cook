@@ -81,7 +81,7 @@ pub struct CookWatcher {
 
 Defined at `cli/crates/cook-cli/src/watcher.rs:8`. Note `cookfile_paths` is **plural** — workspaces can have multiple Cookfiles via `import`, and every imported Cookfile is watched so a change in any of them re-parses and rebuilds.
 
-`globs` is populated by `CookWatcher::collect_globs_for_recipes(cookfile, recipe_names)` (`watcher.rs:21`), which iterates the recipes of a *single* `cook_lang::ast::Cookfile` and collects the `inputs` patterns of every recipe whose name appears in `recipe_names`. The function takes one Cookfile at a time; the workspace driver (`cmd_serve` in `cli/crates/cook-cli/src/pipeline.rs:1087`) collects globs per Cookfile and accumulates `cookfile_paths` for every imported file.
+`globs` is populated by `CookWatcher::collect_globs_for_recipes(cookfile, recipe_names)` (`watcher.rs:21`), which iterates the recipes of a *single* `cook_lang::ast::Cookfile` and collects the `gather` patterns stored in each recipe's internal `inputs` field. The function takes one Cookfile at a time; the workspace driver (`cmd_serve` in `cli/crates/cook-cli/src/pipeline.rs:1087`) collects globs per Cookfile and accumulates `cookfile_paths` for every imported file.
 
 ### Algorithms
 

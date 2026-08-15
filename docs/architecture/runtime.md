@@ -221,7 +221,7 @@ The complete output of one `register_recipe` call. Consumed by `cook-engine` to 
 `setup_recipe_context` (`cli/crates/cook-register/src/context.rs:10`) runs just before the recipe body is called. It builds a Lua `recipe` global with:
 
 - `recipe.name` — the recipe's bare name.
-- `recipe.inputs` — a nested table: `recipe.inputs[i]` is the sorted array of relative paths matching the i-th `inputs` glob, with the recipe's `excludes` patterns subtracted.
+- `recipe.inputs` — an internal nested table: `recipe.inputs[i]` is the sorted array of relative paths matching the i-th `gather` glob, with the recipe's `excludes` patterns subtracted.
 
 Glob expansion happens once per registration (not on every Lua access); patterns are joined to `working_dir`, expanded with `glob::glob`, stripped back to relative paths, and stored in a `BTreeSet` for sorted/dedup-by-construction output. The Cookfile-level cache invalidation that the old monolithic `Runtime` did here is no longer the runtime's job — that work moved to `cook-cache` / `cook-engine`, which compute `context_hash` and consult `CacheMeta.input_paths` directly.
 

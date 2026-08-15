@@ -1,8 +1,8 @@
 #!/bin/bash
-# verify.sh — assert §8.3 inputs <probe>, two tiers:
+# verify.sh — assert §8.2 gather <probe>, two tiers:
 #   1. codegen shape via `cook emit-lua` (parse + codegen, no execution).
 #   2. execution (COOK-64): run every recipe, assert outputs, and prove the
-#      §22.5.9 / §17.1 per-member cache — editing one member re-runs only its
+#      §22.5.10 / §17.1 per-member cache — editing one member re-runs only its
 #      unit while the rest stay cache hits.
 #
 # Set COOK= to override the cook binary (default: workspace target).
@@ -12,6 +12,14 @@ set -uo pipefail
 cd "$(dirname "$0")"
 COOK="${COOK:-../../target/debug/cook}"
 COOK="$(cd "$(dirname "$COOK")" && pwd)/$(basename "$COOK")"
+
+unique_file=""
+cleanup() {
+    [ ! -f data/cards.json.bak ] || mv data/cards.json.bak data/cards.json
+    [ -z "$unique_file" ] || rm -f "$unique_file"
+    rm -rf build .cook
+}
+trap cleanup EXIT
 
 if [ ! -x "$COOK" ]; then
     echo "cook binary not found at $COOK"
@@ -41,7 +49,7 @@ assert_contains() {
     fi
 }
 
-echo "inputs <probe> codegen assertions (cook emit-lua):"
+echo "gather <probe> codegen assertions (cook emit-lua):"
 
 # cards_cook — probe source, cook fan-out, $<in.FIELD>.
 assert_contains "cards_cook: probe member source"      'local _items = cook.probes.get("cards")'
@@ -56,7 +64,7 @@ assert_contains "catalog_cook: bare \$<in> renders member" 'cook.member_to_strin
 # eval — probe source, test fan-out.
 assert_contains "eval: cases probe source"              'local _items = cook.probes.get("cases")'
 assert_contains "eval: \$<in.input> in test body"     'cook.member_to_string(item["input"])'
-assert_contains "eval: test emits add_test"             'cook.add_test({command ='
+assert_contains "eval: test emits test unit"            'cook.add_unit({step_kind = "test", command ='
 
 # --- Tier 2: execution (COOK-64 runtime) ------------------------------------
 
@@ -86,7 +94,7 @@ assert_file_eq() {
 }
 
 echo
-echo "inputs <probe> execution assertions (cook <recipe>):"
+echo "gather <probe> execution assertions (cook <recipe>):"
 
 # Clean slate: wipe local build + cache so the first run is a real miss.
 rm -rf build .cook
@@ -99,20 +107,25 @@ assert_true   "catalog_cook runs (probe:field → cook)"  "$COOK" catalog_cook
 assert_file_eq "catalog_cook: bare \$<in> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
 assert_true   "eval runs (probe → test)"                "$COOK" eval
 
-# Per-member cache (§22.5.9 / §17.1 observable #5): a no-op re-run is fully
+# Per-member cache (§22.5.10 / §17.1 observable #5): a no-op re-run is fully
 # cached; editing ONE member re-runs only that member's unit.
 RERUN="$("$COOK" cards_cook 2>&1)"
 n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: clean re-run is fully cached"
 if printf '%s' "$RERUN" | grep -q "3/3 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; fail=$((fail + 1)); fi
 
-# Edit only the king card; ace must stay cached, king must re-run.
+# Edit only the queen card; ace must stay cached, queen must re-run.
 cp data/cards.json data/cards.json.bak
-sed -i 's/Queen of Hearts/Queen of Spades/' data/cards.json
+# The cache's mtime fast path is millisecond-granular. Write in a later tick
+# so the verifier exercises the content check.
+sleep 1
+unique_file="$(mktemp)"
+edited_queen="Queen of Spades $(basename "$unique_file")"
+sed -i "s/Queen of Hearts/$edited_queen/" data/cards.json
 EDIT="$("$COOK" cards_cook 2>&1)"
 mv data/cards.json.bak data/cards.json
 n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: edit one member → 2/3 cached"
 if printf '%s' "$EDIT" | grep -q "2/3 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; echo "        re-run output: $EDIT"; fail=$((fail + 1)); fi
-assert_file_eq "cards_cook: queen.txt reflects the edit"  build/cards/queen.txt "Queen of Spades"
+assert_file_eq "cards_cook: queen.txt reflects the edit"  build/cards/queen.txt "$edited_queen"
 assert_file_eq "cards_cook: ace.txt unchanged (cache hit)" build/cards/ace.txt "Ace of Spades"
 
 # Stale-output reconciliation (§17.7 / CS-0093): dropping a data member sweeps

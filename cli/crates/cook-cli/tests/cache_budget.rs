@@ -738,7 +738,7 @@ fn auto_gc_true_warns_when_the_sweep_can_only_find_exempt_kinds() {
     // `probe big`'s declared input. Written outside `src/`, so it stays clear of
     // the fan-out fixture's `gather "src/*.txt"` glob and its
     // `SOURCE_COUNT` accounting. It must exist before the first invocation
-    // because a probe's `inputs` glob resolves at registration.
+    // because a `files` producer's glob resolves at registration.
     fs::write(fx.project_dir.join("seed.txt"), "seed\n").unwrap();
 
     let out = fx.run(&["check"]);

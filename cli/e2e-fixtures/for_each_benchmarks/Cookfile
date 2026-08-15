@@ -1,4 +1,4 @@
-# §8.3 gather <probe> Benchmarks (COOK-63 / CS-0091)
+# §8.2 gather <probe> Benchmarks (COOK-63 / CS-0091)
 # Uses the native `probe` DSL (COOK-69).
 #
 # Exercises `gather <probe>` data-member fan-out across every per-member
@@ -8,7 +8,7 @@
 # `$<in>` / `$<in.FIELD>`.
 #
 # SCOPE NOTE — COOK-63 lands the parser + codegen. The register-time runtime
-# these recipes need (the §22.5.9 probe pre-pass that materialises an array
+# these recipes need (the §22.5.10 probe pre-pass that materialises an array
 # probe value before registration and the whole-member `cook.member_to_string`
 # rendering) is the COOK-64 slice. Until then, verify with the transpiler:
 #
@@ -18,7 +18,7 @@
 # Once COOK-64 lands, the recipes below run end-to-end as written (commands are
 # POSIX-portable on purpose). Wipe build/ between runs with `cook clean`.
 
-# Array-shaped probe value: one record per card (§22.5.4, §22.5.9).
+# Array-shaped probe value: one record per card (§22.5.4, §22.5.10).
 probe cards
     seal "data/cards.json"
     json { cat data/cards.json }
@@ -35,7 +35,7 @@ probe cases
 
 # ── Source form 1: probe key, cook consumer ───────────────────────────
 # One cook unit per card record; `$<in.id>` drives the output path,
-# `$<in.name>` interpolates into the body. (Canonical §8.3 Example 8.3.1.)
+# `$<in.name>` interpolates into the body. (Canonical §8.2.)
 recipe cards_cook
     gather cards
     cook "build/cards/$<in.id>.txt" {
@@ -45,7 +45,7 @@ recipe cards_cook
 
 # ── Source form 2: probe key:field, cook consumer ─────────────────────
 # `gather catalog:items` iterates the array at the probe value's `items`
-# field (§22.5.9). The bare `$<in>` renders the whole member.
+# field (§22.5.10). The bare `$<in>` renders the whole member.
 recipe catalog_cook
     gather catalog:items
     cook "build/catalog/$<in.id>.json" {

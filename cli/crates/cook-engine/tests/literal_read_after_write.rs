@@ -312,7 +312,7 @@ recipe consumer : middle
 
 /// The `$<producer>` sigil is a name reference and thus a §10.6 edge. It
 /// orders producer first, so §16.1.2 MUST NOT fire even though the consumer
-/// ALSO names the literal path in `inputs[]`.
+/// does not need a separate gathered file source.
 #[test]
 fn sigil_edge_does_not_fire() {
     let tmp = setup(
@@ -543,13 +543,13 @@ recipe all: producer consumer
 }
 
 // ---------------------------------------------------------------------------
-// The narrowed scope — `inputs` literals are NOT covered (Note 16.1.2.2)
+// The narrowed scope — `gather` literals are NOT covered (Note 16.1.2.2)
 // ---------------------------------------------------------------------------
 
-/// **§16.1.2 does not cover `inputs`-sourced literals, and this pins that
+/// **§16.1.2 does not cover `gather`-sourced literals, and this pins that
 /// exclusion as deliberate.**
 ///
-/// An `inputs` pattern is a filesystem glob resolved against disk at
+/// A `gather` pattern is a filesystem glob resolved against disk at
 /// register time (§21.2.1); a literal is just a glob with no metacharacters.
 /// On a COLD build `build/gen.a` does not exist, so the pattern matches ZERO
 /// files, contributes no input entry, and there is nothing for the rule to
@@ -588,7 +588,7 @@ recipe all : producer consumer
     assert!(!ok, "the cold build still fails on its own terms:\n{combined}");
     assert!(
         !combined.contains("read-after-write with no ordering edge"),
-        "§16.1.2 MUST NOT claim to cover an `inputs`-sourced literal: on \
+        "§16.1.2 MUST NOT claim to cover a `gather`-sourced literal: on \
          a cold build the glob matches 0 files and no input entry exists. If \
          this fires, the rule's scope changed and Note 16.1.2.2 / CS-0144 are \
          now wrong:\n{combined}"

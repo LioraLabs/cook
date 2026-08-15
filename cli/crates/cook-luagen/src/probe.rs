@@ -72,7 +72,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         // CS-0148: `files { … }` declares its glob set as `inputs.files` —
         // register-time glob resolution, each file's content hash folding into
         // the fingerprint. The parser guarantees a `files` probe has no
-        // `inputs` line, so this is the only `files =` emission.
+        // second file-set declaration, so this is the only `files =` emission.
         ProbeProduce::Files { globs, excludes } => {
             if let Some(local) = &inline_files {
                 out.push_str(&format!("    files = {local},\n"));

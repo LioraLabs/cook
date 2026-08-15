@@ -15,7 +15,7 @@ it. The expression form can:
 
 ```cook
 recipe translate
-    inputs "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("docs/en", "build/fr")) {
         sed 's/Hello/Bonjour/g' $<in> > $<out>
     }
@@ -46,7 +46,7 @@ cook index             # one .json sidecar per source
   or empty → the Note 8.4.2.3 register-phase diagnostic).
 
 - **One-to-one mode only (§8.4.2 rule 4).** The expression form requires an
-  element-by-element iteration source; here that's the `inputs` glob.
+  element-by-element iteration source; here that's the `gather` glob.
   Each markdown file produces one unit whose output is the evaluated string.
 
 - **Ordinary 1:1 caching.** The expression changes how the output *path* is

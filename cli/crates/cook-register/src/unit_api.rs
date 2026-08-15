@@ -51,7 +51,7 @@ fn validate_input_not_directory(working_dir: &Path, path: &str) -> Result<(), St
 /// downstream reads the answer off the declaration.
 ///
 /// **An entry naming an existing regular file is a path, whatever is in its
-/// name.** That arm is what the rule is for: `inputs "pages/*.tsx"` is
+/// name.** That arm is what the rule is for: `gather "pages/*.tsx"` is
 /// resolved here at register phase, so `pages/[id].tsx` reaches this call as a
 /// file the register phase has already seen in the tree, and re-reading it as a
 /// character class would expand it, match nothing, and drop it out of the

@@ -1,20 +1,20 @@
-# §8.3 `inputs <probe>` Benchmarks (COOK-63 / CS-0091)
+# §8.2 `gather <probe>` Benchmarks (COOK-63 / CS-0091)
 
-Concrete coverage of Cook's **data-driven fan-out**: the `inputs <probe>`
-form, the data-member counterpart to `inputs "glob"`. Where `inputs
-"glob"` drives one work unit per filesystem path, `inputs <probe>` drives
+Concrete coverage of Cook's **data-driven fan-out**: the `gather <probe>`
+form, the data-member counterpart to `gather "glob"`. Where `gather
+"glob"` drives one work unit per filesystem path, `gather <probe>` drives
 one unit per **data member** — a record or scalar — with the current member
 bound as `item`.
 
 ## Surface forms
 
-An `inputs <probe>` line names exactly one **probe source** (Cook Standard
-§8.3):
+The benchmark's `gather <probe>` lines name exactly one **probe source** (Cook
+Standard §8.2):
 
 | Source | Meaning | Member typing |
 |---|---|---|
-| `inputs <probe>` | An array-shaped probe value (§22.5.9) | each array element is a record/scalar |
-| `inputs <probe>:<field>` | The array at the probe value's named field | each element of that array |
+| `gather <probe>` | An array-shaped probe value (§22.5.10) | each array element is a record/scalar |
+| `gather <probe>:<field>` | The array at the probe value's named field | each element of that array |
 
 The current member is available as:
 
@@ -39,7 +39,7 @@ purpose.
 ## Verifying
 
 **COOK-63 lands the parser + codegen.** The register-time runtime these recipes
-need — the §22.5.9 probe pre-pass that materialises an array probe value
+need — the §22.5.10 probe pre-pass that materialises an array probe value
 *before* registration and the whole-member `cook.member_to_string` rendering —
 is the **COOK-64** slice. Until then, verify at the level COOK-63 implements,
 with the transpiler:

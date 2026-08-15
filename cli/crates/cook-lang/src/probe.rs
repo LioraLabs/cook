@@ -103,25 +103,13 @@ pub(crate) fn parse_probe(
                     }
                     let (p, new_pos) =
                         parse_producer(text, tok.line, tokens, pos, source_lines)?;
-                    // A `files` producer's glob set IS its file-input
-                    // fingerprint set (CS-0148); a separate `inputs`
-                    // line would declare a second, divergable one.
-                    if matches!(p, ProbeProduce::Files { .. })
-                        && (!inputs.is_empty() || !excludes.is_empty())
-                    {
-                        return Err(ParseError::Parse { line: tok.line,
-                            message: "probe: a `files` producer declares its own file set; \
-                                a separate `inputs` line is not allowed"
-                                .into(),
-                        });
-                    }
                     producer = Some(p); pos = new_pos;
                     continue;
                 }
             }
             _other => {
                 return Err(ParseError::Parse { line: tok.line,
-                    message: "probe body: only `inputs`, `seal`, and a producer \
+                    message: "probe body: only `seal` and a producer \
                         (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
                         .into() });
             }
@@ -301,7 +289,7 @@ fn parse_source_name_list(
 }
 
 /// Parse a `files` brace glob list: `{ "a/*.c" !"a/gen/*.c" }` →
-/// (globs, excludes). Each pattern is a quoted string following `inputs`
+/// (globs, excludes). Each pattern is a quoted string following quoted `gather`
 /// syntax (`!"…"` excludes). The list MUST be on one physical line and MUST
 /// contain at least one include glob. The `{ … }` here is a GLOB LIST, not a
 /// shell/Lua body.

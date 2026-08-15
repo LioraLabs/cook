@@ -1822,6 +1822,15 @@ fn probe_unexpected_step_rejected() {
 }
 
 #[test]
+fn probe_inline_lua_reports_current_body_grammar() {
+    let msg = parse_err("probe x\n    >> local x = 1\n    { true }\n");
+    assert_eq!(
+        msg,
+        "line 2: probe body: only `seal` and a producer (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
+    );
+}
+
+#[test]
 fn probe_bare_lua_block_is_producer() {
     // COOK-174: a bare `>{ … }` line (no `produce` keyword) is the Lua producer.
     let p = probe_of("probe x\n    >{ return 1 }\n");

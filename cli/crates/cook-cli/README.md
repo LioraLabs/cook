@@ -37,7 +37,7 @@ invocation and renders what happened, as terminal output and an exit code.
   here stayed invisible.** `build_registered_workspace` passes a real
   `CacheContext` into the register pass. That slot used to be a literal `None`
   at every call site in the tree, so the register-side probe lookup had never
-  run against a backend in any invocation: an `inputs <probe>` driver
+  run against a backend in any invocation: a `gather <probe>` driver
   re-produced on every build while the identical probe consumed through a seal
   was served from cache (COOK-359). CS-0196 then made the same context carry
   key-side project identity (COOK-364).

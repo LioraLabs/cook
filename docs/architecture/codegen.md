@@ -133,7 +133,7 @@ cook "bin/app"
 One output per input. Emits a `for` loop. Inside the loop body, `_cook_in` is bound to the current iteration item and `_cook_out` is the expanded output pattern.
 
 ```text
-inputs "src/*.c"
+gather "src/*.c"
 cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
@@ -424,7 +424,7 @@ $<env.HOME>     → cook.require_env("HOME")    ; forced env lookup, even if HOM
 ### Worked example
 
 ```text
-inputs "src/*.c"
+gather "src/*.c"
 cook "build/$<in.stem>.o" { $<CC> $<CFLAGS> -c $<in> -o $<out> }
 ```
 

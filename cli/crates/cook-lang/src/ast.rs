@@ -169,10 +169,10 @@ pub enum ProbeProduce {
     Tools(Vec<String>),
     /// `files { "src/*.ts" !"src/gen/*.ts" }` — the brace content is a LIST of
     /// quoted glob patterns (NOT a shell body), `!"…"` excluding, following
-    /// `inputs` pattern syntax. The expanded file set self-fingerprints
+    /// quoted `gather` pattern syntax. The expanded file set self-fingerprints
     /// and the value is `{ [path] = content_hash, … }` — per-file identity as
-    /// a sealable determinant (CS-0148). A `files` probe MUST NOT also declare
-    /// an `inputs` line: the glob set IS its file-input fingerprint set.
+    /// a sealable determinant (CS-0148); the glob set is also its file-input
+    /// fingerprint set.
     Files {
         globs: Vec<String>,
         excludes: Vec<String>,

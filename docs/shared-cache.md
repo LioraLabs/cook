@@ -56,7 +56,7 @@ probe compiler
     tools { cc }
 
 recipe app
-    inputs "src/*.c"
+    gather "src/*.c"
     seal compiler
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
 ```
