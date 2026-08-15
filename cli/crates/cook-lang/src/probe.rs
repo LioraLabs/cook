@@ -110,7 +110,7 @@ pub(crate) fn parse_probe(
             _other => {
                 return Err(ParseError::Parse { line: tok.line,
                     message: "probe body: only `seal` and a producer \
-                        (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
+                        (`{ … }`, `json`/`lines`, or `>{ … }`) are allowed here"
                         .into() });
             }
         }

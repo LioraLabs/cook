@@ -24,14 +24,14 @@ impl CookWatcher {
     /// # Why not the AST (COOK-407)
     ///
     /// This used to walk `cookfile.recipes` and collect each one's surface
-    /// `inputs`. That saw only recipes written as `recipe NAME` blocks in
+    /// `gather`. That saw only recipes written as `recipe NAME` blocks in
     /// the ENTRY Cookfile, so three kinds of input were never watched:
     ///
     /// - anything a module registered (`cook_cc.bin` and friends mint their
     ///   units through `cook.add_unit`, and have no AST recipe at all),
     /// - every imported member's recipes, since only the root AST was walked,
     /// - a unit's declared `inputs`, as distinct from the recipe's
-    ///   `inputs` fan-out list.
+    ///   `gather` fan-out list.
     ///
     /// So on a C++ project `cook serve` watched nothing and rebuilt on no
     /// edit, while reporting itself as watching. `cook serve` was the one

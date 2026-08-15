@@ -108,7 +108,7 @@ the offending line:
 
 Each segment of a bare probe key is `[A-Za-z_][A-Za-z0-9_-]*` (§A.3.2 `PROBE_SEG`, CS-0201), so `demo:cc-version` is a single two-segment key and `cc:find:raylib` a three-segment one; there is no cap on segment count. `.` is not admitted, because it is member access in a probe reference. The quoted `STRING` form denotes the same key and is the escape hatch for any spelling the bare form cannot express.
 
-A conforming implementation MUST accept both spellings wherever a probe key is named: this declaration, a dependency-list entry, a `seal` ref (§{steps.disposition}), and  a `gather` probe source (§{cat.probes.member-source}). Before CS-0201 they disagreed — `seal` and `gather` admitted neither `-` nor `.`, `seal` refused the quoted form outright, and both capped segments — so a key this section blessed could be declared and referenced from a command and then neither pinned nor consumed.
+A conforming implementation MUST accept both spellings wherever a probe key is named: this declaration, a dependency-list entry, a `seal` ref (§{steps.disposition}), and  a `gather` probe source (§{cat.probes.member-source}). Before CS-0201 they disagreed — `seal` and `ingredients` admitted neither `-` nor `.`, `seal` refused the quoted form outright, and both capped segments — so a key this section blessed could be declared and referenced from a command and then neither pinned nor consumed.
 
 A shell-block producer (`{ … }`, `json { … }`, `lines { … }`) and the Lua-block
 producer (`>{ … }`) reuse the `body ::= exec_lua_block | shell_block` grammar of
@@ -216,9 +216,7 @@ declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
-the header dependency list becomes `inputs.requires`; `gather` (globs and
-`!` excludes) is resolved at register time to the concrete file set populating
-`inputs.files` (§{cat.probes.inputs}); and the declaration becomes the
+the header dependency list becomes `inputs.requires`; and the declaration becomes the
 `opts.produce` Lua source string — a `>{ … }` block verbatim, a shell block
 wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
 one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
@@ -400,7 +398,7 @@ Before the command runs, `$<cc:compiler.path>` and `$<cc:zlib.cflags>` are repla
 
 A probe unit MUST run at most once per build invocation.
 
-**Probes with no declared inputs have no cache key (CS-0178).** A probe whose fingerprint is formed from sections 1-3 of §{cat.probes.inputs} alone — the marker, the key, and the `produce` source string — declaring no `env`, `tools`, `files`, or `requires`, has NO cache key. A conforming implementation MUST re-produce such a probe on every invocation in which it is reached, MUST NOT consult the cache for it, and MUST NOT publish its value. Sections 1-3 are constant for a given probe, so a fingerprint built from them alone is stable for the life of the store: the probe would answer once and never observe again, which is the one thing a probe exists to do. This is the rule §{exec.cache.test-unit} rule 1 already states for test units — no declared source, no key, always runs — applied to the unit kind whose whole purpose is observation.
+**Probes with no declared inputs have no cache key (CS-0178).** A probe whose fingerprint is formed from sections 1-3 of §{cat.probes.inputs} alone — the marker, the key, and the `produce` source string — declaring no `env`, `tools`, `files`, or `requires`, has NO cache key. A conforming implementation MUST re-produce such a probe on every invocation in which it is reached, MUST NOT consult the cache for it, and MUST NOT publish its value. Sections 1-3 are constant for a given probe, so a fingerprint built from them alone is stable for the life of the store: the probe would answer once and never observe again, which is the one thing a probe exists to do. For comparison, §{exec.cache.test-unit} rule 1 states the current test-unit law: a source-less test with a non-empty seal is keyed; only a test with neither source nor seal is one-shot. Probe keylessness is instead the rule above, for the unit kind whose whole purpose is observation.
 
 Keylessness propagates along `requires`: a probe that names a keyless probe in `inputs.requires` is itself keyless. Its own fingerprint would otherwise fold section 7 over an upstream fingerprint that is constant while the upstream's *value* moves, so it would be served from cache across a change it exists to notice.
 

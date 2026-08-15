@@ -30,9 +30,9 @@ fn write_unique_seed(dir: &std::path::Path) {
 #[test]
 fn passing_test_caches_and_replays() {
     let tmp = tempdir().unwrap();
-    // CS-0135 §17.4: a test caches only when it declares a file source
-    // (here `inputs`), which gives it a cache key. A source-less test
-    // is covered by `source_less_test_always_runs` below.
+    // §17.4 / CS-0223: a test caches when it declares a determinant source
+    // (here `gather`), which gives it a cache key. The source-less, unsealed
+    // case is covered by `source_less_test_always_runs` below.
     write_unique_seed(tmp.path());
     fs::write(
         tmp.path().join("Cookfile"),
@@ -237,8 +237,8 @@ fn replay_logs_prints_a_cached_cook_units_log_on_request() {
 
 #[test]
 fn source_less_test_always_runs() {
-    // CS-0135 §8.6.1/§5: a source-less test — no `inputs`, no upstream
-    // `cook` — has no cache key and MUST always run. A stable command-text-only
+    // CS-0223 §8.6.1/§5: this source-less test — no `gather`, upstream
+    // `cook`, or seal — has no cache key and MUST always run. A stable command-text-only
     // key would be a false green (the true inputs of `cargo test` etc. are
     // opaque to Cook), so such a test is never cached and never shows `(cached)`.
     let tmp = tempdir().unwrap();

@@ -51,6 +51,9 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     const appTestModes = section(grammarDoc, '**Test mode coherence', '**`>>{` is rejected as a body.**');
     const cacheIdentity = section(cacheDoc, '#### 17.1.1.1. Effect kind', '#### 17.1.1.2.');
     const sharing = section(cacheDoc, '### 17.1.3. Sharing and disposition effect', '## 17.2.');
+    const probeDecl = section(probesDoc, '## 22.5.2.', '## 22.5.3.');
+    const probeLowering = section(probesDoc, '**Lowering (informative).**', '## 22.5.3.');
+    const probeExecution = section(probesDoc, '## 22.5.8.', '## 22.5.9.');
 
     const cookMods = disposition.match(/^cook_mods\s*::=([\s\S]*?)(?=^share_mod\s*::=)/m)?.[1];
     expect(cookMods && normalize(cookMods)).toBe('share_mod?');
@@ -106,6 +109,11 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     expect(normalize(declarations)).toContain('both a sealable determinant and a named `gather NAME` source');
     expect(normalize(declarations)).toContain('manifest keys become the gathered members');
     expect(declarations).not.toMatch(/\bseal-only\b/i);
+
+    const normalizedProbeDecl = normalize(probeDecl);
+    expect(probeLowering).not.toContain('`inputs.requires`; `gather`');
+    expect(normalizedProbeDecl).toContain('Before CS-0201 they disagreed — `seal` and `ingredients` admitted neither `-` nor `.`');
+    expect(normalize(probeExecution)).toContain('a source-less test with a non-empty seal is keyed; only a test with neither source nor seal is one-shot');
 
     const memberSources = section(probesDoc, '## 22.5.10.', '## 22.5.11.');
     expectBareGatherUnion(memberSources);
@@ -207,6 +215,12 @@ describe('Language v2 Standard contract', () => {
     expect(() => assertContract({ modulesDoc: modules.replace('with no segment-count limit', 'with at most two segments') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace('## CS-0229 —', '## CS-0230 — duplicate\n\n## CS-0229 —') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace(/## CS-0230 —[\s\S]*?(?=## CS-0229 —)/, '') })).toThrow();
+  });
+
+  it('rejects the three retired §22 probe claims', () => {
+    expect(() => assertContract({ probesDoc: probes.replace('the header dependency list becomes `inputs.requires`;', 'the header dependency list becomes `inputs.requires`; `gather` globs populate `inputs.files`;') })).toThrow();
+    expect(() => assertContract({ probesDoc: probes.replace('`seal` and `ingredients` admitted', '`seal` and `gather` admitted') })).toThrow();
+    expect(() => assertContract({ probesDoc: probes.replace('a source-less test with a non-empty seal is keyed; only a test with neither source nor seal is one-shot', 'a source-less test has no key and always runs') })).toThrow();
   });
 
   it('rejects probe-only or named-files-denial wording in every bare-gather summary', () => {

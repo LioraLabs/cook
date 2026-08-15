@@ -1826,7 +1826,7 @@ fn probe_inline_lua_reports_current_body_grammar() {
     let msg = parse_err("probe x\n    >> local x = 1\n    { true }\n");
     assert_eq!(
         msg,
-        "line 2: probe body: only `seal` and a producer (`{ … }`, `json`/`lines`/`tools`/`envs`/`files`, or `>{ … }`) are allowed here"
+        "line 2: probe body: only `seal` and a producer (`{ … }`, `json`/`lines`, or `>{ … }`) are allowed here"
     );
 }
 
