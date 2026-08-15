@@ -1,4 +1,5 @@
 use cook_contracts::lua_string;
+use cook_contracts::registration::INLINE_SEAL_PROBE_NAME;
 use cook_lang::ast::{Probe, ProbeProduce, ShellProduceType, UseStatement};
 
 use crate::long_bracket::wrap_lua_string;
@@ -7,8 +8,28 @@ use crate::long_bracket::wrap_lua_string;
 /// `probe` declaration. Pure surface sugar over the register-phase API
 /// (§22.5.2); the runtime is unchanged.
 pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement]) {
+    let inline_files = match &probe.produce {
+        ProbeProduce::Files { globs, excludes } if probe.name.starts_with("@seal:") => {
+            let local = format!("_cook_inline_seal_{}", probe.line);
+            out.push_str(&format!(
+                "local {local} = cook.resolve_ingredients({{{}}}, {{{}}})\n",
+                quoted_list(globs), quoted_list(excludes),
+            ));
+            out.push_str(&format!(
+                "if #{local} == 0 then error(\"seal: quoted file determinant on line {} matched no files\", 0) end\n",
+                probe.line,
+            ));
+            Some(local)
+        }
+        _ => None,
+    };
+    let register = if inline_files.is_some() {
+        format!("cook.{INLINE_SEAL_PROBE_NAME}")
+    } else {
+        "cook.probe".into()
+    };
     out.push_str(&format!(
-        "cook.probe(\"{}\", {{\n",
+        "{register}(\"{}\", {{\n",
         lua_string::escape_double_quoted(&probe.name)
     ));
     out.push_str("  inputs = {\n");
@@ -52,11 +73,14 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         // the fingerprint. The parser guarantees a `files` probe has no
         // `ingredients` line, so this is the only `files =` emission.
         ProbeProduce::Files { globs, excludes } => {
-            out.push_str(&format!(
-                "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
-                quoted_list(globs),
-                quoted_list(excludes),
-            ));
+            if let Some(local) = &inline_files {
+                out.push_str(&format!("    files = {local},\n"));
+            } else {
+                out.push_str(&format!(
+                    "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
+                    quoted_list(globs), quoted_list(excludes),
+                ));
+            }
         }
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
     }

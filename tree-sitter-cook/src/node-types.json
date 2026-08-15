@@ -738,6 +738,10 @@
           "named": true
         },
         {
+          "type": "ingredient_exclude",
+          "named": true
+        },
+        {
           "type": "string",
           "named": true
         }

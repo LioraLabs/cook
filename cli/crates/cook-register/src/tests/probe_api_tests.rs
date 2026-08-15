@@ -151,6 +151,30 @@ fn empty_key_raises_error() {
 }
 
 #[test]
+fn inline_seal_key_namespace_raises_error() {
+    let (lua, _reg, _cap) = setup("Cookfile");
+
+    let err = lua
+        .load(r#"cook.probe("@seal:build:5", { inputs = {}, produce = "return 1" })"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("keys beginning `@seal:` are reserved"), "got: {err}");
+}
+
+#[test]
+fn internal_inline_seal_probe_accepts_reserved_key() {
+    let (lua, reg, _cap) = setup("Cookfile");
+
+    lua.load(r#"cook.__inline_seal_probe("@seal:build:5", { inputs = {}, produce = "return 1" })"#)
+        .exec()
+        .unwrap();
+
+    assert!(reg.borrow().probes.contains_key("@seal:build:5"));
+}
+
+#[test]
 fn multiple_distinct_probes_all_registered() {
     let (lua, reg, _cap) = setup("Cookfile");
 

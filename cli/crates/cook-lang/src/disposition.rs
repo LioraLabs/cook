@@ -17,6 +17,7 @@
 //! Internally it still maps to the `Disposition.record` boolean — no semantic
 //! change to the v3 key model.
 
+use crate::ast::{Probe, ProbeProduce};
 use crate::ParseError;
 
 /// Trailing `cook_mods` parsed off a `cook` step's tail (App. A.4 §A.4).
@@ -111,33 +112,10 @@ pub(crate) fn removed_unseal(line: usize) -> ParseError {
     }
 }
 
-/// Validate + collect probe key refs for `seal`.
-///
-/// CS-0201: accepts both spellings a probe key has. A bare ref must match
-/// `cook_contracts::probe_key` (one or more `:`-separated
-/// `[A-Za-z_][A-Za-z0-9_-]*` segments); a quoted ref is any non-empty string
-/// and is the escape hatch.
-///
-/// What this replaced: `seal` alone allowed neither `-` nor `.`, capped at two
-/// segments, and refused the quoted form outright, while the declaration that
-/// mints the key allowed `-`, `.` and quoting. So `probe cc-version` produced
-/// a key that could not be sealed, and `cc:find:raylib` — three segments, and
-/// the flagship module's ordinary case — could not be sealed either, which is
-/// precisely the pin a cache-trust story exists to offer.
+/// Validate bare probe-key operands for `seal`.
 pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String>, ParseError> {
     let mut out = Vec::new();
     for tok in refs {
-        // The quoted form: strip the delimiters and take the contents as-is.
-        if let Some(inner) = tok.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
-            if inner.is_empty() {
-                return Err(ParseError::Parse {
-                    line,
-                    message: "seal: probe key must not be empty".to_string(),
-                });
-            }
-            out.push(inner.to_string());
-            continue;
-        }
         if !cook_contracts::probe_key::is_valid_bare(tok) {
             return Err(ParseError::Parse {
                 line,
@@ -149,32 +127,57 @@ pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String
     Ok(out)
 }
 
-pub(crate) fn parse_seal_ref_text(text: &str, line: usize) -> Result<Vec<String>, ParseError> {
-    let mut refs = Vec::new();
+pub(crate) struct SealOperands {
+    pub refs: Vec<String>,
+    pub inline_probe: Option<Probe>,
+}
+
+pub(crate) fn parse_seal_operands(text: &str, line: usize, owner: &str) -> Result<SealOperands, ParseError> {
+    let mut operands = Vec::new();
     let mut start = None;
     let mut quoted = false;
     let mut escaped = false;
     for (i, ch) in text.char_indices() {
         if start.is_none() {
-            if ch.is_whitespace() {
-                continue;
-            }
+            if ch.is_whitespace() { continue; }
             start = Some(i);
         }
-        if quoted && escaped {
-            escaped = false;
-        } else if quoted && ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            quoted = !quoted;
-        } else if ch.is_whitespace() && !quoted {
-            refs.push(text[start.take().unwrap()..i].to_string());
+        if quoted && escaped { escaped = false; }
+        else if quoted && ch == '\\' { escaped = true; }
+        else if ch == '"' { quoted = !quoted; }
+        else if ch.is_whitespace() && !quoted { operands.push(text[start.take().unwrap()..i].to_string()); }
+    }
+    if let Some(start) = start { operands.push(text[start..].to_string()); }
+    if quoted {
+        return Err(ParseError::Parse { line, message: "seal: unterminated quoted file glob".into() });
+    }
+
+    let mut refs = Vec::new();
+    let mut globs = Vec::new();
+    let mut excludes = Vec::new();
+    for operand in operands {
+        if let Some(quoted) = operand.strip_prefix('!') {
+            let inner = quoted.strip_prefix('"').and_then(|s| s.strip_suffix('"')).ok_or_else(|| ParseError::Parse {
+                line, message: "seal: `!` must be immediately followed by a quoted glob".into(),
+            })?;
+            if inner.is_empty() { return Err(ParseError::Parse { line, message: "seal: excluded file glob must not be empty".into() }); }
+            excludes.push(inner.to_string());
+        } else if let Some(inner) = operand.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            if inner.is_empty() { return Err(ParseError::Parse { line, message: "seal: file glob must not be empty".into() }); }
+            globs.push(inner.to_string());
+        } else {
+            refs.extend(parse_seal_refs(&[operand], line)?);
         }
     }
-    if let Some(start) = start {
-        refs.push(text[start..].to_string());
+    if globs.is_empty() && !excludes.is_empty() {
+        return Err(ParseError::Parse { line, message: "seal: an excluded glob requires a quoted include glob on the same line".into() });
     }
-    parse_seal_refs(&refs, line)
+    let inline_probe = if globs.is_empty() { None } else {
+        let name = format!("@seal:{owner}:{line}");
+        refs.push(name.clone());
+        Some(Probe { name, deps: vec![], ingredients: vec![], excludes: vec![], produce: ProbeProduce::Files { globs, excludes }, line })
+    };
+    Ok(SealOperands { refs, inline_probe })
 }
 
 #[cfg(test)]

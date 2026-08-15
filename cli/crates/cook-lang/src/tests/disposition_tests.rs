@@ -85,25 +85,19 @@ fn parse_seal_refs_rejects_empty_segment() {
     assert!(parse_seal_refs(&[":b".to_string()], 1).is_err());
 }
 
-/// CS-0201: `seal` takes both spellings a probe key has. It previously took
-/// neither `-` nor `.`, capped at two segments, and refused the quoted form
-/// outright — while the declaration that mints the key allowed `-`, `.` and
-/// quoting. `probe cc-version` therefore produced a key that could not be
-/// sealed, and `cc:find:raylib` could not be sealed either, which is exactly
-/// the pin a cache-trust story exists to offer.
+/// CS-0201: bare seal refs admit hyphens and any number of key segments.
 #[test]
-fn parse_seal_refs_takes_hyphens_multi_segments_and_the_quoted_form() {
+fn parse_seal_refs_takes_hyphens_and_multi_segments() {
     let got = parse_seal_refs(
         &[
             "host".to_string(),
             "cc-version".to_string(),
             "demo:cc-version".to_string(),
             "cc:find:raylib".to_string(),
-            "\"any spelling+here\"".to_string(),
         ],
         1,
     )
-    .expect("all five are valid probe key refs");
+    .expect("all four are valid bare probe key refs");
     assert_eq!(
         got,
         vec![
@@ -111,7 +105,6 @@ fn parse_seal_refs_takes_hyphens_multi_segments_and_the_quoted_form() {
             "cc-version".to_string(),
             "demo:cc-version".to_string(),
             "cc:find:raylib".to_string(),
-            "any spelling+here".to_string(),
         ]
     );
 }
@@ -122,9 +115,4 @@ fn parse_seal_refs_rejects_a_dotted_bare_key_and_says_why() {
     let msg = format!("{err:?}");
     assert!(msg.contains("member access"), "must explain the dot: {msg}");
     assert!(msg.contains("quoted"), "must offer the escape hatch: {msg}");
-}
-
-#[test]
-fn parse_seal_refs_rejects_an_empty_quoted_key() {
-    assert!(parse_seal_refs(&["\"\"".to_string()], 1).is_err());
 }

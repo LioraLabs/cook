@@ -1354,8 +1354,17 @@
         {
           "type": "REPEAT1",
           "content": {
-            "type": "SYMBOL",
-            "name": "_disposition_ref"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_disposition_ref"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "ingredient_exclude"
+              }
+            ]
           }
         },
         {

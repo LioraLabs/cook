@@ -12,6 +12,7 @@ use std::rc::Rc;
 use mlua::prelude::*;
 
 use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+use cook_contracts::registration::INLINE_SEAL_PROBE_NAME;
 
 use crate::SharedBodySlot;
 
@@ -57,7 +58,7 @@ pub fn install_cook_probe(
     body_slot: SharedBodySlot,
     source_file: String,
 ) -> LuaResult<()> {
-    let probe_fn = lua.create_function(move |lua, (key, opts): (String, LuaTable)| {
+    let probe_impl = lua.create_function(move |lua, (key, opts): (String, LuaTable)| {
         // 1. Validate key is non-empty (the table typing is already checked by
         //    mlua's argument destructuring — a non-string key raises before here).
         if key.is_empty() {
@@ -173,7 +174,17 @@ pub fn install_cook_probe(
         Ok(())
     })?;
 
+    let internal_probe = probe_impl.clone();
+    let probe_fn = lua.create_function(move |_, (key, opts): (String, LuaTable)| {
+        if key.starts_with("@seal:") {
+            return Err(LuaError::runtime(
+                "cook.probe: keys beginning `@seal:` are reserved for inline file determinants",
+            ));
+        }
+        probe_impl.call::<()>((key, opts))
+    })?;
     cook.set("probe", probe_fn)?;
+    cook.set(INLINE_SEAL_PROBE_NAME, internal_probe)?;
     Ok(())
 }
 

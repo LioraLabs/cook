@@ -1762,10 +1762,13 @@ fn parse_probe_lua_block_with_deps_and_ingredients() {
 
 #[test]
 fn parse_probe_seal_adds_fingerprint_refs() {
-    let src = "files \"svc data\"\n    \"data/services.json\"\nprobe services\n    seal \"svc data\"\n    json { cat data/services.json }\n";
+    let src = "probe services\n    seal \"data/services.json\" !\"data/generated/**\"\n    json { cat data/services.json }\n";
     let cf = crate::parse(src).unwrap();
-    assert_eq!(cf.probes[1].deps, vec!["svc data"]);
-    assert!(cf.probes[1].ingredients.is_empty());
+    assert_eq!(cf.probes[0].deps, vec!["@seal:services:2"]);
+    assert_eq!(cf.probes[1].produce, crate::ast::ProbeProduce::Files {
+        globs: vec!["data/services.json".into()],
+        excludes: vec!["data/generated/**".into()],
+    });
 }
 
 #[test]
@@ -2514,23 +2517,42 @@ fn test_config_valid_lua_still_parses() {
     }
 }
 
-/// CS-0201: the quoted form is the escape hatch at every site that names a
-/// probe key, `seal` included. It used to be refused here alone.
+/// CS-0227: quoted operands are inline file globs; bare operands remain keys.
 #[test]
-fn disp_seal_accepts_the_quoted_form_and_multi_segment_keys() {
+fn disp_seal_accepts_inline_files_and_multi_segment_keys() {
     let src = concat!(
         "recipe build\n",
-        "    seal \"odd+key\" cc:find:raylib demo:cc-version\n",
+        "    seal \"src/**\" !\"src/generated/**\" cc:find:raylib demo:cc-version\n",
         "    cook \"o.txt\" {\n",
         "        echo hi > $<out>\n",
         "    }\n",
     );
-    let cf = parse(src).expect("all three spellings are valid probe key refs");
+    let cf = parse(src).expect("quoted globs and bare probe keys may be mixed");
     let seals = &cf.recipes[0].steps;
     assert!(
-        format!("{seals:?}").contains("odd+key"),
-        "quoted key must survive verbatim: {seals:?}"
+        format!("{seals:?}").contains("@seal:build:2"),
+        "inline files probe must enter the seal set: {seals:?}"
     );
+    assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files {
+        globs: vec!["src/**".into()],
+        excludes: vec!["src/generated/**".into()],
+    });
+}
+
+#[test]
+fn inline_seal_rejects_malformed_file_operands_and_reserved_keys() {
+    for (seal, message) in [
+        ("\"src/**", "unterminated quoted file glob"),
+        ("! \"src/**\"", "immediately followed"),
+        ("!\"src/**\"", "requires a quoted include"),
+        ("\"src/**\" !\"\"", "must not be empty"),
+    ] {
+        let err = parse(&format!("recipe build\n    seal {seal}\n    test {{ true }}\n")).unwrap_err();
+        assert!(format!("{err}").contains(message), "{seal}: {err}");
+    }
+
+    let err = parse("probe \"@seal:build:2\"\n    lines { echo x }\n").unwrap_err();
+    assert!(format!("{err}").contains("reserved for inline file determinants"));
 }
 
 /// CS-0201: the segment cap is gone everywhere. It was enforced on the surface

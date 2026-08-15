@@ -29,10 +29,12 @@ The `probe_body` (App. A) comprises an optional declarative `seal_step`
 (§{steps.disposition}) followed by exactly one **producer**. A conforming
 implementation MUST reject a probe body that: contains no producer; contains
 two or more producers; contains two or more `seal` lines; or contains a `seal`
-line after the producer. Each seal ref names an upstream probe key and joins
-the header dependency list (`probe NAME: a b`) in `inputs.requires`
-(§{cat.probes.inputs}), so the referenced declaration's fingerprint folds into
-this probe's fingerprint. The legacy `ingredients` spelling remains accepted
+line after the producer. Each bare seal operand names an upstream probe key and
+joins the header dependency list (`probe NAME: a b`) in `inputs.requires`.
+Quoted operands desugar to an anonymous `files` probe whose key joins that same
+list; `!"…"` excludes matches with the same adjacency rule as a top-level
+`files` declaration. Thus file contents fold into this probe's fingerprint
+without becoming its producer or iteration source. The legacy `ingredients` spelling remains accepted
 during migration and is mutually exclusive with `seal`.
 
 A **producer** has no introducer keyword: the producer KIND leads, and the

@@ -467,7 +467,7 @@ module.exports = grammar({
     seal_step: ($) =>
       seq(
         "seal",
-        repeat1($._disposition_ref),
+        repeat1(choice($._disposition_ref, $.ingredient_exclude)),
         $._newline,
       ),
 

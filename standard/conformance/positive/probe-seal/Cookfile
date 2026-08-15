@@ -1,6 +1,3 @@
-files "svc data"
-    "data/services.json"
-
 probe services_raw
-    seal "svc data"
+    seal "data/services.json"
     json { cat data/services.json }

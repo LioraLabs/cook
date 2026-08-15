@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::ast::*;
 use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
-use crate::disposition::{parse_seal_ref_text, removed_trailing_seal, removed_unseal};
+use crate::disposition::{parse_seal_operands, removed_trailing_seal, removed_unseal};
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
@@ -336,7 +336,7 @@ pub(crate) fn parse_recipe(
     tokens: &[Located<Token>],
     start: usize,
     source_lines: &[&str],
-) -> Result<(Recipe, usize), ParseError> {
+) -> Result<(Recipe, Vec<Probe>, usize), ParseError> {
     let mut pos = start;
     let mut ingredients = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
@@ -349,6 +349,7 @@ pub(crate) fn parse_recipe(
     // The recipe seal set is folded into every cacheable unit at finalize, so
     // recipe-level seals are order-independent.
     let mut base_seal: BTreeSet<String> = BTreeSet::new();
+    let mut inline_probes = Vec::new();
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -378,6 +379,7 @@ pub(crate) fn parse_recipe(
                         steps,
                         line: recipe_line,
                     },
+                    inline_probes,
                     pos,
                 ));
             }
@@ -411,6 +413,7 @@ pub(crate) fn parse_recipe(
                                 steps,
                                 line: recipe_line,
                             },
+                            inline_probes,
                             pos,
                         ));
                     }
@@ -432,9 +435,11 @@ pub(crate) fn parse_recipe(
                                 .to_string(),
                         });
                     }
-                    for r in parse_seal_ref_text(rest, tok.line)? {
+                    let parsed = parse_seal_operands(rest, tok.line, &name)?;
+                    for r in parsed.refs {
                         base_seal.insert(r);
                     }
+                    inline_probes.extend(parsed.inline_probe);
                     pos += 1;
                     continue;
                 }
@@ -609,6 +614,7 @@ pub(crate) fn parse_recipe(
             steps,
             line: recipe_line,
         },
+        inline_probes,
         pos,
     ))
 }

@@ -65,6 +65,36 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Ok(out)
 }
 
+#[test]
+fn inline_file_seal_invalidates_without_fanout() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("Cookfile"),
+        "recipe build\n    seal \"det.txt\"\n    cook \"out.txt\" { cat det.txt > $<out> }\n").unwrap();
+    fs::write(tmp.path().join("det.txt"), "one\n").unwrap();
+
+    run_cook(tmp.path(), &["build"]).unwrap();
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "one\n");
+
+    fs::write(tmp.path().join("det.txt"), "two\n").unwrap();
+    run_cook(tmp.path(), &["build"]).unwrap();
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "two\n");
+}
+
+#[test]
+fn inline_seal_resolution_errors_name_the_attempted_reading() {
+    let tmp = TempDir::new().unwrap();
+    for (operand, message) in [
+        ("missing_key", "lists probe key 'missing_key'"),
+        ("\"missing/**\"", "quoted file determinant"),
+    ] {
+        fs::write(tmp.path().join("Cookfile"), format!(
+            "recipe build\n    seal {operand}\n    cook \"out.txt\" {{ echo ok > $<out> }}\n"
+        )).unwrap();
+        let err = run_cook(tmp.path(), &["build"]).unwrap_err();
+        assert!(err.contains(message), "{operand}: {err}");
+    }
+}
+
 /// First run: probe executes, consumer unit reads its value, output
 /// file `done.marker` is produced and a probe artifact lands in
 /// `.cook/cache/`.  Second run: probe + consumer both cache-hit and

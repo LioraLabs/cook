@@ -303,16 +303,28 @@ A unit's cache participation is declared by two surfaces — *inputs* and *outpu
 | Concept | Written as | Where | Scope |
 |---|---|---|---|
 | File inputs | `ingredients "…"` | body line | recipe-wide |
-| Probe inputs | `seal <probes>` | body line | recipe-wide |
+| Determinant inputs | `seal <probe-or-glob> …` | body line | recipe-wide |
 | The unit | `cook "out1" "out2" { … }` | body line | one key, ≥1 output |
 | Per-unit identity tweak | `… seal/unseal <probes>` | tail of the `cook` | that unit |
 | Disposition | `… local / pinned / nondet` | tail of the `cook` | that unit |
 
 **One rule:** a body line names a recipe-wide input; a tail tunes one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
 
-A `probe_ref` (used by `seal`/`unseal` everywhere) follows §{grammar-appendix.probe} exactly: `BARE_PROBE_KEY | STRING`, module-prefixable with no cap on segment count (`cc:toolchain`, `cc:find:raylib`), the quoted `STRING` form admitted as at every other site that names a probe key (CS-0201, superseding the rejections this clause used to state). A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` (§{steps.ingredients}), not `seal`.
+A `seal_operand` follows the language-wide quoted-versus-bare law: a bare
+`BARE_PROBE_KEY` names a probe or top-level declaration, while a quoted
+`STRING` is a file glob and `!STRING` excludes matches from the quoted set on
+that line. Quoted operands desugar to one anonymous `files` probe; they are
+invalidate-only, never bind `$<in>`, and never make the recipe iterate. To
+consume paths as data, use `gather` (§{steps.ingredients}), not `seal`.
+The implementation-reserved `@seal:` probe-key prefix identifies those
+anonymous declarations and MUST be rejected on every author-written
+declaration surface, including `cook.probe`; compiler-generated anonymous
+declarations register through an implementation-private path.
+An unmatched quoted glob MUST be rejected as an unresolved file determinant;
+an unresolved bare operand MUST instead identify the attempted probe key.
 
-**A seal/unseal ref is ALWAYS a probe name.** There is no inline environment or tool determinant ref form. `probe_ref` is therefore complete as written above; it needs no extension. The referenced probe MAY be any shell or Lua probe or a `tools` declaration (§{cat.probes.decl}), but the surface is uniform: every seal ref is just a probe name. The two ambient-determinant paths fold through that one surface:
+There is no inline environment or tool determinant form. Those determinants
+remain named declarations:
 
 - **Unconsumed environment.** An ambient environment variable that no unit consumes (so §{exec.cache.lua-variable-reads} does not auto-fold it) is folded by declaring an ordinary shell probe over the variable(s), for example `lines { echo "$CFLAGS"; echo "$LDFLAGS" }`, and sealing that probe by name. The probe is named, can group multiple variables, and is shareable; because it has no declared source it re-observes on every reached invocation, while consuming units key on its value (§{cat.probes.exec}, §{exec.cache.single-key}). Environment a unit *does* consume continues to auto-fold via §{exec.cache.lua-variable-reads}, unchanged.
 - **Tool determinants.** A toolchain is folded by sealing a `tools` declaration (§{cat.probes.decl}) by name. Both ambient kinds therefore resolve to the same uniform "seal a named probe" surface, with no inline environment or tool special forms to parse.
@@ -321,13 +333,13 @@ A `probe_ref` (used by `seal`/`unseal` everywhere) follows §{grammar-appendix.p
 
 `seal` and `unseal` are recipe-body **steps** — a second input stream, sibling of `ingredients`, declaring *determinant* probe inputs (probe values folded into the unit cache key) alongside `ingredients`' *file* inputs. A conforming implementation MUST enforce, at parse time:
 
-1. **Recipe-level `seal` is the baseline.** A `seal <probes>` step adds its `probe_ref`s to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero refs) MUST be rejected — seal/unseal are always explicitly named. A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
+1. **Recipe-level `seal` is the baseline.** A `seal <operands>` step adds the named refs and anonymous file determinant to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero operands) MUST be rejected. An exclusion MUST be immediately adjacent to `!` and a seal line containing exclusions MUST contain at least one quoted include. A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
 2. **Additive and order-independent.** Multiple recipe-level `seal` steps union their refs. The baseline applies to every cacheable unit regardless of textual position (it is *declarative*, not positional): `seal` after a `cook` or `test` still applies to it. The effective set is sorted and de-duplicated.
 3. **Recipe-level `unseal` is rejected.** `unseal` is a trailing modifier on a `cook` or `test` step only (rule 5). The recipe is the outermost seal scope; there is nothing inherited to release, so a recipe-level `unseal` would read as a no-op and MUST be rejected.
 
 **Recipe boundaries break seals implicitly.** The recipe is the outermost seal scope; nothing propagates across recipe dependency edges. A downstream recipe folds an upstream's determinants in transitively via the upstream's OUTPUT CONTENT hashes (consumed as `ingredients`), so re-sealing downstream would double-count. There are exactly two seal tiers — recipe baseline and per-unit tail — and no config-default inheritance tier.
 
-> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *named-only*: every determinant a unit keys on is an explicitly named probe ref. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). This note fixes the boundary such a form would have to draw, so that introducing one later cannot silently change today's keys. A blanket seal would have to enumerate a *universe* comprising (a) the unit's *visible-but-unconsumed* probes — probes declared in the Cookfile that the unit neither consumes as `ingredients <probe>` data nor names in its effective seal set — plus (b) ambient determinants not modelled as probes at all (consulted environment beyond §{exec.cache.lua-variable-reads}, host/machine identity, tool identity). The current surface declares no such universe: a unit keys on exactly the probes named in its effective seal set and nothing more (§{exec.cache.single-key}). Any future blanket form is a NEW determinant set, not a re-reading of the named-only one, and MUST be introduced under its own change ID with its own key-version bump.
+> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *explicit-only*: every determinant is an explicitly named probe ref or file glob. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). An explicit file glob is not a blanket: its author names the filesystem set directly. Any future blanket form is a NEW determinant set, not a re-reading of this one, and MUST be introduced under its own change ID with its own key-version bump.
 
 #### 8.4.3.2. Trailing modifiers (`cook_mods`) [#steps.cook-disposition.tail]
 

@@ -12,7 +12,7 @@ probe "odd+spelling"
 
 recipe build
     ingredients cc-version
-    seal demo:cc-version cc:find:raylib "odd+spelling"
+    seal demo:cc-version cc:find:raylib
     cook "out/$<in>.stamp" {
         echo '$<in>' > $<out>
     }

@@ -189,7 +189,8 @@ ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 gather_step           ::= "gather" (ingredient+ | probe_ref STRING*) NEWLINE  /* CS-0224, CS-0226 */
 
-seal_step             ::= "seal" probe_ref+ NEWLINE
+seal_step             ::= "seal" seal_operand+ NEWLINE
+seal_operand          ::= BARE_PROBE_KEY | STRING | "!" STRING
                           /* recipe-body determinant input stream; see §8.4.3 */
 cook_step             ::= "cook" cook_output body cook_mods NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
@@ -197,9 +198,8 @@ exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 cook_mods             ::= share_mod?
 share_mod             ::= "local" | "pinned" | "nondet"
-                          /* a probe_ref in seal_step follows the
-                             same BARE_PROBE_KEY | STRING shape as every other
-                             site that names a probe key (CS-0201) — see §8.4.3 */
+                          /* bare names reference declarations; quoted strings
+                             are inline file globs (CS-0227) — see §8.4.3 */
 
 test_step             ::= "test" body NEWLINE
 body                  ::= exec_lua_block | shell_block

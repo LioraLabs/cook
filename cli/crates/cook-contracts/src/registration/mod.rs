@@ -63,6 +63,10 @@ pub const CONFIG_DISPATCH_NAME: &str = "__cook_run_config_blocks";
 /// table; emitted with the `cook.` receiver by luagen.
 pub const PROBE_SUBST_NAME: &str = "__probe_subst";
 
+/// Implementation-private registration door for compiler-generated inline
+/// file determinants. The public `cook.probe` door rejects this key namespace.
+pub const INLINE_SEAL_PROBE_NAME: &str = "__inline_seal_probe";
+
 /// A call to a door on the `cook` table with one string argument, qualified
 /// and escaped: `door_call(PROBE_SUBST_NAME, ident)` is
 /// `cook.__probe_subst("…")`.

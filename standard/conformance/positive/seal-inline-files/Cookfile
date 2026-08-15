@@ -1,0 +1,7 @@
+files toolchain
+    "tools/**"
+
+recipe build
+    seal toolchain "src/**" !"src/generated/**"
+    cook "out.txt" { cp src/input.txt $<out> }
+    test { test -s out.txt }

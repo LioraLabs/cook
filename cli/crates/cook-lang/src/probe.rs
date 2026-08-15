@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::cook_line::{parse_ingredients_line, strip_keyword};
-use crate::disposition::parse_seal_ref_text;
+use crate::disposition::parse_seal_operands;
 use crate::lexer::*;
 use crate::ParseError;
 
@@ -11,12 +11,13 @@ pub(crate) fn parse_probe(
     tokens: &[Located<Token>],
     start: usize,
     source_lines: &[&str],
-) -> Result<(Probe, usize), ParseError> {
+) -> Result<(Probe, Vec<Probe>, usize), ParseError> {
     let mut pos = start;
     let mut ingredients: Vec<String> = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut producer: Option<ProbeProduce> = None;
     let mut seal_seen = false;
+    let mut inline_probes = Vec::new();
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -80,7 +81,9 @@ pub(crate) fn parse_probe(
                         return Err(ParseError::Parse { line: tok.line,
                             message: "seal: a probe-level `seal` requires at least one probe ref".into() });
                     }
-                    deps.extend(parse_seal_ref_text(rest, tok.line)?);
+                    let parsed = parse_seal_operands(rest, tok.line, &name)?;
+                    deps.extend(parsed.refs);
+                    inline_probes.extend(parsed.inline_probe);
                     seal_seen = true;
                     pos += 1;
                     continue;
@@ -125,7 +128,7 @@ pub(crate) fn parse_probe(
         message: format!("probe '{name}' has no producer"),
     })?;
 
-    Ok((Probe { name, deps, ingredients, excludes, produce, line: probe_line }, pos))
+    Ok((Probe { name, deps, ingredients, excludes, produce, line: probe_line }, inline_probes, pos))
 }
 
 fn parse_set_declaration(name: String, declaration_line: usize, tokens: &[Located<Token>], start: usize, source_lines: &[&str], files: bool) -> Result<(Probe, usize), ParseError> {
