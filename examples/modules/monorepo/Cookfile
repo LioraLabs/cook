@@ -6,7 +6,10 @@ use cook_pnpm
 # topological order, each sealing the install probe (the pnpm-lock.yaml
 # content hash) so a lockfile change invalidates every downstream build.
 register
-    cook_pnpm.workspace({})
+    # `checks = false` because this example declares its test task by hand
+    # below. Left at its default, workspace() also mints a `<pkg>:test` for
+    # every package declaring that script, and the two collide.
+    cook_pnpm.workspace({ checks = false })
 
     # `pnpm install --frozen-lockfile`, cached by the lockfile-hash probe.
     cook_pnpm.install({ name = "install" })

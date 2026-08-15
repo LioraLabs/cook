@@ -2,3 +2,4 @@ node_modules/
 dist/
 .cook/
 pnpm-lock.yaml
+.cook-pnpm.d
