@@ -3323,7 +3323,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
     assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");
 }
 
-// ── COOK-63 §8.2: gather <probe> data-member fan-out codegen ──────
+// ── COOK-63 §8.2: bare-gather data-member fan-out codegen ────────
 
 #[test]
 fn member_fanout_cook_fans_out_per_member() {

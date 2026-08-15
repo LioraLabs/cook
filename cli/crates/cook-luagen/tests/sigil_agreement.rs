@@ -76,7 +76,7 @@ fn recipe_member_ref_answers_the_same_in_both_bodies() {
     let test = codegen(test_src).expect_err("test body must reject");
     assert_eq!(body(&cook), body(&test), "cook={cook:?}\ntest={test:?}");
     assert!(
-        cook.contains("only valid inside a `gather <probe>` fan-out body"),
+        cook.contains("only valid inside a bare-`gather` fan-out body"),
         "expected the fan-out diagnostic, got: {cook}"
     );
 }

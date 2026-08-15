@@ -173,7 +173,7 @@ fn an_input_alone_is_keyable() {
 }
 
 /// The arm CS-0186 added, and the one with no coverage until now. A unit
-/// fanned out over `gather <probe>` may declare no file at all: its member
+/// fanned out over a bare `gather` may declare no file at all: its member
 /// is an observable input (§17.1 observable 5), it reaches the key through the
 /// command hash, and editing one member must re-run that unit alone. Refusing
 /// this arm is what left a data-member `test` fan-out re-running every

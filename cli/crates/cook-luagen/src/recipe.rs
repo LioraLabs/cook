@@ -1053,7 +1053,7 @@ pub fn generate_with_names(
                         .unwrap_or(false);
                 if first_step_literal_gather {
                     out.push_str(&format!(
-                        "    error(\"recipe '{}': a literal-output cook step in a gather <probe> recipe has nothing to gather — data members are records, not file paths; fan out first (accessor-bearing outputs), or read the probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
+                        "    error(\"recipe '{}': a literal-output cook step in a bare-gather recipe has nothing to gather — data members are not a collected file set; fan out first (accessor-bearing outputs), or read an ordinary probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
                         lua_string::escape_double_quoted(&recipe.name)
                     ));
                 }

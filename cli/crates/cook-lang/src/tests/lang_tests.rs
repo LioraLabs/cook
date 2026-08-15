@@ -1580,8 +1580,8 @@ fn first_member_source(c: &Cookfile) -> &MemberSourceStep {
 
 #[test]
 fn member_source_trailing_globs_parse_into_extra_gather() {
-    // CS-0197: quoted globs after the probe key declare per-member file
-    // inputs. Bare = probe source, quoted = literal globs (§22.5.10).
+    // CS-0197: quoted globs after the bare source declare per-member file
+    // inputs. Bare = named source, quoted = literal globs (§22.5.10).
     let source =
         "recipe r\n    gather cases \"src/*.txt\" \"extra/*.h\"\n    cook \"b/$<in.id>\" { y }\n";
     let c = parse(source).expect("mixed source + globs parses");
@@ -1844,7 +1844,7 @@ fn probe_json_on_lua_block_rejected() {
     assert!(msg.contains("shell block"), "got: {msg}");
 }
 
-// ── COOK-88: gather <probe> member source ──────────────────────
+// ── COOK-88: bare gather member source ─────────────────────────
 
 #[test]
 fn gather_probe_desugars_to_member_source() {
@@ -1890,29 +1890,29 @@ fn gather_multi_segment_ref_parses_whole_ref() {
 #[test]
 fn gather_trailing_colon_ref_rejected() {
     let msg = parse_err("recipe r\n    gather cards:\n    cook \"x\" { y }\n");
-    assert!(msg.contains("malformed probe key"), "got: {msg}");
+    assert!(msg.contains("malformed bare source name"), "got: {msg}");
 }
 
 #[test]
 fn gather_leading_colon_ref_rejected() {
     let msg = parse_err("recipe r\n    gather :cards\n    cook \"x\" { y }\n");
-    assert!(msg.contains("malformed probe key"), "got: {msg}");
+    assert!(msg.contains("malformed bare source name"), "got: {msg}");
 }
 
 #[test]
-fn gather_mixing_glob_then_probe_is_rejected() {
+fn gather_mixing_glob_then_bare_source_is_rejected() {
     let source = "recipe r\n    gather \"a.json\"\n    gather cardprobe\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
     let message = err.to_string();
     assert!(message.contains("gather"), "got: {message}");
-    assert!(message.contains("probe source"), "got: {message}");
+    assert!(message.contains("bare source"), "got: {message}");
 }
 
 #[test]
 fn gather_probe_with_trailing_content_is_rejected() {
     let source = "recipe r\n    gather cardprobe extra\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
-    assert!(format!("{err:?}").contains("trailing"));
+    assert!(format!("{err:?}").contains("after source name"));
 }
 
 #[test]
@@ -1922,14 +1922,14 @@ fn gather_probe_then_glob_is_rejected() {
 }
 
 #[test]
-fn gather_probe_declared_twice_is_rejected() {
+fn gather_bare_source_declared_twice_is_rejected() {
     let source = "recipe r\n    gather cardprobe\n    gather other\n    cook \"x\" { y }\n";
     let message = parse(source).unwrap_err().to_string();
-    assert!(message.contains("gather <probe>"), "got: {message}");
+    assert!(message.contains("bare `gather` source"), "got: {message}");
 }
 
 #[test]
-fn gather_probe_errors_use_the_current_surface_name() {
+fn gather_bare_source_errors_use_the_current_surface_name() {
     for source in [
         "recipe r\n    gather\n    cook \"x\" { y }\n",
         "recipe r\n    gather :cards\n    cook \"x\" { y }\n",

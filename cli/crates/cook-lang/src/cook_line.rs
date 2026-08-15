@@ -210,11 +210,11 @@ pub(crate) fn parse_gather_line(
     Ok((includes, excludes, pos))
 }
 
-/// Parse a `gather <probe>` member source. A bare probe key used as an
+/// Parse a bare `gather` member source. A declaration or probe key used as an
 /// iteration driver returns the desugared
 /// `MemberSourceStep`. The lexical discriminator (quote vs bare ident) is
 /// decided by the caller in `recipe.rs`.
-pub(crate) fn parse_gather_probe_source(
+pub(crate) fn parse_gather_bare_source(
     rest: &str,
     line: usize,
     tokens: &[Located<Token>],
@@ -231,7 +231,7 @@ pub(crate) fn parse_gather_probe_source(
     if end == 0 {
         return Err(ParseError::Parse {
             line,
-            message: "gather: expected a \"glob\" pattern or a probe key".to_string(),
+            message: "gather: expected a \"glob\" pattern or a bare source name".to_string(),
         });
     }
     let key = rest[..end].to_string();
@@ -239,14 +239,16 @@ pub(crate) fn parse_gather_probe_source(
     // colon belongs to the key and which introduces a selector is resolved
     // against the probe registry in the register pre-pass, not here.
     if !cook_contracts::probe_key::is_valid_bare(&key) {
+        let message = cook_contracts::probe_key::bare_key_error("gather", &key)
+            .replacen("probe key", "bare source name", 1);
         return Err(ParseError::Parse {
             line,
-            message: cook_contracts::probe_key::bare_key_error("gather", &key),
+            message,
         });
     }
-    // CS-0197: quoted file globs MAY trail the probe key. Each is an
+    // CS-0197: quoted file globs MAY trail the bare source name. Each is an
     // ordinary "PATTERN" (the two-category discriminator of §22.5.10 holds:
-    // bare = the probe source, quoted = literal filesystem globs); they fold
+    // bare = a named source, quoted = literal filesystem globs); they fold
     // into every member unit's declared inputs. Anything else trailing the
     // key is still an error.
     let mut extra_gather: Vec<String> = Vec::new();
@@ -256,7 +258,7 @@ pub(crate) fn parse_gather_probe_source(
             return Err(ParseError::Parse {
                 line,
                 message: format!(
-                    "gather: unexpected trailing content '{leftover}' after probe key (only quoted \"glob\" patterns may follow the source)"
+                    "gather: unexpected trailing content '{leftover}' after source name (only quoted \"glob\" patterns may follow the source)"
                 ),
             });
         };

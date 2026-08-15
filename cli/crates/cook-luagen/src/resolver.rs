@@ -97,7 +97,7 @@ pub enum ResolveError {
     },
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
-    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside a `gather <probe>` fan-out body")]
+    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside a bare-`gather` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
     #[error("placeholder $<{ident}>: `$<{name}[]>` was respelled `$<{name}[in]>` in v1.0")]
     RecipeMemberEmptyIndex { ident: String, name: String },
@@ -149,7 +149,7 @@ enum BuiltinMatch {
 /// other ident.
 ///
 /// Deliberately *not* wired into [`resolve`]: `in` is the member binding only
-/// inside a data-driven (`gather <probe>`) recipe body, so only
+/// inside a data-driven (bare-`gather`) recipe body, so only
 /// the member-fanout codegen path (`template::expand_member_fanout_template`) consults it.
 /// In a glob recipe, `$<in>` keeps its file-path meaning via `match_builtin`.
 pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
@@ -173,7 +173,7 @@ pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
 /// classified before the recipe shape is known:
 ///
 ///  - in a glob recipe, `X` is a path accessor ([`match_builtin`]);
-///  - in a `gather <probe>` fan-out recipe, `X` is a member field with
+///  - in a bare-`gather` fan-out recipe, `X` is a member field with
 ///    an author-chosen name ([`match_member_sigil`]) — `$<in.id>` over
 ///    `[{"id":"intro"}]` is ordinary, and narrowing this to the accessor set
 ///    made every such recipe look like a literal-output gather step and be

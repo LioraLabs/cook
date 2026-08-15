@@ -181,10 +181,13 @@ is not a quoted `STRING`, and a body (in particular a `>{ … }`
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
 gather_step      ::= "gather" ( input+ | probe_ref STRING* ) NEWLINE
-                          /* probe_ref form is a probe member source; trailing STRING
-                             globs (CS-0197) declare per-member file inputs, resolved
-                             at register time and folded into every member unit's
-                             declared inputs; see §22.5.10 */
+                          /* probe_ref spells a bare gather source: either a named
+                             files declaration, whose resolved manifest keys are path
+                             members, or an ordinary probe, whose value must be an
+                             array and whose elements are members. A non-array ordinary
+                             probe is rejected; a tools declaration is not iterable.
+                             Trailing STRING globs (CS-0197) declare per-member file
+                             inputs; see §22.5.10. */
 input            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 

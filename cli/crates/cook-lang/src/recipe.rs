@@ -343,9 +343,8 @@ pub(crate) fn parse_recipe(
     let mut inputs = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
-    // §{steps.gather}: glob-pattern `gather` and `gather <probe>`
-    // (probe member source) are mutually exclusive within a recipe, and at most
-    // one probe source is allowed per recipe.
+    // §{steps.gather}: glob-pattern and bare-source `gather` are mutually
+    // exclusive within a recipe, and at most one bare source is allowed.
     let mut member_source_seen = false;
 
     // The recipe seal set is folded into every cacheable unit at finalize, so
@@ -455,7 +454,7 @@ pub(crate) fn parse_recipe(
                     if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message: "a recipe may declare at most one `gather <probe>` source"
+                            message: "a recipe may declare at most one bare `gather` source"
                                 .to_string(),
                         });
                     }
@@ -476,15 +475,15 @@ pub(crate) fn parse_recipe(
                         pos = new_pos;
                         continue;
                     } else {
-                        // COOK-88: bare identifier => probe member source. Desugar to MemberSource.
+                        // COOK-88: bare identifier => named member source. Desugar to MemberSource.
                         if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "gather: cannot mix glob patterns with a probe source"
+                                message: "gather: cannot mix glob patterns with a bare source"
                                     .to_string(),
                             });
                         }
-                        let (fe, new_pos) = crate::cook_line::parse_gather_probe_source(
+                        let (fe, new_pos) = crate::cook_line::parse_gather_bare_source(
                             rest, tok.line, tokens, pos, true,
                         )?;
                         member_source_seen = true;

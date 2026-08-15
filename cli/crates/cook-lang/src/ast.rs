@@ -315,14 +315,14 @@ pub enum MemberSource {
     GatherKey(String),
 }
 
-/// A member-source step — the internal `gather <probe>` desugar node (§8.2).
+/// A member-source step — the internal bare-`gather` desugar node (§8.2).
 /// At most one per recipe; mutually exclusive with glob-pattern `gather`. The current
 /// member binds as `$<in>` / `$<in.field>`. Retained sources are named probes
 /// and named files manifests; command and anonymous-Lua sources are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberSourceStep {
     pub source: MemberSource,
-    /// CS-0197: quoted file globs trailing the probe key
+    /// CS-0197: quoted file globs trailing the bare source name
     /// (`gather cases "src/*.txt"`). Resolved at register time like
     /// ordinary recipe inputs and folded into EVERY member unit's
     /// declared inputs — the coarse-grained answer to "what does each

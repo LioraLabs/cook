@@ -108,7 +108,7 @@ The input set is every `.c` file in `src/` and every `.h` file in `include/`, mi
 
 ### Note 8.2.1 — overload rule
 
-A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members; a bare identifier is a **probe key** yielding the probe's array members (§{cat.probes}, §22.5.9). The two forms are mutually exclusive within a recipe. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. The quoted and bare forms are mutually exclusive within a recipe. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
 
 The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_gather_with_excludes` and `test_gather_excludes_only`.
 

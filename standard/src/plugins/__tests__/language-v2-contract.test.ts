@@ -18,6 +18,15 @@ const section = (document: string, start: string, end: string) => {
 
 const normalize = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+const expectBareGatherUnion = (summary: string) => {
+  const normalized = normalize(summary);
+  expect(normalized).toMatch(/bare gather source.*named `?files`?.*manifest keys.*ordinary probe.*array.*elements.*members/i);
+  expect(normalized).toMatch(/non-array ordinary probe is rejected/i);
+  expect(normalized).toMatch(/`?tools`? declaration is not iterable/i);
+  expect(normalized).not.toMatch(/bare gather source[^.]*\b(?:is|only names?|selects only)\b[^.]*\bprobe/i);
+  expect(normalized).not.toMatch(/named files cannot (?:be )?gather/i);
+};
+
 const expectSevenRuleDispatch = (dispatch: string) => {
   const rules = [...dispatch.matchAll(/^(\d+)\.\s+([^\n]+)/gm)].map((match) => [Number(match[1]), normalize(match[2])]);
   expect(rules.map(([number]) => number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
@@ -36,6 +45,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     const disposition = section(stepsDoc, '### 8.4.3. Cook-step disposition', '## 8.5. `cook`');
     const testSteps = section(stepsDoc, '## 8.6. `test` step', '## 8.7.');
     const gatheredInputs = section(stepsDoc, '## 8.2. Gathered inputs', '## 8.3.');
+    const appSteps = section(grammarDoc, '## A.4. Steps', '## A.5. Primitives');
     const stepsDispatch = section(stepsDoc, '## 8.1. Step-dispatch cascade', '## 8.2. Gathered inputs');
     const appDispatch = section(grammarDoc, '**Step-dispatch priority (normative).**', '## A.5. Primitives');
     const appTestModes = section(grammarDoc, '**Test mode coherence', '**`>>{` is rejected as a body.**');
@@ -60,6 +70,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
 
     expect(gatheredInputs).not.toContain('CS-0226');
     expect(gatheredInputs).toContain('[added CS-0224]');
+    for (const summary of [gatheredInputs, appSteps]) expectBareGatherUnion(summary);
     expect(cacheIdentity).not.toMatch(/test\s*\{[^}]*\}\s+seal\b/);
     expect(disposition).toContain('`cook-disposition-seal-envs-probe`');
     expect(disposition).toContain('A change to `toolchain` therefore re-runs both tests');
@@ -97,6 +108,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     expect(declarations).not.toMatch(/\bseal-only\b/i);
 
     const memberSources = section(probesDoc, '## 22.5.10.', '## 22.5.11.');
+    expectBareGatherUnion(memberSources);
     expect(normalize(memberSources)).toContain('There is no segment-count limit');
     expect(memberSources).not.toMatch(/(?:at most two|four or more segments)/i);
 
@@ -195,5 +207,19 @@ describe('Language v2 Standard contract', () => {
     expect(() => assertContract({ modulesDoc: modules.replace('with no segment-count limit', 'with at most two segments') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace('## CS-0229 —', '## CS-0230 — duplicate\n\n## CS-0229 —') })).toThrow();
     expect(() => assertContract({ changesDoc: changes.replace(/## CS-0230 —[\s\S]*?(?=## CS-0229 —)/, '') })).toThrow();
+  });
+
+  it('rejects probe-only or named-files-denial wording in every bare-gather summary', () => {
+    for (const [document, anchor, field] of [
+      [steps, '### Note 8.2.1 — overload rule', 'stepsDoc'],
+      [grammar, '## A.4. Steps', 'grammarDoc'],
+      [probes, '## 22.5.10.', 'probesDoc'],
+    ] as const) {
+      const probeOnly = document.replace(anchor, `${anchor}\n\nA bare gather source is only an array-valued probe.`);
+      expect(() => assertContract({ [field]: probeOnly })).toThrow();
+
+      const denied = document.replace(anchor, `${anchor}\n\nNamed files cannot gather.`);
+      expect(() => assertContract({ [field]: denied })).toThrow();
+    }
   });
 });
