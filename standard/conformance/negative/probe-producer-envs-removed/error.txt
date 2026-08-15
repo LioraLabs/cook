@@ -1,0 +1,1 @@
+`envs { … }` was removed (CS-0226); use an ordinary shell probe: `lines { echo "$SDKROOT"; echo "$CC" }`

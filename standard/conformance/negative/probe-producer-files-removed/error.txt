@@ -1,0 +1,1 @@
+`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`

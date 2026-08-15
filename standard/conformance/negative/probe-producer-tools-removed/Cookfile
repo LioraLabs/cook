@@ -1,0 +1,2 @@
+probe toolset
+    tools { cc, ld }

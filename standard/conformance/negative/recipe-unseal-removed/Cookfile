@@ -1,0 +1,5 @@
+recipe build
+    gather "src/*.c"
+    seal cc
+    unseal cc
+    cook "$<stem>.o" { cc -c $<in> -o $<out> }
