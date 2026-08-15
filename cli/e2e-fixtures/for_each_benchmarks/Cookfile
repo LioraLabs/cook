@@ -1,9 +1,9 @@
-# §8.3 ingredients <probe> Benchmarks (COOK-63 / CS-0091)
+# §8.3 gather <probe> Benchmarks (COOK-63 / CS-0091)
 # Uses the native `probe` DSL (COOK-69).
 #
-# Exercises `ingredients <probe>` data-member fan-out across every per-member
-# consumer (`cook`, `test`). `ingredients <probe>` is the data-driven
-# counterpart to `ingredients "glob"`: it drives one work unit per data member
+# Exercises `gather <probe>` data-member fan-out across every per-member
+# consumer (`cook`, `test`). `gather <probe>` is the data-driven
+# counterpart to `gather "glob"`: it drives one work unit per data member
 # rather than per filesystem path, with the current member bound as `item` /
 # `$<in>` / `$<in.FIELD>`.
 #
@@ -20,34 +20,34 @@
 
 # Array-shaped probe value: one record per card (§22.5.4, §22.5.9).
 probe cards
-    ingredients "data/cards.json"
+    seal "data/cards.json"
     json { cat data/cards.json }
 
 # Object whose `items` field is the array — consumed via `catalog:items`.
 probe catalog
-    ingredients "data/catalog.json"
+    seal "data/catalog.json"
     json { cat data/catalog.json }
 
 # Test-case records.
 probe cases
-    ingredients "data/cases.json"
+    seal "data/cases.json"
     json { cat data/cases.json }
 
 # ── Source form 1: probe key, cook consumer ───────────────────────────
 # One cook unit per card record; `$<in.id>` drives the output path,
 # `$<in.name>` interpolates into the body. (Canonical §8.3 Example 8.3.1.)
 recipe cards_cook
-    ingredients cards
+    gather cards
     cook "build/cards/$<in.id>.txt" {
         mkdir -p build/cards
         printf '%s\n' "$<in.name>" > $<out>
     }
 
 # ── Source form 2: probe key:field, cook consumer ─────────────────────
-# `ingredients catalog:items` iterates the array at the probe value's `items`
+# `gather catalog:items` iterates the array at the probe value's `items`
 # field (§22.5.9). The bare `$<in>` renders the whole member.
 recipe catalog_cook
-    ingredients catalog:items
+    gather catalog:items
     cook "build/catalog/$<in.id>.json" {
         mkdir -p build/catalog
         printf '%s\n' '$<in>' > $<out>
@@ -56,5 +56,5 @@ recipe catalog_cook
 # ── Source form 3: probe key, test consumer ───────────────────────────
 # One test unit per case record; the member fields drive the assertion.
 recipe eval
-    ingredients cases
+    gather cases
     test { [ "$<in.input>" = "$<in.expect>" ] }

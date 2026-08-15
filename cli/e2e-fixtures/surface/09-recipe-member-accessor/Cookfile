@@ -1,5 +1,5 @@
 probe services_raw
-    ingredients "data/services.json"
+    seal "data/services.json"
     json { cat data/services.json }
 
 probe services: services_raw
@@ -12,11 +12,11 @@ probe services: services_raw
     }
 
 recipe render
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" { printf 'conf for %s\n' "$<in.name>" > $<out> }
 
 recipe summary: render
-    ingredients services
+    gather services
     cook "build/summary/$<in.name>.txt" {
         printf '== %s ==\n' "$<in.name>" > $<out>
         cat $<render[in]> >> $<out>

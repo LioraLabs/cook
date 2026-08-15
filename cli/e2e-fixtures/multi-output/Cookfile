@@ -1,5 +1,5 @@
-probe rust:source
-    files { "src/*.rs" }
+files rust:source
+    "src/*.rs"
 
 recipe generate
     seal rust:source
@@ -11,7 +11,7 @@ recipe generate
     }
 
 recipe build_lua
-    seal rust:source
+    gather rust:source
     cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")

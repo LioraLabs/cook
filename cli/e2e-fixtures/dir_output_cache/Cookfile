@@ -1,5 +1,5 @@
 recipe gen
-    ingredients "gen.sh" "src/**/*"
+    seal "gen.sh" "src/**/*"
     cook "out/" {
         sh gen.sh v1
     }

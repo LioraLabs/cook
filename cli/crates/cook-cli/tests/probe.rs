@@ -263,8 +263,8 @@ probe names
     lines { printf 'alpha\nbeta\n' }
 
 recipe render
-    ingredients names
-    cook "out/$<in>.txt" { mkdir -p out && echo $<in> > $<out> }
+    gather names
+    cook "out/$<in>.txt" { mkdir -p out && echo '$<in>' > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();

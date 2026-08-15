@@ -6,11 +6,11 @@
 # suite rather than halting at the first red.
 
 recipe checks
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     test { grep -q ok $<in> }
 
 recipe sibling
-    ingredients "src/*.txt"
+    seal "src/*.txt"
     test { echo sibling-ran }
 
 chore ship: checks

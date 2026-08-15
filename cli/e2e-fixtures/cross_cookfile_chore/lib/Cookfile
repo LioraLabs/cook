@@ -1,5 +1,5 @@
 recipe gen
-    ingredients "seed.txt"
+    seal "seed.txt"
     cook "build/gen.bin" {
         mkdir -p build
         sed 's/^/[gen] /' seed.txt > $<out>

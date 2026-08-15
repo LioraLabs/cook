@@ -10,8 +10,8 @@
 probe world
     { cat STATE }
 
-probe watched
-    files { "WATCHED" }
+files watched
+    "WATCHED"
 
 recipe show
     seal world

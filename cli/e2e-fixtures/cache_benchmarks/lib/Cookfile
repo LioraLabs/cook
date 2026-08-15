@@ -17,7 +17,7 @@ config release
 
 # lib_build — produces the imported library object file.
 recipe lib_build
-    ingredients "src/lib.c"
+    gather "src/lib.c"
     cook "build/lib.o" {
         mkdir -p build
         $<CC> $<CFLAGS> -c $<in> -o $<out>

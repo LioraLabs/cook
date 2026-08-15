@@ -22,10 +22,10 @@
 
 # Naive "translation": rewrite the path docs/en/** → build/fr/**, and the
 # content Hello → Bonjour. One unit per markdown file (one-to-one over own
-# inputs); the iteration driver is the ingredients list, exactly as with a
+# inputs); the iteration driver is the gather list, exactly as with a
 # quoted `$<in.stem>` pattern.
 recipe translate
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("docs/en", "build/fr")) {
         sed 's/Hello/Bonjour/g' $<in> > $<out>
     }
@@ -35,7 +35,7 @@ recipe translate
 # expression must fit the single `cook` line). `input`/`output` are the
 # §23.1 bindings on the worker VM.
 recipe index
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("docs/en", "build/meta"):gsub("%.md$", ".json")) >{
         local lines = 0
         for _ in io.lines(input) do lines = lines + 1 end

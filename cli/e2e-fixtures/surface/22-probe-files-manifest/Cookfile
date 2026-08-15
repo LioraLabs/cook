@@ -6,8 +6,8 @@
 # unchanged output means the probe re-produced the same value and the unit was
 # re-served, and a changed one means the file set moved the key.
 
-probe srcs
-    files { "src/*.ts" !"src/gen/*.ts" }
+files srcs
+    "src/*.ts" !"src/gen/*.ts"
 
 recipe manifest
     seal srcs

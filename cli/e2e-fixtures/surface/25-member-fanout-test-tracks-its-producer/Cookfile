@@ -7,10 +7,10 @@
 # this fixture asserts both halves.
 
 probe cases
-    ingredients "cases.json"
+    seal "cases.json"
     json { cat cases.json }
 
 recipe fan
-    ingredients cases
+    gather cases
     cook "build/$<in.id>.txt" { mkdir -p build && printf '%s\n' "$<in.body>" > $<out> }
     test { grep -q GOOD build/$<in.id>.txt }

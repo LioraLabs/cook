@@ -1,5 +1,5 @@
 probe services_raw
-    ingredients "data/services.json"
+    seal "data/services.json"
     json { cat data/services.json }
 
 probe services: services_raw
@@ -12,7 +12,7 @@ probe services: services_raw
     }
 
 recipe render
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" {
         printf 'name=%s port=%s nonce=%s\n' "$<in.name>" "$<in.port>" "$(date +%s%N)" > $<out>
     }

@@ -1,14 +1,14 @@
 # A seal is enough to key a sourceless test. The chore dependency remains
 # unconditional and demonstrates that chores do not acquire cache semantics.
 
-probe observed
-    files { "probe.txt" }
+files observed
+    "probe.txt"
 
 chore always
     printf x >> chore-runs
 
 recipe gen
-    ingredients "seed.txt"
+    gather "seed.txt"
     cook "build/gen.txt" { mkdir -p build && cp $<in> $<out> }
 
 recipe assert-tree: gen always

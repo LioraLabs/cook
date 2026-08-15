@@ -1,5 +1,5 @@
 recipe widget
-    ingredients "src.txt"
+    seal "src.txt"
     cook "build/widget.bin" {
         mkdir -p build
         sed 's/^/[widget] /' src.txt > $<out>
