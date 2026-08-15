@@ -33,6 +33,15 @@ pub enum CodegenError {
         message: &'static str,
         line: usize,
     },
+    /// CS-0239: `gather $<NAME>` where `NAME` names no recipe in scope, or
+    /// names the gathering recipe itself.
+    #[error("line {line}: recipe '{recipe}': gather $<{referent}>: {message}")]
+    GatherRecipeSource {
+        recipe: String,
+        referent: String,
+        message: &'static str,
+        line: usize,
+    },
     #[error(
         "line {line}: recipe '{referrer}': '{referent}.{accessor}' appears in {surface} but \
          '{referent}' is not named as an iteration driver in this step's output pattern"
@@ -130,18 +139,65 @@ fn validate_gather_usage(
         }
 
         let member_source = recipe.steps.iter().find_map(|step| match step {
-            Step::MemberSource { step, .. } => Some(step),
+            Step::MemberSource { step, line } => Some((step, *line)),
             _ => None,
         });
         let has_member_driver = member_source.is_some();
+        // CS-0239: `gather $<gen>` names no recipe of this Cookfile, or names
+        // this very recipe. Both are rejected here, where the recipe-name set
+        // is known; the parser cannot decide it because §10.2.4 makes a
+        // forward reference legal.
+        if let Some((MemberSource::RecipeRef(name), line)) =
+            member_source.map(|(s, line)| (&s.source, line))
+        {
+            if name == &recipe.name {
+                return Err(CodegenError::GatherRecipeSource {
+                    recipe: recipe.name.clone(),
+                    referent: name.clone(),
+                    message: "a recipe cannot gather its own outputs",
+                    line,
+                });
+            }
+            if !recipe_names.contains(name) {
+                // §10.2.4: a position that cannot honour a resolution MUST
+                // refuse it AND name the position as the reason. A dotted name
+                // resolves fine everywhere else — `$<lib.gen>` in a command
+                // body substitutes that recipe's outputs — so reporting it as
+                // undeclared sends the author hunting a typo that is not
+                // there. This check runs against the local Cookfile's names;
+                // the import-aware union is not built until later in
+                // `cook-plan`, which is why the position is narrower than the
+                // resolver (COOK-512).
+                let message = if name.contains('.') {
+                    concat!(
+                        "a qualified cross-Cookfile reference is not admitted as a ",
+                        "gather source yet; the recipe resolves elsewhere, but this ",
+                        "position does not take it",
+                    )
+                } else {
+                    "no such recipe is declared in this Cookfile"
+                };
+                return Err(CodegenError::GatherRecipeSource {
+                    recipe: recipe.name.clone(),
+                    referent: name.clone(),
+                    message,
+                    line,
+                });
+            }
+        }
         // CS-0234: the single-quote law is about canonical JSON on a command
         // line, so it binds DATA members — the array elements of an ordinary
         // probe. A bare gather source naming a `files` declaration binds the
         // manifest's PATH members, which are strings and never composite, and
-        // quote exactly as a glob gather's member does. Doubt resolves toward
-        // rejection: only a locally declared `files` source is exempt.
-        let drives_data_members =
-            member_source.is_some_and(|source| !names_files_declaration(cookfile, source));
+        // quote exactly as a glob gather's member does. CS-0239 puts a
+        // `gather $<recipe>` source on the same side of that line: its members
+        // are the referent's declared output PATHS. Doubt still resolves
+        // toward rejection — only a source whose path members are provable
+        // from the Cookfile's own declarations is exempt.
+        let drives_data_members = member_source.is_some_and(|(source, _)| {
+            !names_files_declaration(cookfile, source)
+                && !matches!(source.source, MemberSource::RecipeRef(_))
+        });
         if drives_data_members {
             for step in &recipe.steps {
                 let (body, line) = match step {
@@ -1081,9 +1137,23 @@ pub fn generate_with_names(
                         .map(&outputs_all_literal)
                         .unwrap_or(false);
                 if first_step_literal_gather {
+                    // CS-0239: the rule is one rule, but the escape hatch it
+                    // names differs by source category. A recipe source's
+                    // members ARE paths, so "data members are not a collected
+                    // file set" would be a false reason; what makes the step
+                    // wrong is that the aggregate already has a spelling that
+                    // needs no `gather` at all.
+                    let advice = match member_source.map(|(fe, _)| &fe.source) {
+                        Some(MemberSource::RecipeRef(name)) => format!(
+                            "the members are '{name}'s outputs and this step declares no accessor; fan out first (accessor-bearing outputs), or drop the gather and reference $<{name}> in the body to aggregate them in one unit",
+                            name = lua_string::escape_double_quoted(name)
+                        ),
+                        _ => "data members are not a collected file set; fan out first (accessor-bearing outputs), or read an ordinary probe from a >{ ... } Lua body via cook.probes.get".to_string(),
+                    };
                     out.push_str(&format!(
-                        "    error(\"recipe '{}': a literal-output cook step in a bare-gather recipe has nothing to gather — data members are not a collected file set; fan out first (accessor-bearing outputs), or read an ordinary probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
-                        lua_string::escape_double_quoted(&recipe.name)
+                        "    error(\"recipe '{}': a literal-output cook step in a bare-gather recipe has nothing to gather — {} (CS-0155)\", 0)\n",
+                        lua_string::escape_double_quoted(&recipe.name),
+                        advice
                     ));
                 }
                 if let Some((fe, _fe_line)) = member_source {
@@ -1121,7 +1191,9 @@ pub fn generate_with_names(
                             if member_gather && prev_cook_index.is_none() {
                                 // Unreachable at run time: the body-top
                                 // error() raises before any step group runs.
-                            } else if is_member_fanout && !member_gather {
+                            } else if let Some((fe, _)) =
+                                member_source.filter(|_| !member_gather)
+                            {
                                 generate_member_fanout_cook_step(
                                     &mut out,
                                     cook_step,
@@ -1129,9 +1201,7 @@ pub fn generate_with_names(
                                     &cookfile.uses,
                                     cook_index,
                                     recipe_names,
-                                    member_source
-                                        .map(|(fe, _)| fe.extra_gather.as_slice())
-                                        .unwrap_or(&[]),
+                                    fe,
                                 )
                                 .map_err(|source| {
                                     CodegenError::SigilResolve {
@@ -1168,13 +1238,14 @@ pub fn generate_with_names(
                             line,
                         } => {
                             out.push_str("    cook.step_group(function()\n");
-                            if is_member_fanout {
+                            if let Some((fe, _)) = member_source {
                                 test_step::generate_member_fanout_test_step(
                                     &mut out,
                                     test_step_val,
                                     *line,
                                     &cookfile.uses,
                                     recipe_names,
+                                    fe,
                                 )?;
                             } else {
                                 test_step::generate_test_step(
@@ -1307,6 +1378,20 @@ fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
         }
         MemberSource::GatherKey(k) => {
             out.push_str(&format!("    local _items = cook.probes.get(\"{}\")\n", lua_string::escape_double_quoted(k)));
+        }
+        // CS-0239: the members are the referent's declared output paths.
+        // `dep_output_list` is the door that already answers exactly that
+        // (§10.4.1) — and it is the door the dep-driven `$<lib.ACCESSOR>`
+        // form already drives its iteration from, so both spellings of "fan
+        // out over another recipe's outputs" read one list.
+        MemberSource::RecipeRef(name) => {
+            out.push_str(&format!(
+                "    local _items = {}\n",
+                cook_contracts::registration::door_call(
+                    cook_contracts::registration::DEP_OUTPUT_LIST_NAME,
+                    name
+                )
+            ));
         }
     }
 }
@@ -1688,6 +1773,12 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
         MemberSource::GatherKey(k) => MemberSourceDescriptor::Gather {
             source_ref: k.clone(),
         },
+        // CS-0239: a `gather $<recipe>` source has no probe for the pre-pass
+        // to resolve. Emitting a descriptor would send it hunting for a probe
+        // named after the recipe; the member list comes from the referent's
+        // registration instead, which the `requires` edge already orders
+        // ahead of this body.
+        MemberSource::RecipeRef(_) => return None,
     };
     let body = match &descriptor {
         MemberSourceDescriptor::Probe { source_ref } => format!(

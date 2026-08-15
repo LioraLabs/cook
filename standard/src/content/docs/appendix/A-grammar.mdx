@@ -179,14 +179,22 @@ more indented physical lines.
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
-gather_step      ::= "gather" ( input+ | probe_ref STRING* ) NEWLINE
+gather_step      ::= "gather" ( input+ | probe_ref STRING* | recipe_ref ) NEWLINE
                           /* probe_ref spells a bare gather source: either a named
                              files declaration, whose resolved manifest keys are path
                              members, or an ordinary probe, whose value must be an
                              array and whose elements are members. A non-array ordinary
                              probe is rejected; a tools declaration is not iterable.
                              Trailing STRING globs (CS-0197) declare per-member file
-                             inputs; see §22.5.10. */
+                             inputs; see §22.5.10.
+                             recipe_ref spells a recipe gather source (CS-0239): the
+                             members are that recipe's declared output paths. It takes
+                             no trailing globs; see §8.2, Form 3. */
+recipe_ref       ::= "$<" IDENT ( "." IDENT )* ">"
+                          /* the placeholder shape of §2.11 restricted to its bare-name
+                             form: no accessor, no bracket index, no probe colon.
+                             Resolution is §10.2's, so the name must denote a recipe;
+                             §10.2.2's reserved final segments cannot. */
 input            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 

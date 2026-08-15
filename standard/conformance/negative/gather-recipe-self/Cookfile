@@ -1,0 +1,3 @@
+recipe loop
+    gather $<loop>
+    test { validate $<in> }

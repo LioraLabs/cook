@@ -70,6 +70,15 @@ pub fn extract_dep_refs_from_steps(
                 t
             }
             Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
+            // CS-0239: `gather $<gen>` is a name reference like any other, so
+            // §10.6's "every name reference creates its edge" binds it. The
+            // edge is also what ORDERS the two registrations: the register
+            // pass runs bodies in `requires` topological order, and this body
+            // reads `gen`'s registered output list.
+            Step::MemberSource { step, .. } => match &step.source {
+                MemberSource::RecipeRef(name) => vec![name.clone()],
+                _ => vec![],
+            },
             Step::Shell { command, .. } => extract_sigil_tokens(command),
             Step::Lua { .. } | Step::LuaBlock { .. } | Step::InlineLua { .. } => vec![],
             // `Step` is `#[non_exhaustive]`; unknown future variants contribute

@@ -1,0 +1,22 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="gen" line=1
+      deps: []
+      inputs: ["src/*.conf.in"]
+      excludes: []
+      steps:
+        Gather
+        Cook outputs=["build/$<in.stem>.conf"] body=ShellBlock(["render $<in> > $<out>"])
+    Recipe name="check-confs" line=5
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        MemberSource source=RecipeRef("gen")
+        Test body=ShellBlock(["validate $<in>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -233,12 +233,14 @@ fn format_step(step: &Step) -> String {
             }
             s
         }
-        // §8.x: gather desugar node — named probe or named files source.
+        // §8.x: gather desugar node — named probe, named files source, or
+        // (CS-0239) a `$<recipe>` reference.
         Step::MemberSource { step, .. } => format!(
             "MemberSource source={}",
             match &step.source {
                 MemberSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
                 MemberSource::GatherKey(k) => format!("GatherKey({})", repr(k)),
+                MemberSource::RecipeRef(k) => format!("RecipeRef({})", repr(k)),
             },
         ),
         // CS-0159: render the effective seal set only when non-empty, so

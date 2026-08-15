@@ -49,6 +49,15 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0095: non-array probe value — register-phase rejection, not syntactic'],
   ['gather-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
+  // CS-0239: `gather $<recipe>` parses as an ordinary placeholder. Both
+  // rejections are about the recipe SET, which §10.2.4 makes position-
+  // independent — no per-declaration grammar rule can see it.
+  ['gather-recipe-undeclared',
+   'CS-0239: the gather source names no recipe in scope — codegen rejection, not syntactic'],
+  ['gather-recipe-self',
+   'CS-0239: a recipe gathering its own outputs — codegen rejection, not syntactic'],
+  ['gather-recipe-cycle',
+   'CS-0239: a cycle through two gather sources — a property of the assembled graph; both halves parse cleanly'],
   // CS-0219: `after` is a `cook.add_unit` Lua field, not surface syntax. The
   // Cookfile is a `use` and a module call; the rejection is the register
   // phase resolving the entry against the recipe's unit list.

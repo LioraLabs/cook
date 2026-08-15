@@ -2840,6 +2840,103 @@ fn cs0229_ingredients_is_a_removed_keyword() {
     assert!(err.to_string().contains("`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants"), "got: {err}");
 }
 
+// ── COOK-490 / CS-0239: `gather $<recipe>` — the third gather form ──────
+
+#[test]
+fn cs0239_gather_recipe_ref_desugars_to_a_recipe_member_source() {
+    // COOK-490: the sigil self-disambiguates. A bare `gather gen` resolves in
+    // the probe namespace; `gather $<gen>` names the recipe.
+    let source = "recipe check\n    gather $<gen>\n    test { validate '$<in>' }\n";
+    let c = parse(source).expect("recipe-ref gather parses");
+    assert_eq!(
+        first_member_source(&c).source,
+        MemberSource::RecipeRef("gen".to_string())
+    );
+    assert!(c.recipes[0].inputs.is_empty());
+}
+
+#[test]
+fn cs0239_a_dotted_qualified_name_parses_but_is_refused_later() {
+    // The GRAMMAR admits the dotted shape (App. A.4's
+    // `recipe_ref ::= "$<" IDENT ( "." IDENT )* ">"`), so the parser keeps it
+    // verbatim. Whether the position ACCEPTS it is a separate question the
+    // parser cannot answer, and today the answer is no: §8.2 Form 3
+    // constraint 2 scopes the source to the current Cookfile, and codegen
+    // refuses a qualified reference by name (COOK-512). This test pins the
+    // parse only — see `gather_recipe_ref.rs` for the refusal.
+    let source = "recipe check\n    gather $<lib.gen>\n    test { validate '$<in>' }\n";
+    let c = parse(source).expect("qualified recipe-ref gather parses");
+    assert_eq!(
+        first_member_source(&c).source,
+        MemberSource::RecipeRef("lib.gen".to_string())
+    );
+}
+
+#[test]
+fn cs0239_malformed_dotted_recipe_refs_are_rejected() {
+    // App. A.4's dotted shape is IDENT ("." IDENT)*, which admits neither a
+    // trailing nor a doubled dot. Before this check `$<gen.>` reached codegen
+    // and was reported as an undeclared recipe — a syntax error wearing a
+    // resolution error's diagnostic.
+    for source in [
+        "recipe check\n    gather $<gen.>\n    test { x '$<in>' }\n",
+        "recipe check\n    gather $<gen..sub>\n    test { x '$<in>' }\n",
+        "recipe check\n    gather $<.gen>\n    test { x '$<in>' }\n",
+    ] {
+        let msg = parse_err(source);
+        assert!(
+            msg.contains("is not a well-formed recipe name"),
+            "expected a grammar rejection for {source:?}, got: {msg}"
+        );
+    }
+}
+
+#[test]
+fn cs0239_gather_recipe_ref_admits_no_trailing_glob() {
+    // Form 3 is the sigil ALONE: a recipe member IS a path and is its own
+    // per-member input, so Form 2's CS-0197 trailing-glob device has nothing
+    // to add here.
+    let msg = parse_err("recipe check\n    gather $<gen> \"include/*.h\"\n    test { validate '$<in>' }\n");
+    assert!(msg.contains("unexpected trailing content"), "got: {msg}");
+}
+
+#[test]
+fn cs0239_gather_admits_at_most_one_recipe_ref() {
+    let msg = parse_err("recipe check\n    gather $<a> $<b>\n    test { validate '$<in>' }\n");
+    assert!(msg.contains("unexpected trailing content"), "got: {msg}");
+}
+
+#[test]
+fn cs0239_second_gather_line_after_a_recipe_ref_is_rejected() {
+    let msg = parse_err("recipe check\n    gather $<a>\n    gather $<b>\n    test { validate '$<in>' }\n");
+    assert!(
+        msg.contains("at most one bare `gather` source"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn cs0239_gather_recipe_ref_cannot_follow_a_quoted_glob() {
+    let msg = parse_err("recipe check\n    gather \"src/*.c\"\n    gather $<gen>\n    test { validate '$<in>' }\n");
+    assert!(msg.contains("cannot mix glob patterns"), "got: {msg}");
+}
+
+#[test]
+fn cs0239_malformed_recipe_ref_sigils_are_rejected() {
+    for source in [
+        "recipe check\n    gather $<>\n    test { x '$<in>' }\n",
+        "recipe check\n    gather $<gen\n    test { x '$<in>' }\n",
+        "recipe check\n    gather $<9gen>\n    test { x '$<in>' }\n",
+        "recipe check\n    gather $<in>\n    test { x '$<in>' }\n",
+    ] {
+        let msg = parse_err(source);
+        assert!(
+            msg.contains("gather $<...>"),
+            "expected a recipe-ref diagnostic for {source:?}, got: {msg}"
+        );
+    }
+}
+
 // ── CS-0238: `seal` multi-line continuation ─────────────────────────────
 
 /// COOK-482. The ticket's exact repro. Before CS-0238 the continuation line

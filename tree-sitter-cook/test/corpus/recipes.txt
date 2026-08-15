@@ -954,3 +954,48 @@ recipe app
       outputs: (string)
       body: (shell_block
         (shell_content)))))
+
+================
+Gather over another recipe's outputs (CS-0239)
+================
+
+recipe gen
+    gather "src/*.conf.in"
+    cook "build/$<in.stem>.conf" { render $<in> > $<out> }
+
+recipe check-confs
+    gather $<gen>
+    test { validate $<in> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (gather_step
+      (string))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content))))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (gather_step
+      source: (placeholder
+        (placeholder_ident)))
+    (test_step
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))

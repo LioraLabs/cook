@@ -240,6 +240,18 @@ pub(crate) fn generate_test_step(
 const MEMBER_SOURCE_LINE: &str =
     "        local _test_src = cook.prior_outputs(cook.member_to_string(item))\n";
 
+/// CS-0239: under a `gather $<recipe>` source the member is itself a path —
+/// the referent's declared output — so a test with no preceding `cook` step
+/// for that member has an artifact to key on after all. That is the whole
+/// motivating case: "validate each artifact `gen` produced" registers a test
+/// unit and nothing else, and `prior_outputs` answers empty for it. Falling
+/// back to the member keeps the rule `MEMBER_SOURCE_LINE` states — a member
+/// unit declares the artifact it reads — instead of exempting this shape from
+/// it. A preceding per-member `cook` step still wins, exactly as it does for
+/// a data-member fan-out.
+const RECIPE_MEMBER_SOURCE_FALLBACK: &str =
+    "        if #_test_src == 0 then _test_src = {cook.member_to_string(item)} end\n";
+
 /// COOK-63 §8.2: lower a `test` step inside a member-fanout recipe to one test
 /// unit per data member, with the member bound as `item`. The recipe body has
 /// already emitted `local _items = <source>`.
@@ -249,9 +261,18 @@ pub(crate) fn generate_member_fanout_test_step(
     line: usize,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
+    member_source: &MemberSourceStep,
 ) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
     use crate::template::{cook_step_ctx, expand_member_fanout_template};
+
+    let member_is_path = matches!(member_source.source, MemberSource::RecipeRef(_));
+    let member_source_lines = |out: &mut String| {
+        out.push_str(MEMBER_SOURCE_LINE);
+        if member_is_path {
+            out.push_str(RECIPE_MEMBER_SOURCE_FALLBACK);
+        }
+    };
 
     let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
     // CS-0159: the effective seal set travels with the fan-out units too —
@@ -278,7 +299,7 @@ pub(crate) fn generate_member_fanout_test_step(
             reject_probe_refs_in_command(line, probe_keys)?;
             let cmd_expr = cmd_concat;
             out.push_str("    for _, item in ipairs(_items) do\n");
-            out.push_str(MEMBER_SOURCE_LINE);
+            member_source_lines(out);
             out.push_str(&format!(
                 "        cook.add_unit({{step_kind = \"test\", command = {}, inputs = _test_src, {}line = {}, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr, seal_field, line, consulted.to_lua_table()
@@ -289,7 +310,7 @@ pub(crate) fn generate_member_fanout_test_step(
             // §8.2: the Lua body sees the member as `item`; execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             out.push_str("    for _, item in ipairs(_items) do\n");
-            out.push_str(MEMBER_SOURCE_LINE);
+            member_source_lines(out);
             out.push_str(&format!(
                 "        cook.add_unit({{step_kind = \"test\", lua_code = {}, inputs = _test_src, {}line = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
                 lua_chunk_literal(&with_execute_prelude(uses, code)), seal_field, line

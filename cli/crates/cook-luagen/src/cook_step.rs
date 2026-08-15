@@ -557,8 +557,9 @@ pub(crate) fn generate_member_fanout_cook_step(
     uses: &[UseStatement],
     index: usize,
     recipe_names: &BTreeSet<String>,
-    extra_gather: &[String],
+    member_source: &MemberSourceStep,
 ) -> Result<(), crate::resolver::ResolveError> {
+    let extra_gather: &[String] = &member_source.extra_gather;
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
     // OneShot rejects `$<in>` (the member binds via `item`, not the path
@@ -599,7 +600,16 @@ pub(crate) fn generate_member_fanout_cook_step(
     // same resolution rule as ordinary recipe inputs) and become each
     // member unit's declared inputs. Without them the field stays the empty
     // list it always was.
-    let inputs_field = if extra_gather.is_empty() {
+    // CS-0239: a `gather $<gen>` member IS a path — the referent's declared
+    // output — so it is the unit's declared file input, content-hashed into
+    // that member's key. Without it the unit would be keyed on the path
+    // STRING alone, and a member whose upstream artifact changed would replay
+    // a stale pass over it (COOK-355). Form 3 admits no trailing globs, so
+    // this arm has nothing to union with.
+    let member_is_path = matches!(member_source.source, MemberSource::RecipeRef(_));
+    let inputs_field = if member_is_path {
+        "inputs = {cook.member_to_string(item)}".to_string()
+    } else if extra_gather.is_empty() {
         "inputs = {}".to_string()
     } else {
         let pats = extra_gather

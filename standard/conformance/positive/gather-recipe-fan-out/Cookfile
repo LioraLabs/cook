@@ -1,0 +1,7 @@
+recipe gen
+    gather "src/*.conf.in"
+    cook "build/$<in.stem>.conf" { render $<in> > $<out> }
+
+recipe check-confs
+    gather $<gen>
+    test { validate $<in> }

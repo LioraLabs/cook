@@ -509,9 +509,18 @@ pub(crate) fn parse_recipe(
                                     .to_string(),
                             });
                         }
-                        let (fe, new_pos) = crate::cook_line::parse_gather_bare_source(
-                            rest, tok.line, tokens, pos, true,
-                        )?;
+                        // CS-0239: the leading `$<` selects Form 3 — a recipe
+                        // reference. Both bare arms share the exclusivity
+                        // guards above, so the third form inherits them.
+                        let (fe, new_pos) = if head.starts_with("$<") {
+                            crate::cook_line::parse_gather_recipe_ref(
+                                head, tok.line, tokens, pos,
+                            )?
+                        } else {
+                            crate::cook_line::parse_gather_bare_source(
+                                rest, tok.line, tokens, pos, true,
+                            )?
+                        };
                         member_source_seen = true;
                         steps.push(Step::MemberSource {
                             step: fe,

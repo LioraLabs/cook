@@ -189,7 +189,10 @@ pub enum LexError {
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "env"];
 
-fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
+/// CS-0239 made this `pub(crate)`: a `gather $<NAME>` source names a recipe,
+/// so the declaration site and the reference site must agree on which names
+/// can exist.
+pub(crate) fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
     let first_segment = name.split('.').next().unwrap_or(name);
     if first_segment == "env" {
         return Err(LexError::ReservedRecipeName {

@@ -1,0 +1,1 @@
+a recipe cannot gather its own outputs

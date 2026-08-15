@@ -277,6 +277,76 @@ pub(crate) fn parse_gather_line(
     Ok((includes, excludes, pos))
 }
 
+/// Parse a `gather $<recipe>` source (§8.2 Form 3, CS-0239). The members are
+/// the named recipe's declared output paths; the caller in `recipe.rs` has
+/// already decided the arm from the leading `$<`.
+///
+/// Form 3 is the sigil ALONE. Form 2's trailing `STRING*` exists because a
+/// data member has no path of its own, so CS-0197 needed a device to declare
+/// what each member unit reads; a recipe member IS a path and is its own
+/// per-member input, so the device has nothing to add here and anything after
+/// the closing `>` is an error.
+///
+/// Whether the name resolves to a declared recipe is NOT decided here:
+/// §10.2.4 makes name references position-independent, so a forward reference
+/// is legal and the recipe set is not known until codegen.
+pub(crate) fn parse_gather_recipe_ref(
+    rest: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+) -> Result<(MemberSourceStep, usize), ParseError> {
+    let bad = |detail: &str| ParseError::Parse {
+        line,
+        message: format!("gather $<...>: {detail}"),
+    };
+    let after_open = rest
+        .strip_prefix("$<")
+        .ok_or_else(|| bad("expected a `$<recipe>` reference"))?;
+    let close = after_open
+        .find('>')
+        .ok_or_else(|| bad("unterminated `$<` reference"))?;
+    let name = &after_open[..close];
+    // App. A.4 spells this `recipe_ref ::= "$<" IDENT ( "." IDENT )* ">"`.
+    // `is_bare_name` is the looser BARE_IDENTIFIER class, which also admits a
+    // trailing or doubled dot, so checking it alone let `$<gen.>` through to
+    // codegen and be reported as an undeclared recipe rather than as malformed
+    // syntax. Check the dotted shape the grammar actually writes.
+    if !name
+        .split('.')
+        .all(cook_contracts::naming::is_bare_name)
+    {
+        return Err(bad(&format!(
+            "'{name}' is not a well-formed recipe name"
+        )));
+    }
+    // §10.2.2: a recipe cannot be NAMED `in`/`out`/an accessor, so a gather
+    // source spelled that way names no recipe that can exist. Reuse the
+    // declaration-site check rather than restating the reserved set.
+    crate::lexer::check_reserved_recipe_name(name, line)
+        .map_err(|e| bad(&format!("{name} is not a usable recipe reference ({e})")))?;
+    let leftover = after_open[close + 1..].trim();
+    if !leftover.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "gather $<...>: unexpected trailing content '{leftover}' after the recipe reference (a `gather $<recipe>` source stands alone)"
+            ),
+        });
+    }
+    let mut pos = current_pos + 1;
+    while pos < tokens.len() && tokens[pos].line <= line {
+        pos += 1;
+    }
+    Ok((
+        MemberSourceStep {
+            source: MemberSource::RecipeRef(name.to_string()),
+            extra_gather: Vec::new(),
+        },
+        pos,
+    ))
+}
+
 /// Parse a bare `gather` member source. A declaration or probe key used as an
 /// iteration driver returns the desugared
 /// `MemberSourceStep`. The lexical discriminator (quote vs bare ident) is

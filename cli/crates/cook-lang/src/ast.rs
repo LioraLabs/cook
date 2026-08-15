@@ -313,6 +313,12 @@ pub enum MemberSource {
     /// A bare source spelled with `gather`; registration accepts an array
     /// probe or a named `files` declaration.
     GatherKey(String),
+    /// CS-0239: `gather $<gen>` — the members are recipe `gen`'s declared
+    /// output paths (§10.4.1). The sigil is what disambiguates the namespace:
+    /// a bare `gather gen` resolves in the probe namespace, so the recipe
+    /// reading needs a spelling of its own. Members are **path** members and
+    /// each is its own per-member declared input.
+    RecipeRef(String),
 }
 
 /// A member-source step — the internal bare-`gather` desugar node (§8.2).

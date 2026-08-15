@@ -1,0 +1,7 @@
+recipe a
+    gather $<b>
+    cook "build/a/$<in.stem>.out" { cp $<in> $<out> }
+
+recipe b
+    gather $<a>
+    cook "build/b/$<in.stem>.out" { cp $<in> $<out> }

@@ -407,6 +407,12 @@ module.exports = grammar({
           repeat(seq(optional($._step_continuation_newline), $.string)),
           $._newline,
         ),
+        // CS-0239 Form 3: a `$<recipe>` reference. The sigil is the whole
+        // discriminator — a bare name is Form 2 and resolves in the probe
+        // namespace. It takes no trailing globs, so there is no repeat here;
+        // whether the name denotes a recipe is a codegen question, not a
+        // syntactic one.
+        seq("gather", field("source", $.placeholder), $._newline),
       ),
 
     gather_exclude: ($) => seq("!", $.string),

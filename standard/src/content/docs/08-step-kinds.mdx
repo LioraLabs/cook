@@ -64,14 +64,16 @@ The `cook-lang` parser test `test_empty_interactive_step_errors` pinned rejectio
 The reference parser at `cli/crates/cook-lang` enforces the CS-0134 cascade in `parse_recipe`'s step-dispatch loop (informative); `parse_chore`'s step-dispatch loop keeps the `>`/`>{` steps and loose (implicitly-interactive) shell commands a chore body admits, but — like every other context — no longer accepts an `@` line (CS-0134).
 
 ## 8.2. Gathered inputs [#steps.gather]
-A `gather_step` is introduced by `gather` followed by either one or more quoted
-`input` items or one bare source name. Quoted items resolve the same
-include-minus-exclude path set as the quoted `gather` form. A bare name
-selects a top-level `files` declaration or an array-valued probe (including the
-existing `<key>:<field>` selection); quoted globs MAY trail it and are inputs of
-every member unit. A files-backed gather binds each matched path as `$<in>` and
-declares that path as the member unit's input. It is not a work unit and adds no
-DAG node.
+A `gather_step` is introduced by `gather` followed by one or more quoted
+`input` items, one bare source name, or one `$<recipe>` reference. Quoted items
+resolve the same include-minus-exclude path set as the quoted `gather` form. A
+bare name selects a top-level `files` declaration or an array-valued probe
+(including the existing `<key>:<field>` selection); quoted globs MAY trail it
+and are inputs of every member unit. A `$<recipe>` reference selects that
+recipe's declared output paths (CS-0239). A files-backed gather binds each
+matched path as `$<in>` and declares that path as the member unit's input, and
+a recipe-backed gather does the same with the referenced recipe's outputs. It
+is not a work unit and adds no DAG node.
 
 `gather` says what the recipe's command text names. A recipe containing
 `gather` MUST name its gathered set from at least one `cook` or `test` step,
@@ -81,8 +83,8 @@ with a diagnostic stating that the command never names the gathered files and
 directing the author to `seal` them instead. Conversely, a recipe that
 establishes no **input source** MUST reject such an own-input reference with a
 diagnostic stating that nothing gathers what the command references. A source
-is established by any of: a `gather_step`, in either its quoted-glob or its
-bare-source-name form (this section); a dep-driven output pattern, where a
+is established by any of: a `gather_step`, in any of its quoted-glob,
+bare-source-name, or `$<recipe>` forms (this section); a dep-driven output pattern, where a
 `$<lib.ACCESSOR>` in the step's own output list makes `lib`'s output list the
 source (§{xref.dep-driven}); or a preceding `cook_step` in the same recipe,
 whose collected outputs are the source under the chained-step rule
@@ -98,7 +100,7 @@ conforming implementation accepts.) [added CS-0224]
 
 A recipe body MAY contain at most one `gather_step` (§{grammar-appendix.recipes}, "At-most-one-gather rule"). A second `gather` line within the same recipe body MUST be rejected.
 
-The `gather_step` is introduced by the keyword `gather` and takes one of **two forms** (§{grammar-appendix.steps}, `gather_step ::= "gather" ( input+ | probe_ref STRING* ) NEWLINE`).
+The `gather_step` is introduced by the keyword `gather` and takes one of **three forms** (§{grammar-appendix.steps}, `gather_step ::= "gather" ( input+ | probe_ref STRING* | recipe_ref ) NEWLINE`). One lexical discriminator selects among them, at the first token after the keyword: a quote (or `!`) opens Form 1, `$<` opens Form 3, and anything else is read as Form 2's bare name.
 
 **Form 1 — glob form.** One or more `input` items, each of:
 
@@ -115,7 +117,23 @@ A conforming implementation MUST accept a `gather` line containing only excludes
 2. **The bare source comes first.** A quoted item MUST NOT precede it: `gather "include/*.h" sources` is rejected.
 3. **Only plain globs MAY trail it.** The trailing items are `STRING*`, so an exclusion is not admitted there: `gather sources !"include/bad.h"` is rejected.
 
-The two forms are alternatives of one production, not mutually exclusive vocabularies: a named source with trailing globs — `gather sources "include/*.h"` — is Form 2 and is well-formed, pinned by `standard/conformance/positive/068-gather-named-files`. What a recipe cannot do is mix the arms in the other direction, per constraints 2 and 3 above.
+**Form 3 — recipe form (CS-0239).** A single `recipe_ref` — a `$<NAME>` placeholder whose `NAME` resolves to a recipe under §{xref.resolution}. The recipe's **members** are that recipe's declared output paths (§{xref.dep-recipe-output}), one member per path.
+
+The sigil is what selects this form, and it is load-bearing rather than decorative: a *bare* source resolves in the probe namespace (Form 2), so `gather gen` names a probe `gen` and reports one that was never declared, whatever recipes are in scope. `$<gen>` self-disambiguates, and it does so with the vocabulary the language already uses for "that recipe's outputs" everywhere else — in a command body and in a `cook` output pattern alike.
+
+Three constraints follow, and a conforming implementation MUST reject each violation:
+
+1. **The source stands alone.** Form 3 admits no trailing globs and no second source: `gather $<gen> "include/*.h"` and `gather $<a> $<b>` are both parse-time rejections. Form 2's trailing `STRING*` exists because a data member has no path of its own (CS-0197); a recipe member IS a path and is its own per-member input, so the device has nothing to add here.
+2. **The name MUST resolve to a recipe of the current Cookfile.** A `$<NAME>` naming no such recipe is rejected, naming the reference. Because the name is not known to be a recipe until the whole Cookfile is read — §{xref.position-independence} makes a forward reference legal — the rejection is a load-time one and need not be a parse-time one.
+
+   A **qualified** cross-Cookfile reference (`$<lib.gen>`, §{comp.qualified-refs}) is not admitted in this position. This is a position declining a resolution, not a token meaning something different here: §{xref.resolution} still resolves `lib.gen` to that recipe, and `$<lib.gen>` in a command body still substitutes its outputs. §{xref.position-independence} permits exactly this — "a position that cannot honour a resolution MUST refuse it" — and requires the refusal to name the position as the reason. A conforming implementation MUST therefore reject a dotted gather source with a diagnostic that (a) reproduces the reference as written, (b) says this position does not yet admit a qualified reference, and (c) does NOT report the recipe as undeclared — the name is declared, and telling the author otherwise sends them looking for a typo that is not there. Admitting it is a future amendment.
+
+The three parts are stated separately because a diagnostic is only as good as the text that reaches the author, and a rule phrased as "mentions the position" is satisfiable by a message no one can read. A conformance check that asserts a diagnostic CONTAINS a substring cannot see a defect in the whitespace, ordering, or joining BETWEEN its substrings; the rendered message is the artifact under test, not the fragments an implementation happens to assemble it from.
+3. **A recipe MUST NOT gather its own outputs.** `recipe r` / `gather $<r>` is rejected. It is the degenerate cycle: the member set would be the output of the units the member set registers. Longer cycles are caught by the cross-recipe cycle rule of §{xref.dep-implications}.
+
+The reference creates the dependency edge, exactly as §{xref.dep-implications} requires of every name reference: `gather $<gen>` puts `gen` in the gathering recipe's build closure with no `: gen` dep-list entry, and the ordering is a consequence of the name rather than of any path. The path-literal spelling of the same intent — `gather "build/*.conf"` over what `gen` writes — is not equivalent and MUST NOT be read as one: a literal path surface establishes no edge at all (§{xref.dep-implications}, "Only name references create edges"), so it races the producer, and it globs whatever is on disk rather than what a recipe declared.
+
+The three forms are alternatives of one production, not mutually exclusive vocabularies: a named source with trailing globs — `gather sources "include/*.h"` — is Form 2 and is well-formed, pinned by `standard/conformance/positive/068-gather-named-files`. What a recipe cannot do is mix the arms, per Form 2's constraints 2 and 3 and Form 3's constraint 1.
 
 The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by §{recipes} and is resolved by the execution model (§{exec.phases}).
 
@@ -131,9 +149,29 @@ The input set is every `.c` file in `src/` and every `.h` file in `include/`, mi
 
 ### Note 8.2.1 — overload rule
 
-A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. A bare source MAY be followed by quoted glob patterns, which declare per-member file inputs rather than adding members (§8.2, Form 2; CS-0197); it MUST NOT be preceded by a quoted item, repeated, or followed by an exclusion. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. A bare source MAY be followed by quoted glob patterns, which declare per-member file inputs rather than adding members (§8.2, Form 2; CS-0197); it MUST NOT be preceded by a quoted item, repeated, or followed by an exclusion. Members of all three forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+
+A `$<recipe>` argument (Form 3, CS-0239) is the third iterable source. Its members are path members and bind exactly as a glob's do — `$<in>` is one path, `$<in.stem>` is that path's stem — because a declared output IS a path. It admits no trailing globs and no exclusion.
 
 The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_gather_with_excludes` and `test_gather_excludes_only`.
+
+### Example 8.2.2 — per-output tests over another recipe's artifacts
+
+```cook
+recipe gen
+    gather "src/*.conf.in"
+    cook "build/$<in.stem>.conf" { render $<in> > $<out> }
+
+recipe check-confs
+    gather $<gen>
+    test { validate $<in> }
+```
+
+`check-confs` registers one `test` unit per file `gen` declared. Each unit declares the artifact it reads as a file input, so it is keyed on that artifact's content: an artifact that goes bad re-runs its test rather than replaying a cached pass over it, and adding a source adds a test. The `$<gen>` reference is what orders `gen` ahead of `check-confs`; no `: gen` is written and none is needed.
+
+Per-member *reuse* is a separate property from per-member *keying*, and this form does not yet deliver it: an implementation MAY over-approximate a member unit's recorded input set with the whole upstream output list, in which case one changed artifact re-runs every member. The Standard requires the keying (a member unit MUST declare the artifact it reads) and permits the coarser recording, on the same ground §{xref.dep-implications} permits a coarse edge — the failure mode is wasted work, not a wrong answer. The reference implementation is coarse here, in both this form and the dep-driven form of §{xref.dep-driven}, for one shared reason recorded in `COOK-505`.
+
+This is the shape a `test` step could not otherwise take. Dep-driven iteration (§{xref.dep-driven}) hangs its driver off an accessor in an **output pattern**, and a `test` step has no output pattern, so before CS-0239 "validate each artifact `gen` produced" had no spelling at all.
 
 ## 8.3. Step kinds — overview [#steps.overview]
 A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, a conforming implementation recognises the following five step kinds — all of them register-phase:
@@ -236,8 +274,12 @@ output registers one unit per member; a later all-literal `cook` output
 registers one aggregate unit over the preceding outputs; an all-literal first
 `cook` step is rejected.
 
+The mode selection above is stated over a `gather <probe>` source. CS-0239's `gather $<recipe>` source (§{steps.gather}, Form 3) is selected by it identically: an accessor-bearing output registers one unit per member, an all-literal output does not, and the source decides neither. Two things about it differ, and both follow from its members being **paths** rather than records. `$<in.ACCESSOR>` is a path accessor there, not a record-field read — the data-member bullet's prohibition below is scoped to a `gather <probe>` source and does not reach this one. And each member path is a **declared file input** of the first unit it drives, so that unit is keyed on the artifact's content and not on the path string; a member whose upstream artifact changed re-runs rather than replaying a stale pass over it. A later step in the same recipe chains on the preceding step's per-member output under the ordinary chained-step rule, and is keyed on the upstream artifact transitively through it.
+
 - A `cook_step` with at least one accessor-bearing output is in **one-to-one over data members** mode: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no input path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by a `gather <probe>` source.
 - A `cook_step` whose outputs are all literal is the ordinary **many-to-one** gather of this section, and its input list is the *preceding* `cook_step`'s collected outputs — exactly the chained-step rule that applies in a glob-driven recipe: one unit, `$<in>` expanding to that collected list, space-joined. Data members are records, not file paths, so there is nothing path-shaped for a *first* step to gather: a conforming implementation MUST reject a literal-output `cook_step` with no preceding `cook_step` in a probe-driven recipe with a register-phase diagnostic that names the recipe and directs the author to fan out first or to aggregate member values in a `>{ … }` Lua body via `cook.probes.get` (§{cat.probes.consumer}).
+
+  The same rejection binds a `gather $<recipe>` recipe (CS-0239), for a different reason and therefore with different advice: those members ARE paths, so the objection is not that there is nothing path-shaped to gather but that the aggregate already has a spelling needing no `gather` at all — `cook "out" { … $<gen> … }` substitutes `gen`'s whole output list and establishes the same edge (§{xref.string-substitution}). A conforming implementation MUST NOT tell a recipe-source author that data members are not a collected file set; the diagnostic MUST name the alternative that is true of the source in hand.
 
 ### Example 8.4.1.2
 

@@ -1,0 +1,3 @@
+recipe check
+    gather $<nope>
+    test { validate $<in> }
