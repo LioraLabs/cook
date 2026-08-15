@@ -22,18 +22,10 @@ pub fn render(t: &Tally, wall: Duration, style: &Style) -> String {
 
     let mut parts = vec![format!("{} passed", t.passed)];
     if any_problem {
-        if t.failed > 0 {
-            parts.push(format!("{} failed", t.failed));
-        }
-        if t.timed_out > 0 {
-            parts.push(format!("{} timed out", t.timed_out));
-        }
-        if t.blocked > 0 {
-            parts.push(format!("{} blocked", t.blocked));
-        }
-        if t.cached > 0 {
-            parts.push(format!("{} cached", t.cached));
-        }
+        if t.failed > 0 { parts.push(format!("{} failed", t.failed)); }
+        if t.timed_out > 0 { parts.push(format!("{} timed out", t.timed_out)); }
+        if t.blocked > 0 { parts.push(format!("{} blocked", t.blocked)); }
+        if t.cached > 0 { parts.push(format!("{} cached", t.cached)); }
         parts.push(format!("finished in {:.1}s", wall.as_secs_f64()));
         let mut line = format!(
             "{} {}. {}",

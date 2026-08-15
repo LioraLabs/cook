@@ -101,10 +101,7 @@ fn rejects_function_with_path() {
         e.contains(".cflags[3]"),
         "error must name path .cflags[3]; got: {e}"
     );
-    assert!(
-        e.contains("function"),
-        "error must mention 'function'; got: {e}"
-    );
+    assert!(e.contains("function"), "error must mention 'function'; got: {e}");
 }
 
 #[test]
@@ -116,11 +113,7 @@ fn rejects_mixed_key_table() {
 #[test]
 fn rejects_array_with_holes() {
     let e = convert("return { [1] = \"a\", [3] = \"c\" }").unwrap_err();
-    assert!(
-        e.contains("hole") || e.contains("not contiguous"),
-        "got: {}",
-        e
-    );
+    assert!(e.contains("hole") || e.contains("not contiguous"), "got: {}", e);
 }
 
 #[test]
@@ -150,11 +143,7 @@ fn rejects_non_utf8_string() {
         .eval()
         .unwrap();
     let e = lua_to_json(&v).unwrap_err();
-    assert!(
-        e.contains(".blob"),
-        "error must name path .blob; got: {}",
-        e
-    );
+    assert!(e.contains(".blob"), "error must name path .blob; got: {}", e);
     assert!(e.contains("non-UTF-8"), "got: {}", e);
 }
 
@@ -242,10 +231,7 @@ fn float_identity_round_trips() {
 
     let float_v: LuaValue = lua.load("return 1.0").eval().unwrap();
     let float_json = lua_to_json(&float_v).unwrap();
-    assert!(
-        float_json.is_f64(),
-        "Lua float 1.0 must map to a JSON float"
-    );
+    assert!(float_json.is_f64(), "Lua float 1.0 must map to a JSON float");
     let float_bytes = cook_contracts::probe_value::encode_canonical_json(&float_json);
     assert_eq!(float_bytes, b"1.0\n");
     let float_back = cook_contracts::probe_value::decode_json(&float_bytes).unwrap();
@@ -257,10 +243,7 @@ fn float_identity_round_trips() {
 
     let int_v: LuaValue = lua.load("return 1").eval().unwrap();
     let int_json = lua_to_json(&int_v).unwrap();
-    assert!(
-        int_json.is_i64(),
-        "Lua integer 1 must map to a JSON integer"
-    );
+    assert!(int_json.is_i64(), "Lua integer 1 must map to a JSON integer");
     let int_bytes = cook_contracts::probe_value::encode_canonical_json(&int_json);
     assert_eq!(int_bytes, b"1\n");
     let int_back = cook_contracts::probe_value::decode_json(&int_bytes).unwrap();

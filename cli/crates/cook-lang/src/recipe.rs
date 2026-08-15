@@ -152,9 +152,7 @@ pub(crate) fn parse_config_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. }
-            | Token::FilesHeader { .. }
-            | Token::ToolsHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (column-0 Content matching the module-call
             // shape) is also a terminator as of CS-0072. Check the raw source
             // line to distinguish column-0 from indented Content.
@@ -185,9 +183,7 @@ pub(crate) fn parse_config_block_lua(
         // config block body and the next keyword does not become part of
         // the body (consistent with v0.3 explicit-`end` behaviour).
         let lines = &source_lines[start_idx..end_idx];
-        let trimmed_end = lines
-            .iter()
-            .rposition(|l| !l.trim().is_empty())
+        let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
             .map(|i| i + 1)
             .unwrap_or(0);
 
@@ -236,9 +232,7 @@ pub(crate) fn parse_register_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. }
-            | Token::FilesHeader { .. }
-            | Token::ToolsHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (Content matching <id>.<id>(...) shape)
             // is also a terminator (CS-0072 §4.1.1 clause b).
             // Only column-0 Content can be top-level: check the raw source line.
@@ -434,9 +428,8 @@ pub(crate) fn parse_recipe(
                     if rest.trim().is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message:
-                                "seal: a recipe-level `seal` step requires at least one probe ref"
-                                    .to_string(),
+                            message: "seal: a recipe-level `seal` step requires at least one probe ref"
+                                .to_string(),
                         });
                     }
                     let parsed = parse_seal_operands(rest, tok.line, &name)?;
@@ -516,12 +509,7 @@ pub(crate) fn parse_recipe(
                 } else if let Some(rest) = strip_keyword(text, "test") {
                     // Tests admit no tail; the recipe seal set is folded in at finalize.
                     let (body, trailing, new_pos) = crate::cook_line::parse_body_payload(
-                        rest,
-                        tok.line,
-                        tokens,
-                        pos,
-                        source_lines,
-                        "test",
+                        rest, tok.line, tokens, pos, source_lines, "test",
                     )?;
                     reject_test_tail(&trailing, tok.line)?;
                     steps.push(Step::Test {
@@ -550,10 +538,13 @@ pub(crate) fn parse_recipe(
                     // remains a shell_command per the post-CS-0072 rule 6.
                     {
                         let trimmed = text.trim();
-                        if trimmed.starts_with("register") && trimmed.len() > 8 && {
-                            let b = trimmed.as_bytes()[8];
-                            b == b' ' || b == b'\t'
-                        } {
+                        if trimmed.starts_with("register")
+                            && trimmed.len() > 8
+                            && {
+                                let b = trimmed.as_bytes()[8];
+                                b == b' ' || b == b'\t'
+                            }
+                        {
                             return Err(ParseError::Parse {
                                 line: tok.line,
                                 message:
@@ -575,9 +566,10 @@ pub(crate) fn parse_recipe(
             Token::LuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message: "execute-phase `>` Lua is not allowed in a recipe body (CS-0134); \
+                    message:
+                        "execute-phase `>` Lua is not allowed in a recipe body (CS-0134); \
                          use `cook \"out\" >{ … }`, `test >{ … }`, or a chore"
-                        .to_string(),
+                            .to_string(),
                 });
             }
             Token::LuaBlockOpen => {
@@ -592,10 +584,11 @@ pub(crate) fn parse_recipe(
             Token::InlineLuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message: "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                    message:
+                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
                          `module.call()` in the recipe body, or move register work to a \
                          top-level `register` block"
-                        .to_string(),
+                            .to_string(),
                 });
             }
             Token::InlineLuaBlockOpen => {
@@ -667,9 +660,7 @@ pub(crate) fn parse_chore(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. }
-            | Token::FilesHeader { .. }
-            | Token::ToolsHeader { .. } => {
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
                 return Ok((
                     Chore {
                         name,
@@ -729,10 +720,13 @@ pub(crate) fn parse_chore(
                     // the post-CS-0072 rule 6.
                     {
                         let trimmed = text.trim();
-                        if trimmed.starts_with("register") && trimmed.len() > 8 && {
-                            let b = trimmed.as_bytes()[8];
-                            b == b' ' || b == b'\t'
-                        } {
+                        if trimmed.starts_with("register")
+                            && trimmed.len() > 8
+                            && {
+                                let b = trimmed.as_bytes()[8];
+                                b == b' ' || b == b'\t'
+                            }
+                        {
                             return Err(ParseError::Parse {
                                 line: tok.line,
                                 message:
@@ -782,10 +776,11 @@ pub(crate) fn parse_chore(
             Token::InlineLuaLine(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message: "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                    message:
+                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
                          `module.call()` in the recipe body, or move register work to a \
                          top-level `register` block"
-                        .to_string(),
+                            .to_string(),
                 });
             }
             Token::InlineLuaBlockOpen => {

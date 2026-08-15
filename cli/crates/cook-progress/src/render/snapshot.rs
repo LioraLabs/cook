@@ -56,9 +56,7 @@ impl StatusSnapshot {
     pub fn from_state(state: &BuildState) -> Self {
         let total_nodes = state.totals.total_nodes;
         let done_nodes = state.totals.completed_nodes;
-        let mut running: Vec<RunningEntry> = state
-            .recipes
-            .values()
+        let mut running: Vec<RunningEntry> = state.recipes.values()
             .flat_map(|r| r.nodes.values())
             .filter(|n| n.status == NodeStatus::Running)
             .filter_map(|n| {
@@ -87,12 +85,8 @@ const NAMES_BUDGET_MARGIN: usize = 2;
 /// If the snapshot has fewer than `opts.min_nodes` total or `running` is empty,
 /// returns an empty string (caller does not draw).
 pub fn render_status_line(snap: &StatusSnapshot, opts: StatusLineOptions, cols: usize) -> String {
-    if snap.total_nodes < opts.min_nodes {
-        return String::new();
-    }
-    if snap.running.is_empty() {
-        return String::new();
-    }
+    if snap.total_nodes < opts.min_nodes { return String::new(); }
+    if snap.running.is_empty() { return String::new(); }
 
     let verb = format_verb(
         verb_for(LineKind::StatusBar, NodeKind::Cooked),
@@ -115,9 +109,7 @@ pub fn render_status_line(snap: &StatusSnapshot, opts: StatusLineOptions, cols: 
 
     let inner = cols.saturating_sub(fixed);
     let bar_width = inner.saturating_div(4).clamp(10, 40);
-    let names_budget = inner
-        .saturating_sub(bar_width)
-        .saturating_sub(NAMES_BUDGET_MARGIN);
+    let names_budget = inner.saturating_sub(bar_width).saturating_sub(NAMES_BUDGET_MARGIN);
 
     let bar = render_bar(snap.done_nodes, snap.total_nodes, bar_width);
     let names = render_names(&snap.running, names_budget);
@@ -126,12 +118,8 @@ pub fn render_status_line(snap: &StatusSnapshot, opts: StatusLineOptions, cols: 
 }
 
 fn render_bar(done: usize, total: usize, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if total == 0 {
-        return " ".repeat(width);
-    }
+    if width == 0 { return String::new(); }
+    if total == 0 { return " ".repeat(width); }
     let filled = ((done as f64 / total as f64) * width as f64).floor() as usize;
     let filled = filled.min(width);
 
@@ -145,15 +133,13 @@ fn render_bar(done: usize, total: usize, width: usize) -> String {
         s.push_str(&"=".repeat(filled - 1));
         s.push('>');
     }
-    let chars_in_s = s.len(); // ASCII content: bytes == chars == width
+    let chars_in_s = s.len();    // ASCII content: bytes == chars == width
     s.push_str(&" ".repeat(width.saturating_sub(chars_in_s)));
     s
 }
 
 fn render_names(running: &[RunningEntry], budget: usize) -> String {
-    if budget == 0 || running.is_empty() {
-        return String::new();
-    }
+    if budget == 0 || running.is_empty() { return String::new(); }
     let mut shown = Vec::new();
     let mut used = 0usize;
     for (i, entry) in running.iter().enumerate() {

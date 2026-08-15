@@ -36,9 +36,7 @@ impl Driver {
         }
         self.renderer.finish(&self.state)?;
         let success = self.state.finished.unwrap_or(false);
-        if let Some(store) = self.log_store.as_mut() {
-            let _ = store.close(success);
-        }
+        if let Some(store) = self.log_store.as_mut() { let _ = store.close(success); }
         Ok(success)
     }
 }

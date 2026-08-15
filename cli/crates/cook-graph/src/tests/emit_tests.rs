@@ -120,11 +120,7 @@ fn merged_edge_keeps_the_most_constraining_kind() {
         .iter()
         .find(|e| e.from == "recipe:lib" && e.to == "recipe:bin")
         .expect("lib -> bin edge");
-    assert_eq!(
-        e.kind,
-        EdgeKind::Barrier,
-        "barrier must not hide behind data"
-    );
+    assert_eq!(e.kind, EdgeKind::Barrier, "barrier must not hide behind data");
     assert_eq!(e.count, 2);
 }
 
@@ -163,11 +159,7 @@ fn file_nodes_count_toward_no_tally() {
         .lines()
         .find(|l| l.starts_with("file:main.c"))
         .expect("file node rendered");
-    assert_eq!(
-        line.trim(),
-        "file:main.c",
-        "file node must carry no tally: {line:?}"
-    );
+    assert_eq!(line.trim(), "file:main.c", "file node must carry no tally: {line:?}");
 }
 
 #[test]
@@ -401,10 +393,7 @@ fn timing_renders_as_observation_and_admits_its_coverage() {
     let g = agg(Level::Recipe);
     let out = render(&g, Format::Text);
     assert!(out.contains("observed"), "{out}");
-    assert!(
-        !out.contains("estimate"),
-        "must not read as a prediction: {out}"
-    );
+    assert!(!out.contains("estimate"), "must not read as a prediction: {out}");
 
     // One of lib's two units never timed: coverage must be stated.
     let mut a = Annotations::new();
@@ -475,8 +464,7 @@ fn a_never_observed_node_shows_no_duration_at_all() {
 fn unit_level_refuses_past_the_cap_instead_of_emitting_a_blob() {
     let mut dag = fixture();
     for i in 0..50 {
-        dag.nodes
-            .push(unit(&format!("unit:big:{i}"), "big", None, None));
+        dag.nodes.push(unit(&format!("unit:big:{i}"), "big", None, None));
     }
     let err = aggregate(&dag, Level::Unit, 10, &facts()).unwrap_err();
     assert!(matches!(err, EmitError::TooManyNodes { .. }));

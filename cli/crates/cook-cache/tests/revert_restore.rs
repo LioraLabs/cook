@@ -108,9 +108,7 @@ fn put_determinant_manifest(backend: &LocalBackend, key: &[u8; 32], output_paths
         sealed_probes: Default::default(),
         observation: None,
     };
-    backend
-        .put_manifest(key, &manifest)
-        .expect("seed determinant manifest");
+    backend.put_manifest(key, &manifest).expect("seed determinant manifest");
 }
 
 fn di() -> DiscoveredInputs {
@@ -185,10 +183,7 @@ fn revert_restores_despite_stale_caller_output_names() {
         "restored list must come from the candidate key's manifest, not the stale caller list",
     );
     assert_eq!(outcome.discovered_paths, vec!["header.h".to_string()]);
-    assert_eq!(
-        std::fs::read(wd.join("build/chunk-orig.txt")).unwrap(),
-        b"ORIG"
-    );
+    assert_eq!(std::fs::read(wd.join("build/chunk-orig.txt")).unwrap(), b"ORIG");
     assert_eq!(std::fs::read(wd.join("deps.d")).unwrap(), DEPFILE_BYTES);
     assert!(
         !wd.join("build/chunk-edited.txt").exists(),
@@ -311,9 +306,6 @@ fn v1_single_set_manifest_still_recovers() {
         false,
     )
     .expect("v1 store must keep working");
-    assert_eq!(
-        outcome.restored_outputs,
-        vec!["out.txt".to_string(), "deps.d".to_string()]
-    );
+    assert_eq!(outcome.restored_outputs, vec!["out.txt".to_string(), "deps.d".to_string()]);
     assert_eq!(std::fs::read(wd.join("out.txt")).unwrap(), b"ORIG");
 }

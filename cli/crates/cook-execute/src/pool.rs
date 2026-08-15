@@ -256,8 +256,7 @@ fn worker_loop(
     // this worker, but needs interior mutability for closures).
     let current_recipe: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let current_working_dir: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(PathBuf::new()));
-    let current_env_vars: Arc<Mutex<HashMap<String, String>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     // R1 (CS-0164): the child-process env subset (chore-param exports). Kept
     // separate from `current_env_vars` (the full `cook.env` lookup map) so a
     // config `var.*` value never reaches a spawned step's environment.
@@ -374,9 +373,8 @@ fn worker_loop(
                     *env = work.env_vars.clone();
                 }
                 {
-                    let mut penv = current_process_env_vars
-                        .lock()
-                        .expect("process_env_vars lock");
+                    let mut penv =
+                        current_process_env_vars.lock().expect("process_env_vars lock");
                     *penv = work.process_env_vars.clone();
                 }
                 // CS-0188: start this unit's output empty. The worker VM is
@@ -467,7 +465,9 @@ fn worker_loop(
                         WorkResult {
                             id: work_id,
                             success: false,
-                            error: Some(format!("[{recipe_name}] worker panic: {msg}")),
+                            error: Some(format!(
+                                "[{recipe_name}] worker panic: {msg}"
+                            )),
                             exit_code: None,
                             node_name,
                             output_lines: Vec::new(),
@@ -938,10 +938,7 @@ fn install_execute_phase_cook_probes(
         move |lua, key: &str| match store_for_get.get(key) {
             Some(bytes) => {
                 let jv = store_for_get.read_view(key, &bytes).map_err(|e| {
-                    mlua::Error::runtime(format!(
-                        "cook.probes.get('{}'): decode failed: {}",
-                        key, e
-                    ))
+                    mlua::Error::runtime(format!("cook.probes.get('{}'): decode failed: {}", key, e))
                 })?;
                 crate::probe_value::json_to_lua(lua, &jv)
             }
@@ -1265,10 +1262,7 @@ fn execute_work_item(
         _ => WorkResult {
             id: work.id,
             success: false,
-            error: Some(format!(
-                "BUG: unknown WorkPayload variant dispatched to worker pool: {:?}",
-                work.payload
-            )),
+            error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
             exit_code: None,
             node_name,
             output_lines: Vec::new(),
@@ -1394,9 +1388,7 @@ fn execute_probe(
                     key,
                     cook_contracts::lua_error::sanitize(
                         &e.to_string(),
-                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV)
-                            .map(|v| v == "1")
-                            .unwrap_or(false),
+                        std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
                     )
                 )),
                 exit_code: None,
@@ -1544,9 +1536,7 @@ fn execute_lua_chunk(
                 "[{recipe_name}] {}",
                 cook_contracts::lua_error::sanitize(
                     &e.to_string(),
-                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV)
-                        .map(|v| v == "1")
-                        .unwrap_or(false),
+                    std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
                 )
             )),
             exit_code: None,

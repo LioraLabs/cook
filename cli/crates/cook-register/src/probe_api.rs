@@ -123,7 +123,11 @@ pub fn install_cook_probe(
         if let Some(prev) = reg.probes.get(&key) {
             return Err(LuaError::runtime(format!(
                 "probe key '{}' declared at {}:{}; previously declared at {}:{}",
-                key, source_file, call_line, prev.source_file, prev.source_line,
+                key,
+                source_file,
+                call_line,
+                prev.source_file,
+                prev.source_line,
             )));
         }
 
@@ -230,7 +234,10 @@ impl ProbeRegistry {
                         let start = stack.iter().position(|&n| n == r.as_str()).unwrap_or(0);
                         let mut path: Vec<&str> = stack[start..].to_vec();
                         path.push(r.as_str());
-                        return Err(format!("probe cycle detected: {}", path.join(" -> ")));
+                        return Err(format!(
+                            "probe cycle detected: {}",
+                            path.join(" -> ")
+                        ));
                     }
                     Some(NodeState::Done) => continue,
                     None => self.dfs(r, state, stack)?,

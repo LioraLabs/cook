@@ -37,21 +37,14 @@ fn hidden_status_line_does_not_write_lines() {
     let writer = CaptureWriter::default();
     let buf = writer.buf.clone();
     let mut s = StatusLine::spawn_with_writer(
-        StatusLineOptions {
-            colored: false,
-            ..Default::default()
-        },
+        StatusLineOptions { colored: false, ..Default::default() },
         snap(47, 0),
         writer,
     );
     thread::sleep(Duration::from_millis(250));
     s.shutdown();
     let out = buf.lock().unwrap();
-    assert!(
-        !out.iter().any(|l| l.starts_with("LINE:")),
-        "got: {:?}",
-        *out
-    );
+    assert!(!out.iter().any(|l| l.starts_with("LINE:")), "got: {:?}", *out);
 }
 
 #[test]
@@ -59,37 +52,19 @@ fn show_then_hide_writes_then_stops() {
     let writer = CaptureWriter::default();
     let buf = writer.buf.clone();
     let mut s = StatusLine::spawn_with_writer(
-        StatusLineOptions {
-            colored: false,
-            ..Default::default()
-        },
+        StatusLineOptions { colored: false, ..Default::default() },
         snap(47, 0),
         writer,
     );
     s.show();
     thread::sleep(Duration::from_millis(250));
-    let count_after_show = buf
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|l| l.starts_with("LINE:"))
-        .count();
-    assert!(
-        count_after_show >= 1,
-        "expected at least 1 paint, got {count_after_show}"
-    );
+    let count_after_show = buf.lock().unwrap().iter().filter(|l| l.starts_with("LINE:")).count();
+    assert!(count_after_show >= 1, "expected at least 1 paint, got {count_after_show}");
     s.hide();
     thread::sleep(Duration::from_millis(250));
-    let count_after_hide = buf
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|l| l.starts_with("LINE:"))
-        .count();
+    let count_after_hide = buf.lock().unwrap().iter().filter(|l| l.starts_with("LINE:")).count();
     s.shutdown();
     // After hide, no further LINE: writes (allow ~1 in-flight tick = +1).
-    assert!(
-        count_after_hide <= count_after_show + 1,
-        "expected LINE count not to grow after hide; before={count_after_show} after={count_after_hide}"
-    );
+    assert!(count_after_hide <= count_after_show + 1,
+        "expected LINE count not to grow after hide; before={count_after_show} after={count_after_hide}");
 }

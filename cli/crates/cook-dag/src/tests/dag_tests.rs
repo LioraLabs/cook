@@ -142,10 +142,7 @@ fn add_node_rejects_self_reference() {
     let err = dag.add_node("a", &[0]).unwrap_err();
     assert!(matches!(
         err,
-        DagError::DependencyOutOfRange {
-            dep_id: 0,
-            num_nodes: 0
-        }
+        DagError::DependencyOutOfRange { dep_id: 0, num_nodes: 0 }
     ));
 }
 

@@ -12,7 +12,7 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 fn write_toml(dir: &Path, contents: &str) -> PathBuf {
     let cook_dir = dir.join(".cook");
     std::fs::create_dir_all(&cook_dir).expect("mkdir");
-    let path = cook_dir.join("cloud.toml");
+        let path = cook_dir.join("cloud.toml");
     let mut f = std::fs::File::create(&path).expect("create");
     f.write_all(contents.as_bytes()).expect("write");
     path
@@ -21,7 +21,7 @@ fn write_toml(dir: &Path, contents: &str) -> PathBuf {
 #[test]
 fn missing_file_returns_default() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert!(!cfg.cloud.enabled);
     // CS-0196: unconfigured key-side identity is empty, never the dir name.
     assert_eq!(cfg.project_id_for_keys(), "");
@@ -31,9 +31,7 @@ fn missing_file_returns_default() {
 #[test]
 fn cloud_disabled_no_project_required() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = false
 "#,
@@ -46,19 +44,14 @@ enabled = false
 #[test]
 fn cloud_enabled_requires_project() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
 "#,
     );
     let result = CloudConfig::load_or_default(dir.path());
-    assert!(
-        result.is_err(),
-        "missing project must error when cloud.enabled=true"
-    );
+    assert!(result.is_err(), "missing project must error when cloud.enabled=true");
 }
 
 #[test]
@@ -69,13 +62,9 @@ fn cloud_enabled_with_project_ok() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: tests touching COOK_CLOUD_API_KEY hold ENV_LOCK; this
     // serialises set/remove across them.
-    unsafe {
-        std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-12345");
-    }
+    unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-12345"); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
@@ -86,17 +75,13 @@ project = "cook"
     assert!(cfg.cloud.enabled);
     assert_eq!(cfg.cloud.project.as_deref(), Some("cook"));
     assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-tok-12345"));
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
 }
 
 #[test]
 fn cache_ignore_env_parsed() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cache]
 ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
 "#,
@@ -111,7 +96,7 @@ ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
 #[test]
 fn malformed_toml_errors() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(dir.path(), "this is not valid toml === ");
+        write_toml(dir.path(), "this is not valid toml === ");
     assert!(CloudConfig::load_or_default(dir.path()).is_err());
 }
 
@@ -142,7 +127,7 @@ fn project_id_for_keys_is_configured_or_empty_never_the_dir_name() {
 #[test]
 fn backend_config_uses_defaults_when_unset() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     let bc = cfg.backend_config();
     let def = BackendConfig::default();
     assert_eq!(bc.timeout, def.timeout);
@@ -158,9 +143,7 @@ fn backend_config_uses_defaults_when_unset() {
 #[test]
 fn backend_config_overrides_from_toml() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 timeout_secs = 90
 max_retries = 7
@@ -187,13 +170,9 @@ fn cloud_enabled_requires_api_key() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: we hold ENV_LOCK; no other test in this module mutates
     // COOK_CLOUD_API_KEY without taking the lock.
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
@@ -214,13 +193,9 @@ project = "cook"
 fn cloud_enabled_uses_env_var_api_key() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: ENV_LOCK serialises COOK_CLOUD_API_KEY mutation.
-    unsafe {
-        std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-9999");
-    }
+    unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-9999"); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
@@ -230,9 +205,7 @@ project = "cook"
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-tok-9999"));
     // Cleanup so subsequent tests don't see this env var.
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
 }
 
 /// `cloud.enabled = true` without an endpoint → `MissingEndpoint`,
@@ -240,13 +213,9 @@ project = "cook"
 #[test]
 fn cloud_enabled_requires_endpoint() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        std::env::set_var("COOK_CLOUD_API_KEY", "tok-for-endpoint-test");
-    }
+    unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "tok-for-endpoint-test"); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 project = "cook"
@@ -257,9 +226,7 @@ project = "cook"
         Err(CloudConfigError::MissingEndpoint) => {}
         other => panic!("expected MissingEndpoint, got: {other:?}"),
     }
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
 }
 
 /// CS-0059. Empty env var (`COOK_CLOUD_API_KEY=""`) is treated as
@@ -269,13 +236,9 @@ project = "cook"
 #[test]
 fn cloud_empty_env_var_treated_as_unset() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        std::env::set_var("COOK_CLOUD_API_KEY", "");
-    }
+    unsafe { std::env::set_var("COOK_CLOUD_API_KEY", ""); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
@@ -291,9 +254,7 @@ project = "cook"
     // — no error path is even invoked.
     let cfg = CloudConfig::default();
     assert_eq!(cfg.resolved_api_key(), None);
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
 }
 
 /// CS-0059. Stray `[cloud] api_key = "..."` lines that pre-date
@@ -305,13 +266,9 @@ project = "cook"
 #[test]
 fn legacy_toml_api_key_field_silently_ignored() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        std::env::set_var("COOK_CLOUD_API_KEY", "env-takes-precedence");
-    }
+    unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-takes-precedence"); }
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
@@ -335,19 +292,14 @@ api_key = "stale-toml-secret-should-be-ignored"
 #[test]
 fn publish_defaults_to_true_when_absent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-    assert!(
-        cfg.publish(),
-        "publish must default to true when [cloud] publish is unset"
-    );
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+    assert!(cfg.publish(), "publish must default to true when [cloud] publish is unset");
 }
 
 #[test]
 fn publish_false_parsed() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 publish = false
 "#,
@@ -361,9 +313,7 @@ fn publish_off_does_not_require_cloud_enabled() {
     // publish-off is orthogonal to cloud.enabled; a publish=false config with
     // cloud disabled loads cleanly (no project/endpoint required).
     let dir = tempfile::tempdir().expect("tempdir");
-    write_toml(
-        dir.path(),
-        r#"
+        write_toml(dir.path(), r#"
 [cloud]
 publish = false
 "#,
@@ -647,10 +597,7 @@ ignore_env = ["GITHUB_TOKEN"]
 fn auto_gc_defaults_to_false_when_file_absent() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-    assert!(
-        !cfg.auto_gc(),
-        "auto_gc must default to false with no cloud.toml at all"
-    );
+    assert!(!cfg.auto_gc(), "auto_gc must default to false with no cloud.toml at all");
 }
 
 #[test]
@@ -663,10 +610,7 @@ fn auto_gc_defaults_to_false_when_cache_section_empty() {
 "#,
     );
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-    assert!(
-        !cfg.auto_gc(),
-        "auto_gc must default to false with an empty [cache] section"
-    );
+    assert!(!cfg.auto_gc(), "auto_gc must default to false with an empty [cache] section");
 }
 
 #[test]
@@ -746,8 +690,7 @@ fn auto_gc_true_without_max_size_is_not_an_error() {
 auto_gc = true
 "#,
     );
-    let cfg = CloudConfig::load_or_default(dir.path())
-        .expect("auto_gc=true with no max_size must load fine");
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("auto_gc=true with no max_size must load fine");
     assert!(cfg.auto_gc());
     assert_eq!(cfg.max_size_bytes().expect("parse"), None);
 }

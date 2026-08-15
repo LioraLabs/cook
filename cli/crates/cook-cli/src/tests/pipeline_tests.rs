@@ -139,7 +139,8 @@ fn verify_json_survives_a_multiline_error_detail() {
     assert_eq!(parsed["errors"], 1);
     assert_eq!(parsed["divergences"], 1);
     assert_eq!(
-        parsed["units"][0]["detail"], "re-run failed:\n  cc: no such file\n\ttab\there",
+        parsed["units"][0]["detail"],
+        "re-run failed:\n  cc: no such file\n\ttab\there",
         "the detail must round-trip byte for byte, not merely parse"
     );
     assert_eq!(parsed["units"][1]["unit"], r#"we"ird\path"#);
@@ -178,10 +179,7 @@ fn the_engine_and_the_renderer_name_one_node_kind() {
 /// not change verb on its way to the renderer.
 #[test]
 fn the_unannotated_default_is_cooked() {
-    assert_eq!(
-        cook_engine::NodeKind::default(),
-        cook_progress::NodeKind::Cooked
-    );
+    assert_eq!(cook_engine::NodeKind::default(), cook_progress::NodeKind::Cooked);
     assert_eq!(
         cook_engine::RecipeKind::default(),
         cook_progress::event::RecipeKind::Recipe
@@ -210,15 +208,9 @@ fn the_wire_spelling_is_what_is_already_on_disk() {
         (P::Test, "test"),
         (P::Cooked, "cooked"),
     ] {
-        assert_eq!(
-            serde_json::to_string(&kind).expect("serialise"),
-            format!("\"{spelled}\"")
-        );
+        assert_eq!(serde_json::to_string(&kind).expect("serialise"), format!("\"{spelled}\""));
     }
     for (kind, spelled) in [(R::Recipe, "recipe"), (R::Chore, "chore")] {
-        assert_eq!(
-            serde_json::to_string(&kind).expect("serialise"),
-            format!("\"{spelled}\"")
-        );
+        assert_eq!(serde_json::to_string(&kind).expect("serialise"), format!("\"{spelled}\""));
     }
 }

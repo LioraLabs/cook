@@ -215,12 +215,7 @@ fn every_payload_reports_its_line() {
         2
     );
     assert_eq!(
-        WorkPayload::Probe {
-            key: "k".into(),
-            produce: "return 1".into(),
-            line: 3
-        }
-        .line(),
+        WorkPayload::Probe { key: "k".into(), produce: "return 1".into(), line: 3 }.line(),
         3
     );
     assert_eq!(
@@ -396,7 +391,7 @@ fn captured_unit_construction() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -434,7 +429,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                test_name: None,
+                            test_name: None,
 
                 after: Vec::new(),
             },
@@ -449,7 +444,7 @@ fn recipe_units_construction() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                test_name: None,
+                            test_name: None,
 
                 after: Vec::new(),
             },
@@ -559,7 +554,7 @@ fn captured_unit_probes_defaults_to_empty() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     assert!(cu.probes.is_empty());
 }
@@ -615,7 +610,7 @@ fn captured_unit_with_cache() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };

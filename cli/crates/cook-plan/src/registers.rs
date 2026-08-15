@@ -155,8 +155,8 @@ fn root_anchored_cookfile_label(workspace_root: &Path, member_dir: &Path) -> Str
     // `Workspace::load` canonicalizes `workspace_root`, but manually
     // constructed workspaces (tests) may pass a non-canonical root —
     // canonicalize both sides so strip_prefix compares like with like.
-    let root =
-        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+    let root = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
     let canon = std::fs::canonicalize(member_dir).unwrap_or_else(|_| member_dir.to_path_buf());
     match canon.join("Cookfile").strip_prefix(&root) {
         Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
@@ -244,7 +244,8 @@ pub fn register_workspace(
     // Backend for the `inputs <probe>` pre-pass only — see
     // `register_cookfile`'s parameter of the same name (COOK-359).
 ) -> Result<RegisteredWorkspace, PipelineError> {
-    let shared_outputs: SharedTerminalOutputs = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let shared_outputs: SharedTerminalOutputs =
+        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     let shared_member_outputs: SharedMemberOutputs =
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
 
@@ -295,8 +296,8 @@ pub fn register_workspace(
     // Register Cookfiles importees-first / root-last so every cross-Cookfile
     // `cook.dep_output` call sees its producer's terminal outputs already
     // populated in the shared map (see `cookfile_registration_order`).
-    let root_canon =
-        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
+    let root_canon = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
     for dir in cookfile_registration_order(workspace) {
         let is_root = dir == root_canon;
         let (member, prefix): (&LoadedCookfile, String) = if is_root {
@@ -312,22 +313,20 @@ pub fn register_workspace(
 
         let alias_dirs = workspace.alias_dirs_for(&member.dir);
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
-        let mut builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
-            .with_shared_terminal_outputs(shared_outputs.clone())
-            .with_workspace_root(workspace.workspace_root.clone())
-            .with_shared_member_outputs(shared_member_outputs.clone())
-            .with_alias_dirs(alias_dirs.clone())
-            .with_alias_qualified_prefixes(alias_qp.clone())
-            .with_cookfile_label(root_anchored_cookfile_label(
-                &workspace.workspace_root,
-                &member.dir,
-            ))
-            .with_reachable_names(
-                reachable_by_prefix
-                    .get(&prefix)
-                    .cloned()
-                    .unwrap_or_default(),
-            );
+        let mut builder =
+            member_base_builder(member, &prefix, is_root, config, env_overrides)?
+                .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_workspace_root(workspace.workspace_root.clone())
+                .with_shared_member_outputs(shared_member_outputs.clone())
+                .with_alias_dirs(alias_dirs.clone())
+                .with_alias_qualified_prefixes(alias_qp.clone())
+                .with_cookfile_label(root_anchored_cookfile_label(
+                    &workspace.workspace_root,
+                    &member.dir,
+                ))
+                .with_reachable_names(
+                    reachable_by_prefix.get(&prefix).cloned().unwrap_or_default(),
+                );
         // Bind the dispatch target to whichever member OWNS the targeted name.
         //
         // This used to bind only on the root Cookfile, on the premise that
@@ -503,8 +502,8 @@ pub fn list_workspace_names(
     let mut out: Vec<cook_register::RegisteredRecipePub> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names =
-            cook_register::list_names(builder, &member.lua_source).map_err(map_register_error)?;
+        let names = cook_register::list_names(builder, &member.lua_source)
+            .map_err(map_register_error)?;
         for mut n in names {
             n.name = if is_root {
                 n.name
@@ -540,8 +539,8 @@ pub fn codegen_with_module_recipes(
     let mut discovered: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for (member, canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names =
-            cook_register::list_names(builder, &member.lua_source).map_err(map_register_error)?;
+        let names = cook_register::list_names(builder, &member.lua_source)
+            .map_err(map_register_error)?;
         discovered.insert(canon, names.into_iter().map(|n| n.name).collect());
     }
     super::workspace::regenerate_lua_sources(workspace, &discovered)
@@ -645,10 +644,11 @@ fn workspace_requires_graph(
     };
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names =
-            cook_register::list_names(builder, &member.lua_source).map_err(map_register_error)?;
+        let names = cook_register::list_names(builder, &member.lua_source)
+            .map_err(map_register_error)?;
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
-        let local_names: BTreeSet<String> = names.iter().map(|n| n.name.clone()).collect();
+        let local_names: BTreeSet<String> =
+            names.iter().map(|n| n.name.clone()).collect();
         for n in &names {
             let qname = qualify_name(&n.name, &prefix);
             let requires: Vec<String> = n
@@ -659,9 +659,7 @@ fn workspace_requires_graph(
             if n.kind != cook_register::RecipeKind::Chore {
                 graph.non_chores.insert(qname.clone());
             }
-            graph
-                .owner
-                .insert(qname.clone(), (prefix.clone(), n.name.clone()));
+            graph.owner.insert(qname.clone(), (prefix.clone(), n.name.clone()));
             graph.requires.insert(qname, requires);
         }
     }
@@ -714,7 +712,8 @@ fn merge_into(
     // references that callers may have produced explicitly. Intra-Cookfile
     // requires get the prefix; cross-Cookfile or already-qualified ones pass
     // through untouched.
-    let local_names: BTreeSet<String> = rc.names.iter().map(|n| n.name.clone()).collect();
+    let local_names: BTreeSet<String> =
+        rc.names.iter().map(|n| n.name.clone()).collect();
     // Resolve one dep name to its workspace-global key. Shared by the `names`
     // requires-rewrite and the `units_by_recipe` deps-rewrite below so the two
     // views cannot disagree about what a dep name means (COOK-352) — and
@@ -792,9 +791,7 @@ fn map_register_error(e: cook_register::RegisterError) -> PipelineError {
         } if declared == 0
             && supplied == 1
             && !first_unmatched.is_empty()
-            && first_unmatched
-                .chars()
-                .all(cook_contracts::naming::is_bare_name_char) =>
+            && first_unmatched.chars().all(cook_contracts::naming::is_bare_name_char) =>
         {
             let base = e.to_string();
             PipelineError::Other(format!(

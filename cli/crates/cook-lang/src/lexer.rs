@@ -282,7 +282,9 @@ fn split_use_arguments(text: &str, line: usize) -> Result<Vec<String>, LexError>
             args.push(after_quote[..end].to_string());
             rest = after_quote[end + 1..].trim_start();
         } else {
-            let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+            let end = rest
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(rest.len());
             args.push(rest[..end].to_string());
             rest = rest[end..].trim_start();
         }
@@ -320,7 +322,11 @@ fn classify_use_arguments(args: &[String], line: usize) -> Result<(String, Strin
     // Positional, not by value: comparing the found comment against `args[0]`
     // by equality let `use #a #a` slip through, because the second `#a` IS
     // equal to the first.
-    if let Some((index, comment)) = args.iter().enumerate().find(|(_, a)| a.starts_with('#')) {
+    if let Some((index, comment)) = args
+        .iter()
+        .enumerate()
+        .find(|(_, a)| a.starts_with('#'))
+    {
         if index > 0 {
             return Err(LexError::UseTrailingComment {
                 argument: comment.clone(),
@@ -387,7 +393,9 @@ fn parse_name(text: &str, line: usize) -> Result<(String, &str), LexError> {
             .ok_or(LexError::UnterminatedString { line })?;
         Ok((rest[..end].to_string(), rest[end + 1..].trim_start()))
     } else {
-        let end = text.find(|c: char| !is_ident_char(c)).unwrap_or(text.len());
+        let end = text
+            .find(|c: char| !is_ident_char(c))
+            .unwrap_or(text.len());
         if end == 0 || !is_ident_start(text.as_bytes()[0] as char) {
             return Err(LexError::MissingRecipeName { line });
         }

@@ -258,10 +258,7 @@ recipe consumer : producer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "consumer");
-    assert!(
-        ok,
-        "a dep-list edge orders producer first — MUST NOT fire:\n{combined}"
-    );
+    assert!(ok, "a dep-list edge orders producer first — MUST NOT fire:\n{combined}");
     assert!(
         tmp.path().join("out.bin").exists(),
         "the build MUST actually run:\n{combined}"
@@ -334,10 +331,7 @@ recipe consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "consumer");
-    assert!(
-        ok,
-        "a $<sigil> edge orders producer first — MUST NOT fire:\n{combined}"
-    );
+    assert!(ok, "a $<sigil> edge orders producer first — MUST NOT fire:\n{combined}");
     assert!(
         tmp.path().join("out.bin").exists(),
         "the build MUST actually run:\n{combined}"
@@ -418,10 +412,7 @@ recipe consumer
 
     // The run still fails — but on the honest `cp: cannot stat`, at execution
     // time, NOT on a §16.1.2 plan-time rejection.
-    assert!(
-        !ok,
-        "consumer still fails: nothing schedules producer:\n{combined}"
-    );
+    assert!(!ok, "consumer still fails: nothing schedules producer:\n{combined}");
     assert!(
         !combined.contains("producer"),
         "§16.1.2 is CLOSURE-scoped: with only `consumer` in the closure the \
@@ -451,10 +442,7 @@ fn same_recipe_output_then_input_does_not_fire() {
     );
 
     let (ok, combined) = run_cook(tmp.path(), "solo");
-    assert!(
-        ok,
-        "a recipe reading its own output MUST NOT fire:\n{combined}"
-    );
+    assert!(ok, "a recipe reading its own output MUST NOT fire:\n{combined}");
 }
 
 // ---------------------------------------------------------------------------
@@ -546,10 +534,7 @@ recipe all: producer consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "all");
-    assert!(
-        ok,
-        "naming the producer MUST repair the example:\n{combined}"
-    );
+    assert!(ok, "naming the producer MUST repair the example:\n{combined}");
     assert_eq!(
         fs::read_to_string(tmp.path().join("out.bin")).unwrap(),
         "a",
@@ -600,10 +585,7 @@ recipe all : producer consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "all");
-    assert!(
-        !ok,
-        "the cold build still fails on its own terms:\n{combined}"
-    );
+    assert!(!ok, "the cold build still fails on its own terms:\n{combined}");
     assert!(
         !combined.contains("read-after-write with no ordering edge"),
         "§16.1.2 MUST NOT claim to cover an `inputs`-sourced literal: on \

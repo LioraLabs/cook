@@ -59,9 +59,10 @@ struct RegistryRaw {
 }
 
 pub fn parse_cook_toml(path: &Path) -> Result<(ManifestModules, ManifestRegistry)> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let parsed: CookToml =
-        toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let parsed: CookToml = toml::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
     let modules = ManifestModules {
         modules: parsed.modules.unwrap_or_default(),
     };

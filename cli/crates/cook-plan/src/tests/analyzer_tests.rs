@@ -33,20 +33,14 @@ fn prefix_diamond_prefers_root_direct_alias() {
         ("/r", "b", "/r/b"),
         ("/r/b", "a", "/r/a"),
     ]);
-    assert_eq!(
-        find_full_prefix(&direct_first, Path::new("/r"), Path::new("/r/a")),
-        "a"
-    );
+    assert_eq!(find_full_prefix(&direct_first, Path::new("/r"), Path::new("/r/a")), "a");
 
     let direct_last = ns(&[
         ("/r", "b", "/r/b"),
         ("/r/b", "a", "/r/a"),
         ("/r", "a", "/r/a"),
     ]);
-    assert_eq!(
-        find_full_prefix(&direct_last, Path::new("/r"), Path::new("/r/a")),
-        "a"
-    );
+    assert_eq!(find_full_prefix(&direct_last, Path::new("/r"), Path::new("/r/a")), "a");
 }
 
 #[test]
@@ -58,10 +52,7 @@ fn prefix_diamond_equal_depth_breaks_ties_by_declaration_order() {
         ("/r/x", "lib", "/r/lib"),
         ("/r/y", "lib", "/r/lib"),
     ]);
-    assert_eq!(
-        find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")),
-        "x.lib"
-    );
+    assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")), "x.lib");
 }
 
 #[test]
@@ -75,10 +66,7 @@ fn prefix_diamond_shortest_chain_wins_over_deeper() {
         ("/r/mid", "lib", "/r/lib"),
         ("/r", "direct", "/r/lib"),
     ]);
-    assert_eq!(
-        find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")),
-        "direct"
-    );
+    assert_eq!(find_full_prefix(&map, Path::new("/r"), Path::new("/r/lib")), "direct");
 }
 
 fn info(inputs: Vec<&str>, serves: Vec<&str>, requires: Vec<&str>) -> RecipeInfo {
@@ -137,12 +125,8 @@ fn test_path_match_does_not_imply_dep() {
     // After the rule removal, `compile` MUST NOT be pulled in as a dep
     // of `build`.
     let order = topological_sort(&recipes, "build").unwrap();
-    assert_eq!(
-        order,
-        vec!["build"],
-        "path-match must not imply dep; got {:?}",
-        order
-    );
+    assert_eq!(order, vec!["build"],
+        "path-match must not imply dep; got {:?}", order);
 }
 
 #[test]

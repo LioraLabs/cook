@@ -129,10 +129,7 @@ pub fn list_builds(logs_root: &Path) -> io::Result<Vec<BuildSummary>> {
             continue;
         }
         let build_dir = entry.path();
-        let mtime = entry
-            .metadata()?
-            .modified()
-            .unwrap_or(std::time::UNIX_EPOCH);
+        let mtime = entry.metadata()?.modified().unwrap_or(std::time::UNIX_EPOCH);
         let summary = summarize_build_dir(&build_dir)?;
         summaries.push((summary, mtime));
     }
@@ -298,14 +295,9 @@ fn replay_events_jsonl(
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
-            Err(_) => {
-                diag.skipped_jsonl_lines += 1;
-                continue;
-            }
+            Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
         };
-        if line.trim().is_empty() {
-            continue;
-        }
+        if line.trim().is_empty() { continue; }
         // COOK-394: the line parses as the one wire schema. Version-gate
         // first (a typed parse would accept any `v`); then a typed-parse
         // failure under an ACCEPTED v with a `type` string is an unknown
@@ -341,9 +333,7 @@ fn replay_events_jsonl(
         match wire.event {
             WireEvent::RecipeStarted { recipe: name } => {
                 let rid = *recipe_ids.entry(name.clone()).or_insert_with(|| {
-                    let id = RecipeId::new(next_recipe);
-                    next_recipe += 1;
-                    id
+                    let id = RecipeId::new(next_recipe); next_recipe += 1; id
                 });
                 view.recipes.entry(rid).or_insert_with(|| RecipeView {
                     name,
@@ -365,16 +355,9 @@ fn replay_events_jsonl(
                     }
                 }
             }
-            WireEvent::NodeStarted {
-                recipe: r_name,
-                node: n_name,
-                kind,
-                ..
-            } => {
+            WireEvent::NodeStarted { recipe: r_name, node: n_name, kind, .. } => {
                 let rid = *recipe_ids.entry(r_name.clone()).or_insert_with(|| {
-                    let id = RecipeId::new(next_recipe);
-                    next_recipe += 1;
-                    id
+                    let id = RecipeId::new(next_recipe); next_recipe += 1; id
                 });
                 let recipe = view.recipes.entry(rid).or_insert_with(|| RecipeView {
                     name: r_name,
@@ -382,9 +365,7 @@ fn replay_events_jsonl(
                     nodes: BTreeMap::new(),
                 });
                 let nid = *node_ids.entry((rid, n_name.clone())).or_insert_with(|| {
-                    let id = NodeId::new(next_node);
-                    next_node += 1;
-                    id
+                    let id = NodeId::new(next_node); next_node += 1; id
                 });
                 recipe.nodes.entry(nid).or_insert(NodeView {
                     name: n_name,

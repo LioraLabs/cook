@@ -187,10 +187,7 @@ fn budget_line_absent_without_a_budget() {
 fn budget_line_shows_percentage_under_budget() {
     let report = summarize(vec![candidate(None, "ns", 1_200_000, 1)]);
     let rendered = render(&report, Path::new("/tmp/store"), Some(20_000_000_000));
-    assert!(
-        rendered.contains("Budget: 1.2 MB of 20.0 GB (0% used)"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("Budget: 1.2 MB of 20.0 GB (0% used)"), "{rendered}");
     assert!(!rendered.contains("OVER BUDGET"));
 }
 
@@ -199,10 +196,7 @@ fn budget_line_carries_over_budget_suffix_and_overage() {
     let report = summarize(vec![candidate(None, "ns", 1_500_000_000, 1)]);
     let rendered = render(&report, Path::new("/tmp/store"), Some(1_000_000_000));
     assert!(rendered.contains("OVER BUDGET"), "{rendered}");
-    assert!(
-        rendered.contains("500.0 MB"),
-        "expected the overage amount:\n{rendered}"
-    );
+    assert!(rendered.contains("500.0 MB"), "expected the overage amount:\n{rendered}");
 }
 
 #[test]

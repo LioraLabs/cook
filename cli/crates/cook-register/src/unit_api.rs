@@ -77,10 +77,7 @@ fn classify_declared_input(working_dir: &Path, path: &str) -> cook_contracts::ca
     };
     // `metadata` rather than `symlink_metadata`: a symlink to a regular file is
     // a file the unit reads, and the cache hashes what it points at.
-    if std::fs::metadata(&resolved)
-        .map(|m| m.is_file())
-        .unwrap_or(false)
-    {
+    if std::fs::metadata(&resolved).map(|m| m.is_file()).unwrap_or(false) {
         return cook_contracts::cache::DeclaredInput::path(path);
     }
     if cook_cache::is_terminal_output(path) {

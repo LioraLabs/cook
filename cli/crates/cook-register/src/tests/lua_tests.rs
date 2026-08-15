@@ -2,9 +2,7 @@ use super::*;
 
 fn setup() -> (Lua, SharedExportStore) {
     let lua = Lua::new();
-    lua.globals()
-        .set("cook", lua.create_table().unwrap())
-        .unwrap();
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
     let store: SharedExportStore = Rc::new(RefCell::new(BTreeMap::new()));
     register_export_api(&lua, store.clone()).unwrap();
     (lua, store)

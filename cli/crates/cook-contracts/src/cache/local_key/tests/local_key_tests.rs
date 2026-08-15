@@ -16,8 +16,10 @@ fn key(outputs: &[&str], inputs: &[&str], command_hash: u64, env: u64) -> String
 /// exclusion 3 requires the identity to separate units by.
 fn keyed(outputs: &[&str], inputs: &[&str], command_hash: u64, env: u64, seal: &[&str]) -> String {
     let outputs: Vec<String> = outputs.iter().map(|s| s.to_string()).collect();
-    let inputs: Vec<crate::cache::DeclaredInput> = inputs.iter().map(|s| (*s).into()).collect();
-    let seal: std::collections::BTreeSet<String> = seal.iter().map(|s| s.to_string()).collect();
+    let inputs: Vec<crate::cache::DeclaredInput> =
+        inputs.iter().map(|s| (*s).into()).collect();
+    let seal: std::collections::BTreeSet<String> =
+        seal.iter().map(|s| s.to_string()).collect();
     build_local_cache_key("Cookfile", "r", &outputs, &inputs, command_hash, env, &seal)
 }
 
@@ -41,10 +43,7 @@ fn a_producing_units_key_ignores_inputs_and_command() {
 #[test]
 fn an_observing_unit_is_identified_by_a_declaration_digest() {
     let k = key(&[], &["a.c"], 0xbeef, 0);
-    assert!(
-        k.starts_with(OBSERVING_KEY_MARKER),
-        "observing keys carry the marker: {k}"
-    );
+    assert!(k.starts_with(OBSERVING_KEY_MARKER), "observing keys carry the marker: {k}");
     assert_eq!(k.len(), 17, "marker plus 16 hex digits: {k}");
     assert!(k[1..].chars().all(|c| c.is_ascii_hexdigit()));
 }
@@ -76,18 +75,12 @@ fn the_two_identity_spaces_do_not_overlap() {
 fn units_differing_only_past_the_first_input_are_distinct() {
     let a = key(&[], &["shared.c", "one.c"], 0xbeef, 0);
     let b = key(&[], &["shared.c", "two.c"], 0xbeef, 0);
-    assert_ne!(
-        a, b,
-        "every declared input reaches the identity, not just the first"
-    );
+    assert_ne!(a, b, "every declared input reaches the identity, not just the first");
 }
 
 #[test]
 fn units_differing_only_in_input_count_are_distinct() {
-    assert_ne!(
-        key(&[], &["a.c"], 0xbeef, 0),
-        key(&[], &["a.c", "b.c"], 0xbeef, 0)
-    );
+    assert_ne!(key(&[], &["a.c"], 0xbeef, 0), key(&[], &["a.c", "b.c"], 0xbeef, 0));
 }
 
 /// A unit declaring no inputs at all keyed as `@<command-hash>` under the old
@@ -110,10 +103,7 @@ fn units_differing_only_in_command_are_distinct() {
 /// not hash like the concatenation of a different one.
 #[test]
 fn input_paths_cannot_run_together() {
-    assert_ne!(
-        key(&[], &["ab", "c"], 0xbeef, 0),
-        key(&[], &["a", "bc"], 0xbeef, 0)
-    );
+    assert_ne!(key(&[], &["ab", "c"], 0xbeef, 0), key(&[], &["a", "bc"], 0xbeef, 0));
 }
 
 // --- what the identity deliberately does NOT depend on ---
@@ -126,10 +116,7 @@ fn input_paths_cannot_run_together() {
 fn the_identity_is_stable_across_everything_but_the_declaration() {
     let first = key(&[], &["a.c", "b.c"], 0xbeef, 0x1234);
     let again = key(&[], &["a.c", "b.c"], 0xbeef, 0x1234);
-    assert_eq!(
-        first, again,
-        "the identity is a pure function of the declaration"
-    );
+    assert_eq!(first, again, "the identity is a pure function of the declaration");
 }
 
 /// §17.4: moving a test within a recipe, or a recipe between Cookfiles, MUST
@@ -168,10 +155,7 @@ fn reaching_one_path_twice_does_not_change_the_identity() {
 /// silent one.
 #[test]
 fn input_order_is_part_of_the_declaration() {
-    assert_ne!(
-        key(&[], &["a.c", "b.c"], 0xbeef, 0),
-        key(&[], &["b.c", "a.c"], 0xbeef, 0)
-    );
+    assert_ne!(key(&[], &["a.c", "b.c"], 0xbeef, 0), key(&[], &["b.c", "a.c"], 0xbeef, 0));
 }
 
 /// The effective seal key set separates two units that declare nothing else
@@ -228,8 +212,5 @@ fn adding_a_seal_key_moves_the_identity() {
 /// rendered as the marker `:` and sixteen lower-hex digits.
 #[test]
 fn the_observing_identity_is_these_exact_bytes() {
-    assert_eq!(
-        keyed(&[], &["a.c", "b.c"], 0xbeef, 0, &["toolchain"]),
-        ":cee58b942fa4c6ff"
-    );
+    assert_eq!(keyed(&[], &["a.c", "b.c"], 0xbeef, 0, &["toolchain"]), ":cee58b942fa4c6ff");
 }

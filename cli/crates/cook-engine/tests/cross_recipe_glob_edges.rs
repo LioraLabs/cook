@@ -196,15 +196,11 @@ fn literal_input_inside_directory_output_is_rejected() {
         "must emit the register-time terminal-output diagnostic, not a runtime error: {combined}"
     );
     assert!(
-        combined.contains("recipe 'a'")
-            || combined.contains("upstream")
-            || combined.contains("'a'"),
+        combined.contains("recipe 'a'") || combined.contains("upstream") || combined.contains("'a'"),
         "diagnostic must name upstream recipe 'a': {combined}"
     );
     assert!(
-        combined.contains("recipe 'b'")
-            || combined.contains("downstream")
-            || combined.contains("'b'"),
+        combined.contains("recipe 'b'") || combined.contains("downstream") || combined.contains("'b'"),
         "diagnostic must name downstream recipe 'b': {combined}"
     );
     assert!(

@@ -91,7 +91,8 @@ fn module_recipe_dep_ref_on_bare_cookfile() {
 
     let (ok, diag) = run_cook(tmp.path(), "consume");
     assert!(ok, "bare cook consume failed:\n{diag}");
-    let produced = std::fs::read_to_string(tmp.path().join("build/out.txt")).expect("out.txt");
+    let produced =
+        std::fs::read_to_string(tmp.path().join("build/out.txt")).expect("out.txt");
     assert_eq!(produced, "hi");
 }
 

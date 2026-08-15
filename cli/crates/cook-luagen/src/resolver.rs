@@ -41,11 +41,11 @@ pub struct ResolveCtx<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BuiltinKind {
-    In,                                // {in}
-    InAccessor(String),                // {in.stem} etc — accessor stored
-    Out,                               // {out}
-    OutAccessor(String),               // {out.stem} etc
-    OutIndexed(usize),                 // {out_1}
+    In,                    // {in}
+    InAccessor(String),    // {in.stem} etc — accessor stored
+    Out,                   // {out}
+    OutAccessor(String),   // {out.stem} etc
+    OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
     /// COOK-63 §9.3: `$<in>` — the whole current data member.
     Item,

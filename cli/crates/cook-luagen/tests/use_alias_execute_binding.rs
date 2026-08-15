@@ -21,7 +21,11 @@ const GLUED: &str = r#"local greet = cook.load_module("greet"); greet."#;
 
 fn lua(src: &str) -> String {
     let cookfile = cook_lang::parse(src).expect("fixture must parse");
-    let names: BTreeSet<String> = cookfile.recipes.iter().map(|r| r.name.clone()).collect();
+    let names: BTreeSet<String> = cookfile
+        .recipes
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
     cook_luagen::generate_checked(&cookfile, &names)
         .expect("fixture must lower")
         .0

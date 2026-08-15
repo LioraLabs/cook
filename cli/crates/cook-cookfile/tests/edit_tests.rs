@@ -39,10 +39,7 @@ fn splices_into_an_empty_list_without_a_leading_comma() {
     let src = "recipe app\n    cook_cc.bin({ links = {} })\n";
     let out = splice_into_field(src, "app", "links", "\"mathlib\"", AbsentField::Refuse).unwrap();
     assert!(out.contains("{ links = {\"mathlib\"} }"), "got: {out}");
-    assert!(
-        !out.contains(", \"mathlib\""),
-        "no leading comma on an empty list"
-    );
+    assert!(!out.contains(", \"mathlib\""), "no leading comma on an empty list");
 }
 
 #[test]
@@ -59,24 +56,16 @@ fn a_brace_inside_a_string_does_not_close_the_list() {
     // The reason field location is a quote-aware scan and not `find('}')`.
     // Getting this wrong splices into the middle of a string literal.
     let src = "recipe app\n    cook_cc.bin({ sources = { \"src/a}b.cpp\" } })\n";
-    let out =
-        splice_into_field(src, "app", "sources", "\"src/c.cpp\"", AbsentField::Refuse).unwrap();
-    assert!(
-        out.contains("{ \"src/a}b.cpp\", \"src/c.cpp\" }"),
-        "got: {out}"
-    );
+    let out = splice_into_field(src, "app", "sources", "\"src/c.cpp\"", AbsentField::Refuse).unwrap();
+    assert!(out.contains("{ \"src/a}b.cpp\", \"src/c.cpp\" }"), "got: {out}");
 }
 
 #[test]
 fn a_field_name_appearing_inside_another_token_is_not_matched() {
     // `find("links")` would hit `mathlinks` first and splice into `sources`.
-    let src =
-        "recipe app\n    cook_cc.bin({ sources = { \"mathlinks.cpp\" }, links = { \"m\" } })\n";
+    let src = "recipe app\n    cook_cc.bin({ sources = { \"mathlinks.cpp\" }, links = { \"m\" } })\n";
     let out = splice_into_field(src, "app", "links", "\"n\"", AbsentField::Refuse).unwrap();
-    assert!(
-        out.contains("{ \"mathlinks.cpp\" }"),
-        "sources untouched: {out}"
-    );
+    assert!(out.contains("{ \"mathlinks.cpp\" }"), "sources untouched: {out}");
     assert!(out.contains("links = { \"m\", \"n\" }"), "got: {out}");
 }
 
@@ -105,10 +94,7 @@ recipe app
 ";
     let out = splice_into_field(src, "app", "links", "\"b\"", AbsentField::Refuse).unwrap();
     assert!(out.contains("links   = { \"a\", \"b\" }"), "got: {out}");
-    assert!(
-        out.contains("warnings = { \"all\", \"extra\" }"),
-        "nested table untouched"
-    );
+    assert!(out.contains("warnings = { \"all\", \"extra\" }"), "nested table untouched");
 }
 
 // ---------------------------------------------------------------------------
@@ -119,12 +105,7 @@ recipe app
 #[test]
 fn missing_recipe_is_named() {
     let err = splice_into_field(APP, "nope", "links", "\"x\"", AbsentField::Refuse).unwrap_err();
-    assert_eq!(
-        err,
-        EditError::RecipeNotFound {
-            recipe: "nope".into()
-        }
-    );
+    assert_eq!(err, EditError::RecipeNotFound { recipe: "nope".into() });
     assert!(err.to_string().contains("no recipe named 'nope'"));
 }
 
@@ -132,36 +113,24 @@ fn missing_recipe_is_named() {
 fn recipe_without_a_module_call_is_named() {
     let src = "recipe app\n    cook \"out\" { echo hi > $<out> }\n";
     let err = splice_into_field(src, "app", "links", "\"x\"", AbsentField::Refuse).unwrap_err();
-    assert_eq!(
-        err,
-        EditError::NoModuleCall {
-            recipe: "app".into()
-        }
-    );
+    assert_eq!(err, EditError::NoModuleCall { recipe: "app".into() });
 }
 
 #[test]
 fn missing_field_reports_the_manual_fix() {
     let src = "recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" } })\n";
-    let err =
-        splice_into_field(src, "app", "links", "\"mathlib\"", AbsentField::Refuse).unwrap_err();
+    let err = splice_into_field(src, "app", "links", "\"mathlib\"", AbsentField::Refuse).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("couldn't find 'links'"), "got: {msg}");
     assert!(msg.contains("cook_cc.bin"), "names the call: {msg}");
-    assert!(
-        msg.contains("add \"mathlib\" to it manually"),
-        "actionable: {msg}"
-    );
+    assert!(msg.contains("add \"mathlib\" to it manually"), "actionable: {msg}");
 }
 
 #[test]
 fn a_field_that_is_not_a_list_is_refused_rather_than_mangled() {
     let src = "recipe app\n    cook_cc.bin({ links = shared_links })\n";
     let err = splice_into_field(src, "app", "links", "\"x\"", AbsentField::Refuse).unwrap_err();
-    assert!(
-        matches!(err, EditError::FieldNotAList { .. }),
-        "got: {err:?}"
-    );
+    assert!(matches!(err, EditError::FieldNotAList { .. }), "got: {err:?}");
     assert!(err.to_string().contains("is not a `{ ... }` list"));
 }
 
@@ -229,10 +198,8 @@ recipe app
     );
     // Anchored after the trailing comma — which already separates, so no
     // second comma is added — and ahead of the comment, which stays put.
-    assert!(
-        out.contains("\"mathlib\", \"physlib\"   -- see docs/build.md {section 2}"),
-        "got: {out}"
-    );
+    assert!(out.contains("\"mathlib\", \"physlib\"   -- see docs/build.md {section 2}"),
+        "got: {out}");
 }
 
 // ---------------------------------------------------------------------------
@@ -280,10 +247,7 @@ fn a_nested_field_of_the_same_name_is_not_edited() {
     // is the one that would have survived review.
     let src = "recipe app\n    cook_cc.bin({ opts = { links = { \"x\" } }, links = { \"a\" } })\n";
     let out = splice_into_field(src, "app", "links", "\"b\"", AbsentField::Refuse).unwrap();
-    assert!(
-        out.contains("opts = { links = { \"x\" } }"),
-        "nested untouched: {out}"
-    );
+    assert!(out.contains("opts = { links = { \"x\" } }"), "nested untouched: {out}");
     assert!(out.contains(", links = { \"a\", \"b\" } }"), "got: {out}");
 }
 
@@ -296,10 +260,7 @@ fn a_bracketed_key_is_refused_by_name_rather_than_mis_aimed() {
     // edited the next candidate would not be a limit, it would be the bug.
     let src = "recipe app\n    cook_cc.bin({ [\"links\"] = { \"a\" } })\n";
     let err = splice_into_field(src, "app", "links", "\"b\"", AbsentField::Refuse).unwrap_err();
-    assert!(
-        matches!(err, EditError::FieldNotFound { .. }),
-        "got: {err:?}"
-    );
+    assert!(matches!(err, EditError::FieldNotFound { .. }), "got: {err:?}");
 }
 
 #[test]
@@ -588,10 +549,7 @@ fn the_edit_is_exactly_the_inserted_bytes_and_nothing_else() {
     let insertion = "use cook_pnpm\n";
     assert_eq!(out.len(), APP.len() + insertion.len());
     assert_eq!(out.replacen(insertion, "", 1), APP);
-    assert_eq!(
-        out,
-        "use cook_cc\nuse cook_pnpm\n".to_string() + &APP["use cook_cc\n".len()..]
-    );
+    assert_eq!(out, "use cook_cc\nuse cook_pnpm\n".to_string() + &APP["use cook_cc\n".len()..]);
 }
 
 #[test]
@@ -632,10 +590,7 @@ fn an_unparseable_cookfile_is_refused_before_any_use_is_added() {
     // has is never compounded by an insertion landing somewhere arbitrary,
     // and an offset derived from a tree full of ERROR nodes is arbitrary.
     let src = "recipe app\n    cook_cc.bin({ links = { \"a\" }\n";
-    assert_eq!(
-        ensure_use(src, "cook_cc").unwrap_err(),
-        EditError::Unparseable
-    );
+    assert_eq!(ensure_use(src, "cook_cc").unwrap_err(), EditError::Unparseable);
 }
 
 // ---------------------------------------------------------------------------
@@ -679,10 +634,7 @@ recipe app
     let out = splice_into_field(src, "app", "links", "\"math\"", AbsentField::Create).unwrap();
     assert!(out.contains("-- entry point"), "got: {out}");
     assert!(out.contains("standard = cxx_std,"), "got: {out}");
-    assert_eq!(
-        out.len(),
-        src.len() + "\n        links = { \"math\" },".len()
-    );
+    assert_eq!(out.len(), src.len() + "\n        links = { \"math\" },".len());
 }
 
 #[test]
@@ -757,8 +709,7 @@ fn a_field_created_in_an_empty_argument_table_needs_no_separator() {
     // Consistent with an empty list, which takes the entry with no leading
     // comma and no invented padding: `{}` has no style to preserve.
     let src = "recipe app\n    cook_cc.headers({})\n";
-    let out =
-        splice_into_field(src, "app", "includes", "\"include\"", AbsentField::Create).unwrap();
+    let out = splice_into_field(src, "app", "includes", "\"include\"", AbsentField::Create).unwrap();
     assert_eq!(
         out,
         "recipe app\n    cook_cc.headers({includes = { \"include\" }})\n"
@@ -798,15 +749,11 @@ fn creating_does_not_relax_a_missing_recipe_or_a_missing_call() {
     let src = "recipe app\n    cook \"out\" { echo hi > $<out> }\n";
     assert_eq!(
         splice_into_field(src, "ghost", "links", "\"b\"", AbsentField::Create).unwrap_err(),
-        EditError::RecipeNotFound {
-            recipe: "ghost".into()
-        }
+        EditError::RecipeNotFound { recipe: "ghost".into() }
     );
     assert_eq!(
         splice_into_field(src, "app", "links", "\"b\"", AbsentField::Create).unwrap_err(),
-        EditError::NoModuleCall {
-            recipe: "app".into()
-        }
+        EditError::NoModuleCall { recipe: "app".into() }
     );
 }
 
@@ -844,8 +791,7 @@ fn a_commented_out_field_is_created_rather_than_revived() {
     // §22.13 already says a commented-out `links` is not the field. It follows
     // that creating one is the right answer here, and that the author's
     // comment is left exactly where it is.
-    let src =
-        "recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" } --[[ links = { \"old\" } ]] })\n";
+    let src = "recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" } --[[ links = { \"old\" } ]] })\n";
     let out = splice_into_field(src, "app", "links", "\"math\"", AbsentField::Create).unwrap();
     assert!(out.contains("--[[ links = { \"old\" } ]]"), "got: {out}");
     assert!(
@@ -1007,10 +953,7 @@ recipe app
     })
 ";
     let out = splice_into_field(src, "app", "links", "\"math\"", AbsentField::Create).unwrap();
-    assert!(
-        out.contains("more ]]\n        links = { \"math\" },\n"),
-        "got: {out}"
-    );
+    assert!(out.contains("more ]]\n        links = { \"math\" },\n"), "got: {out}");
     // The claim, stated as the thing a caller depends on: what was written can
     // be read back.
     assert_eq!(
@@ -1054,12 +997,8 @@ fn a_semicolon_separated_table_keeps_its_separator() {
     // And the read agrees with both: a `;` is a separator, not part of an
     // entry, so an idempotence check does not compare `"a";` against `"a"`.
     assert_eq!(
-        field_entries(
-            "recipe app\n    cook_cc.bin({ links = { \"a\"; \"b\" } })\n",
-            "app",
-            "links"
-        )
-        .unwrap(),
+        field_entries("recipe app\n    cook_cc.bin({ links = { \"a\"; \"b\" } })\n", "app", "links")
+            .unwrap(),
         Some(vec!["\"a\"".to_string(), "\"b\"".to_string()])
     );
 }
@@ -1073,10 +1012,7 @@ recipe app
     })
 ";
     let out = splice_into_field(src, "app", "links", "\"math\"", AbsentField::Create).unwrap();
-    assert!(
-        out.contains("\n        links = { \"math\" };\n"),
-        "got: {out}"
-    );
+    assert!(out.contains("\n        links = { \"math\" };\n"), "got: {out}");
 }
 
 #[test]
@@ -1088,9 +1024,7 @@ fn a_name_that_cannot_be_written_as_a_key_is_refused_rather_than_written() {
     for field in ["", "a.b", "end", "my links", "2fast"] {
         assert_eq!(
             splice_into_field(src, "app", field, "\"math\"", AbsentField::Create).unwrap_err(),
-            EditError::UnspellableField {
-                field: field.to_string()
-            },
+            EditError::UnspellableField { field: field.to_string() },
             "field {field:?} must be refused"
         );
     }
@@ -1109,8 +1043,5 @@ fn a_crlf_file_keeps_its_line_endings() {
         out,
         "recipe app\r\n    cook_cc.bin({\r\n        sources = { \"a.cpp\" },\r\n        links = { \"math\" },\r\n    })\r\n"
     );
-    assert!(
-        !out.contains("\n\n"),
-        "no bare newline was introduced: {out:?}"
-    );
+    assert!(!out.contains("\n\n"), "no bare newline was introduced: {out:?}");
 }

@@ -73,7 +73,9 @@ pub fn parse_prerequisites(content: &str, source_path: &str) -> Result<Vec<Strin
     // Join continuation lines: '\\\r\n' and '\\\n' both become a single space.
     // CRLF is processed first so the trailing '\r' doesn't leak into a token
     // when the file uses Windows line endings.
-    let joined = after_colon.replace("\\\r\n", " ").replace("\\\n", " ");
+    let joined = after_colon
+        .replace("\\\r\n", " ")
+        .replace("\\\n", " ");
 
     // Tokenise on any whitespace and apply filter rules. Preserve first-occurrence order.
     let mut seen = std::collections::HashSet::new();

@@ -140,8 +140,7 @@ pub fn resolve_gather_glob(
             )
         })
     });
-    if (raw.starts_with('/') && anchored.is_none())
-        || raw.starts_with("///")
+    if (raw.starts_with('/') && anchored.is_none()) || raw.starts_with("///")
         || matches!(anchored, Some("") | Some(".."))
         || anchored_escapes
     {

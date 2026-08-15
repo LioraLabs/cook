@@ -49,7 +49,8 @@ pub fn cmd_cache_du(globals: &Globals) -> Result<(), CookError> {
     // that guarantee (its `None` branch checks existence BEFORE
     // constructing a backend); a missing store renders the same zero-total
     // report an empty one would.
-    let candidates = crate::cache_gc::enumerate_store(&store)?.unwrap_or_default();
+    let candidates =
+        crate::cache_gc::enumerate_store(&store)?.unwrap_or_default();
 
     let report = summarize(candidates);
     print!("{}", render(&report, &store, budget));
@@ -171,11 +172,7 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
     out.push_str("By namespace:\n");
     let ns_total = report.by_namespace.len();
     for (ns, bytes, count) in report.by_namespace.iter().take(MAX_NAMESPACE_ROWS) {
-        let label = if ns.is_empty() {
-            "<no sidecar>"
-        } else {
-            ns.as_str()
-        };
+        let label = if ns.is_empty() { "<no sidecar>" } else { ns.as_str() };
         out.push_str(&format!(
             "  {label}: {count} objects, {}\n",
             human_size(*bytes)
@@ -187,16 +184,10 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
 
     out.push('\n');
     if let Some(oldest) = report.oldest {
-        out.push_str(&format!(
-            "Oldest: {}\n",
-            cook_contracts::timestamp::format_rfc3339_secs(oldest)
-        ));
+        out.push_str(&format!("Oldest: {}\n", cook_contracts::timestamp::format_rfc3339_secs(oldest)));
     }
     if let Some(newest) = report.newest {
-        out.push_str(&format!(
-            "Newest: {}\n",
-            cook_contracts::timestamp::format_rfc3339_secs(newest)
-        ));
+        out.push_str(&format!("Newest: {}\n", cook_contracts::timestamp::format_rfc3339_secs(newest)));
     }
 
     if let Some(budget) = budget {

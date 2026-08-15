@@ -171,10 +171,7 @@ fn an_existing_gitignore_is_appended_to_rather_than_replaced() {
     wire_use_declarations(dir.path(), &names(&["cook_cc"])).expect("wires");
 
     let ignored = std::fs::read_to_string(dir.path().join(".gitignore")).expect(".gitignore");
-    assert!(
-        ignored.starts_with("build/\n"),
-        "the author's rules survive"
-    );
+    assert!(ignored.starts_with("build/\n"), "the author's rules survive");
     assert!(ignored.contains(COOK_GITIGNORE_MARKER));
 }
 

@@ -84,7 +84,9 @@ pub(crate) fn reject_stray_tail(tail: &str, line: usize, context: &str) -> Resul
     }
     Err(ParseError::Parse {
         line,
-        message: format!("{context}: unexpected text after the closing '}}': `{tail}`"),
+        message: format!(
+            "{context}: unexpected text after the closing '}}': `{tail}`"
+        ),
     })
 }
 

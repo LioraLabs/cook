@@ -20,7 +20,5 @@ pub enum ViewerError {
 }
 
 impl ViewerError {
-    pub fn io_listing(e: io::Error) -> Self {
-        Self::IoListing(e)
-    }
+    pub fn io_listing(e: io::Error) -> Self { Self::IoListing(e) }
 }

@@ -83,10 +83,7 @@ fn vendored_luarocks_runtime_subtrees_are_fully_tracked() {
             if !entry.file_type().is_file() {
                 continue;
             }
-            let path = entry
-                .path()
-                .canonicalize()
-                .unwrap_or_else(|_| entry.into_path());
+            let path = entry.path().canonicalize().unwrap_or_else(|_| entry.into_path());
             if !tracked.contains(&path) {
                 missing.push(path);
             }

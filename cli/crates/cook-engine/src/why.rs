@@ -182,9 +182,7 @@ fn diff_map_u64(
     let keys: std::collections::BTreeSet<&String> = ours.keys().chain(theirs.keys()).collect();
     for k in keys {
         let (o, t) = (ours.get(k).copied(), theirs.get(k).copied());
-        if o != t {
-            emit(k.clone(), o, t);
-        }
+        if o != t { emit(k.clone(), o, t); }
     }
 }
 
@@ -196,9 +194,7 @@ fn diff_map_str(
     let keys: std::collections::BTreeSet<&String> = ours.keys().chain(theirs.keys()).collect();
     for k in keys {
         let (o, t) = (ours.get(k).cloned(), theirs.get(k).cloned());
-        if o != t {
-            emit(k.clone(), o, t);
-        }
+        if o != t { emit(k.clone(), o, t); }
     }
 }
 
@@ -519,11 +515,7 @@ fn classify(
     let (local_hit, local_cause) = local_step_hit(node, meta, det, cache_managers);
     if meta.sharing.is_local() {
         return Classification {
-            status: if local_hit {
-                CacheStatus::LocalHit
-            } else {
-                CacheStatus::LocalOnlyMiss
-            },
+            status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::LocalOnlyMiss },
             local_hit,
             local_cause,
             shared_present: None,
@@ -575,11 +567,7 @@ fn classify(
     let probed = shared_artifacts_present(cache_ctx, key_hex, meta);
     let shared = probed.is_some();
     let shared_output_hashes = probed.unwrap_or_default();
-    let manifest_diff = if shared {
-        None
-    } else {
-        manifest_diff(cache_ctx, key_hex, det)
-    };
+    let manifest_diff = if shared { None } else { manifest_diff(cache_ctx, key_hex, det) };
     let status = if local_hit {
         CacheStatus::LocalHit
     } else if shared {
@@ -779,10 +767,7 @@ fn local_step_hit(
     // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror
     // check_node_cache (executor.rs:654-664) by substituting the StepEntry's
     // recorded concrete output paths when any declared output is a glob.
-    let any_glob = meta
-        .output_paths
-        .iter()
-        .any(|s| cook_cache::is_terminal_output(s));
+    let any_glob = meta.output_paths.iter().any(|s| cook_cache::is_terminal_output(s));
     let current_outputs_storage: Vec<String> = if any_glob {
         entry.outputs.iter().map(|f| f.path.to_string()).collect()
     } else {

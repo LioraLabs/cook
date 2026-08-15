@@ -86,7 +86,7 @@ fn picker_starts_closed_and_can_be_opened() {
 fn cycle_filter_failed_only_hides_passing_nodes() {
     let mut s = UiState::new(mk(false), LoadDiagnostics::default());
     s.cycle_filter(); // -> FailedOnly
-                      // Recipe row + only the failing node (b)
+    // Recipe row + only the failing node (b)
     assert_eq!(s.flat.len(), 2);
 }
 
@@ -151,9 +151,7 @@ fn set_fold_is_directional_and_idempotent() {
     // Select the first recipe row.
     s.selected = 0;
     assert!(matches!(s.flat[0], FlatRow::Recipe(_)));
-    let FlatRow::Recipe(rid) = s.flat[0] else {
-        unreachable!()
-    };
+    let FlatRow::Recipe(rid) = s.flat[0] else { unreachable!() };
 
     assert!(s.expanded.contains(&rid), "recipes start expanded");
 

@@ -99,10 +99,7 @@ recipe consumer
     );
 
     let (ok, combined) = run_cook(tmp.path(), "consumer");
-    assert!(
-        ok,
-        "the dep_order edge must order the read after the write:\n{combined}"
-    );
+    assert!(ok, "the dep_order edge must order the read after the write:\n{combined}");
     assert_eq!(
         fs::read_to_string(tmp.path().join("out.bin")).unwrap(),
         "seed-content\n",

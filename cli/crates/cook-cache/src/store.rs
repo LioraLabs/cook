@@ -56,9 +56,7 @@ pub use cook_contracts::cache::step::{CACHE_VERSION, FileRecord, StepEntry};
 /// TOML file. TOML is non-positional, so a missing key is plausible (e.g. a
 /// hand-edited or pre-v4 file). Defaulting to 1 ensures the exact-match
 /// version check refuses the file — 1 != CACHE_VERSION (currently 4).
-fn default_cache_schema() -> u32 {
-    1
-}
+fn default_cache_schema() -> u32 { 1 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeCache {

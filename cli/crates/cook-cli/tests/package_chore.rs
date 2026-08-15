@@ -11,10 +11,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn host_supported() -> bool {
-    let out = Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .expect("rustc -vV");
+    let out = Command::new("rustc").arg("-vV").output().expect("rustc -vV");
     let text = String::from_utf8_lossy(&out.stdout);
     let triple = text
         .lines()
@@ -40,10 +37,7 @@ fn chore_package_produces_expected_tarball_shape() {
     // Use a sentinel version that won't collide with real release tarballs.
     let version = "v0.0.0-test";
 
-    let triple_out = Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .expect("rustc -vV");
+    let triple_out = Command::new("rustc").arg("-vV").output().expect("rustc -vV");
     let triple_text = String::from_utf8_lossy(&triple_out.stdout);
     let triple = triple_text
         .lines()

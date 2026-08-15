@@ -38,18 +38,19 @@ fn reconcile_dir_output_deletes_strays_keeps_set_prunes_empty() {
     let tmp = tempfile::tempdir().unwrap();
     let wd = tmp.path();
     std::fs::create_dir_all(wd.join("pkg/sub")).unwrap();
-    std::fs::write(wd.join("pkg/a.js"), b"a").unwrap(); // kept
-    std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap(); // delete
-    std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap(); // delete -> sub becomes empty
+    std::fs::write(wd.join("pkg/a.js"), b"a").unwrap();        // kept
+    std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap();   // delete
+    std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap();// delete -> sub becomes empty
 
-    let kept: std::collections::BTreeSet<String> = ["pkg/a.js".to_string()].into_iter().collect();
+    let kept: std::collections::BTreeSet<String> =
+        ["pkg/a.js".to_string()].into_iter().collect();
     reconcile_dir_output(wd, "pkg", &kept);
 
     assert!(wd.join("pkg/a.js").exists());
     assert!(!wd.join("pkg/STRAY.txt").exists());
     assert!(!wd.join("pkg/sub/old.wasm").exists());
-    assert!(!wd.join("pkg/sub").exists()); // pruned empty dir
-    assert!(wd.join("pkg").exists()); // root dir preserved
+    assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
+    assert!(wd.join("pkg").exists());        // root dir preserved
 }
 
 #[test]
@@ -79,19 +80,20 @@ fn reconcile_dir_output_trailing_slash_root_works_identically() {
     let tmp = tempfile::tempdir().unwrap();
     let wd = tmp.path();
     std::fs::create_dir_all(wd.join("pkg/sub")).unwrap();
-    std::fs::write(wd.join("pkg/a.js"), b"a").unwrap(); // kept
-    std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap(); // delete
-    std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap(); // delete -> sub becomes empty
+    std::fs::write(wd.join("pkg/a.js"), b"a").unwrap();        // kept
+    std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap();   // delete
+    std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap();// delete -> sub becomes empty
 
-    let kept: std::collections::BTreeSet<String> = ["pkg/a.js".to_string()].into_iter().collect();
+    let kept: std::collections::BTreeSet<String> =
+        ["pkg/a.js".to_string()].into_iter().collect();
     // Pass root with trailing slash — must behave the same as "pkg".
     reconcile_dir_output(wd, "pkg/", &kept);
 
     assert!(wd.join("pkg/a.js").exists());
     assert!(!wd.join("pkg/STRAY.txt").exists());
     assert!(!wd.join("pkg/sub/old.wasm").exists());
-    assert!(!wd.join("pkg/sub").exists()); // pruned empty dir
-    assert!(wd.join("pkg").exists()); // root dir preserved
+    assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
+    assert!(wd.join("pkg").exists());        // root dir preserved
 }
 
 // ===========================================================================
@@ -137,10 +139,7 @@ fn resolve(inputs: &[DeclaredInput], consumes: &[&str], dir: &std::path::Path) -
 #[test]
 fn literal_inputs_are_returned_in_declaration_order() {
     let d = tree(&["b.c", "a.c"]);
-    assert_eq!(
-        resolve(&[f("b.c"), f("a.c")], &[], d.path()),
-        vec!["b.c", "a.c"]
-    );
+    assert_eq!(resolve(&[f("b.c"), f("a.c")], &[], d.path()), vec!["b.c", "a.c"]);
 }
 
 /// A literal input is NOT checked against the filesystem. A declared input that
@@ -202,10 +201,7 @@ fn duplicates_are_dropped_keeping_first_position() {
 #[test]
 fn consumes_narrows_the_resolved_set() {
     let d = tree(&["dist/index.mjs", "dist/index.mjs.map"]);
-    assert_eq!(
-        resolve(&[g("dist/**")], &["*.mjs"], d.path()),
-        vec!["dist/index.mjs"]
-    );
+    assert_eq!(resolve(&[g("dist/**")], &["*.mjs"], d.path()), vec!["dist/index.mjs"]);
 }
 
 /// Narrowing errs toward the UNDER-keyed direction, where a stale hit replays
@@ -232,10 +228,7 @@ fn an_empty_consumes_narrows_nothing() {
 #[test]
 fn an_uncompilable_consumes_keeps_the_full_set() {
     let d = tree(&["dist/a.mjs"]);
-    assert_eq!(
-        resolve(&[g("dist/**")], &["["], d.path()),
-        vec!["dist/a.mjs"]
-    );
+    assert_eq!(resolve(&[g("dist/**")], &["["], d.path()), vec!["dist/a.mjs"]);
 }
 
 // --- B1: a path is a path, whatever is in its name (§17.1.1.2) ------------
@@ -285,11 +278,7 @@ fn consumes_never_removes_a_declared_path() {
 fn consumes_over_paths_alone_is_inert() {
     let d = tree(&["src/own.txt", "src/other.txt"]);
     assert_eq!(
-        resolve(
-            &[f("src/own.txt"), f("src/other.txt")],
-            &["*.mjs"],
-            d.path()
-        ),
+        resolve(&[f("src/own.txt"), f("src/other.txt")], &["*.mjs"], d.path()),
         vec!["src/own.txt", "src/other.txt"]
     );
 }

@@ -43,8 +43,8 @@ use crate::cli::{Cli, Globals};
 ///
 /// `reserved_names_match_the_parse_tree` pins this against the real command.
 const RESERVED: &[&str] = &[
-    "init", "menu", "list", "modules", "test", "logs", "cache", "serve", "emit-lua", "affected",
-    "why", "help",
+    "init", "menu", "list", "modules", "test", "logs", "cache", "serve", "emit-lua",
+    "affected", "why", "help",
 ];
 
 /// Entry point. Returns immediately unless the shell is driving completion.

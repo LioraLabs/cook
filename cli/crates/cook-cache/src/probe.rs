@@ -70,9 +70,7 @@ pub fn resolve_probe_inputs(
 /// `cook why` display) always sees where the tool resolves NOW rather than a
 /// cached location that can go stale.
 pub fn resolve_tool_path(name: &str) -> Option<String> {
-    which::which(name)
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
+    which::which(name).ok().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// CS-0158: canonical tool identity for Lua consumers (`cook.tools.id`).

@@ -55,10 +55,7 @@ fn tools_identity_sorts_keys_bytewise() {
         encode_tools_identity(&[("ld".to_string(), GOLDEN_LD), ("cc".to_string(), GOLDEN_CC)]);
     assert_eq!(forward, reversed);
     let text = String::from_utf8(forward).unwrap();
-    assert!(
-        text.find("\"cc\"").unwrap() < text.find("\"ld\"").unwrap(),
-        "{text}"
-    );
+    assert!(text.find("\"cc\"").unwrap() < text.find("\"ld\"").unwrap(), "{text}");
 }
 
 #[test]
@@ -66,10 +63,7 @@ fn tools_identity_carries_identity_only() {
     // CS-0157: the resolved path is location, not identity, and a location in
     // these bytes would key every sealing unit to a machine.
     let text = String::from_utf8(encode_tools_identity(&[("cc".to_string(), GOLDEN_CC)])).unwrap();
-    assert!(
-        !text.contains("path"),
-        "path must never enter the value: {text}"
-    );
+    assert!(!text.contains("path"), "path must never enter the value: {text}");
 }
 
 #[test]

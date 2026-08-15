@@ -19,9 +19,7 @@ fn default_file_is_not_explicit() {
 #[test]
 fn pre_subcommand_flag_is_explicit() {
     assert!(cookfile_flag_was_explicit(&matches_for(&[
-        "-f",
-        "sub/Cookfile",
-        "build"
+        "-f", "sub/Cookfile", "build"
     ])));
 }
 
@@ -31,8 +29,6 @@ fn post_subcommand_global_flag_is_explicit() {
     // top-level matches (pinned by cli.rs::globals_apply_after_subcommand);
     // value_source must see them as CommandLine too.
     assert!(cookfile_flag_was_explicit(&matches_for(&[
-        "test",
-        "-f",
-        "sub/Cookfile"
+        "test", "-f", "sub/Cookfile"
     ])));
 }

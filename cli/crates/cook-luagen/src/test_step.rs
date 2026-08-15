@@ -4,8 +4,8 @@ use cook_lang::ast::*;
 
 use crate::long_bracket::lua_chunk_literal;
 use crate::template::{
-    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders, ConsultedEnv,
-    PlateTestMode,
+    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
+    ConsultedEnv, PlateTestMode,
 };
 use crate::use_prelude::with_execute_prelude;
 
@@ -259,10 +259,7 @@ pub(crate) fn generate_member_fanout_test_step(
     let seal_field: String = if test_step.seal.is_empty() {
         String::new()
     } else {
-        format!(
-            "seal = {}, ",
-            crate::cook_step::probe_keys_to_lua_table(&test_step.seal)
-        )
+        format!("seal = {}, ", crate::cook_step::probe_keys_to_lua_table(&test_step.seal))
     };
     let seal_field: &str = &seal_field;
     // CS-0101: substitution only (cache = false) — hoists, no file_refs field.

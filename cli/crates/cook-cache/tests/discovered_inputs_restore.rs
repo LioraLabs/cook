@@ -122,13 +122,8 @@ fn missing_outputs_and_depfile_are_both_restored() {
         false,
     );
 
-    assert!(
-        matches!(result, RebuildResult::Skip),
-        "expected Skip after restoring both output and depfile; got {result:?}"
-    );
+    assert!(matches!(result, RebuildResult::Skip),
+        "expected Skip after restoring both output and depfile; got {result:?}");
     assert!(wd.join("a.o").exists(), "a.o restored");
-    assert!(
-        wd.join(".cook/deps/a.d").exists(),
-        ".cook/deps/a.d restored"
-    );
+    assert!(wd.join(".cook/deps/a.d").exists(), ".cook/deps/a.d restored");
 }

@@ -2,19 +2,14 @@ use super::*;
 
 #[test]
 fn double_underscore_marks_internal() {
-    assert!(is_internal_recipe(
-        "__cc_config_header__build_dhewm3_config_h"
-    ));
+    assert!(is_internal_recipe("__cc_config_header__build_dhewm3_config_h"));
     assert!(!is_internal_recipe("idLib"));
     assert!(!is_internal_recipe("_private"));
 }
 
 #[test]
 fn internal_recipe_displays_module_tag() {
-    assert_eq!(
-        display_recipe_name("__cc_config_header__build_dhewm3_config_h"),
-        "cc"
-    );
+    assert_eq!(display_recipe_name("__cc_config_header__build_dhewm3_config_h"), "cc");
     assert_eq!(display_recipe_name("__pnpm_install__web"), "pnpm");
 }
 

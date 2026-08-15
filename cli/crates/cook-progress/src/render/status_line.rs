@@ -54,12 +54,8 @@ impl StatusLine {
         let thread = thread::spawn(move || {
             loop {
                 thread::sleep(TICK_INTERVAL);
-                if halt.load(Ordering::Relaxed) {
-                    break;
-                }
-                if !vis.load(Ordering::Relaxed) {
-                    continue;
-                }
+                if halt.load(Ordering::Relaxed) { break; }
+                if !vis.load(Ordering::Relaxed) { continue; }
                 let s = snap.load();
                 let line = render_status_line(&*s, opts, detect_cols());
                 if line.is_empty() {
@@ -83,17 +79,11 @@ impl StatusLine {
     pub fn update(&self, snap: StatusSnapshot) {
         self.snapshot.store(Arc::new(snap));
     }
-    pub fn show(&self) {
-        self.visible.store(true, Ordering::Relaxed);
-    }
-    pub fn hide(&self) {
-        self.visible.store(false, Ordering::Relaxed);
-    }
+    pub fn show(&self) { self.visible.store(true, Ordering::Relaxed); }
+    pub fn hide(&self) { self.visible.store(false, Ordering::Relaxed); }
     /// Whether the tick thread may currently be painting the line — i.e.
     /// whether an event writer needs to clear before printing its own line.
-    pub fn is_visible(&self) -> bool {
-        self.visible.load(Ordering::Relaxed)
-    }
+    pub fn is_visible(&self) -> bool { self.visible.load(Ordering::Relaxed) }
 
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);

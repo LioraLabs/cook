@@ -39,7 +39,7 @@ pub struct DagData {
 #[derive(Serialize, Clone)]
 pub struct NodeData {
     pub id: String,
-    pub kind: String, // "file" or "unit"
+    pub kind: String,       // "file" or "unit"
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipe: Option<String>,
@@ -338,7 +338,8 @@ fn build_nodes(
         // key "rust.build", cache_meta name "build") loading under the
         // qualified key would silently miss the index and render every node
         // as never-cached.
-        let cache_index_name = cook_contracts::cache::recipe_cache_index_name(ru, recipe_name);
+        let cache_index_name =
+            cook_contracts::cache::recipe_cache_index_name(ru, recipe_name);
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
         for (unit_idx, unit) in ru.units.iter().enumerate() {
@@ -364,10 +365,7 @@ fn build_nodes(
                 _ => unit.payload.display_name(),
             };
 
-            let output = unit
-                .cache_meta
-                .as_ref()
-                .and_then(|m| m.output_paths.first().cloned());
+            let output = unit.cache_meta.as_ref().and_then(|m| m.output_paths.first().cloned());
 
             let label = if let Some(ref out) = output {
                 Path::new(out)
@@ -422,7 +420,8 @@ fn build_nodes(
                 // to avoid duplicate edges. A pattern entry is drawn as what it
                 // is — the declaration — rather than as its expansion: the
                 // graph reports what the unit declared (§17.1.1.2).
-                let unique_paths: BTreeSet<&String> = meta.inputs.iter().map(|e| &e.path).collect();
+                let unique_paths: BTreeSet<&String> =
+                    meta.inputs.iter().map(|e| &e.path).collect();
 
                 for path in unique_paths {
                     // An input that another unit produces is an intermediate
@@ -456,10 +455,7 @@ fn build_nodes(
                             path,
                             &ru.working_dir,
                             cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
-                                e.inputs
-                                    .iter()
-                                    .find(|r| &*r.path == path.as_str())
-                                    .map(|r| (r.mtime, r.hash))
+                                e.inputs.iter().find(|r| &*r.path == path.as_str()).map(|r| (r.mtime, r.hash))
                             }),
                         );
 

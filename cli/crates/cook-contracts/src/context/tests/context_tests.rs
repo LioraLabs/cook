@@ -13,10 +13,7 @@ fn probe_fingerprint_is_deterministic_for_same_inputs() {
         files: vec![],
         upstream_probes: vec![],
     };
-    assert_eq!(
-        compute_probe_fingerprint(&inputs),
-        compute_probe_fingerprint(&inputs)
-    );
+    assert_eq!(compute_probe_fingerprint(&inputs), compute_probe_fingerprint(&inputs));
 }
 
 #[test]
@@ -25,9 +22,7 @@ fn probe_fingerprint_changes_when_env_value_changes() {
         key: "cc:zlib".into(),
         produce_source: "".into(),
         env: vec![("PKG_CONFIG_PATH".into(), Some("/a".into()))],
-        tools: vec![],
-        files: vec![],
-        upstream_probes: vec![],
+        tools: vec![], files: vec![], upstream_probes: vec![],
     };
     let h1 = compute_probe_fingerprint(&a);
     a.env[0].1 = Some("/b".into());
@@ -64,30 +59,24 @@ fn probe_fingerprint_is_invariant_to_input_order() {
 #[test]
 fn probe_fingerprint_changes_on_upstream_probe_change() {
     let mut a = ProbeFingerprintInputs {
-        key: "cc:x".into(),
-        produce_source: "".into(),
-        env: vec![],
-        tools: vec![],
-        files: vec![],
+        key: "cc:x".into(), produce_source: "".into(),
+        env: vec![], tools: vec![], files: vec![],
         upstream_probes: vec![("cc:compiler".into(), [1u8; 32])],
-    };
-    let h1 = compute_probe_fingerprint(&a);
-    a.upstream_probes[0].1 = [2u8; 32];
-    assert_ne!(h1, compute_probe_fingerprint(&a));
-}
+        };
+        let h1 = compute_probe_fingerprint(&a);
+        a.upstream_probes[0].1 = [2u8; 32];
+        assert_ne!(h1, compute_probe_fingerprint(&a));
+    }
 
-/// CS-0102 marker bump: the fingerprint preimage starts with
-/// `COOK_PROBE_FP_V2`, so every artifact addressed under the V1
-/// (pre-CS-0102) marker is unreachable.
-#[test]
-fn probe_fingerprint_marker_is_v2() {
-    let inputs = ProbeFingerprintInputs {
-        key: "k".into(),
+    /// CS-0102 marker bump: the fingerprint preimage starts with
+    /// `COOK_PROBE_FP_V2`, so every artifact addressed under the V1
+    /// (pre-CS-0102) marker is unreachable.
+    #[test]
+    fn probe_fingerprint_marker_is_v2() {
+        let inputs = ProbeFingerprintInputs {
+            key: "k".into(),
         produce_source: "return 1".into(),
-        env: vec![],
-        tools: vec![],
-        files: vec![],
-        upstream_probes: vec![],
+        env: vec![], tools: vec![], files: vec![], upstream_probes: vec![],
     };
     let fp = compute_probe_fingerprint(&inputs);
 
@@ -96,17 +85,13 @@ fn probe_fingerprint_marker_is_v2() {
     let v1: [u8; 32] = h.finalize().into();
 
     assert_ne!(fp, v1, "probe fingerprint still uses the V1 marker");
-}
+    }
 
-#[test]
-fn probe_fingerprint_changes_when_produce_source_changes() {
-    let mut a = ProbeFingerprintInputs {
-        key: "k".into(),
-        produce_source: "return 1".into(),
-        env: vec![],
-        tools: vec![],
-        files: vec![],
-        upstream_probes: vec![],
+    #[test]
+    fn probe_fingerprint_changes_when_produce_source_changes() {
+        let mut a = ProbeFingerprintInputs {
+            key: "k".into(), produce_source: "return 1".into(),
+        env: vec![], tools: vec![], files: vec![], upstream_probes: vec![],
     };
     let h1 = compute_probe_fingerprint(&a);
     a.produce_source = "return 2".into();
@@ -160,20 +145,14 @@ fn folding_distinguishes_paths() {
     let declared = [7u8; 32];
     let one = [("a.lua".to_string(), [1u8; 32])];
     let other = [("b.lua".to_string(), [1u8; 32])];
-    assert_ne!(
-        fold_module_sources(&declared, &one),
-        fold_module_sources(&declared, &other)
-    );
+    assert_ne!(fold_module_sources(&declared, &one), fold_module_sources(&declared, &other));
 }
 
 #[test]
 fn manifest_key_is_derived_and_distinct_from_the_declared_fingerprint() {
     let declared = [7u8; 32];
     assert_ne!(probe_module_manifest_key(&declared), declared);
-    assert_eq!(
-        probe_module_manifest_key(&declared),
-        probe_module_manifest_key(&declared)
-    );
+    assert_eq!(probe_module_manifest_key(&declared), probe_module_manifest_key(&declared));
 }
 
 // ---------------------------------------------------------------------------

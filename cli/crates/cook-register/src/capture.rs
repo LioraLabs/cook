@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use cook_contracts::{
-    CapturedUnit, DepKind, WorkPayload, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
+    CapturedUnit, DepKind, WorkPayload,
+    REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
 };
 
 use crate::{RecipeKind, SharedBodySlot};
@@ -46,8 +47,8 @@ pub use cook_contracts::registration::MemberSourceDescriptor;
 /// Returns `None` when the field is absent (a non-member-fanout recipe).
 fn parse_member_source_meta(meta: &LuaTable) -> LuaResult<Option<MemberSourceDescriptor>> {
     use cook_contracts::registration::{
-        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_KEY,
-        MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
+        MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE,
+        MEMBER_SOURCE_REF_KEY,
     };
     let Some(t) = meta.get::<Option<LuaTable>>(MEMBER_SOURCE_FIELD)? else {
         return Ok(None);
@@ -349,8 +350,8 @@ pub fn install_cook_api(
     // cook.recipe(name, metadata, fn) — the public API.
     // Always tagged Dynamic; chores cannot be registered through this path.
     let recipes_clone = recipes.clone();
-    let recipe_fn = lua.create_function(
-        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+    let recipe_fn =
+        lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
             let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let origin = parse_origin_meta("cook.recipe", &meta)?;
@@ -399,8 +400,8 @@ pub fn install_cook_api(
     // of this closure alone would catch.
     let recipes_dyn_chore = recipes.clone();
     let chore_module_state = module_state.clone();
-    let chore_pub_fn = lua.create_function(
-        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+    let chore_pub_fn =
+        lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             {
                 let state = chore_module_state.borrow();
                 validate_chore_namespace(&name, state.current_module.as_deref())?;

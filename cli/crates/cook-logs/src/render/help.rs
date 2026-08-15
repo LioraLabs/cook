@@ -39,7 +39,8 @@ pub fn draw(f: &mut Frame, area: Rect, diag: &LoadDiagnostics) {
         )));
     }
     f.render_widget(
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" help ")),
+        Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(" help ")),
         modal,
     );
 }

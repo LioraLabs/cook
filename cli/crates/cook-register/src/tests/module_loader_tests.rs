@@ -6,7 +6,8 @@ use tempfile::TempDir;
 /// tree root does not have to touch this suite (CS-0207 moved it from
 /// `cook_modules/` to `.cook/modules/`).
 fn installed_share(dir: &std::path::Path) -> std::path::PathBuf {
-    cook_contracts::layout::modules_dir(dir).join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+    cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
 }
 
 fn setup_with_module(
@@ -47,7 +48,8 @@ fn setup_with_module(
 
 #[test]
 fn test_load_module_returns_table() {
-    let (lua, _dir, _) = setup_with_module("test_mod", "local m = {} m.value = 42 return m");
+    let (lua, _dir, _) =
+        setup_with_module("test_mod", "local m = {} m.value = 42 return m");
     let result: i32 = lua
         .load(r#"local m = cook.load_module("test_mod") return m.value"#)
         .eval()
@@ -125,10 +127,7 @@ fn test_load_module_memoized_returns_same_table() {
         )
         .eval()
         .unwrap();
-    assert_eq!(
-        result, 99,
-        "memoization must return the same table instance"
-    );
+    assert_eq!(result, 99, "memoization must return the same table instance");
 }
 
 #[test]
@@ -354,9 +353,10 @@ fn cook_cache_is_hard_error_with_did_you_mean() {
         .load(r#"return cook.cache.get("x")"#)
         .exec()
         .expect_err("cook.cache.get must be a hard error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("cook.cache' was renamed to 'cook.probes'") && msg.contains("cook.probes.get"),
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cook.cache' was renamed to 'cook.probes'")
+            && msg.contains("cook.probes.get"),
         "rename diagnostic must name the new spelling; got: {msg}"
     );
 }

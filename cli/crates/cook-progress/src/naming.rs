@@ -39,11 +39,7 @@ pub fn probe_module(display: &str) -> Option<&str> {
     // COOK-392: the parse half of contracts' probe_label pair.
     let key = cook_contracts::unit::parse_probe_label(display)?;
     let module = key.split(':').next().unwrap_or("");
-    if module.is_empty() {
-        None
-    } else {
-        Some(module)
-    }
+    if module.is_empty() { None } else { Some(module) }
 }
 
 #[cfg(test)]

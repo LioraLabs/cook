@@ -28,10 +28,7 @@ fn identifier_occurs_ignores_strings_and_comments() {
 #[test]
 fn identifier_occurs_after_a_string_still_matches() {
     // The scanner must resume scanning code AFTER a literal, not stop at it.
-    assert!(free_identifier_occurs(
-        "print(\"hello\") greet.say()",
-        "greet"
-    ));
+    assert!(free_identifier_occurs("print(\"hello\") greet.say()", "greet"));
 }
 
 #[test]
@@ -42,10 +39,7 @@ fn identifier_occurs_skips_a_field_or_method_access() {
     // register-oriented module — the exact scenario CS-0205 gates to avoid.
     assert!(!free_identifier_occurs("t.greet = 1", "greet"));
     assert!(!free_identifier_occurs("t:greet()", "greet"));
-    assert!(!free_identifier_occurs(
-        "local o = {} o.greet = 1 print(o.greet)",
-        "greet"
-    ));
+    assert!(!free_identifier_occurs("local o = {} o.greet = 1 print(o.greet)", "greet"));
 }
 
 #[test]

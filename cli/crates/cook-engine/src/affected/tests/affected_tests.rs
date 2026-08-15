@@ -22,7 +22,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         consulted_env: BTreeMap::new(),
         discovered_inputs: None,
         seal_keys: Default::default(),
-        sharing: Default::default(),
+            sharing: Default::default(),
         record: false,
     };
     let unit = CapturedUnit {
@@ -37,7 +37,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let mut units_by_recipe = BTreeMap::new();
     units_by_recipe.insert(
@@ -86,7 +86,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
             unit_env_vars: BTreeMap::new(),
             member: None,
             output_paths: Vec::new(),
-            test_name: None,
+                    test_name: None,
 
             after: Vec::new(),
         };

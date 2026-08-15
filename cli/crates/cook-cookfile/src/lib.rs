@@ -326,9 +326,7 @@ impl CodeView {
 
     /// Index of the last non-whitespace byte before `before`.
     fn significant_before(&self, before: usize) -> Option<usize> {
-        (0..before)
-            .rev()
-            .find(|&i| !self.bytes[i].is_ascii_whitespace())
+        (0..before).rev().find(|&i| !self.bytes[i].is_ascii_whitespace())
     }
 }
 

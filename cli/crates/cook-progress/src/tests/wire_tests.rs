@@ -84,9 +84,6 @@ fn additive_fields_are_ignored_and_defaults_fill_absent_ones() {
     let line: WireLine = serde_json::from_str(older).unwrap();
     assert!(matches!(
         line.event,
-        WireEvent::RecipeCompleted {
-            kind: crate::event::RecipeKind::Recipe,
-            ..
-        }
+        WireEvent::RecipeCompleted { kind: crate::event::RecipeKind::Recipe, .. }
     ));
 }

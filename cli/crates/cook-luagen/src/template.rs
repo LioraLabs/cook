@@ -201,7 +201,11 @@ impl ConsultedEnv {
         if self.keys.is_empty() {
             return "{}".to_string();
         }
-        let parts: Vec<String> = self.keys.iter().map(|k| lua_string::literal(k)).collect();
+        let parts: Vec<String> = self
+            .keys
+            .iter()
+            .map(|k| lua_string::literal(k))
+            .collect();
         format!("{{{}}}", parts.join(", "))
     }
 }
@@ -307,10 +311,7 @@ fn resolved_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             consulted_env.record(&key);
-            Ok(format!(
-                "cook.require_var(\"{}\")",
-                lua_string::escape_double_quoted(&key)
-            ))
+            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
         }
         // CS-0195: probe-value reference — one substitution helper, backed by
         // the CS-0192 law over the pre-pass store. Scalars render as their
@@ -349,10 +350,7 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         // a nested table value, and the bare string form for a scalar.
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {
-            let record = format!(
-                "cook.member_to_string(item[\"{}\"])",
-                lua_string::escape_double_quoted(&field)
-            );
+            let record = format!("cook.member_to_string(item[\"{}\"])", lua_string::escape_double_quoted(&field));
             if cook_contracts::accessor::ACCESSORS.contains(&field.as_str()) {
                 format!("(type(item) == \"string\" and path.{field}(item) or {record})")
             } else {
@@ -489,10 +487,7 @@ fn output_pattern_ident_to_lua(
         }
         Resolved::EnvRuntime(key) => {
             out.record(&key);
-            Ok(format!(
-                "cook.require_var(\"{}\")",
-                lua_string::escape_double_quoted(&key)
-            ))
+            Ok(format!("cook.require_var(\"{}\")", lua_string::escape_double_quoted(&key)))
         }
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
@@ -533,9 +528,7 @@ pub(crate) enum PlateTestMode {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlateTestModeError {
-    #[error(
-        "body contains both per-item and batched references — `{0}` and `{1}` cannot both appear"
-    )]
+    #[error("body contains both per-item and batched references — `{0}` and `{1}` cannot both appear")]
     Mixed(&'static str, &'static str),
 }
 

@@ -60,7 +60,9 @@ impl CloudBackend {
     /// `endpoint` is stripped to keep URL composition trivial.
     pub fn new(endpoint: String, api_key: String, config: BackendConfig) -> Self {
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let client = ureq::AgentBuilder::new().timeout(config.timeout).build();
+        let client = ureq::AgentBuilder::new()
+            .timeout(config.timeout)
+            .build();
         Self {
             endpoint,
             api_key,
@@ -157,9 +159,7 @@ fn map_ureq_error(err: ureq::Error, ctx: &str) -> BackendError {
     match err {
         ureq::Error::Status(status, response) => {
             let retry_after = parse_retry_after(&response);
-            let body = response
-                .into_string()
-                .unwrap_or_else(|_| "<no body>".into());
+            let body = response.into_string().unwrap_or_else(|_| "<no body>".into());
             map_status_error(status, ctx, body, retry_after)
         }
         ureq::Error::Transport(t) => BackendError::Transient(format!("{ctx}: transport: {t}")),
@@ -188,7 +188,11 @@ fn jitter_factor() -> f64 {
 fn jittered_capped(delay: Duration, cap: Duration) -> Duration {
     let nanos = delay.as_nanos() as f64 * jitter_factor();
     let jittered = Duration::from_nanos(nanos as u64);
-    if jittered > cap { cap } else { jittered }
+    if jittered > cap {
+        cap
+    } else {
+        jittered
+    }
 }
 
 /// Retry shell. Calls `op` up to `1 + max_retries` times, retrying on:
@@ -423,8 +427,8 @@ impl CacheBackend for CloudBackend {
             let body = BatchQueryRequest {
                 keys: hex_keys.iter().map(|s| s.as_str()).collect(),
             };
-            let response =
-                req.send_json(serde_json::to_value(&body).map_err(|e| {
+            let response = req
+                .send_json(serde_json::to_value(&body).map_err(|e| {
                     BackendError::Other(format!("serialize batch_query body: {e}"))
                 })?)
                 .map_err(|e| map_ureq_error(e, "batch_query"))?;

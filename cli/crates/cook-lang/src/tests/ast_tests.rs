@@ -195,10 +195,7 @@ fn chore_param_variants_construct() {
         col: 13,
     };
     let p_def_str = ChoreParam::DefaultedString {
-        name: "host".into(),
-        default: "prod".into(),
-        line: 1,
-        col: 20,
+        name: "host".into(), default: "prod".into(), line: 1, col: 20,
     };
     let p_def_lua = ChoreParam::DefaultedLua {
         name: "version".into(),
@@ -268,37 +265,19 @@ fn probe_ast_constructs() {
         commands: vec!["cat data/cards.json".to_string()],
         typing: ShellProduceType::Json,
     };
-    assert!(matches!(
-        shell,
-        ProbeProduce::Shell {
-            typing: ShellProduceType::Json,
-            ..
-        }
-    ));
+    assert!(matches!(shell, ProbeProduce::Shell { typing: ShellProduceType::Json, .. }));
 
     let shell_str = ProbeProduce::Shell {
         commands: vec!["hostname".to_string()],
         typing: ShellProduceType::String,
     };
-    assert!(matches!(
-        shell_str,
-        ProbeProduce::Shell {
-            typing: ShellProduceType::String,
-            ..
-        }
-    ));
+    assert!(matches!(shell_str, ProbeProduce::Shell { typing: ShellProduceType::String, .. }));
 
     let shell_lines = ProbeProduce::Shell {
         commands: vec!["ls data/".to_string()],
         typing: ShellProduceType::Lines,
     };
-    assert!(matches!(
-        shell_lines,
-        ProbeProduce::Shell {
-            typing: ShellProduceType::Lines,
-            ..
-        }
-    ));
+    assert!(matches!(shell_lines, ProbeProduce::Shell { typing: ShellProduceType::Lines, .. }));
 }
 
 #[test]

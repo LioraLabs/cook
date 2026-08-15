@@ -56,9 +56,9 @@ where
     meta.set(
         "__newindex",
         lua.create_function(
-            move |_,
-                  (_proxy, name, _value): (mlua::Value, String, mlua::Value)|
-                  -> mlua::Result<()> { Err(mlua::Error::RuntimeError(refuse(&name))) },
+            move |_, (_proxy, name, _value): (mlua::Value, String, mlua::Value)| -> mlua::Result<()> {
+                Err(mlua::Error::RuntimeError(refuse(&name)))
+            },
         )?,
     )?;
 

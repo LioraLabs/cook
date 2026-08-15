@@ -9,14 +9,8 @@ fn candidates_are_the_installed_tree_only() {
     let wd = Path::new("/proj");
     let c = module_candidates(wd, "cook_cc");
     assert_eq!(c.len(), 2);
-    assert_eq!(
-        c[0],
-        Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc.lua")
-    );
-    assert_eq!(
-        c[1],
-        Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc/init.lua")
-    );
+    assert_eq!(c[0], Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc.lua"));
+    assert_eq!(c[1], Path::new("/proj/.cook/modules/share/lua/5.4/cook_cc/init.lua"));
     for p in &c {
         assert!(
             !p.to_string_lossy().contains(LEGACY_MODULES_DIR),
@@ -95,11 +89,7 @@ mod use_paths {
             "build/./helpers.lua",
             "build//helpers.lua",
         ] {
-            assert_eq!(
-                normalise_use_path(raw),
-                Ok("build/helpers.lua".to_string()),
-                "{raw}"
-            );
+            assert_eq!(normalise_use_path(raw), Ok("build/helpers.lua".to_string()), "{raw}");
         }
     }
 
@@ -245,13 +235,10 @@ mod module_load_laws {
                 tree_present: true,
             },
         );
-        assert!(
-            msg.starts_with(
-                "cook.load_module: module 'foo' not found under /proj/.cook/modules \
+        assert!(msg.starts_with(
+            "cook.load_module: module 'foo' not found under /proj/.cook/modules \
              (tried share/lua/5.4/foo.lua, share/lua/5.4/foo/init.lua)"
-            ),
-            "{msg}"
-        );
+        ), "{msg}");
     }
 
     /// CS-0207: the hard cut is affordable because the diagnostic does the one
@@ -295,7 +282,8 @@ mod module_load_laws {
 
     #[test]
     fn read_failed_message_names_module_path_and_cause() {
-        let msg = module_read_failed_message("foo", Path::new("/p/foo.lua"), "permission denied");
+        let msg =
+            module_read_failed_message("foo", Path::new("/p/foo.lua"), "permission denied");
         assert_eq!(
             msg,
             "cook.load_module: failed to read module 'foo' at /p/foo.lua: permission denied"

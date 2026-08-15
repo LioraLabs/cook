@@ -141,9 +141,7 @@ fn recipe_keys_with_env_suffixes_round_trip() {
 #[test]
 fn glob_with_empty_member_set_round_trips() {
     let mut cache = RecipeCache::new();
-    cache
-        .globs
-        .insert("nothing/*.zz".to_string(), BTreeSet::new());
+    cache.globs.insert("nothing/*.zz".to_string(), BTreeSet::new());
     assert_eq!(cache, decode(&encode(&cache)).expect("decode"));
 }
 
@@ -153,7 +151,10 @@ fn shared_path_is_stored_once() {
     // copy: this is the 77x-redundancy win the whole format exists for.
     let bytes = encode(&populated());
     let needle = b"src/common.h";
-    let occurrences = bytes.windows(needle.len()).filter(|w| *w == needle).count();
+    let occurrences = bytes
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count();
     assert_eq!(occurrences, 1, "path blob must intern shared paths");
 }
 
@@ -167,24 +168,15 @@ fn decoded_records_share_one_allocation_per_path() {
     let main = &decoded.steps["compile_main"].inputs;
     let util = &decoded.steps["compile_util"].inputs;
 
-    let a = main
-        .iter()
-        .find(|r| &*r.path == "src/common.h")
-        .expect("in compile_main");
-    let b = util
-        .iter()
-        .find(|r| &*r.path == "src/common.h")
-        .expect("in compile_util");
+    let a = main.iter().find(|r| &*r.path == "src/common.h").expect("in compile_main");
+    let b = util.iter().find(|r| &*r.path == "src/common.h").expect("in compile_util");
     assert!(
         std::sync::Arc::ptr_eq(&a.path, &b.path),
         "records naming the same path must share one Arc"
     );
 
     // Distinct paths must NOT be conflated into one allocation.
-    let distinct = main
-        .iter()
-        .find(|r| &*r.path == "src/main.c")
-        .expect("main.c");
+    let distinct = main.iter().find(|r| &*r.path == "src/main.c").expect("main.c");
     assert!(!std::sync::Arc::ptr_eq(&a.path, &distinct.path));
 }
 
@@ -197,15 +189,11 @@ fn encoding_is_deterministic() {
 
     // Insertion order must not leak into the encoding either.
     let mut a = RecipeCache::new();
-    a.steps
-        .insert("z".to_string(), step(vec![rec("b.c", 1, 2)], vec![]));
-    a.steps
-        .insert("a".to_string(), step(vec![rec("a.c", 3, 4)], vec![]));
+    a.steps.insert("z".to_string(), step(vec![rec("b.c", 1, 2)], vec![]));
+    a.steps.insert("a".to_string(), step(vec![rec("a.c", 3, 4)], vec![]));
     let mut b = RecipeCache::new();
-    b.steps
-        .insert("a".to_string(), step(vec![rec("a.c", 3, 4)], vec![]));
-    b.steps
-        .insert("z".to_string(), step(vec![rec("b.c", 1, 2)], vec![]));
+    b.steps.insert("a".to_string(), step(vec![rec("a.c", 3, 4)], vec![]));
+    b.steps.insert("z".to_string(), step(vec![rec("b.c", 1, 2)], vec![]));
     assert_eq!(encode(&a), encode(&b));
 }
 
@@ -213,10 +201,7 @@ fn encoding_is_deterministic() {
 fn header_is_the_documented_shape() {
     let bytes = encode(&populated());
     assert_eq!(&bytes[0..8], MAGIC);
-    assert_eq!(
-        u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-        CACHE_VERSION
-    );
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), CACHE_VERSION);
     assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 0);
     let payload_len = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
     assert_eq!(payload_len as usize, bytes.len() - HEADER_LEN);
@@ -331,10 +316,7 @@ fn module_records_round_trip_alongside_inputs_and_outputs() {
     );
 
     let decoded = decode(&encode(&cache)).expect("round trip");
-    assert_eq!(
-        decoded.steps["with"].module_inputs,
-        with_modules.module_inputs
-    );
+    assert_eq!(decoded.steps["with"].module_inputs, with_modules.module_inputs);
     assert!(decoded.steps["without"].module_inputs.is_empty());
     assert_eq!(decoded.steps["with"].inputs, with_modules.inputs);
     assert_eq!(decoded.steps["with"].outputs, with_modules.outputs);

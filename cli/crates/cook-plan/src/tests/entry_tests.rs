@@ -108,8 +108,7 @@ fn test_resolve_workspace_root_skips_candidate_that_doesnt_anchor_sigils() {
     fs::write(
         dir.path().join("inner/Cookfile"),
         "import lib //top/lib\nimport leaf ./leaf\nrecipe \"y\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(dir.path().join("inner/leaf/Cookfile"), "recipe \"build\"\n").unwrap();
     fs::write(dir.path().join("top/lib/Cookfile"), "recipe \"q\"\n").unwrap();
 
@@ -117,10 +116,7 @@ fn test_resolve_workspace_root_skips_candidate_that_doesnt_anchor_sigils() {
     let root = resolve_workspace_root(&invoked, None).unwrap();
     let expected = std::fs::canonicalize(dir.path()).unwrap();
     let got = std::fs::canonicalize(root).unwrap();
-    assert_eq!(
-        got, expected,
-        "expected dir/ as root (anchors //top/lib), got {got:?}"
-    );
+    assert_eq!(got, expected, "expected dir/ as root (anchors //top/lib), got {got:?}");
 }
 
 #[test]
@@ -132,13 +128,11 @@ fn test_resolve_workspace_root_gate_eliminates_only_candidate_falls_to_rule5() {
     fs::write(
         dir.path().join("inner/leaf/Cookfile"),
         "import shared //shared/lib\nrecipe \"leaf\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(
         dir.path().join("inner/Cookfile"),
         "import leaf ./leaf\nimport shared //shared/lib\nrecipe \"inner\"\n",
-    )
-    .unwrap();
+    ).unwrap();
 
     let invoked = dir.path().join("inner/leaf/Cookfile");
     let result = resolve_workspace_root(&invoked, None);
@@ -153,7 +147,7 @@ fn test_resolve_workspace_root_gate_eliminates_only_candidate_falls_to_rule5() {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("workspace root") || msg.contains("anchor"),
-        "expected diagnostic mentioning 'workspace root' or 'anchor', got: {msg}"
+            "expected diagnostic mentioning 'workspace root' or 'anchor', got: {msg}"
     );
 }
 
@@ -163,20 +157,13 @@ fn test_resolve_workspace_root_rejects_self_root_with_sigils() {
     fs::write(
         dir.path().join("Cookfile"),
         "import top //top/lib\nrecipe \"x\"\n",
-    )
-    .unwrap();
+    ).unwrap();
 
     let invoked = dir.path().join("Cookfile");
     let result = resolve_workspace_root(&invoked, None);
-    assert!(
-        result.is_err(),
-        "expected reject for sigil import without anchor"
-    );
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("workspace root"),
-        "diagnostic missing 'workspace root'"
-    );
+    assert!(result.is_err(), "expected reject for sigil import without anchor");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("workspace root"), "diagnostic missing 'workspace root'");
     assert!(
         msg.contains("top/lib") || msg.contains("//top/lib"),
         "diagnostic should name offending sigil path, got: {msg}"
@@ -223,10 +210,7 @@ fn test_discover_entry_falls_through_to_root_cookfile() {
     fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
     fs::create_dir_all(dir.path().join("tools/scripts")).unwrap();
     let found = discover_entry_cookfile(&dir.path().join("tools/scripts"), None).unwrap();
-    assert_eq!(
-        found,
-        std::fs::canonicalize(dir.path().join("Cookfile")).unwrap()
-    );
+    assert_eq!(found, std::fs::canonicalize(dir.path().join("Cookfile")).unwrap());
 }
 
 #[test]
@@ -257,10 +241,7 @@ fn test_discover_entry_boundary_dir_itself_is_checked() {
     )
     .unwrap();
     let found = discover_entry_cookfile(&dir.path().join("proj/sub"), None).unwrap();
-    assert_eq!(
-        found,
-        std::fs::canonicalize(dir.path().join("proj/Cookfile")).unwrap()
-    );
+    assert_eq!(found, std::fs::canonicalize(dir.path().join("proj/Cookfile")).unwrap());
 }
 
 #[test]
@@ -273,8 +254,9 @@ fn test_discover_entry_stop_at_explicit_root() {
     )
     .unwrap();
     fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
-    let err = discover_entry_cookfile(&dir.path().join("proj/sub"), Some(&dir.path().join("proj")))
-        .unwrap_err();
+    let err =
+        discover_entry_cookfile(&dir.path().join("proj/sub"), Some(&dir.path().join("proj")))
+            .unwrap_err();
     assert!(err.to_string().contains("no Cookfile found"));
 }
 
@@ -306,8 +288,5 @@ fn test_discover_entry_skips_directory_named_cookfile() {
     fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
     fs::create_dir_all(dir.path().join("sub/Cookfile")).unwrap();
     let found = discover_entry_cookfile(&dir.path().join("sub"), None).unwrap();
-    assert_eq!(
-        found,
-        std::fs::canonicalize(dir.path().join("Cookfile")).unwrap()
-    );
+    assert_eq!(found, std::fs::canonicalize(dir.path().join("Cookfile")).unwrap());
 }

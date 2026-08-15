@@ -90,7 +90,10 @@ fn an_alias_that_is_not_a_lua_identifier_binds_nothing() {
     // Escaping of the module NAME is `module_binding`'s test; this pins the
     // consequence here: a needle that cannot be an identifier token can never
     // match one, so the prelude stays empty rather than emitting broken Lua.
-    assert_eq!(execute_prelude(&uses(&["q\"x"]), "q_x.f()"), String::new());
+    assert_eq!(
+        execute_prelude(&uses(&["q\"x"]), "q_x.f()"),
+        String::new()
+    );
 }
 
 #[test]
@@ -103,9 +106,6 @@ fn with_execute_prelude_glues_the_body_onto_the_same_line() {
 
 #[test]
 fn with_execute_prelude_leaves_an_unreferencing_body_byte_identical() {
-    assert_eq!(
-        with_execute_prelude(&uses(&["greet"]), "print(1)"),
-        "print(1)"
-    );
+    assert_eq!(with_execute_prelude(&uses(&["greet"]), "print(1)"), "print(1)");
     assert_eq!(with_execute_prelude(&[], "print(1)"), "print(1)");
 }

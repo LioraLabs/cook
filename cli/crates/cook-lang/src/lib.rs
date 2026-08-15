@@ -55,7 +55,9 @@ fn validate_and_classify_import_path(
         if path_contains_dotdot_segment(after_sigil) {
             return Err(ParseError::Parse {
                 line,
-                message: format!("import path '{raw}': '..' segments are not permitted after '//'"),
+                message: format!(
+                    "import path '{raw}': '..' segments are not permitted after '//'"
+                ),
             });
         }
         return Ok(ast::ImportPath::Sigil(after_sigil.to_string()));
@@ -170,8 +172,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                         if config_blocks.iter().any(|b| b.name.is_none()) {
                             return Err(ParseError::Parse {
                                 line: header_line,
-                                message: "multiple unnamed config blocks (only one allowed)"
-                                    .to_string(),
+                                message: "multiple unnamed config blocks (only one allowed)".to_string(),
                             });
                         }
                     }
@@ -185,8 +186,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                     }
                 }
                 pos += 1;
-                let (body, new_pos) =
-                    parse_config_block_lua(&tokens, pos, header_line, &source_lines)?;
+                let (body, new_pos) = parse_config_block_lua(&tokens, pos, header_line, &source_lines)?;
                 config_blocks.push(ConfigBlock {
                     name: block_name,
                     body,
@@ -217,7 +217,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 pos = new_pos;
             }
             Token::ChoreHeader { name, params, deps } => {
-                seen_recipe = true; // chores count toward the ordering rule
+                seen_recipe = true;  // chores count toward the ordering rule
                 let chore_line = tok.line;
                 let name = name.clone();
                 let params = params.clone();
@@ -310,8 +310,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if seen_recipe {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "import declarations must appear before recipes and chores"
-                            .to_string(),
+                        message: "import declarations must appear before recipes and chores".to_string(),
                     });
                 }
                 if imports.iter().any(|i: &ast::ImportDecl| i.name == *name) {
@@ -343,28 +342,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 pos = new_pos;
             }
             Token::FilesHeader { name } => {
-                let line = tok.line;
-                let name = name.clone();
-                pos += 1;
-                if name.starts_with("@seal:") {
-                    return Err(ParseError::Parse { line, message: "files: keys beginning `@seal:` are reserved for inline file determinants".into() });
-                }
-                let (probe, new_pos) =
-                    probe::parse_files_declaration(name, line, &tokens, pos, &source_lines)?;
-                probes.push(probe);
-                pos = new_pos;
+                let line = tok.line; let name = name.clone(); pos += 1;
+                if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "files: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                let (probe, new_pos) = probe::parse_files_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
             }
             Token::ToolsHeader { name } => {
-                let line = tok.line;
-                let name = name.clone();
-                pos += 1;
-                if name.starts_with("@seal:") {
-                    return Err(ParseError::Parse { line, message: "tools: keys beginning `@seal:` are reserved for inline file determinants".into() });
-                }
-                let (probe, new_pos) =
-                    probe::parse_tools_declaration(name, line, &tokens, pos, &source_lines)?;
-                probes.push(probe);
-                pos = new_pos;
+                let line = tok.line; let name = name.clone(); pos += 1;
+                if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "tools: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                let (probe, new_pos) = probe::parse_tools_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
             }
             Token::RegisterHeader => {
                 let header_line = tok.line;
@@ -377,8 +364,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if !after_kw.trim().is_empty() {
                     return Err(ParseError::Parse {
                         line: header_line,
-                        message: "register block takes no name; remove the trailing arguments"
-                            .to_string(),
+                        message: "register block takes no name; remove the trailing arguments".to_string(),
                     });
                 }
                 pos += 1;

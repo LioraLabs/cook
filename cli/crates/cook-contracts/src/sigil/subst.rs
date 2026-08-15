@@ -75,7 +75,9 @@ pub fn substitute(root: &JsonValue, path: &[Seg], ident: &str) -> Result<String,
                 match value {
                     JsonValue::Array(items) => {
                         if i == 0 {
-                            return Err(format!("$<{ident}>: `[0]` — array indices are one-based"));
+                            return Err(format!(
+                                "$<{ident}>: `[0]` — array indices are one-based"
+                            ));
                         }
                         items.get(i - 1).ok_or_else(|| {
                             format!(

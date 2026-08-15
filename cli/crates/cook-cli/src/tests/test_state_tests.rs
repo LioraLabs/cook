@@ -45,14 +45,14 @@ fn save_then_load_failed_returns_only_failed_blocked_timed_out() {
 fn load_missing_state_file_errors() {
     let tmp = tempdir().unwrap();
     let err = load_failed_set(tmp.path()).expect_err("must error");
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-}
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
 
-#[test]
-fn save_roundtrip_preserves_outcome_strings() {
-    let tmp = tempdir().unwrap();
-    let results = vec![
-        mk("r:a", TestOutcome::Passed),
+    #[test]
+    fn save_roundtrip_preserves_outcome_strings() {
+        let tmp = tempdir().unwrap();
+        let results = vec![
+            mk("r:a", TestOutcome::Passed),
         mk("r:b", TestOutcome::Failed),
     ];
     save(tmp.path(), &results).unwrap();

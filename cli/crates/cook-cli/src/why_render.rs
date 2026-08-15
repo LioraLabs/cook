@@ -138,11 +138,7 @@ pub(crate) fn render_why_plain(
                 format!("REBUILD (forced by {producer})")
             }
             _ => {
-                let local = if u.local_hit {
-                    "HIT (local)"
-                } else {
-                    "MISS (local)"
-                };
+                let local = if u.local_hit { "HIT (local)" } else { "MISS (local)" };
                 match u.shared_present {
                     None => local.to_string(),
                     Some(true) => format!("{local}, HIT (shared)"),
@@ -161,18 +157,9 @@ pub(crate) fn render_why_plain(
             "\n{} :: {} [{}]  {}\n",
             u.recipe_name, u.cache_key, status, key_field
         ));
-        s.push_str(&format!(
-            "  command_hash      {:016x}\n",
-            u.determinants.command_hash
-        ));
-        s.push_str(&format!(
-            "  env_contribution  {:016x}\n",
-            u.determinants.env_contribution
-        ));
-        s.push_str(&format!(
-            "  seal_contribution {:016x}\n",
-            u.determinants.seal_contribution
-        ));
+        s.push_str(&format!("  command_hash      {:016x}\n", u.determinants.command_hash));
+        s.push_str(&format!("  env_contribution  {:016x}\n", u.determinants.env_contribution));
+        s.push_str(&format!("  seal_contribution {:016x}\n", u.determinants.seal_contribution));
         if !u.determinants.inputs.is_empty() {
             s.push_str("  inputs:\n");
             for (p, h) in &u.determinants.inputs {
@@ -323,11 +310,8 @@ fn render_why_json(
     report: &cook_engine::why::WhyReport,
     timings: &cook_engine::observations::Observations,
 ) -> String {
-    let units: Vec<serde_json::Value> = report
-        .units
-        .iter()
-        .map(|u| why_unit_json(u, timings))
-        .collect();
+    let units: Vec<serde_json::Value> =
+        report.units.iter().map(|u| why_unit_json(u, timings)).collect();
     let mut document = serde_json::json!({
         "recipe": report.recipe,
         "units": units,

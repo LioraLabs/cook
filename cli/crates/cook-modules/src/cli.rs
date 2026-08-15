@@ -218,11 +218,7 @@ fn update_one_or_all(
         None => manifest.modules.keys().cloned().collect(),
     };
     for n in &names {
-        let constraint = manifest
-            .modules
-            .get(n)
-            .cloned()
-            .unwrap_or_else(|| "*".into());
+        let constraint = manifest.modules.get(n).cloned().unwrap_or_else(|| "*".into());
         driver.install(n, &constraint)?;
     }
     let lock = lockfile::introspect_closure(

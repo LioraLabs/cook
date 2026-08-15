@@ -19,7 +19,7 @@ fn resolve_glob_filters_directories() {
 fn excludes_match_lexically_equivalent_include_paths() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir(dir.path().join("dir")).unwrap();
-    std::fs::write(dir.path().join("file"), "").unwrap();
+        std::fs::write(dir.path().join("file"), "").unwrap();
     let lua = Lua::new();
     lua.globals()
         .set("cook", lua.create_table().unwrap())

@@ -20,11 +20,7 @@ fn run(dir: &TempDir, args: &[&str]) {
         .args(args)
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 fn write(dir: &TempDir, rel: &str, body: &str) {
@@ -144,18 +140,13 @@ fn shallow_clone_outside_depth_returns_no_merge_base() {
         .arg(shallow.path())
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "clone failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "clone failed: {}", String::from_utf8_lossy(&out.stderr));
     run(&shallow, &["config", "user.email", "test@example.com"]);
     run(&shallow, &["config", "user.name", "Test"]);
 
     let c1_sha = String::from_utf8(
         Command::new("git")
-            .arg("-C")
-            .arg(origin.path())
+            .arg("-C").arg(origin.path())
             .args(["rev-list", "--max-parents=0", "HEAD"])
             .output()
             .unwrap()
@@ -169,10 +160,7 @@ fn shallow_clone_outside_depth_returns_no_merge_base() {
     // Either RefNotFound (shallow doesn't have it) or NoMergeBase — both
     // are acceptable "ref unreachable" signals.
     assert!(
-        matches!(
-            err,
-            GitError::RefNotFound { .. } | GitError::NoMergeBase { .. }
-        ),
+        matches!(err, GitError::RefNotFound { .. } | GitError::NoMergeBase { .. }),
         "got {err:?}"
     );
 }

@@ -14,12 +14,10 @@ pub fn render(
     label_for_id: &dyn Fn(&str) -> String,
     style: &Style,
 ) -> String {
-    let mut failed: Vec<&TestResult> = results
-        .iter()
+    let mut failed: Vec<&TestResult> = results.iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Failed | TestOutcome::TimedOut))
         .collect();
-    let mut blocked: Vec<&TestResult> = results
-        .iter()
+    let mut blocked: Vec<&TestResult> = results.iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Blocked))
         .collect();
     failed.sort_by(|a, b| {
@@ -58,14 +56,10 @@ pub fn render(
             out.push('\n');
             // trailer
             let trailer = if matches!(r.outcome, TestOutcome::TimedOut) {
-                format!(
-                    "---- {label} ---- timed out after {:.1}s",
-                    r.duration.as_secs_f64()
-                )
+                format!("---- {label} ---- timed out after {:.1}s", r.duration.as_secs_f64())
             } else {
                 let ms = r.duration.as_millis();
-                let exit = r
-                    .exit_code
+                let exit = r.exit_code
                     .map(|c| format!("exit {c}"))
                     .unwrap_or_else(|| "exit unknown".to_string());
                 format!("---- {label} ---- {exit}, finished in {ms}ms")
@@ -84,7 +78,9 @@ pub fn render(
             ));
             let cause = r.blocked_by.as_deref().unwrap_or("upstream cook step");
             let one_line = single_line(cause);
-            out.push_str(&format!("blocked by upstream cook step: `{one_line}`\n\n"));
+            out.push_str(&format!(
+                "blocked by upstream cook step: `{one_line}`\n\n"
+            ));
         }
     }
 
@@ -99,7 +95,10 @@ pub fn render(
     if !blocked.is_empty() {
         out.push_str(&format!("{}\n", style.bold_yellow("blocked:")));
         for r in &blocked {
-            out.push_str(&format!("    {}\n", style.yellow(&label_for_id(&r.id.0))));
+            out.push_str(&format!(
+                "    {}\n",
+                style.yellow(&label_for_id(&r.id.0))
+            ));
         }
         out.push('\n');
     }
@@ -127,13 +126,12 @@ fn format_stream(s: &str) -> String {
         }
         out
     } else {
-        let head: String = lines
-            .iter()
-            .take(STDOUT_STDERR_LINE_CAP)
-            .cloned()
+        let head: String = lines.iter().take(STDOUT_STDERR_LINE_CAP).cloned()
             .collect::<Vec<_>>()
             .join("\n");
-        format!("{head}\n(truncated, see .cook/test-report.json for full output)\n")
+        format!(
+            "{head}\n(truncated, see .cook/test-report.json for full output)\n"
+        )
     }
 }
 

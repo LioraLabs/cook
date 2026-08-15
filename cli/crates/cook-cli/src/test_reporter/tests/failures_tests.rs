@@ -42,7 +42,7 @@ fn empty_when_no_failures_or_blocked() {
 fn renders_failure_with_exit_code_and_duration() {
     let s = Style::new(false);
     let r = mk_failed("recipe:t", "out", "err", Some(1));
-    let out = render(&[r], &|id| id.replace(':', "@"), &s);
+        let out = render(&[r], &|id| id.replace(':', "@"), &s);
     assert!(out.contains("---- recipe@t stdout ----"), "{out}");
     assert!(out.contains("out\n"), "{out}");
     assert!(out.contains("---- recipe@t stderr ----"), "{out}");
@@ -75,10 +75,7 @@ fn blocked_renders_single_line_cause() {
     let s = Style::new(false);
     let r = mk_blocked("r:t", "set -e\nmkdir -p build\nfalse");
     let out = render(&[r], &|id| id.into(), &s);
-    assert!(
-        out.contains("blocked by upstream cook step: `mkdir -p build…`"),
-        "{out}"
-    );
+    assert!(out.contains("blocked by upstream cook step: `mkdir -p build…`"), "{out}");
     assert!(out.contains("\nblocked:\n    r:t\n"), "{out}");
 }
 

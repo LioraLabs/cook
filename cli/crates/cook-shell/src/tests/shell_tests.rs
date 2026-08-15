@@ -29,11 +29,7 @@ fn a_silent_command_contributes_no_chunks() {
     let dir = tempfile::tempdir().unwrap();
     let o = captured("true", dir.path());
     assert!(o.success());
-    assert!(
-        o.chunks().is_empty(),
-        "expected no chunks, got {:?}",
-        o.chunks()
-    );
+    assert!(o.chunks().is_empty(), "expected no chunks, got {:?}", o.chunks());
 }
 
 #[test]
@@ -80,9 +76,7 @@ fn failure_carries_both_streams_and_none_on_success() {
     assert!(ok.failure(7, "echo fine").is_none());
 
     let bad = captured("echo OUT; echo ERR >&2; exit 2", dir.path());
-    let f = bad
-        .failure(7, "the command")
-        .expect("a failed command has a failure");
+    let f = bad.failure(7, "the command").expect("a failed command has a failure");
     assert_eq!(f.line(), 7);
     assert_eq!(f.exit_code(), 2);
     assert_eq!(f.command(), "the command");
@@ -113,13 +107,9 @@ fn the_overlay_accepts_the_map_types_the_callers_actually_hold() {
     // without the caller rebuilding its map.
     let dir = tempfile::tempdir().unwrap();
     let hash: std::collections::HashMap<String, String> =
-        [("COOK_SHELL_MAP_PROBE".to_string(), "h".to_string())]
-            .into_iter()
-            .collect();
+        [("COOK_SHELL_MAP_PROBE".to_string(), "h".to_string())].into_iter().collect();
     let btree: std::collections::BTreeMap<String, String> =
-        [("COOK_SHELL_MAP_PROBE".to_string(), "b".to_string())]
-            .into_iter()
-            .collect();
+        [("COOK_SHELL_MAP_PROBE".to_string(), "b".to_string())].into_iter().collect();
     let cmd = "printf '%s' \"$COOK_SHELL_MAP_PROBE\"";
 
     let a = run(

@@ -264,11 +264,7 @@ fn unit_selector_reports_determinants_for_one_unit() {
     assert!(s.contains("command_hash"), "{s}");
     assert!(s.contains("out.txt"), "{s}");
     // Exactly one unit is selected: the report has one determinant block.
-    assert_eq!(
-        s.matches("command_hash").count(),
-        1,
-        "selector should narrow: {s}"
-    );
+    assert_eq!(s.matches("command_hash").count(), 1, "selector should narrow: {s}");
 }
 
 /// §17.1.6.6 / CS-0217: `cook why` emits its machine-readable answer as two
@@ -292,17 +288,15 @@ fn both_machine_readable_documents_carry_the_same_schema_version() {
     assert_ok(&whole);
     let whole: serde_json::Value = serde_json::from_str(&stdout(&whole)).expect("valid json");
     let version = whole["schema_version"].clone();
-    assert!(
-        version.is_number(),
-        "the closure document must carry a version: {whole}"
-    );
+    assert!(version.is_number(), "the closure document must carry a version: {whole}");
 
     let selected = cook(
         tmp.path(),
         &["why", "build", "--unit", "out.txt", "--format", "json"],
     );
     assert_ok(&selected);
-    let selected: serde_json::Value = serde_json::from_str(&stdout(&selected)).expect("valid json");
+    let selected: serde_json::Value =
+        serde_json::from_str(&stdout(&selected)).expect("valid json");
     assert_eq!(
         selected["schema_version"], version,
         "the selector document must carry the same wire-format version as the closure \
@@ -310,11 +304,7 @@ fn both_machine_readable_documents_carry_the_same_schema_version() {
     );
     // And it is still the document it was: a version is added, nothing moves.
     assert_eq!(selected["recipe"], "build", "{selected}");
-    assert_eq!(
-        selected["units"].as_array().map(Vec::len),
-        Some(1),
-        "{selected}"
-    );
+    assert_eq!(selected["units"].as_array().map(Vec::len), Some(1), "{selected}");
 }
 
 /// A selector matching nothing is a user error worth naming, not an empty
@@ -345,11 +335,7 @@ fn a_warm_workspace_reports_hits_not_rebuilds() {
 
     let cold = cook(tmp.path(), &["why", "build"]);
     assert_ok(&cold);
-    assert!(
-        stdout(&cold).contains("2 rebuild"),
-        "cold: {}",
-        stdout(&cold)
-    );
+    assert!(stdout(&cold).contains("2 rebuild"), "cold: {}", stdout(&cold));
 
     assert_ok(&cook(tmp.path(), &["build"]));
     assert_ok(&cook(tmp.path(), &["build"]));
@@ -468,10 +454,7 @@ fn a_unit_downstream_of_a_rebuild_is_not_reported_as_a_hit() {
         .iter()
         .find(|n| n["id"] == "recipe:build")
         .expect("build node");
-    assert_eq!(
-        build["hits"], 0,
-        "downstream of a rebuild is not a hit: {v}"
-    );
+    assert_eq!(build["hits"], 0, "downstream of a rebuild is not a hit: {v}");
     assert_eq!(build["rebuilds"], 1, "{v}");
 }
 
@@ -504,10 +487,7 @@ fn a_forced_unit_reports_no_key_and_names_its_cause() {
         unit["determinants"]["inputs"].get("mid.txt").is_none(),
         "a pending input must not carry a hash: {v}"
     );
-    assert_eq!(
-        unit["determinants"]["pending_inputs"]["mid.txt"], "gen",
-        "{v}"
-    );
+    assert_eq!(unit["determinants"]["pending_inputs"]["mid.txt"], "gen", "{v}");
 }
 
 /// The plain renderer names the upstream instead of restating the consequence.
@@ -624,10 +604,7 @@ fn live_and_historical_causes_are_reported_independently() {
     assert_eq!(unit["local_cause"], "input changed: src.txt", "live: {v}");
     assert_eq!(unit["last_cause"], "input changed: src.txt", "history: {v}");
     // Distinct keys, both present, neither standing in for the other.
-    assert!(
-        !unit["local_cause"].is_null() && !unit["last_cause"].is_null(),
-        "{v}"
-    );
+    assert!(!unit["local_cause"].is_null() && !unit["last_cause"].is_null(), "{v}");
 }
 
 // ---------------------------------------------------------------------------

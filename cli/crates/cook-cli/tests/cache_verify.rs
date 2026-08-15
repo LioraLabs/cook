@@ -29,22 +29,15 @@ fn run_verify(dir: &Path, extra: &[&str]) -> std::process::Output {
 
 #[test]
 fn deterministic_step_verifies_clean() {
-    let dir =
-        write_cookfile("recipe build\n    cook \"out.txt\" { printf 'stable-bytes' > out.txt }\n");
+    let dir = write_cookfile("recipe build\n    cook \"out.txt\" { printf 'stable-bytes' > out.txt }\n");
     let out = run_verify(dir.path(), &[]);
     let combined = format!(
         "STDOUT:\n{}\nSTDERR:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        out.status.success(),
-        "deterministic step must verify clean.\n{combined}"
-    );
-    assert!(
-        !combined.contains("DIVERGENCE"),
-        "no divergence expected.\n{combined}"
-    );
+    assert!(out.status.success(), "deterministic step must verify clean.\n{combined}");
+    assert!(!combined.contains("DIVERGENCE"), "no divergence expected.\n{combined}");
 }
 
 #[test]
@@ -56,30 +49,20 @@ fn hidden_determinant_is_flagged_as_divergence() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        !out.status.success(),
-        "hidden determinant must yield non-zero exit.\n{combined}"
-    );
-    assert!(
-        combined.contains("DIVERGENCE"),
-        "expected DIVERGENCE.\n{combined}"
-    );
+    assert!(!out.status.success(), "hidden determinant must yield non-zero exit.\n{combined}");
+    assert!(combined.contains("DIVERGENCE"), "expected DIVERGENCE.\n{combined}");
 }
 
 #[test]
 fn record_step_is_byte_exempt() {
-    let dir =
-        write_cookfile("recipe build\n    cook \"gen.txt\" { date +%s%N > gen.txt } nondet\n");
+    let dir = write_cookfile("recipe build\n    cook \"gen.txt\" { date +%s%N > gen.txt } nondet\n");
     let out = run_verify(dir.path(), &[]);
     let combined = format!(
         "STDOUT:\n{}\nSTDERR:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        out.status.success(),
-        "nondet step must NOT fail verify.\n{combined}"
-    );
+    assert!(out.status.success(), "nondet step must NOT fail verify.\n{combined}");
     assert!(
         combined.contains("nondet") || combined.contains("record") || combined.contains("waived"),
         "nondet exemption should be visible.\n{combined}"

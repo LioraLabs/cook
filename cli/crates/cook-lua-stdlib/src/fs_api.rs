@@ -45,15 +45,17 @@ fn glob_one_pattern(
     let full_pattern = full_pattern_path.to_string_lossy().to_string();
     let policy = sandbox.resolve();
     let mut paths: Vec<String> = Vec::new();
-    for entry in
-        glob::glob(&full_pattern).map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
+    for entry in glob::glob(&full_pattern)
+        .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
     {
         let path = match entry {
             Ok(p) => p,
             Err(_) => continue,
         };
         let lossy = path.to_string_lossy().to_string();
-        if policy.resolve("fs.glob", working_dir, &lossy).is_ok() && !resolves_to_directory(&path) {
+        if policy.resolve("fs.glob", working_dir, &lossy).is_ok()
+            && !resolves_to_directory(&path)
+        {
             paths.push(lossy);
         }
     }

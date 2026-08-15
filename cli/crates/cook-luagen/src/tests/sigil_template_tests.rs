@@ -1,8 +1,6 @@
 use super::*;
 
-fn empty_recipes() -> BTreeSet<String> {
-    BTreeSet::new()
-}
+fn empty_recipes() -> BTreeSet<String> { BTreeSet::new() }
 
 fn ctx_os_n0(r: &BTreeSet<String>) -> ResolveCtx<'_> {
     ResolveCtx {

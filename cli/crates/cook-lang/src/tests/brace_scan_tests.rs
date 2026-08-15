@@ -86,7 +86,7 @@ fn shell_heredoc_carries_state() {
     assert_eq!(s.scan_line("cat <<EOF"), 0);
     // Inside heredoc — `}` is data
     assert_eq!(s.scan_line("} not a closer"), 0);
-    assert_eq!(s.scan_line("more } data"), 0);
+        assert_eq!(s.scan_line("more } data"), 0);
     assert!(s.has_pending_heredoc());
     assert_eq!(s.scan_line("EOF"), 0);
     assert!(!s.has_pending_heredoc());
@@ -121,7 +121,7 @@ fn shell_heredoc_does_not_close_inside_outer() {
     // counts; only the heredoc body is opaque.
     let mut s = ShellScanner::new();
     assert_eq!(s.scan_line("{ cat <<EOF"), 1);
-    assert_eq!(s.scan_line("}"), 0); // inside heredoc, ignored
+    assert_eq!(s.scan_line("}"), 0);  // inside heredoc, ignored
     assert_eq!(s.scan_line("EOF"), 0);
     assert_eq!(s.scan_line("}"), -1);
 }

@@ -103,16 +103,8 @@ fn machine_independent_unit_hits_across_host_change_sealed_unit_misses() {
 
     // Run 1 (cold, SIMHOST=alpha): both units execute fresh.
     build(wd, "alpha");
-    assert_eq!(
-        runs(wd, "shared.runlog"),
-        1,
-        "run1: shared should build cold"
-    );
-    assert_eq!(
-        runs(wd, "host.runlog"),
-        1,
-        "run1: hostdep should build cold"
-    );
+    assert_eq!(runs(wd, "shared.runlog"), 1, "run1: shared should build cold");
+    assert_eq!(runs(wd, "host.runlog"), 1, "run1: hostdep should build cold");
 
     // Run 2 (warm, SIMHOST=alpha, nothing changed): BOTH hit — including the
     // sealed unit, because the host probe value is unchanged.

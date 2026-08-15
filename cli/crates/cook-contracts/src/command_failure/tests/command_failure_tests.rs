@@ -114,5 +114,8 @@ fn displayed_command_of_an_empty_block_is_empty() {
 #[test]
 fn displayed_command_passes_uncomposed_text_through() {
     assert_eq!(failed("false").displayed_command(), "false");
-    assert_eq!(failed("echo set -e").displayed_command(), "echo set -e");
+    assert_eq!(
+        failed("echo set -e").displayed_command(),
+        "echo set -e"
+    );
 }

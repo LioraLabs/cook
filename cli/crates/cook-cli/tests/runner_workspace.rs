@@ -127,8 +127,8 @@ fn cook_test_writes_json_sidecar() {
     );
 
     let bytes = fs::read(&report).unwrap();
-    let v: serde_json::Value =
-        serde_json::from_slice(&bytes).expect("JSON sidecar must be valid JSON");
+    let v: serde_json::Value = serde_json::from_slice(&bytes)
+        .expect("JSON sidecar must be valid JSON");
 
     assert_eq!(
         v["schema_version"],

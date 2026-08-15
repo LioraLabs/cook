@@ -85,7 +85,9 @@ impl ThreadSafeCacheManager {
 
     pub fn update_step(&self, recipe_name: &str, cache_key: &str, entry: StepEntry) {
         let mut caches = self.caches.lock().unwrap();
-        let recipe_cache = caches.entry(recipe_name.to_string()).or_default();
+        let recipe_cache = caches
+            .entry(recipe_name.to_string())
+            .or_default();
         // COOK-306: a settled run re-validates every step and writes back an
         // entry identical to the one it read. Storing it is a no-op; marking
         // the recipe dirty is not — it costs a full re-serialisation of the
@@ -100,9 +102,7 @@ impl ThreadSafeCacheManager {
         // (every caller drops it within its own statement or block), so this
         // is an in-place insert on the hot path. Retaining a snapshot across
         // a build would silently restore the COOK-306 quadratic clone.
-        Arc::make_mut(recipe_cache)
-            .steps
-            .insert(cache_key.to_string(), entry);
+        Arc::make_mut(recipe_cache).steps.insert(cache_key.to_string(), entry);
         drop(caches);
         let mut dirty = self.dirty.lock().unwrap();
         dirty.insert(recipe_name.to_string());
@@ -233,8 +233,8 @@ impl ThreadSafeCacheManager {
         // being dropped: dropping it would file an entry keyed on LESS than
         // the unit actually ran, which is the defect this change closes. No
         // entry is a cold miss; a short entry is a wrong hit.
-        let module_inputs =
-            collect_records(module_paths, working_dir).map_err(RecordError::UnreadableFile)?;
+        let module_inputs = collect_records(module_paths, working_dir)
+            .map_err(RecordError::UnreadableFile)?;
 
         let entry = StepEntry {
             inputs: new_inputs,

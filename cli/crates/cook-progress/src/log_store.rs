@@ -72,9 +72,7 @@ impl LogStore {
         })
     }
 
-    pub fn build_id(&self) -> &str {
-        &self.build_id
-    }
+    pub fn build_id(&self) -> &str { &self.build_id }
 
     pub fn record(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
         if let Some(w) = self.events_writer.as_mut() {
@@ -113,11 +111,7 @@ impl LogStore {
                     .and_then(|x| x.nodes.get(node))
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| format!("node-{}", node.raw()));
-                let dir = self
-                    .root
-                    .join(&self.build_id)
-                    .join("nodes")
-                    .join(sanitize(rname));
+                let dir = self.root.join(&self.build_id).join("nodes").join(sanitize(rname));
                 fs::create_dir_all(&dir)?;
                 let path = dir.join(format!("{}.log", sanitize(&nname)));
                 let f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -141,12 +135,8 @@ impl LogStore {
     }
 
     pub fn close(&mut self, success: bool) -> io::Result<()> {
-        if let Some(w) = self.events_writer.as_mut() {
-            w.flush()?;
-        }
-        for w in self.node_writers.values_mut() {
-            w.flush()?;
-        }
+        if let Some(w) = self.events_writer.as_mut() { w.flush()?; }
+        for w in self.node_writers.values_mut() { w.flush()?; }
 
         let manifest = format!(
             "schema_version = 1\nbuild_id = \"{}\"\nstarted_at = \"{}\"\nended_at = \"{}\"\nexit_code = {}\n",
@@ -161,22 +151,14 @@ impl LogStore {
 }
 
 fn new_build_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     let hash = format!("{:x}", ts & 0xfff);
     format!("{}-{hash}", current_date_string())
 }
 
 fn current_date_string() -> String {
     let now = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}",
-        now.year(),
-        u8::from(now.month()),
-        now.day()
-    )
+    format!("{:04}-{:02}-{:02}", now.year(), u8::from(now.month()), now.day())
 }
 
 fn current_rfc3339() -> String {
@@ -216,10 +198,10 @@ fn rotate(root: &Path, keep_builds: usize, max_total_bytes: u64) -> io::Result<(
     }
 
     loop {
-        let total: u64 = entries.iter().map(|(p, _)| dir_size(p).unwrap_or(0)).sum();
-        if total <= max_total_bytes || entries.is_empty() {
-            break;
-        }
+        let total: u64 = entries.iter()
+            .map(|(p, _)| dir_size(p).unwrap_or(0))
+            .sum();
+        if total <= max_total_bytes || entries.is_empty() { break; }
         let (p, _) = entries.remove(0);
         let _ = fs::remove_dir_all(p);
     }

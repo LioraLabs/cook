@@ -31,10 +31,9 @@ fn make_lua_with_test_api() -> (Lua, SharedBodySlot) {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     let lua = Lua::new();
-    lua.globals()
-        .set("cook", lua.create_table().unwrap())
-        .unwrap();
-    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+    let body_slot: SharedBodySlot =
+        Rc::new(RefCell::new(Some(BodyCaptureState::new())));
     let terminal_outputs: crate::SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
     let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     crate::unit_api::register_unit_api(
@@ -53,8 +52,7 @@ fn make_lua_with_test_api() -> (Lua, SharedBodySlot) {
 #[test]
 fn test_add_test_basic() {
     let (lua, capture_state) = make_lua_with_test_api();
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test", 
                 command = "./run_tests",
             })
@@ -101,8 +99,7 @@ fn test_add_test_propagates_step_group_dep_refs_to_dep_edges() {
         .step_group_dep_refs
         .push("upstream".to_string());
 
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test", 
                 command = "./check",
             })
@@ -120,8 +117,7 @@ fn test_add_test_propagates_step_group_dep_refs_to_dep_edges() {
 #[test]
 fn test_add_test_defaults() {
     let (lua, capture_state) = make_lua_with_test_api();
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test", 
                 command = "./test",
             })
@@ -151,8 +147,7 @@ fn add_test_defaults_suite_to_recipe_name() {
         .expect("body slot populated for test")
         .current_recipe = Some("frontend.unit".to_string());
 
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test",  command = "true" })
         "#,
     )
@@ -179,8 +174,7 @@ fn test_unit_name_derives_from_recipe_and_line() {
         .expect("body slot populated for test")
         .current_recipe = Some("rust-test".to_string());
 
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test",  command = "true",  line = 4 })
             cook.add_unit({step_kind = "test",  command = "false", line = 7 })
         "#,
@@ -213,9 +207,7 @@ fn add_test_rejects_empty_command() {
         .expect("body slot populated for test")
         .current_recipe = Some("r".to_string());
 
-    let res = lua
-        .load(
-            r#"
+        let res = lua.load(r#"
         cook.add_unit({step_kind = "test",  command = "" })
     "#,
         )
@@ -234,9 +226,7 @@ fn add_test_rejects_missing_command() {
         .expect("body slot populated for test")
         .current_recipe = Some("r".to_string());
 
-    let res = lua
-        .load(
-            r#"
+        let res = lua.load(r#"
         cook.add_unit({step_kind = "test",  name = "x" })
     "#,
         )
@@ -258,8 +248,7 @@ fn add_test_rejects_missing_command() {
 #[test]
 fn add_test_captures_inputs_into_payload() {
     let (lua, capture_state) = make_lua_with_test_api();
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test", 
                 command = "cargo test",
                 name = "t",
@@ -279,10 +268,7 @@ fn add_test_captures_inputs_into_payload() {
 #[test]
 fn add_test_unions_step_group_dep_input_paths() {
     let (lua, capture_state) = make_lua_with_test_api();
-    capture_state
-        .borrow_mut()
-        .as_mut()
-        .expect("body slot populated for test")
+    capture_state.borrow_mut().as_mut().expect("body slot populated for test")
         .step_group_dep_input_paths
         .extend([
             "../core/build/core.so".to_string(),
@@ -310,14 +296,10 @@ fn add_test_unions_step_group_dep_input_paths() {
 #[test]
 fn add_test_without_inputs_still_carries_dep_paths() {
     let (lua, capture_state) = make_lua_with_test_api();
-    capture_state
-        .borrow_mut()
-        .as_mut()
-        .expect("body slot populated for test")
+    capture_state.borrow_mut().as_mut().expect("body slot populated for test")
         .step_group_dep_input_paths
         .push("build/lib.txt".to_string());
-    lua.load(
-        r#"
+    lua.load(r#"
             cook.add_unit({step_kind = "test",  command = "true", name = "t" })
         "#,
     )
@@ -340,8 +322,7 @@ fn add_test_accepts_lua_code_without_command() {
         .expect("body slot populated for test")
         .current_recipe = Some("r".to_string());
 
-    lua.load(
-        r#"
+        lua.load(r#"
         cook.add_unit({step_kind = "test",  lua_code = "assert(true)", name = "t" })
     "#,
     )
@@ -375,8 +356,7 @@ fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
         .expect("body slot populated for test")
         .current_recipe = Some("r".to_string());
 
-    lua.load(
-        r#"
+        lua.load(r#"
         cook.add_unit({step_kind = "test",  command = "true", lua_code = "", name = "t" })
     "#,
     )
@@ -395,28 +375,20 @@ fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
 #[test]
 fn add_test_rejects_both_command_and_lua_code() {
     let (lua, _capture_state) = make_lua_with_test_api();
-    let res = lua
-        .load(
-            r#"
+    let res = lua.load(r#"
             cook.add_unit({step_kind = "test",  command = "true", lua_code = "assert(true)" })
         "#,
         )
         .exec();
 
     assert!(res.is_err(), "both command and lua_code must be rejected");
-    assert!(
-        format!("{:?}", res).contains("exactly one"),
-        "got: {:?}",
-        res
-    );
+    assert!(format!("{:?}", res).contains("exactly one"), "got: {:?}", res);
 }
 
 #[test]
 fn add_test_rejects_non_string_command() {
     let (lua, _capture_state) = make_lua_with_test_api();
-    let res = lua
-        .load(
-            r#"
+    let res = lua.load(r#"
             cook.add_unit({step_kind = "test",  command = function() end })
         "#,
         )
@@ -431,9 +403,7 @@ fn add_test_rejects_non_string_command() {
 #[test]
 fn add_test_rejects_non_string_lua_code() {
     let (lua, _capture_state) = make_lua_with_test_api();
-    let res = lua
-        .load(
-            r#"
+    let res = lua.load(r#"
             cook.add_unit({step_kind = "test",  lua_code = 42 })
         "#,
         )

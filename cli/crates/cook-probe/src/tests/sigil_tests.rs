@@ -26,8 +26,8 @@ fn store_backed_substitution_agrees_with_the_law() {
     store.insert("cc:zlib", encode_canonical_json(&value));
 
     for ident in ["cc:zlib.name", "cc:zlib.cflags[2]", "cc:zlib.version"] {
-        let via_store =
-            resolve_probe_sigils(&store, &format!("echo $<{ident}>")).expect("store path renders");
+        let via_store = resolve_probe_sigils(&store, &format!("echo $<{ident}>"))
+            .expect("store path renders");
         let r = probe_ref(ident).expect("probe-shaped");
         let via_law = substitute(&value, r.path(), ident).expect("law renders");
         assert_eq!(via_store, format!("echo {via_law}"), "ident {ident}");
@@ -41,7 +41,8 @@ fn store_backed_substitution_agrees_with_the_law() {
         "cc:tc",
         std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]),
     );
-    let via_store = resolve_probe_sigils(&store, "$<cc:tc.gcc.path>").expect("read view renders");
+    let via_store =
+        resolve_probe_sigils(&store, "$<cc:tc.gcc.path>").expect("read view renders");
     let mut merged = tools.clone();
     cook_contracts::probe_value::merge_tool_paths(
         &mut merged,
@@ -75,10 +76,7 @@ fn an_unmaterialised_key_is_the_cs0152_diagnostic() {
     let store = ProbeValueStore::new();
     let error = resolve_probe_sigils(&store, "echo $<cc:absent.name>")
         .expect_err("an unmaterialised key must fail");
-    assert!(
-        error.contains("cc:absent"),
-        "must name the key; got: {error}"
-    );
+    assert!(error.contains("cc:absent"), "must name the key; got: {error}");
     assert!(
         error.contains("not materialised"),
         "must be the CS-0152 sentence; got: {error}"

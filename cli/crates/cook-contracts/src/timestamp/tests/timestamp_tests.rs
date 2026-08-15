@@ -27,11 +27,7 @@ fn the_calendar_agrees_with_the_calendar() {
         (20_513, (2026, 3, 1)),
     ] {
         assert_eq!(civil_from_days(days), ymd, "civil_from_days({days})");
-        assert_eq!(
-            days_from_civil(ymd.0, ymd.1, ymd.2),
-            days,
-            "days_from_civil{ymd:?}"
-        );
+        assert_eq!(days_from_civil(ymd.0, ymd.1, ymd.2), days, "days_from_civil{ymd:?}");
     }
 }
 
@@ -77,10 +73,7 @@ fn a_fraction_is_read_as_a_fraction_however_many_digits_it_has() {
     assert_eq!(parse_rfc3339_ms("2026-05-07T10:00:00.05Z"), Some(base + 50));
     assert_eq!(parse_rfc3339_ms("2026-05-07T10:00:00.007Z"), Some(base + 7));
     // Beyond milliseconds is dropped, not rounded.
-    assert_eq!(
-        parse_rfc3339_ms("2026-05-07T10:00:00.123999Z"),
-        Some(base + 123)
-    );
+    assert_eq!(parse_rfc3339_ms("2026-05-07T10:00:00.123999Z"), Some(base + 123));
 }
 
 /// Refused rather than guessed. Each of these would otherwise produce a
@@ -90,17 +83,17 @@ fn a_fraction_is_read_as_a_fraction_however_many_digits_it_has() {
 fn a_timestamp_outside_the_accepted_shape_is_refused() {
     for bad in [
         "",
-        "2026-05-07T10:00:00",       // no zone
-        "2026-05-07T10:00:00+02:00", // an offset Cook never writes
-        "2026-05-07 10:00:00Z",      // space instead of T
-        "2026-5-07T10:00:00Z",       // unpadded month
-        "2026-05-07T10:00Z",         // no seconds
-        "2026-13-07T10:00:00Z",      // month 13
-        "2026-05-32T10:00:00Z",      // day 32
-        "2026-05-07T24:00:00Z",      // hour 24
-        "2026-05-07T10:60:00Z",      // minute 60
-        "2026-05-07T10:00:00.Z",     // empty fraction
-        "2026-05-07T10:00:00.abcZ",  // non-digit fraction
+        "2026-05-07T10:00:00",         // no zone
+        "2026-05-07T10:00:00+02:00",   // an offset Cook never writes
+        "2026-05-07 10:00:00Z",        // space instead of T
+        "2026-5-07T10:00:00Z",         // unpadded month
+        "2026-05-07T10:00Z",           // no seconds
+        "2026-13-07T10:00:00Z",        // month 13
+        "2026-05-32T10:00:00Z",        // day 32
+        "2026-05-07T24:00:00Z",        // hour 24
+        "2026-05-07T10:60:00Z",        // minute 60
+        "2026-05-07T10:00:00.Z",       // empty fraction
+        "2026-05-07T10:00:00.abcZ",    // non-digit fraction
         "not-a-timestamp",
     ] {
         assert_eq!(parse_rfc3339_ms(bad), None, "{bad:?} must be refused");
@@ -147,10 +140,7 @@ fn everything_the_formatter_writes_the_parser_reads_back() {
 #[test]
 fn the_formatter_pads_every_field() {
     assert_eq!(format_rfc3339_secs(0), "1970-01-01T00:00:00Z");
-    assert_eq!(
-        format_rfc3339_secs(951_782_400 + 3661),
-        "2000-02-29T01:01:01Z"
-    );
+    assert_eq!(format_rfc3339_secs(951_782_400 + 3661), "2000-02-29T01:01:01Z");
 }
 
 /// A day past the end of its month is refused, not rolled forward.

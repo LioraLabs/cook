@@ -16,14 +16,8 @@ fn hash_fields_serialize_as_lowercase_hex_strings() {
         observed: None,
     };
     let s = toml::to_string(&entry).expect("toml serialize");
-    assert!(
-        s.contains(r#"command_hash = "0102030405060708""#),
-        "got: {s}"
-    );
-    assert!(
-        s.contains(r#"env_contribution = "0000000000000000""#),
-        "got: {s}"
-    );
+    assert!(s.contains(r#"command_hash = "0102030405060708""#), "got: {s}");
+    assert!(s.contains(r#"env_contribution = "0000000000000000""#), "got: {s}");
     assert!(s.contains(r#"hash = "1234567890abcdef""#), "got: {s}");
     // mtime is a timestamp, not a hash — it stays a TOML integer.
     assert!(s.contains("mtime = 1700000000123"), "got: {s}");
@@ -97,10 +91,7 @@ fn seal_contribution_round_trips_as_hex() {
         observed: None,
     };
     let s = toml::to_string(&entry).expect("toml serialize");
-    assert!(
-        s.contains(r#"seal_contribution = "aabbccddeeff0011""#),
-        "got: {s}"
-    );
+    assert!(s.contains(r#"seal_contribution = "aabbccddeeff0011""#), "got: {s}");
     let back: StepEntry = toml::from_str(&s).expect("toml deserialize");
     assert_eq!(entry, back);
 }

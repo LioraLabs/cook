@@ -9,11 +9,11 @@ fn resolve_always_forces_color() {
 #[test]
 fn resolve_never_forces_no_color() {
     assert!(!resolve_color_choice("never", None, true));
-}
+    }
 
-#[test]
-fn resolve_auto_respects_no_color_env() {
-    assert!(!resolve_color_choice("auto", Some("1"), true));
+    #[test]
+    fn resolve_auto_respects_no_color_env() {
+        assert!(!resolve_color_choice("auto", Some("1"), true));
 }
 
 #[test]

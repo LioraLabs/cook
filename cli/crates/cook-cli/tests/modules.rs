@@ -84,10 +84,7 @@ fn online_install_cook_smoke_from_fixture_project() {
         .output()
         .expect("spawn smoke");
     let stdout = String::from_utf8_lossy(&smoke.stdout);
-    assert!(
-        stdout.contains("42"),
-        "smoke recipe should print 42; got: {stdout}"
-    );
+    assert!(stdout.contains("42"), "smoke recipe should print 42; got: {stdout}");
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {

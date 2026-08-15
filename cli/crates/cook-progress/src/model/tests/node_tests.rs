@@ -20,11 +20,11 @@ fn display_falls_back_to_command_token() {
         "$ ar rcs libliblua.a lapi.o".into(),
     );
     assert_eq!(n.display(), "$ar");
-}
+    }
 
-#[test]
-fn display_handles_empty_fallback() {
-    let n = NodeState::new(NodeId::new(2), "x".into(), None, "".into());
+    #[test]
+    fn display_handles_empty_fallback() {
+        let n = NodeState::new(NodeId::new(2), "x".into(), None, "".into());
     assert_eq!(n.display(), "$?");
 }
 

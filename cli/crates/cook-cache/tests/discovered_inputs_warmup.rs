@@ -42,10 +42,8 @@ fn warmup_collapses_to_two_runs() {
         Some(&di),
         false,
     );
-    assert!(
-        matches!(r1, RebuildResult::Rebuild(RebuildReason::NoCacheEntry)),
-        "fresh check returns NoCacheEntry"
-    );
+    assert!(matches!(r1, RebuildResult::Rebuild(RebuildReason::NoCacheEntry)),
+        "fresh check returns NoCacheEntry");
 
     // Engine post-execution augmentation: build a fat StepEntry.
     // Use mtime=0 for inputs so the mtime fast-path always fires the
@@ -85,10 +83,8 @@ fn warmup_collapses_to_two_runs() {
         Some(&di),
         false,
     );
-    assert!(
-        matches!(r2, RebuildResult::Skip),
-        "Run 2 should hit (augmented current matches fat entry); got {r2:?}"
-    );
+    assert!(matches!(r2, RebuildResult::Skip),
+        "Run 2 should hit (augmented current matches fat entry); got {r2:?}");
 
     // ---- Run 3: edit header content; expect InputChanged ----
     std::fs::write(wd.join("a.h"), b"#pragma once\n#define X 1\n").expect("a.h v2");
@@ -105,9 +101,7 @@ fn warmup_collapses_to_two_runs() {
         Some(&di),
         false,
     );
-    assert!(
-        matches!(&r3, RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+    assert!(matches!(&r3, RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
             if changed.contains(&"a.h".to_string())),
-        "Run 3 should rebuild because a.h content changed; got {r3:?}"
-    );
+        "Run 3 should rebuild because a.h content changed; got {r3:?}");
 }

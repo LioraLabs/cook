@@ -52,7 +52,8 @@ fn json_sidecar_custom_path() {
     let results = vec![mk("r:a", TestOutcome::Passed)];
     write_json_sidecar(tmp.path(), Some(&custom), &results).unwrap();
     assert!(custom.exists());
-    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&custom).unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&custom).unwrap()).unwrap();
     assert_eq!(v["schema_version"], 1);
 }
 
@@ -151,14 +152,12 @@ fn junit_cdata_safe_handles_close_marker() {
     let path = tmp.path().join("junit.xml");
     let mut r = mk("r:tricky", TestOutcome::Failed);
     r.stdout = "before ]]> after".to_string();
-    write_junit_sidecar(&path, &[r]).unwrap();
-    let xml = std::fs::read_to_string(&path).unwrap();
-    // The literal "]]>" inside CDATA would close it prematurely; we expect
+        write_junit_sidecar(&path, &[r]).unwrap();
+        let xml = std::fs::read_to_string(&path).unwrap();
+        // The literal "]]>" inside CDATA would close it prematurely; we expect
     // the safe replacement so the raw sequence doesn't appear verbatim.
-    assert!(
-        !xml.contains("before ]]> after"),
-        "unsafe CDATA sequence survived into XML:\n{xml}"
-    );
+    assert!(!xml.contains("before ]]> after"),
+            "unsafe CDATA sequence survived into XML:\n{xml}");
 }
 
 #[test]
@@ -203,10 +202,8 @@ fn junit_xml_attr_escaping() {
 #[test]
 fn cdata_safe_escapes_close_marker() {
     let safe = cdata_safe("hello ]]> world ]]> end");
-    assert!(
-        !safe.contains("]]>") || safe.contains("]]]]><![CDATA[>"),
-        "close marker was not escaped: {safe}"
-    );
+    assert!(!safe.contains("]]>") || safe.contains("]]]]><![CDATA[>"),
+        "close marker was not escaped: {safe}");
     assert!(safe.contains("]]]]><![CDATA[>"));
 }
 

@@ -17,7 +17,7 @@ fn two_recipes_same_output_path_different_keys() {
     });
     let key_b = cloud_key(&CloudKeyInputs {
         schema_version: CACHE_VERSION,
-        recipe_namespace: "myproj/Cookfile::test", // different recipe
+        recipe_namespace: "myproj/Cookfile::test",  // different recipe
         command_hash: 0xAA,
         env_contribution: 0xCC,
         seal_contribution: 0,

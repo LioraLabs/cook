@@ -162,9 +162,7 @@ fn a_cached_tests_streams_are_opt_in() {
         .unwrap()
         .success());
     assert!(
-        fs::read_to_string(&sidecar)
-            .unwrap()
-            .contains("RECORDED-MARKER"),
+        fs::read_to_string(&sidecar).unwrap().contains("RECORDED-MARKER"),
         "the cold run really did print the marker"
     );
 
@@ -176,10 +174,7 @@ fn a_cached_tests_streams_are_opt_in() {
         .unwrap()
         .success());
     let warm = fs::read_to_string(&sidecar).unwrap();
-    assert!(
-        warm.contains("\"from_cache\": true"),
-        "expected a hit: {warm}"
-    );
+    assert!(warm.contains("\"from_cache\": true"), "expected a hit: {warm}");
     assert!(
         !warm.contains("RECORDED-MARKER"),
         "a default warm hit must not replay the streams: {warm}"

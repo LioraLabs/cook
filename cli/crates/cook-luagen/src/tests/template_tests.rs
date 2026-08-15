@@ -84,10 +84,7 @@ fn shell_brace_idioms_survive_verbatim() {
     let result3 = expand_sigil_template("awk '{print $1}'", &ctx, &mut env).unwrap();
     assert_eq!(result3, "\"awk '{print $1}'\"");
 
-    assert!(
-        env.keys.is_empty(),
-        "no env keys should be recorded for shell braces"
-    );
+    assert!(env.keys.is_empty(), "no env keys should be recorded for shell braces");
 }
 
 #[test]
@@ -162,17 +159,11 @@ fn builtin_in_wrong_mode_returns_err() {
     };
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env);
-    assert!(
-        result.is_err(),
-        "expected error for $<in.stem> in many-to-one mode"
-    );
+    assert!(result.is_err(), "expected error for $<in.stem> in many-to-one mode");
 
     let mut env = ConsultedEnv::new();
     let result = expand_sigil_template("$<in.stem>", &os_ctx, &mut env);
-    assert!(
-        result.is_err(),
-        "expected error for $<in.stem> in one-shot mode"
-    );
+    assert!(result.is_err(), "expected error for $<in.stem> in one-shot mode");
 }
 
 #[test]
@@ -196,10 +187,7 @@ fn in_stem_expands_to_path_stem() {
 // COOK-63 §9.3: data-member builtins lower to `item` accesses.
 #[test]
 fn item_builtins_lower_to_member_access() {
-    assert_eq!(
-        builtin_to_lua(BuiltinKind::Item),
-        "cook.member_to_string(item)"
-    );
+    assert_eq!(builtin_to_lua(BuiltinKind::Item), "cook.member_to_string(item)");
     assert_eq!(
         builtin_to_lua(BuiltinKind::ItemField("host".into())),
         "cook.member_to_string(item[\"host\"])"
@@ -215,10 +203,10 @@ fn item_builtins_lower_to_member_access() {
 fn recipe_member_lowers_to_dep_output_member() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
-    let mut env = ConsultedEnv::new();
-    let (lua, _) = expand_member_fanout_template(
-        "bin/mux --video $<render[in]>",
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let (lua, _) = expand_member_fanout_template(
+            "bin/mux --video $<render[in]>",
         &ctx,
         &mut env,
         ProbeLowering::CacheGet,
@@ -235,9 +223,9 @@ fn recipe_member_lowers_to_dep_output_member() {
 fn recipe_member_in_plain_command_is_error() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
-    let mut env = ConsultedEnv::new();
-    let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env);
+        let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env);
     assert!(
         matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
         "expected RecipeMemberOutsideFanout, got: {res:?}"
@@ -250,10 +238,10 @@ fn recipe_member_in_plain_command_is_error() {
 fn recipe_member_empty_index_errors_in_fanout_body() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
-    let mut env = ConsultedEnv::new();
-    let res = expand_member_fanout_template(
-        "bin/mux --video $<render[]>",
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_member_fanout_template(
+            "bin/mux --video $<render[]>",
         &ctx,
         &mut env,
         ProbeLowering::CacheGet,
@@ -270,10 +258,10 @@ fn recipe_member_empty_index_errors_in_fanout_body() {
 fn recipe_member_bad_index_errors_in_fanout_body() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
-    let mut env = ConsultedEnv::new();
-    let res = expand_member_fanout_template(
-        "bin/mux --video $<render[key]>",
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_member_fanout_template(
+            "bin/mux --video $<render[key]>",
         &ctx,
         &mut env,
         ProbeLowering::CacheGet,
@@ -304,8 +292,5 @@ fn recipe_member_bracket_errors_are_typed_in_output_patterns() {
         "expected the reserved-index error, got: {res:?}"
     );
 
-    assert!(
-        env.keys.is_empty(),
-        "no env keys must be recorded for bracket errors"
-    );
+    assert!(env.keys.is_empty(), "no env keys must be recorded for bracket errors");
 }

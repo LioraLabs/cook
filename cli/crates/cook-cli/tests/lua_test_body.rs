@@ -44,10 +44,7 @@ fn lua_body_test_passes() {
     let dir = write_cookfile("recipe check\n    test >{\n        assert(1 + 1 == 2)\n    }\n");
     let out = run_recipe(dir.path(), "check");
     let c = combined(&out);
-    assert!(
-        out.status.success(),
-        "a passing lua-body test must exit 0.\n{c}"
-    );
+    assert!(out.status.success(), "a passing lua-body test must exit 0.\n{c}");
 }
 
 #[test]

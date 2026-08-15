@@ -8,7 +8,7 @@ use cook_contracts::cache::step::FileRecord;
 #[test]
 fn test_hash_file_deterministic() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("file.txt");
+        let path = dir.path().join("file.txt");
     std::fs::write(&path, b"hello world").expect("write");
 
     let h1 = hash_file(&path).expect("hash");
@@ -19,7 +19,7 @@ fn test_hash_file_deterministic() {
 #[test]
 fn test_hash_file_differs_on_content() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let p1 = dir.path().join("a.txt");
+        let p1 = dir.path().join("a.txt");
     let p2 = dir.path().join("b.txt");
     std::fs::write(&p1, b"hello").expect("write");
     std::fs::write(&p2, b"world").expect("write");
@@ -32,14 +32,14 @@ fn test_hash_file_differs_on_content() {
 #[test]
 fn test_hash_file_missing_returns_none() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("nonexistent.txt");
+        let path = dir.path().join("nonexistent.txt");
     assert!(hash_file(&path).is_none());
 }
 
 #[test]
 fn test_stat_mtime_returns_positive() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("file.txt");
+        let path = dir.path().join("file.txt");
     std::fs::write(&path, b"data").expect("write");
 
     let mtime = stat_mtime(&path).expect("mtime");
@@ -49,7 +49,7 @@ fn test_stat_mtime_returns_positive() {
 #[test]
 fn test_stat_mtime_missing_returns_none() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("nonexistent.txt");
+        let path = dir.path().join("nonexistent.txt");
     assert!(stat_mtime(&path).is_none());
 }
 
@@ -74,8 +74,8 @@ fn test_hash_str_differs() {
 #[test]
 fn check_inputs_collects_every_changed_path_not_just_first() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    for f in ["a.txt", "b.txt", "c.txt"] {
+        let wd = dir.path();
+        for f in ["a.txt", "b.txt", "c.txt"] {
         std::fs::write(wd.join(f), format!("old {f}")).expect("write");
     }
     let cached: Vec<FileRecord> = ["a.txt", "b.txt", "c.txt"]
@@ -104,8 +104,8 @@ fn check_inputs_collects_every_changed_path_not_just_first() {
 #[test]
 fn check_inputs_names_added_and_removed_paths() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("keep.txt"), b"x").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("keep.txt"), b"x").expect("write");
     let cached = vec![
         make_file_record("keep.txt", wd),
         FileRecord {
@@ -148,25 +148,12 @@ fn cause_summary_formats_and_caps() {
         changed: vec!["m.json".into()],
         added: vec!["a".into()],
         removed: vec!["r".into()],
-    };
-    assert_eq!(
-        mixed.cause_summary().unwrap(),
-        "input changed: m.json (+2 more)"
-    );
+        };
+        assert_eq!(mixed.cause_summary().unwrap(), "input changed: m.json (+2 more)");
 
-    assert_eq!(
-        RebuildReason::EnvChanged.cause_summary().unwrap(),
-        "env changed"
-    );
-    assert_eq!(
-        RebuildReason::CommandHashChanged.cause_summary().unwrap(),
-        "command changed"
-    );
-    assert_eq!(
-        RebuildReason::NoCacheEntry.cause_summary(),
-        None,
-        "cold is not attributed"
-    );
+    assert_eq!(RebuildReason::EnvChanged.cause_summary().unwrap(), "env changed");
+    assert_eq!(RebuildReason::CommandHashChanged.cause_summary().unwrap(), "command changed");
+    assert_eq!(RebuildReason::NoCacheEntry.cause_summary(), None, "cold is not attributed");
 
     let reorder = RebuildReason::InputsChanged {
         changed: vec![],
@@ -211,8 +198,8 @@ fn test_no_cache_entry_rebuilds() {
 #[test]
 fn test_command_hash_changed_rebuilds() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let in_record = make_file_record("in.c", wd);
@@ -250,8 +237,8 @@ fn test_command_hash_changed_rebuilds() {
 #[test]
 fn test_output_missing_rebuilds() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     // out.o is intentionally NOT created
 
     let in_record = make_file_record("in.c", wd);
@@ -285,8 +272,8 @@ fn test_output_missing_rebuilds() {
 #[test]
 fn test_nothing_changed_skips() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let in_record = make_file_record("in.c", wd);
@@ -321,8 +308,8 @@ fn test_nothing_changed_skips() {
 #[test]
 fn test_input_content_changed_rebuilds() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let out_record = make_file_record("out.o", wd);
@@ -381,8 +368,8 @@ fn test_input_content_changed_rebuilds() {
 #[test]
 fn record_unit_with_drifted_present_output_skips() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let in_record = make_file_record("in.c", wd);
@@ -442,8 +429,8 @@ fn record_unit_with_drifted_present_output_skips() {
 #[test]
 fn record_unit_with_missing_output_still_rebuilds_without_restore() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     // out.o is intentionally NOT created — genuinely missing.
 
     let in_record = make_file_record("in.c", wd);
@@ -554,7 +541,7 @@ fn no_outputs_nothing_changed_skips() {
 fn test_hash_env_deterministic() {
     let mut env = BTreeMap::new();
     env.insert("FOO".to_string(), "bar".to_string());
-    env.insert("BAZ".to_string(), "qux".to_string());
+        env.insert("BAZ".to_string(), "qux".to_string());
 
     let h1 = hash_env(&env);
     let h2 = hash_env(&env);
@@ -592,8 +579,8 @@ fn test_hash_env_differs_on_value_change() {
 #[test]
 fn env_contribution_changed_rebuilds() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let in_record = make_file_record("in.c", wd);
@@ -628,8 +615,8 @@ fn env_contribution_changed_rebuilds() {
 #[test]
 fn seal_contribution_changed_rebuilds() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
     std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
     let in_record = make_file_record("in.c", wd);
@@ -647,16 +634,7 @@ fn seal_contribution_changed_rebuilds() {
 
     // Same command/env/inputs/outputs, different seal value -> SealChanged.
     let (result, updated) = needs_rebuild_cook(
-        Some(&entry),
-        &["in.c"],
-        &["out.o"],
-        0xbeef,
-        0,
-        0x9999,
-        wd,
-        None,
-        None,
-        false,
+        Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None, None, false,
     );
     assert_eq!(result, RebuildResult::Rebuild(RebuildReason::SealChanged));
     assert!(updated.is_none());
@@ -667,9 +645,9 @@ fn augments_current_inputs_from_depfile_and_skips() {
     use cook_contracts::DiscoveredInputs;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let wd = dir.path();
-    // Lay out source, header, and a depfile that references both.
-    std::fs::write(wd.join("src.c"), b"src").expect("src");
+        let wd = dir.path();
+        // Lay out source, header, and a depfile that references both.
+        std::fs::write(wd.join("src.c"), b"src").expect("src");
     std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
     std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
     std::fs::write(wd.join(".cook/deps/src.d"), b"build/src.o: src.c hdr.h\n").expect("d");
@@ -724,10 +702,8 @@ fn augments_current_inputs_from_depfile_and_skips() {
         false,
     );
 
-    assert!(
-        matches!(result, RebuildResult::Skip),
-        "augmented current_inputs (declared + discovered) should match the fat entry"
-    );
+    assert!(matches!(result, RebuildResult::Skip),
+        "augmented current_inputs (declared + discovered) should match the fat entry");
 }
 
 #[test]
@@ -758,16 +734,7 @@ fn missing_depfile_does_not_force_a_rebuild() {
     };
 
     let (result, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
 
     assert!(matches!(result, RebuildResult::Skip), "got: {result:?}");
@@ -797,16 +764,7 @@ fn settled_check_never_reads_the_depfile() {
 
     // With the depfile present: skip.
     let (before, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
     assert!(matches!(before, RebuildResult::Skip), "got: {before:?}");
 
@@ -853,26 +811,14 @@ fn deleted_discovered_header_rebuilds() {
     std::fs::remove_file(wd.join("hdr.h")).expect("rm header");
 
     let (result, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
 
-    assert!(
-        matches!(
-            &result,
-            RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
-                if changed == &vec!["hdr.h".to_string()]
-        ),
-        "a deleted discovered header must rebuild and be named; got: {result:?}"
-    );
+    assert!(matches!(
+        &result,
+        RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+            if changed == &vec!["hdr.h".to_string()]
+    ), "a deleted discovered header must rebuild and be named; got: {result:?}");
 }
 
 #[test]
@@ -897,26 +843,14 @@ fn changed_discovered_header_rebuilds() {
     std::fs::write(wd.join("hdr.h"), b"hdr-EDITED").expect("edit header");
 
     let (result, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
 
-    assert!(
-        matches!(
-            &result,
-            RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
-                if changed == &vec!["hdr.h".to_string()]
-        ),
-        "got: {result:?}"
-    );
+    assert!(matches!(
+        &result,
+        RebuildResult::Rebuild(RebuildReason::InputsChanged { changed, .. })
+            if changed == &vec!["hdr.h".to_string()]
+    ), "got: {result:?}");
 }
 
 #[test]
@@ -952,16 +886,7 @@ fn missing_depfile_recorded_as_output_still_self_heals() {
 
     // Settled: skip.
     let (before, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
     assert!(matches!(before, RebuildResult::Skip), "got: {before:?}");
 
@@ -969,16 +894,7 @@ fn missing_depfile_recorded_as_output_still_self_heals() {
     // so the output walk must force a rebuild rather than silently skipping.
     std::fs::remove_file(wd.join(d_rel)).expect("rm depfile");
     let (after, _) = needs_rebuild_cook(
-        Some(&entry),
-        &["src.c"],
-        &["out.o"],
-        0xc0de,
-        0,
-        0,
-        wd,
-        None,
-        Some(&di),
-        false,
+        Some(&entry), &["src.c"], &["out.o"], 0xc0de, 0, 0, wd, None, Some(&di), false,
     );
     assert!(
         matches!(after, RebuildResult::Rebuild(_)),
@@ -1063,11 +979,7 @@ impl crate::backend::CacheBackend for FakeBackend {
         keys: &[crate::backend::CloudKey],
     ) -> crate::backend::BackendResult<std::collections::BTreeSet<crate::backend::CloudKey>> {
         let store = self.store.lock().unwrap();
-        Ok(keys
-            .iter()
-            .filter(|k| store.contains_key(*k))
-            .copied()
-            .collect())
+        Ok(keys.iter().filter(|k| store.contains_key(*k)).copied().collect())
     }
     fn get(
         &self,
@@ -1173,13 +1085,7 @@ fn restore_one_materialises_file_and_symlink() {
     let wd = tmp.path().join("wd");
     std::fs::create_dir_all(&wd).unwrap();
 
-    assert!(restore_one(
-        &backend,
-        &file_key,
-        &wd.join("bin/run"),
-        &wd,
-        None
-    ));
+    assert!(restore_one(&backend, &file_key, &wd.join("bin/run"), &wd, None));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1189,19 +1095,11 @@ fn restore_one_materialises_file_and_symlink() {
 
     #[cfg(unix)]
     {
-        assert!(restore_one(
-            &backend,
-            &symlink_key,
-            &wd.join("bin/run-link"),
-            &wd,
-            None
-        ));
-        assert!(
-            std::fs::symlink_metadata(wd.join("bin/run-link"))
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        assert!(restore_one(&backend, &symlink_key, &wd.join("bin/run-link"), &wd, None));
+        assert!(std::fs::symlink_metadata(wd.join("bin/run-link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }
 
@@ -1221,19 +1119,10 @@ fn symlink_hardening_rejects_escapes() {
     assert!(!link.exists());
     // parent-escape rejected
     assert!(!restore_symlink_checked(anchor, &link, "../../etc/passwd"));
-    assert!(
-        !std::fs::symlink_metadata(&link)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    );
+    assert!(!std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false));
     // sibling within anchor accepted
     assert!(restore_symlink_checked(anchor, &link, "sib"));
-    assert!(
-        std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 
 #[test]
@@ -1246,12 +1135,7 @@ fn symlink_hardening_allows_reentrant_within_anchor() {
     std::fs::create_dir_all(anchor.join("sub2")).unwrap();
     // target `../sub2/x` from link-parent `sub/` resolves to `sub2/x` under anchor
     assert!(restore_symlink_checked(anchor, &link, "../sub2/x"));
-    assert!(
-        std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 
 /// COOK-414: a golden vector for the crate's LOCAL content hash, computed
@@ -1299,8 +1183,7 @@ fn hash_reader_agrees_with_hash_file_on_the_same_bytes() {
         let from_file = super::hash_file(&p).unwrap();
         let from_reader = super::hash_reader(&mut std::io::Cursor::new(&body)).unwrap();
         assert_eq!(
-            from_file,
-            from_reader,
+            from_file, from_reader,
             "hash_file and hash_reader disagree on {} bytes",
             body.len()
         );
@@ -1597,8 +1480,5 @@ fn touched_module_with_same_bytes_absorbs_the_mtime() {
         false,
     );
     assert_eq!(result, RebuildResult::Skip);
-    assert_eq!(
-        updated.expect("skip entry").module_inputs[0].mtime,
-        recorded_mtime
-    );
+    assert_eq!(updated.expect("skip entry").module_inputs[0].mtime, recorded_mtime);
 }

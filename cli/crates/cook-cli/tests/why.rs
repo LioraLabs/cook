@@ -248,9 +248,7 @@ fn extract_input_hash(manifest: &str, path: &str) -> String {
         .unwrap_or_else(|| panic!("manifest must record input {path}; got: {manifest}"))
         + needle.len();
     let rest = &manifest[start..];
-    let end = rest
-        .find('"')
-        .expect("recorded hash must be quote-terminated");
+    let end = rest.find('"').expect("recorded hash must be quote-terminated");
     rest[..end].to_string()
 }
 

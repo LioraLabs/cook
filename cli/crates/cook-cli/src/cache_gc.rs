@@ -98,7 +98,10 @@ pub(crate) fn enumerate_store(store: &Path) -> Result<Option<Vec<EvictCandidate>
     }
     let backend = LocalBackend::new(store.to_path_buf());
     let candidates = backend.enumerate().map_err(|e| {
-        CookError::Other(format!("enumerating cache store {}: {e}", store.display()))
+        CookError::Other(format!(
+            "enumerating cache store {}: {e}",
+            store.display()
+        ))
     })?;
     Ok(Some(candidates))
 }

@@ -125,9 +125,7 @@ pub(crate) fn check_budget_after_run(project_root: &Path, published_count: u64, 
     //    count toward the total exactly as they do in `EvictPlan.total_before`
     //    and in `cook cache du`. Strictly over, per the ticket — a store
     //    sitting exactly at its budget is within it.
-    let total = candidates
-        .iter()
-        .fold(0u64, |a, c| a.saturating_add(c.size));
+    let total = candidates.iter().fold(0u64, |a, c| a.saturating_add(c.size));
     if total <= budget {
         return;
     }

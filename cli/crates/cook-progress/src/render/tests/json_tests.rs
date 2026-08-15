@@ -6,10 +6,8 @@ fn make_state_with_one_recipe() -> BuildState {
     let mut state = BuildState::new();
     state.apply(&ProgressEvent::BuildStarted {
         recipes: vec![RecipeTopo {
-            id: RecipeId::new(0),
-            name: "deps".into(),
-            deps: vec![],
-            expected_nodes: 3,
+            id: RecipeId::new(0), name: "deps".into(),
+            deps: vec![], expected_nodes: 3,
         }],
         total_nodes: 3,
     });
@@ -75,11 +73,8 @@ fn recipe_completed_uses_elapsed_ms_integer() {
 fn node_output_uses_names_and_stream_string() {
     let mut state = make_state_with_one_recipe();
     state.apply(&ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0),
-        node: NodeId::new(0),
-        name: "lvm.c".into(),
-        artifact: None,
-        fallback_label: "x".into(),
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
         cause: None,
         cache_key: None,
@@ -141,11 +136,8 @@ fn node_event_node_field_resolves_via_state() {
     // BuildState lookup, not the inline `name` carried by some variants.
     let mut state = make_state_with_one_recipe();
     state.apply(&ProgressEvent::NodeStarted {
-        recipe: RecipeId::new(0),
-        node: NodeId::new(0),
-        name: "lvm.c".into(),
-        artifact: None,
-        fallback_label: "x".into(),
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
         kind: NodeKind::Cooked,
         cause: None,
         cache_key: None,
@@ -230,15 +222,11 @@ fn each_event_is_one_line() {
 #[test]
 fn node_started_emits_kind_in_wire_format() {
     let state = make_state_with_one_recipe();
-    let s = write_event(
-        &state,
-        &ProgressEvent::NodeStarted {
-            recipe: RecipeId::new(0),
-            node: NodeId::new(0),
-            name: "lvm.c".into(),
-            artifact: None,
-            fallback_label: "x".into(),
-            kind: NodeKind::Compile,
+    let s = write_event(&state, &ProgressEvent::NodeStarted {
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        name: "lvm.c".into(), artifact: None,
+        fallback_label: "x".into(),
+        kind: NodeKind::Compile,
             cause: None,
             cache_key: None,
         },
@@ -286,7 +274,7 @@ fn check_schema_version_accepts_lower_versions() {
     // CS-0048: readers accept any `v <= MAX_KNOWN`. Build a synthetic
     // v=0 line to pin the additive-only contract for the future v=2 case
     // (today MAX_KNOWN=1, so v=0 is the only "lower" value we can test).
-    let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":0}"#;
+        let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":0}"#;
     let v = check_schema_version(line).expect("v <= MAX_KNOWN must validate");
     assert_eq!(v, 0);
 }

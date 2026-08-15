@@ -14,10 +14,7 @@ fn reports_once_the_total_crosses() {
     let mut c = CapCounter::new(10);
     assert!(c.add(11).is_err());
     assert!(c.exceeded());
-    assert_eq!(
-        c.message(),
-        "artifact exceeds max_artifact_bytes (11); cap 10"
-    );
+    assert_eq!(c.message(), "artifact exceeds max_artifact_bytes (11); cap 10");
 }
 
 /// COOK-417: the message was written out three times (backend.rs:349,

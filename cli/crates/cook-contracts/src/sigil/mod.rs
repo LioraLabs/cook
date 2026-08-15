@@ -195,13 +195,7 @@ fn is_alpha(b: u8) -> bool {
 
 #[inline]
 fn is_ident_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric()
-        || b == b'_'
-        || b == b'.'
-        || b == b':'
-        || b == b'['
-        || b == b']'
-        || b == b'-'
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':' || b == b'[' || b == b']' || b == b'-'
 }
 
 pub mod subst;

@@ -195,10 +195,7 @@ fn member_relative_gather_cannot_escape_member_root() {
     let output = cook(tmp.path(), &["member.build"]);
     assert!(!output.status.success());
     let diagnostic = stderr(&output);
-    assert!(
-        diagnostic.contains("../outside.txt"),
-        "stderr: {diagnostic}"
-    );
+    assert!(diagnostic.contains("../outside.txt"), "stderr: {diagnostic}");
     assert!(diagnostic.contains("escape"), "stderr: {diagnostic}");
 }
 
@@ -254,10 +251,7 @@ fn duplicate_literal_output_is_rejected() {
     );
 
     let output = cook(tmp.path(), &["dup"]);
-    assert!(
-        !output.status.success(),
-        "expected a register-phase refusal"
-    );
+    assert!(!output.status.success(), "expected a register-phase refusal");
     let err = stderr(&output);
     assert!(err.contains("same output 'same.txt'"), "stderr:\n{err}");
     // Both producing sites must be named — finding one of them is the whole
@@ -278,10 +272,7 @@ fn duplicate_literal_output_across_recipes_is_rejected() {
     );
 
     let output = cook(tmp.path(), &["b"]);
-    assert!(
-        !output.status.success(),
-        "expected a register-phase refusal"
-    );
+    assert!(!output.status.success(), "expected a register-phase refusal");
     let err = stderr(&output);
     assert!(err.contains("same output 'shared.txt'"), "stderr:\n{err}");
     assert!(err.contains("[a]") && err.contains("[b]"), "stderr:\n{err}");

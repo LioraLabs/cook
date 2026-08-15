@@ -226,11 +226,7 @@ pub fn lookup(
         && probe.inputs.tools.is_empty()
         && probe.inputs.files.is_empty()
         && probe.inputs.requires.is_empty();
-    let reaches_keyless = probe
-        .inputs
-        .requires
-        .iter()
-        .any(|k| keyless_upstreams.contains(k));
+    let reaches_keyless = probe.inputs.requires.iter().any(|k| keyless_upstreams.contains(k));
     let keyless = declares_nothing || reaches_keyless;
 
     // 4. CS-0157 tool locations. Resolved before the hit/miss fork so both

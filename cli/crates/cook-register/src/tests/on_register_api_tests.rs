@@ -2,9 +2,7 @@ use super::*;
 
 fn setup() -> (Lua, SharedFinalizerQueue) {
     let lua = Lua::new();
-    lua.globals()
-        .set("cook", lua.create_table().unwrap())
-        .unwrap();
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
     let queue: SharedFinalizerQueue = Rc::new(RefCell::new(Vec::new()));
     register_on_register_complete(&lua, queue.clone()).unwrap();
     (lua, queue)
@@ -16,11 +14,7 @@ fn queues_a_function_without_running_it() {
     lua.load(r#"cook.on_register_complete(function() error("must not run") end)"#)
         .exec()
         .unwrap();
-    assert_eq!(
-        queue.borrow().len(),
-        1,
-        "callback should be queued, not run"
-    );
+    assert_eq!(queue.borrow().len(), 1, "callback should be queued, not run");
 }
 
 #[test]
@@ -50,8 +44,8 @@ fn rejects_number() {
     assert!(err.contains("function"), "got: {err}");
     // mlua (Lua 5.4) distinguishes the integer/float subtypes in
     // `type_name()` even though Lua itself reports both as `"number"`;
-    // a bare integer literal like `42` is an mlua `Integer`.
-    assert!(err.contains("integer"), "got: {err}");
+        // a bare integer literal like `42` is an mlua `Integer`.
+        assert!(err.contains("integer"), "got: {err}");
     assert!(err.contains("22.9"), "got: {err}");
     assert!(err.contains("CS-0149"), "got: {err}");
 }

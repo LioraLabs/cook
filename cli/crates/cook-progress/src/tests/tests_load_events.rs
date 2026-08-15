@@ -26,9 +26,9 @@ fn drive_minimal_build(tmp: &Path) -> String {
         artifact: None,
         fallback_label: "parser.c".into(),
         kind: NodeKind::Cooked,
-        cause: None,
-        cache_key: None,
-    };
+            cause: None,
+            cache_key: None,
+        };
     state.apply(&ns);
     store.record(&state, &ns).unwrap();
 
@@ -111,7 +111,8 @@ fn a_future_schema_line_is_refused_by_the_summary_and_the_replay_alike() {
         .failed_count;
 
     let (baseline_view, _) = crate::log_reader::load(&build_dir).unwrap();
-    let baseline_nodes: usize = baseline_view.recipes.values().map(|r| r.nodes.len()).sum();
+    let baseline_nodes: usize =
+        baseline_view.recipes.values().map(|r| r.nodes.len()).sum();
 
     // A node-failed line from a writer one major schema ahead of us.
     let future = crate::event::PROGRESS_SCHEMA_VERSION + 1;

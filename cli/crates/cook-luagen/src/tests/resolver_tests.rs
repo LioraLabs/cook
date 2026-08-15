@@ -46,10 +46,7 @@ fn member_sigil_matches_in_head() {
 fn a_colon_ident_is_a_probe_ref() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
-    assert!(matches!(
-        resolve("cc:zlib.cflags", &ctx),
-        Resolved::ProbeRef { .. }
-    ));
+    assert!(matches!(resolve("cc:zlib.cflags", &ctx), Resolved::ProbeRef { .. }));
 }
 
 // CS-0074: probe-ref dispatch tests
@@ -103,10 +100,7 @@ fn probe_ref_does_not_intercept_recipe() {
     let mut r = BTreeSet::new();
     r.insert("my_recipe".to_string());
     let ctx = ctx_oneshot_none(&r);
-    assert!(matches!(
-        resolve("my_recipe", &ctx),
-        Resolved::Recipe { .. }
-    ));
+    assert!(matches!(resolve("my_recipe", &ctx), Resolved::Recipe { .. }));
 }
 
 #[test]
@@ -120,10 +114,7 @@ fn resolves_in_to_builtin() {
 fn resolves_in_stem_to_builtin() {
     let r = empty();
     let ctx = ctx_oneone_single(&r);
-    assert_eq!(
-        resolve("in.stem", &ctx),
-        Resolved::Builtin(BuiltinKind::InAccessor("stem".to_string()))
-    );
+    assert_eq!(resolve("in.stem", &ctx), Resolved::Builtin(BuiltinKind::InAccessor("stem".to_string())));
 }
 
 #[test]
@@ -133,10 +124,7 @@ fn resolves_recipe_in_scope() {
     let ctx = ctx_oneshot_none(&r);
     assert_eq!(
         resolve("build", &ctx),
-        Resolved::Recipe {
-            name: "build".to_string(),
-            accessor: None
-        }
+        Resolved::Recipe { name: "build".to_string(), accessor: None }
     );
 }
 
@@ -147,10 +135,7 @@ fn resolves_recipe_accessor() {
     let ctx = ctx_oneshot_none(&r);
     assert_eq!(
         resolve("lib.stem", &ctx),
-        Resolved::Recipe {
-            name: "lib".to_string(),
-            accessor: Some("stem".to_string())
-        }
+        Resolved::Recipe { name: "lib".to_string(), accessor: Some("stem".to_string()) }
     );
 }
 
@@ -158,20 +143,14 @@ fn resolves_recipe_accessor() {
 fn unknown_token_falls_through_to_env_runtime() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
-    assert_eq!(
-        resolve("HOME", &ctx),
-        Resolved::EnvRuntime("HOME".to_string())
-    );
+    assert_eq!(resolve("HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
 }
 
 #[test]
 fn explicit_var_prefix_strips_to_var_runtime() {
     let r = empty();
     let ctx = ctx_oneshot_none(&r);
-    assert_eq!(
-        resolve("var.HOME", &ctx),
-        Resolved::EnvRuntime("HOME".to_string())
-    );
+    assert_eq!(resolve("var.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
 }
 
 #[test]
@@ -194,10 +173,7 @@ fn explicit_var_prefix_overrides_recipe_match() {
     // Bare HOME → recipe (recipe wins over a declared variable).
     assert!(matches!(resolve("HOME", &ctx), Resolved::Recipe { .. }));
     // var.HOME → always the variable, even if HOME is a recipe.
-    assert_eq!(
-        resolve("var.HOME", &ctx),
-        Resolved::EnvRuntime("HOME".to_string())
-    );
+    assert_eq!(resolve("var.HOME", &ctx), Resolved::EnvRuntime("HOME".to_string()));
 }
 
 #[test]
@@ -226,10 +202,7 @@ fn out_in_multi_output_is_error() {
         outputs: OutputShape::Multi(2),
         recipes_in_scope: &r,
     };
-    assert!(matches!(
-        resolve("out", &ctx),
-        Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })
-    ));
+    assert!(matches!(resolve("out", &ctx), Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })));
 }
 
 #[test]
@@ -240,10 +213,7 @@ fn out_n_overflow_is_error() {
         outputs: OutputShape::Multi(2),
         recipes_in_scope: &r,
     };
-    assert!(matches!(
-        resolve("out_3", &ctx),
-        Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })
-    ));
+    assert!(matches!(resolve("out_3", &ctx), Resolved::Error(ResolveError::BuiltinWrongOutputCount { .. })));
 }
 
 #[test]
@@ -291,18 +261,16 @@ fn ctx_member<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
 fn recipe_bracket_in_resolves_to_recipe_member() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    assert_eq!(
-        resolve("render[in]", &ctx_member(&recipes)),
-        Resolved::RecipeMember {
-            name: "render".to_string()
-        }
-    );
-}
+        assert_eq!(
+            resolve("render[in]", &ctx_member(&recipes)),
+        Resolved::RecipeMember { name: "render".to_string() }
+        );
+    }
 
-#[test]
-fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
-    let mut recipes = BTreeSet::new();
-    recipes.insert("render".to_string());
+    #[test]
+    fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
     let ctx = ctx_member(&recipes);
     // The pre-v1.0 spelling errors whether or not the base names a recipe
     // (no env fallthrough for a trailing bracket group).
@@ -310,10 +278,8 @@ fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
     match &r {
         Resolved::Error(e @ ResolveError::RecipeMemberEmptyIndex { .. }) => {
             let msg = e.to_string();
-            assert!(
-                msg.contains("`$<render[]>` was respelled `$<render[in]>` in v1.0"),
-                "did-you-mean must show the concrete respelling; got: {msg}"
-            );
+            assert!(msg.contains("`$<render[]>` was respelled `$<render[in]>` in v1.0"),
+                "did-you-mean must show the concrete respelling; got: {msg}");
         }
         other => panic!("expected RecipeMemberEmptyIndex, got {other:?}"),
     }
@@ -327,15 +293,12 @@ fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
 fn non_in_bracket_content_is_rejected_not_v1() {
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    let ctx = ctx_member(&recipes);
-    for ident in ["render[x]", "render[key]", "render[in.id]", "render[0]"] {
+        let ctx = ctx_member(&recipes);
+        for ident in ["render[x]", "render[key]", "render[in.id]", "render[0]"] {
         match resolve(ident, &ctx) {
             Resolved::Error(e @ ResolveError::RecipeMemberBadIndex { .. }) => {
-                assert!(
-                    e.to_string()
-                        .contains("member-field joins are not part of v1.0"),
-                    "diagnostic must note joins are not in v1.0; got: {e}"
-                );
+                assert!(e.to_string().contains("member-field joins are not part of v1.0"),
+                    "diagnostic must note joins are not in v1.0; got: {e}");
             }
             other => panic!("{ident}: expected RecipeMemberBadIndex, got {other:?}"),
         }
@@ -358,8 +321,8 @@ fn non_trailing_bracket_group_falls_through_unchanged() {
     // not trailing keeps the pre-existing env-runtime fallthrough.
     let mut recipes = BTreeSet::new();
     recipes.insert("render".to_string());
-    assert_eq!(
-        resolve("render[in].stem", &ctx_member(&recipes)),
+        assert_eq!(
+            resolve("render[in].stem", &ctx_member(&recipes)),
         Resolved::EnvRuntime("render[in].stem".to_string())
     );
 }
@@ -385,18 +348,9 @@ fn the_retired_file_prefix_is_refused_by_name() {
         Resolved::Error(e) => e.to_string(),
         other => panic!("expected an error, got {other:?}"),
     };
-    assert!(
-        rendered.contains("CS-0187"),
-        "the diagnostic names the entry: {rendered}"
-    );
-    assert!(
-        rendered.contains("files"),
-        "and the replacement: {rendered}"
-    );
-    assert!(
-        rendered.contains("seal"),
-        "and how it becomes a determinant: {rendered}"
-    );
+    assert!(rendered.contains("CS-0187"), "the diagnostic names the entry: {rendered}");
+    assert!(rendered.contains("files"), "and the replacement: {rendered}");
+    assert!(rendered.contains("seal"), "and how it becomes a determinant: {rendered}");
 }
 
 /// A path shape the generic ident charset cannot hold (`/`) strict-bails to
@@ -436,18 +390,8 @@ fn cs_0210_recipe_ref_is_independent_of_mode_and_output_shape() {
     ];
 
     for ident in [
-        "in",
-        "out",
-        "in.stem",
-        "out_2",
-        "out_9.dir",
-        "libmath",
-        "libmath.stem",
-        "in.foo",
-        "out_1",
-        "out_1.stem",
-        "protos[in]",
-        "CC",
+        "in", "out", "in.stem", "out_2", "out_9.dir", "libmath", "libmath.stem", "in.foo",
+        "out_1", "out_1.stem", "protos[in]", "CC",
     ] {
         let expected = recipe_ref(ident, &names);
         for mode in modes {
@@ -482,10 +426,7 @@ fn cs_0210_recipe_ref_reports_the_member_form_as_a_recipe_edge() {
     names.insert("render".to_string());
     assert_eq!(
         recipe_ref("render[in]", &names),
-        Some(RecipeRef {
-            name: "render".to_string(),
-            accessor: None
-        })
+        Some(RecipeRef { name: "render".to_string(), accessor: None })
     );
     // A bracket form on an unknown name is a diagnostic, not an edge.
     assert_eq!(recipe_ref("nope[in]", &names), None);
@@ -502,10 +443,7 @@ fn accessor_ref_splits_a_name_in_scope_carrying_a_path_accessor() {
     let scope = names(&["lib"]);
     assert_eq!(
         accessor_ref("lib.stem", &scope),
-        Some(AccessorRef {
-            name: "lib",
-            accessor: "stem"
-        })
+        Some(AccessorRef { name: "lib", accessor: "stem" })
     );
 }
 
@@ -516,10 +454,7 @@ fn accessor_ref_admits_only_the_closed_accessor_set() {
         let ident = format!("lib.{accessor}");
         assert_eq!(
             accessor_ref(&ident, &scope),
-            Some(AccessorRef {
-                name: "lib",
-                accessor
-            }),
+            Some(AccessorRef { name: "lib", accessor }),
             "{ident} is a path-accessor reference"
         );
     }
@@ -543,10 +478,7 @@ fn accessor_ref_splits_at_the_rightmost_dot_so_a_qualified_name_survives() {
     let scope = names(&["alias.recipe"]);
     assert_eq!(
         accessor_ref("alias.recipe.stem", &scope),
-        Some(AccessorRef {
-            name: "alias.recipe",
-            accessor: "stem"
-        })
+        Some(AccessorRef { name: "alias.recipe", accessor: "stem" })
     );
 }
 
@@ -569,9 +501,6 @@ fn accessor_ref_reads_the_split_not_the_whole_token() {
     assert_eq!(accessor_ref("alias.stem", &names(&["alias.stem"])), None);
     assert_eq!(
         accessor_ref("alias.stem", &names(&["alias"])),
-        Some(AccessorRef {
-            name: "alias",
-            accessor: "stem"
-        })
+        Some(AccessorRef { name: "alias", accessor: "stem" })
     );
 }

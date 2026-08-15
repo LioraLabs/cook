@@ -91,10 +91,8 @@ impl ConsumesFilter {
         if self.is_empty() {
             return candidates.iter().collect();
         }
-        let kept: Vec<&T> = candidates
-            .iter()
-            .filter(|c| self.matches(&root_rel(c)))
-            .collect();
+        let kept: Vec<&T> =
+            candidates.iter().filter(|c| self.matches(&root_rel(c))).collect();
         if kept.is_empty() && !candidates.is_empty() {
             return candidates.iter().collect();
         }

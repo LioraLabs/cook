@@ -187,10 +187,7 @@ recipe consumer
 
     let (ok, combined) = run_cook(wd, "consumer");
 
-    assert!(
-        ok,
-        "the sigil path MUST schedule producer then consumer:\n{combined}"
-    );
+    assert!(ok, "the sigil path MUST schedule producer then consumer:\n{combined}");
 
     // Both recipes are in the closure.
     assert!(

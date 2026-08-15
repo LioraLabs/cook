@@ -368,7 +368,9 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
     }
     let payload_len = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
     let payload_hash = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
-    let payload = bytes.get(HEADER_LEN..).ok_or(DecodeError::Truncated)?;
+    let payload = bytes
+        .get(HEADER_LEN..)
+        .ok_or(DecodeError::Truncated)?;
     if payload.len() as u64 != payload_len {
         return Err(DecodeError::Truncated);
     }
@@ -421,8 +423,8 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
                 let recorded_at = r.u64()?;
                 let log_bytes = r.u64()?;
                 let cause_len = r.u32()? as usize;
-                let cause =
-                    std::str::from_utf8(r.take(cause_len)?).map_err(|_| DecodeError::Utf8)?;
+                let cause = std::str::from_utf8(r.take(cause_len)?)
+                    .map_err(|_| DecodeError::Utf8)?;
                 Some(Observation::new(
                     duration_ms,
                     recorded_at,

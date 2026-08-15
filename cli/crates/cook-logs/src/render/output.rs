@@ -24,8 +24,8 @@ pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
     // Conservative under `soft_wrap`: a wrapped line occupies more than one row,
     // so the true bottom is further down and this stops short of it rather than
     // overshooting into blank space.
-    let max_scroll =
-        u16::try_from(lines.len().saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
+    let max_scroll = u16::try_from(lines.len().saturating_sub(area.height as usize))
+        .unwrap_or(u16::MAX);
     let scroll_y = state.scroll_y.min(max_scroll);
     let mut para = Paragraph::new(Text::from(lines))
         .block(block)
@@ -61,13 +61,10 @@ fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
     lines.push(Line::raw(""));
 
     // Collect line indices that are search matches for the currently selected node.
-    let matched_lines: std::collections::BTreeSet<usize> = state
-        .search
-        .as_ref()
+    let matched_lines: std::collections::BTreeSet<usize> = state.search.as_ref()
         .filter(|s| !s.editing)
         .map(|s| {
-            s.matches
-                .iter()
+            s.matches.iter()
                 .filter(|(r, n, _)| *r == rid && *n == nid)
                 .map(|(_, _, i)| *i)
                 .collect()
@@ -80,11 +77,7 @@ fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
             let style = ratatui::style::Style::default()
                 .bg(ratatui::style::Color::Yellow)
                 .fg(ratatui::style::Color::Black);
-            let spans = line
-                .spans
-                .into_iter()
-                .map(|s| s.patch_style(style))
-                .collect::<Vec<_>>();
+            let spans = line.spans.into_iter().map(|s| s.patch_style(style)).collect::<Vec<_>>();
             lines.push(Line::from(spans));
         } else {
             lines.push(line);
@@ -94,11 +87,7 @@ fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
 }
 
 fn render_line<'a>(log: &'a LogLine, state: &UiState, theme: &Theme) -> Line<'a> {
-    let parsed = log
-        .text
-        .as_bytes()
-        .into_text()
-        .unwrap_or_else(|_| Text::raw(log.text.clone()));
+    let parsed = log.text.as_bytes().into_text().unwrap_or_else(|_| Text::raw(log.text.clone()));
     let mut spans: Vec<Span<'a>> = parsed.lines.into_iter().flat_map(|l| l.spans).collect();
     if log.stream == Stream::Stderr {
         let style = theme.err_style();

@@ -49,10 +49,7 @@ fn size_sweep_evicts_the_lru_tail_of_files_only() {
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
     assert_eq!(plan.victims, vec![f1.clone(), f2.clone()]);
-    assert!(
-        !plan.victims.contains(&exempt),
-        "exempt kind must never be size-swept"
-    );
+    assert!(!plan.victims.contains(&exempt), "exempt kind must never be size-swept");
     assert_eq!(plan.freed_bytes, 40);
     assert_eq!(plan.total_before, 560);
     assert_eq!(plan.total_after, 520);
@@ -137,10 +134,7 @@ fn age_cutoff_is_strict_so_an_exactly_at_cutoff_object_survives() {
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
-    assert!(
-        !plan.victims.contains(&at_cutoff),
-        "exactly-at-cutoff must survive"
-    );
+    assert!(!plan.victims.contains(&at_cutoff), "exactly-at-cutoff must survive");
     assert!(plan.victims.contains(&just_before_cutoff));
 }
 
@@ -155,10 +149,7 @@ fn zero_last_access_is_never_an_age_victim_but_is_lru_first() {
         low_water: 1.0,
     };
     let age_plan = plan_eviction(&[unknown_mtime.clone()], &age_policy, 1_000_000);
-    assert!(
-        age_plan.victims.is_empty(),
-        "last_access == 0 must never be an age victim"
-    );
+    assert!(age_plan.victims.is_empty(), "last_access == 0 must never be an age victim");
 
     // Size pass: the same object sorts first (evicted before objects with a
     // known, nonzero last_access) because 0 is the smallest u64.
@@ -211,25 +202,10 @@ fn both_knobs_together_the_size_pass_still_evicts_after_the_age_pass() {
 
     // Age pass takes `old` (freed 50, running_total 150-50=100). Size pass
     // then still must evict `young` (100 > target 60) to reach budget.
-    assert_eq!(
-        plan.victims.len(),
-        2,
-        "both old and young must be evicted, each exactly once"
-    );
-    assert_eq!(
-        plan.victims.iter().filter(|c| **c == old).count(),
-        1,
-        "old must not be double-counted"
-    );
-    assert_eq!(
-        plan.victims.iter().filter(|c| **c == young).count(),
-        1,
-        "young must be evicted by the size pass"
-    );
-    assert_eq!(
-        plan.freed_bytes, 150,
-        "freed_bytes must be 50+100, not 50+50 from a double-counted old"
-    );
+    assert_eq!(plan.victims.len(), 2, "both old and young must be evicted, each exactly once");
+    assert_eq!(plan.victims.iter().filter(|c| **c == old).count(), 1, "old must not be double-counted");
+    assert_eq!(plan.victims.iter().filter(|c| **c == young).count(), 1, "young must be evicted by the size pass");
+    assert_eq!(plan.freed_bytes, 150, "freed_bytes must be 50+100, not 50+50 from a double-counted old");
     assert_eq!(plan.total_after, 0);
 }
 
@@ -272,10 +248,7 @@ fn low_water_below_one_sweeps_past_max_size() {
 
     assert_eq!(plan.victims, vec![f1]);
     assert_eq!(plan.total_after, 80);
-    assert!(
-        plan.total_after < policy.max_size.unwrap(),
-        "must sweep below max_size, not just to it"
-    );
+    assert!(plan.total_after < policy.max_size.unwrap(), "must sweep below max_size, not just to it");
 }
 
 #[test]
@@ -352,14 +325,8 @@ fn auto_sweep_plans_down_to_low_water_and_no_further() {
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
     assert_eq!(plan.victims, vec![f1]);
-    assert!(
-        plan.total_after <= 32,
-        "must sweep to at most 0.8 * max_size"
-    );
-    assert!(
-        plan.total_after > 0,
-        "must not overshoot past what's necessary"
-    );
+    assert!(plan.total_after <= 32, "must sweep to at most 0.8 * max_size");
+    assert!(plan.total_after > 0, "must not overshoot past what's necessary");
 }
 
 #[test]
@@ -433,16 +400,10 @@ fn every_artifact_kind_is_either_sweep_exempt_or_deliberately_not() {
     let sweepable = [k::OBSERVATION];
 
     for kind in exempt {
-        assert!(
-            is_size_sweep_exempt(Some(kind)),
-            "{kind} must survive a size sweep"
-        );
+        assert!(is_size_sweep_exempt(Some(kind)), "{kind} must survive a size sweep");
     }
     for kind in sweepable {
-        assert!(
-            !is_size_sweep_exempt(Some(kind)),
-            "{kind} must be sweepable"
-        );
+        assert!(!is_size_sweep_exempt(Some(kind)), "{kind} must be sweepable");
     }
     assert_eq!(
         exempt.len() + sweepable.len(),

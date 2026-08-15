@@ -37,7 +37,8 @@ fn vm_with_loader(working_dir: PathBuf) -> Lua {
 /// touch this suite (CS-0207 moved it from `cook_modules/` to
 /// `.cook/modules/`).
 fn installed_share_dir(dir: &std::path::Path) -> PathBuf {
-    cook_contracts::layout::modules_dir(dir).join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
+    cook_contracts::layout::modules_dir(dir)
+        .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR)
 }
 
 fn write_module(dir: &std::path::Path, name: &str, source: &str) {
@@ -379,26 +380,11 @@ fn refresh_sets_path_and_cpath_with_rock_tree_entries() {
     // paths must stay in step with `module_candidates` — a name that resolves
     // through `require` but not through `cook.load_module` is exactly the
     // register/execute split this module exists to prevent.
-    assert!(
-        !path.contains("/tmp/fake-project/.cook/modules/?.lua"),
-        "{path}"
-    );
-    assert!(
-        !path.contains("/tmp/fake-project/.cook/modules/?/init.lua"),
-        "{path}"
-    );
-    assert!(
-        !path.contains("cook_modules"),
-        "the old tree root must not be searched: {path}"
-    );
-    assert!(
-        !cpath.contains("/tmp/fake-project/.cook/modules/?."),
-        "{cpath}"
-    );
-    assert!(
-        !cpath.contains("cook_modules"),
-        "the old tree root must not be searched: {cpath}"
-    );
+    assert!(!path.contains("/tmp/fake-project/.cook/modules/?.lua"), "{path}");
+    assert!(!path.contains("/tmp/fake-project/.cook/modules/?/init.lua"), "{path}");
+    assert!(!path.contains("cook_modules"), "the old tree root must not be searched: {path}");
+    assert!(!cpath.contains("/tmp/fake-project/.cook/modules/?."), "{cpath}");
+    assert!(!cpath.contains("cook_modules"), "the old tree root must not be searched: {cpath}");
 }
 
 #[test]
@@ -413,14 +399,8 @@ fn refresh_is_idempotent() {
     refresh_package_search_paths(&lua, &cwd).expect("second");
     let second_path: String = pkg.get("path").unwrap();
     let second_cpath: String = pkg.get("cpath").unwrap();
-    assert_eq!(
-        first_path, second_path,
-        "path must not grow on repeated refresh"
-    );
-    assert_eq!(
-        first_cpath, second_cpath,
-        "cpath must not grow on repeated refresh"
-    );
+    assert_eq!(first_path, second_path, "path must not grow on repeated refresh");
+    assert_eq!(first_cpath, second_cpath, "cpath must not grow on repeated refresh");
 }
 
 // ---------------------------------------------------------------------------
@@ -464,10 +444,7 @@ fn a_hyphenated_module_binds_its_underscore_alias_through_the_same_door() {
     // AND the composed lookup must be the un-rewritten disk name.
     let chunk = format!(
         "{}\nreturn my_mod.value",
-        cook_contracts::module_binding::binding(
-            &cook_contracts::module_binding::alias_of("my-mod"),
-            "my-mod"
-        )
+        cook_contracts::module_binding::binding(&cook_contracts::module_binding::alias_of("my-mod"), "my-mod")
     );
     let got: i64 = lua.load(&chunk).eval().unwrap();
     assert_eq!(got, 7);
@@ -501,11 +478,7 @@ fn the_binding_goes_through_the_observed_door() {
     .unwrap();
 
     let seen = observer.take();
-    assert_eq!(
-        seen.len(),
-        1,
-        "the composed binding must be observed: {seen:?}"
-    );
+    assert_eq!(seen.len(), 1, "the composed binding must be observed: {seen:?}");
     assert!(seen[0].ends_with("greet.lua"), "{seen:?}");
 }
 
@@ -693,5 +666,8 @@ return {}"#,
         .load(r#"return cook.load_module("lua/cyclic.lua")"#)
         .eval::<LuaValue>()
         .expect_err("a self-referential path module must be detected");
-    assert!(err.to_string().contains("module cycle detected:"), "{err}");
+    assert!(
+        err.to_string().contains("module cycle detected:"),
+        "{err}"
+    );
 }

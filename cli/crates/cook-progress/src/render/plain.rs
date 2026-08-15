@@ -51,8 +51,7 @@ impl<W: Write + Send> PlainRenderer<W> {
     }
 
     fn is_internal(&self, state: &BuildState, recipe: RecipeId) -> bool {
-        self.raw_name(state, recipe)
-            .is_some_and(|n| is_internal_recipe(&n))
+        self.raw_name(state, recipe).is_some_and(|n| is_internal_recipe(&n))
     }
 
     /// Flush a recipe's grouped probe row, then its held cached rows.
@@ -74,9 +73,7 @@ impl<W: Write + Send> PlainRenderer<W> {
         buf.probes_ran = 0;
         buf.probes_cached = 0;
         buf.probes_elapsed = Duration::ZERO;
-        if ran == 0 {
-            return Ok(0);
-        }
+        if ran == 0 { return Ok(0); }
         let rname = self.name(state, recipe);
         let label = format!(
             "probe:{module} {}",
@@ -140,24 +137,12 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 // Zero-node aggregators and internal tooling recipes add no
                 // information to the queued list.
                 for r in recipes {
-                    if r.expected_nodes == 0 || is_internal_recipe(&r.name) {
-                        continue;
-                    }
-                    writeln!(
-                        self.out,
-                        "  {:24} queued  ({} nodes)",
-                        r.name, r.expected_nodes
-                    )?;
+                    if r.expected_nodes == 0 || is_internal_recipe(&r.name) { continue; }
+                    writeln!(self.out, "  {:24} queued  ({} nodes)", r.name, r.expected_nodes)?;
                 }
             }
             ProgressEvent::RecipeStarted { .. } => {}
-            ProgressEvent::RecipeCompleted {
-                recipe,
-                elapsed,
-                cached,
-                total,
-                ..
-            } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
                 let probes_ran = self.flush_probes(state, *recipe)?;
                 if *total == 0 || self.is_internal(state, *recipe) {
                     self.buffers.remove(recipe);
@@ -176,13 +161,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 } else {
                     format!("({total}/{total})")
                 };
-                writeln!(
-                    self.out,
-                    "  {:24} done     {:24} {}",
-                    name,
-                    detail,
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(self.out, "  {:24} done     {:24} {}", name, detail, fmt_secs(*elapsed))?;
             }
             ProgressEvent::RecipeFailed {
                 recipe,
@@ -192,40 +171,15 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             } => {
                 self.flush_recipe(state, *recipe)?;
                 let name = self.name(state, *recipe);
-                writeln!(
-                    self.out,
-                    "  {:24} FAILED   ({}/{} steps) {}",
-                    name,
-                    completed,
-                    total,
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(self.out, "  {:24} FAILED   ({}/{} steps) {}", name, completed, total, fmt_secs(*elapsed))?;
             }
-            ProgressEvent::RecipeSkipped {
-                recipe,
-                elapsed,
-                completed,
-                total,
-                ..
-            } => {
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
                 self.flush_recipe(state, *recipe)?;
                 let name = self.name(state, *recipe);
-                writeln!(
-                    self.out,
-                    "  {:24} skipped  ({}/{} ran, upstream-failed) {}",
-                    name,
-                    completed,
-                    total,
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(self.out, "  {:24} skipped  ({}/{} ran, upstream-failed) {}", name, completed, total, fmt_secs(*elapsed))?;
             }
             // COOK-276: a warm re-run announces its cause at start of work.
-            ProgressEvent::NodeStarted {
-                recipe,
-                node,
-                cause: Some(cause),
-                ..
-            } => {
+            ProgressEvent::NodeStarted { recipe, node, cause: Some(cause), .. } => {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
                 let nname = self.node_display(state, recipe, node);
@@ -261,13 +215,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
                 let nname = self.node_display(state, recipe, node);
-                writeln!(
-                    self.out,
-                    "  {}/{:40}FAILED {}",
-                    rname,
-                    nname,
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(self.out, "  {}/{:40}FAILED {}", rname, nname, fmt_secs(*elapsed))?;
                 for line in error.lines() {
                     writeln!(self.out, "  [{rname}/{nname}] {line}")?;
                 }
@@ -284,18 +232,9 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 // Held: prints only if the recipe turns out to do real work.
                 let rname = self.name(state, *recipe);
                 let row = format!("  {}/{:40}cached", rname, nname);
-                self.buffers
-                    .entry(*recipe)
-                    .or_default()
-                    .cached_rows
-                    .push(row);
+                self.buffers.entry(*recipe).or_default().cached_rows.push(row);
             }
-            ProgressEvent::NodeSkipped {
-                recipe,
-                name: nname,
-                reason,
-                ..
-            } => {
+            ProgressEvent::NodeSkipped { recipe, name: nname, reason, .. } => {
                 self.flush_recipe(state, *recipe)?;
                 let rname = self.name(state, *recipe);
                 // COOK-413: this hand-spelled the three strings beside the
@@ -332,21 +271,11 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 let label = interactive_label(&rname, name);
                 writeln!(self.out, "─── {label} ───")?;
             }
-            ProgressEvent::InteractiveEnd {
-                recipe,
-                name,
-                elapsed,
-                success,
-                ..
-            } => {
+            ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => {
                 let rname = self.name(state, *recipe);
                 let label = interactive_label(&rname, name);
                 let ok = if *success { "ok" } else { "failed" };
-                writeln!(
-                    self.out,
-                    "─── {label} resumed ({ok}, {}) ───",
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(self.out, "─── {label} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
             }
             ProgressEvent::Finished { .. } => {}
         }
@@ -369,10 +298,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
         // confusing for non-build entrypoints. Drop the recipe label — the
         // per-row progress lines above already named what ran.
         if ok {
-            writeln!(
-                self.out,
-                "cook done in {elapsed} ({total} nodes, {cached} cached recipes, {done} done)"
-            )?;
+            writeln!(self.out, "cook done in {elapsed} ({total} nodes, {cached} cached recipes, {done} done)")?;
         } else {
             writeln!(self.out, "cook FAILED after {elapsed}")?;
         }

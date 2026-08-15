@@ -61,16 +61,8 @@ fn repr_body(body: &Body) -> String {
 
 fn format_step(step: &Step) -> String {
     match step {
-        Step::Shell {
-            command,
-            interactive,
-            ..
-        } => {
-            format!(
-                "Shell interactive={} command={}",
-                interactive,
-                repr(command)
-            )
+        Step::Shell { command, interactive, .. } => {
+            format!("Shell interactive={} command={}", interactive, repr(command))
         }
         Step::Lua { code, .. } => format!("Lua code={}", repr(code)),
         Step::LuaBlock { code, .. } => format!("LuaBlock code={}", repr(code)),
@@ -99,11 +91,7 @@ fn format_use(u: &UseStatement) -> String {
             u.line
         )
     } else {
-        format!(
-            "UseStatement module_name={} line={}",
-            repr(&u.target),
-            u.line
-        )
+        format!("UseStatement module_name={} line={}", repr(&u.target), u.line)
     }
 }
 
@@ -121,12 +109,7 @@ fn format_config(cb: &ConfigBlock) -> String {
         None => "None".to_string(),
         Some(n) => format!("Some({})", repr(n)),
     };
-    format!(
-        "ConfigBlock name={} body={} line={}",
-        name,
-        repr(&cb.body),
-        cb.line
-    )
+    format!("ConfigBlock name={} body={} line={}", name, repr(&cb.body), cb.line)
 }
 
 fn format_cookfile(c: &Cookfile) -> String {

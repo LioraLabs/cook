@@ -56,9 +56,7 @@ pub fn extract_dep_refs_from_steps(
 
     for step in steps {
         let tokens = match step {
-            Step::Cook {
-                step: cook_step, ..
-            } => {
+            Step::Cook { step: cook_step, .. } => {
                 let mut t: Vec<String> = Vec::new();
                 for pat in &cook_step.outputs {
                     t.extend(extract_sigil_tokens(pat.as_str()));
@@ -71,9 +69,7 @@ pub fn extract_dep_refs_from_steps(
                 }
                 t
             }
-            Step::Test {
-                step: test_step, ..
-            } => extract_body_tokens(&test_step.body),
+            Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
             Step::Shell { command, .. } => extract_sigil_tokens(command),
             Step::Lua { .. } | Step::LuaBlock { .. } | Step::InlineLua { .. } => vec![],
             // `Step` is `#[non_exhaustive]`; unknown future variants contribute
@@ -93,7 +89,10 @@ pub fn extract_dep_refs_from_steps(
 
 /// Extract all $<IDENT> tokens from a template string. Returns ident strings.
 pub fn extract_sigil_tokens(template: &str) -> Vec<String> {
-    sigil::scan(template).into_iter().map(|s| s.ident).collect()
+    sigil::scan(template)
+        .into_iter()
+        .map(|s| s.ident)
+        .collect()
 }
 
 /// Extract sigil-token dep refs from a `Body`, supporting both shell and Lua bodies.

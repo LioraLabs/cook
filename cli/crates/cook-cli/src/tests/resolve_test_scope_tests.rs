@@ -76,7 +76,7 @@ fn recipe_match_wins_over_namespace_match() {
 fn unknown_scope_errors_with_useful_diagnostic() {
     let set = names(&["build", "web.build", "web.test"]);
     let err = resolve_test_scope("xyz", &set).expect_err("unknown scope must error");
-    let msg = format!("{err}");
+        let msg = format!("{err}");
     assert!(msg.contains("unknown test scope: 'xyz'"), "message: {msg}");
     assert!(msg.contains("recipe name"), "message: {msg}");
     assert!(msg.contains("namespace"), "message: {msg}");
@@ -89,6 +89,6 @@ fn unknown_scope_does_not_swallow_partial_namespace_typo() {
     // namespace `webs.` — we must error rather than silently widening.
     let set = names(&["web.build", "web.test"]);
     let err = resolve_test_scope("webs", &set).expect_err("typo must error");
-    let msg = format!("{err}");
+        let msg = format!("{err}");
     assert!(msg.contains("unknown test scope: 'webs'"), "message: {msg}");
 }

@@ -58,7 +58,10 @@ pub(crate) fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
     if keys.is_empty() {
         return "{}".to_string();
     }
-    let parts: Vec<String> = keys.iter().map(|k| lua_string::literal(k)).collect();
+    let parts: Vec<String> = keys
+        .iter()
+        .map(|k| lua_string::literal(k))
+        .collect();
     format!("{{{}}}", parts.join(", "))
 }
 
@@ -293,7 +296,10 @@ pub(crate) fn generate_cook_step(
             out.push_str("        local _cook_out\n");
             out.push_str("        do\n");
             out.push_str("            local input = _cook_in\n");
-            out.push_str(&format!("            _cook_out = ({})\n", expr_src));
+            out.push_str(&format!(
+                "            _cook_out = ({})\n",
+                expr_src
+            ));
             out.push_str("        end\n");
             out.push_str("        if type(_cook_out) ~= \"string\" or _cook_out == \"\" then\n");
             out.push_str(
@@ -586,11 +592,7 @@ pub(crate) fn generate_member_fanout_cook_step(
         out_exprs.push(expr);
     }
     let multi = out_exprs.len() > 1;
-    let out_field = if multi {
-        "outputs = _cook_outs"
-    } else {
-        "output = _cook_out"
-    };
+    let out_field = if multi { "outputs = _cook_outs" } else { "output = _cook_out" };
 
     // CS-0197: trailing quoted globs on `inputs <probe>` resolve ONCE at
     // register time (outside the member loop — same files for every member,
@@ -633,7 +635,8 @@ pub(crate) fn generate_member_fanout_cook_step(
         Some(Body::LuaBlock(code)) => {
             // §8.2: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
-            let code_literal = wrap_lua_string(&with_execute_prelude(uses, code));
+            let code_literal =
+                wrap_lua_string(&with_execute_prelude(uses, code));
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
                 "        cook.add_unit({{{}, {}, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}, line = {}}})\n",
@@ -644,9 +647,7 @@ pub(crate) fn generate_member_fanout_cook_step(
             // Declaration-only: one declared output per member, no command.
             format!(
                 "        cook.add_unit({{{}, {}, member = cook.member_to_string(item){}}})\n",
-                inputs_field,
-                out_field,
-                disposition_field(&cook_step.disposition)
+                inputs_field, out_field, disposition_field(&cook_step.disposition)
             )
         }
     };

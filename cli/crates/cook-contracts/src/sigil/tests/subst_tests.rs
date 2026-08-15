@@ -120,10 +120,7 @@ fn zero_index_names_one_based() {
 #[test]
 fn member_of_non_object_is_a_diagnostic_naming_the_type() {
     let err = subst(json!({"a": "str"}), "v:t.a.deeper").unwrap_err();
-    assert!(
-        err.contains("cannot address member 'deeper' of a string value"),
-        "{err}"
-    );
+    assert!(err.contains("cannot address member 'deeper' of a string value"), "{err}");
 }
 
 #[test]

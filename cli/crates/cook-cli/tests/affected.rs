@@ -137,10 +137,7 @@ recipe c : a b
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(dir.path().join("a.stamp").exists(), "a should have run");
-    assert!(
-        !dir.path().join("b.stamp").exists(),
-        "b should NOT have run"
-    );
+    assert!(!dir.path().join("b.stamp").exists(), "b should NOT have run");
 }
 
 #[test]
@@ -172,7 +169,10 @@ fn bad_ref_exits_nonzero() {
     );
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("nonexistent-ref"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("nonexistent-ref"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

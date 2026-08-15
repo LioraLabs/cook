@@ -74,13 +74,19 @@ fn a_lone_bracket_is_code() {
 #[test]
 fn unterminated_long_comment_stops_the_scan() {
     let src = "a--[[ never closed";
-    assert!(matches!(skip_non_code(src, 1), Skip::Unterminated));
+    assert!(matches!(
+        skip_non_code(src, 1),
+        Skip::Unterminated
+    ));
 }
 
 #[test]
 fn unterminated_long_string_stops_the_scan() {
     let src = "a[[ never closed";
-    assert!(matches!(skip_non_code(src, 1), Skip::Unterminated));
+    assert!(matches!(
+        skip_non_code(src, 1),
+        Skip::Unterminated
+    ));
 }
 
 #[test]

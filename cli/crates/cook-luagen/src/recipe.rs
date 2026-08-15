@@ -129,9 +129,7 @@ fn validate_gather_usage(
             }
         }
 
-        let has_member_driver = recipe
-            .steps
-            .iter()
+        let has_member_driver = recipe.steps.iter()
             .any(|step| matches!(step, Step::MemberSource { .. }));
         if has_member_driver {
             for step in &recipe.steps {
@@ -143,8 +141,7 @@ fn validate_gather_usage(
                 if body.is_some_and(has_unsafe_whole_member_ref) {
                     return Err(CodegenError::GatherUsage {
                         recipe: recipe.name.clone(),
-                        message:
-                            "$<in> in a data fan-out shell body must be enclosed in single quotes",
+                        message: "$<in> in a data fan-out shell body must be enclosed in single quotes",
                         line,
                     });
                 }
@@ -461,11 +458,7 @@ fn validate_accessor_placement(
 fn is_bundleable(step: &Step) -> bool {
     matches!(
         step,
-        Step::Shell {
-            interactive: false,
-            ..
-        } | Step::Lua { .. }
-            | Step::LuaBlock { .. }
+        Step::Shell { interactive: false, .. } | Step::Lua { .. } | Step::LuaBlock { .. }
     )
 }
 
@@ -797,11 +790,11 @@ enum TopLevelItem<'a> {
 impl<'a> TopLevelItem<'a> {
     fn line(&self) -> usize {
         match self {
-            TopLevelItem::Recipe(r) => r.line,
-            TopLevelItem::Chore(c) => c.line,
-            TopLevelItem::RegisterBlock(rb) => rb.line,
+            TopLevelItem::Recipe(r)             => r.line,
+            TopLevelItem::Chore(c)              => c.line,
+            TopLevelItem::RegisterBlock(rb)     => rb.line,
             TopLevelItem::TopLevelModuleCall(c) => c.line,
-            TopLevelItem::Probe(p) => p.line,
+            TopLevelItem::Probe(p)              => p.line,
         }
     }
 }
@@ -1087,17 +1080,15 @@ pub fn generate_with_names(
                             line,
                         } => {
                             cook_index += 1;
-                            out.push_str(&format!(
-                                "    local _cook_outputs_{} = {{}}\n",
-                                cook_index
-                            ));
+                            out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
                             out.push_str("    cook.step_group(function()\n");
                             // CS-0155: accessor-bearing (and Lua-expr)
                             // outputs iterate members; all-literal outputs
                             // route through the ordinary chained gather arm
                             // below. The literal-FIRST-step rejection was
                             // emitted at the top of the recipe body.
-                            let member_gather = is_member_fanout && outputs_all_literal(cook_step);
+                            let member_gather =
+                                is_member_fanout && outputs_all_literal(cook_step);
                             if member_gather && prev_cook_index.is_none() {
                                 // Unreachable at run time: the body-top
                                 // error() raises before any step group runs.
@@ -1201,9 +1192,7 @@ pub fn generate_with_names(
                             ));
                             i += 1;
                         }
-                        Step::Shell {
-                            interactive: false, ..
-                        }
+                        Step::Shell { interactive: false, .. }
                         | Step::Lua { .. }
                         | Step::LuaBlock { .. } => {
                             // §{recipes.body-bundling}: coalesce a run of
@@ -1288,10 +1277,7 @@ fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
             ));
         }
         MemberSource::GatherKey(k) => {
-            out.push_str(&format!(
-                "    local _items = cook.probes.get(\"{}\")\n",
-                lua_string::escape_double_quoted(k)
-            ));
+            out.push_str(&format!("    local _items = cook.probes.get(\"{}\")\n", lua_string::escape_double_quoted(k)));
         }
     }
 }
@@ -1396,11 +1382,7 @@ fn chore_param_env_table(params: &[cook_lang::ast::ChoreParam]) -> Option<String
             // special characters that would need escaping in a Lua string key.
             // We use ["name"] = expr (quoted bracket key) so the key is always
             // a string literal, never resolved as a Lua variable reference.
-            format!(
-                "[\"{}\"] = {}",
-                lua_string::escape_double_quoted(n),
-                value_expr
-            )
+            format!("[\"{}\"] = {}", lua_string::escape_double_quoted(n), value_expr)
         })
         .collect();
     Some(format!("{{{}}}", entries.join(", ")))
@@ -1444,36 +1426,30 @@ fn compile_chore_checked(
 
     // COOK-36 Task 3: emit __params metadata when the chore declares parameters.
     if !chore.params.is_empty() {
-        let entries: Vec<String> = chore
-            .params
-            .iter()
-            .filter_map(|p| match p {
-                cook_lang::ast::ChoreParam::Required { name, .. } => Some(format!(
-                    "{{name = \"{}\", kind = \"required\"}}",
-                    lua_string::escape_double_quoted(name),
-                )),
-                cook_lang::ast::ChoreParam::DefaultedString { name, default, .. } => Some(format!(
-                    "{{name = \"{}\", kind = \"defaulted_string\", default = \"{}\"}}",
-                    lua_string::escape_double_quoted(name),
-                    lua_string::escape_double_quoted(default),
-                )),
-                cook_lang::ast::ChoreParam::VariadicPlus { name, .. } => Some(format!(
-                    "{{name = \"{}\", kind = \"variadic_plus\"}}",
-                    lua_string::escape_double_quoted(name),
-                )),
-                cook_lang::ast::ChoreParam::VariadicStar { name, .. } => Some(format!(
-                    "{{name = \"{}\", kind = \"variadic_star\"}}",
-                    lua_string::escape_double_quoted(name),
-                )),
-                cook_lang::ast::ChoreParam::DefaultedLua {
-                    name, default_lua, ..
-                } => Some(format!(
+        let entries: Vec<String> = chore.params.iter().filter_map(|p| match p {
+            cook_lang::ast::ChoreParam::Required { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"required\"}}",
+                lua_string::escape_double_quoted(name),
+            )),
+            cook_lang::ast::ChoreParam::DefaultedString { name, default, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"defaulted_string\", default = \"{}\"}}",
+                lua_string::escape_double_quoted(name),
+                lua_string::escape_double_quoted(default),
+            )),
+            cook_lang::ast::ChoreParam::VariadicPlus { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"variadic_plus\"}}",
+                lua_string::escape_double_quoted(name),
+            )),
+            cook_lang::ast::ChoreParam::VariadicStar { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"variadic_star\"}}",
+                lua_string::escape_double_quoted(name),
+            )),
+            cook_lang::ast::ChoreParam::DefaultedLua { name, default_lua, .. } => Some(format!(
                 "{{name = \"{}\", kind = \"defaulted_lua\", default = function() return ({}) end}}",
                 lua_string::escape_double_quoted(name),
                 default_lua,
             )),
-            })
-            .collect();
+        }).collect();
         if !entries.is_empty() {
             fields.push(format!("__params = {{{}}}", entries.join(", ")));
         }
@@ -1492,12 +1468,7 @@ fn compile_chore_checked(
     // COOK-36 Task 3: bind each declared parameter as a Lua local in the body's scope.
     for p in &chore.params {
         let n = p.name();
-        out.push_str(&format!(
-            "    local {} = {}.{}\n",
-            n,
-            crate::COOK_PARAMS_LOCAL,
-            n
-        ));
+        out.push_str(&format!("    local {} = {}.{}\n", n, crate::COOK_PARAMS_LOCAL, n));
     }
 
     // Emit steps. All shell steps are interactive (parser guarantees this).
@@ -1698,10 +1669,8 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
             lua_string::escape_double_quoted(source_ref)
         ),
         MemberSourceDescriptor::Gather { source_ref } => format!(
-            "{} = \"{}\", {} = \"{}\"",
-            MEMBER_SOURCE_KIND_KEY,
-            MEMBER_SOURCE_KIND_GATHER,
-            MEMBER_SOURCE_REF_KEY,
+            "{} = \"{}\", {} = \"{}\"", MEMBER_SOURCE_KIND_KEY,
+            MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_REF_KEY,
             lua_string::escape_double_quoted(source_ref)
         ),
     };
@@ -1773,7 +1742,10 @@ fn unified_requires_field(
     if requires.is_empty() {
         return None;
     }
-    let items: Vec<String> = requires.iter().map(|s| lua_string::literal(s)).collect();
+    let items: Vec<String> = requires
+        .iter()
+        .map(|s| lua_string::literal(s))
+        .collect();
     Some(format!("requires = {{{}}}", items.join(", ")))
 }
 

@@ -260,10 +260,7 @@ fn size_reflects_real_file_length_not_untrusted_meta_size_bytes() {
 
     let candidates = backend.enumerate().expect("enumerate");
     assert_eq!(candidates.len(), 1);
-    assert_eq!(
-        candidates[0].size, 12,
-        "size must come from fs::metadata, not caller-set size_bytes"
-    );
+    assert_eq!(candidates[0].size, 12, "size must come from fs::metadata, not caller-set size_bytes");
 }
 
 #[test]

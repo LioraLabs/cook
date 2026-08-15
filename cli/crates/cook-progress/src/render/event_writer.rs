@@ -117,13 +117,9 @@ impl EventWriter {
 
         // Flush any pending cascaded-skip buffer when the next event is not
         // an UpstreamFailed skip.
-        if !matches!(
-            event,
-            ProgressEvent::NodeSkipped {
-                reason: SkipReason::UpstreamFailed,
-                ..
-            }
-        ) && !self.pending_upstream_skips.is_empty()
+        if !matches!(event,
+            ProgressEvent::NodeSkipped { reason: SkipReason::UpstreamFailed, .. })
+            && !self.pending_upstream_skips.is_empty()
         {
             self.flush_skips(out)?;
         }
@@ -133,13 +129,9 @@ impl EventWriter {
             ProgressEvent::RecipeStarted { .. } => Ok(false),
 
             ProgressEvent::NodeCacheHit { recipe, node, .. } => {
-                if self.opts.quiet {
-                    return Ok(false);
-                }
+                if self.opts.quiet { return Ok(false); }
                 let nname = node_display(state, *recipe, *node);
-                if !self.opts.verbose
-                    && let Some(module) = probe_module(&nname)
-                {
+                if !self.opts.verbose && let Some(module) = probe_module(&nname) {
                     let buf = self.buffers.entry(*recipe).or_default();
                     buf.probes_cached += 1;
                     buf.probe_module.get_or_insert_with(|| module.to_string());
@@ -147,9 +139,7 @@ impl EventWriter {
                 }
                 let n = state.recipes.get(recipe).and_then(|r| r.nodes.get(node));
                 let has_artifact = n.is_some_and(|n| n.artifact.is_some());
-                if !has_artifact && !self.opts.verbose {
-                    return Ok(false);
-                }
+                if !has_artifact && !self.opts.verbose { return Ok(false); }
 
                 let rname = recipe_name(state, *recipe);
                 if self.opts.verbose {
@@ -161,11 +151,8 @@ impl EventWriter {
                 }
                 // Hold the line: it only prints if this recipe turns out to
                 // do real work. An all-cached recipe collapses to one line.
-                self.buffers
-                    .entry(*recipe)
-                    .or_default()
-                    .cached
-                    .push(format!("{rname}/{nname}"));
+                self.buffers.entry(*recipe).or_default()
+                    .cached.push(format!("{rname}/{nname}"));
                 Ok(false)
             }
 
@@ -180,9 +167,7 @@ impl EventWriter {
                     return Ok(false);
                 }
                 let nname = node_display(state, *recipe, *node);
-                if !self.opts.verbose
-                    && let Some(module) = probe_module(&nname)
-                {
+                if !self.opts.verbose && let Some(module) = probe_module(&nname) {
                     let buf = self.buffers.entry(*recipe).or_default();
                     buf.probes_ran += 1;
                     buf.probes_elapsed += *elapsed;
@@ -191,18 +176,12 @@ impl EventWriter {
                 }
                 let n = state.recipes.get(recipe).and_then(|r| r.nodes.get(node));
                 let has_artifact = n.is_some_and(|n| n.artifact.is_some());
-                if !has_artifact && !self.opts.verbose {
-                    return Ok(false);
-                }
+                if !has_artifact && !self.opts.verbose { return Ok(false); }
                 self.flush_recipe(out, state, *recipe, false)?;
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::NodeCompleted, *kind);
-                writeln!(
-                    out,
-                    "{} {rname}/{nname} in {}",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(out, "{} {rname}/{nname} in {}",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed))?;
                 Ok(true)
             }
 
@@ -216,12 +195,8 @@ impl EventWriter {
                 let rname = recipe_name(state, *recipe);
                 let nname = node_display(state, *recipe, *node);
                 let v = verb_for(LineKind::NodeFailed, NodeKind::Cooked);
-                writeln!(
-                    out,
-                    "{} {rname}/{nname} in {}",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(*elapsed)
-                )?;
+                writeln!(out, "{} {rname}/{nname} in {}",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed))?;
                 // Indent stderr to one space past the verb's right margin (15 spaces).
                 for line in error.lines() {
                     writeln!(out, "{STDERR_INDENT}{line}")?;
@@ -229,29 +204,18 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::NodeSkipped {
-                recipe,
-                name,
-                reason,
-                ..
-            } => match reason {
+            ProgressEvent::NodeSkipped { recipe, name, reason, .. } => match reason {
                 SkipReason::UpstreamFailed => {
                     self.pending_upstream_skips.push((*recipe, name.clone()));
                     Ok(false)
                 }
                 _ => {
-                    if self.opts.quiet {
-                        return Ok(false);
-                    }
+                    if self.opts.quiet { return Ok(false); }
                     self.flush_recipe(out, state, *recipe, false)?;
                     let rname = recipe_name(state, *recipe);
                     let v = verb_for(LineKind::NodeSkipped, NodeKind::Cooked);
-                    writeln!(
-                        out,
-                        "{} {rname}/{name} ({})",
-                        format_verb(v, self.opts.colored),
-                        reason.as_str()
-                    )?;
+                    writeln!(out, "{} {rname}/{name} ({})",
+                        format_verb(v, self.opts.colored), reason.as_str())?;
                     Ok(true)
                 }
             },
@@ -285,27 +249,19 @@ impl EventWriter {
                 kind,
             } => {
                 let probes_ran = self.flush_probes(out, state, *recipe)?;
-                if *total == 0 {
-                    return Ok(false);
-                }
-                let internal =
-                    raw_recipe_name(state, *recipe).is_some_and(|n| is_internal_recipe(&n));
+                if *total == 0 { return Ok(false); }
+                let internal = raw_recipe_name(state, *recipe)
+                    .is_some_and(|n| is_internal_recipe(&n));
                 // No real work: everything was cached except (at most) the
                 // toolchain probes, which just printed their own group line.
                 // The dominant warm-build case — one dim line per recipe.
                 if crate::naming::recipe_did_no_real_work(*cached, probes_ran, *total) {
                     self.buffers.remove(recipe);
-                    if internal {
-                        return Ok(probes_ran > 0);
-                    }
+                    if internal { return Ok(probes_ran > 0); }
                     let rname = recipe_name(state, *recipe);
                     let v = verb_for(LineKind::NodeCached, NodeKind::Cooked);
-                    writeln!(
-                        out,
-                        "{} {rname} ({} nodes)",
-                        format_verb(v, self.opts.colored),
-                        total
-                    )?;
+                    writeln!(out, "{} {rname} ({} nodes)",
+                        format_verb(v, self.opts.colored), total)?;
                     return Ok(true);
                 }
                 self.flush_cached(out, *recipe, true)?;
@@ -326,13 +282,8 @@ impl EventWriter {
                         }
                     }
                 };
-                writeln!(
-                    out,
-                    "{} {rname} in {}   {}",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(*elapsed),
-                    detail
-                )?;
+                writeln!(out, "{} {rname} in {}   {}",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed), detail)?;
                 Ok(true)
             }
 
@@ -345,44 +296,21 @@ impl EventWriter {
                 self.flush_recipe(out, state, *recipe, true)?;
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::RecipeFailed, NodeKind::Cooked);
-                writeln!(
-                    out,
-                    "{} {rname} in {}   ({}/{} nodes)",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(*elapsed),
-                    completed,
-                    total
-                )?;
+                writeln!(out, "{} {rname} in {}   ({}/{} nodes)",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed), completed, total)?;
                 Ok(true)
             }
 
-            ProgressEvent::RecipeSkipped {
-                recipe,
-                elapsed,
-                completed,
-                total,
-                ..
-            } => {
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
                 self.flush_recipe(out, state, *recipe, true)?;
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::NodeSkipped, NodeKind::Cooked);
-                writeln!(
-                    out,
-                    "{} {rname} in {}   ({}/{} ran, upstream-failed)",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(*elapsed),
-                    completed,
-                    total
-                )?;
+                writeln!(out, "{} {rname} in {}   ({}/{} ran, upstream-failed)",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed), completed, total)?;
                 Ok(true)
             }
 
-            ProgressEvent::InteractiveStart {
-                recipe,
-                name,
-                chore_step_count,
-                ..
-            } => {
+            ProgressEvent::InteractiveStart { recipe, name, chore_step_count, .. } => {
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::InteractiveRunning, NodeKind::Cooked);
                 // For chore windows, the subject is always the chore name —
@@ -409,24 +337,14 @@ impl EventWriter {
 
             // COOK-276: a warm re-run announces its cause at start of work —
             // the moment the user is staring at an unexplained rebuild.
-            ProgressEvent::NodeStarted {
-                recipe,
-                node,
-                cause: Some(cause),
-                ..
-            } => {
-                if self.opts.quiet {
-                    return Ok(false);
-                }
+            ProgressEvent::NodeStarted { recipe, node, cause: Some(cause), .. } => {
+                if self.opts.quiet { return Ok(false); }
                 self.flush_recipe(out, state, *recipe, false)?;
                 let rname = recipe_name(state, *recipe);
                 let nname = node_display(state, *recipe, *node);
                 let v = verb_for(LineKind::NodeRebuilding, NodeKind::Cooked);
-                writeln!(
-                    out,
-                    "{} {rname}/{nname} — {cause}",
-                    format_verb(v, self.opts.colored)
-                )?;
+                writeln!(out, "{} {rname}/{nname} — {cause}",
+                    format_verb(v, self.opts.colored))?;
                 Ok(true)
             }
             ProgressEvent::NodeStarted { .. } => Ok(false),
@@ -438,11 +356,7 @@ impl EventWriter {
                     self.flush_recipe(out, state, r, true)?;
                 }
                 self.flush_skips(out)?;
-                let line_kind = if *success {
-                    LineKind::RecipeFinished
-                } else {
-                    LineKind::RecipeFailed
-                };
+                let line_kind = if *success { LineKind::RecipeFinished } else { LineKind::RecipeFailed };
                 let v = verb_for(line_kind, NodeKind::Cooked);
                 let elapsed = state.elapsed();
                 let totals = &state.totals;
@@ -455,21 +369,14 @@ impl EventWriter {
                         format!("({} nodes, {} cached)", total, cached)
                     }
                 } else {
-                    format!(
-                        "({} failed, {} skipped, {}/{} nodes)",
+                    format!("({} failed, {} skipped, {}/{} nodes)",
                         totals.failed_node_count(state),
                         totals.skipped_node_count(state),
                         totals.completed_nodes,
-                        total
-                    )
+                        total)
                 };
-                writeln!(
-                    out,
-                    "{} in {}   {}",
-                    format_verb(v, self.opts.colored),
-                    fmt_secs(elapsed),
-                    detail
-                )?;
+                writeln!(out, "{} in {}   {}",
+                    format_verb(v, self.opts.colored), fmt_secs(elapsed), detail)?;
                 Ok(true)
             }
         }
@@ -508,9 +415,7 @@ impl EventWriter {
         buf.probes_ran = 0;
         buf.probes_cached = 0;
         buf.probes_elapsed = Duration::ZERO;
-        if ran == 0 {
-            return Ok(0);
-        }
+        if ran == 0 { return Ok(0); }
         let rname = recipe_name(state, recipe);
         let v = verb_for(LineKind::NodeCompleted, NodeKind::Resolve);
         let subject = if module.is_empty() {
@@ -519,12 +424,8 @@ impl EventWriter {
             format!("{module} toolchain for {rname}")
         };
         let detail = crate::naming::probe_group_detail(ran, cached);
-        writeln!(
-            out,
-            "{} {subject} {detail} in {}",
-            format_verb(v, self.opts.colored),
-            fmt_secs(elapsed)
-        )?;
+        writeln!(out, "{} {subject} {detail} in {}",
+            format_verb(v, self.opts.colored), fmt_secs(elapsed))?;
         Ok(ran)
     }
 
@@ -541,17 +442,10 @@ impl EventWriter {
             return Ok(());
         };
         let held = std::mem::take(&mut buf.cached);
-        let allowance = self
-            .opts
-            .cached_inline_threshold
-            .saturating_sub(buf.cached_printed);
+        let allowance = self.opts.cached_inline_threshold.saturating_sub(buf.cached_printed);
         buf.cached_printed += held.len().min(allowance);
         buf.cached_suppressed += held.len().saturating_sub(allowance);
-        let suppressed = if terminal {
-            std::mem::take(&mut buf.cached_suppressed)
-        } else {
-            0
-        };
+        let suppressed = if terminal { std::mem::take(&mut buf.cached_suppressed) } else { 0 };
         let v = verb_for(LineKind::NodeCached, NodeKind::Cooked);
         for label in held.iter().take(allowance) {
             writeln!(out, "{} {label}", format_verb(v, self.opts.colored))?;
@@ -563,9 +457,7 @@ impl EventWriter {
     }
 
     fn flush_skips<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
-        if self.pending_upstream_skips.is_empty() {
-            return Ok(());
-        }
+        if self.pending_upstream_skips.is_empty() { return Ok(()); }
         let mut by_recipe: BTreeMap<RecipeId, Vec<String>> = BTreeMap::new();
         for (r, n) in self.pending_upstream_skips.drain(..) {
             by_recipe.entry(r).or_default().push(n);
@@ -574,16 +466,10 @@ impl EventWriter {
         let recipe_count = by_recipe.len();
         let v = verb_for(LineKind::NodeSkipped, NodeKind::Cooked);
         let label = if recipe_count == 1 {
-            format!(
-                "{} ({} nodes, upstream failed)",
-                by_recipe.values().next().unwrap().join(", "),
-                total
-            )
+            format!("{} ({} nodes, upstream failed)",
+                by_recipe.values().next().unwrap().join(", "), total)
         } else {
-            format!(
-                "{} recipes ({} nodes, upstream failed)",
-                recipe_count, total
-            )
+            format!("{} recipes ({} nodes, upstream failed)", recipe_count, total)
         };
         writeln!(out, "{} {}", format_verb(v, self.opts.colored), label)?;
         Ok(())
@@ -603,9 +489,7 @@ fn raw_recipe_name(state: &BuildState, recipe: RecipeId) -> Option<String> {
 }
 
 fn node_display(state: &BuildState, recipe: RecipeId, node: crate::event::NodeId) -> String {
-    state
-        .recipes
-        .get(&recipe)
+    state.recipes.get(&recipe)
         .and_then(|r| r.nodes.get(&node))
         .map(|n| n.display())
         .unwrap_or_else(|| format!("node#{}", node.raw()))

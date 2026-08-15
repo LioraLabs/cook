@@ -108,11 +108,7 @@ fn output_json_emits_structured_diagnostic() {
         .expect("invoke cook");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
-    let line = stderr
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("");
+    let line = stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("");
     let diagnostic: Value = serde_json::from_str(line)
         .unwrap_or_else(|e| panic!("stderr was not json ({e}): {stderr}"));
     assert_eq!(diagnostic["type"], "diagnostic");
@@ -120,10 +116,7 @@ fn output_json_emits_structured_diagnostic() {
     assert_eq!(diagnostic["file"], "Cookfile");
     assert_eq!(diagnostic["line"], 2);
     assert!(
-        diagnostic["message"]
-            .as_str()
-            .unwrap_or("")
-            .contains("did you mean"),
+        diagnostic["message"].as_str().unwrap_or("").contains("did you mean"),
         "diagnostic: {diagnostic}"
     );
 }

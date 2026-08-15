@@ -180,19 +180,11 @@ fn test_minimal_recipe() {
     // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
     assert!(output.contains("cook.__register_surface(\"build\""));
     assert!(
-        output.contains("cook.add_unit({lua_code = ")
-            && output.contains("cook.sh(")
-            && output.contains("set -e\necho hello"),
+        output.contains("cook.add_unit({lua_code = ") && output.contains("cook.sh(") && output.contains("set -e\necho hello"),
         "Single shell line should produce one body unit calling cook.sh, got:\n{output}"
     );
-    assert!(
-        !output.contains("cook.layer"),
-        "Shell steps should not use cook.layer"
-    );
-    assert!(
-        !output.contains("cook.exec"),
-        "Shell steps should not use cook.exec"
-    );
+    assert!(!output.contains("cook.layer"), "Shell steps should not use cook.layer");
+    assert!(!output.contains("cook.exec"), "Shell steps should not use cook.exec");
 }
 
 #[test]
@@ -258,10 +250,7 @@ fn test_cook_step_one_to_one() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(
-        output.contains("cook.step_group(function()"),
-        "missing cook.step_group"
-    );
+    assert!(output.contains("cook.step_group(function()"), "missing cook.step_group");
     assert!(output.contains("local _cook_outputs_1 = {}"));
     // Iteration source is the flat resolved set (Standard §4.3 union),
     // emitted as the local `inputs` by `recipe.rs`. Reading
@@ -269,10 +258,8 @@ fn test_cook_step_one_to_one() {
     // the first.
     assert!(output.contains("for _, _cook_in in ipairs(inputs) do"));
     // CS-0022: output pattern $<in.stem> expands directly to path.stem(_cook_in)
-    assert!(
-        output.contains("local _cook_out = \"build/\" .. path.stem(_cook_in) .. \".o\""),
-        "output pattern should expand $<in.stem> to path.stem(_cook_in), got:\n{output}"
-    );
+    assert!(output.contains("local _cook_out = \"build/\" .. path.stem(_cook_in) .. \".o\""),
+        "output pattern should expand $<in.stem> to path.stem(_cook_in), got:\n{output}");
     assert!(
         output.contains("cook.add_unit({inputs = {_cook_in}, output = _cook_out, command = "),
         "missing cook.add_unit call, got:\n{output}"
@@ -281,14 +268,8 @@ fn test_cook_step_one_to_one() {
     // Should NOT have old API calls
     assert!(!output.contains("cook.layer"), "should not use cook.layer");
     assert!(!output.contains("cook.exec"), "should not use cook.exec");
-    assert!(
-        !output.contains("cook.begin_step"),
-        "should not use cook.begin_step"
-    );
-    assert!(
-        !output.contains("cook.end_step"),
-        "should not use cook.end_step"
-    );
+    assert!(!output.contains("cook.begin_step"), "should not use cook.begin_step");
+    assert!(!output.contains("cook.end_step"), "should not use cook.end_step");
 }
 
 #[test]
@@ -350,10 +331,7 @@ fn test_cook_step_declaration() {
     assert!(output.contains("local _cook_outputs_1 = {}"));
     assert!(output.contains("_cook_outputs_1[1] = \"bin/app\""));
     // DeclarationOnly should NOT have cook.add_unit
-    assert!(
-        !output.contains("cook.add_unit"),
-        "DeclarationOnly should not emit cook.add_unit"
-    );
+    assert!(!output.contains("cook.add_unit"), "DeclarationOnly should not emit cook.add_unit");
 }
 
 #[test]
@@ -383,10 +361,7 @@ fn test_cook_step_lua_block() {
         "missing gather_groups, got:\n{output}"
     );
     assert!(output.contains("cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)"));
-    assert!(
-        !output.contains("lua = function()"),
-        "should not emit lua = function(), got:\n{output}"
-    );
+    assert!(!output.contains("lua = function()"), "should not emit lua = function(), got:\n{output}");
     // Should NOT have old API
     assert!(!output.contains("cook.layer"), "should not use cook.layer");
 }
@@ -574,10 +549,7 @@ fn test_cook_step_emits_step_group() {
     // Verify ordering: step_group before the loop, end) after
     let group_pos = output.find("cook.step_group(function()").unwrap();
     let loop_pos = output.find("for _, _cook_in").unwrap();
-    assert!(
-        group_pos < loop_pos,
-        "step_group should come before the loop"
-    );
+    assert!(group_pos < loop_pos, "step_group should come before the loop");
 }
 
 #[test]
@@ -598,14 +570,8 @@ fn test_config_var_in_cook_step() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(
-        output.contains("_cook_in"),
-        "should expand $<in> to _cook_in"
-    );
-    assert!(
-        output.contains("_cook_out"),
-        "should expand $<out> to _cook_out"
-    );
+    assert!(output.contains("_cook_in"), "should expand $<in> to _cook_in");
+    assert!(output.contains("_cook_out"), "should expand $<out> to _cook_out");
     assert!(
         output.contains(r#"cook.require_var("CC")"#),
         "should expand $<CC> to cook.require_var(\"CC\"), got: {}",
@@ -658,18 +624,9 @@ fn test_no_config_vars_unchanged() {
     )]);
     let output = generate(&cookfile);
     // CS-0022: shell block joined with "set -e\n" prefix; gcc command follows
-    assert!(
-        output.contains("gcc -c "),
-        "should contain gcc -c command, got:\n{output}"
-    );
-    assert!(
-        !output.contains("cook.env"),
-        "should not emit cook.env when no config vars"
-    );
-    assert!(
-        !output.contains("cook.require_var"),
-        "should not emit cook.require_var when no env tokens"
-    );
+    assert!(output.contains("gcc -c "), "should contain gcc -c command, got:\n{output}");
+    assert!(!output.contains("cook.env"), "should not emit cook.env when no config vars");
+    assert!(!output.contains("cook.require_var"), "should not emit cook.require_var when no env tokens");
 }
 
 #[test]
@@ -686,9 +643,7 @@ fn test_interactive_shell_step() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains(
-            "cook.add_unit({command = [[./bin/app]], interactive = true, line = 5, cache = false})"
-        ),
+        output.contains("cook.add_unit({command = [[./bin/app]], interactive = true, line = 5, cache = false})"),
         "expected cook.add_unit with interactive=true, got: {output}"
     );
     assert!(
@@ -812,10 +767,7 @@ fn test_test_step_codegen() {
         "should not emit a should_fail field, got:\n{output}"
     );
     // Should NOT have old API
-    assert!(
-        !output.contains("cook.test_layer"),
-        "should not use old cook.test_layer"
-    );
+    assert!(!output.contains("cook.test_layer"), "should not use old cook.test_layer");
 }
 
 #[test]
@@ -842,12 +794,8 @@ fn test_multiple_uses_generate_in_order() {
         probes: vec![],
     };
     let output = generate(&cookfile);
-    let cpp_pos = output
-        .find(r#"local cpp = cook.load_module("cpp")"#)
-        .unwrap();
-    let proto_pos = output
-        .find(r#"local proto = cook.load_module("proto")"#)
-        .unwrap();
+    let cpp_pos = output.find(r#"local cpp = cook.load_module("cpp")"#).unwrap();
+    let proto_pos = output.find(r#"local proto = cook.load_module("proto")"#).unwrap();
     assert!(cpp_pos < proto_pos);
 }
 
@@ -878,10 +826,7 @@ fn test_no_hash_in_output() {
     )]);
     let output = generate(&cookfile);
     // Old API passed hash as a numeric literal to cook.layer -- this should be gone
-    assert!(
-        !output.contains("cook.layer"),
-        "should not contain cook.layer with hash argument"
-    );
+    assert!(!output.contains("cook.layer"), "should not contain cook.layer with hash argument");
 }
 
 #[test]
@@ -953,10 +898,7 @@ fn test_recipe_with_excludes() {
 fn test_recipe_without_excludes() {
     let cookfile = make_cookfile(vec![make_recipe("build", vec![], vec!["src/*.c"], vec![])]);
     let output = generate(&cookfile);
-    assert!(
-        !output.contains("excludes"),
-        "should not emit excludes when empty"
-    );
+    assert!(!output.contains("excludes"), "should not emit excludes when empty");
 }
 
 #[test]
@@ -1022,10 +964,8 @@ fn test_no_gather_no_variable() {
 
 #[test]
 fn test_dep_ref_in_command_emits_dep_output() {
-    let names: std::collections::BTreeSet<String> = ["libmath", "libstr"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let names: std::collections::BTreeSet<String> =
+        ["libmath", "libstr"].iter().map(|s| s.to_string()).collect();
     let cookfile = make_cookfile(vec![make_recipe(
         "app",
         vec![],
@@ -1063,14 +1003,8 @@ fn test_dep_ref_in_command_emits_dep_output() {
         output.contains(r#"cook.dep_output("libstr")"#),
         "expected cook.dep_output for libstr, got:\n{output}"
     );
-    assert!(
-        output.contains("_cook_in"),
-        "built-in $<in> should still work"
-    );
-    assert!(
-        output.contains("_cook_out"),
-        "built-in $<out> should still work"
-    );
+    assert!(output.contains("_cook_in"), "built-in $<in> should still work");
+    assert!(output.contains("_cook_out"), "built-in $<out> should still work");
 }
 
 #[test]
@@ -1201,17 +1135,20 @@ fn test_bare_shell_no_sigil_keeps_long_string_shape() {
     let output = generate_with_names(&cookfile, &names).expect("codegen");
     // Match `lua_code = [` followed by zero-or-more `=` and another `[` —
     // i.e., a Lua long-string literal at any bracket level (`[[`, `[=[`, `[==[`, …).
-    let has_long_string_lua_code = output.split("lua_code = ").skip(1).any(|s| {
-        let bytes = s.as_bytes();
-        if bytes.first() != Some(&b'[') {
-            return false;
-        }
-        let mut i = 1usize;
-        while i < bytes.len() && bytes[i] == b'=' {
-            i += 1;
-        }
-        i < bytes.len() && bytes[i] == b'['
-    });
+    let has_long_string_lua_code = output
+        .split("lua_code = ")
+        .skip(1)
+        .any(|s| {
+            let bytes = s.as_bytes();
+            if bytes.first() != Some(&b'[') {
+                return false;
+            }
+            let mut i = 1usize;
+            while i < bytes.len() && bytes[i] == b'=' {
+                i += 1;
+            }
+            i < bytes.len() && bytes[i] == b'['
+        });
     assert!(
         has_long_string_lua_code,
         "no-sigil bare shell should still use a single long-string lua_code, got:\n{output}"
@@ -1225,7 +1162,8 @@ fn test_bare_shell_no_sigil_keeps_long_string_shape() {
 #[test]
 fn test_dep_ref_in_test_command() {
     // CS-0024: test bodies may not reference {out}; use {app} dep-ref instead.
-    let names: std::collections::BTreeSet<String> = ["app"].iter().map(|s| s.to_string()).collect();
+    let names: std::collections::BTreeSet<String> =
+        ["app"].iter().map(|s| s.to_string()).collect();
     let cookfile = make_cookfile(vec![make_recipe(
         "run",
         vec![],
@@ -1531,7 +1469,8 @@ fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
     assert_eq!(
         lines[1], "",
         "expected generated line 2 to be blank for a comment line, got: {:?}\nfull output:\n{}",
-        lines[1], out
+        lines[1],
+        out
     );
     // env.Z is source line 3 -> generated line 3 (index 2).
     assert!(
@@ -1547,10 +1486,8 @@ fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
 #[test]
 fn test_cross_recipe_deps_codegen_integration() {
     // Simulate the cross-recipe-deps example
-    let names: std::collections::BTreeSet<String> = ["libmath", "libstr", "app"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let names: std::collections::BTreeSet<String> =
+        ["libmath", "libstr", "app"].iter().map(|s| s.to_string()).collect();
 
     let cookfile = make_cookfile(vec![
         make_recipe(
@@ -1642,29 +1579,18 @@ fn test_cross_recipe_deps_codegen_integration() {
 
     // Codegen produces correct Lua
     let lua = generate_with_names(&cookfile, &names).expect("codegen");
-    assert!(
-        lua.contains(r#"cook.dep_output("libmath")"#),
-        "missing dep_output for libmath"
-    );
-    assert!(
-        lua.contains(r#"cook.dep_output("libstr")"#),
-        "missing dep_output for libstr"
-    );
+    assert!(lua.contains(r#"cook.dep_output("libmath")"#), "missing dep_output for libmath");
+    assert!(lua.contains(r#"cook.dep_output("libstr")"#), "missing dep_output for libstr");
 
     // libmath recipe should NOT have dep_output calls (it has no deps).
     // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
-    let libmath_section = lua
-        .split("cook.__register_surface(\"libmath\"")
-        .nth(1)
-        .unwrap();
+    let libmath_section = lua.split("cook.__register_surface(\"libmath\"").nth(1).unwrap();
     let libmath_end = libmath_section
         .find("cook.__register_surface(")
         .unwrap_or(libmath_section.len());
     let libmath_lua = &libmath_section[..libmath_end];
-    assert!(
-        !libmath_lua.contains("cook.dep_output"),
-        "libmath should have no dep_output calls"
-    );
+    assert!(!libmath_lua.contains("cook.dep_output"),
+        "libmath should have no dep_output calls");
 }
 
 // ── BlockStep codegen (multi-output) ─────────────────────────────
@@ -1682,24 +1608,16 @@ fn blockstep_shell_multi_output() {
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = generate(&cookfile);
     // Outputs table:
-    assert!(
-        lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#),
-        "missing outs table: {lua}"
-    );
+    assert!(lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#), "missing outs table: {lua}");
     // Single add_unit call with all three commands joined, fail-fast via set -e:
-    assert!(
-        lua.contains(r#"command = "set -e\nwasm-pack build\ncp x a.js\ncp y b.wasm""#)
-            || lua.contains(r#"command = "set -e\\nwasm-pack build\\ncp x a.js\\ncp y b.wasm""#),
-        "generated Lua missing expected shell command: {lua}"
-    );
+    assert!(lua.contains(r#"command = "set -e\nwasm-pack build\ncp x a.js\ncp y b.wasm""#)
+        || lua.contains(r#"command = "set -e\\nwasm-pack build\\ncp x a.js\\ncp y b.wasm""#),
+        "generated Lua missing expected shell command: {lua}");
     // Should not iterate per input:
     let for_count = lua.matches("for _, _cook_in in ipairs").count();
     assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop");
     // Should not emit a Lua function body for the shell block:
-    assert!(
-        !lua.contains("lua = function()"),
-        "ShellBlock should not emit lua = function(): {lua}"
-    );
+    assert!(!lua.contains("lua = function()"), "ShellBlock should not emit lua = function(): {lua}");
 }
 
 #[test]
@@ -1718,10 +1636,7 @@ fn blockstep_lua_multi_output() {
         "generated Lua missing outs table: {lua}"
     );
     let for_count = lua.matches("for _, _cook_in in ipairs").count();
-    assert_eq!(
-        for_count, 0,
-        "BlockStep should not emit a per-input loop: {lua}"
-    );
+    assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop: {lua}");
     // Must emit lua_code = ... so the worker can execute the code body.
     // Emitting `lua = function()` silently drops the code since unit_api
     // does not consume Lua function values.
@@ -1801,7 +1716,8 @@ fn test_empty_output_reference_warns_not_errors() {
             }],
         ),
     ]);
-    let (output, warnings) = generate_with_names_and_warnings(&cookfile, &names);
+    let (output, warnings) =
+        generate_with_names_and_warnings(&cookfile, &names);
     assert!(!warnings.is_empty(), "expected empty-output warning");
     assert!(
         warnings
@@ -1993,9 +1909,7 @@ fn test_compile_chore_basic_shell_interactive_cache_false() {
     // The metadata table always carries `__line = N` even when the chore has
     // no deps, so the table is non-empty.
     assert!(
-        lua.contains(
-            "cook.__register_surface_chore(\"clean\", {__line = 1}, function(__cook_params)"
-        ),
+        lua.contains("cook.__register_surface_chore(\"clean\", {__line = 1}, function(__cook_params)"),
         "chore should register via __register_surface_chore, got:\n{lua}"
     );
     assert!(
@@ -2066,19 +1980,13 @@ fn test_compile_chore_with_lua_step_cache_false() {
         }],
     );
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
-    assert!(
-        lua.contains(r#"print("hello")"#),
-        "Lua code missing, got:\n{lua}"
-    );
+    assert!(lua.contains(r#"print("hello")"#), "Lua code missing, got:\n{lua}");
     assert!(
         lua.contains("cache = false"),
         "chore Lua body unit must have cache = false, got:\n{lua}"
     );
     // Emitted as a body unit on the drain thread (CS-0051).
-    assert!(
-        lua.contains("lua_code ="),
-        "Lua step should emit lua_code =, got:\n{lua}"
-    );
+    assert!(lua.contains("lua_code ="), "Lua step should emit lua_code =, got:\n{lua}");
     assert!(
         lua.contains("interactive = true"),
         "chore Lua-bundle unit must be interactive (CS-0051), got:\n{lua}"
@@ -2100,7 +2008,8 @@ chore mychore
     // The chore should have exactly one Lua-bundle unit (lua_code = ...).
     let lua_unit_count = lua.matches("lua_code =").count();
     assert_eq!(
-        lua_unit_count, 1,
+        lua_unit_count,
+        1,
         "expected exactly one Lua-bundle unit (lua_code =), got:\n{lua}"
     );
     // That unit must carry interactive = true (CS-0051: drain-thread execution).
@@ -2155,27 +2064,12 @@ fn test_compile_chore_emits_no_enter_exit_markers() {
         }],
     );
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
-    assert!(
-        !lua.contains("_enter_chore"),
-        "stale _enter_chore marker, got:\n{lua}"
-    );
-    assert!(
-        !lua.contains("_exit_chore"),
-        "stale _exit_chore marker, got:\n{lua}"
-    );
+    assert!(!lua.contains("_enter_chore"), "stale _enter_chore marker, got:\n{lua}");
+    assert!(!lua.contains("_exit_chore"), "stale _exit_chore marker, got:\n{lua}");
     // The body still registers its unit uncached and interactive.
-    assert!(
-        lua.contains("cook.add_unit("),
-        "missing add_unit, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("cache = false"),
-        "chore unit must be cache = false, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("interactive = true"),
-        "chore unit must be interactive, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.add_unit("), "missing add_unit, got:\n{lua}");
+    assert!(lua.contains("cache = false"), "chore unit must be cache = false, got:\n{lua}");
+    assert!(lua.contains("interactive = true"), "chore unit must be interactive, got:\n{lua}");
 }
 
 #[test]
@@ -2203,19 +2097,10 @@ fn test_generate_includes_chores() {
     // Surface recipes/chores lower to `cook.__register_surface[_chore]`
     // (CS-0077 codegen). The kind tag carries to `RegisteredRecipe.kind`
     // through the register-phase capture closures in cook-register.
-    assert!(
-        lua.contains("cook.__register_surface(\"build\""),
-        "recipe missing, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("cook.__register_surface_chore(\"clean\""),
-        "chore missing, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.__register_surface(\"build\""), "recipe missing, got:\n{lua}");
+    assert!(lua.contains("cook.__register_surface_chore(\"clean\""), "chore missing, got:\n{lua}");
     // Chore section must have cache = false.
-    let chore_section = lua
-        .split("cook.__register_surface_chore(\"clean\"")
-        .nth(1)
-        .unwrap_or("");
+    let chore_section = lua.split("cook.__register_surface_chore(\"clean\"").nth(1).unwrap_or("");
     assert!(
         chore_section.contains("cache = false"),
         "chore section must have cache = false, got section:\n{chore_section}"
@@ -2243,10 +2128,7 @@ fn cs_0022_validate_placeholders_returns_error_not_panic() {
         "{{out_1}} in single-output step must error, not panic"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("out_1"),
-        "error must name the bad placeholder, got: {err_str}"
-    );
+    assert!(err_str.contains("out_1"), "error must name the bad placeholder, got: {err_str}");
     assert!(
         err_str.contains("out_1"),
         "error must name the bad placeholder, got: {err_str}"
@@ -2293,12 +2175,12 @@ fn cs_0130_in_accessor_in_many_to_one_returns_error() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = generate_with_names_checked(&cookfile, &names);
-    assert!(result.is_err(), "$<in.stem> in many-to-one step must error");
-    let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("in.stem") || err_str.contains("in"),
-        "error must name $<in.stem>, got: {err_str}"
+        result.is_err(),
+        "$<in.stem> in many-to-one step must error"
     );
+    let err_str = result.unwrap_err().to_string();
+    assert!(err_str.contains("in.stem") || err_str.contains("in"), "error must name $<in.stem>, got: {err_str}");
 }
 
 #[test]
@@ -2313,12 +2195,12 @@ fn cs_0022_bare_stem_in_output_pattern_returns_error() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = generate_with_names_checked(&cookfile, &names);
-    assert!(result.is_err(), "bare $<stem> in output pattern must error");
-    let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("stem"),
-        "error must name 'stem', got: {err_str}"
+        result.is_err(),
+        "bare $<stem> in output pattern must error"
     );
+    let err_str = result.unwrap_err().to_string();
+    assert!(err_str.contains("stem"), "error must name 'stem', got: {err_str}");
     assert!(
         err_str.contains("stem"),
         "error must name 'stem', got: {err_str}"
@@ -2364,10 +2246,7 @@ fn cs_0022_out_bare_in_multi_output_returns_error() {
     let result = generate_with_names_checked(&cookfile, &names);
     assert!(result.is_err(), "$<out> in multi-output step must error");
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("out"),
-        "error must name $<out>, got: {err_str}"
-    );
+    assert!(err_str.contains("out"), "error must name $<out>, got: {err_str}");
 }
 
 #[test]
@@ -2406,19 +2285,10 @@ fn test_test_step_shell_one_to_one() {
         lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
-    assert!(
-        lua.contains("cook.add_unit({step_kind = \"test\""),
-        "expected a test unit via cook.add_unit, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
     // CS-0135: no timeout/should_fail/name modifiers are emitted.
-    assert!(
-        !lua.contains("timeout ="),
-        "should not emit timeout, got:\n{lua}"
-    );
-    assert!(
-        !lua.contains("should_fail ="),
-        "should not emit should_fail, got:\n{lua}"
-    );
+    assert!(!lua.contains("timeout ="), "should not emit timeout, got:\n{lua}");
+    assert!(!lua.contains("should_fail ="), "should not emit should_fail, got:\n{lua}");
 }
 
 #[test]
@@ -2431,10 +2301,7 @@ fn test_test_step_shell_batched_form_is_gone() {
         lua.contains("for _, _test_in in ipairs(_test_src"),
         "expected one-to-one test loop, got:\n{lua}"
     );
-    assert!(
-        lua.contains("cook.add_unit({step_kind = \"test\""),
-        "expected a test unit via cook.add_unit, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -2453,10 +2320,7 @@ fn test_test_step_batched_via_lua_inputs() {
         lua.contains("local inputs = {"),
         "expected 'local inputs = {{...}}' binding, got:\n{lua}"
     );
-    assert!(
-        lua.contains("cook.add_unit({step_kind = \"test\""),
-        "expected a test unit via cook.add_unit, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -2468,10 +2332,7 @@ fn test_test_step_shell_one_shot() {
         !lua.contains("for _, _test_in"),
         "one-shot should not emit a loop, got:\n{lua}"
     );
-    assert!(
-        lua.contains("cook.add_unit({step_kind = \"test\""),
-        "expected a test unit via cook.add_unit, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\""), "expected a test unit via cook.add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -2487,10 +2348,7 @@ fn test_test_step_lua_one_to_one() {
         lua.contains("local input = "),
         "expected 'local input = ' binding, got:\n{lua}"
     );
-    assert!(
-        lua.contains("lua_code ="),
-        "expected lua_code field, got:\n{lua}"
-    );
+    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
 }
 
 #[test]
@@ -2506,10 +2364,7 @@ fn test_test_step_lua_many_to_one() {
         lua.contains("local inputs = {"),
         "expected 'local inputs = {{...}}' binding, got:\n{lua}"
     );
-    assert!(
-        lua.contains("lua_code ="),
-        "expected lua_code field, got:\n{lua}"
-    );
+    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
 }
 
 #[test]
@@ -2525,10 +2380,7 @@ fn test_test_step_lua_one_shot() {
         !lua.contains("local input = "),
         "one-shot should not emit input binding, got:\n{lua}"
     );
-    assert!(
-        lua.contains("lua_code ="),
-        "expected lua_code field, got:\n{lua}"
-    );
+    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
 }
 
 // ── CS-0024/CS-0135: test placeholder rejection tests ─────────────
@@ -3120,11 +2972,8 @@ fn test_codegen_emits_register_block() {
         probes: vec![],
     };
     let out = generate(&cookfile);
-    assert!(
-        out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
-        "expected register-block body in output, got:\n{}",
-        out
-    );
+    assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
+        "expected register-block body in output, got:\n{}", out);
 }
 
 #[test]
@@ -3151,10 +3000,7 @@ fn test_codegen_emits_register_blocks_in_source_order() {
     let out = generate(&cookfile);
     let first_pos = out.find("first()").expect("first() in output");
     let second_pos = out.find("second()").expect("second() in output");
-    assert!(
-        first_pos < second_pos,
-        "expected first() before second() in output"
-    );
+    assert!(first_pos < second_pos, "expected first() before second() in output");
 }
 
 #[test]
@@ -3195,15 +3041,9 @@ fn test_codegen_interleaves_register_blocks_with_recipes() {
     let recipe_pos = out
         .find("cook.__register_surface(\"mid\"")
         .expect("recipe registration in output");
-    let after_pos = out.find("after()").expect("after() in output");
-    assert!(
-        before_pos < recipe_pos,
-        "before() should precede `cook.__register_surface(\"mid\"`"
-    );
-    assert!(
-        recipe_pos < after_pos,
-        "`cook.__register_surface(\"mid\"` should precede after()"
-    );
+    let after_pos  = out.find("after()").expect("after() in output");
+    assert!(before_pos < recipe_pos, "before() should precede `cook.__register_surface(\"mid\"`");
+    assert!(recipe_pos < after_pos, "`cook.__register_surface(\"mid\"` should precede after()");
 }
 
 #[test]
@@ -3222,11 +3062,8 @@ fn test_codegen_emits_top_level_module_call() {
         probes: vec![],
     };
     let out = generate(&cookfile);
-    assert!(
-        out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
-        "expected top-level module_call body in output, got:\n{}",
-        out
-    );
+    assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
+        "expected top-level module_call body in output, got:\n{}", out);
 }
 
 #[test]
@@ -3262,20 +3099,14 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
         probes: vec![],
     };
     let out = generate(&cookfile);
-    let a_pos = out.find("cpp.bin(\"a\"").expect("`a` in output");
+    let a_pos      = out.find("cpp.bin(\"a\"").expect("`a` in output");
     // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
     let recipe_pos = out
         .find("cook.__register_surface(\"mid\"")
         .expect("recipe registration in output");
-    let b_pos = out.find("cpp.bin(\"b\"").expect("`b` in output");
-    assert!(
-        a_pos < recipe_pos,
-        "cpp.bin(\"a\") should precede recipe registration"
-    );
-    assert!(
-        recipe_pos < b_pos,
-        "recipe registration should precede cpp.bin(\"b\")"
-    );
+    let b_pos      = out.find("cpp.bin(\"b\"").expect("`b` in output");
+    assert!(a_pos < recipe_pos, "cpp.bin(\"a\") should precede recipe registration");
+    assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");
 }
 
 // ── COOK-36 Task 3: __params metadata + body-fn local-binding prelude ──────
@@ -3292,10 +3123,7 @@ fn compile_chore_emits_param_metadata_and_locals() {
                 col: 13,
             },
             ChoreParam::DefaultedString {
-                name: "host".into(),
-                default: "prod".into(),
-                line: 1,
-                col: 20,
+                name: "host".into(), default: "prod".into(), line: 1, col: 20,
             },
         ],
         deps: vec![],
@@ -3307,23 +3135,11 @@ fn compile_chore_emits_param_metadata_and_locals() {
     };
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(lua.contains("__params"), "lua: {lua}");
-    assert!(
-        lua.contains(r#"{name = "target", kind = "required""#),
-        "lua: {lua}"
-    );
-    assert!(
-        lua.contains(r#"{name = "host", kind = "defaulted_string", default = "prod""#),
-        "lua: {lua}"
-    );
+    assert!(lua.contains(r#"{name = "target", kind = "required""#), "lua: {lua}");
+    assert!(lua.contains(r#"{name = "host", kind = "defaulted_string", default = "prod""#), "lua: {lua}");
     assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
-    assert!(
-        lua.contains("local target = __cook_params.target"),
-        "lua: {lua}"
-    );
-    assert!(
-        lua.contains("local host = __cook_params.host"),
-        "lua: {lua}"
-    );
+    assert!(lua.contains("local target = __cook_params.target"), "lua: {lua}");
+    assert!(lua.contains("local host = __cook_params.host"), "lua: {lua}");
 }
 
 #[test]
@@ -3350,10 +3166,7 @@ fn compile_chore_emits_defaulted_lua_param_metadata() {
         "lua: {lua}"
     );
     assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
-    assert!(
-        lua.contains("local version = __cook_params.version"),
-        "lua: {lua}"
-    );
+    assert!(lua.contains("local version = __cook_params.version"), "lua: {lua}");
 }
 
 #[test]
@@ -3378,10 +3191,7 @@ fn compile_chore_emits_variadic_param_metadata() {
         lua.contains(r#"{name = "files", kind = "variadic_plus"}"#),
         "lua: {lua}"
     );
-    assert!(
-        lua.contains("local files = __cook_params.files"),
-        "lua: {lua}"
-    );
+    assert!(lua.contains("local files = __cook_params.files"), "lua: {lua}");
 }
 
 #[test]
@@ -3399,10 +3209,7 @@ fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
     };
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(!lua.contains("__params"), "lua: {lua}");
-    assert!(
-        !lua.contains("local "),
-        "no local-binding prelude expected for paramless chore. lua: {lua}"
-    );
+    assert!(!lua.contains("local "), "no local-binding prelude expected for paramless chore. lua: {lua}");
     // Paramless chores still take `function(__cook_params)` so the runtime
     // can pass nil/{} uniformly. Confirm.
     assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
@@ -3512,14 +3319,8 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
     };
     let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     // Must emit env = {["target"] = __cook_params.target}
-    assert!(
-        lua.contains("env ="),
-        "env field missing from add_unit. lua:\n{lua}"
-    );
-    assert!(
-        lua.contains(r#"["target"] = __cook_params.target"#),
-        "env key should be string literal, not variable reference. lua:\n{lua}"
-    );
+    assert!(lua.contains("env ="), "env field missing from add_unit. lua:\n{lua}");
+    assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");
 }
 
 // ── COOK-63 §8.2: gather <probe> data-member fan-out codegen ──────
@@ -3530,20 +3331,14 @@ fn member_fanout_cook_fans_out_per_member() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     // Member set sourced from the probe value (the COOK-64 pre-pass populates it).
-    assert!(
-        lua.contains("local _items = cook.probes.get(\"cards\")"),
-        "missing probe member source, got:\n{lua}"
-    );
+    assert!(lua.contains("local _items = cook.probes.get(\"cards\")"),
+        "missing probe member source, got:\n{lua}");
     // One cook.add_unit per member, member bound as `item`.
-    assert!(
-        lua.contains("for _, item in ipairs(_items) do"),
-        "missing per-member loop, got:\n{lua}"
-    );
+    assert!(lua.contains("for _, item in ipairs(_items) do"),
+        "missing per-member loop, got:\n{lua}");
     // Output path interpolates the member field.
-    assert!(
-        lua.contains("cook.member_to_string(item[\"id\"])"),
-        "output should interpolate $<in.id>, got:\n{lua}"
-    );
+    assert!(lua.contains("cook.member_to_string(item[\"id\"])"),
+        "output should interpolate $<in.id>, got:\n{lua}");
     // Command interpolates the member field and $<out>.
     assert!(
         lua.contains("cook.member_to_string(item[\"name\"])"),
@@ -3565,22 +3360,14 @@ fn member_fanout_cook_multi_output_declares_all_outputs() {
     let src = "recipe art\n    gather cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" { gen $<in.id> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
-    assert!(
-        lua.contains("local _cook_outs = {"),
-        "missing multi-output table, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("outputs = _cook_outs"),
-        "unit must declare all outputs, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("-dark.svg"),
-        "second output template must be expanded, got:\n{lua}"
-    );
-    assert!(
-        !lua.contains("output = _cook_out,"),
-        "single-output field must not appear for a multi-output step, got:\n{lua}"
-    );
+    assert!(lua.contains("local _cook_outs = {"),
+        "missing multi-output table, got:\n{lua}");
+    assert!(lua.contains("outputs = _cook_outs"),
+        "unit must declare all outputs, got:\n{lua}");
+    assert!(lua.contains("-dark.svg"),
+        "second output template must be expanded, got:\n{lua}");
+    assert!(!lua.contains("output = _cook_out,"),
+        "single-output field must not appear for a multi-output step, got:\n{lua}");
 }
 
 #[test]
@@ -3592,14 +3379,10 @@ fn member_fanout_cook_out_indexed_placeholders_resolve() {
     // registers every declared output per member.
     let src = "recipe art\n    gather cards\n    cook \"o/$<in.id>.svg\" \"o/$<in.id>-dark.svg\" {\n        gen --light $<out_1> --dark $<out_2>\n    }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(
-        !lua.contains("SIGIL_ERROR"),
-        "indexed output placeholders must resolve in a fan-out body, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("_cook_outs[1]") && lua.contains("_cook_outs[2]"),
-        "command must reference the member's declared outputs, got:\n{lua}"
-    );
+    assert!(!lua.contains("SIGIL_ERROR"),
+        "indexed output placeholders must resolve in a fan-out body, got:\n{lua}");
+    assert!(lua.contains("_cook_outs[1]") && lua.contains("_cook_outs[2]"),
+        "command must reference the member's declared outputs, got:\n{lua}");
 }
 
 #[test]
@@ -3631,21 +3414,14 @@ fn member_fanout_literal_step_gathers_previous_outputs() {
     // record with raw JSON in $<in>.
     let src = "recipe render\n    gather services\n    cook \"build/$<in.name>.conf\" { gen $<in.name> > $<out> }\n    cook \"build/manifest.txt\" { cat $<in> > $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(
-        lua.contains("_cook_outputs_1"),
-        "gather step must read the previous step's collected outputs, got:\n{lua}"
-    );
+    assert!(lua.contains("_cook_outputs_1"),
+        "gather step must read the previous step's collected outputs, got:\n{lua}");
     // The gather unit is emitted by the ordinary chained arm: it declares
     // real inputs (the collected files), unlike fan-out units (inputs = {}).
     let gather = lua.split("step_group").nth(2).expect("second step group");
-    assert!(
-        !gather.contains("for _, item in ipairs(_items)"),
-        "gather step must not member-iterate, got:\n{gather}"
-    );
-    assert!(
-        gather.contains("manifest.txt"),
-        "gather output present, got:\n{gather}"
-    );
+    assert!(!gather.contains("for _, item in ipairs(_items)"),
+        "gather step must not member-iterate, got:\n{gather}");
+    assert!(gather.contains("manifest.txt"), "gather output present, got:\n{gather}");
 }
 
 #[test]
@@ -3654,10 +3430,8 @@ fn member_fanout_literal_first_step_rejected() {
     // nothing path-shaped to gather — members are records, not files.
     let src = "recipe render\n    gather services\n    cook \"build/manifest.txt\" { cat $<in> > $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(
-        lua.contains("nothing to gather"),
-        "literal-output first step must emit the register-phase rejection, got:\n{lua}"
-    );
+    assert!(lua.contains("nothing to gather"),
+        "literal-output first step must emit the register-phase rejection, got:\n{lua}");
 }
 
 #[test]
@@ -3667,28 +3441,17 @@ fn member_fanout_probe_ref_passes_through_verbatim() {
     // under the verbatim ref.
     let src = "recipe a\n    gather cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(
-        lua.contains("local _items = cook.probes.get(\"cards:items\")"),
-        "ref must pass through unsplit, got:\n{lua}"
-    );
+    assert!(lua.contains("local _items = cook.probes.get(\"cards:items\")"),
+        "ref must pass through unsplit, got:\n{lua}");
 }
 
 #[test]
 fn member_fanout_test_fans_out_per_member() {
     let src = "recipe eval\n    gather cases\n    test { assert-eval \"$<in.input>\" \"$<in.expect>\" }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(
-        lua.contains("for _, item in ipairs(_items) do"),
-        "missing per-member loop, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("cook.member_to_string(item[\"input\"])"),
-        "test body should interpolate $<in.input>, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("cook.add_unit({step_kind = \"test\", command = "),
-        "missing test add_unit, got:\n{lua}"
-    );
+    assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
+    assert!(lua.contains("cook.member_to_string(item[\"input\"])"), "test body should interpolate $<in.input>, got:\n{lua}");
+    assert!(lua.contains("cook.add_unit({step_kind = \"test\", command = "), "missing test add_unit, got:\n{lua}");
 }
 
 #[test]
@@ -3743,14 +3506,8 @@ fn member_fanout_test_probe_ref_in_shell_command_is_codegen_error() {
         "expected a codegen error for a probe ref in a member-fanout test shell command",
     );
     let msg = err.to_string();
-    assert!(
-        msg.contains("foo:bar"),
-        "error should name the probe key, got: {msg}"
-    );
-    assert!(
-        msg.contains("line 3"),
-        "error should name the offending line, got: {msg}"
-    );
+    assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
+    assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
 }
 
 #[test]
@@ -3812,13 +3569,8 @@ chore setup
 
 fn make_probe_cf(produce: ProbeProduce) -> Cookfile {
     Cookfile {
-        config_blocks: vec![],
-        recipes: vec![],
-        chores: vec![],
-        uses: vec![],
-        imports: vec![],
-        register_blocks: vec![],
-        top_level_module_calls: vec![],
+        config_blocks: vec![], recipes: vec![], chores: vec![], uses: vec![],
+        imports: vec![], register_blocks: vec![], top_level_module_calls: vec![],
         probes: vec![Probe {
             name: "p".into(),
             deps: vec![],
@@ -3833,13 +3585,8 @@ fn make_probe_cf(produce: ProbeProduce) -> Cookfile {
 #[test]
 fn probe_lua_block_lowers_to_cook_probe() {
     let cf = Cookfile {
-        config_blocks: vec![],
-        recipes: vec![],
-        chores: vec![],
-        uses: vec![],
-        imports: vec![],
-        register_blocks: vec![],
-        top_level_module_calls: vec![],
+        config_blocks: vec![], recipes: vec![], chores: vec![], uses: vec![],
+        imports: vec![], register_blocks: vec![], top_level_module_calls: vec![],
         probes: vec![Probe {
             name: "services".into(),
             deps: vec!["cards".into()],
@@ -3907,22 +3654,13 @@ fn probe_tools_lowers_to_inputs_and_sentinel() {
     // This lowering used to author the identity itself, in Lua, by shelling
     // out. Two implementations of one decision — and one of them needed GNU
     // coreutils, which stock macOS does not ship.
-    assert!(
-        !lua.contains("sha256sum"),
-        "the producer must not shell out to hash:\n{lua}"
-    );
-    assert!(
-        !lua.contains("command -v"),
-        "the producer must not shell out to resolve:\n{lua}"
-    );
+    assert!(!lua.contains("sha256sum"), "the producer must not shell out to hash:\n{lua}");
+    assert!(!lua.contains("command -v"), "the producer must not shell out to resolve:\n{lua}");
     // CS-0157: the canonical value carries IDENTITY only — the resolved path
     // is machine-specific location and must never enter the value bytes that
     // seal_contribution folds. Path reaches consumers via the engine's
     // per-run read-view metadata channel instead.
-    assert!(
-        !lua.contains("path ="),
-        "path must NOT enter the value:\n{lua}"
-    );
+    assert!(!lua.contains("path ="), "path must NOT enter the value:\n{lua}");
 }
 
 #[test]
@@ -3942,7 +3680,10 @@ fn probe_files_lowers_to_inputs_and_sentinel() {
     );
     // The VALUE: the reserved sentinel (CS-0148) — never dispatched as Lua;
     // the engine synthesises the manifest from the same resolved pairs.
-    assert!(lua.contains("@files-manifest"), "lua:\n{lua}");
+    assert!(
+        lua.contains("@files-manifest"),
+        "lua:\n{lua}"
+    );
 }
 
 #[test]
@@ -3956,14 +3697,8 @@ fn probe_shell_produce_with_brackets_escalates_levels() {
         typing: ShellProduceType::String,
     });
     let lua = generate(&cf);
-    assert!(
-        lua.contains("[=["),
-        "expected escalated inner bracket, lua:\n{lua}"
-    );
-    assert!(
-        lua.contains("[==["),
-        "expected escalated outer bracket, lua:\n{lua}"
-    );
+    assert!(lua.contains("[=["), "expected escalated inner bracket, lua:\n{lua}");
+    assert!(lua.contains("[==["), "expected escalated outer bracket, lua:\n{lua}");
 }
 
 #[test]
@@ -4044,15 +3779,11 @@ fn one_to_one_over_gather_declares_its_own_item() {
 fn a_single_unit_test_declares_the_whole_source() {
     let src = "recipe check\n    gather \"src/*.c\"\n    cook \"build/$<in.stem>\" {\n        cc $<in> -o $<out>\n    }\n    test {\n        ls build\n    }\n";
     let lua = generate_lua_for_test(src);
-    assert!(
-        lua.contains("inputs = _test_src"),
-        "a single-unit test declares its whole source:\n{lua}"
-    );
-    assert!(
-        lua.contains("cook.prior_outputs()"),
+    assert!(lua.contains("inputs = _test_src"),
+        "a single-unit test declares its whole source:\n{lua}");
+    assert!(lua.contains("cook.prior_outputs()"),
         "which is the preceding producing step's outputs, asked for at \
-         register phase so module-registered units count too:\n{lua}"
-    );
+         register phase so module-registered units count too:\n{lua}");
 }
 
 /// No cook step: the source falls back to the resolved gather (§8.6.1).
@@ -4093,10 +3824,7 @@ fn seal_disposition_emits_seal_field() {
 fn unsealed_step_emits_no_seal_field() {
     let src = "recipe build\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
     let lua = generate_lua_for_test(src);
-    assert!(
-        !lua.contains("seal ="),
-        "unsealed step must not emit seal:\n{lua}"
-    );
+    assert!(!lua.contains("seal ="), "unsealed step must not emit seal:\n{lua}");
 }
 
 // COOK-162: codegen for `local` / `pinned` disposition decorators.
@@ -4109,30 +3837,21 @@ fn local_disposition_emits_local_field() {
     let src = "recipe build\n    cook \"scratch.o\" { cc -c scratch.c -o scratch.o } local\n";
     let lua = generate_lua_for_test(src);
     // I3: sharing is a plain string field (no reserved-keyword bracket-quote).
-    assert!(
-        lua.contains("sharing = \"local\""),
-        "local disposition must emit 'sharing = \"local\"' in cook.add_unit:\n{lua}"
-    );
+    assert!(lua.contains("sharing = \"local\""), "local disposition must emit 'sharing = \"local\"' in cook.add_unit:\n{lua}");
 }
 
 #[test]
 fn pinned_disposition_emits_pinned_field() {
     let src = "recipe build\n    cook \"vendor.a\" { ar rcs vendor.a obj.o } pinned\n";
     let lua = generate_lua_for_test(src);
-    assert!(
-        lua.contains("sharing = \"pinned\""),
-        "pinned disposition must emit 'sharing = \"pinned\"' in cook.add_unit:\n{lua}"
-    );
+    assert!(lua.contains("sharing = \"pinned\""), "pinned disposition must emit 'sharing = \"pinned\"' in cook.add_unit:\n{lua}");
 }
 
 #[test]
 fn plain_step_emits_neither_local_nor_pinned() {
     let src = "recipe build\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
     let lua = generate_lua_for_test(src);
-    assert!(
-        !lua.contains("sharing ="),
-        "plain step must NOT emit a sharing field:\n{lua}"
-    );
+    assert!(!lua.contains("sharing ="), "plain step must NOT emit a sharing field:\n{lua}");
 }
 
 #[test]
@@ -4280,8 +3999,6 @@ fn the_member_source_is_asked_for_inside_the_member_loop() {
     let loop_at = lua
         .rfind("for _, item in ipairs(_items) do")
         .expect("member loop");
-    let src_at = lua
-        .find("cook.prior_outputs(cook.member_to_string(item))")
-        .expect("per-member source");
+    let src_at = lua.find("cook.prior_outputs(cook.member_to_string(item))").expect("per-member source");
     assert!(src_at > loop_at, "the source is read per member:\n{lua}");
 }

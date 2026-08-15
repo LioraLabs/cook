@@ -58,14 +58,9 @@ fn refusing_vm() -> Lua {
 #[test]
 fn get_and_set_reach_the_phases_store_with_the_key_verbatim() {
     let (lua, gets, sets) = writing_vm();
-    let got: String = lua
-        .load(r#"return cook.probes.get("cc:version")"#)
-        .eval()
-        .unwrap();
+    let got: String = lua.load(r#"return cook.probes.get("cc:version")"#).eval().unwrap();
     assert_eq!(got, "cc:version");
-    lua.load(r#"cook.probes.set("cc:version", 1)"#)
-        .exec()
-        .unwrap();
+    lua.load(r#"cook.probes.set("cc:version", 1)"#).exec().unwrap();
     assert_eq!(*gets.borrow(), vec!["cc:version".to_string()]);
     assert_eq!(*sets.borrow(), vec!["cc:version".to_string()]);
 }

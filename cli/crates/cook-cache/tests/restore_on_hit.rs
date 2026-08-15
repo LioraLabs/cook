@@ -80,7 +80,8 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         mode: ArtifactMeta::default_mode(),
         target: None,
     };
-    put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta).expect("seed put");
+    put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta)
+        .expect("seed put");
 
     // Simulate variant-toggle drift: overwrite with stale bytes, and force a
     // distinct mtime so the cache's mtime fast-path doesn't short-circuit
@@ -288,10 +289,7 @@ fn restore_rejects_tampered_backend_bytes() {
         matches!(result, RebuildResult::Rebuild(RebuildReason::OutputChanged)),
         "tampered backend bytes must be rejected: got {result:?}"
     );
-    assert!(
-        updated.is_none(),
-        "rebuild path must not return an updated entry"
-    );
+    assert!(updated.is_none(), "rebuild path must not return an updated entry");
 
     // The on-disk file MUST NOT be overwritten with the tampered bytes.
     let on_disk = std::fs::read(wd.join("out.o")).expect("read out.o");

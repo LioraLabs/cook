@@ -25,7 +25,7 @@ fn make_meta(output_paths: Vec<String>) -> CacheMeta {
         consulted_env: std::collections::BTreeMap::new(),
         discovered_inputs: None,
         seal_keys: Default::default(),
-        sharing: Default::default(),
+            sharing: Default::default(),
         record: false,
     }
 }
@@ -59,9 +59,7 @@ fn record_completion_with_resolved_glob_produces_concrete_step_entry() {
     let cm = ThreadSafeCacheManager::new(cache_dir);
 
     let meta = make_meta(resolved);
-    let entry = cm
-        .record_completion("rec", "step", &meta, wd, 0, &[])
-        .expect("record");
+    let entry = cm.record_completion("rec", "step", &meta, wd, 0, &[]).expect("record");
     cm.flush_all().expect("flush");
 
     assert_eq!(entry.outputs.len(), 3, "StepEntry records three outputs");

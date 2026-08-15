@@ -10,8 +10,7 @@ fn test_alias_dirs_for_root_tree_import() {
     fs::write(
         dir.path().join("Cookfile"),
         "import lib ./lib\nrecipe \"top\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(dir.path().join(".cookroot"), "").unwrap();
 
     let entry = dir.path().join("Cookfile");
@@ -32,13 +31,11 @@ fn test_alias_dirs_for_sigil_import_with_dotdot() {
     fs::write(
         dir.path().join("apps/web/Cookfile"),
         "import core //core/lib\nrecipe \"app\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(
         dir.path().join("Cookfile"),
         "import web ./apps/web\nrecipe \"top\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(dir.path().join(".cookroot"), "").unwrap();
 
     let entry = dir.path().join("Cookfile");
@@ -46,10 +43,7 @@ fn test_alias_dirs_for_sigil_import_with_dotdot() {
     let ws = Workspace::load(&entry, &root, &[]).unwrap();
     let web_dir = std::fs::canonicalize(dir.path().join("apps/web")).unwrap();
     let alias_dirs = ws.alias_dirs_for(&web_dir);
-    assert_eq!(
-        alias_dirs.get("core"),
-        Some(&PathBuf::from("../../core/lib"))
-    );
+    assert_eq!(alias_dirs.get("core"), Some(&PathBuf::from("../../core/lib")));
 }
 
 #[test]
@@ -168,18 +162,15 @@ fn test_diamond_via_sigil_dedups() {
     fs::write(
         dir.path().join("apps/a/Cookfile"),
         "import shared //shared/lib\nrecipe \"a\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(
         dir.path().join("apps/b/Cookfile"),
         "import shared //shared/lib\nrecipe \"b\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(
         dir.path().join("Cookfile"),
         "import a ./apps/a\nimport b ./apps/b\nrecipe \"top\"\n",
-    )
-    .unwrap();
+    ).unwrap();
 
     let entry = dir.path().join("Cookfile");
     let root = std::fs::canonicalize(dir.path()).unwrap();
@@ -189,10 +180,7 @@ fn test_diamond_via_sigil_dedups() {
         .keys()
         .filter(|p| p.to_string_lossy().contains("shared/lib"))
         .count();
-    assert_eq!(
-        shared_count, 1,
-        "shared/lib must dedup across diamond imports"
-    );
+    assert_eq!(shared_count, 1, "shared/lib must dedup across diamond imports");
 }
 
 #[test]
@@ -202,13 +190,11 @@ fn test_workspace_codegen_emits_dep_output_for_alias_recipe() {
     fs::write(
         dir.path().join("lib/Cookfile"),
         "recipe lib_build\n    cook \"build/lib.o\" { echo $<out> }\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(
         dir.path().join("Cookfile"),
         "import lib ./lib\nrecipe demo\n    cook \"build/demo\" { echo $<lib.lib_build> }\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(dir.path().join(".cookroot"), "").unwrap();
 
     let entry = dir.path().join("Cookfile");
@@ -217,9 +203,7 @@ fn test_workspace_codegen_emits_dep_output_for_alias_recipe() {
 
     // The root cookfile's lua_source should now contain `cook.dep_output("lib.lib_build")`.
     assert!(
-        ws.root
-            .lua_source
-            .contains("cook.dep_output(\"lib.lib_build\")"),
+        ws.root.lua_source.contains("cook.dep_output(\"lib.lib_build\")"),
         "expected dep_output(lib.lib_build) emission, got:\n{}",
         ws.root.lua_source
     );
@@ -243,8 +227,7 @@ fn test_cycle_via_sigil_rejected() {
     fs::write(
         dir.path().join("Cookfile"),
         "import a ./a\nimport b ./b\nrecipe \"top\"\n",
-    )
-    .unwrap();
+    ).unwrap();
     fs::write(dir.path().join(".cookroot"), "").unwrap();
 
     let entry = dir.path().join("Cookfile");
@@ -254,6 +237,6 @@ fn test_cycle_via_sigil_rejected() {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.to_lowercase().contains("cycle") || msg.to_lowercase().contains("circular"),
-        "expected cycle diagnostic, got: {msg}"
+            "expected cycle diagnostic, got: {msg}"
     );
 }

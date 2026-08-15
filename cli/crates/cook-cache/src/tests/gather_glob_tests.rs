@@ -9,7 +9,7 @@ fn normalize_glob_directory_forms() {
 fn resolves_nested_and_workspace_anchored_files() {
     let t = tempfile::tempdir().unwrap();
     let m = t.path().join("member");
-    std::fs::create_dir_all(m.join("dir/nested")).unwrap();
+        std::fs::create_dir_all(m.join("dir/nested")).unwrap();
     std::fs::write(m.join("dir/nested/file"), "").unwrap();
     std::fs::write(t.path().join("root.txt"), "").unwrap();
     assert_eq!(
@@ -35,7 +35,7 @@ fn malformed_anchor_errors() {
         let error = resolve_gather_glob(t.path(), t.path(), pattern).unwrap_err();
         assert!(
             error.contains("malformed workspace anchor"),
-            "{pattern}: {error}"
+                "{pattern}: {error}"
         );
     }
 }
@@ -44,7 +44,7 @@ fn malformed_anchor_errors() {
 fn anchored_curdir_component_stays_within_workspace() {
     let t = tempfile::tempdir().unwrap();
     std::fs::create_dir(t.path().join("dir")).unwrap();
-    std::fs::write(t.path().join("dir/file"), "").unwrap();
+        std::fs::write(t.path().join("dir/file"), "").unwrap();
     assert_eq!(
         resolve_gather_glob(t.path(), t.path(), "//dir/./file").unwrap(),
         BTreeSet::from(["dir/file".into()])
@@ -64,7 +64,7 @@ fn member_relative_patterns_cannot_escape_member_root() {
 fn contained_member_parent_component_is_allowed() {
     let t = tempfile::tempdir().unwrap();
     std::fs::create_dir(t.path().join("dir")).unwrap();
-    std::fs::write(t.path().join("file"), "").unwrap();
+        std::fs::write(t.path().join("file"), "").unwrap();
     assert_eq!(
         resolve_gather_glob(t.path(), t.path(), "dir/../file").unwrap(),
         BTreeSet::from(["file".into()])

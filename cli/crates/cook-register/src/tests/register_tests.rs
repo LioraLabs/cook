@@ -127,9 +127,7 @@ fn test_module_loads_and_adds_units() {
     let modules_dir = cook_contracts::layout::modules_dir(dir.path())
         .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
-    fs::write(
-        modules_dir.join("test_mod.lua"),
-        r#"
+    fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
         function m.add_steps()
             cook.step_group(function()
@@ -171,9 +169,7 @@ fn test_export_import_across_recipes() {
     let modules_dir = cook_contracts::layout::modules_dir(dir.path())
         .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
-    fs::write(
-        modules_dir.join("test_mod.lua"),
-        r#"
+    fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
         function m.export_lib()
             cook.export("mylib", { lib_path = "build/libmylib.a" })
@@ -226,9 +222,7 @@ fn test_platform_available_in_module() {
     let modules_dir = cook_contracts::layout::modules_dir(dir.path())
         .join(cook_contracts::layout::MODULES_SHARE_LUA_SUBDIR);
     fs::create_dir_all(&modules_dir).unwrap();
-    fs::write(
-        modules_dir.join("test_mod.lua"),
-        r#"
+    fs::write(modules_dir.join("test_mod.lua"), r#"
         local m = {}
         m.detected_os = cook.platform.os
         return m
@@ -353,10 +347,7 @@ end)
     let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "empty command must be rejected");
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("command"),
-        "error should mention 'command', got: {err}"
-    );
+    assert!(err.contains("command"), "error should mention 'command', got: {err}");
 }
 
 // CS-0135 §22.4: `cook.add_test` no longer accepts a `timeout` field, so
@@ -486,7 +477,8 @@ cook.recipe("r", {}, function()
     cook.add_unit({ command = "true", step_kind = "test", line = 4 })
 end)
 "#;
-    let units = register_cookfile(rt, lua_src, None).expect("step_kind = \"test\" must register");
+    let units = register_cookfile(rt, lua_src, None)
+        .expect("step_kind = \"test\" must register");
     let r = units.units_by_recipe.get("r").expect("recipe r missing");
     assert_eq!(r.units.len(), 1);
     match &r.units[0].payload {
@@ -629,14 +621,8 @@ cook.recipe("build", {}, function() end)
 
     let units = register_one(registry, lua_source, "build");
 
-    assert_eq!(
-        units.env_vars.get("CC").map(|s| s.as_str()),
-        Some("from_base")
-    );
-    assert_eq!(
-        units.env_vars.get("CXXFLAGS").map(|s| s.as_str()),
-        Some("-O3")
-    );
+    assert_eq!(units.env_vars.get("CC").map(|s| s.as_str()), Some("from_base"));
+    assert_eq!(units.env_vars.get("CXXFLAGS").map(|s| s.as_str()), Some("-O3"));
 }
 
 #[test]
@@ -659,10 +645,7 @@ cook.recipe("build", {}, function() end)
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env);
     let units = register_one(registry, lua_source, "build");
 
-    assert_eq!(
-        units.env_vars.get("BASE").map(|s| s.as_str()),
-        Some("applied")
-    );
+    assert_eq!(units.env_vars.get("BASE").map(|s| s.as_str()), Some("applied"));
     assert!(units.env_vars.get("SHOULD_NOT_APPEAR").is_none());
 }
 
@@ -703,21 +686,12 @@ cook.recipe("build", {}, function() end)
     let units = register_one(registry, lua_source, "build");
 
     // CLI override wins over the config block's `var.OPT_LEVEL = "3"`.
-    assert_eq!(
-        units.env_vars.get("OPT_LEVEL").map(|s| s.as_str()),
-        Some("0")
-    );
+    assert_eq!(units.env_vars.get("OPT_LEVEL").map(|s| s.as_str()), Some("0"));
     // Keys not in cli_overrides keep the config-block value.
-    assert_eq!(
-        units.env_vars.get("GREETING").map(|s| s.as_str()),
-        Some("hello")
-    );
+    assert_eq!(units.env_vars.get("GREETING").map(|s| s.as_str()), Some("hello"));
     // Process-env keys not touched by the config block (and not in
     // cli_overrides) flow through unchanged.
-    assert_eq!(
-        units.env_vars.get("UNSET_KEY").map(|s| s.as_str()),
-        Some("from_env")
-    );
+    assert_eq!(units.env_vars.get("UNSET_KEY").map(|s| s.as_str()), Some("from_env"));
 }
 
 #[test]
@@ -745,14 +719,8 @@ end
     let err = register_cookfile(registry, lua_source, None)
         .expect_err("--set on an undeclared name must be rejected");
     let msg = format!("{err}");
-    assert!(
-        msg.contains("ARBITRARY"),
-        "diagnostic must name the key: {msg}"
-    );
-    assert!(
-        msg.contains("DECLARED"),
-        "diagnostic must suggest the declared name: {msg}"
-    );
+    assert!(msg.contains("ARBITRARY"), "diagnostic must name the key: {msg}");
+    assert!(msg.contains("DECLARED"), "diagnostic must suggest the declared name: {msg}");
 }
 
 #[test]
@@ -777,10 +745,7 @@ end
         .with_cli_overrides(cli_overrides);
     let units = register_one(registry, lua_source, "build");
 
-    assert_eq!(
-        units.env_vars.get("DECLARED").map(|s| s.as_str()),
-        Some("42")
-    );
+    assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("42"));
 }
 
 #[test]
@@ -840,10 +805,7 @@ end)
     let result = register_one(rt, lua_src, "clean");
     assert_eq!(result.units.len(), 1);
     // cache_meta must be None (cache = false).
-    assert!(
-        result.units[0].cache_meta.is_none(),
-        "chore unit must have no cache_meta"
-    );
+    assert!(result.units[0].cache_meta.is_none(), "chore unit must have no cache_meta");
     // Payload must be Interactive.
     match &result.units[0].payload {
         WorkPayload::Interactive { cmd, .. } => {
@@ -960,12 +922,7 @@ fn test_compile_chore_and_register_integration() {
         .get("clean")
         .expect("clean missing");
     // Two shell steps → two interactive units.
-    assert_eq!(
-        units.units.len(),
-        2,
-        "expected 2 units, got: {:#?}",
-        units.units
-    );
+    assert_eq!(units.units.len(), 2, "expected 2 units, got: {:#?}", units.units);
     for unit in &units.units {
         assert!(
             unit.cache_meta.is_none(),
@@ -1173,12 +1130,7 @@ end)
             _ => None,
         })
         .collect();
-    assert_eq!(
-        probe_units.len(),
-        1,
-        "expected 1 probe unit, got: {:?}",
-        probe_units
-    );
+    assert_eq!(probe_units.len(), 1, "expected 1 probe unit, got: {:?}", probe_units);
     assert_eq!(probe_units[0], ("cc:zlib", "return { found = true }"));
 }
 
@@ -1207,10 +1159,7 @@ end)
         .collect();
     assert_eq!(keys.len(), 2);
     assert!(keys.contains(&"cc:zlib"), "expected cc:zlib in probes");
-    assert!(
-        keys.contains(&"cc:openssl"),
-        "expected cc:openssl in probes"
-    );
+    assert!(keys.contains(&"cc:openssl"), "expected cc:openssl in probes");
 }
 
 #[test]
@@ -1226,10 +1175,7 @@ end)
 "#;
 
     let result = register_cookfile(rt, lua_src, None);
-    assert!(
-        result.is_err(),
-        "duplicate probe key must fail register_cookfile"
-    );
+    assert!(result.is_err(), "duplicate probe key must fail register_cookfile");
     let err = result.err().unwrap().to_string();
     assert!(
         err.contains("cc:zlib"),
@@ -1277,10 +1223,7 @@ end)
     // After CS-0074 Bug 1 fix: probe units also appear in units vec.
     // 1 probe unit + 1 consumer unit = 2 total.
     assert_eq!(result.units.len(), 2, "expected probe unit + consumer unit");
-    let consumer = result
-        .units
-        .iter()
-        .find(|u| matches!(u.payload, WorkPayload::Shell { .. }))
+    let consumer = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. }))
         .expect("expected a consumer Shell unit");
     assert_eq!(consumer.probes, vec!["cc:zlib"]);
 }
@@ -1333,11 +1276,7 @@ end)
 
     let result = register_one(rt, lua_src, "build");
     // After CS-0074 Bug 1 fix: first unit is the probe, second is the consumer.
-    let u = result
-        .units
-        .iter()
-        .find(|u| matches!(u.payload, WorkPayload::Shell { .. }))
-        .unwrap();
+    let u = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. })).unwrap();
     assert_eq!(u.probes, vec!["cc:zlib"]);
 }
 
@@ -1437,18 +1376,11 @@ end)
 "#;
 
     let result = register_one(rt, lua_src, "build");
-    let probe_unit = result
-        .units
-        .iter()
-        .find(|u| matches!(u.payload, WorkPayload::Probe { .. }));
+    let probe_unit = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Probe { .. }));
     assert!(
         probe_unit.is_some(),
         "expected a CapturedUnit with WorkPayload::Probe; units: {:?}",
-        result
-            .units
-            .iter()
-            .map(|u| format!("{:?}", u.payload))
-            .collect::<Vec<_>>()
+        result.units.iter().map(|u| format!("{:?}", u.payload)).collect::<Vec<_>>()
     );
     if let WorkPayload::Probe { key, produce, .. } = &probe_unit.unwrap().payload {
         assert_eq!(key, "test:k");
@@ -1506,11 +1438,7 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
         .units_by_recipe
         .get("z")
         .expect("missing units_by_recipe entry for z");
-    assert_eq!(
-        z_units.units.len(),
-        1,
-        "recipe z should have produced exactly one unit"
-    );
+    assert_eq!(z_units.units.len(), 1, "recipe z should have produced exactly one unit");
     match &z_units.units[0].payload {
         WorkPayload::Shell { cmd, .. } => {
             assert_eq!(cmd, "touch z.txt", "recipe z captured wrong command");
@@ -1614,8 +1542,9 @@ fn list_names_returns_registrations_without_invoking_bodies() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
     let names = list_names(builder, lua_src).unwrap();
-    let by_name: std::collections::BTreeMap<_, _> =
-        names.iter().map(|r| (r.name.clone(), r)).collect();
+    let by_name: std::collections::BTreeMap<_, _> = names.iter()
+        .map(|r| (r.name.clone(), r))
+        .collect();
     assert!(by_name.contains_key("a"));
     assert!(by_name.contains_key("b"));
     assert_eq!(by_name["b"].requires, vec!["a".to_string()]);
@@ -1894,7 +1823,8 @@ fn register_cookfile_records_static_surface_recipe_with_line() {
             end)
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
-    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let builder =
+        RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
     let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert_eq!(registered.names.len(), 1);
@@ -1921,7 +1851,8 @@ fn register_cookfile_records_static_surface_chore_with_kind_chore() {
             end)
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
-    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let builder =
+        RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
     let registered = register_cookfile(builder, lua_src, None).unwrap();
 
     assert_eq!(registered.names.len(), 1);
@@ -1972,15 +1903,11 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
             assert_eq!(name, "build");
             assert_eq!(sites.len(), 2);
             assert!(
-                sites
-                    .iter()
-                    .any(|s| matches!(s.kind, crate::RegistrationSiteKind::SurfaceRecipe)),
+                sites.iter().any(|s| matches!(s.kind, crate::RegistrationSiteKind::SurfaceRecipe)),
                 "expected one site tagged SurfaceRecipe, got sites: {sites:?}"
             );
             assert!(
-                sites
-                    .iter()
-                    .any(|s| matches!(s.kind, crate::RegistrationSiteKind::Dynamic)),
+                sites.iter().any(|s| matches!(s.kind, crate::RegistrationSiteKind::Dynamic)),
                 "expected one site tagged Dynamic, got sites: {sites:?}"
             );
         }
@@ -2005,8 +1932,7 @@ fn register_surface(
     // respelled COOK-221/CS-0137) and `{NAME.ACCESSOR}` resolve as recipe refs
     // rather than env vars.
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
-    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names)
-        .map(|(lua, _)| lua)
+    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
     register_cookfile(make_registry(dir), &lua_src, None)
 }
@@ -2136,15 +2062,8 @@ recipe stamps
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
-    let units = registered
-        .units_by_recipe
-        .get("stamps")
-        .expect("stamps registered");
-    assert_eq!(
-        units.units.len(),
-        3,
-        "one unit per member of probe 'cards:list'"
-    );
+    let units = registered.units_by_recipe.get("stamps").expect("stamps registered");
+    assert_eq!(units.units.len(), 3, "one unit per member of probe 'cards:list'");
 }
 
 #[test]
@@ -2170,11 +2089,7 @@ recipe build_cards
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
     let units = registered.units_by_recipe.get("build_cards").unwrap();
-    assert_eq!(
-        units.units.len(),
-        2,
-        "two items via the ns:cards:items selector"
-    );
+    assert_eq!(units.units.len(), 2, "two items via the ns:cards:items selector");
 }
 
 #[test]
@@ -2202,11 +2117,7 @@ recipe stamps
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
     let units = registered.units_by_recipe.get("stamps").unwrap();
-    assert_eq!(
-        units.units.len(),
-        2,
-        "exact key 'cards:list' wins over cards[list]"
-    );
+    assert_eq!(units.units.len(), 2, "exact key 'cards:list' wins over cards[list]");
 }
 
 #[test]
@@ -2340,12 +2251,7 @@ recipe b
         "target 'a' fans out its single unit"
     );
     assert!(
-        registered
-            .units_by_recipe
-            .get("b")
-            .unwrap()
-            .units
-            .is_empty(),
+        registered.units_by_recipe.get("b").unwrap().units.is_empty(),
         "unreachable member-fanout recipe 'b' registers with no units"
     );
 }
@@ -2590,14 +2496,8 @@ end)
 "#;
     let registered = register_cookfile(rt, lua_src, None)
         .unwrap_or_else(|e| panic!("register_cookfile failed: {e:?}"));
-    let first = registered
-        .units_by_recipe
-        .get("first")
-        .expect("first registered");
-    let second = registered
-        .units_by_recipe
-        .get("second")
-        .expect("second registered");
+    let first = registered.units_by_recipe.get("first").expect("first registered");
+    let second = registered.units_by_recipe.get("second").expect("second registered");
     match &first.units[0].payload {
         WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "first"),
         other => panic!("expected Shell payload, got: {:?}", other),
@@ -2644,18 +2544,9 @@ cook.recipe_name()
     let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "top-level call must error");
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("cook.recipe_name"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("recipe body"),
-        "error must state the inside-a-recipe-body requirement; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
 }
 
 /// A reachable, member-source probe's `produce` body runs on the
@@ -2689,18 +2580,9 @@ recipe deal
         "cook.recipe_name() in a member-source probe's produce must error"
     );
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("cook.recipe_name"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("recipe body"),
-        "error must state the inside-a-recipe-body requirement; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
 }
 
 // -----------------------------------------------------------------------
@@ -2718,9 +2600,7 @@ recipe deal
 /// pipeline. Mirrors the existing `make_unit_api_lua` scaffold below.
 fn require_recipe_vm(current_recipe_bare: &str) -> (mlua::Lua, SharedBodySlot) {
     let lua = mlua::Lua::new();
-    lua.globals()
-        .set("cook", lua.create_table().unwrap())
-        .unwrap();
+    lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
     let mut body = BodyCaptureState::new();
     body.current_recipe = Some(current_recipe_bare.to_string());
     body.current_recipe_bare = Some(current_recipe_bare.to_string());
@@ -2751,18 +2631,9 @@ cook.require_recipe("anything")
     let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "top-level call must error");
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("recipe body"),
-        "error must state the inside-a-recipe-body requirement; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
 }
 
 /// A surface `register` block lowers to top-level Lua that runs before the
@@ -2785,18 +2656,9 @@ recipe build
     let result = register_surface(dir.path(), cookfile);
     assert!(result.is_err(), "a register block call must error");
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("recipe body"),
-        "error must state the inside-a-recipe-body requirement; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
 }
 
 /// A non-string argument is rejected outright — matched on the raw Lua
@@ -2810,22 +2672,10 @@ fn require_recipe_rejects_non_string_argument() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("`name`") && err.contains("must be a string"),
-        "error must name the field and accepted form; got: {err}"
-    );
-    assert!(
-        !err.contains("42"),
-        "the integer must not be coerced into the message; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("`name`") && err.contains("must be a string"), "error must name the field and accepted form; got: {err}");
+    assert!(!err.contains("42"), "the integer must not be coerced into the message; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
 }
 
 /// An empty string is rejected — an empty dependency name is never
@@ -2838,18 +2688,9 @@ fn require_recipe_rejects_empty_string() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("non-empty"),
-        "error must reject the empty string; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("non-empty"), "error must reject the empty string; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
 }
 
 /// Self-reference — the argument equals the enclosing recipe's own bare
@@ -2863,22 +2704,10 @@ fn require_recipe_rejects_self_reference() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("build"),
-        "error must name the recipe; got: {err}"
-    );
-    assert!(
-        err.contains("itself") || err.contains("self"),
-        "error must describe the self-reference; got: {err}"
-    );
-    assert!(
-        err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"),
-        "error must cite the spec; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.8") && err.contains("CS-0144"), "error must cite the spec; got: {err}");
 }
 
 /// Two calls naming the same recipe record exactly one entry, in the order
@@ -2896,11 +2725,7 @@ fn require_recipe_dedups_repeated_names() {
     .exec()
     .unwrap();
     let got = slot.borrow().as_ref().unwrap().dynamic_requires.clone();
-    assert_eq!(
-        got,
-        vec!["a".to_string(), "b".to_string()],
-        "must dedup while preserving first-seen order"
-    );
+    assert_eq!(got, vec!["a".to_string(), "b".to_string()], "must dedup while preserving first-seen order");
 }
 
 /// The critical regression guard: `current_recipe` holds the QUALIFIED
@@ -2927,18 +2752,9 @@ end)
         "self-reference must be caught even under a qualified prefix (bare-vs-qualified mix-up would silently pass)"
     );
     let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("build"),
-        "error must name the recipe; got: {err}"
-    );
-    assert!(
-        err.contains("itself") || err.contains("self"),
-        "error must describe the self-reference; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("build"), "error must name the recipe; got: {err}");
+    assert!(err.contains("itself") || err.contains("self"), "error must describe the self-reference; got: {err}");
 }
 
 /// A dependency on a DIFFERENT recipe, called from inside a real recipe
@@ -2959,11 +2775,7 @@ cook.recipe("other", {}, function()
 end)
 "#;
     let result = register_one(rt, lua_src, "build");
-    assert_eq!(
-        result.units.len(),
-        1,
-        "require_recipe must not itself capture a unit"
-    );
+    assert_eq!(result.units.len(), 1, "require_recipe must not itself capture a unit");
 }
 
 // -----------------------------------------------------------------------
@@ -2981,8 +2793,7 @@ fn register_surface_target(
 ) -> Result<RegisteredCookfile, RegisterError> {
     let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
-    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names)
-        .map(|(lua, _)| lua)
+    let lua_src = cook_luagen::generate_checked(&parsed, &recipe_names).map(|(lua, _)| lua)
         .expect("fixture must lower");
     let rt = make_registry(dir).with_target_argv(target.to_string(), vec![]);
     register_cookfile(rt, &lua_src, None)
@@ -3006,11 +2817,7 @@ fn only_shell_cmd(registered: &RegisteredCookfile, name: &str) -> String {
         .get(name)
         .unwrap_or_else(|| panic!("recipe {name:?} has no units entry"))
         .units;
-    assert_eq!(
-        units.len(),
-        1,
-        "recipe {name:?} must capture exactly one unit"
-    );
+    assert_eq!(units.len(), 1, "recipe {name:?} must capture exactly one unit");
     match &units[0].payload {
         WorkPayload::Shell { cmd, .. } => cmd.clone(),
         other => panic!("expected Shell payload for {name:?}, got: {other:?}"),
@@ -3146,22 +2953,10 @@ cook.recipe("producer", {}, function() end)
     let err = register_cookfile(rt, lua_src, None)
         .expect_err("an unregistered name must be a hard error")
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("produsers"),
-        "error must name the unknown recipe; got: {err}"
-    );
-    assert!(
-        err.contains("consumer"),
-        "error must name the requiring recipe; got: {err}"
-    );
-    assert!(
-        err.contains("producer"),
-        "fix hint must list the closest registered name; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("produsers"), "error must name the unknown recipe; got: {err}");
+    assert!(err.contains("consumer"), "error must name the requiring recipe; got: {err}");
+    assert!(err.contains("producer"), "fix hint must list the closest registered name; got: {err}");
 }
 
 /// Forcing is synchronous, so a dynamic cycle would recurse without bound.
@@ -3177,10 +2972,7 @@ cook.recipe("idLib", {}, function() cook.require_recipe("framework") end)
     let err = register_cookfile(rt, lua_src, None)
         .expect_err("a dynamic cycle must be a hard error")
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(
         err.contains("framework -> idLib -> framework"),
         "error must render the cycle path; got: {err}"
@@ -3215,7 +3007,8 @@ cook.recipe("m", {}, function() end)
 fn require_recipe_forces_parametric_chore_when_target_requested() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
-    let registered = register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "gen"),
         "generate world",
@@ -3232,7 +3025,8 @@ fn require_recipe_forces_parametric_chore_when_target_requested() {
 fn require_recipe_forces_parametric_chore_with_no_target() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
-    let registered = register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("gen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "gen"),
         "generate world",
@@ -3253,7 +3047,8 @@ fn require_recipe_forces_parametric_chore_with_no_target() {
 fn require_recipe_forces_parametric_chore_seeded_before_its_requirer() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path()).with_target_argv("app".to_string(), vec![]);
-    let registered = register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "agen"),
         "generate world",
@@ -3269,7 +3064,8 @@ fn require_recipe_forces_parametric_chore_seeded_before_its_requirer() {
 fn require_recipe_forces_parametric_chore_seeded_before_its_requirer_no_target() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
-    let registered = register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     assert_eq!(
         only_shell_cmd(&registered, "agen"),
         "generate world",
@@ -3286,7 +3082,8 @@ fn require_recipe_forces_parametric_chore_seeded_before_its_requirer_no_target()
 fn require_recipe_reinvoked_skip_arm_registers_exactly_one_entry() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
-    let registered = register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
+    let registered =
+        register_cookfile(rt, &parametric_chore_fixture("agen"), None).unwrap();
     let entries: Vec<&str> = registered
         .names
         .iter()
@@ -3507,14 +3304,8 @@ recipe fan
             "forcing an unreachable probe-sourced member-fanout recipe must be a hard error",
         )
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("fan"),
-        "error must name the recipe; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("fan"), "error must name the recipe; got: {err}");
     assert!(
         err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
@@ -3555,14 +3346,8 @@ recipe afan
              so the arm-3 error has to fire on the force",
         )
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("afan"),
-        "error must name the recipe; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("afan"), "error must name the recipe; got: {err}");
     assert!(
         err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
@@ -3984,14 +3769,8 @@ recipe afan
              units while the edge still builds it",
         )
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
-    assert!(
-        err.contains("afan"),
-        "error must name the recipe; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("afan"), "error must name the recipe; got: {err}");
     assert!(
         err.contains("member source") && err.contains("probe"),
         "error must state the reason; got: {err}"
@@ -4114,10 +3893,7 @@ fn canonical_cycle_path(err: &str) -> Vec<String> {
     let end = rest
         .find(". Forcing is synchronous")
         .unwrap_or_else(|| panic!("no cycle terminator in: {err}"));
-    let mut nodes: Vec<String> = rest[..end]
-        .split("->")
-        .map(|s| s.trim().to_string())
-        .collect();
+    let mut nodes: Vec<String> = rest[..end].split("->").map(|s| s.trim().to_string()).collect();
     assert!(
         nodes.len() > 1 && nodes.first() == nodes.last(),
         "a cycle path must repeat its first node at the end; got: {nodes:?}"
@@ -4162,10 +3938,7 @@ fn require_recipe_force_through_already_visited_recipe_renders_full_cycle() {
     let err = register_cookfile(rt, &mid_achore_cycle_fixture("zzz"), None)
         .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(
         !err.contains("achore -> achore"),
         "must not render a one-element self-cycle on `achore` — `achore` requires nothing; \
@@ -4202,10 +3975,7 @@ fn require_recipe_force_before_visit_renders_full_cycle_matches_already_visited_
     let err = register_cookfile(rt, &mid_achore_cycle_fixture("app"), None)
         .expect_err("mid : achore plus achore's body forcing mid is a real cycle")
         .to_string();
-    assert!(
-        err.contains("cook.require_recipe"),
-        "error must name the API; got: {err}"
-    );
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     let canonical = canonical_cycle_path(&err);
     assert_eq!(
         canonical,
@@ -4571,10 +4341,7 @@ fn cook_chore_rejects_another_modules_namespace() {
     let err = list_names(builder, r#"cook.load_module("cook_pnpm")"#).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("claims namespace 'cc'"), "got: {msg}");
-    assert!(
-        msg.contains("cook_pnpm"),
-        "should name the module, got: {msg}"
-    );
+    assert!(msg.contains("cook_pnpm"), "should name the module, got: {msg}");
 }
 
 #[test]
@@ -4589,7 +4356,10 @@ fn cook_chore_rejects_registration_outside_module_evaluation() {
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
     let err = list_names(builder, r#"cook.chore("cc.add", {}, function() end)"#).unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("outside module evaluation"), "got: {msg}");
+    assert!(
+        msg.contains("outside module evaluation"),
+        "got: {msg}"
+    );
 }
 
 #[test]
@@ -4684,8 +4454,7 @@ fn cook_chore_body_gets_chore_unit_semantics() {
         .with_target_argv("cc.fmt".to_string(), vec![]);
     let err = register_cookfile(builder, r#"cook.load_module("cook_cc")"#, None).unwrap_err();
     assert!(
-        err.to_string()
-            .contains("cache = true is not permitted in a chore body"),
+        err.to_string().contains("cache = true is not permitted in a chore body"),
         "chore semantics not established for a cook.chore body; got: {err}"
     );
 }
@@ -4723,24 +4492,18 @@ recipe grade
     let units = &registered.units_by_recipe["grade"].units;
     assert_eq!(units.len(), 2);
     assert_eq!(units[0].member.as_deref(), Some("src/a.txt"));
-    assert_eq!(
-        units[0].cache_meta.as_ref().unwrap().inputs,
-        vec![cook_contracts::cache::DeclaredInput::path("src/a.txt")]
-    );
+    assert_eq!(units[0].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("src/a.txt")]);
     assert_eq!(units[1].member, None);
-    assert_eq!(
-        units[1].cache_meta.as_ref().unwrap().inputs,
-        vec![cook_contracts::cache::DeclaredInput::path("build/a.out")]
-    );
+    assert_eq!(units[1].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("build/a.out")]);
 }
 
 #[test]
 fn gather_array_probe_keeps_record_members_and_trailing_inputs() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("shared.txt"), "shared\n").unwrap();
-    let registered = register_surface(
-        dir.path(),
-        r#"
+    let registered = register_surface(dir.path(), r#"
 probe records
     json { printf '[{"id":"a"},{"id":"b"}]' }
 
@@ -4752,18 +4515,11 @@ recipe consume
     .expect("array probe gather registers");
     let units = &registered.units_by_recipe["consume"].units;
     assert_eq!(units.len(), 2);
-    assert_eq!(
-        units
-            .iter()
-            .map(|u| u.member.as_deref().unwrap())
-            .collect::<Vec<_>>(),
-        vec![r#"{"id":"a"}"#, r#"{"id":"b"}"#]
-    );
+    assert_eq!(units.iter().map(|u| u.member.as_deref().unwrap()).collect::<Vec<_>>(),
+        vec![r#"{"id":"a"}"#, r#"{"id":"b"}"#]);
     for unit in units {
-        assert_eq!(
-            unit.cache_meta.as_ref().unwrap().inputs,
-            vec![cook_contracts::cache::DeclaredInput::path("shared.txt")]
-        );
+        assert_eq!(unit.cache_meta.as_ref().unwrap().inputs,
+            vec![cook_contracts::cache::DeclaredInput::path("shared.txt")]);
     }
 }
 
@@ -4859,10 +4615,7 @@ fn a_test_with_its_own_inputs_behind_a_dep_still_keys() {
         .as_ref()
         .expect("a test declaring a source is cacheable");
     assert_eq!(
-        meta.inputs
-            .iter()
-            .map(|e| e.path.as_str())
-            .collect::<Vec<_>>(),
+        meta.inputs.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
         vec!["t/case.txt"],
         "keyed on what it declares, and on nothing the barrier produced"
     );
@@ -4988,10 +4741,7 @@ end)
 "#;
     let err = register_cookfile(rt, lua_src, None).expect_err("wrong type refused");
     let msg = format!("{err}");
-    assert!(
-        msg.contains("`after` must be a table of output-path strings"),
-        "{msg}"
-    );
+    assert!(msg.contains("`after` must be a table of output-path strings"), "{msg}");
 }
 
 // -----------------------------------------------------------------------
@@ -5059,10 +4809,8 @@ end)
         })
         .expect("bar node");
     assert!(
-        graph.nodes[bar]
-            .deps
-            .iter()
-            .any(|&(d, k)| d == foo && k == cook_contracts::unit_graph::EdgeProvenance::UnitOrder),
+        graph.nodes[bar].deps.iter().any(|&(d, k)| d == foo
+            && k == cook_contracts::unit_graph::EdgeProvenance::UnitOrder),
         "bar must be ordered after foo: {:?}",
         graph.nodes[bar].deps
     );
@@ -5157,11 +4905,7 @@ end)
     let msg = format!("{err}");
     assert!(msg.contains("inputs.requires"), "{msg}");
     assert!(msg.contains("p:self"), "{msg}");
-    assert!(
-        msg.len() < 2000,
-        "message must not be a recursion trace: {} bytes",
-        msg.len()
-    );
+    assert!(msg.len() < 2000, "message must not be a recursion trace: {} bytes", msg.len());
 }
 
 /// The same rule catches an UNDECLARED upstream, which is the silent-stale
@@ -5230,7 +4974,10 @@ cook.recipe("r", {}, function()
 end)
 "#;
     let err = register_cookfile(rt, lua_src, None).expect_err("capture into the body refused");
-    assert!(format!("{err}").contains("outside a recipe body"), "{err}");
+    assert!(
+        format!("{err}").contains("outside a recipe body"),
+        "{err}"
+    );
 }
 
 /// §22.5.10's static-input rule binds a probe a `cook.on_register_complete`

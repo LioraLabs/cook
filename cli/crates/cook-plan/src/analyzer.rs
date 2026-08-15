@@ -206,13 +206,15 @@ pub fn find_full_prefix(
     root_dir: &Path,
     canonical_path: &Path,
 ) -> String {
-    let root_canonical = std::fs::canonicalize(root_dir).unwrap_or_else(|_| root_dir.to_path_buf());
+    let root_canonical =
+        std::fs::canonicalize(root_dir).unwrap_or_else(|_| root_dir.to_path_buf());
     if canonical_path == root_canonical {
         return String::new();
     }
 
     let mut named: BTreeMap<&Path, String> = BTreeMap::new();
-    let mut frontier: Vec<(&Path, String)> = vec![(root_canonical.as_path(), String::new())];
+    let mut frontier: Vec<(&Path, String)> =
+        vec![(root_canonical.as_path(), String::new())];
     while !frontier.is_empty() {
         let mut next: Vec<(&Path, String)> = Vec::new();
         for (dir, prefix) in &frontier {

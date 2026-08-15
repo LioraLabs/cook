@@ -150,7 +150,10 @@ fn live_glob_uses_current_slot() {
     let slot = Arc::new(Mutex::new(dir.path().to_path_buf()));
     let lua = setup_live(slot);
 
-    let count: usize = lua.load(r#"return #fs.glob("*.txt")"#).eval().unwrap();
+    let count: usize = lua
+        .load(r#"return #fs.glob("*.txt")"#)
+        .eval()
+        .unwrap();
     assert_eq!(count, 2);
 }
 
@@ -166,7 +169,10 @@ fn static_glob_filters_out_directories() {
     std::fs::write(dir.path().join("nested/c.txt"), "").unwrap();
 
     let lua = setup_static(dir.path());
-    let table: LuaTable = lua.load(r#"return fs.glob("*")"#).eval().unwrap();
+    let table: LuaTable = lua
+        .load(r#"return fs.glob("*")"#)
+        .eval()
+        .unwrap();
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
@@ -195,7 +201,10 @@ fn static_glob_filters_symlink_to_directory() {
     std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
 
     let lua = setup_static(dir.path());
-    let table: LuaTable = lua.load(r#"return fs.glob("*")"#).eval().unwrap();
+    let table: LuaTable = lua
+        .load(r#"return fs.glob("*")"#)
+        .eval()
+        .unwrap();
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
@@ -223,7 +232,10 @@ fn static_glob_keeps_symlink_to_file() {
     std::os::unix::fs::symlink(&real, dir.path().join("link.txt")).unwrap();
 
     let lua = setup_static(dir.path());
-    let table: LuaTable = lua.load(r#"return fs.glob("*.txt")"#).eval().unwrap();
+    let table: LuaTable = lua
+        .load(r#"return fs.glob("*.txt")"#)
+        .eval()
+        .unwrap();
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
@@ -252,14 +264,8 @@ fn confined_fs_read_rejects_absolute_outside_root() {
         .exec()
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("escapes project root"),
-        "diagnostic missing escape text: {err}"
-    );
-    assert!(
-        err.contains("/etc/passwd"),
-        "diagnostic missing path: {err}"
-    );
+    assert!(err.contains("escapes project root"), "diagnostic missing escape text: {err}");
+    assert!(err.contains("/etc/passwd"), "diagnostic missing path: {err}");
 }
 
 /// A confined `fs.read` MUST reject a relative path that escapes
@@ -397,7 +403,10 @@ fn static_glob_array_filters_directories_per_pattern() {
     std::fs::write(dir.path().join("src/b.c"), "").unwrap();
 
     let lua = setup_static(dir.path());
-    let table: LuaTable = lua.load(r#"return fs.glob({"src/*"})"#).eval().unwrap();
+    let table: LuaTable = lua
+        .load(r#"return fs.glob({"src/*"})"#)
+        .eval()
+        .unwrap();
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
@@ -420,7 +429,10 @@ fn static_glob_array_filters_directories_per_pattern() {
 fn static_glob_empty_array_returns_empty() {
     let dir = TempDir::new().unwrap();
     let lua = setup_static(dir.path());
-    let len: usize = lua.load(r#"return #fs.glob({})"#).eval().unwrap();
+    let len: usize = lua
+        .load(r#"return #fs.glob({})"#)
+        .eval()
+        .unwrap();
     assert_eq!(len, 0);
 }
 
@@ -433,7 +445,10 @@ fn static_glob_string_form_unchanged() {
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
 
     let lua = setup_static(dir.path());
-    let table: LuaTable = lua.load(r#"return fs.glob("*.txt")"#).eval().unwrap();
+    let table: LuaTable = lua
+        .load(r#"return fs.glob("*.txt")"#)
+        .eval()
+        .unwrap();
     let mut got: Vec<String> = table
         .sequence_values::<String>()
         .map(Result::unwrap)
@@ -513,10 +528,7 @@ fn fs_remove_deletes_a_file_and_reports_true() {
     )
     .unwrap();
 
-    let removed: bool = lua
-        .load(r#"return fs.remove("scratch.txt")"#)
-        .eval()
-        .unwrap();
+    let removed: bool = lua.load(r#"return fs.remove("scratch.txt")"#).eval().unwrap();
     assert!(removed);
     assert!(!dir.path().join("scratch.txt").exists());
 }
@@ -553,11 +565,7 @@ fn fs_remove_refuses_a_directory() {
     )
     .unwrap();
 
-    let err = lua
-        .load(r#"fs.remove("sub")"#)
-        .exec()
-        .unwrap_err()
-        .to_string();
+    let err = lua.load(r#"fs.remove("sub")"#).exec().unwrap_err().to_string();
     assert!(err.contains("is a directory"), "got: {err}");
     assert!(dir.path().join("sub").exists(), "directory must survive");
 }
@@ -565,11 +573,7 @@ fn fs_remove_refuses_a_directory() {
 #[test]
 fn fs_remove_is_refused_outside_the_sandbox() {
     let dir = tempfile::TempDir::new().unwrap();
-    let outside = dir
-        .path()
-        .parent()
-        .unwrap()
-        .join("cook-fs-remove-outside.txt");
+    let outside = dir.path().parent().unwrap().join("cook-fs-remove-outside.txt");
     std::fs::write(&outside, "keep me").unwrap();
 
     let root = dir.path().join("root");

@@ -131,26 +131,16 @@ fn a_keyed_probe_is_served_from_cache_on_the_second_evaluation() {
     let unit = declares_file("ns:keyed", "dep.txt");
 
     let first = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &CountingRunner::new("[1]"),
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &CountingRunner::new("[1]"),
+        &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
     assert!(!first.cache_hit);
 
     // A runner that panics if reached: the second evaluation must not produce.
     let second = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &PoisonRunner,
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &PoisonRunner,
+        &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
     assert!(second.cache_hit);
@@ -168,23 +158,14 @@ fn cs0178_a_probe_declaring_nothing_is_keyless_and_always_reproduces() {
 
     for _ in 0..3 {
         let out = eval_cached(
-            &unit,
-            tmp.path(),
-            &be,
-            &runner,
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            true,
+            &unit, tmp.path(), &be, &runner,
+            &BTreeSet::new(), &BTreeMap::new(), true,
         )
         .unwrap();
         assert!(out.keyless);
         assert!(!out.cache_hit);
     }
-    assert_eq!(
-        runner.runs(),
-        3,
-        "a keyless probe must re-produce every time"
-    );
+    assert_eq!(runner.runs(), 3, "a keyless probe must re-produce every time");
 }
 
 #[test]
@@ -194,21 +175,15 @@ fn cs0178_a_keyless_probe_publishes_nothing() {
     let be = backend(store.path());
 
     eval_cached(
-        &declares_nothing("ns:keyless"),
-        tmp.path(),
-        &be,
-        &CountingRunner::new("[1]"),
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &declares_nothing("ns:keyless"), tmp.path(), &be, &CountingRunner::new("[1]"),
+        &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
 
     // Skipping only the GET would leave a stable fingerprint addressing a
     // stored value that another reader of a shared store could still be served.
     assert_eq!(
-        file_count(store.path()),
-        0,
+        file_count(store.path()), 0,
         "a keyless probe wrote to the shared store",
     );
 }
@@ -223,10 +198,7 @@ fn cs0178_keylessness_propagates_along_requires() {
     // upstream it names is.
     let unit = probe(
         "ns:downstream",
-        ProbeInputs {
-            requires: vec!["ns:keyless".to_string()],
-            ..Default::default()
-        },
+        ProbeInputs { requires: vec!["ns:keyless".to_string()], ..Default::default() },
     );
     let mut upstream_fps = BTreeMap::new();
     upstream_fps.insert("ns:keyless".to_string(), [7u8; 32]);
@@ -236,13 +208,7 @@ fn cs0178_keylessness_propagates_along_requires() {
     let runner = CountingRunner::new("[1]");
     for _ in 0..2 {
         let out = eval_cached(
-            &unit,
-            tmp.path(),
-            &be,
-            &runner,
-            &keyless_upstreams,
-            &upstream_fps,
-            true,
+            &unit, tmp.path(), &be, &runner, &keyless_upstreams, &upstream_fps, true,
         )
         .unwrap();
         assert!(
@@ -262,12 +228,8 @@ fn cook168_publish_off_suppresses_the_upload_but_not_the_value() {
     let be = backend(store.path());
 
     let out = eval_cached(
-        &declares_file("ns:keyed", "dep.txt"),
-        tmp.path(),
-        &be,
-        &CountingRunner::new("[1]"),
-        &BTreeSet::new(),
-        &BTreeMap::new(),
+        &declares_file("ns:keyed", "dep.txt"), tmp.path(), &be,
+        &CountingRunner::new("[1]"), &BTreeSet::new(), &BTreeMap::new(),
         /*publish*/ false,
     )
     .unwrap();
@@ -377,13 +339,7 @@ fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
     cook_cache::backend::put_bytes(&be, &fingerprint, value, &mut meta).unwrap();
 
     let err = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &PoisonRunner,
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap_err();
 
@@ -460,13 +416,8 @@ fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
 
     // Learn the fingerprint, then poison that exact key.
     let first = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &CountingRunner::new("[1]"),
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &CountingRunner::new("[1]"),
+        &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
     // CS-0055 conflict detection refuses to overwrite a key with differing
@@ -478,35 +429,20 @@ fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
 
     let runner = CountingRunner::new("[1]");
     let out = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &runner,
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &runner, &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
 
     assert!(!out.cache_hit, "unparseable bytes must read as a miss");
     assert_eq!(runner.runs(), 1, "the miss must re-produce");
     assert!(
-        out.warnings
-            .iter()
-            .any(|w| w.contains("not probe-value JSON")),
-        "the condition must be reported, got {:?}",
-        out.warnings,
+        out.warnings.iter().any(|w| w.contains("not probe-value JSON")),
+        "the condition must be reported, got {:?}", out.warnings,
     );
     // Self-healed: the poisoned key now addresses valid bytes again, so the
     // next reader of the shared store is not served the same garbage forever.
     let served = eval_cached(
-        &unit,
-        tmp.path(),
-        &be,
-        &PoisonRunner,
-        &BTreeSet::new(),
-        &BTreeMap::new(),
-        true,
+        &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
     )
     .unwrap();
     assert!(served.cache_hit);
@@ -521,12 +457,8 @@ fn cs0102_the_canonical_local_copy_is_written_with_the_value_bytes() {
         cache: None,
     };
     let out = evaluate(
-        &declares_nothing("ns:local"),
-        &ctx,
-        &CountingRunner::new("[1]"),
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
+        &declares_nothing("ns:local"), &ctx, &CountingRunner::new("[1]"),
+        &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap();
 
@@ -545,12 +477,8 @@ fn a_produce_failure_names_the_probe() {
         cache: None,
     };
     let err = evaluate(
-        &declares_nothing("ns:bad"),
-        &ctx,
-        &FailingRunner,
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
+        &declares_nothing("ns:bad"), &ctx, &FailingRunner,
+        &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap_err();
 
@@ -563,22 +491,14 @@ fn a_missing_upstream_fingerprint_is_a_resolve_error() {
     let tmp = tempfile::tempdir().unwrap();
     let unit = probe(
         "ns:downstream",
-        ProbeInputs {
-            requires: vec!["ns:absent".to_string()],
-            ..Default::default()
-        },
+        ProbeInputs { requires: vec!["ns:absent".to_string()], ..Default::default() },
     );
     let ctx = EvalCtx {
         working_dir: tmp.path(),
         cache: None,
     };
     let err = evaluate(
-        &unit,
-        &ctx,
-        &PoisonRunner,
-        &no_env,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
+        &unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap_err();
 

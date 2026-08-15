@@ -15,7 +15,8 @@ pub type SharedTerminalOutputs = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
 /// COOK-96: per-member terminal outputs. recipe qualified-name → member-string
 /// → terminal output paths. Keyed identically to `SharedTerminalOutputs` so
 /// `cook.dep_output_member` and `cook.dep_output` resolve the same name space.
-pub type SharedMemberOutputs = Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<String>>>>>;
+pub type SharedMemberOutputs =
+    Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<String>>>>>;
 
 /// Register `cook.dep_output(name)` and `cook.dep_output_list(name)` on the cook table.
 ///

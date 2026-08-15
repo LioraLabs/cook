@@ -192,11 +192,7 @@ recipe stamps
     assert!(dir.join(format!("out/alpha-{uniq}.stamp")).exists());
     assert!(dir.join(format!("out/beta-{uniq}.stamp")).exists());
     assert!(dir.join(format!("out/gamma-{uniq}.stamp")).exists());
-    assert_eq!(
-        ran_lines(dir),
-        3,
-        "three members must execute on the first run"
-    );
+    assert_eq!(ran_lines(dir), 3, "three members must execute on the first run");
 
     // Second run: per-member caching — nothing re-executes.
     run_cook(dir, &["stamps"]);

@@ -425,10 +425,7 @@ pub fn needs_rebuild_cook(
                 .map(|s| (*s).to_string())
                 .chain(std::iter::once(di.from.clone()))
                 .collect();
-            augmented_outputs_refs = augmented_outputs_storage
-                .iter()
-                .map(String::as_str)
-                .collect();
+            augmented_outputs_refs = augmented_outputs_storage.iter().map(String::as_str).collect();
             &augmented_outputs_refs
         } else {
             current_outputs
@@ -535,9 +532,7 @@ fn normalize_lexical(p: &Path) -> std::path::PathBuf {
     let mut out = std::path::PathBuf::new();
     for c in p.components() {
         match c {
-            Component::ParentDir => {
-                out.pop();
-            }
+            Component::ParentDir => { out.pop(); }
             Component::CurDir => {}
             other => out.push(other.as_os_str()),
         }
@@ -549,9 +544,7 @@ fn normalize_lexical(p: &Path) -> std::path::PathBuf {
 fn longest_existing_prefix(p: &Path) -> Option<std::path::PathBuf> {
     let mut cur = Some(p);
     while let Some(c) = cur {
-        if c.exists() {
-            return Some(c.to_path_buf());
-        }
+        if c.exists() { return Some(c.to_path_buf()); }
         cur = c.parent();
     }
     None
@@ -585,9 +578,7 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
     // (2) Lexically resolve target against link's parent directory and verify
     // the result stays within the anchor.
     let lexical = normalize_lexical(&parent.join(t));
-    let real_anchor = anchor
-        .canonicalize()
-        .unwrap_or_else(|_| normalize_lexical(anchor));
+    let real_anchor = anchor.canonicalize().unwrap_or_else(|_| normalize_lexical(anchor));
     let lexical_anchor = normalize_lexical(anchor);
     if !(lexical.starts_with(&real_anchor) || lexical.starts_with(&lexical_anchor)) {
         tracing::warn!(
@@ -1016,11 +1007,7 @@ pub fn fetch_by_key(
     for (set, module_set) in pairs {
         let mut full_hashes: Vec<u64> = sorted_input_content_hashes.to_vec();
         if !set.is_empty() || !module_set.is_empty() {
-            let refs: Vec<&str> = set
-                .iter()
-                .chain(module_set.iter())
-                .map(|s| s.as_str())
-                .collect();
+            let refs: Vec<&str> = set.iter().chain(module_set.iter()).map(|s| s.as_str()).collect();
             match hash_input_paths(&refs, working_dir) {
                 Some(mut h) => full_hashes.append(&mut h),
                 // A listed discovered input or module is absent locally, so
@@ -1042,19 +1029,19 @@ pub fn fetch_by_key(
         // files, implicit depfile, empty dirs.
         let (restore_list, observation): (Vec<String>, Option<_>) =
             match ctx.backend.get_manifest(&cloud_k) {
-                Ok(Some(m)) => {
-                    let mut list = m.output_paths;
-                    if let Some(di) = discovered_inputs {
-                        list.push(di.from.clone());
-                    }
-                    list.extend(m.empty_dir_outputs);
-                    (list, m.observation)
+            Ok(Some(m)) => {
+                let mut list = m.output_paths;
+                if let Some(di) = discovered_inputs {
+                    list.push(di.from.clone());
                 }
+                list.extend(m.empty_dir_outputs);
+                    (list, m.observation)
+            }
                 _ => (
                     output_paths.iter().map(|s| (*s).to_string()).collect(),
                     None,
                 ),
-            };
+        };
         if restore_all(ctx, &cloud_k, &restore_list, working_dir) {
             return Some(FetchOutcome {
                 restored_outputs: restore_list,

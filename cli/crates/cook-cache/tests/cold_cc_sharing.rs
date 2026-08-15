@@ -96,7 +96,8 @@ fn seed_backend(backend: &LocalBackend, dep_h_bytes: &[u8]) {
         mode: ArtifactMeta::default_mode(),
         target: None,
     };
-    put_bytes(backend, &manifest_k, &manifest_bytes, &mut manifest_meta).expect("seed manifest");
+    put_bytes(backend, &manifest_k, &manifest_bytes, &mut manifest_meta)
+        .expect("seed manifest");
 
     // 2. Real output artifact under the full key.
     let obj_bytes: &[u8] = b"OBJ";
@@ -231,10 +232,7 @@ fn cold_fetch_safe_miss_when_header_differs() {
         false,
     );
 
-    assert!(
-        hit.is_none(),
-        "safe miss: consumer dep.h differs, full key must not match"
-    );
+    assert!(hit.is_none(), "safe miss: consumer dep.h differs, full key must not match");
     assert!(
         !wd.join("build/main.o").exists(),
         "build/main.o must NOT be created on a safe miss",

@@ -38,18 +38,10 @@ fn render_row<'a>(state: &'a UiState, theme: &Theme, row: FlatRow) -> Line<'a> {
     match row {
         FlatRow::Recipe(rid) => {
             let recipe = state.view.recipes.get(&rid).unwrap();
-            let glyph = if state.expanded.contains(&rid) {
-                "⏷"
-            } else {
-                "⏵"
-            };
+            let glyph = if state.expanded.contains(&rid) { "⏷" } else { "⏵" };
             let total = recipe.nodes.len();
             // Count successful nodes — use NodeStatus::Completed
-            let ok = recipe
-                .nodes
-                .values()
-                .filter(|n| n.status == NodeStatus::Completed)
-                .count();
+            let ok = recipe.nodes.values().filter(|n| n.status == NodeStatus::Completed).count();
             Line::from(vec![
                 Span::raw(format!("{glyph} ")),
                 Span::raw(recipe.name.clone()),
@@ -62,8 +54,7 @@ fn render_row<'a>(state: &'a UiState, theme: &Theme, row: FlatRow) -> Line<'a> {
             // COOK-392 / CS-0198: THE duration law. This site hand-rolled
             // `{:.1}s` and so disagreed with the header pane in the same frame
             // (61,500ms read `1m01s` above and `61.5s` here).
-            let dur = node
-                .elapsed_ms
+            let dur = node.elapsed_ms
                 .map(|ms| format!("  ·  {}", cook_contracts::render::duration_ms(ms)))
                 .unwrap_or_default();
             Line::from(vec![

@@ -26,10 +26,7 @@ fn rewrite_at(path: &std::path::Path, body: &str, mtime: std::time::SystemTime) 
 }
 
 fn mtime_of(path: &std::path::Path) -> std::time::SystemTime {
-    std::fs::metadata(path)
-        .expect("metadata")
-        .modified()
-        .expect("mtime")
+    std::fs::metadata(path).expect("metadata").modified().expect("mtime")
 }
 
 fn sha256_of(body: &str) -> [u8; 32] {

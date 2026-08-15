@@ -154,8 +154,7 @@ pub(crate) fn collect_quoted_patterns_multiline(
             None => return Ok((patterns, excludes, String::new(), pos)),
         };
         let starts_pattern = next_line_text.starts_with('"')
-            || (allow_exclude
-                && next_line_text.starts_with('!')
+            || (allow_exclude && next_line_text.starts_with('!')
                 && next_line_text.get(1..2) == Some("\""));
         if !starts_pattern {
             return Ok((patterns, excludes, String::new(), pos));
@@ -181,14 +180,10 @@ pub(crate) fn parse_gather_line(
     current_pos: usize,
     source_lines: &[&str],
 ) -> Result<(Vec<String>, Vec<String>, usize), ParseError> {
-    let (patterns, excludes_flags, leftover, pos_after) = collect_quoted_patterns_multiline(
-        text,
-        line,
-        tokens,
-        current_pos,
-        source_lines,
-        /*allow_exclude=*/ true,
-    )?;
+    let (patterns, excludes_flags, leftover, pos_after) =
+        collect_quoted_patterns_multiline(
+            text, line, tokens, current_pos, source_lines, /*allow_exclude=*/ true,
+        )?;
     if !leftover.trim().is_empty() {
         return Err(ParseError::Parse {
             line,
@@ -198,17 +193,16 @@ pub(crate) fn parse_gather_line(
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     for (pat, is_exc) in patterns.into_iter().zip(excludes_flags.into_iter()) {
-        if is_exc {
-            excludes.push(pat);
-        } else {
-            includes.push(pat);
-        }
+        if is_exc { excludes.push(pat); } else { includes.push(pat); }
     }
     // Advance past every token on the line where collection stopped. Explicit
     // walk (matches the pattern used in `parse_cook_line`'s declaration-only
     // branch) so this stays correct if the lexer ever emits more than one
     // token per source line.
-    let stop_line = tokens.get(pos_after).map(|t| t.line).unwrap_or(line);
+    let stop_line = tokens
+        .get(pos_after)
+        .map(|t| t.line)
+        .unwrap_or(line);
     let mut pos = pos_after;
     while pos < tokens.len() && tokens[pos].line <= stop_line {
         pos += 1;
@@ -403,7 +397,9 @@ pub(crate) fn parse_cook_line(
         if leftover.starts_with('"') || leftover.starts_with('(') {
             return Err(ParseError::Parse {
                 line,
-                message: "cook (LUA_EXPR) form requires exactly one output".to_string(),
+                message:
+                    "cook (LUA_EXPR) form requires exactly one output"
+                        .to_string(),
             });
         }
 
@@ -448,15 +444,12 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    let (output_strs, _excludes, leftover, pos_after_patterns) = collect_quoted_patterns_multiline(
-        rest,
-        line,
-        tokens,
-        current_pos,
-        source_lines,
-        /*allow_exclude=*/ false,
-    )?;
-    let outputs: Vec<OutputPattern> = output_strs.into_iter().map(OutputPattern::Quoted).collect();
+    let (output_strs, _excludes, leftover, pos_after_patterns) =
+        collect_quoted_patterns_multiline(
+            rest, line, tokens, current_pos, source_lines, /*allow_exclude=*/ false,
+        )?;
+    let outputs: Vec<OutputPattern> =
+        output_strs.into_iter().map(OutputPattern::Quoted).collect();
 
     let after_pattern = leftover.trim();
 
@@ -497,10 +490,7 @@ pub(crate) fn parse_cook_line(
     // After our multiline pattern walk, pos_after_patterns points at the
     // first token on the line where pattern collection stopped — which is
     // the line `leftover` came from. Read its line number off the token.
-    let body_line = tokens
-        .get(pos_after_patterns)
-        .map(|t| t.line)
-        .unwrap_or(line);
+    let body_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
 
     let (body, tail, new_pos) = parse_body_payload(
         after_pattern,

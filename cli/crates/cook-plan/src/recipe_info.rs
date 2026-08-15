@@ -78,8 +78,8 @@ pub fn build_recipe_infos_from_registered(
 /// the `registries` and `inferred_deps` paths that also walked `Workspace`
 /// directly are gone (COOK-423).
 pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path) -> String {
-    let root_dir =
-        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
+    let root_dir = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
     analyzer::find_full_prefix(&workspace.namespace_map, &root_dir, canonical_path)
 }
 

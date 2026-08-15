@@ -68,14 +68,8 @@ fn cold_then_hot_then_restore_round_trip() {
         "cold run failed. stderr:\n{}",
         String::from_utf8_lossy(&out1.stderr)
     );
-    assert!(
-        wd.join("build/a.out").exists(),
-        "cold run produced build/a.out"
-    );
-    assert!(
-        wd.join("build/stamp").exists(),
-        "cold run produced build/stamp"
-    );
+    assert!(wd.join("build/a.out").exists(), "cold run produced build/a.out");
+    assert!(wd.join("build/stamp").exists(), "cold run produced build/stamp");
     let stamp1 = fs::read(wd.join("build/stamp")).unwrap();
 
     // Hot rerun: no source changes -> cache hit, command does not run.

@@ -46,15 +46,13 @@ fn verifying_reader_errors_on_mismatch() {
     let bogus: [u8; 32] = <Sha256 as Digest>::digest(b"not the real bytes").into();
     let mut vr = VerifyingReader::new(Cursor::new(bytes.to_vec()), bogus);
     let mut out = Vec::new();
-    let err = vr
-        .read_to_end(&mut out)
-        .expect_err("expected mismatch error");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-}
+    let err = vr.read_to_end(&mut out).expect_err("expected mismatch error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 
-#[test]
-fn verifying_reader_passes_through_on_empty_match() {
-    let bytes: &[u8] = b"";
+    #[test]
+    fn verifying_reader_passes_through_on_empty_match() {
+        let bytes: &[u8] = b"";
     let expected: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
     let mut vr = VerifyingReader::new(Cursor::new(bytes.to_vec()), expected);
     let mut out = Vec::new();
@@ -67,25 +65,25 @@ fn verifying_reader_passes_through_on_empty_match() {
 #[test]
 fn local_backend_health_ok_on_existing_root() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    backend.health().expect("health ok");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        backend.health().expect("health ok");
 }
 
 #[test]
 fn local_backend_get_miss_returns_none() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xAB);
-    assert!(backend.get(&k).expect("get").is_none());
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xAB);
+        assert!(backend.get(&k).expect("get").is_none());
 }
 
 #[test]
 fn local_backend_put_get_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x01);
-    let mut meta = sample_meta();
-    put_bytes(&backend, &k, b"hello", &mut meta).expect("put");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x01);
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, b"hello", &mut meta).expect("put");
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
     assert_eq!(got, b"hello");
 }
@@ -93,11 +91,11 @@ fn local_backend_put_get_round_trip() {
 #[test]
 fn local_backend_put_idempotent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x02);
-    let mut meta1 = sample_meta();
-    let mut meta2 = sample_meta();
-    put_bytes(&backend, &k, b"data", &mut meta1).expect("put 1");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x02);
+        let mut meta1 = sample_meta();
+        let mut meta2 = sample_meta();
+        put_bytes(&backend, &k, b"data", &mut meta1).expect("put 1");
     put_bytes(&backend, &k, b"data", &mut meta2).expect("put 2");
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
     assert_eq!(got, b"data");
@@ -106,13 +104,13 @@ fn local_backend_put_idempotent() {
 #[test]
 fn local_backend_batch_query_returns_hits_subset() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k1 = key(0x10);
-    let k2 = key(0x20);
-    let k3 = key(0x30);
-    let mut m1 = sample_meta();
-    let mut m3 = sample_meta();
-    put_bytes(&backend, &k1, b"a", &mut m1).expect("put1");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k1 = key(0x10);
+        let k2 = key(0x20);
+        let k3 = key(0x30);
+        let mut m1 = sample_meta();
+        let mut m3 = sample_meta();
+        put_bytes(&backend, &k1, b"a", &mut m1).expect("put1");
     put_bytes(&backend, &k3, b"c", &mut m3).expect("put3");
     let hits = backend.batch_query(&[k1, k2, k3]).expect("query");
     assert!(hits.contains(&k1));
@@ -123,9 +121,9 @@ fn local_backend_batch_query_returns_hits_subset() {
 #[test]
 fn local_backend_delete_idempotent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xFF);
-    backend.delete(&k).expect("delete missing ok"); // never existed
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xFF);
+        backend.delete(&k).expect("delete missing ok"); // never existed
     let mut meta = sample_meta();
     put_bytes(&backend, &k, b"x", &mut meta).expect("put");
     backend.delete(&k).expect("delete existing ok");
@@ -136,10 +134,10 @@ fn local_backend_delete_idempotent() {
 #[test]
 fn local_backend_meta_sidecar_persisted() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x55);
-    let mut meta = sample_meta();
-    meta.tags.insert("ci".into());
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x55);
+        let mut meta = sample_meta();
+        meta.tags.insert("ci".into());
     meta.tags.insert("release:v0.5".into());
     put_bytes(&backend, &k, b"x", &mut meta).expect("put");
 
@@ -147,7 +145,7 @@ fn local_backend_meta_sidecar_persisted() {
     let path = backend.path_for(&k);
     let meta_path = path.with_extension("meta.json");
     let bytes = std::fs::read(&meta_path).expect("read sidecar");
-    let restored: ArtifactMeta = serde_json::from_slice(&bytes).expect("deserialize");
+        let restored: ArtifactMeta = serde_json::from_slice(&bytes).expect("deserialize");
     assert_eq!(restored.tags, meta.tags);
     assert_eq!(restored.recipe_namespace, meta.recipe_namespace);
 }
@@ -155,17 +153,12 @@ fn local_backend_meta_sidecar_persisted() {
 #[test]
 fn local_backend_path_for_fans_out_by_first_byte() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xAB);
-    let path = backend.path_for(&k);
-    // First two hex chars are the parent directory; remaining 62 are the file name.
-    let parent = path
-        .parent()
-        .unwrap()
-        .file_name()
-        .unwrap()
-        .to_string_lossy();
-    assert_eq!(parent, "ab");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xAB);
+        let path = backend.path_for(&k);
+        // First two hex chars are the parent directory; remaining 62 are the file name.
+        let parent = path.parent().unwrap().file_name().unwrap().to_string_lossy();
+        assert_eq!(parent, "ab");
     let file_name = path.file_name().unwrap().to_string_lossy();
     assert_eq!(file_name.len(), 62);
 }
@@ -178,9 +171,9 @@ fn local_backend_path_for_fans_out_by_first_byte() {
 #[test]
 fn put_computes_sha256_in_meta() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xC5);
-    let bytes = b"hello cs-0054";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC5);
+        let bytes = b"hello cs-0054";
     // Caller passes the zero sentinel; put must overwrite.
     let mut meta = sample_meta();
     meta.content_hash = [0u8; 32];
@@ -200,7 +193,8 @@ fn put_computes_sha256_in_meta() {
         "put must stamp content_hash with SHA-256(bytes)"
     );
     assert_ne!(
-        restored.content_hash, [0u8; 32],
+        restored.content_hash,
+        [0u8; 32],
         "put must overwrite the caller's zero sentinel"
     );
     // The in-memory `meta` is also stamped — caller observes the
@@ -213,9 +207,9 @@ fn put_computes_sha256_in_meta() {
 #[test]
 fn get_succeeds_when_bytes_match_meta() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xC6);
-    let bytes = b"round-trip payload";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC6);
+        let bytes = b"round-trip payload";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
@@ -228,9 +222,9 @@ fn get_succeeds_when_bytes_match_meta() {
 #[test]
 fn get_fails_closed_on_byte_tamper() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xC7);
-    let bytes = b"original bytes";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC7);
+        let bytes = b"original bytes";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
@@ -252,9 +246,9 @@ fn get_fails_closed_on_byte_tamper() {
 #[test]
 fn get_fails_closed_on_meta_tamper() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xC8);
-    let bytes = b"original bytes 2";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC8);
+        let bytes = b"original bytes 2";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
@@ -283,16 +277,16 @@ fn get_fails_closed_on_meta_tamper() {
 #[test]
 fn get_fails_closed_on_missing_meta() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0xC9);
-    let mut meta = sample_meta();
-    put_bytes(&backend, &k, b"x", &mut meta).expect("put");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC9);
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, b"x", &mut meta).expect("put");
 
     let path = backend.path_for(&k);
     let meta_path = path.with_extension("meta.json");
     std::fs::remove_file(&meta_path).expect("remove sidecar");
 
-    let got = backend.get(&k).expect("get");
+        let got = backend.get(&k).expect("get");
     assert!(
         got.is_none(),
         "missing sidecar must surface as a miss; got Some"
@@ -306,13 +300,14 @@ fn get_fails_closed_on_missing_meta() {
 #[test]
 fn put_idempotent_on_same_bytes() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x55);
-    let bytes = b"identical payload";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x55);
+        let bytes = b"identical payload";
     let mut m1 = sample_meta();
     let mut m2 = sample_meta();
     put_bytes(&backend, &k, bytes, &mut m1).expect("first put");
-    put_bytes(&backend, &k, bytes, &mut m2).expect("re-put with identical bytes must succeed");
+    put_bytes(&backend, &k, bytes, &mut m2)
+        .expect("re-put with identical bytes must succeed");
 
     // Bytes still readable round-trip.
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
@@ -327,18 +322,19 @@ fn put_idempotent_on_same_bytes() {
 #[test]
 fn put_rejects_conflict() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x56);
-    let bytes_a = b"payload alpha";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x56);
+        let bytes_a = b"payload alpha";
     let bytes_b = b"payload bravo";
     let mut m_a = sample_meta();
     let mut m_b = sample_meta();
     put_bytes(&backend, &k, bytes_a, &mut m_a).expect("put a");
 
-    let err = put_bytes(&backend, &k, bytes_b, &mut m_b).expect_err("conflicting put must error");
-    let err_msg = err.to_string();
-    assert!(
-        err_msg.contains("conflict"),
+    let err = put_bytes(&backend, &k, bytes_b, &mut m_b)
+        .expect_err("conflicting put must error");
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("conflict"),
         "diagnostic must mention 'conflict'; got: {err_msg}"
     );
     let key_hex = hex::encode(k);
@@ -363,9 +359,9 @@ fn put_rejects_conflict() {
 #[test]
 fn put_recovers_from_missing_meta() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x57);
-    let bytes = b"recovery payload";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x57);
+        let bytes = b"recovery payload";
     let mut m1 = sample_meta();
     put_bytes(&backend, &k, bytes, &mut m1).expect("put 1");
 
@@ -373,8 +369,9 @@ fn put_recovers_from_missing_meta() {
     let meta_path = path.with_extension("meta.json");
     std::fs::remove_file(&meta_path).expect("remove sidecar");
 
-    let mut m2 = sample_meta();
-    put_bytes(&backend, &k, bytes, &mut m2).expect("re-put after missing sidecar must succeed");
+        let mut m2 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m2)
+            .expect("re-put after missing sidecar must succeed");
 
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
     assert_eq!(got, bytes);
@@ -384,18 +381,20 @@ fn put_recovers_from_missing_meta() {
 #[test]
 fn put_recovers_from_corrupt_meta() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x58);
-    let bytes = b"corrupt-meta payload";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x58);
+        let bytes = b"corrupt-meta payload";
     let mut m1 = sample_meta();
     put_bytes(&backend, &k, bytes, &mut m1).expect("put 1");
 
     let path = backend.path_for(&k);
     let meta_path = path.with_extension("meta.json");
-    std::fs::write(&meta_path, b"this is not JSON {{{ ::: garbage").expect("corrupt sidecar");
+    std::fs::write(&meta_path, b"this is not JSON {{{ ::: garbage")
+        .expect("corrupt sidecar");
 
-    let mut m2 = sample_meta();
-    put_bytes(&backend, &k, bytes, &mut m2).expect("re-put after corrupt sidecar must succeed");
+        let mut m2 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m2)
+            .expect("re-put after corrupt sidecar must succeed");
 
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
     assert_eq!(got, bytes);
@@ -408,12 +407,12 @@ fn put_recovers_from_corrupt_meta() {
 #[test]
 fn local_backend_get_returns_streaming_reader() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x60);
-    let bytes: Vec<u8> = (0..=255u8).cycle().take(10_000).collect();
-    let mut meta = sample_meta();
-    meta.size_bytes = bytes.len() as u64;
-    put_bytes(&backend, &k, &bytes, &mut meta).expect("put");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x60);
+        let bytes: Vec<u8> = (0..=255u8).cycle().take(10_000).collect();
+        let mut meta = sample_meta();
+        meta.size_bytes = bytes.len() as u64;
+        put_bytes(&backend, &k, &bytes, &mut meta).expect("put");
 
     let mut reader = backend.get(&k).expect("get").expect("hit");
     let mut out = Vec::new();
@@ -428,9 +427,9 @@ fn local_backend_get_returns_streaming_reader() {
 #[test]
 fn local_backend_get_streaming_errors_on_byte_tamper() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x61);
-    let bytes = b"streaming-tamper original";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x61);
+        let bytes = b"streaming-tamper original";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
@@ -442,15 +441,15 @@ fn local_backend_get_streaming_errors_on_byte_tamper() {
     let err = reader
         .read_to_end(&mut out)
         .expect_err("streaming verifier must raise InvalidData on tamper");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-}
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 
-/// `put` with the zero sentinel stamps `meta.content_hash` in-place to
-/// `SHA-256(bytes)` — the streaming-path equivalent of the CS-0054
-/// stamp.
-#[test]
-fn local_backend_put_streams_with_zero_sentinel() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    /// `put` with the zero sentinel stamps `meta.content_hash` in-place to
+    /// `SHA-256(bytes)` — the streaming-path equivalent of the CS-0054
+    /// stamp.
+    #[test]
+    fn local_backend_put_streams_with_zero_sentinel() {
+        let dir = tempfile::tempdir().expect("tempdir");
     let backend = LocalBackend::new(dir.path().to_path_buf());
     let k = key(0x62);
     let bytes = b"sentinel stamp test";
@@ -470,9 +469,9 @@ fn local_backend_put_streams_with_zero_sentinel() {
 #[test]
 fn local_backend_put_rejects_caller_hash_mismatch() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x63);
-    let bytes = b"caller-bug detection";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x63);
+        let bytes = b"caller-bug detection";
     let mut meta = sample_meta();
     // A non-zero hash that is provably *not* SHA-256(bytes).
     let bogus: [u8; 32] = <Sha256 as Digest>::digest(b"different bytes entirely").into();
@@ -480,9 +479,9 @@ fn local_backend_put_rejects_caller_hash_mismatch() {
 
     let err = put_bytes(&backend, &k, bytes, &mut meta)
         .expect_err("caller-claimed hash mismatch must error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("caller-claimed content_hash"),
+        let msg = err.to_string();
+        assert!(
+            msg.contains("caller-claimed content_hash"),
         "diagnostic must mention caller-claimed mismatch; got: {msg}"
     );
     // No artifact persisted at this key.
@@ -494,9 +493,9 @@ fn local_backend_put_rejects_caller_hash_mismatch() {
 #[test]
 fn local_backend_put_accepts_caller_hash_match() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x64);
-    let bytes = b"caller pre-computed hash";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x64);
+        let bytes = b"caller pre-computed hash";
     let mut meta = sample_meta();
     let pre: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
     meta.content_hash = pre;
@@ -509,9 +508,9 @@ fn local_backend_put_accepts_caller_hash_match() {
 #[test]
 fn put_bytes_helper_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x65);
-    let bytes = b"helper round trip";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x65);
+        let bytes = b"helper round trip";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put_bytes");
     let got = get_bytes(&backend, &k).expect("get_bytes").expect("hit");
@@ -524,46 +523,49 @@ fn put_bytes_helper_round_trip() {
 #[test]
 fn get_bytes_helper_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x66);
-    let bytes = b"helper tamper-surface test";
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x66);
+        let bytes = b"helper tamper-surface test";
     let mut meta = sample_meta();
     put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
     // Happy path: bytes round-trip.
-    assert_eq!(get_bytes(&backend, &k).expect("get").expect("hit"), bytes);
+    assert_eq!(
+        get_bytes(&backend, &k).expect("get").expect("hit"),
+        bytes
+    );
 
     // Tamper: helper folds InvalidData into Ok(None).
     let path = backend.path_for(&k);
     std::fs::write(&path, b"helper tamper-surface ATTACKER").expect("tamper");
-    assert!(
-        get_bytes(&backend, &k).expect("get").is_none(),
+        assert!(
+            get_bytes(&backend, &k).expect("get").is_none(),
         "tamper must surface as None through the helper"
-    );
-}
+        );
+    }
 
-// ─── CS-0057: BackendConfig threading ───────────────────────────────────
+    // ─── CS-0057: BackendConfig threading ───────────────────────────────────
 
-/// `BackendConfig::default()` matches the values pinned by the
-/// CS-0057 spec. Sanity check — if anyone tightens or loosens the
-/// defaults later, this test is the single source of truth they
-/// should review.
-#[test]
-fn backend_config_default_values() {
-    let cfg = BackendConfig::default();
-    assert_eq!(cfg.timeout, std::time::Duration::from_secs(30));
-    assert_eq!(cfg.max_retries, 3);
-    assert_eq!(cfg.backoff_initial, std::time::Duration::from_millis(100));
-    assert_eq!(cfg.backoff_max, std::time::Duration::from_secs(5));
-    assert_eq!(cfg.max_artifact_bytes, 1024 * 1024 * 1024);
-}
+    /// `BackendConfig::default()` matches the values pinned by the
+    /// CS-0057 spec. Sanity check — if anyone tightens or loosens the
+    /// defaults later, this test is the single source of truth they
+    /// should review.
+    #[test]
+    fn backend_config_default_values() {
+        let cfg = BackendConfig::default();
+        assert_eq!(cfg.timeout, std::time::Duration::from_secs(30));
+        assert_eq!(cfg.max_retries, 3);
+        assert_eq!(cfg.backoff_initial, std::time::Duration::from_millis(100));
+        assert_eq!(cfg.backoff_max, std::time::Duration::from_secs(5));
+        assert_eq!(cfg.max_artifact_bytes, 1024 * 1024 * 1024);
+    }
 
-/// `LocalBackend::with_config` stores the config and exposes it via
-/// the `config()` accessor — observable proof that the constructor
-/// honoured the override rather than silently substituting defaults.
-#[test]
-fn local_backend_with_config_honored() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    /// `LocalBackend::with_config` stores the config and exposes it via
+    /// the `config()` accessor — observable proof that the constructor
+    /// honoured the override rather than silently substituting defaults.
+    #[test]
+    fn local_backend_with_config_honored() {
+        let dir = tempfile::tempdir().expect("tempdir");
     let custom = BackendConfig {
         timeout: std::time::Duration::from_secs(7),
         max_retries: 11,
@@ -576,10 +578,7 @@ fn local_backend_with_config_honored() {
     assert_eq!(backend.config().max_retries, custom.max_retries);
     assert_eq!(backend.config().backoff_initial, custom.backoff_initial);
     assert_eq!(backend.config().backoff_max, custom.backoff_max);
-    assert_eq!(
-        backend.config().max_artifact_bytes,
-        custom.max_artifact_bytes
-    );
+    assert_eq!(backend.config().max_artifact_bytes, custom.max_artifact_bytes);
 }
 
 /// `put` of bytes that exceed `max_artifact_bytes` MUST be rejected
@@ -588,15 +587,16 @@ fn local_backend_with_config_honored() {
 #[test]
 fn local_backend_put_rejects_oversize_artifact() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = BackendConfig {
-        max_artifact_bytes: 100,
-        ..BackendConfig::default()
-    };
-    let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
-    let k = key(0x70);
-    let bytes = vec![0xABu8; 200]; // 2x the cap
-    let mut meta = sample_meta();
-    let err = put_bytes(&backend, &k, &bytes, &mut meta).expect_err("oversize put must error");
+        let cfg = BackendConfig {
+            max_artifact_bytes: 100,
+            ..BackendConfig::default()
+        };
+        let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
+        let k = key(0x70);
+        let bytes = vec![0xABu8; 200]; // 2x the cap
+        let mut meta = sample_meta();
+        let err = put_bytes(&backend, &k, &bytes, &mut meta)
+            .expect_err("oversize put must error");
     let msg = err.to_string();
     assert!(
         msg.contains("exceeds"),
@@ -621,15 +621,15 @@ fn local_backend_put_rejects_oversize_artifact() {
 #[test]
 fn local_backend_put_accepts_artifact_at_limit() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = BackendConfig {
-        max_artifact_bytes: 100,
-        ..BackendConfig::default()
-    };
-    let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
-    let k = key(0x71);
-    let bytes = vec![0xCDu8; 100]; // exactly at the cap
-    let mut meta = sample_meta();
-    put_bytes(&backend, &k, &bytes, &mut meta).expect("put at limit ok");
+        let cfg = BackendConfig {
+            max_artifact_bytes: 100,
+            ..BackendConfig::default()
+        };
+        let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
+        let k = key(0x71);
+        let bytes = vec![0xCDu8; 100]; // exactly at the cap
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, &bytes, &mut meta).expect("put at limit ok");
 
     let got = get_bytes(&backend, &k).expect("get").expect("hit");
     assert_eq!(got, bytes);
@@ -664,43 +664,29 @@ fn sample_manifest() -> DeterminantManifest {
 #[test]
 fn local_backend_manifest_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x80);
-    let m = sample_manifest();
-    backend.put_manifest(&k, &m).expect("put_manifest");
-    let got = backend
-        .get_manifest(&k)
-        .expect("get_manifest")
-        .expect("present");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x80);
+        let m = sample_manifest();
+        backend.put_manifest(&k, &m).expect("put_manifest");
+    let got = backend.get_manifest(&k).expect("get_manifest").expect("present");
     assert_eq!(got, m);
 }
 
 #[test]
 fn local_backend_manifest_miss_returns_none() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    assert!(
-        backend
-            .get_manifest(&key(0x81))
-            .expect("get_manifest")
-            .is_none()
-    );
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        assert!(backend.get_manifest(&key(0x81)).expect("get_manifest").is_none());
 }
 
 #[test]
 fn local_backend_manifest_stored_beside_artifact() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let backend = LocalBackend::new(dir.path().to_path_buf());
-    let k = key(0x82);
-    backend
-        .put_manifest(&k, &sample_manifest())
-        .expect("put_manifest");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x82);
+        backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
     let prov = backend.path_for(&k).with_extension("provenance.json");
-    assert!(
-        prov.exists(),
-        "manifest sidecar must exist at {}",
-        prov.display()
-    );
+    assert!(prov.exists(), "manifest sidecar must exist at {}", prov.display());
 }
 
 // ─── COOK-180: get_with_meta seam ───────────────────────────────────────
@@ -795,9 +781,7 @@ fn read_does_not_restamp_or_rewrite_sidecars() {
     let k = key(0xD2);
     let mut meta = sample_meta();
     put_bytes(&backend, &k, b"sidecar untouched", &mut meta).expect("put");
-    backend
-        .put_manifest(&k, &sample_manifest())
-        .expect("put_manifest");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
 
     let blob = backend.path_for(&k);
     let meta_path = blob.with_extension("meta.json");
@@ -830,10 +814,7 @@ fn read_does_not_restamp_or_rewrite_sidecars() {
         prov_before,
         "provenance sidecar bytes must be untouched by a read"
     );
-    assert!(
-        mtime_of(&blob) > OLD_STAMP,
-        "blob mtime should have advanced"
-    );
+    assert!(mtime_of(&blob) > OLD_STAMP, "blob mtime should have advanced");
 }
 
 /// Case 4a — a miss on a missing sidecar returns before the touch.
@@ -916,19 +897,14 @@ fn delete_removes_blob_meta_and_provenance() {
     let k = key(0x90);
     let mut meta = sample_meta();
     put_bytes(&backend, &k, b"provenance leak repro", &mut meta).expect("put");
-    backend
-        .put_manifest(&k, &sample_manifest())
-        .expect("put_manifest");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
 
     let blob = backend.path_for(&k);
     let meta_path = blob.with_extension("meta.json");
     let prov_path = blob.with_extension("provenance.json");
     assert!(blob.exists(), "blob must exist before delete");
     assert!(meta_path.exists(), "meta sidecar must exist before delete");
-    assert!(
-        prov_path.exists(),
-        "provenance sidecar must exist before delete"
-    );
+    assert!(prov_path.exists(), "provenance sidecar must exist before delete");
 
     backend.delete(&k).expect("delete ok");
 
@@ -954,9 +930,7 @@ fn delete_of_a_key_with_no_provenance_is_not_an_error() {
     let prov_path = backend.path_for(&k).with_extension("provenance.json");
     assert!(!prov_path.exists());
 
-    backend
-        .delete(&k)
-        .expect("delete without provenance must still be ok");
+    backend.delete(&k).expect("delete without provenance must still be ok");
     assert!(backend.get(&k).expect("get").is_none());
 }
 
@@ -975,9 +949,7 @@ fn apply_eviction_removes_only_the_planned_keys() {
     let mut m_victim = sample_meta();
     m_victim.size_bytes = 10;
     put_bytes(&backend, &victim_key, b"0123456789", &mut m_victim).expect("put victim");
-    backend
-        .put_manifest(&victim_key, &sample_manifest())
-        .expect("put_manifest victim");
+    backend.put_manifest(&victim_key, &sample_manifest()).expect("put_manifest victim");
 
     let mut m_survivor = sample_meta();
     m_survivor.size_bytes = 5;
@@ -1043,9 +1015,7 @@ fn apply_eviction_tolerates_a_victim_that_vanished_mid_sweep() {
     let mut meta = sample_meta();
     meta.size_bytes = 7;
     put_bytes(&backend, &k, b"vanish!", &mut meta).expect("put");
-    backend
-        .put_manifest(&k, &sample_manifest())
-        .expect("put_manifest");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
 
     let blob = backend.path_for(&k);
     // Simulate a concurrent sweep already having removed the blob, leaving
@@ -1094,9 +1064,7 @@ fn apply_eviction_of_an_empty_plan_is_a_no_op() {
     let k = key(0xC0);
     let mut meta = sample_meta();
     put_bytes(&backend, &k, b"untouched", &mut meta).expect("put");
-    backend
-        .put_manifest(&k, &sample_manifest())
-        .expect("put_manifest");
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
 
     let plan = EvictPlan {
         victims: Vec::new(),
@@ -1106,9 +1074,7 @@ fn apply_eviction_of_an_empty_plan_is_a_no_op() {
         count_before: 1,
     };
 
-    let outcome = backend
-        .apply_eviction(&plan)
-        .expect("apply_eviction empty plan");
+    let outcome = backend.apply_eviction(&plan).expect("apply_eviction empty plan");
     assert_eq!(outcome.objects, 0);
     assert_eq!(outcome.bytes, 0);
 

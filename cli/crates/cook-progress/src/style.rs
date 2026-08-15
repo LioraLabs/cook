@@ -139,15 +139,13 @@ pub fn format_verb(verb: Verb, colored: bool) -> String {
         return padded;
     }
     let mut out = String::new();
-    if verb.bold {
-        out.push_str("\x1b[1m");
-    }
+    if verb.bold { out.push_str("\x1b[1m"); }
     match verb.color {
         VerbColor::Default => {}
-        VerbColor::Dim => out.push_str("\x1b[2m"),
-        VerbColor::Yellow => out.push_str("\x1b[33m"),
-        VerbColor::Green => out.push_str("\x1b[32m"),
-        VerbColor::Red => out.push_str("\x1b[31m"),
+        VerbColor::Dim     => out.push_str("\x1b[2m"),
+        VerbColor::Yellow  => out.push_str("\x1b[33m"),
+        VerbColor::Green   => out.push_str("\x1b[32m"),
+        VerbColor::Red     => out.push_str("\x1b[31m"),
     }
     out.push_str(&padded);
     out.push_str("\x1b[0m");

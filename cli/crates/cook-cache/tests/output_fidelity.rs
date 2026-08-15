@@ -167,19 +167,12 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
         false,
     );
 
-    assert_eq!(
-        result,
-        RebuildResult::Skip,
-        "all outputs must restore cleanly"
-    );
+    assert_eq!(result, RebuildResult::Skip, "all outputs must restore cleanly");
 
     // File: regular file, exact mode bits, exact content.
     let tool = wd.join("bin/tool");
     let tool_meta = std::fs::symlink_metadata(&tool).expect("bin/tool exists");
-    assert!(
-        tool_meta.file_type().is_file(),
-        "bin/tool must be a regular file"
-    );
+    assert!(tool_meta.file_type().is_file(), "bin/tool must be a regular file");
     assert_eq!(
         tool_meta.permissions().mode() & 0o777,
         0o755,

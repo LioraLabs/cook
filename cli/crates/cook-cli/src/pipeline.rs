@@ -896,7 +896,8 @@ pub fn cmd_cache_verify(
             argv: &[],
         },
     )?;
-    let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
+    let (edges, reachable) =
+        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     let project_root = resolve_project_root(globals)?;
 
@@ -1619,7 +1620,9 @@ chore clean
         Ok(s) => Some(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
-            return Err(CookError::Other(format!("failed to read .gitignore: {e}")));
+            return Err(CookError::Other(format!(
+                "failed to read .gitignore: {e}"
+            )));
         }
     };
     match merge_cook_gitignore_section(existing.as_deref()) {
@@ -1757,7 +1760,10 @@ pub fn cmd_serve(
     // module-registered unit. The registered units are every unit there is.
     for (rname, units) in &serve_registered.units_by_recipe {
         for unit in &units.units {
-            if let cook_contracts::WorkPayload::Interactive { line, is_chore, .. } = &unit.payload {
+            if let cook_contracts::WorkPayload::Interactive {
+                line, is_chore, ..
+            } = &unit.payload
+            {
                 // A chore's interactive window is not a recipe `@` step; only
                 // the legacy in-recipe form is rejected here.
                 if !is_chore {
@@ -1988,7 +1994,8 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
         },
     )?;
 
-    let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
+    let (edges, reachable) =
+        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     // `cook why` MUST recompute the same cache key K as `cook run` would, so it
     // MUST anchor the cache context at the SAME project_root the executor uses.
@@ -2093,11 +2100,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     if format == cook_graph::emit::Format::Json {
         let mut doc = cook_graph::emit::json_value(&graph);
         doc["units"] = serde_json::Value::Array(
-            report
-                .units
-                .iter()
-                .map(|u| why_render::why_unit_json(u, &timings))
-                .collect(),
+            report.units.iter().map(|u| why_render::why_unit_json(u, &timings)).collect(),
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
         return Ok(());

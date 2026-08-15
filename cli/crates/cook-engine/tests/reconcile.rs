@@ -181,14 +181,8 @@ fn cold_restored_outputs_are_recorded_and_later_swept() {
 
     // Run 2: every unit is a cold fetch-by-key restore, no execution.
     run_build(wd, &[]);
-    assert!(
-        wd.join("build/a.txt").exists(),
-        "restore must materialise a.txt"
-    );
-    assert!(
-        wd.join("build/b.txt").exists(),
-        "restore must materialise b.txt"
-    );
+    assert!(wd.join("build/a.txt").exists(), "restore must materialise a.txt");
+    assert!(wd.join("build/b.txt").exists(), "restore must materialise b.txt");
 
     // Run 3: the output set shrinks. The restored-run's recorded outputs are
     // the only prior state — b.txt must still be swept.

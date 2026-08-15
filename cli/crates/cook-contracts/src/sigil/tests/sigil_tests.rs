@@ -26,7 +26,10 @@ fn matches_out_indexed_accessor() {
 
 #[test]
 fn matches_multiple_in_one_string() {
-    assert_eq!(idents("gcc -c $<in> -o $<out>"), vec!["in", "out"]);
+    assert_eq!(
+        idents("gcc -c $<in> -o $<out>"),
+        vec!["in", "out"]
+    );
 }
 
 #[test]
@@ -64,10 +67,7 @@ fn ident_with_colon_and_dash_is_accepted() {
 
 #[test]
 fn probe_ref_with_hyphen_in_key_is_accepted() {
-    assert_eq!(
-        idents("$<demo:cc-version.version>"),
-        vec!["demo:cc-version.version"]
-    );
+    assert_eq!(idents("$<demo:cc-version.version>"), vec!["demo:cc-version.version"]);
 }
 
 // CS-0074: probe-ref tokenization tests
@@ -143,10 +143,7 @@ fn span_includes_dollar_and_close() {
 
 #[test]
 fn file_ref_literal_path() {
-    assert_eq!(
-        idents("--tokens $<file:tokens.css>"),
-        vec!["file:tokens.css"]
-    );
+    assert_eq!(idents("--tokens $<file:tokens.css>"), vec!["file:tokens.css"]);
 }
 
 #[test]

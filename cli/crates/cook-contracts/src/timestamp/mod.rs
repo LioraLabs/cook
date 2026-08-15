@@ -28,11 +28,7 @@
 /// up writing the missing half somewhere else, which is the whole of what this
 /// module was created to undo.
 pub fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
-    let y = if month <= 2 {
-        year as i64 - 1
-    } else {
-        year as i64
-    };
+    let y = if month <= 2 { year as i64 - 1 } else { year as i64 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64; // 0..=399
     let m = month as u64;
@@ -119,11 +115,7 @@ pub fn parse_rfc3339_ms(s: &str) -> Option<i64> {
             }
             let mut ms: i64 = 0;
             for index in 0..3 {
-                ms = ms * 10
-                    + fraction
-                        .as_bytes()
-                        .get(index)
-                        .map_or(0, |b| i64::from(b - b'0'));
+                ms = ms * 10 + fraction.as_bytes().get(index).map_or(0, |b| i64::from(b - b'0'));
             }
             (parse_fixed::<i64>(whole, 2)?, ms)
         }

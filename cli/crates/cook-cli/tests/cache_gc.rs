@@ -232,14 +232,8 @@ fn object_paths(cache_dir: &Path, key: &[u8; 32]) -> (PathBuf, PathBuf, PathBuf)
 
 fn assert_object_absent(cache_dir: &Path, key: &[u8; 32], label: &str) {
     let (blob, meta, provenance) = object_paths(cache_dir, key);
-    assert!(
-        !blob.exists(),
-        "{label}: blob should have been evicted: {blob:?}"
-    );
-    assert!(
-        !meta.exists(),
-        "{label}: .meta.json should have been evicted: {meta:?}"
-    );
+    assert!(!blob.exists(), "{label}: blob should have been evicted: {blob:?}");
+    assert!(!meta.exists(), "{label}: .meta.json should have been evicted: {meta:?}");
     assert!(
         !provenance.exists(),
         "{label}: .provenance.json should have been evicted: {provenance:?}"
@@ -248,14 +242,8 @@ fn assert_object_absent(cache_dir: &Path, key: &[u8; 32], label: &str) {
 
 fn assert_object_present(cache_dir: &Path, key: &[u8; 32], label: &str) {
     let (blob, meta, provenance) = object_paths(cache_dir, key);
-    assert!(
-        blob.exists(),
-        "{label}: blob should have survived: {blob:?}"
-    );
-    assert!(
-        meta.exists(),
-        "{label}: .meta.json should have survived: {meta:?}"
-    );
+    assert!(blob.exists(), "{label}: blob should have survived: {blob:?}");
+    assert!(meta.exists(), "{label}: .meta.json should have survived: {meta:?}");
     assert!(
         provenance.exists(),
         "{label}: .provenance.json should have survived: {provenance:?}"
@@ -332,20 +320,14 @@ fn snapshot_files(dir: &Path) -> std::collections::BTreeSet<PathBuf> {
 /// simultaneously proves "gc reported on the store we configured" and "gc
 /// never touched anything outside this sandbox".
 fn assert_store_line(text: &str, cache_dir: &Path) {
-    let first = text
-        .lines()
-        .next()
-        .expect("gc must print at least one line");
+    let first = text.lines().next().expect("gc must print at least one line");
     assert_eq!(first, format!("Store: {}", cache_dir.display()));
 }
 
 /// Parse a `"Would free: N objects, SIZE"` or `"Freed: N objects, SIZE"`
 /// line (always line 2 of a victims-non-empty report) into `(N, "SIZE")`.
 fn parse_free_line(text: &str) -> (usize, String) {
-    let line = text
-        .lines()
-        .nth(1)
-        .expect("gc report must have a second line");
+    let line = text.lines().nth(1).expect("gc report must have a second line");
     let rest = line
         .strip_prefix("Would free: ")
         .or_else(|| line.strip_prefix("Freed: "))
@@ -365,10 +347,7 @@ fn parse_free_line(text: &str) -> (usize, String) {
 /// unlike the seeded per-object sizes, `total_before`/`total_after` are
 /// sums the tests don't fully control the rounding of.
 fn parse_transition_counts(text: &str) -> (usize, usize) {
-    let line = text
-        .lines()
-        .nth(2)
-        .expect("gc report must have a third line");
+    let line = text.lines().nth(2).expect("gc report must have a third line");
     let inside = line
         .split('(')
         .nth(1)
@@ -436,15 +415,9 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     // would silently degrade it to `kind: None`, and this assertion catches
     // that before the eviction assertions below could pass vacuously.
     let kinds = fx.kinds_reported();
-    assert!(
-        kinds.contains("file"),
-        "expected a 'file' kind row; got {kinds:?}"
-    );
+    assert!(kinds.contains("file"), "expected a 'file' kind row; got {kinds:?}");
     for kind in EXEMPT_KINDS {
-        assert!(
-            kinds.contains(*kind),
-            "expected a {kind:?} kind row; got {kinds:?}"
-        );
+        assert!(kinds.contains(*kind), "expected a {kind:?} kind row; got {kinds:?}");
     }
 
     // total_before = 5,000,000 (files) + 5 * 10,000 (exempt) = 5,050,000.
@@ -457,20 +430,11 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
 
     assert_store_line(&text, &fx.cache_dir);
     let (freed_objects, freed_size) = parse_free_line(&text);
-    assert_eq!(
-        freed_objects, 3,
-        "expected exactly the 3 oldest files evicted:\n{text}"
-    );
-    assert_eq!(
-        freed_size, "3.0 MB",
-        "3 * 1,000,000 bytes must render as an exact 3.0 MB:\n{text}"
-    );
+    assert_eq!(freed_objects, 3, "expected exactly the 3 oldest files evicted:\n{text}");
+    assert_eq!(freed_size, "3.0 MB", "3 * 1,000,000 bytes must render as an exact 3.0 MB:\n{text}");
 
     let (count_before, count_after) = parse_transition_counts(&text);
-    assert_eq!(
-        count_before, 10,
-        "5 files + 5 exempt objects seeded:\n{text}"
-    );
+    assert_eq!(count_before, 10, "5 files + 5 exempt objects seeded:\n{text}");
     assert_eq!(count_after, 7, "10 - 3 evicted = 7 remaining:\n{text}");
 
     // The exact LRU tail: the 3 OLDEST files (index 0, 1, 2) are gone; the
@@ -520,10 +484,7 @@ fn a_manifest_gating_recent_artifacts_survives_the_size_sweep() {
         kinds.contains("discovered_input_sets"),
         "expected a 'discovered_input_sets' kind row; got {kinds:?}"
     );
-    assert!(
-        kinds.contains("file"),
-        "expected a 'file' kind row; got {kinds:?}"
-    );
+    assert!(kinds.contains("file"), "expected a 'file' kind row; got {kinds:?}");
 
     // total_before = 9,000 + 500,000 + 500,000 = 1,009,000.
     // target = 950,000: evicting the older of the two files brings
@@ -536,14 +497,8 @@ fn a_manifest_gating_recent_artifacts_survives_the_size_sweep() {
 
     assert_store_line(&text, &fx.cache_dir);
     let (freed_objects, freed_size) = parse_free_line(&text);
-    assert_eq!(
-        freed_objects, 1,
-        "expected exactly one file evicted:\n{text}"
-    );
-    assert_eq!(
-        freed_size, "500.0 kB",
-        "one 500,000-byte file must render as exact 500.0 kB:\n{text}"
-    );
+    assert_eq!(freed_objects, 1, "expected exactly one file evicted:\n{text}");
+    assert_eq!(freed_size, "500.0 kB", "one 500,000-byte file must render as exact 500.0 kB:\n{text}");
 
     // The manifest — blob, .meta.json, AND .provenance.json — survives
     // untouched, even though it was the single oldest object in the store.
@@ -590,15 +545,9 @@ fn older_than_applies_to_every_kind_including_exempt_ones() {
     }
 
     let kinds = fx.kinds_reported();
-    assert!(
-        kinds.contains("file"),
-        "expected a 'file' kind row; got {kinds:?}"
-    );
+    assert!(kinds.contains("file"), "expected a 'file' kind row; got {kinds:?}");
     for kind in KINDS.iter().flatten() {
-        assert!(
-            kinds.contains(*kind),
-            "expected a {kind:?} kind row; got {kinds:?}"
-        );
+        assert!(kinds.contains(*kind), "expected a {kind:?} kind row; got {kinds:?}");
     }
 
     let gc = fx.run(&["cache", "gc", "--older-than", "10d"]);
@@ -607,20 +556,11 @@ fn older_than_applies_to_every_kind_including_exempt_ones() {
 
     assert_store_line(&text, &fx.cache_dir);
     let (freed_objects, freed_size) = parse_free_line(&text);
-    assert_eq!(
-        freed_objects, 6,
-        "one old object per kind (6 kinds) must be evicted:\n{text}"
-    );
-    assert_eq!(
-        freed_size, "600.0 kB",
-        "6 * 100,000 bytes must render as exact 600.0 kB:\n{text}"
-    );
+    assert_eq!(freed_objects, 6, "one old object per kind (6 kinds) must be evicted:\n{text}");
+    assert_eq!(freed_size, "600.0 kB", "6 * 100,000 bytes must render as exact 600.0 kB:\n{text}");
 
     let (count_before, count_after) = parse_transition_counts(&text);
-    assert_eq!(
-        count_before, 12,
-        "6 kinds * 2 ages = 12 seeded objects:\n{text}"
-    );
+    assert_eq!(count_before, 12, "6 kinds * 2 ages = 12 seeded objects:\n{text}");
     assert_eq!(count_after, 6, "12 - 6 evicted = 6 remaining:\n{text}");
 
     // Every OLD object is gone, INCLUDING the exempt kinds — the age pass
@@ -654,11 +594,7 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
     }
 
     let before_snapshot = snapshot_files(&fx.cache_dir);
-    assert_eq!(
-        before_snapshot.len(),
-        12,
-        "4 objects * 3 files each (blob+meta+provenance)"
-    );
+    assert_eq!(before_snapshot.len(), 12, "4 objects * 3 files each (blob+meta+provenance)");
 
     // target = 2,000,000: evicts exactly the 2 oldest files (frees
     // 2,000,000, leaving running_total at 2,000,000 <= target).
@@ -675,14 +611,8 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
     );
 
     let (projected_objects, projected_size) = parse_free_line(&dry_text);
-    assert_eq!(
-        projected_objects, 2,
-        "expected the 2 oldest files projected:\n{dry_text}"
-    );
-    assert_eq!(
-        projected_size, "2.0 MB",
-        "2 * 1,000,000 bytes must render as exact 2.0 MB:\n{dry_text}"
-    );
+    assert_eq!(projected_objects, 2, "expected the 2 oldest files projected:\n{dry_text}");
+    assert_eq!(projected_size, "2.0 MB", "2 * 1,000,000 bytes must render as exact 2.0 MB:\n{dry_text}");
 
     // The identical command, without --dry-run: the real freed numbers
     // must equal the dry-run's projection exactly.
@@ -703,11 +633,7 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
 
     // And now the store genuinely changed: 2 objects' worth of files gone.
     let after_real_snapshot = snapshot_files(&fx.cache_dir);
-    assert_eq!(
-        after_real_snapshot.len(),
-        6,
-        "2 objects evicted * 3 files each removed from 12"
-    );
+    assert_eq!(after_real_snapshot.len(), 6, "2 objects evicted * 3 files each removed from 12");
 }
 
 // ---------------------------------------------------------------------------
@@ -718,19 +644,10 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
 fn neither_flag_is_a_usage_error() {
     let fx = Fixture::new();
     let gc = fx.run(&["cache", "gc"]);
-    assert!(
-        !gc.status.success(),
-        "neither --max-size nor --older-than must be a usage error: {gc:?}"
-    );
+    assert!(!gc.status.success(), "neither --max-size nor --older-than must be a usage error: {gc:?}");
     let stderr = String::from_utf8_lossy(&gc.stderr);
-    assert!(
-        stderr.contains("--max-size"),
-        "stderr must name --max-size; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("--older-than"),
-        "stderr must name --older-than; got: {stderr}"
-    );
+    assert!(stderr.contains("--max-size"), "stderr must name --max-size; got: {stderr}");
+    assert!(stderr.contains("--older-than"), "stderr must name --older-than; got: {stderr}");
 }
 
 // ---------------------------------------------------------------------------
@@ -740,16 +657,10 @@ fn neither_flag_is_a_usage_error() {
 #[test]
 fn missing_store_is_a_no_op_and_is_not_created() {
     let fx = Fixture::new();
-    assert!(
-        !fx.cache_dir.exists(),
-        "precondition: cache_dir must not exist yet"
-    );
+    assert!(!fx.cache_dir.exists(), "precondition: cache_dir must not exist yet");
 
     let gc = fx.run(&["cache", "gc", "--max-size", "10MB"]);
-    assert!(
-        gc.status.success(),
-        "a missing store is a zero-work report, not an error: {gc:?}"
-    );
+    assert!(gc.status.success(), "a missing store is a zero-work report, not an error: {gc:?}");
     let text = String::from_utf8(gc.stdout).unwrap();
     assert_eq!(
         text,
@@ -795,10 +706,7 @@ fn cloud_backend_defers_to_the_server_and_deletes_nothing_locally() {
 
     // Every seeded file survives, byte-for-byte.
     let after = snapshot_files(&fx.cache_dir);
-    assert_eq!(
-        before, after,
-        "the cloud-enabled path must delete nothing locally"
-    );
+    assert_eq!(before, after, "the cloud-enabled path must delete nothing locally");
     assert_object_present(&fx.cache_dir, &key_a, "file object");
     assert_object_present(&fx.cache_dir, &key_b, "probe_value object");
 }

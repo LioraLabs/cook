@@ -65,9 +65,10 @@ impl Lockfile {
 }
 
 pub fn read(path: &Path) -> Result<Lockfile> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let parsed: Lockfile =
-        toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let parsed: Lockfile = toml::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
     if parsed.schema > SCHEMA_VERSION {
         return Err(anyhow!(
             "cook.lock schema version {} is newer than this cook supports (max {}); upgrade cook",
@@ -79,8 +80,10 @@ pub fn read(path: &Path) -> Result<Lockfile> {
 }
 
 pub fn write(path: &Path, lock: &Lockfile) -> Result<()> {
-    let contents = toml::to_string_pretty(lock).with_context(|| "serialize cook.lock")?;
-    std::fs::write(path, contents).with_context(|| format!("write {}", path.display()))?;
+    let contents = toml::to_string_pretty(lock)
+        .with_context(|| "serialize cook.lock")?;
+    std::fs::write(path, contents)
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 
@@ -98,7 +101,8 @@ pub fn verify_integrity(locked: &LockedModule, cache_dir: &Path) -> Result<()> {
     }
     let filename = format!("{}-{}.src.rock", locked.name, locked.version);
     let path = cache_dir.join(&filename);
-    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read {}", path.display()))?;
     let mut h = Sha256::new();
     h.update(&bytes);
     let actual = format!("sha256-{}", B64.encode(h.finalize()));
@@ -135,8 +139,8 @@ pub fn introspect_closure(modules_dir: &Path, manifest: &ManifestModules) -> Res
         return Ok(Lockfile::new(out));
     }
     let mut by_name: BTreeMap<String, BTreeMap<String, PathBuf>> = BTreeMap::new();
-    for name_entry in
-        std::fs::read_dir(&rocks_root).with_context(|| format!("read {}", rocks_root.display()))?
+    for name_entry in std::fs::read_dir(&rocks_root)
+        .with_context(|| format!("read {}", rocks_root.display()))?
     {
         let name_entry = name_entry?;
         if !name_entry.file_type()?.is_dir() {
@@ -180,7 +184,8 @@ pub fn introspect_closure(modules_dir: &Path, manifest: &ManifestModules) -> Res
 }
 
 fn parse_rockspec_source_url(path: &Path) -> Result<String> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?;
     // Rockspecs are Lua, not TOML. We do a minimal scrape that locates
     // `source = {` and then finds the first `url = "..."` line inside that
     // block. luarocks writes installed rockspecs in canonical multi-line
@@ -230,7 +235,8 @@ fn compute_integrity(cache_dir: &Path, name: &str, version: &str) -> Result<Stri
         // honest about gaps.
         return Ok(INTEGRITY_UNKNOWN.to_string());
     }
-    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read {}", path.display()))?;
     let mut h = Sha256::new();
     h.update(&bytes);
     Ok(format!("sha256-{}", B64.encode(h.finalize())))

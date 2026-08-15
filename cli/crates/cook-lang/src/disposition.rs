@@ -108,8 +108,7 @@ pub(crate) fn removed_trailing_seal(step: &str, line: usize) -> ParseError {
 pub(crate) fn removed_unseal(line: usize) -> ParseError {
     ParseError::Parse {
         line,
-        message: "`unseal` was removed (CS-0225); do not put the ref in the recipe's `seal` step"
-            .to_string(),
+        message: "`unseal` was removed (CS-0225); do not put the ref in the recipe's `seal` step".to_string(),
     }
 }
 
@@ -144,9 +143,7 @@ pub(crate) fn parse_seal_operands(
     let mut escaped = false;
     for (i, ch) in text.char_indices() {
         if start.is_none() {
-            if ch.is_whitespace() {
-                continue;
-            }
+            if ch.is_whitespace() { continue; }
             start = Some(i);
         }
         if quoted && escaped {
@@ -207,9 +204,7 @@ pub(crate) fn parse_seal_operands(
                 .into(),
         });
     }
-    let inline_probe = if globs.is_empty() {
-        None
-    } else {
+    let inline_probe = if globs.is_empty() { None } else {
         let name = format!("@seal:{owner}:{line}");
         refs.push(name.clone());
         Some(Probe {

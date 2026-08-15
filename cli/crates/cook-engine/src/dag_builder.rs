@@ -164,17 +164,9 @@ fn lower_unit(ru: &RecipeUnits, unit: &CapturedUnit) -> WorkNode {
         .collect();
     let presatisfied = is_presatisfied(unit);
     WorkNode {
-        payload: if presatisfied {
-            None
-        } else {
-            Some(unit.payload.clone())
-        },
+        payload: if presatisfied { None } else { Some(unit.payload.clone()) },
         recipe_name: ru.recipe_name.clone(),
-        cache_meta: if presatisfied {
-            None
-        } else {
-            unit.cache_meta.clone()
-        },
+        cache_meta: if presatisfied { None } else { unit.cache_meta.clone() },
         working_dir: ru.working_dir.clone(),
         env_vars: merged_env_vars,
         process_env_vars,

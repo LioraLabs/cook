@@ -76,17 +76,11 @@ fn inline_file_seal_invalidates_without_fanout() {
     fs::write(tmp.path().join("det.txt"), "one\n").unwrap();
 
     run_cook(tmp.path(), &["build"]).unwrap();
-    assert_eq!(
-        fs::read_to_string(tmp.path().join("out.txt")).unwrap(),
-        "one\n"
-    );
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "one\n");
 
     fs::write(tmp.path().join("det.txt"), "two\n").unwrap();
     run_cook(tmp.path(), &["build"]).unwrap();
-    assert_eq!(
-        fs::read_to_string(tmp.path().join("out.txt")).unwrap(),
-        "two\n"
-    );
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "two\n");
 }
 
 #[test]
@@ -163,18 +157,12 @@ recipe build
         .unwrap_or_else(|_| panic!("cache dir {} missing", cache_dir.display()))
         .filter_map(|e| e.ok())
         .collect();
-    assert!(
-        !entries.is_empty(),
-        "expected at least one cache artifact after first run"
-    );
+    assert!(!entries.is_empty(), "expected at least one cache artifact after first run");
 
     // Second run — should still succeed and produce the same output.
     let _out2 = run_cook(tmp.path(), &["build"]).expect("second run should succeed");
     let marker2 = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
-    assert_eq!(
-        marker, marker2,
-        "probe output should be identical on second run (cache hit)"
-    );
+    assert_eq!(marker, marker2, "probe output should be identical on second run (cache hit)");
 }
 
 /// CS-0074 probe-cache regression (SHI-222 Task 4.4 review C1).
@@ -287,10 +275,7 @@ recipe render
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
-    assert!(
-        tmp.path().join("out/alpha.txt").exists(),
-        "alpha.txt missing"
-    );
+    assert!(tmp.path().join("out/alpha.txt").exists(), "alpha.txt missing");
     assert!(tmp.path().join("out/beta.txt").exists(), "beta.txt missing");
 }
 
@@ -359,10 +344,7 @@ recipe render
     // edit the input -> re-fingerprint -> new member
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
-    assert!(
-        tmp.path().join("out/second.txt").exists(),
-        "second.txt missing after edit"
-    );
+    assert!(tmp.path().join("out/second.txt").exists(), "second.txt missing after edit");
 }
 
 #[test]
@@ -405,11 +387,8 @@ recipe build
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     let err = run_cook(tmp.path(), &["build"]).expect_err("expected duplicate-key rejection");
-    assert!(
-        err.contains("dup")
-            && (err.contains("declared") || err.to_lowercase().contains("duplicate")),
-        "expected duplicate-key diagnostic mentioning 'dup', got: {err}"
-    );
+    assert!(err.contains("dup") && (err.contains("declared") || err.to_lowercase().contains("duplicate")),
+        "expected duplicate-key diagnostic mentioning 'dup', got: {err}");
 }
 
 /// Demand-driven scheduling: a probe that no recipe-reachable unit references
@@ -476,10 +455,7 @@ recipe build
             found.is_none(),
             "unreached probe must not write a probe-value artifact under .cook/cache/, \
              but found one at: {}",
-            found
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
+            found.as_ref().map(|p| p.display().to_string()).unwrap_or_default()
         );
     }
 }

@@ -14,7 +14,7 @@ fn ok_cached_modifier() {
     let s = Style::new(false);
     assert_eq!(
         outcome_line("c::r", Outcome::Ok, true, false, &s),
-        "test c::r ... ok (cached)"
+            "test c::r ... ok (cached)"
     );
 }
 

@@ -145,11 +145,7 @@ fn a_preset_selector_needs_a_declarable_name() {
 
     let mut g = crate::cli::Globals::default();
     let p = partition_argv(&["@fast.v2".to_string()], "build", &mut g).unwrap();
-    assert_eq!(
-        p.preset.as_deref(),
-        Some("fast.v2"),
-        "a declarable name selects a preset"
-    );
+    assert_eq!(p.preset.as_deref(), Some("fast.v2"), "a declarable name selects a preset");
     assert!(p.argv.is_empty());
 }
 
@@ -160,10 +156,6 @@ fn the_why_path_strips_the_same_shapes_and_no_others() {
     assert_eq!(strip_preset_sigil("@fast.v2"), "fast.v2");
     assert_eq!(strip_preset_sigil("@_x-1"), "_x-1");
     for verbatim in ["@9x", "@-x", "@", "@a/b", "plain"] {
-        assert_eq!(
-            strip_preset_sigil(verbatim),
-            verbatim,
-            "{verbatim} passes through"
-        );
+        assert_eq!(strip_preset_sigil(verbatim), verbatim, "{verbatim} passes through");
     }
 }

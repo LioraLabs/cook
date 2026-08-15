@@ -254,7 +254,7 @@ impl CacheBackend for LocalBackend {
         // proof. Fail closed, treat as miss, force rebuild.
         if meta.content_hash == ArtifactMeta::zero_content_hash() {
             tracing::warn!(
-                "cache integrity: legacy zero-sentinel content_hash at {}; treating as miss",
+                    "cache integrity: legacy zero-sentinel content_hash at {}; treating as miss",
                 meta_path.display()
             );
             return Ok(None);
@@ -546,9 +546,7 @@ impl CacheBackend for LocalBackend {
 /// sidecars from `LocalBackend::enumerate` — no extension-specific logic
 /// needed.
 fn is_lowercase_hex(s: &str, len: usize) -> bool {
-    s.len() == len
-        && s.bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 // Deliberately a SEPARATE `impl LocalBackend` block (not folded into the one

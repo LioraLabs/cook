@@ -195,9 +195,9 @@ fn cache_meta_is_invocation_independent_across_entry_points() {
 
     // (ii) Entry = the member Cookfile itself (invoked inside apps/rust);
     //      it registers as the workspace-of-one root under prefix "".
-    let ws_member = Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
-    let reg_member =
-        register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None).unwrap();
+    let ws_member =
+        Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
+    let reg_member = register_workspace(&ws_member, None, &[], RegisterMode::Enumerate, None).unwrap();
 
     let meta_of = |reg: &RegisteredWorkspace, key: &str| {
         reg.units_by_recipe
@@ -313,7 +313,8 @@ fn register_workspace_qualifies_recipe_units_deps() {
         Workspace::load(&dir.path().join("Cookfile"), dir.path(), &[]).expect("workspace loads");
 
     let registered =
-        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None).expect("register");
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None)
+            .expect("register");
 
     let use_units = registered
         .units_by_recipe

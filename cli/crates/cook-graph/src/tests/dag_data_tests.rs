@@ -44,7 +44,7 @@ fn recipe_with_depfile(
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -101,7 +101,7 @@ fn independent_probes_have_no_edges_between_them() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -117,7 +117,7 @@ fn independent_probes_have_no_edges_between_them() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -133,7 +133,7 @@ fn independent_probes_have_no_edges_between_them() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -203,10 +203,7 @@ fn build_dag_data_emits_discovered_file_nodes() {
     let by_id = |id: &str| nodes.iter().find(|n| n.id == id);
 
     let bar_cpp = by_id("file:bar.cpp").expect("declared file node missing");
-    assert_eq!(
-        bar_cpp.discovered, None,
-        "declared file should not be flagged discovered"
-    );
+    assert_eq!(bar_cpp.discovered, None, "declared file should not be flagged discovered");
 
     let helpers = by_id("file:helpers.h").expect("discovered helpers.h missing");
     assert_eq!(helpers.discovered, Some(true));
@@ -264,7 +261,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru_a = RecipeUnits {
         recipe_name: "a".into(),
@@ -307,7 +304,7 @@ fn discovered_path_declared_by_other_unit_is_classified_declared() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru_b = RecipeUnits {
         recipe_name: "b".into(),
@@ -433,7 +430,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru_compile = RecipeUnits {
         recipe_name: "compile".into(),
@@ -479,7 +476,7 @@ fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru_archive = RecipeUnits {
         recipe_name: "archive".into(),
@@ -571,7 +568,7 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -601,8 +598,8 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
             command_hash: 0,
             env_contribution: 0,
             seal_contribution: 0,
-            module_inputs: Vec::new(),
-            observed: None,
+        module_inputs: Vec::new(),
+        observed: None,
         },
     );
 

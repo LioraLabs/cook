@@ -28,12 +28,8 @@ pub(crate) fn parse_probe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. }
-            | Token::FilesHeader { .. }
-            | Token::ToolsHeader { .. } => break,
-            Token::Comment(_) | Token::Blank => {
-                pos += 1;
-            }
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
+            Token::Comment(_) | Token::Blank => { pos += 1; }
             Token::LuaBlockOpen => {
                 // A bare `>{ … }` line is the Lua producer (§22.5.2). Unlike the
                 // shell/`json`/`lines`/`tools`/`envs` forms (which lex as
@@ -58,13 +54,8 @@ pub(crate) fn parse_probe(
             }
             Token::Content(text) => {
                 if crate::recipe::is_module_call(text) {
-                    let raw = source_lines
-                        .get(tok.line.saturating_sub(1))
-                        .copied()
-                        .unwrap_or("");
-                    if !raw.starts_with(|c: char| c.is_whitespace()) {
-                        break;
-                    }
+                    let raw = source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("");
+                    if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
                 }
                 if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse { line: tok.line,
@@ -98,9 +89,7 @@ pub(crate) fn parse_probe(
                     pos += 1;
                     continue;
                 } else {
-                    if strip_keyword(text, "files").is_some()
-                        || strip_keyword(text, "tools").is_some()
-                    {
+                    if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {
                         return Err(ParseError::Parse { line: tok.line,
                             message: "`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`".into() });
                     }
@@ -112,22 +101,21 @@ pub(crate) fn parse_probe(
                             message: "probe: at most one producer per probe".into(),
                         });
                     }
-                    let (p, new_pos) = parse_producer(text, tok.line, tokens, pos, source_lines)?;
+                    let (p, new_pos) =
+                        parse_producer(text, tok.line, tokens, pos, source_lines)?;
                     // A `files` producer's glob set IS its file-input
                     // fingerprint set (CS-0148); a separate `inputs`
                     // line would declare a second, divergable one.
                     if matches!(p, ProbeProduce::Files { .. })
                         && (!inputs.is_empty() || !excludes.is_empty())
                     {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
+                        return Err(ParseError::Parse { line: tok.line,
                             message: "probe: a `files` producer declares its own file set; \
                                 a separate `inputs` line is not allowed"
                                 .into(),
                         });
                     }
-                    producer = Some(p);
-                    pos = new_pos;
+                    producer = Some(p); pos = new_pos;
                     continue;
                 }
             }
@@ -173,26 +161,16 @@ fn parse_set_declaration(
     while pos < tokens.len() {
         let tok = &tokens[pos];
         match &tok.value {
-            Token::RecipeHeader { .. }
-            | Token::ChoreHeader { .. }
-            | Token::ConfigHeader { .. }
-            | Token::UseDecl { .. }
-            | Token::ImportDecl { .. }
-            | Token::RegisterHeader
-            | Token::ProbeHeader { .. }
-            | Token::FilesHeader { .. }
-            | Token::ToolsHeader { .. } => break,
+            Token::RecipeHeader { .. } | Token::ChoreHeader { .. } | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. } | Token::ImportDecl { .. } | Token::RegisterHeader
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             Token::Comment(_) | Token::Blank => pos += 1,
             Token::Content(_) => {
                 let raw = source_lines.get(tok.line - 1).copied().unwrap_or("");
-                if !raw.starts_with(|c: char| c.is_whitespace()) {
-                    break;
-                }
+                if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
                 if files {
-                    let (mut includes, mut line_excludes) =
-                        parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
-                    values.append(&mut includes);
-                    excludes.append(&mut line_excludes);
+                    let (mut includes, mut line_excludes) = parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
+                    values.append(&mut includes); excludes.append(&mut line_excludes);
                 } else {
                     values.extend(parse_source_name_list(
                         &format!("{{{}}}", raw.trim()),
@@ -284,7 +262,9 @@ fn parse_source_name_list(
         .and_then(|t| t.trim_end().strip_suffix('}'))
         .ok_or_else(|| ParseError::Parse {
             line,
-            message: format!("{kind}: expected a brace name list `{{ a, b }}` on one line"),
+            message: format!(
+                "{kind}: expected a brace name list `{{ a, b }}` on one line"
+            ),
         })?;
     let mut names = Vec::new();
     for tok in inner.split(|c: char| c == ',' || c.is_whitespace()) {
@@ -297,17 +277,11 @@ fn parse_source_name_list(
             cook_contracts::probe_key::is_tool_name(tok)
         } else {
             let mut chars = tok.chars();
-            chars
-                .next()
-                .is_some_and(cook_contracts::naming::is_bare_name_start)
+            chars.next().is_some_and(cook_contracts::naming::is_bare_name_start)
                 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
         if !ok {
-            let charset = if tools {
-                "[A-Za-z_][A-Za-z0-9_.-]*"
-            } else {
-                "[A-Za-z_][A-Za-z0-9_]*"
-            };
+            let charset = if tools { "[A-Za-z_][A-Za-z0-9_.-]*" } else { "[A-Za-z_][A-Za-z0-9_]*" };
             return Err(ParseError::Parse {
                 line,
                 message: format!(
@@ -449,12 +423,7 @@ fn finish_typed_shell(
     source_lines: &[&str],
 ) -> Result<(ProbeProduce, usize), ParseError> {
     let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
-        tail,
-        line,
-        tokens,
-        current_pos,
-        source_lines,
-        "probe",
+        tail, line, tokens, current_pos, source_lines, "probe",
     )?;
     crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     match body {
@@ -533,12 +502,7 @@ pub(crate) fn parse_producer(
     }
     // Bare shell block (`{ … }` → string) or Lua block (`>{ … }` → structured).
     let (body, block_tail, new_pos) = crate::cook_line::parse_body_payload(
-        text,
-        line,
-        tokens,
-        current_pos,
-        source_lines,
-        "probe",
+        text, line, tokens, current_pos, source_lines, "probe",
     )?;
     crate::shell_block::reject_stray_tail(&block_tail, line, "probe")?;
     Ok(match body {

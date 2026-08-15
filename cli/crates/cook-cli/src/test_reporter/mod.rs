@@ -86,38 +86,29 @@ impl Reporter {
                     println!("    test {} ...", self.label_for(&id.0));
                 }
             }
-            EngineEvent::TestPassed {
-                id,
-                cached,
-                should_fail,
-                ..
-            } => {
+            EngineEvent::TestPassed { id, cached, should_fail, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!(
-                    "{}",
-                    live::outcome_line(&lbl, live::Outcome::Ok, cached, should_fail, &self.style,)
-                );
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Ok, cached, should_fail, &self.style,
+                ));
             }
             EngineEvent::TestFailed { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!(
-                    "{}",
-                    live::outcome_line(&lbl, live::Outcome::Failed, false, false, &self.style,)
-                );
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Failed, false, false, &self.style,
+                ));
             }
             EngineEvent::TestTimedOut { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!(
-                    "{}",
-                    live::outcome_line(&lbl, live::Outcome::Timeout, false, false, &self.style,)
-                );
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Timeout, false, false, &self.style,
+                ));
             }
             EngineEvent::TestBlocked { id, .. } => {
                 let lbl = self.label_for(&id.0);
-                println!(
-                    "{}",
-                    live::outcome_line(&lbl, live::Outcome::Blocked, false, false, &self.style,)
-                );
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Blocked, false, false, &self.style,
+                ));
             }
             _ => {}
         }
@@ -127,17 +118,12 @@ impl Reporter {
         let multi_ns = self.multi_ns;
         // Pre-build labels keyed by TestId.0 so the failure renderer doesn't
         // need to reach into self.
-        let labels: BTreeMap<String, String> = results
-            .iter()
+        let labels: BTreeMap<String, String> = results.iter()
             .map(|r| {
                 let meta = self.label_meta.get(&r.id.0);
-                let recipe = meta
-                    .map(|m| m.recipe.clone())
-                    .unwrap_or_else(|| r.recipe.clone());
+                let recipe = meta.map(|m| m.recipe.clone()).unwrap_or_else(|| r.recipe.clone());
                 let ln = meta.map(|m| m.line).unwrap_or(r.line);
-                let it = meta
-                    .and_then(|m| m.iteration_item.clone())
-                    .or(r.iteration_item.clone());
+                let it = meta.and_then(|m| m.iteration_item.clone()).or(r.iteration_item.clone());
                 let lbl = label::label(&recipe, ln, it.as_deref(), multi_ns);
                 (r.id.0.clone(), lbl)
             })
@@ -266,8 +252,7 @@ pub fn write_json_sidecar(
 
     let summary = compute_summary(results);
     let total_duration: f64 = results.iter().map(|r| r.duration.as_secs_f64()).sum();
-    let saved_by_cache: f64 = results
-        .iter()
+    let saved_by_cache: f64 = results.iter()
         .filter(|r| r.from_cache)
         .map(|r| r.duration.as_secs_f64())
         .sum();
@@ -347,8 +332,7 @@ pub fn write_junit_sidecar(path: &std::path::Path, results: &[TestResult]) -> st
     ));
 
     for (recipe, tests) in &by_recipe {
-        let recipe_failures = tests
-            .iter()
+        let recipe_failures = tests.iter()
             .filter(|r| matches!(r.outcome, TestOutcome::Failed | TestOutcome::TimedOut))
             .count();
         let recipe_time: f64 = tests.iter().map(|r| r.duration.as_secs_f64()).sum();
@@ -361,11 +345,7 @@ pub fn write_junit_sidecar(path: &std::path::Path, results: &[TestResult]) -> st
         ));
 
         for r in tests {
-            let test_name = if r.name.is_empty() {
-                "(unnamed)"
-            } else {
-                &r.name
-            };
+            let test_name = if r.name.is_empty() { "(unnamed)" } else { &r.name };
             out.push_str(&format!(
                 "    <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\"",
                 xml_escape_attr(test_name),

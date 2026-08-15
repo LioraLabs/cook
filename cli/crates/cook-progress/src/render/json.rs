@@ -39,11 +39,7 @@ fn duration_ms(d: std::time::Duration) -> u64 {
 }
 
 fn recipe_name(state: &BuildState, id: crate::event::RecipeId) -> String {
-    state
-        .recipes
-        .get(&id)
-        .map(|r| r.name.clone())
-        .unwrap_or_else(|| format!("recipe#{}", id.raw()))
+    state.recipes.get(&id).map(|r| r.name.clone()).unwrap_or_else(|| format!("recipe#{}", id.raw()))
 }
 
 fn node_name(
@@ -284,10 +280,7 @@ impl std::fmt::Display for SchemaCheckError {
         match self {
             Self::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
             Self::NotAnObject => write!(f, "events.jsonl line is not a JSON object"),
-            Self::MissingVersion => write!(
-                f,
-                "events.jsonl line missing required `v` schema-version field"
-            ),
+            Self::MissingVersion => write!(f, "events.jsonl line missing required `v` schema-version field"),
             Self::Unsupported { found, max_known } => write!(
                 f,
                 "events.jsonl schema version {found} exceeds maximum supported version {max_known}; upgrade required"
@@ -306,8 +299,8 @@ impl std::error::Error for SchemaCheckError {}
 /// `ProgressEvent`. Lines whose `v` is at or below `PROGRESS_SCHEMA_VERSION`
 /// are accepted (additive-only evolution within a major version).
 pub fn check_schema_version(line: &str) -> Result<u32, SchemaCheckError> {
-    let value: Value =
-        serde_json::from_str(line).map_err(|e| SchemaCheckError::InvalidJson(e.to_string()))?;
+    let value: Value = serde_json::from_str(line)
+        .map_err(|e| SchemaCheckError::InvalidJson(e.to_string()))?;
     let obj = value.as_object().ok_or(SchemaCheckError::NotAnObject)?;
     let v = obj
         .get("v")

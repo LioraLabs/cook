@@ -16,10 +16,7 @@ fn cook_binary() -> std::path::PathBuf {
     path.pop();
     path.pop();
     path.push("cook");
-    assert!(
-        path.exists(),
-        "cook binary not found — cargo build --bin cook"
-    );
+    assert!(path.exists(), "cook binary not found — cargo build --bin cook");
     path
 }
 
@@ -38,10 +35,7 @@ fn mk_checkout(
         .unwrap_or_default();
     fs::write(
         dir.join(".cook/cloud.toml"),
-        format!(
-            "{project_line}[cache]\ncache_dir = \"{}\"\n",
-            shared_store.display()
-        ),
+        format!("{project_line}[cache]\ncache_dir = \"{}\"\n", shared_store.display()),
     )
     .unwrap();
     fs::write(dir.join("Cookfile"), COOKFILE).unwrap();

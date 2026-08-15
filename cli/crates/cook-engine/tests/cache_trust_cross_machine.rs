@@ -113,9 +113,7 @@ fn runs(wd: &Path, runlog: &str) -> usize {
 }
 
 fn gen_runs(wd: &Path) -> u64 {
-    fs::metadata(wd.join("out/gen.side"))
-        .map(|m| m.len())
-        .unwrap_or(0)
+    fs::metadata(wd.join("out/gen.side")).map(|m| m.len()).unwrap_or(0)
 }
 
 fn artifact_file_count(dir: &Path) -> usize {
@@ -187,16 +185,8 @@ fn cache_trust_v3_cross_machine_narrative() {
         build(wd, r, "alpha");
     }
     assert_eq!(runs(wd, "portable.runlog"), 1, "portable warm hit");
-    assert_eq!(
-        runs(wd, "host.runlog"),
-        1,
-        "hostdep warm hit (stable host value)"
-    );
-    assert_eq!(
-        gen_runs(wd),
-        1,
-        "record warm hit reuses recording, no re-generate"
-    );
+    assert_eq!(runs(wd, "host.runlog"), 1, "hostdep warm hit (stable host value)");
+    assert_eq!(gen_runs(wd), 1, "record warm hit reuses recording, no re-generate");
 
     // 4. Host change to SIMHOST=beta: portable HITS, hostdep MISSES + rebuilds.
     for r in ["portable", "hostdep"] {
@@ -230,11 +220,7 @@ fn cache_trust_v3_cross_machine_narrative() {
         !wd.join("out/pin.txt").exists(),
         "pinned cold-miss MUST NOT execute the unit"
     );
-    assert_eq!(
-        runs(wd, "pin.runlog"),
-        0,
-        "pinned cold-miss MUST NOT execute"
-    );
+    assert_eq!(runs(wd, "pin.runlog"), 0, "pinned cold-miss MUST NOT execute");
     assert!(
         combined.contains("pinned") || combined.contains("MUST NOT be rebuilt"),
         "pinned cold-miss error should name the pinned / fetch-only rule.\n{combined}"

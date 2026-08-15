@@ -79,10 +79,7 @@ fn find_one_file_ending_with(dir: &Path, suffix: &str) -> Option<PathBuf> {
     match matches.len() {
         0 => None,
         1 => Some(matches.pop().unwrap()),
-        _ => panic!(
-            "expected exactly one *{suffix} under {}, found {matches:#?}",
-            dir.display()
-        ),
+        _ => panic!("expected exactly one *{suffix} under {}, found {matches:#?}", dir.display()),
     }
 }
 

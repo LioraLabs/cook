@@ -110,10 +110,7 @@ fn budget_warning_omits_the_largest_line_without_candidates() {
         "cook: warning: cache store is 3.0 GB, over the 2.0 GB budget (150%)\n\
          cook:          run `cook cache gc --max-size 2GB` to reclaim 1.0 GB\n"
     );
-    assert!(
-        !out.contains("largest"),
-        "no candidates, no largest line:\n{out}"
-    );
+    assert!(!out.contains("largest"), "no candidates, no largest line:\n{out}");
 }
 
 // ---------------------------------------------------------------------------

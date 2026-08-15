@@ -571,10 +571,7 @@ fn a_settled_no_op_build_neither_warns_nor_walks_the_store() {
     // Identical build, nothing changed: every unit is a cache hit, nothing is
     // published, and the check must not run at all.
     let second = fx.run(&["build"]);
-    assert!(
-        second.status.success(),
-        "settled rebuild failed: {second:?}"
-    );
+    assert!(second.status.success(), "settled rebuild failed: {second:?}");
     let stderr = stderr_of(&second);
     assert_silent(&stderr, "a settled no-op build");
 }

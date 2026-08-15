@@ -202,9 +202,7 @@ fn probes_get(
         // hit, not only before resolution — a key some earlier body already
         // resolved is just as far outside this probe's fingerprint chain as an
         // unresolved one.
-        resolver
-            .check_produce_read(key)
-            .map_err(|e| LuaError::runtime(e.to_string()))?;
+        resolver.check_produce_read(key).map_err(|e| LuaError::runtime(e.to_string()))?;
         if let Some(val) = resolver.store().borrow().get(key) {
             return crate::probe_value::json_to_lua(lua, val);
         }
@@ -287,7 +285,8 @@ pub fn register_cache_api(
                 r.key()
             ))
         })?;
-        cook_contracts::sigil::subst::substitute(value, r.path(), &ident).map_err(LuaError::runtime)
+        cook_contracts::sigil::subst::substitute(value, r.path(), &ident)
+            .map_err(LuaError::runtime)
     })?;
     cook.set(cook_contracts::registration::PROBE_SUBST_NAME, subst_fn)?;
 

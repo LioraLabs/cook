@@ -177,9 +177,7 @@ fn table_to_json(
         let mut map = JsonMap::new();
         for k in &str_keys {
             path.push(k.clone());
-            let v: LuaValue = t
-                .get(k.as_str())
-                .map_err(|e| format!("get failed: {}", e))?;
+            let v: LuaValue = t.get(k.as_str()).map_err(|e| format!("get failed: {}", e))?;
             let jv = lua_to_json_inner(&v, path, visited)?;
             path.pop();
             map.insert(k.clone(), jv);

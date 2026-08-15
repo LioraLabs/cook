@@ -54,28 +54,16 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::RecipeCompleted {
-                recipe,
-                elapsed,
-                cached,
-                total,
-                ..
-            } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
                     r.progress = (*total, *total);
-                    r.status = if *cached == *total && *total > 0 {
-                        Status::Cached
-                    } else {
-                        Status::Completed
-                    };
+                    r.status = if *cached == *total && *total > 0 { Status::Cached } else { Status::Completed };
                     if was_running {
                         self.totals.running = self.totals.running.saturating_sub(1);
                         self.totals.done += 1;
-                        if r.status == Status::Cached {
-                            self.totals.cached += 1;
-                        }
+                        if r.status == Status::Cached { self.totals.cached += 1; }
                     }
                 }
             }
@@ -96,13 +84,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::RecipeSkipped {
-                recipe,
-                elapsed,
-                completed,
-                total,
-                ..
-            } => {
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
@@ -198,8 +180,7 @@ impl BuildState {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     if let Entry::Vacant(e) = r.nodes.entry(*node) {
-                        let mut ns =
-                            NodeState::new(*node, name.clone(), artifact.clone(), name.clone());
+                        let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), name.clone());
                         ns.kind = *kind;
                         ns.status = NodeStatus::Completed;
                         ns.completed_at = Some(Instant::now());
@@ -236,9 +217,7 @@ impl BuildState {
                 }
             }
             ProgressEvent::NodeOutput { .. } => { /* log store handles this */ }
-            ProgressEvent::InteractiveStart {
-                recipe, node, name, ..
-            } => {
+            ProgressEvent::InteractiveStart { recipe, node, name, .. } => {
                 // Register the interactive node so downstream renderers
                 // (notably the JSON writer) can resolve its name from
                 // BuildState rather than re-reading the inline `name` field.
@@ -252,9 +231,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::InteractiveEnd {
-                recipe, node, name, ..
-            } => {
+            ProgressEvent::InteractiveEnd { recipe, node, name, .. } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     match r.nodes.entry(*node) {
@@ -310,9 +287,7 @@ impl Counters {
         state.recipes.values().map(|r| r.cached_count).sum()
     }
     pub fn failed_node_count(&self, state: &BuildState) -> usize {
-        state
-            .recipes
-            .values()
+        state.recipes.values()
             .flat_map(|r| r.nodes.values())
             .filter(|n| matches!(n.status, crate::model::node::NodeStatus::Failed))
             .count()
@@ -323,9 +298,7 @@ impl Counters {
 }
 
 impl Default for BuildState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 #[cfg(test)]

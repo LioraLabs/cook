@@ -19,9 +19,7 @@ pub enum GitError {
     NotAGitRepo(PathBuf),
     #[error("git ref '{reference}' not found: {stderr}")]
     RefNotFound { reference: String, stderr: String },
-    #[error(
-        "no merge-base between '{reference}' and HEAD (shallow clone? try `git fetch --deepen`)"
-    )]
+    #[error("no merge-base between '{reference}' and HEAD (shallow clone? try `git fetch --deepen`)")]
     NoMergeBase { reference: String },
     #[error("git executable not found on PATH")]
     GitNotInstalled,
@@ -62,7 +60,9 @@ fn run_git(project_root: &Path, args: &[&str]) -> Result<std::process::Output, G
 
 fn ensure_inside_work_tree(project_root: &Path) -> Result<(), GitError> {
     let out = run_git(project_root, &["rev-parse", "--is-inside-work-tree"])?;
-    if !out.status.success() || String::from_utf8_lossy(&out.stdout).trim() != "true" {
+    if !out.status.success()
+        || String::from_utf8_lossy(&out.stdout).trim() != "true"
+    {
         return Err(GitError::NotAGitRepo(project_root.to_path_buf()));
     }
     Ok(())

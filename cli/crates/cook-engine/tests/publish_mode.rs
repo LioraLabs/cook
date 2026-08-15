@@ -209,7 +209,8 @@ fn publish_off_serves_prepopulated_and_publishes_nothing() {
     // (3) No new artifacts uploaded: count must equal the seeded count.
     let count_after_fetch = artifact_file_count(cache.path());
     assert_eq!(
-        count_after_fetch, count_after_seed,
+        count_after_fetch,
+        count_after_seed,
         "phase2 (publish-off): artifact count in shared store MUST NOT grow — \
          publish is disabled, so no new artifact may be uploaded \
          (before={count_after_seed}, after={count_after_fetch})"

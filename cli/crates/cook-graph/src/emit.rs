@@ -420,7 +420,8 @@ fn render_text(graph: &Graph) -> String {
     for e in &graph.edges {
         incoming.entry(e.to.as_str()).or_default().push(e);
     }
-    let node_of: BTreeMap<&str, &Node> = graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let node_of: BTreeMap<&str, &Node> =
+        graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
     for n in &graph.nodes {
         let mut header = format!("{}{}", n.label, unit_suffix(n));
@@ -534,7 +535,11 @@ fn render_mermaid(graph: &Graph) -> String {
     // they are the ones the diagram distinguishes.
     for n in &graph.nodes {
         if n.rebuilding() {
-            let _ = writeln!(out, "  style {} stroke-width:3px", safe_id(&n.id));
+            let _ = writeln!(
+                out,
+                "  style {} stroke-width:3px",
+                safe_id(&n.id)
+            );
         }
     }
     for e in &graph.edges {

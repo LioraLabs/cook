@@ -21,11 +21,7 @@ fn line_seen_from(chunk: &str, target: &'static str, code: &str) -> Option<usize
 #[test]
 fn reports_the_line_of_the_call_in_the_named_chunk() {
     assert_eq!(
-        line_seen_from(
-            "@Cookfile",
-            "@Cookfile",
-            "local a = 1\nlocal b = 2\nwhere()\n"
-        ),
+        line_seen_from("@Cookfile", "@Cookfile", "local a = 1\nlocal b = 2\nwhere()\n"),
         Some(3)
     );
 }
@@ -62,18 +58,12 @@ fn skips_frames_from_other_chunks_and_reports_the_entering_line() {
 /// the loader named with Lua's `@` file prefix.
 #[test]
 fn matches_a_chunk_name_by_suffix() {
-    assert_eq!(
-        line_seen_from("@sub/Cookfile", "sub/Cookfile", "where()\n"),
-        Some(1)
-    );
+    assert_eq!(line_seen_from("@sub/Cookfile", "sub/Cookfile", "where()\n"), Some(1));
 }
 
 /// No frame from the target chunk means no line — the caller degrades to a
 /// location-free diagnostic rather than reporting somebody else's line.
 #[test]
 fn reports_nothing_when_the_target_chunk_is_not_on_the_stack() {
-    assert_eq!(
-        line_seen_from("@probe:cc:zlib", "@Cookfile", "where()\n"),
-        None
-    );
+    assert_eq!(line_seen_from("@probe:cc:zlib", "@Cookfile", "where()\n"), None);
 }

@@ -9,7 +9,8 @@ fn run_config(body: &str) -> (Lua, LuaResult<()>, LuaTable, Vec<HostRead>) {
     let lua = Lua::new();
     let out = lua.create_table().unwrap();
     let reads: SharedHostReads = Rc::new(RefCell::new(Vec::new()));
-    let sandbox = build_config_sandbox_env(&lua, &out, Path::new("."), &reads).unwrap();
+    let sandbox =
+        build_config_sandbox_env(&lua, &out, Path::new("."), &reads).unwrap();
 
     let func = lua
         .load(format!("return function()\n{body}\nend"))
@@ -26,7 +27,8 @@ fn run_config(body: &str) -> (Lua, LuaResult<()>, LuaTable, Vec<HostRead>) {
 
 #[test]
 fn rejects_os() {
-    let (_lua, res, _out, _reads) = run_config(r#"var.X = os.getenv("HOME") or "d""#);
+    let (_lua, res, _out, _reads) =
+        run_config(r#"var.X = os.getenv("HOME") or "d""#);
     let err = format!("{}", res.unwrap_err());
     assert!(err.contains("'os'"), "diagnostic must name os: {err}");
     assert!(err.contains("5.3"), "diagnostic must cite §5.3: {err}");
@@ -70,7 +72,8 @@ fn var_sink_writes_reach_output() {
 fn var_read_back_of_prior_value_works() {
     // `var.X = var.X or default` — reading back an unset sink key yields
     // nil (ordinary table read), so the `or` fallback applies.
-    let (_lua, res, out, _reads) = run_config(r#"var.X = var.X or "fallback""#);
+    let (_lua, res, out, _reads) =
+        run_config(r#"var.X = var.X or "fallback""#);
     res.unwrap();
     assert_eq!(out.get::<String>("X").unwrap(), "fallback");
 }
@@ -81,10 +84,7 @@ fn rejects_cook() {
     // index on the absent global (cook is not in the banned-with-hint set,
     // it simply does not exist).
     let (_lua, res, _out, _reads) = run_config(r#"var.X = cook.platform.os"#);
-    assert!(
-        res.is_err(),
-        "cook.* must not be reachable in a config body"
-    );
+    assert!(res.is_err(), "cook.* must not be reachable in a config body");
 }
 
 #[test]
@@ -127,7 +127,10 @@ fn host_env_reads_with_default_and_records() {
 
 #[test]
 fn host_read_reads_relative_file_and_records() {
-    let dir = std::env::temp_dir().join(format!("cook-cfgsandbox-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "cook-cfgsandbox-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("version.txt"), "9.9.9\n").unwrap();
 
@@ -167,7 +170,8 @@ fn pure_control_flow_and_string_methods_work() {
 
 #[test]
 fn math_random_is_removed() {
-    let (_lua, res, _out, _reads) = run_config(r#"var.X = tostring(math.random())"#);
+    let (_lua, res, _out, _reads) =
+        run_config(r#"var.X = tostring(math.random())"#);
     // math.random was dropped, so this is a call on a nil value.
     assert!(res.is_err(), "math.random must not be available");
 }

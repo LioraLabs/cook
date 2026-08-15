@@ -45,7 +45,8 @@ fn errors_for_undeclared_key() {
     let (lua, env, ks) = setup();
     env.set("HOME", "x").unwrap();
     ks.freeze(&env).unwrap();
-    let res: mlua::Result<String> = lua.load(r#"return cook.require_var("HOEM")"#).eval();
+    let res: mlua::Result<String> =
+        lua.load(r#"return cook.require_var("HOEM")"#).eval();
     assert!(res.is_err());
     let msg = format!("{}", res.unwrap_err());
     assert!(msg.contains("HOEM"), "expected HOEM in: {msg}");
@@ -62,7 +63,8 @@ fn errors_for_undeclared_key_suggests_closest_matches_only() {
         env.set(name, "x").unwrap();
     }
     ks.freeze(&env).unwrap();
-    let res: mlua::Result<String> = lua.load(r#"return cook.require_var("HOMDIR")"#).eval();
+    let res: mlua::Result<String> =
+        lua.load(r#"return cook.require_var("HOMDIR")"#).eval();
     assert!(res.is_err());
     let msg = format!("{}", res.unwrap_err());
     assert!(msg.contains("HOMEDIR"), "expected HOMEDIR in: {msg}");
@@ -138,9 +140,6 @@ fn post_freeze_write_does_not_make_key_declared() {
     let res: mlua::Result<String> = lua.load(r#"return cook.require_var("LATE")"#).eval();
     assert!(res.is_err(), "post-freeze write must not declare key");
     let msg = format!("{}", res.unwrap_err());
-    assert!(
-        msg.contains("LATE") && msg.contains("no config block declares"),
-        "diagnostic must name LATE and mention it is not declared; got: {}",
-        msg
-    );
+    assert!(msg.contains("LATE") && msg.contains("no config block declares"),
+        "diagnostic must name LATE and mention it is not declared; got: {}", msg);
 }

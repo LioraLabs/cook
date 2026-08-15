@@ -146,8 +146,5 @@ fn header_change_after_pull_invalidates_correctly() {
         sorted_input_content_hashes: &h_fat,
     });
 
-    assert_ne!(
-        key_thin, key_fat,
-        "fattened input set → different cloud_key"
-    );
+    assert_ne!(key_thin, key_fat, "fattened input set → different cloud_key");
 }

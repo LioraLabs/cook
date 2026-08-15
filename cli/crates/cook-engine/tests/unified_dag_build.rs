@@ -31,7 +31,7 @@ fn recipe(name: &str, cmd: &str) -> RecipeUnits {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
-            test_name: None,
+                    test_name: None,
 
             after: Vec::new(),
         }],
@@ -62,7 +62,11 @@ fn dag_builder_assembles_cross_recipe_edges_across_full_set() {
     );
 
     // node 0 = lib (no deps), node 1 = app (depends on lib's leaf).
-    assert_eq!(dag.node(0).remaining_deps(), 0, "lib unit has no deps");
+    assert_eq!(
+        dag.node(0).remaining_deps(),
+        0,
+        "lib unit has no deps"
+    );
     assert_eq!(
         dag.node(1).remaining_deps(),
         1,

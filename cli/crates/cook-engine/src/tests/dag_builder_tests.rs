@@ -45,7 +45,7 @@ fn dag_builder_adds_probe_to_consumer_edge() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             // Consumer unit with probes = ["cc:zlib"]
             CapturedUnit {
@@ -57,7 +57,7 @@ fn dag_builder_adds_probe_to_consumer_edge() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -70,11 +70,7 @@ fn dag_builder_adds_probe_to_consumer_edge() {
     let dag = build_dag(vec![units]).expect("no collision");
     assert_eq!(dag.len(), 2);
     // Probe node (0) has no deps.
-    assert_eq!(
-        dag.node(0).remaining_deps(),
-        0,
-        "probe node must have no deps"
-    );
+    assert_eq!(dag.node(0).remaining_deps(), 0, "probe node must have no deps");
     // Consumer node (1) depends on: sequential barrier (probe node 0) + probes edge (also probe 0).
     // The probes edge is deduplicated since it's the same node, so remaining_deps = 1.
     assert_eq!(
@@ -99,7 +95,7 @@ fn test_build_single_recipe_sequential() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("echo b"),
@@ -110,7 +106,7 @@ fn test_build_single_recipe_sequential() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -143,7 +139,7 @@ fn test_build_step_group() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -c b.c"),
@@ -154,7 +150,7 @@ fn test_build_step_group() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("ar rcs lib.a"),
@@ -165,7 +161,7 @@ fn test_build_step_group() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -198,7 +194,7 @@ fn test_build_cross_recipe_deps() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -219,7 +215,7 @@ fn test_build_cross_recipe_deps() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -256,7 +252,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -c mul.c"),
@@ -267,7 +263,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("ar rcs libmath.a"),
@@ -278,7 +274,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0, 1]],
@@ -303,7 +299,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
             CapturedUnit {
                 payload: shell("gcc -o app main.o libmath.a"),
@@ -314,7 +310,7 @@ fn test_fine_grained_cross_recipe_deps() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![vec![0]],
@@ -363,7 +359,7 @@ fn test_fine_grained_no_dep_edges_unchanged() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -384,7 +380,7 @@ fn test_fine_grained_no_dep_edges_unchanged() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -423,7 +419,7 @@ fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -438,10 +434,7 @@ fn dep_edges_entry_naming_recipe_outside_closure_diagnoses() {
         "dep_edges entry naming an out-of-closure recipe must error, not vanish silently",
     );
     let msg = err.to_string();
-    assert!(
-        msg.contains("app"),
-        "message must name the referring recipe: {msg}"
-    );
+    assert!(msg.contains("app"), "message must name the referring recipe: {msg}");
     assert!(msg.contains("libmath"), "message must name the dep: {msg}");
     assert!(
         msg.contains(": libmath"),
@@ -492,7 +485,7 @@ fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -518,16 +511,16 @@ fn dep_edges_entry_naming_in_closure_zero_unit_recipe_does_not_diagnose() {
 /// The core bug: a zero-unit recipe used as a meta-target must forward
 /// its prerequisites' leaves as its own leaf set, not register an empty
 /// one. `producer` (1 unit) -> `middle` (0 units, `deps: ["producer"]`)
-/// -> `consumer` (1 unit, `deps: ["middle"]`). Without the fix,
+    /// -> `consumer` (1 unit, `deps: ["middle"]`). Without the fix,
 /// `middle`'s leaf set is `Some(empty)` and `consumer` ends up with zero
 /// deps, running concurrently with `producer` instead of after it.
 #[test]
 fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
     let producer = RecipeUnits {
         recipe_name: "producer".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("touch build/gen.a"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
@@ -535,7 +528,7 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -547,16 +540,16 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
     let middle = RecipeUnits {
         recipe_name: "middle".into(),
         deps: vec!["producer".into()],
-        units: vec![], // zero units — the meta-target shape
-        step_groups: vec![],
-        working_dir: default_wd(),
-        env_vars: default_env(),
-        terminal_outputs: vec![],
-        dep_edges: vec![],
-        probes: vec![],
-    };
-    let consumer = RecipeUnits {
-        recipe_name: "consumer".into(),
+            units: vec![], // zero units — the meta-target shape
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let consumer = RecipeUnits {
+            recipe_name: "consumer".into(),
         deps: vec!["middle".into()],
         units: vec![CapturedUnit {
             payload: shell("cp build/gen.a ."),
@@ -567,7 +560,7 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -599,9 +592,9 @@ fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
 fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
     let producer = RecipeUnits {
         recipe_name: "producer".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("touch build/gen.a"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
@@ -609,7 +602,7 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -621,16 +614,16 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
     let m1 = RecipeUnits {
         recipe_name: "m1".into(),
         deps: vec!["producer".into()],
-        units: vec![],
-        step_groups: vec![],
-        working_dir: default_wd(),
-        env_vars: default_env(),
-        terminal_outputs: vec![],
-        dep_edges: vec![],
-        probes: vec![],
-    };
-    let m2 = RecipeUnits {
-        recipe_name: "m2".into(),
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let m2 = RecipeUnits {
+            recipe_name: "m2".into(),
         deps: vec!["m1".into()],
         units: vec![],
         step_groups: vec![],
@@ -642,7 +635,7 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
     };
     let consumer = RecipeUnits {
         recipe_name: "consumer".into(),
-        deps: vec!["m2".into()],
+            deps: vec!["m2".into()],
         units: vec![CapturedUnit {
             payload: shell("cp build/gen.a ."),
             cache_meta: None,
@@ -652,7 +645,7 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -681,9 +674,9 @@ fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
 fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
     let producer = RecipeUnits {
         recipe_name: "producer".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("touch build/gen.a"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
@@ -691,7 +684,7 @@ fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -703,27 +696,27 @@ fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
     let b = RecipeUnits {
         recipe_name: "b".into(),
         deps: vec!["producer".into()],
-        units: vec![],
-        step_groups: vec![],
-        working_dir: default_wd(),
-        env_vars: default_env(),
-        terminal_outputs: vec![],
-        dep_edges: vec![],
-        probes: vec![],
-    };
-    let c = RecipeUnits {
-        recipe_name: "c".into(),
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let c = RecipeUnits {
+            recipe_name: "c".into(),
         deps: vec!["producer".into()],
-        units: vec![],
-        step_groups: vec![],
-        working_dir: default_wd(),
-        env_vars: default_env(),
-        terminal_outputs: vec![],
-        dep_edges: vec![],
-        probes: vec![],
-    };
-    let d = RecipeUnits {
-        recipe_name: "d".into(),
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let d = RecipeUnits {
+            recipe_name: "d".into(),
         deps: vec!["b".into(), "c".into()],
         units: vec![CapturedUnit {
             payload: shell("echo done"),
@@ -734,7 +727,7 @@ fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -784,7 +777,7 @@ fn zero_unit_recipe_with_no_deps_forwards_empty_leaf_set() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -818,9 +811,9 @@ fn zero_unit_recipe_with_no_deps_forwards_empty_leaf_set() {
 fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
     let producer = RecipeUnits {
         recipe_name: "producer".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("touch build/gen.a"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
@@ -828,7 +821,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -840,14 +833,14 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
     let middle = RecipeUnits {
         recipe_name: "middle".into(),
         deps: vec!["producer".into()],
-        // NON-empty units: one probe, but its key is never referenced by
-        // any non-probe unit anywhere (in `middle` or `consumer`), so
-        // demand-driven pruning (§22.5.7) omits it from the DAG entirely.
-        // Even if it survived pruning, probes never advance the barrier
-        // (see the `is_probe` skip in the unit loop) — either way
-        // `middle`'s barrier ends empty despite `units.len() == 1`.
-        units: vec![CapturedUnit {
-            payload: probe("mid:unreferenced"),
+            // NON-empty units: one probe, but its key is never referenced by
+            // any non-probe unit anywhere (in `middle` or `consumer`), so
+            // demand-driven pruning (§22.5.7) omits it from the DAG entirely.
+            // Even if it survived pruning, probes never advance the barrier
+            // (see the `is_probe` skip in the unit loop) — either way
+            // `middle`'s barrier ends empty despite `units.len() == 1`.
+            units: vec![CapturedUnit {
+                payload: probe("mid:unreferenced"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
@@ -855,7 +848,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -866,7 +859,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
     };
     let consumer = RecipeUnits {
         recipe_name: "consumer".into(),
-        deps: vec!["middle".into()],
+            deps: vec!["middle".into()],
         units: vec![CapturedUnit {
             payload: shell("cp build/gen.a ."),
             cache_meta: None,
@@ -876,7 +869,7 @@ fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -914,7 +907,7 @@ fn test_build_presatisfied_units() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                test_name: None,
+                            test_name: None,
 
                 after: Vec::new(),
             },
@@ -927,7 +920,7 @@ fn test_build_presatisfied_units() {
                 member: None,
                 output_paths: Vec::new(),
                 after: Vec::new(),
-                test_name: None,
+                            test_name: None,
             },
         ],
         step_groups: vec![],
@@ -981,7 +974,7 @@ fn test_output_collision_unrelated_recipes_rejected() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1002,7 +995,7 @@ fn test_output_collision_unrelated_recipes_rejected() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1038,7 +1031,7 @@ fn test_output_collision_dep_related_recipes_allowed() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1059,7 +1052,7 @@ fn test_output_collision_dep_related_recipes_allowed() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1090,22 +1083,22 @@ fn unreached_probe_is_pruned_from_dag() {
 
     let units = RecipeUnits {
         recipe_name: "r".to_string(),
-        deps: vec![],
-        units: vec![
-            CapturedUnit {
-                payload: probe_payload,
-                cache_meta: None,
-                dep_kind: DepKind::Sequential,
-                probes: vec![],
-                unit_env_vars: Default::default(),
-                member: None,
-                output_paths: Vec::new(),
-                after: Vec::new(),
-                test_name: None,
-            },
-            CapturedUnit {
-                payload: WorkPayload::Shell {
-                    cmd: "echo hello".to_string(),
+            deps: vec![],
+            units: vec![
+                CapturedUnit {
+                    payload: probe_payload,
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                    probes: vec![],
+                    unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
+                    after: Vec::new(),
+                                    test_name: None,
+                },
+                CapturedUnit {
+                    payload: WorkPayload::Shell {
+                        cmd: "echo hello".to_string(),
                     line: 2,
                 },
                 cache_meta: None,
@@ -1114,7 +1107,7 @@ fn unreached_probe_is_pruned_from_dag() {
                 unit_env_vars: Default::default(),
                 member: None,
                 output_paths: Vec::new(),
-                test_name: None,
+                            test_name: None,
 
                 after: Vec::new(),
             },
@@ -1132,10 +1125,7 @@ fn unreached_probe_is_pruned_from_dag() {
         .map(|i| dag.node(i))
         .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
         .collect();
-    assert!(
-        probe_nodes.is_empty(),
-        "unreached probe must not appear in DAG"
-    );
+    assert!(probe_nodes.is_empty(), "unreached probe must not appear in DAG");
 }
 
 #[test]
@@ -1176,7 +1166,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe_b_payload,
@@ -1187,7 +1177,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: WorkPayload::Shell {
@@ -1201,15 +1191,15 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
 
     let make_ru = |units: Vec<CapturedUnit>| RecipeUnits {
         recipe_name: "r".to_string(),
-        units,
-        deps: vec![],
-        step_groups: vec![],
-        working_dir: std::path::PathBuf::from("/"),
+            units,
+            deps: vec![],
+            step_groups: vec![],
+            working_dir: std::path::PathBuf::from("/"),
         env_vars: std::collections::BTreeMap::new(),
         terminal_outputs: vec![],
         dep_edges: vec![],
@@ -1222,10 +1212,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         .map(|i| dag.node(i))
         .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
         .count();
-    assert_eq!(
-        probe_count, 2,
-        "both probes must be present when downstream is consumed"
-    );
+    assert_eq!(probe_count, 2, "both probes must be present when downstream is consumed");
 
     let without_consumer = make_ru(vec![probe_a, probe_b]);
     let dag2 = build_dag(vec![without_consumer]).unwrap();
@@ -1233,10 +1220,7 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         .map(|i| dag2.node(i))
         .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
         .count();
-    assert_eq!(
-        probe_count2, 0,
-        "both probes must be pruned when nothing consumes downstream"
-    );
+    assert_eq!(probe_count2, 0, "both probes must be pruned when nothing consumes downstream");
 }
 
 /// SHI-222 Phase 8 regression: top-level register-scope probes (whose
@@ -1268,7 +1252,7 @@ fn top_level_probe_materialises_when_consumer_references_it() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1286,10 +1270,7 @@ fn top_level_probe_materialises_when_consumer_references_it() {
     );
     // Node 0 should be the synthesised Probe (no deps).
     assert!(
-        matches!(
-            dag.node(0).payload().payload,
-            Some(WorkPayload::Probe { .. })
-        ),
+        matches!(dag.node(0).payload().payload, Some(WorkPayload::Probe { .. })),
         "node 0 must be the synthesised Probe"
     );
     assert_eq!(dag.node(0).remaining_deps(), 0);
@@ -1315,9 +1296,9 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
     };
     let ru = RecipeUnits {
         recipe_name: "r".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("true"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("true"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![], // no references
@@ -1325,7 +1306,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1343,10 +1324,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
             )
         })
         .count();
-    assert_eq!(
-        probe_nodes, 0,
-        "unreferenced top-level probe must not be synthesised"
-    );
+    assert_eq!(probe_nodes, 0, "unreferenced top-level probe must not be synthesised");
 }
 
 /// SHI-222 Phase 8: probe-on-probe transitive synthesis. If consumer
@@ -1373,9 +1351,9 @@ fn top_level_probe_chain_synthesised_transitively() {
     };
     let ru = RecipeUnits {
         recipe_name: "r".into(),
-        deps: vec![],
-        units: vec![CapturedUnit {
-            payload: shell("true"),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("true"),
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:b".into()],
@@ -1383,7 +1361,7 @@ fn top_level_probe_chain_synthesised_transitively() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1410,16 +1388,8 @@ fn top_level_probe_chain_synthesised_transitively() {
     let a_id = a_id.expect("probe A must be synthesised");
     let b_id = b_id.expect("probe B must be synthesised");
     // A has no deps, B depends on A.
-    assert_eq!(
-        dag.node(a_id).remaining_deps(),
-        0,
-        "probe A must have no deps"
-    );
-    assert_eq!(
-        dag.node(b_id).remaining_deps(),
-        1,
-        "probe B must depend on probe A"
-    );
+    assert_eq!(dag.node(a_id).remaining_deps(), 0, "probe A must have no deps");
+    assert_eq!(dag.node(b_id).remaining_deps(), 1, "probe B must depend on probe A");
     // Topo order: A added before B (A's dag_id < B's).
     assert!(a_id < b_id, "probe A must be added before probe B");
 }
@@ -1450,7 +1420,7 @@ fn body_scope_probe_chain_not_pruned() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -1468,7 +1438,7 @@ fn body_scope_probe_chain_not_pruned() {
         unit_env_vars: Default::default(),
         member: None,
         output_paths: Vec::new(),
-        test_name: None,
+            test_name: None,
 
         after: Vec::new(),
     };
@@ -1485,7 +1455,7 @@ fn body_scope_probe_chain_not_pruned() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
 
     let ru = RecipeUnits {
@@ -1538,7 +1508,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe("cc:b"),
@@ -1549,7 +1519,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let probe_c = CapturedUnit {
         payload: probe("cc:c"),
@@ -1560,7 +1530,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: shell("link"),
@@ -1571,7 +1541,7 @@ fn independent_body_scope_probes_run_in_parallel() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -1586,12 +1556,12 @@ fn independent_body_scope_probes_run_in_parallel() {
     };
     let dag = build_dag(vec![ru]).expect("no collision");
     assert_eq!(dag.len(), 4, "3 probes + 1 consumer");
-    // Each probe is a root (no deps).
-    for i in 0..3 {
-        assert_eq!(
-            dag.node(i).remaining_deps(),
-            0,
-            "probe node {i} must have no deps; got {}",
+        // Each probe is a root (no deps).
+        for i in 0..3 {
+            assert_eq!(
+                dag.node(i).remaining_deps(),
+                0,
+                "probe node {i} must have no deps; got {}",
             dag.node(i).remaining_deps()
         );
     }
@@ -1617,7 +1587,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let probe_b = CapturedUnit {
         payload: probe("cc:b"),
@@ -1628,7 +1598,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let probe_c = CapturedUnit {
         payload: probe("cc:c"),
@@ -1639,7 +1609,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let consumer = CapturedUnit {
         payload: shell("link"),
@@ -1650,7 +1620,7 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "game".into(),
@@ -1668,7 +1638,11 @@ fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
     // A: root (no deps).
     assert_eq!(dag.node(0).remaining_deps(), 0, "probe A has no deps");
     // B: depends on A only.
-    assert_eq!(dag.node(1).remaining_deps(), 1, "probe B depends only on A");
+    assert_eq!(
+        dag.node(1).remaining_deps(),
+        1,
+        "probe B depends only on A"
+    );
     // C: root (no deps, sibling to A).
     assert_eq!(dag.node(2).remaining_deps(), 0, "probe C has no deps");
     // Consumer: depends on B and C (2 distinct edges).
@@ -1694,7 +1668,7 @@ fn non_probe_units_around_probes_keep_barrier() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let p = CapturedUnit {
         payload: probe("cc:x"),
@@ -1705,7 +1679,7 @@ fn non_probe_units_around_probes_keep_barrier() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let post_shell = CapturedUnit {
         payload: shell("post"),
@@ -1716,20 +1690,20 @@ fn non_probe_units_around_probes_keep_barrier() {
         member: None,
         output_paths: Vec::new(),
         after: Vec::new(),
-        test_name: None,
+            test_name: None,
     };
     let ru = RecipeUnits {
         recipe_name: "r".into(),
-        deps: vec![],
-        units: vec![pre_shell, p, post_shell],
-        step_groups: vec![],
-        working_dir: default_wd(),
-        env_vars: default_env(),
-        terminal_outputs: vec![],
-        dep_edges: vec![],
-        probes: vec![],
-    };
-    let dag = build_dag(vec![ru]).expect("no collision");
+            deps: vec![],
+            units: vec![pre_shell, p, post_shell],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
     assert_eq!(dag.len(), 3);
     assert_eq!(dag.node(0).remaining_deps(), 0, "pre shell is root");
     // Probe sees barrier=[pre_shell] but does not depend on it sequentially.
@@ -1769,7 +1743,7 @@ fn multi_recipe_wave_prunes_independently() {
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
-            test_name: None,
+                    test_name: None,
 
             after: Vec::new(),
         }];
@@ -1780,16 +1754,12 @@ fn multi_recipe_wave_prunes_independently() {
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            probes: if has_consumer {
-                vec!["k:p".to_string()]
-            } else {
-                vec![]
-            },
+            probes: if has_consumer { vec!["k:p".to_string()] } else { vec![] },
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         });
         RecipeUnits {
             recipe_name: name.to_string(),
@@ -1806,17 +1776,14 @@ fn multi_recipe_wave_prunes_independently() {
 
     let foo = make_recipe("foo", true);
     let bar = make_recipe("bar", false);
-    let dag = build_dag(vec![foo, bar]).unwrap();
-    let probe_node_recipes: Vec<String> = (0..dag.len())
-        .map(|i| dag.node(i))
-        .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
-        .map(|n| n.payload().recipe_name.clone())
-        .collect();
-    assert_eq!(
-        probe_node_recipes,
-        vec!["foo".to_string()],
-        "probe present only in the recipe that consumes it"
-    );
+        let dag = build_dag(vec![foo, bar]).unwrap();
+        let probe_node_recipes: Vec<String> = (0..dag.len())
+            .map(|i| dag.node(i))
+            .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
+            .map(|n| n.payload().recipe_name.clone())
+            .collect();
+        assert_eq!(probe_node_recipes, vec!["foo".to_string()],
+        "probe present only in the recipe that consumes it");
 }
 
 #[test]
@@ -1833,7 +1800,7 @@ fn test_output_collision_distinct_outputs_allowed() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),
@@ -1854,7 +1821,7 @@ fn test_output_collision_distinct_outputs_allowed() {
             member: None,
             output_paths: Vec::new(),
             after: Vec::new(),
-            test_name: None,
+                    test_name: None,
         }],
         step_groups: vec![],
         working_dir: default_wd(),

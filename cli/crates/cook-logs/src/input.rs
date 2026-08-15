@@ -17,9 +17,7 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
         return handle_picker(state, key);
     }
     if let Some(s) = state.search.as_ref() {
-        if s.editing {
-            return handle_search_overlay(state, key);
-        }
+        if s.editing { return handle_search_overlay(state, key); }
     }
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => Action::Quit,
@@ -28,11 +26,7 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
             Action::Continue
         }
         (KeyCode::Tab, _) => {
-            state.focus = if state.focus == Focus::Tree {
-                Focus::Output
-            } else {
-                Focus::Tree
-            };
+            state.focus = if state.focus == Focus::Tree { Focus::Output } else { Focus::Tree };
             Action::Continue
         }
         (KeyCode::Down, _) | (KeyCode::Char('j'), _) => move_selection(state, 1),
@@ -48,21 +42,11 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
             state.set_fold(true);
             Action::Continue
         }
-        (KeyCode::Enter, _) | (KeyCode::Char(' '), _) => {
-            state.toggle_fold();
-            Action::Continue
-        }
-        (KeyCode::Char('g'), _) => {
-            state.scroll_y = 0;
-            Action::Continue
-        }
-        (KeyCode::Char('G'), _) => {
-            state.scroll_y = u16::MAX;
-            Action::Continue
-        }
+        (KeyCode::Enter, _) | (KeyCode::Char(' '), _) => { state.toggle_fold(); Action::Continue }
+        (KeyCode::Char('g'), _) => { state.scroll_y = 0; Action::Continue }
+        (KeyCode::Char('G'), _) => { state.scroll_y = u16::MAX; Action::Continue }
         (KeyCode::PageDown, _) | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-            state.scroll_y = state.scroll_y.saturating_add(10);
-            Action::Continue
+            state.scroll_y = state.scroll_y.saturating_add(10); Action::Continue
         }
         (KeyCode::PageUp, _) | (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
             state.scroll_y = state.scroll_y.saturating_sub(10);
@@ -98,23 +82,15 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
             });
             Action::Continue
         }
-        (KeyCode::Char('n'), _) => {
-            state.jump_to_next_match(1);
-            Action::Continue
-        }
-        (KeyCode::Char('N'), _) => {
-            state.jump_to_next_match(-1);
-            Action::Continue
-        }
+        (KeyCode::Char('n'), _) => { state.jump_to_next_match(1); Action::Continue }
+        (KeyCode::Char('N'), _) => { state.jump_to_next_match(-1); Action::Continue }
         _ => Action::Continue,
     }
 }
 
 fn move_selection(state: &mut UiState, delta: i32) -> Action {
     let len = state.flat.len() as i32;
-    if len == 0 {
-        return Action::Continue;
-    }
+    if len == 0 { return Action::Continue; }
     let next = (state.selected as i32 + delta).rem_euclid(len);
     state.selected = next as usize;
     state.scroll_y = 0;
@@ -128,20 +104,13 @@ fn handle_picker(state: &mut UiState, key: KeyEvent) -> Action {
             return Action::Continue;
         };
         match key.code {
-            KeyCode::Esc => {
-                state.picker = None;
-                return Action::Continue;
-            }
+            KeyCode::Esc => { state.picker = None; return Action::Continue; }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !p.builds.is_empty() {
-                    p.cursor = (p.cursor + 1) % p.builds.len();
-                }
+                if !p.builds.is_empty() { p.cursor = (p.cursor + 1) % p.builds.len(); }
                 return Action::Continue;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if !p.builds.is_empty() {
-                    p.cursor = (p.cursor + p.builds.len() - 1) % p.builds.len();
-                }
+                if !p.builds.is_empty() { p.cursor = (p.cursor + p.builds.len() - 1) % p.builds.len(); }
                 return Action::Continue;
             }
             KeyCode::Enter => {
@@ -160,26 +129,16 @@ fn handle_picker(state: &mut UiState, key: KeyEvent) -> Action {
 
 fn handle_search_overlay(state: &mut UiState, key: KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => {
-            state.search = None;
-        }
+        KeyCode::Esc => { state.search = None; }
         KeyCode::Enter => {
-            let pat = state
-                .search
-                .as_ref()
-                .map(|s| s.pattern.clone())
-                .unwrap_or_default();
+            let pat = state.search.as_ref().map(|s| s.pattern.clone()).unwrap_or_default();
             state.set_search_pattern(pat);
         }
         KeyCode::Backspace => {
-            if let Some(s) = state.search.as_mut() {
-                s.pattern.pop();
-            }
+            if let Some(s) = state.search.as_mut() { s.pattern.pop(); }
         }
         KeyCode::Char(c) => {
-            if let Some(s) = state.search.as_mut() {
-                s.pattern.push(c);
-            }
+            if let Some(s) = state.search.as_mut() { s.pattern.push(c); }
         }
         _ => {}
     }

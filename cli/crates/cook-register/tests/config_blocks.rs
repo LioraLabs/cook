@@ -33,10 +33,7 @@ config
 recipe build
 ";
     let units = compile_and_run(source, None);
-    assert_eq!(
-        units.env_vars.get("GREETING").map(|s| s.as_str()),
-        Some("hello")
-    );
+    assert_eq!(units.env_vars.get("GREETING").map(|s| s.as_str()), Some("hello"));
 }
 
 #[test]
@@ -53,24 +50,12 @@ config release
 recipe build
 ";
     let units_rel = compile_and_run(source, Some("release"));
-    assert_eq!(
-        units_rel.env_vars.get("MODE").map(|s| s.as_str()),
-        Some("release")
-    );
-    assert_eq!(
-        units_rel.env_vars.get("OPT").map(|s| s.as_str()),
-        Some("-O3")
-    );
+    assert_eq!(units_rel.env_vars.get("MODE").map(|s| s.as_str()), Some("release"));
+    assert_eq!(units_rel.env_vars.get("OPT").map(|s| s.as_str()), Some("-O3"));
 
     let units_base = compile_and_run(source, None);
-    assert_eq!(
-        units_base.env_vars.get("MODE").map(|s| s.as_str()),
-        Some("base")
-    );
-    assert_eq!(
-        units_base.env_vars.get("OPT").map(|s| s.as_str()),
-        Some("-O0")
-    );
+    assert_eq!(units_base.env_vars.get("MODE").map(|s| s.as_str()), Some("base"));
+    assert_eq!(units_base.env_vars.get("OPT").map(|s| s.as_str()), Some("-O0"));
 }
 
 #[test]

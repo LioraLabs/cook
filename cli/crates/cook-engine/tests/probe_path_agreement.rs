@@ -101,10 +101,7 @@ fn arm() -> Arm {
     fs::create_dir_all(wd.join(".cook")).unwrap();
     fs::write(
         wd.join(".cook/cloud.toml"),
-        format!(
-            "[cache]\ncache_dir = {:?}\n",
-            cache.path().to_string_lossy()
-        ),
+        format!("[cache]\ncache_dir = {:?}\n", cache.path().to_string_lossy()),
     )
     .unwrap();
     fs::create_dir_all(wd.join("src")).unwrap();
@@ -157,8 +154,10 @@ const RUNS: usize = 3;
 
 #[test]
 fn keyed_probe_costs_the_same_on_both_paths() {
-    let (sealed_runs, sealed_value) = measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
-    let (fanned_runs, fanned_value) = measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
+    let (sealed_runs, sealed_value) =
+        measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
+    let (fanned_runs, fanned_value) =
+        measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
 
     // §22.5.8: a keyed probe whose declared inputs have not moved is served
     // from cache, so the producer runs exactly once across the whole series.
@@ -187,8 +186,10 @@ fn keyed_probe_costs_the_same_on_both_paths() {
 
 #[test]
 fn keyless_probe_reproduces_on_both_paths() {
-    let (sealed_runs, _) = measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
-    let (fanned_runs, _) = measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
+    let (sealed_runs, _) =
+        measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
+    let (fanned_runs, _) =
+        measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
 
     // CS-0178: a probe declaring no inputs has no cache key and MUST re-produce
     // on every invocation in which it is reached. Turning the pre-pass cache on

@@ -70,11 +70,7 @@ impl ProbeValueStore {
     }
 
     pub fn insert(&self, key: &str, bytes: Vec<u8>) {
-        self.inner
-            .lock()
-            .unwrap()
-            .map
-            .insert(key.to_string(), bytes);
+        self.inner.lock().unwrap().map.insert(key.to_string(), bytes);
     }
 
     /// CS-0157: record the freshly-resolved paths of a probe's declared
