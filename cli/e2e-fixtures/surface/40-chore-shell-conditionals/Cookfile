@@ -1,0 +1,16 @@
+# COOK-489 / CS-0233. Both shell conditional spellings in a chore body, plus
+# a probe producer whose script contains `[ … ]` — the second caller of the
+# long-bracket lowering the same fix repaired.
+
+probe guard_state
+    { [ -f src/canvas.ts ] && echo present }
+
+recipe build
+    seal guard_state
+    cook "out/canvas.js" { cp src/canvas.ts $<out> }
+
+chore guard
+    test -f src/canvas.ts
+    [ -f src/canvas.ts ]
+    test "$COOK_489_UNSET" = ""
+    echo guard-ok > guard.txt

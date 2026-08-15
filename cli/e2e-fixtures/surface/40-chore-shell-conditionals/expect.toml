@@ -1,0 +1,13 @@
+# Run 1: the chore's three conditional spellings all execute as shell steps.
+[[run]]
+args = ["guard"]
+[run.assert]
+equals = { "guard.txt" = "guard-ok\n" }
+
+# Run 2: the probe producer contains `[ -f … ]`; before CS-0233 its emitted
+# long-bracket literal closed early and the probe raised a Lua syntax error.
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["out/canvas.js"]
+output_not_contains = ["syntax error"]

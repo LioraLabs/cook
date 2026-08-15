@@ -43,6 +43,42 @@ fn wrap_three_consecutive_brackets_treated_as_run_zero() {
     assert_eq!(out, "[=[]]]]=]");
 }
 
+// COOK-489: the closing bracket sits immediately after the content, so a
+// trailing `]` in the content pairs with it and closes the literal early.
+#[test]
+fn wrap_string_ending_in_close_bracket_escalates() {
+    // `[[` + `[ -f x ]` + `]]` is `[[[ -f x ]]]`, which Lua closes at the
+    // content's own `]`, leaving a stray `]` behind.
+    assert_eq!(wrap_lua_string("[ -f x ]"), "[=[[ -f x ]]=]");
+}
+
+// COOK-489: the same boundary hazard one level up — a trailing `]=` pairs
+// with a level-1 closer chosen from an interior `]]`.
+#[test]
+fn wrap_string_ending_in_close_run_escalates_past_the_run() {
+    assert_eq!(wrap_lua_string("a ]] b ]="), "[==[a ]] b ]=]==]");
+}
+
+// COOK-489, the silent half: content that ALREADY wrapped validly, whose level
+// the boundary sentinel nonetheless raises. Unlike the two cases above, these
+// never produced a Lua syntax error — so a regression here reports nothing. The
+// literal stays well-formed and decodes to a DIFFERENT string: a wrong shell
+// command that no error names, and that the cache is happy to reuse. Pinning
+// the literal text is how that value gets asserted at all; this crate emits Lua
+// and never evaluates it.
+#[test]
+fn wrap_string_ending_in_close_run_equal_to_level_escalates() {
+    // k == old level (both 0). `[[foo]=]]` was valid and decoded correctly;
+    // the level rises to 2 and the decoded value must not move.
+    assert_eq!(wrap_lua_string("foo]="), "[==[foo]=]==]");
+}
+
+#[test]
+fn wrap_string_ending_in_close_run_above_level_escalates() {
+    // k (2) > old level (0) — the other side of the boundary.
+    assert_eq!(wrap_lua_string("echo a]=="), "[===[echo a]==]===]");
+}
+
 #[test]
 fn lua_chunk_literal_wraps_with_newlines_and_escalates() {
     let out = lua_chunk_literal("local x = [==[ y ]==]");

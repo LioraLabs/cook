@@ -1,0 +1,7 @@
+chore guard
+    test -f src/canvas.ts
+    [ -f src/canvas.ts ]
+    test "$X" = ""
+    cook build
+    gather -x logs
+    test

@@ -635,6 +635,58 @@ pub(crate) fn parse_recipe(
     ))
 }
 
+/// Classify a chore-body `Content` line against the three banned step kinds
+/// (§{chores.body}, App. A.3.1 "Chore step-kind ban"; CS-0233).
+///
+/// The ban is on the step KIND, not on the keyword: a chore body is the
+/// shell-first form, and `test`, `cook` and `gather` are all ordinary words a
+/// shell command may open with. `test -f x` and `cook build` are shell; only a
+/// line that actually carries the banned step's own syntax is that step.
+/// Returns the offending keyword when the line is one of the banned kinds.
+///
+/// The discriminators are the ones `tree-sitter-cook`'s external scanner has
+/// always used (`scan_shell_content`, the `quoted_step` / `test_body` /
+/// `cook_lua_output` / `bare_gather` block): a quoted first operand, `test`
+/// opening a body (`{` or `>{`), `cook` opening its Lua-expression output form
+/// (`(`), or `gather` naming a bare member source and nothing else. Before
+/// CS-0233 the reference parser tested the keyword prefix alone and the two
+/// implementations disagreed; the scanner's reading is the one that holds.
+pub(crate) fn chore_banned_step_kind(text: &str) -> Option<&'static str> {
+    for keyword in ["gather", "cook", "test"] {
+        let Some(rest) = strip_keyword(text, keyword) else {
+            continue;
+        };
+        // A bare keyword with no operand is a shell command (`test` alone is
+        // a real, if useless, invocation); it carries no step syntax.
+        // A quoted first operand is a `cook`/`gather` shape only. A `test`
+        // step's operand is its body, and the bare-string form `test "cmd"`
+        // is not a test step in any position (§{steps.test}) — so
+        // `test "$X" = y` is shell, not a malformed step.
+        let quoted_step =
+            keyword != "test" && (rest.starts_with('"') || rest.starts_with('\''));
+        // `gather !"build/*"` is an exclude glob (App. A.4, `input ::= STRING |
+        // "!" STRING`), so it is gather-shaped too. Scoped to `gather` because
+        // a `cook` step takes no excludes: `parse_cook_line` requires a leading
+        // `"` and passes `allow_exclude = false`. Without this the line lowers
+        // to a shell step that dies at run time with `gather: command not
+        // found` — a strictly worse answer than the parse error it replaced,
+        // and the only error-to-wrong-meaning case this classification has.
+        let exclude_glob = keyword == "gather" && rest.starts_with('!');
+        let test_body = keyword == "test" && (rest.starts_with('{') || rest.starts_with('>'));
+        let cook_lua_output = keyword == "cook" && rest.starts_with('(');
+        let bare_gather = keyword == "gather"
+            && rest.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            && rest
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-' | ':'));
+        if quoted_step || exclude_glob || test_body || cook_lua_output || bare_gather {
+            return Some(keyword);
+        }
+        return None;
+    }
+    None
+}
+
 pub(crate) fn parse_chore(
     name: String,
     params: Vec<ChoreParam>,
@@ -714,12 +766,8 @@ pub(crate) fn parse_chore(
                 if strip_keyword(&text, "ingredients").is_some() {
                     return Err(ParseError::Parse { line: tok.line,
                         message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
-                } else if strip_keyword(&text, "gather").is_some() {
-                    return Err(chore_banned("gather", tok.line));
-                } else if strip_keyword(&text, "cook").is_some() {
-                    return Err(chore_banned("cook", tok.line));
-                } else if strip_keyword(&text, "test").is_some() {
-                    return Err(chore_banned("test", tok.line));
+                } else if let Some(keyword) = chore_banned_step_kind(&text) {
+                    return Err(chore_banned(keyword, tok.line));
                 } else if text.starts_with('@') {
                     return Err(ParseError::Parse {
                         line: tok.line,

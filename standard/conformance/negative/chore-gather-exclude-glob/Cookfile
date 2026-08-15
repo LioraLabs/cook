@@ -1,0 +1,3 @@
+chore clean
+    gather !"build/*"
+    rm -rf build

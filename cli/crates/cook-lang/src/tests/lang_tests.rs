@@ -933,6 +933,108 @@ fn test_chore_with_test_rejected() {
     assert!(parse(input).is_err());
 }
 
+// COOK-489: a chore body bans the three step KINDS, not every line that
+// happens to start with their keyword. `test -f x` and `cook build` are
+// ordinary shell commands and the shell-first form must admit them.
+fn chore_shell_commands(input: &str) -> Vec<String> {
+    let cookfile = parse(input).expect("chore body should parse as shell");
+    cookfile.chores[0]
+        .steps
+        .iter()
+        .map(|s| match s {
+            Step::Shell { command, .. } => command.clone(),
+            other => panic!("expected a shell step, got: {:?}", other),
+        })
+        .collect()
+}
+
+#[test]
+fn test_chore_shell_test_command_is_not_a_test_step() {
+    assert_eq!(
+        chore_shell_commands("chore guard\n    test -f src/canvas.ts\n"),
+        vec!["test -f src/canvas.ts".to_string()]
+    );
+}
+
+#[test]
+fn test_chore_shell_test_with_quoted_operands_is_not_a_test_step() {
+    // `test "$X" = y` is the other everyday spelling; the quoted operand
+    // must not be mistaken for a step's quoted pattern.
+    assert_eq!(
+        chore_shell_commands("chore guard\n    test \"$X\" = y\n"),
+        vec!["test \"$X\" = y".to_string()]
+    );
+}
+
+#[test]
+fn test_chore_shell_cook_command_is_not_a_cook_step() {
+    // Running cook itself from a chore is the common case this broke.
+    assert_eq!(
+        chore_shell_commands("chore ci\n    cook build\n    cook test\n"),
+        vec!["cook build".to_string(), "cook test".to_string()]
+    );
+}
+
+#[test]
+fn test_chore_bracket_conditional_is_a_shell_command() {
+    assert_eq!(
+        chore_shell_commands("chore guard\n    [ -f src/canvas.ts ]\n"),
+        vec!["[ -f src/canvas.ts ]".to_string()]
+    );
+}
+
+#[test]
+fn test_chore_test_lua_block_body_still_rejected() {
+    let msg = format!("{}", parse("chore play\n    test >{ ./run }\n").unwrap_err());
+    assert!(msg.contains("'test' is not allowed in a chore"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_cook_lua_expr_output_still_rejected() {
+    let msg = format!(
+        "{}",
+        parse("chore deploy\n    cook (out) >{ x() }\n").unwrap_err()
+    );
+    assert!(msg.contains("'cook' is not allowed in a chore"), "got: {}", msg);
+}
+
+// COOK-489: `!"glob"` is an exclude input (App. A.4, `input ::= STRING | "!"
+// STRING`), so it is gather-shaped. Classifying it as shell would turn a clean
+// parse error into a chore that fails at runtime with `gather: command not
+// found` — the one error-to-wrong-meaning case this classification can have.
+#[test]
+fn test_chore_gather_exclude_glob_still_rejected() {
+    let msg = format!(
+        "{}",
+        parse("chore clean\n    gather !\"build/*\"\n").unwrap_err()
+    );
+    assert!(
+        msg.contains("'gather' is not allowed in a chore"),
+        "got: {}",
+        msg
+    );
+}
+
+// COOK-489: the shell side of the same keyword. A remainder that is neither a
+// glob, an exclude, nor a lone bare identifier is not a gather step.
+#[test]
+fn test_chore_shell_gather_command_is_not_a_gather_step() {
+    assert_eq!(
+        chore_shell_commands("chore c\n    gather -x logs\n"),
+        vec!["gather -x logs".to_string()]
+    );
+}
+
+#[test]
+fn test_chore_bare_gather_source_still_rejected() {
+    let msg = format!("{}", parse("chore clean\n    gather members\n").unwrap_err());
+    assert!(
+        msg.contains("'gather' is not allowed in a chore"),
+        "got: {}",
+        msg
+    );
+}
+
 #[test]
 fn test_chore_lua_step() {
     let input = "chore status\n    > print(\"hello\")\n";

@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="guard" line=1
+      params: []
+      deps: []
+      steps:
+        Shell interactive=true command="test -f src/canvas.ts"
+        Shell interactive=true command="[ -f src/canvas.ts ]"
+        Shell interactive=true command="test \"$X\" = \"\""
+        Shell interactive=true command="cook build"
+        Shell interactive=true command="gather -x logs"
+        Shell interactive=true command="test"
+  register_blocks: []
+  top_level_module_calls: []

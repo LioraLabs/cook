@@ -117,7 +117,7 @@ As of CS-0134 a `chore_body` is a flat sequence of execute-phase (imperative) st
 
 **Variadic rules (normative).** A `variadic_param` with sigil `+` (one-or-more) MUST be the final parameter; at invocation time, all remaining argv collect into a Lua sequence. If zero remain, a diagnostic MUST be raised (§7.1.3). A `variadic_param` with sigil `*` (zero-or-more) behaves identically except that zero remaining argv is valid and binds `{}`. At most one `variadic_param` is permitted per `param_list`; a `variadic_param` MUST NOT carry an `=default`.
 
-**Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `gather_step`, `cook_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
+**Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `gather_step`, `cook_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword. The ban is on the step kind, not on the keyword: a `shell_command` MAY begin with `gather`, `cook` or `test`, and §{chores.keyword-initial} gives the normative rule for classifying such a line (CS-0233).
 
 **Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` is interactive: it MUST be run with the controlling terminal inherited (§{chores.default-interactive}). There is no `@` prefix or `interactive_command` step kind — CS-0134 removed both from the language (§{lexical.line-prefixes}).
 

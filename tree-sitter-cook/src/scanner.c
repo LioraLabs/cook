@@ -590,11 +590,22 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
       while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
         lexer->advance(lexer, false);
       }
-      bool quoted_step = lexer->lookahead == '"' || lexer->lookahead == '\'';
-      bool test_body = len == 4 && strcmp(word, "test") == 0 &&
+      // CS-0233: a quoted first operand is a `cook`/`gather` shape only. A
+      // `test` step's operand is its body, and the bare-string form
+      // `test "cmd"` is not a test step in any position, so `test "$X" = y`
+      // is an ordinary chore shell command.
+      bool is_test = len == 4 && strcmp(word, "test") == 0;
+      bool quoted_step =
+          !is_test && (lexer->lookahead == '"' || lexer->lookahead == '\'');
+      bool test_body = is_test &&
                        (lexer->lookahead == '{' || lexer->lookahead == '>');
       bool cook_lua_output = len == 4 && strcmp(word, "cook") == 0 &&
                              lexer->lookahead == '(';
+      // CS-0233: `gather !"build/*"` is an exclude glob (App. A.4,
+      // `input ::= STRING | "!" STRING`) and so is gather-shaped. Scoped to
+      // `gather`; a `cook` step takes no excludes.
+      bool exclude_glob = len == 6 && strcmp(word, "gather") == 0 &&
+                          lexer->lookahead == '!';
       bool bare_gather = false;
       if (len == 6 && strcmp(word, "gather") == 0 &&
           (iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
@@ -604,7 +615,8 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
         while (lexer->lookahead == ' ' || lexer->lookahead == '\t') lexer->advance(lexer, false);
         bare_gather = lexer->lookahead == '\n' || lexer->lookahead == 0;
       }
-      if (quoted_step || test_body || cook_lua_output || bare_gather) {
+      if (quoted_step || exclude_glob || test_body || cook_lua_output ||
+          bare_gather) {
         return false;
       }
     }

@@ -46,8 +46,16 @@ fn pick_long_bracket_level(s: &str) -> usize {
 }
 
 /// Wrap `s` in a Lua long-string literal, picking the smallest safe level.
+///
+/// The closing bracket sits immediately after `s`, so the scan runs over
+/// `s` with a sentinel `]` appended (COOK-489). Without it a content
+/// suffix of `]` followed by exactly `level` equals signs pairs with the
+/// closer's leading `]` to form a matching close, and the literal ends
+/// early: `[ -f x ]` wrapped at level 0 is `[[[ -f x ]]]`, which Lua reads
+/// as the string `[ -f x ` plus a stray `]`. The sentinel makes any such
+/// suffix a run the level must exceed, so the pairing can never happen.
 pub(crate) fn wrap_lua_string(s: &str) -> String {
-    let level = pick_long_bracket_level(s);
+    let level = pick_long_bracket_level(&format!("{s}]"));
     let eq = "=".repeat(level);
     format!("[{eq}[{s}]{eq}]")
 }
@@ -56,6 +64,10 @@ pub(crate) fn wrap_lua_string(s: &str) -> String {
 /// chunk (plate/test bodies). Adds the surrounding newlines that Lua eats
 /// after `[…[` so the body's first line is preserved verbatim, then picks
 /// a long-bracket level high enough to contain any `]=*]` runs in `code`.
+///
+/// This form needs no closing sentinel (unlike `wrap_lua_string`): the `\n`
+/// it writes before the closer separates `code`'s last byte from the
+/// closing `]`, so a trailing `]` in `code` cannot pair with it.
 pub(crate) fn lua_chunk_literal(code: &str) -> String {
     let level = pick_long_bracket_level(code);
     let eq = "=".repeat(level);

@@ -149,6 +149,37 @@ A conforming implementation MUST reject a chore body that contains any of the th
 
 **Migration note (CS-0134).** Prior to CS-0072 a chore body admitted a `module_call` step (register-phase). CS-0072 removed it, and pre-CS-0134 authors reached for the `>>` / `>>{` inline-Lua prefixes to invoke a module function from a chore body. Both prefixes are now gone. An author who needs **register-phase** module-call orchestration MUST move it to a top-level `register_block` (§{decl.register}) or a top-level `module_call` (§{toplevel.module-call}); an author who wants to call a module function at **execute** time from a chore body writes it as an execute-Lua step — `> ns.fn(...)` or inside a `>{ … }` block — which runs on the chore's drain thread (§{chores.default-interactive}).
 
+### 7.2.1. Classifying a keyword-initial chore line (CS-0233) [#chores.keyword-initial]
+
+The ban above is on the three **step kinds**, not on the three **words**. A chore body is the shell-first form (§{chores.default-interactive}), and `gather`, `cook` and `test` are all ordinary words at the start of an everyday shell command — `test -f src/canvas.ts` and `cook build` are among the most common lines an author writes in a chore. A conforming implementation MUST NOT reject a chore-body `Content` line merely because its first word is one of the three keywords.
+
+**Classification rule (normative).** A `Content` token in a `chore_body` whose first word is `gather`, `cook` or `test` followed by a separator (space, tab, or end of token) is the corresponding banned step kind — and MUST be rejected per the rule above — when the remainder of the line, after leading whitespace, opens with that step kind's own syntax:
+
+| Keyword | Is the banned step kind when the remainder opens with | Otherwise |
+|---|---|---|
+| `gather` | `"` or `'` (a glob pattern), or `!` (an exclude input, App. A.4), or is a single bare identifier and nothing else (a named member source) — §{steps.gather} | `shell_command` |
+| `cook` | `"` or `'` (an output pattern, §{steps.cook-single}, §{steps.cook-multi}), or `(` (the Lua-expression output form, §{steps.cook-lua-expr-output}) | `shell_command` |
+| `test` | `{` or `>{` (a body, §{steps.test}) | `shell_command` |
+
+The test is on the opening of the remainder, not on the whole line parsing as that step, and it errs toward the ban in two places. A `'`-quoted operand is treated as a `gather` / `cook` shape although `'…'` is not a `STRING` (App. A.4) and such a line is rejected rather than run; likewise `gather !x`, where `!` opens no valid input. Both are near-misses of a step spelling rather than commands anyone writes, and a diagnostic naming the keyword serves the author better than a shell error would.
+
+A quoted remainder is a `gather` or `cook` shape only. It is deliberately **not** a `test` shape: a `test` step's sole operand is its body, and the bare-string form `test "cmd"` is not a `test_step` in any position (§{steps.test}), so `test "$X" = y` is a `shell_command`. A bare keyword with no remainder at all (`test` alone on a line) carries no step syntax and is likewise a `shell_command`.
+
+The `gather` exclude row matters more than its rarity suggests. `gather` is also a real program name, so a misclassified `gather !"build/*"` would parse cleanly and then fail at run time with `gather: command not found` — an error about the wrong thing, raised after the chore has already begun. It is the only line this rule could turn from a parse error into a wrong meaning rather than into working shell.
+
+This rule governs classification only. It does not relax the ban: a line that does match a banned step kind's syntax MUST still be rejected with the diagnostic above. It has no effect on a `recipe_body`, where the step-dispatch cascade of §{steps.dispatch} applies unchanged and a loose shell command is rejected outright.
+
+#### Example 7.2.1
+
+```cook
+chore guard
+    test -f src/canvas.ts
+    [ -f src/canvas.ts ]
+    cook build
+```
+
+All three lines are `shell_command` steps. The first begins with the keyword `test`, but its remainder (`-f src/canvas.ts`) is not a body, so it is not a `test_step`; the third invokes the `cook` binary itself, and its remainder (`build`) is not an output pattern.
+
 ## 7.3. Default-interactive shell semantics [#chores.default-interactive]
 
 Every `shell_command` step inside a chore body is **interactive**: it runs with the controlling terminal inherited, so the spawned child sees a real TTY (§{steps.shell}). This is the chore default; there is no marker to write. CS-0134 removed the `@` interactive prefix from the language entirely (§{lexical.line-prefixes}) — it was a redundant no-op, since every chore shell command is already interactive by this rule. A chore therefore inherits the TTY-allocation and stdio-inheritance semantics that the drain rule (§{exec.interactive-drain}) specifies for an interactive unit.
