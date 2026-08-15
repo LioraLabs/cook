@@ -162,10 +162,40 @@ pub(crate) struct SealOperands {
     pub inline_probe: Option<Probe>,
 }
 
+/// The reserved key for one anonymous file determinant (CS-0236).
+///
+/// Derived from the operands and nothing else: §17.4 forbids the recipe name
+/// and the step's source position from a cache key or a unit identity, and this
+/// key is folded into the `seal_contribution` of *every* cacheable unit in the
+/// owning recipe (§8.4.3.1 rule 1). Keying it by owner and line therefore made
+/// renaming a recipe, or moving any line above a `seal`, a cache miss for every
+/// unit in it.
+///
+/// The operands are the whole declaration — an anonymous probe's producer is
+/// the files-manifest sentinel and its inputs are these globs — so equal keys
+/// hold exactly when the declarations are equal, and two identical seals are
+/// one determinant rather than a collision (`parse` de-duplicates them).
+///
+/// Spelled as a hex fold rather than the globs verbatim because a probe key is
+/// `:`-segmented and `.`-qualified by the import prefix, and a glob carries
+/// `/ * . :`.
+pub(crate) fn anonymous_seal_key(globs: &[String], excludes: &[String]) -> String {
+    let mut records: Vec<String> = globs
+        .iter()
+        .map(|g| format!("+{g}"))
+        .chain(excludes.iter().map(|e| format!("-{e}")))
+        .collect();
+    records.sort();
+    records.dedup();
+    format!(
+        "@seal:{:016x}",
+        cook_contracts::hash::hash_str(&records.join("\n"))
+    )
+}
+
 pub(crate) fn parse_seal_operands(
     text: &str,
     line: usize,
-    owner: &str,
 ) -> Result<SealOperands, ParseError> {
     let mut operands = Vec::new();
     let mut start = None;
@@ -235,7 +265,7 @@ pub(crate) fn parse_seal_operands(
         });
     }
     let inline_probe = if globs.is_empty() { None } else {
-        let name = format!("@seal:{owner}:{line}");
+        let name = anonymous_seal_key(&globs, &excludes);
         refs.push(name.clone());
         Some(Probe {
             name,

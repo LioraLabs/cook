@@ -10,7 +10,13 @@ use crate::long_bracket::wrap_lua_string;
 pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement]) {
     let inline_files = match &probe.produce {
         ProbeProduce::Files { globs, excludes } if probe.name.starts_with("@seal:") => {
-            let local = format!("_cook_inline_seal_{}", probe.line);
+            // CS-0236: named after the probe's own key, not its line. The key
+            // is what identifies an anonymous determinant now, and a
+            // line-derived local was the last positional string on this path.
+            let local = format!(
+                "_cook_inline_seal_{}",
+                probe.name.trim_start_matches("@seal:")
+            );
             out.push_str(&format!(
                 "local {local} = cook.resolve_gather({{{}}}, {{{}}})\n",
                 quoted_list(globs),

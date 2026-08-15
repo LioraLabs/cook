@@ -8,12 +8,12 @@ Cookfile
       inputs: []
       excludes: []
       steps:
-        Cook outputs=["out.txt"] body=ShellBlock(["for i in {1..3}; do echo \"iter $i\" >> $<out>; done", "cp file.{c,h} dest/ 2>/dev/null || true"]) disposition=[local=false pinned=false record=false seal=["@seal:build:2"]]
+        Cook outputs=["out.txt"] body=ShellBlock(["for i in {1..3}; do echo \"iter $i\" >> $<out>; done", "cp file.{c,h} dest/ 2>/dev/null || true"]) disposition=[local=false pinned=false record=false seal=["@seal:d1864aeb3e547962"]]
   chores:
   register_blocks: []
   top_level_module_calls: []
   probes:
-    Probe name="@seal:build:2" line=2
+    Probe name="@seal:d1864aeb3e547962" line=2
       deps: []
       inputs: []
       excludes: []

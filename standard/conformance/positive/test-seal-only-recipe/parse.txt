@@ -8,12 +8,12 @@ Cookfile
       inputs: []
       excludes: []
       steps:
-        Test body=ShellBlock(["./run.sh"]) seal=["@seal:verify:2", "host"]
+        Test body=ShellBlock(["./run.sh"]) seal=["@seal:1e9ec25289d385e3", "host"]
   chores:
   register_blocks: []
   top_level_module_calls: []
   probes:
-    Probe name="@seal:verify:2" line=2
+    Probe name="@seal:1e9ec25289d385e3" line=2
       deps: []
       inputs: []
       excludes: []

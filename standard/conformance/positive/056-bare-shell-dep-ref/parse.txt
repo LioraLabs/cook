@@ -8,7 +8,7 @@ Cookfile
       inputs: []
       excludes: []
       steps:
-        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""]) disposition=[local=false pinned=false record=false seal=["@seal:greet:15"]]
+        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""]) disposition=[local=false pinned=false record=false seal=["@seal:2eebc614ecbbc731"]]
   chores:
     Chore name="shout" line=18
       params: []
@@ -18,7 +18,7 @@ Cookfile
   register_blocks: []
   top_level_module_calls: []
   probes:
-    Probe name="@seal:greet:15" line=15
+    Probe name="@seal:2eebc614ecbbc731" line=15
       deps: []
       inputs: []
       excludes: []

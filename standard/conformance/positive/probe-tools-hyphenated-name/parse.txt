@@ -8,7 +8,7 @@ Cookfile
       inputs: []
       excludes: []
       steps:
-        Cook outputs=["src/parser.c"] body=ShellBlock(["tree-sitter generate"]) disposition=[local=false pinned=false record=false seal=["@seal:generate:5", "generate:tool"]]
+        Cook outputs=["src/parser.c"] body=ShellBlock(["tree-sitter generate"]) disposition=[local=false pinned=false record=false seal=["@seal:5b7b263b1093130a", "generate:tool"]]
   chores:
   register_blocks: []
   top_level_module_calls: []
@@ -18,7 +18,7 @@ Cookfile
       inputs: []
       excludes: []
       produce: Tools names=["tree-sitter", "pkg-config", "llvm-config"]
-    Probe name="@seal:generate:5" line=5
+    Probe name="@seal:5b7b263b1093130a" line=5
       deps: []
       inputs: []
       excludes: []

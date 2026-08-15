@@ -431,7 +431,7 @@ pub(crate) fn parse_recipe(
                                 .to_string(),
                         });
                     }
-                    let parsed = parse_seal_operands(rest, tok.line, &name)?;
+                    let parsed = parse_seal_operands(rest, tok.line)?;
                     for r in parsed.refs {
                         base_seal.insert(r);
                     }

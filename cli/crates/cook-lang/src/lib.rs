@@ -379,6 +379,13 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
+    // CS-0236: an anonymous seal key is a fold of its operands, so two
+    // identical inline seals name one determinant. Keep the first and drop the
+    // rest — reaching the register phase with both would be a duplicate-key
+    // error over two declarations that are the same declaration.
+    let mut seen_anonymous = std::collections::HashSet::new();
+    probes.retain(|p| !p.name.starts_with("@seal:") || seen_anonymous.insert(p.name.clone()));
+
     Ok(Cookfile {
         config_blocks,
         recipes,

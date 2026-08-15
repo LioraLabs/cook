@@ -1,0 +1,26 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["a.txt"] body=ShellBlock(["echo a > $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:091064f4084cdb9c"]]
+    Recipe name="check" line=7
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["b.txt"] body=ShellBlock(["echo b > $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:091064f4084cdb9c"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="@seal:091064f4084cdb9c" line=2
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Files globs=["src/**"] excludes=["src/generated/**"]

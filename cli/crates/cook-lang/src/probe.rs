@@ -82,7 +82,7 @@ pub(crate) fn parse_probe(
                                 .into(),
                         });
                     }
-                    let parsed = parse_seal_operands(rest, tok.line, &name)?;
+                    let parsed = parse_seal_operands(rest, tok.line)?;
                     deps.extend(parsed.refs);
                     inline_probes.extend(parsed.inline_probe);
                     seal_seen = true;

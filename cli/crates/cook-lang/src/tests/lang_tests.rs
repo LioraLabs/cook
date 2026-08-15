@@ -1890,7 +1890,10 @@ fn produce_files_lua_block_is_error() {
 fn parse_probe_seal_adds_fingerprint_refs() {
     let src = "probe services\n    seal \"data/services.json\" !\"data/generated/**\"\n    json { cat data/services.json }\n";
     let cf = crate::parse(src).unwrap();
-    assert_eq!(cf.probes[0].deps, vec!["@seal:services:2"]);
+    // The ref is the anonymous determinant's own key, whatever it folds to
+    // (COOK-488 made it content-derived, so it is not spelled here).
+    assert_eq!(cf.probes[0].deps, vec![cf.probes[1].name.clone()]);
+    assert!(cf.probes[1].name.starts_with("@seal:"));
     assert_eq!(cf.probes[1].produce, crate::ast::ProbeProduce::Files {
         globs: vec!["data/services.json".into()],
         excludes: vec!["data/generated/**".into()],
@@ -2632,13 +2635,120 @@ fn disp_seal_accepts_inline_files_and_multi_segment_keys() {
     let cf = parse(src).expect("quoted globs and bare probe keys may be mixed");
     let seals = &cf.recipes[0].steps;
     assert!(
-        format!("{seals:?}").contains("@seal:build:2"),
+        format!("{seals:?}").contains(&cf.probes[0].name),
         "inline file seal must enter the seal set: {seals:?}"
     );
     assert_eq!(cf.probes[0].produce, crate::ast::ProbeProduce::Files {
         globs: vec!["src/**".into()],
         excludes: vec!["src/generated/**".into()],
     });
+}
+
+/// The first `@seal:` key a source mints, for the COOK-488 tests below.
+fn anon_seal_keys(src: &str) -> Vec<String> {
+    crate::parse(src)
+        .unwrap_or_else(|e| panic!("parse {src:?}: {e}"))
+        .probes
+        .iter()
+        .filter(|p| p.name.starts_with("@seal:"))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// COOK-488: §17.4 — the cache key and unit identity MUST NOT include the
+/// recipe name or the step's source position. The anonymous `@seal:` key is
+/// folded into every unit's `seal_contribution` (the recipe baseline reaches
+/// every cacheable unit), so the key must be a function of the operands alone.
+#[test]
+fn inline_seal_key_is_content_derived_not_positional() {
+    let key = |src: &str| {
+        let keys = anon_seal_keys(src);
+        assert_eq!(keys.len(), 1, "expected one anonymous seal in {src:?}");
+        keys.into_iter().next().unwrap()
+    };
+
+    let base = key("recipe build\n    seal \"src/**\"\n    cook \"o.txt\" {\n        echo hi > $<out>\n    }\n");
+
+    // Nothing positional survives into the key.
+    assert!(
+        !base.contains("build") && !base.contains(":1") && !base.contains(":2"),
+        "key must name neither the recipe nor a line: {base}"
+    );
+    let digest = base.strip_prefix("@seal:").expect("@seal: prefix");
+    assert!(
+        digest.len() == 16 && digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "key must be the reserved prefix plus a 16-char lowercase hex fold: {base}"
+    );
+
+    // Renaming the owning recipe does not move the key.
+    assert_eq!(
+        base,
+        key("recipe release\n    seal \"src/**\"\n    cook \"o.txt\" {\n        echo hi > $<out>\n    }\n"),
+        "renaming a recipe must not bust its units' cache"
+    );
+
+    // Moving the seal line within the recipe does not move the key.
+    assert_eq!(
+        base,
+        key("recipe build\n    cook \"o.txt\" {\n        echo hi > $<out>\n    }\n    seal \"src/**\"\n"),
+        "moving a step within a recipe must not bust its cache"
+    );
+
+    // The same operand set in a probe body mints the same key.
+    assert_eq!(
+        base,
+        key("probe ver\n    seal \"src/**\"\n    lines { echo x }\n"),
+        "the owning declaration's name and kind are not determinants"
+    );
+
+    // Operand order on one line is not a determinant; the set is.
+    assert_eq!(
+        key("recipe build\n    seal \"a/**\" \"b/**\"\n    test { true }\n"),
+        key("recipe build\n    seal \"b/**\" \"a/**\"\n    test { true }\n"),
+        "a seal line's operands are a set"
+    );
+
+    // The operands themselves still are determinants: a different glob, and an
+    // exclusion versus an inclusion of the same glob, are different keys.
+    let include_both = key("recipe build\n    seal \"a/**\" \"b/**\"\n    test { true }\n");
+    let exclude_b = key("recipe build\n    seal \"a/**\" !\"b/**\"\n    test { true }\n");
+    let other = key("recipe build\n    seal \"c/**\"\n    test { true }\n");
+    assert_ne!(include_both, exclude_b, "an exclusion is not an inclusion");
+    assert_ne!(include_both, other, "a different glob set is a different determinant");
+}
+
+/// COOK-488: a content-derived key makes two identical anonymous seals one
+/// declaration. They must collapse to a single probe rather than reach the
+/// register phase as a duplicate-key error.
+#[test]
+fn inline_seal_identical_operand_sets_share_one_probe() {
+    let src = concat!(
+        "recipe build\n",
+        "    seal \"src/**\" !\"src/generated/**\"\n",
+        "    cook \"a.txt\" {\n",
+        "        echo a > $<out>\n",
+        "    }\n",
+        "\n",
+        "recipe check\n",
+        "    seal !\"src/generated/**\" \"src/**\"\n",
+        "    test { true }\n",
+    );
+    let cf = crate::parse(src).expect("two identical anonymous seals are one determinant");
+    let anon: Vec<&crate::ast::Probe> = cf
+        .probes
+        .iter()
+        .filter(|p| p.name.starts_with("@seal:"))
+        .collect();
+    assert_eq!(anon.len(), 1, "identical operand sets must mint one probe: {anon:?}");
+
+    let key = anon[0].name.clone();
+    for recipe in &cf.recipes {
+        assert!(
+            format!("{:?}", recipe.steps).contains(&key),
+            "recipe {} must seal on the shared key {key}",
+            recipe.name
+        );
+    }
 }
 
 #[test]

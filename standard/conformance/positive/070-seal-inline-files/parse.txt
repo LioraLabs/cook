@@ -8,8 +8,8 @@ Cookfile
       inputs: []
       excludes: []
       steps:
-        Cook outputs=["out.txt"] body=ShellBlock(["cp src/input.txt $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:build:5", "toolchain"]]
-        Test body=ShellBlock(["test -s out.txt"]) seal=["@seal:build:5", "toolchain"]
+        Cook outputs=["out.txt"] body=ShellBlock(["cp src/input.txt $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:091064f4084cdb9c", "toolchain"]]
+        Test body=ShellBlock(["test -s out.txt"]) seal=["@seal:091064f4084cdb9c", "toolchain"]
   chores:
   register_blocks: []
   top_level_module_calls: []
@@ -19,7 +19,7 @@ Cookfile
       inputs: []
       excludes: []
       produce: Files globs=["tools/**"] excludes=[]
-    Probe name="@seal:build:5" line=5
+    Probe name="@seal:091064f4084cdb9c" line=5
       deps: []
       inputs: []
       excludes: []

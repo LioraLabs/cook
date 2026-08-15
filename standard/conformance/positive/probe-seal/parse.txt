@@ -8,11 +8,11 @@ Cookfile
   top_level_module_calls: []
   probes:
     Probe name="services_raw" line=1
-      deps: ["@seal:services_raw:2"]
+      deps: ["@seal:ebb4d3715cecfb45"]
       inputs: []
       excludes: []
       produce: Shell typing=Json commands=["cat data/services.json"]
-    Probe name="@seal:services_raw:2" line=2
+    Probe name="@seal:ebb4d3715cecfb45" line=2
       deps: []
       inputs: []
       excludes: []
