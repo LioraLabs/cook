@@ -4,11 +4,11 @@
 # command string and defeated caching on every single run.
 
 probe services
-    ingredients "data/services.json"
+    seal "data/services.json"
     json { cat data/services.json }
 
 recipe render
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" {
         printf 'tags=%s\nmeta=%s\n' '$<in.tags>' '$<in.meta>' > $<out>
     }

@@ -9,6 +9,6 @@ Cookfile
   probes:
     Probe name="toolchain" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Tools names=["cc", "ld"]

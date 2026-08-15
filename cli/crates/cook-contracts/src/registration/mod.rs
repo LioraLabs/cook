@@ -63,6 +63,10 @@ pub const CONFIG_DISPATCH_NAME: &str = "__cook_run_config_blocks";
 /// table; emitted with the `cook.` receiver by luagen.
 pub const PROBE_SUBST_NAME: &str = "__probe_subst";
 
+/// Implementation-private registration door for compiler-generated inline
+/// file determinants. The public `cook.probe` door rejects this key namespace.
+pub const INLINE_SEAL_PROBE_NAME: &str = "__inline_seal_probe";
+
 /// A call to a door on the `cook` table with one string argument, qualified
 /// and escaped: `door_call(PROBE_SUBST_NAME, ident)` is
 /// `cook.__probe_subst("…")`.
@@ -242,7 +246,7 @@ pub fn no_terminal_output_message(name: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// The surface-meta field carrying a member-fanout recipe's data source
-/// (`__member_source = { kind = "probe", ref = "…" }`, §22.5.10).
+/// (`__member_source = { kind = "probe"|"gather", ref = "…" }`, §22.5.10).
 pub const MEMBER_SOURCE_FIELD: &str = "__member_source";
 
 /// Key naming the descriptor's kind inside the meta table.
@@ -251,8 +255,9 @@ pub const MEMBER_SOURCE_KIND_KEY: &str = "kind";
 /// Key naming the probe reference inside the meta table.
 pub const MEMBER_SOURCE_REF_KEY: &str = "ref";
 
-/// The only kind value since COOK-97 removed `Shell`/`Lua`.
+/// The retained kind values after command and anonymous-Lua sources were removed.
 pub const MEMBER_SOURCE_KIND_PROBE: &str = "probe";
+pub const MEMBER_SOURCE_KIND_GATHER: &str = "gather";
 
 /// The data source of a member-fanout recipe, as carried on the register
 /// surface meta by `cook-luagen` and parsed back by `cook-register`'s
@@ -264,14 +269,18 @@ pub const MEMBER_SOURCE_KIND_PROBE: &str = "probe";
 /// type stays (it is the parser's), but emitter and consumer now share THIS
 /// declaration and the key constants above.
 ///
-/// - `Probe { source_ref }` — `ingredients <ref>`, the ref verbatim (`key`
-///   or `key:field`; a probe key may itself be two-segment `ns:name`).
+/// - `Probe { source_ref }` — legacy internal descriptor for `gather <ref>`, the ref verbatim (`key`
+///   or `key:field`; probe keys admit any number of segments).
 ///   Resolution against the probe registry happens in the register
 ///   pre-pass (COOK-190); the body reads the resolved member array via
 ///   `cook.probes.get(<verbatim ref>)`.
+/// - `Gather { source_ref }` — current `gather <ref>` descriptor. It resolves
+///   array probes like `Probe` and also turns a named files manifest's path
+///   keys into members.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemberSourceDescriptor {
     Probe { source_ref: String },
+    Gather { source_ref: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +357,10 @@ pub enum ChoreParamMeta {
     ///
     /// Named registry keys use a unique string per registration pass;
     /// the key is `"__cook_chore_default:<chore>:<param>:<serial>"`.
-    DefaultedLua { name: String, default_key_name: String },
+    DefaultedLua {
+        name: String,
+        default_key_name: String,
+    },
     /// A one-or-more variadic — collects all remaining argv into a Lua sequence;
     /// zero remaining argv is an error.
     VariadicPlus { name: String },

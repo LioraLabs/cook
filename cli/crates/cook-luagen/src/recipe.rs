@@ -27,6 +27,12 @@ use crate::test_step;
 /// - `$<lib.ACCESSOR>` inside a cook-step body (rejected)
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
+    #[error("line {line}: recipe '{recipe}': {message}")]
+    GatherUsage {
+        recipe: String,
+        message: &'static str,
+        line: usize,
+    },
     #[error(
         "line {line}: recipe '{referrer}': '{referent}.{accessor}' appears in {surface} but \
          '{referent}' is not named as an iteration driver in this step's output pattern"
@@ -96,29 +102,126 @@ pub fn generate_checked(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(String, Vec<String>), CodegenError> {
+    validate_gather_usage(cookfile, recipe_names)?;
     validate_accessor_placement(cookfile, recipe_names)?;
     let warnings = warn_empty_output_refs(cookfile, recipe_names);
     Ok((generate_with_names(cookfile, recipe_names)?, warnings))
+}
+
+fn validate_gather_usage(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), CodegenError> {
+    for recipe in &cookfile.recipes {
+        let gather_line = recipe.steps.iter().find_map(|step| match step {
+            Step::Gather { line } => Some(*line),
+            _ => None,
+        });
+        let names_input = recipe.steps.iter().any(step_names_input);
+
+        if let Some(line) = gather_line {
+            if !names_input {
+                return Err(CodegenError::GatherUsage {
+                    recipe: recipe.name.clone(),
+                    message: "the command never names the gathered files; seal them instead",
+                    line,
+                });
+            }
+        }
+
+        let has_member_driver = recipe.steps.iter()
+            .any(|step| matches!(step, Step::MemberSource { .. }));
+        if has_member_driver {
+            for step in &recipe.steps {
+                let (body, line) = match step {
+                    Step::Cook { step, line } => (step.body.as_ref(), *line),
+                    Step::Test { step, line } => (Some(&step.body), *line),
+                    _ => continue,
+                };
+                if body.is_some_and(has_unsafe_whole_member_ref) {
+                    return Err(CodegenError::GatherUsage {
+                        recipe: recipe.name.clone(),
+                        message: "$<in> in a data fan-out shell body must be enclosed in single quotes",
+                        line,
+                    });
+                }
+            }
+        }
+        let mut preceding_cook = false;
+        let mut unbacked_input_line = None;
+        for step in &recipe.steps {
+            if step_names_input(step) {
+                let dep_driver = matches!(step, Step::Cook { step, .. } if step.outputs.iter().any(|output| {
+                    matches!(
+                        crate::template::output_pattern_kind_with_recipes(output.as_str(), recipe_names),
+                        crate::template::OutputPatternKind::DepDriven { .. }
+                    )
+                }));
+                if !preceding_cook && !has_member_driver && !dep_driver {
+                    unbacked_input_line = Some(step_line(step));
+                    break;
+                }
+            }
+            preceding_cook |= matches!(step, Step::Cook { .. });
+        }
+        if gather_line.is_none() && recipe.inputs.is_empty() && unbacked_input_line.is_some() {
+            return Err(CodegenError::GatherUsage {
+                recipe: recipe.name.clone(),
+                message: "nothing gathers what this command references",
+                line: unbacked_input_line.unwrap_or(recipe.line),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn has_unsafe_whole_member_ref(body: &Body) -> bool {
+    let Body::ShellBlock(lines) = body else {
+        return false;
+    };
+    cook_lang::shell_placeholder_contexts(lines)
+        .into_iter()
+        .any(|(ident, ctx)| ident == "in" && ctx != cook_contracts::quoting::QCtx::Single)
+}
+
+fn step_names_input(step: &Step) -> bool {
+    let shell_names_input = |text: &str| {
+        sigil::scan(text)
+            .iter()
+            .any(|span| crate::resolver::is_own_input_ref(&span.ident))
+    };
+    let body_names_input = |body: &Body| match body {
+        Body::ShellBlock(lines) => lines.iter().any(|line| shell_names_input(line)),
+        Body::LuaBlock(code) => {
+            crate::lua_scan::free_identifier_occurs(code, "input")
+                || crate::lua_scan::free_identifier_occurs(code, "inputs")
+        }
+    };
+
+    match step {
+        Step::Cook { step, .. } => {
+            step.outputs
+                .iter()
+                .any(|output| !output.is_lua_expr() && shell_names_input(output.as_str()))
+                || step.body.as_ref().is_some_and(body_names_input)
+        }
+        Step::Test { step, .. } => body_names_input(&step.body),
+        _ => false,
+    }
 }
 
 /// Detect references whose referent has an empty output list and return one
 /// warning per offending (referrer, referent) pair.
 ///
 /// "Empty output list" is approximated at codegen time as: no cook steps AND
-/// no ingredients. A recipe with only ingredients still has a non-empty output
-/// list per § 5.4.1 passthrough; a recipe whose ingredient globs resolve to
+/// no inputs. A recipe with only inputs still has a non-empty output
+/// list per § 5.4.1 passthrough; a recipe whose input globs resolve to
 /// nothing at register time is still flagged by the runtime, not here.
-fn warn_empty_output_refs(
-    cookfile: &Cookfile,
-    recipe_names: &BTreeSet<String>,
-) -> Vec<String> {
+fn warn_empty_output_refs(cookfile: &Cookfile, recipe_names: &BTreeSet<String>) -> Vec<String> {
     let empty: BTreeSet<String> = cookfile
         .recipes
         .iter()
-        .filter(|r| {
-            r.ingredients.is_empty()
-                && !r.steps.iter().any(|s| matches!(s, Step::Cook { .. }))
-        })
+        .filter(|r| r.inputs.is_empty() && !r.steps.iter().any(|s| matches!(s, Step::Cook { .. })))
         .map(|r| r.name.clone())
         .collect();
 
@@ -194,7 +297,6 @@ fn check_output_pattern_no_bare_accessors(
     for span in sigil::scan(pattern) {
         let inner = span.ident.as_str();
 
-
         if ACCESSORS.contains(&inner) {
             return Err(CodegenError::PlaceholderViolation {
                 recipe: recipe.to_string(),
@@ -240,7 +342,10 @@ fn validate_accessor_placement(
     for recipe in &cookfile.recipes {
         for step in &recipe.steps {
             match step {
-                Step::Cook { step: cook_step, line } => {
+                Step::Cook {
+                    step: cook_step,
+                    line,
+                } => {
                     // Check output patterns for bare path accessors (CS-0022 §6.7)
                     // and bare recipe references (Standard §5.4). Skip the
                     // LuaExpr form: its source text is a Lua expression, not
@@ -273,9 +378,8 @@ fn validate_accessor_placement(
                     if let Some(Body::ShellBlock(lines)) = &cook_step.body {
                         // Determine the mode so validate_placeholders can check
                         // {in}, {out}, {out_N}, {all}, bare accessors, and lib refs.
-                        let mode = crate::cook_step::cook_step_mode_with_names(
-                            cook_step, recipe_names,
-                        );
+                        let mode =
+                            crate::cook_step::cook_step_mode_with_names(cook_step, recipe_names);
                         let ctx = crate::template::PlaceholderValidationContext {
                             mode: &mode,
                             declared_output_count: cook_step.outputs.len(),
@@ -306,7 +410,10 @@ fn validate_accessor_placement(
                     // Inline Lua bodies are opaque to the accessor-placement
                     // check; the templater does not run on Lua source.
                 }
-                Step::Test { step: test_step, line } => {
+                Step::Test {
+                    step: test_step,
+                    line,
+                } => {
                     if let Body::ShellBlock(lines) = &test_step.body {
                         for shell_line in lines {
                             check_command(
@@ -488,7 +595,11 @@ fn emit_body_unit_with_names(
 
     for step in bundle {
         match step {
-            Step::Shell { command, interactive: false, line } => {
+            Step::Shell {
+                command,
+                interactive: false,
+                line,
+            } => {
                 let has_sigils = !crate::sigil::scan(command).is_empty();
                 if has_sigils {
                     // Flush any accumulated raw lines (into static_buf) so they
@@ -506,16 +617,13 @@ fn emit_body_unit_with_names(
                     let mut consulted = ConsultedEnv::new();
                     // COOK-188: an unresolvable placeholder is propagated, not
                     // swallowed — it used to "compile" and fail at execute time.
-                    let lua_expr = crate::template::expand_sigil_template(
-                        command,
-                        &ctx,
-                        &mut consulted,
-                    )
-                    .map_err(|e| CodegenError::SigilResolve {
-                        recipe: recipe_name.to_string(),
-                        line: *line,
-                        source: e,
-                    })?;
+                    let lua_expr =
+                        crate::template::expand_sigil_template(command, &ctx, &mut consulted)
+                            .map_err(|e| CodegenError::SigilResolve {
+                                recipe: recipe_name.to_string(),
+                                line: *line,
+                                source: e,
+                            })?;
                     // Prepend the compose() prelude (spelled in Lua-escaped
                     // form from the law's constant) so per-line
                     // halt-on-failure semantics match raw-shell flushes.
@@ -631,7 +739,7 @@ fn collect_drivers(
     for pat in output_patterns {
         // The LuaExpr form's source text is Lua code, not a sigil
         // template; skip it. Driver semantics for a LuaExpr cook step
-        // are fixed by §8.4.2: one-to-one over own ingredients only.
+        // are fixed by §8.4.2: one-to-one over own inputs only.
         if pat.is_lua_expr() {
             continue;
         }
@@ -826,8 +934,18 @@ pub fn generate_with_names(
         .iter()
         .map(TopLevelItem::Recipe)
         .chain(cookfile.chores.iter().map(TopLevelItem::Chore))
-        .chain(cookfile.register_blocks.iter().map(TopLevelItem::RegisterBlock))
-        .chain(cookfile.top_level_module_calls.iter().map(TopLevelItem::TopLevelModuleCall))
+        .chain(
+            cookfile
+                .register_blocks
+                .iter()
+                .map(TopLevelItem::RegisterBlock),
+        )
+        .chain(
+            cookfile
+                .top_level_module_calls
+                .iter()
+                .map(TopLevelItem::TopLevelModuleCall),
+        )
         .chain(cookfile.probes.iter().map(TopLevelItem::Probe))
         .collect();
     items.sort_by_key(|i| i.line());
@@ -873,10 +991,10 @@ pub fn generate_with_names(
                     generate_metadata_with_line(recipe, recipe_names)
                 ));
 
-                // Emit local ingredients variable when recipe has ingredients
-                if !recipe.ingredients.is_empty() {
+                // Emit local inputs variable when recipe has inputs
+                if !recipe.inputs.is_empty() {
                     let includes: Vec<String> = recipe
-                        .ingredients
+                        .inputs
                         .iter()
                         .map(|s| lua_string::literal(s))
                         .collect();
@@ -886,17 +1004,16 @@ pub fn generate_with_names(
                         .map(|s| lua_string::literal(s))
                         .collect();
                     out.push_str(&format!(
-                        "    local ingredients = cook.resolve_ingredients({{{}}}, {{{}}})\n",
+                        "    local inputs = cook.resolve_gather({{{}}}, {{{}}})\n",
                         includes.join(", "),
                         excludes.join(", "),
                     ));
                 }
 
-                // COOK-63 §8.2: a member-fanout recipe drives its per-member
-                // steps from a data source. Emit the member set once, then
-                // route this recipe's cook/plate/test steps through the
-                // data-member fan-out path (each producing one unit per member,
-                // member bound as `item`) instead of the ingredient-driven one.
+                // Emit the gathered member set once. Each step then selects
+                // its own route: accessor-bearing cook outputs and
+                // item-referencing plate/test bodies fan out, while CS-0155
+                // keeps later literal-output cook steps aggregate.
                 let member_source = recipe.steps.iter().find_map(|s| match s {
                     Step::MemberSource { step, line } => Some((step, *line)),
                     _ => None,
@@ -935,7 +1052,7 @@ pub fn generate_with_names(
                         .unwrap_or(false);
                 if first_step_literal_gather {
                     out.push_str(&format!(
-                        "    error(\"recipe '{}': a literal-output cook step in an ingredients <probe> recipe has nothing to gather — data members are records, not file paths; fan out first (accessor-bearing outputs), or read the probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
+                        "    error(\"recipe '{}': a literal-output cook step in a bare-gather recipe has nothing to gather — data members are not a collected file set; fan out first (accessor-bearing outputs), or read an ordinary probe from a >{{ ... }} Lua body via cook.probes.get (CS-0155)\", 0)\n",
                         lua_string::escape_double_quoted(&recipe.name)
                     ));
                 }
@@ -983,13 +1100,15 @@ pub fn generate_with_names(
                                     cook_index,
                                     recipe_names,
                                     member_source
-                                        .map(|(fe, _)| fe.extra_ingredients.as_slice())
+                                        .map(|(fe, _)| fe.extra_gather.as_slice())
                                         .unwrap_or(&[]),
                                 )
-                                .map_err(|source| CodegenError::SigilResolve {
-                                    recipe: recipe.name.clone(),
-                                    line: *line,
-                                    source,
+                                .map_err(|source| {
+                                    CodegenError::SigilResolve {
+                                        recipe: recipe.name.clone(),
+                                        line: *line,
+                                        source,
+                                    }
                                 })?;
                             } else {
                                 generate_cook_step(
@@ -999,13 +1118,15 @@ pub fn generate_with_names(
                                     &cookfile.uses,
                                     cook_index,
                                     prev_cook_index,
-                                    &recipe.ingredients,
+                                    &recipe.inputs,
                                     recipe_names,
                                 )
-                                .map_err(|source| CodegenError::SigilResolve {
-                                    recipe: recipe.name.clone(),
-                                    line: *line,
-                                    source,
+                                .map_err(|source| {
+                                    CodegenError::SigilResolve {
+                                        recipe: recipe.name.clone(),
+                                        line: *line,
+                                        source,
+                                    }
                                 })?;
                             }
                             out.push_str("    end)\n");
@@ -1032,27 +1153,28 @@ pub fn generate_with_names(
                                     *line,
                                     &cookfile.uses,
                                     prev_cook_index,
-                                    !recipe.ingredients.is_empty(),
+                                    !recipe.inputs.is_empty(),
                                     recipe_names,
                                 )?;
                             }
                             out.push_str("    end)\n");
                             i += 1;
                         }
-                        Step::Shell { interactive: true, command, line } => {
+                        Step::Shell {
+                            interactive: true,
+                            command,
+                            line,
+                        } => {
                             // §{exec.interactive-drain}: own draining unit, breaks
                             // body-bundling (the next imperative step starts a fresh
                             // body unit).
                             // Apply sigil substitution to the command (CS-0033).
-                            let cmd_expr = expand_shell_command_sigil(
-                                command,
-                                recipe_names,
-                            )
-                            .map_err(|e| CodegenError::SigilResolve {
-                                recipe: recipe.name.clone(),
-                                line: *line,
-                                source: e,
-                            })?;
+                            let cmd_expr = expand_shell_command_sigil(command, recipe_names)
+                                .map_err(|e| CodegenError::SigilResolve {
+                                    recipe: recipe.name.clone(),
+                                    line: *line,
+                                    source: e,
+                                })?;
                             // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                             // units that are never cached. The cacheable cook-step path in
                             // cook_step.rs is the only emission site that includes it.
@@ -1090,6 +1212,11 @@ pub fn generate_with_names(
                         // consumed above into `local _items`; it emits no step
                         // of its own here.
                         Step::MemberSource { .. } => {
+                            i += 1;
+                        }
+                        // `gather` is a register-time driver marker. Its paths
+                        // already lower through `recipe.inputs` above.
+                        Step::Gather { .. } => {
                             i += 1;
                         }
                         // `Step` is `#[non_exhaustive]`. Future step kinds added by
@@ -1130,13 +1257,13 @@ pub fn generate_with_names(
 ///
 /// Member-materialisation is structurally correct here; the demand-driven
 /// probe pre-pass (§22.5.10) and the per-member fingerprint fold (§17) are the
-/// COOK-64 runtime slice. The `$(cmd)` and `(LUA_EXPR)` sources were removed
-/// in COOK-97 — only `ProbeKey` remains.
+/// COOK-64 runtime slice. Retained sources are named probes and named files
+/// manifests; command and anonymous-Lua sources are removed.
 ///
-/// COOK-190: the ref passes through verbatim. Probe keys are canonically
-/// two-segment (`ns:name`, §22.5.2), so `a:b` is ambiguous between a
-/// two-segment key and a `key:field` selector — resolvable only against the
-/// probe registry, which exists at register time, not codegen time. The
+/// The ref passes through verbatim. Probe keys admit unlimited segments, so
+/// the final colon is ambiguous between a key segment and a `key:field`
+/// selector — resolvable only against the probe registry, which exists at
+/// register time, not codegen time. The
 /// register pre-pass (§22.5.10) resolves the ref (exact key match wins, else
 /// the trailing segment is a field selector) and stores the member array
 /// under the verbatim ref, where this lookup finds it.
@@ -1147,6 +1274,9 @@ fn emit_member_items(out: &mut String, fe: &MemberSourceStep) {
                 "    local _items = cook.probes.get(\"{}\")\n",
                 lua_string::escape_double_quoted(k)
             ));
+        }
+        MemberSource::GatherKey(k) => {
+            out.push_str(&format!("    local _items = cook.probes.get(\"{}\")\n", lua_string::escape_double_quoted(k)));
         }
     }
 }
@@ -1272,8 +1402,9 @@ pub fn compile_chore(
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
 ) -> String {
-    compile_chore_checked(chore, uses, recipe_names)
-        .expect("compile_chore: unexpected codegen error (use generate_checked for validated codegen)")
+    compile_chore_checked(chore, uses, recipe_names).expect(
+        "compile_chore: unexpected codegen error (use generate_checked for validated codegen)",
+    )
 }
 
 fn compile_chore_checked(
@@ -1288,7 +1419,7 @@ fn compile_chore_checked(
     // `__line = N`). The register-phase capture closure tags the
     // registration with `RecipeKind::Chore` so collision detection and
     // CLI dispatch can distinguish chores from recipes. Chores have no
-    // ingredients/excludes (parser-enforced), only `requires`.
+    // inputs/excludes (parser-enforced), only `requires`.
     let mut fields = chore_metadata_fields(chore, recipe_names);
     fields.push(format!("__line = {}", chore.line));
 
@@ -1359,16 +1490,14 @@ fn compile_chore_checked(
                 // expansion to the runtime helper so param values are visible.
                 // CS-0101: chore units are cache = false — hoisted file-ref
                 // locals, no file_refs field.
-                let cmd_expr = expand_chore_shell_command(
-                    command,
-                    recipe_names,
-                    &chore_param_names,
-                )
-                .map_err(|e| CodegenError::SigilResolve {
-                    recipe: chore.name.clone(),
-                    line: *line,
-                    source: e,
-                })?;
+                let cmd_expr =
+                    expand_chore_shell_command(command, recipe_names, &chore_param_names).map_err(
+                        |e| CodegenError::SigilResolve {
+                            recipe: chore.name.clone(),
+                            line: *line,
+                            source: e,
+                        },
+                    )?;
                 // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                 // units that are never cached. The cacheable cook-step path in
                 // cook_step.rs is the only emission site that includes it.
@@ -1489,7 +1618,7 @@ fn emit_chore_body_unit(
 /// top-level chunk and the call site line is the *generated* line, not the
 /// original Cookfile line. The `__line` field is always present so the
 /// emitted table is non-empty even for a recipe with no `requires` /
-/// `ingredients` / `excludes`.
+/// `inputs` / `excludes`.
 fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> String {
     let mut fields = recipe_metadata_fields(recipe, recipe_names);
     // COOK-64 §8.2/§22.5.10: expose a member-fanout recipe's data source on the
@@ -1513,8 +1642,8 @@ fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>)
 /// `cook-register`'s `parse_member_source_meta` parses back into.
 fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
     use cook_contracts::registration::{
-        MemberSourceDescriptor, MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_KEY,
-        MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
+        MemberSourceDescriptor, MEMBER_SOURCE_FIELD, MEMBER_SOURCE_KIND_GATHER,
+        MEMBER_SOURCE_KIND_KEY, MEMBER_SOURCE_KIND_PROBE, MEMBER_SOURCE_REF_KEY,
     };
     let step = recipe.steps.iter().find_map(|s| match s {
         Step::MemberSource { step, .. } => Some(step),
@@ -1526,6 +1655,9 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
         MemberSource::ProbeKey(k) => MemberSourceDescriptor::Probe {
             source_ref: k.clone(),
         },
+        MemberSource::GatherKey(k) => MemberSourceDescriptor::Gather {
+            source_ref: k.clone(),
+        },
     };
     let body = match &descriptor {
         MemberSourceDescriptor::Probe { source_ref } => format!(
@@ -1535,13 +1667,18 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
             MEMBER_SOURCE_REF_KEY,
             lua_string::escape_double_quoted(source_ref)
         ),
+        MemberSourceDescriptor::Gather { source_ref } => format!(
+            "{} = \"{}\", {} = \"{}\"", MEMBER_SOURCE_KIND_KEY,
+            MEMBER_SOURCE_KIND_GATHER, MEMBER_SOURCE_REF_KEY,
+            lua_string::escape_double_quoted(source_ref)
+        ),
     };
     Some(format!("{} = {{{}}}", MEMBER_SOURCE_FIELD, body))
 }
 
 /// Field-builder for `generate_metadata_with_line`. Emits one
 /// `KEY = {...}` entry per non-empty list metadata field, in the historical
-/// order (`ingredients`, `excludes`, `requires`). The `__line = N` field is
+/// order (`inputs`, `excludes`, `requires`). The `__line = N` field is
 /// appended by the caller.
 ///
 /// `requires` merges the explicit `requires`/`deps` declaration with cross-
@@ -1553,13 +1690,13 @@ fn member_source_meta_field(recipe: &Recipe) -> Option<String> {
 /// pre-unified behaviour where AST-walked inferred deps drove wave ordering.
 fn recipe_metadata_fields(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> Vec<String> {
     let mut fields = Vec::new();
-    if !recipe.ingredients.is_empty() {
+    if !recipe.inputs.is_empty() {
         let items: Vec<String> = recipe
-            .ingredients
+            .inputs
             .iter()
             .map(|s| lua_string::literal(s))
             .collect();
-        fields.push(format!("ingredients = {{{}}}", items.join(", ")));
+        fields.push(format!("inputs = {{{}}}", items.join(", ")));
     }
     if !recipe.excludes.is_empty() {
         let items: Vec<String> = recipe
@@ -1611,7 +1748,7 @@ fn unified_requires_field(
     Some(format!("requires = {{{}}}", items.join(", ")))
 }
 
-/// Build chore metadata fields. Chores have no ingredients/excludes,
+/// Build chore metadata fields. Chores have no inputs/excludes,
 /// only `requires` (chore `deps`). Used by `compile_chore` to assemble
 /// the surface-shape (with `__line`) metadata table for
 /// `cook.__register_surface_chore(...)`.

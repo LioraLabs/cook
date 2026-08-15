@@ -1,2 +1,1 @@
-probe srcs
-    files { }
+files srcs

@@ -6,9 +6,15 @@ fn setup(source_file: &str) -> (Lua, SharedProbeRegistry, SharedBodySlot) {
     let cook = lua.create_table().unwrap();
     lua.globals().set("cook", cook.clone()).unwrap();
     let reg: SharedProbeRegistry = Rc::new(RefCell::new(ProbeRegistry::default()));
-    let body_slot: SharedBodySlot =
-        Rc::new(RefCell::new(Some(BodyCaptureState::new())));
-    install_cook_probe(&lua, &cook, reg.clone(), body_slot.clone(), source_file.to_string()).unwrap();
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+    install_cook_probe(
+        &lua,
+        &cook,
+        reg.clone(),
+        body_slot.clone(),
+        source_file.to_string(),
+    )
+    .unwrap();
     (lua, reg, body_slot)
 }
 
@@ -21,7 +27,8 @@ fn cook_probe_registers_a_unit() {
               inputs = { env = {"PKG_CONFIG_PATH"}, tools = {"pkg-config"} },
               produce = "return { found = true }",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -42,7 +49,8 @@ fn cook_probe_registers_requires_in_inputs() {
               inputs = { requires = {"cc:compiler"} },
               produce = "return true",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -60,7 +68,8 @@ fn cook_probe_registers_requires_in_inputs() {
               inputs = {},
               produce = "return 1",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -76,7 +85,8 @@ fn cook_probe_omitting_inputs_defaults_to_empty() {
             cook.probe("cc:noinputs", {
               produce = "return nil",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -96,7 +106,8 @@ fn duplicate_probe_key_errors_with_both_locations() {
         .load(r#"
             cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
             cook.probe("cc:zlib", { inputs = {}, produce = "return 2" })
-        "#)
+        "#,
+        )
         .exec();
 
     let err = result.unwrap_err().to_string();
@@ -117,7 +128,8 @@ fn produce_must_be_string_not_function() {
               inputs = {},
               produce = function() return 1 end,
             })
-        "#)
+        "#,
+        )
         .exec();
 
     let err = result.unwrap_err().to_string();
@@ -151,6 +163,30 @@ fn empty_key_raises_error() {
 }
 
 #[test]
+fn inline_seal_key_namespace_raises_error() {
+    let (lua, _reg, _cap) = setup("Cookfile");
+
+    let err = lua
+        .load(r#"cook.probe("@seal:build:5", { inputs = {}, produce = "return 1" })"#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("keys beginning `@seal:` are reserved"), "got: {err}");
+}
+
+#[test]
+fn internal_inline_seal_probe_accepts_reserved_key() {
+    let (lua, reg, _cap) = setup("Cookfile");
+
+    lua.load(r#"cook.__inline_seal_probe("@seal:build:5", { inputs = {}, produce = "return 1" })"#)
+        .exec()
+        .unwrap();
+
+    assert!(reg.borrow().probes.contains_key("@seal:build:5"));
+}
+
+#[test]
 fn multiple_distinct_probes_all_registered() {
     let (lua, reg, _cap) = setup("Cookfile");
 
@@ -158,7 +194,8 @@ fn multiple_distinct_probes_all_registered() {
             cook.probe("cc:zlib",  { inputs = {}, produce = "return 1" })
             cook.probe("cc:openssl", { inputs = {}, produce = "return 2" })
             cook.probe("cc:lua", { inputs = {}, produce = "return 3" })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 

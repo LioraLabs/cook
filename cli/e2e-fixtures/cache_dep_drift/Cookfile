@@ -21,14 +21,14 @@ config
     var.CFLAGS = "-O0"
 
 recipe lib_obj
-    ingredients "src/lib.c"
+    gather "src/lib.c"
     cook "build/lib.o" {
         mkdir -p build
         $<CC> $<CFLAGS> -c $<in> -o $<out>
     }
 
 recipe app
-    ingredients "src/main.c"
+    gather "src/main.c"
     cook "build/app" {
         mkdir -p build
         $<CC> $<CFLAGS> $<in> $<lib_obj> -o $<out>

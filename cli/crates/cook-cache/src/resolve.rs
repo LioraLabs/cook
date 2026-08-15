@@ -124,7 +124,7 @@ pub fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-pub fn resolve_ingredient_glob(
+pub fn resolve_gather_glob(
     member_root: &Path,
     workspace_root: &Path,
     raw: &str,
@@ -144,19 +144,19 @@ pub fn resolve_ingredient_glob(
         || matches!(anchored, Some("") | Some(".."))
         || anchored_escapes
     {
-        return Err(format!("malformed workspace anchor in ingredient pattern {raw:?}: use //"));
+        return Err(format!(
+            "malformed workspace anchor in input pattern {raw:?}: use //"
+        ));
     }
     if anchored.is_none() && escapes_base(Path::new(raw)) {
-        return Err(format!(
-            "ingredient pattern {raw:?} escapes member root"
-        ));
+        return Err(format!("input pattern {raw:?} escapes member root"));
     }
     let (root, pattern) = anchored.map_or((member_root, raw), |p| (workspace_root, p));
     let full_pattern = root.join(normalize_glob_pattern(pattern).as_ref());
     let paths = glob::glob(&full_pattern.to_string_lossy())
-        .map_err(|e| format!("invalid ingredient glob {raw:?}: {e}"))?;
+        .map_err(|e| format!("invalid input glob {raw:?}: {e}"))?;
     let resolved = paths
-        .map(|entry| entry.map_err(|e| format!("failed to resolve ingredient glob {raw:?}: {e}")))
+        .map(|entry| entry.map_err(|e| format!("failed to resolve input glob {raw:?}: {e}")))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|p| !matches!(std::fs::metadata(p), Ok(m) if m.is_dir()))
@@ -180,8 +180,8 @@ fn relative_path(from: &Path, to: &Path) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/ingredient_glob_tests.rs"]
-mod ingredient_glob_tests;
+#[path = "tests/gather_glob_tests.rs"]
+mod gather_glob_tests;
 
 /// Reconcile a build-owned directory output (CS-0119) so the subtree rooted at
 /// `working_dir/root` contains exactly `kept` (paths relative to `working_dir`,

@@ -1,6 +1,6 @@
+use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 use mlua::prelude::*;
 use std::path::{Path, PathBuf};
-use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedBodySlot};
@@ -51,7 +51,7 @@ fn validate_input_not_directory(working_dir: &Path, path: &str) -> Result<(), St
 /// downstream reads the answer off the declaration.
 ///
 /// **An entry naming an existing regular file is a path, whatever is in its
-/// name.** That arm is what the rule is for: `ingredients "pages/*.tsx"` is
+/// name.** That arm is what the rule is for: `gather "pages/*.tsx"` is
 /// resolved here at register phase, so `pages/[id].tsx` reaches this call as a
 /// file the register phase has already seen in the tree, and re-reading it as a
 /// character class would expand it, match nothing, and drop it out of the
@@ -358,23 +358,23 @@ pub fn register_unit_api(
             Ok(LuaValue::Table(t)) => Some(collect_string_list(&t, "outputs")?),
             Ok(other) => return Err(type_err("outputs", "a table of strings", other.type_name())),
         };
-        // CS-0127: `ingredient_groups` must be a table of tables of
+        // CS-0127: `gather_groups` must be a table of tables of
         // strings — strict at both levels, never coerced.
-        let ingredient_groups: Vec<Vec<String>> = match tbl.get::<LuaValue>("ingredient_groups") {
+        let gather_groups: Vec<Vec<String>> = match tbl.get::<LuaValue>("gather_groups") {
             Ok(LuaValue::Nil) | Err(_) => Vec::new(),
             Ok(LuaValue::Table(outer)) => {
                 let mut groups = Vec::new();
                 for v in outer.sequence_values::<LuaValue>() {
                     let v = v.map_err(|e| {
-                        LuaError::runtime(format!("cook.add_unit: `ingredient_groups`: {e}"))
+                        LuaError::runtime(format!("cook.add_unit: `gather_groups`: {e}"))
                     })?;
                     match v {
                         LuaValue::Table(inner) => {
-                            groups.push(collect_string_list(&inner, "ingredient_groups")?);
+                            groups.push(collect_string_list(&inner, "gather_groups")?);
                         }
                         other => {
                             return Err(type_err(
-                                "ingredient_groups",
+                                "gather_groups",
                                 "a table of tables of strings",
                                 other.type_name(),
                             ))
@@ -385,7 +385,7 @@ pub fn register_unit_api(
             }
             Ok(other) => {
                 return Err(type_err(
-                    "ingredient_groups",
+                    "gather_groups",
                     "a table of tables of strings",
                     other.type_name(),
                 ))
@@ -776,7 +776,7 @@ pub fn register_unit_api(
         // member, because the member is an observable input (§17.1 observable
         // 5) and is already folded into `command_hash` above. Before CS-0186
         // that case was refused along with the source-less one, so a `test`
-        // fanned out over `ingredients <probe>` re-ran on every invocation
+        // fanned out over `gather <probe>` re-ran on every invocation
         // while its `cook` sibling over the same source cached per member.
         //
         // This is the DECLARED half of the rule. The engine asks it again when
@@ -790,6 +790,7 @@ pub fn register_unit_api(
                 output_paths.len(),
                 cache_inputs.len(),
                 member_keyed,
+                !seal_keys.is_empty(),
             );
         let cache_meta = if cache_enabled {
             let cache_key = cook_contracts::cache::local_key::build_local_cache_key(
@@ -1013,7 +1014,7 @@ pub fn register_unit_api(
                     // makes it an observing unit (§17.1.1.1); nothing else
                     // about it is special.
                     outputs: Vec::new(),
-                    ingredient_groups: vec![],
+                    gather_groups: vec![],
                     step_kind,
                     is_chore: false,
                     line,
@@ -1054,7 +1055,7 @@ pub fn register_unit_api(
                 code: final_code,
                 inputs,
                 outputs: output_paths.clone(),
-                ingredient_groups,
+                gather_groups,
                 step_kind,
                 is_chore,
                 line: chunk_line,
@@ -1237,15 +1238,15 @@ pub fn register_unit_api(
     //
     // Codegen calls this once per test/shell step, inside the
     // enclosing `cook.step_group`, with the same source expression the
-    // step iterates over (`ingredients`, `_cook_outputs_N`, or a literal
+    // step iterates over (`inputs`, `_cook_outputs_N`, or a literal
     // list). The `step_group` close-out then drains the pushed values
     // into `last_cook_step_outputs` per the normal flow.
     let body_slot_pt = body_slot.clone();
     let passthrough_fn = lua.create_function(move |_, list: LuaTable| {
         let mut slot = body_slot_pt.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook.passthrough called outside a recipe body")
-        })?;
+        let body = slot
+            .as_mut()
+            .ok_or_else(|| mlua::Error::runtime("cook.passthrough called outside a recipe body"))?;
         for pair in list.sequence_values::<String>() {
             let item = pair.map_err(|e| {
                 mlua::Error::runtime(format!("cook.passthrough: bad list element: {e}"))
@@ -1347,7 +1348,7 @@ pub fn register_unit_api(
 
     // CS-0186 §8.6.1: the outputs of the preceding output-producing step in
     // the enclosing recipe body — the iteration source a `test` step falls back
-    // on when the recipe declares no `ingredients`.
+    // on when the recipe declares no `inputs`.
     //
     // Read at REGISTER phase rather than baked into codegen, which is what
     // makes it see every unit however it was registered. A parse-time local
@@ -1395,7 +1396,10 @@ pub fn register_unit_api(
         }
         lua.create_sequence_from(body.last_cook_step_outputs.clone())
     })?;
-    cook.set(cook_contracts::registration::PRIOR_OUTPUTS_NAME, prior_outputs_fn)?;
+    cook.set(
+        cook_contracts::registration::PRIOR_OUTPUTS_NAME,
+        prior_outputs_fn,
+    )?;
 
     Ok(())
 }

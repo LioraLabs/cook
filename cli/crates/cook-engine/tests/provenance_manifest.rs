@@ -19,9 +19,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use cook_cache::backend::DeterminantManifest;
 use cook_cache::backend::LocalBackend;
 use cook_cache::CacheBackend;
-use cook_cache::backend::DeterminantManifest;
 use cook_cache::CACHE_VERSION;
 
 fn cook_binary() -> PathBuf {
@@ -102,9 +102,9 @@ fn published_artifact_has_matching_determinant_manifest() {
     var.GREETING = host.env("GREETING", "")
 
 recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        printf '%s\n' "$<GREETING>" > out/art.txt
+        : $<in>; printf '%s\n' "$<GREETING>" > out/art.txt
     }
 "#,
     );

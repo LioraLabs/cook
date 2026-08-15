@@ -1,6 +1,6 @@
 use super::*;
-use cook_register::RegisteredWorkspace;
 use cook_contracts::RecipeUnits;
+use cook_register::RegisteredWorkspace;
 use cook_register::{RecipeKind, RegisteredRecipePub, RegistrationSource};
 use std::path::PathBuf;
 
@@ -57,7 +57,7 @@ fn surface_recipe_populates_serves_and_requires() {
     let info = infos.get("build").expect("build present");
     assert_eq!(info.serves, vec!["build/app".to_string()]);
     assert_eq!(info.requires, vec!["compile".to_string()]);
-    assert!(info.ingredients.is_empty());
+    assert!(info.inputs.is_empty());
 }
 
 #[test]

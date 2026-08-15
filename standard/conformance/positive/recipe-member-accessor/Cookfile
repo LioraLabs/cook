@@ -2,13 +2,13 @@ probe scenes
     json { echo '[{"id":"intro"},{"id":"outro"}]' }
 
 recipe render
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.silent.mp4" { ffmpeg -i $<in.id>.blend $<out> }
 
 recipe tts
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.wav" { tts $<in.id> $<out> }
 
 recipe mux
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }

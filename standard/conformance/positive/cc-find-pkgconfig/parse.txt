@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local r = cook_cc.find(\"zlib\")\n        if not r.found then error(\"zlib not found\") end\n        if #r.system_libs == 0 then error(\"zlib system_libs empty\") end")

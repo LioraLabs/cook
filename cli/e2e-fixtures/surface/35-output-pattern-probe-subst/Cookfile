@@ -4,17 +4,17 @@
 # address inside a declared output path.
 
 probe conf:build
-    ingredients "conf.json"
+    seal "conf.json"
     json { cat conf.json }
 
 recipe good
-    ingredients conf:build:items
+    gather conf:build:items
     cook "out/$<conf:build.prefix>-$<in.id>.txt" { printf 'made %s\n' "$<in.id>" > $<out> }
 
 recipe badcomposite
-    ingredients conf:build:items
+    gather conf:build:items
     cook "out/$<conf:build.items>-$<in.id>.txt" { printf 'x\n' > $<out> }
 
 recipe badmember
-    ingredients conf:build:items
+    gather conf:build:items
     cook "out/$<conf:build.nosuch>-$<in.id>.txt" { printf 'x\n' > $<out> }

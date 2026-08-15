@@ -1,7 +1,0 @@
-recipe "headers"
-    ingredients "include/a.h" "include/b.h"
-
-recipe "list_headers"
-    cook "build/$<headers.stem>.listed" {
-        echo $<in> > $<out>
-    }

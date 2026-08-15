@@ -13,5 +13,5 @@ register
     CFLAGS = flags .. " -j" .. var.jobs
 
 recipe build
-    ingredients "src/main.c"
+    gather "src/main.c"
     cook "build/main" { cc $<optimize> $<in> -o $<out> }

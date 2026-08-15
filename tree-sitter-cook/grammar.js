@@ -61,6 +61,8 @@ module.exports = grammar({
       choice(
         $.recipe,
         $.chore,
+        $.files_declaration,
+        $.tools_declaration,
         $.probe,
         $.config_block,
         $.register_block,
@@ -237,14 +239,37 @@ module.exports = grammar({
         $._newline,
       ),
 
+    // ── Named determinant sets (CS-0222) ───────────────────────
+
+    files_declaration: ($) =>
+      seq(
+        "files",
+        field("name", $._probe_name),
+        $._newline,
+        repeat(choice($._newline, $.comment)),
+        repeat1($.file_set_line),
+      ),
+
+    file_set_line: ($) => seq(repeat1($.glob_pattern), $._newline),
+
+    tools_declaration: ($) =>
+      seq(
+        "tools",
+        field("name", $._probe_name),
+        $._newline,
+        repeat(choice($._newline, $.comment)),
+        repeat1($.tool_set_line),
+      ),
+
+    tool_set_line: ($) =>
+      seq(repeat1(alias($._tool_name, $.identifier)), $._newline),
+
     // ── Probes (COOK-67/68/69, §22, App. A.3.2; CS-0092 / v0.14) ──
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body ::= "files" glob_list NEWLINE
-    //                | ingredients_step? producer NEWLINE
+    //   probe_body ::= seal_step? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
-    //                | ("tools" | "envs") name_list
     //                | exec_lua_block
     //
     // The body region (App. A.3.2 "Column-zero constraint" + the
@@ -255,40 +280,18 @@ module.exports = grammar({
     // itself contains no `shell_command`, so it terminates naturally at
     // the next column-0 top-level item once `producer` closes.
     //
-    // CS-0148: a `files` producer MUST NOT combine with a preceding
-    // `ingredients_step` (§22.5.2, A-grammar A.3.2). This is encoded
-    // syntactically, not just semantically: the `files` form is a
-    // separate first alternative of the top-level choice below, so an
-    // `ingredients` line followed by `files { … }` cannot reduce through
-    // that branch (no `ingredients_step` slot precedes it) and instead
-    // falls into the `producer` branch, where `files` is not a valid
-    // producer keyword — producing an ERROR node.
     probe: ($) =>
       seq(
         $.probe_header,
         $._newline,
         repeat(choice($._newline, $.comment)),
-        choice(
-          alias($.files_producer, $.producer),
-          seq(
-            optional(seq(
-              $.ingredients_step,
-              repeat(choice($._newline, $.comment)),
-            )),
-            $.producer,
-          ),
+        seq(
+          optional(seq(
+            $.seal_step,
+            repeat(choice($._newline, $.comment)),
+          )),
+          $.producer,
         ),
-      ),
-
-    // `files` is a contextual keyword recognised only in this probe-body
-    // position (mirrors `tools`/`envs`/`json`/`lines` in `producer`
-    // below). Aliased to `$.producer` so the tree shape stays uniform
-    // with the other producer kinds (a single `producer` node per probe).
-    files_producer: ($) =>
-      seq(
-        "files",
-        $.glob_list,
-        $._newline,
       ),
 
     probe_header: ($) =>
@@ -311,12 +314,12 @@ module.exports = grammar({
       choice(alias($._bare_probe_key, $.identifier), $.string),
 
     // Default token precedence, deliberately. This carried `prec(-1)` until
-    // it was found to break `repeat1($._disposition_ref)`: a seal/unseal group
+    // it was found to break `repeat1($._disposition_ref)`: a seal step
     // accepted at most ONE bare ref, and only in first position, so
     // `seal a b` and `seal ns:x a` both ERRORed while `seal a ns:x` and
     // `seal ns:a ns:b` parsed — the prefixed alternative carries `prec(1)`
     // and repeated fine. The negative precedence was not needed to keep
-    // contextual keywords (`tools`, `envs`, `files`, `json`, `lines`,
+    // contextual keywords (`tools`, `files`, `json`, `lines`,
     // `local`, `pinned`, `nondet`, `as`) winning: those are string literals,
     // which tree-sitter already prefers over a regex token of equal
     // precedence and equal match length. The at-most-one-colon shape is
@@ -340,39 +343,14 @@ module.exports = grammar({
     probe_dep_list: ($) => repeat1($._probe_ref),
 
     // Producer keywords are contextual because these literals occur only
-    // after a probe header. JSON/lines decorate shell output; tools/envs
-    // accept a non-empty, one-line list of bare names.
-    //
-    // The two name lists take different charsets (CS-0201). A `tools` entry
-    // names an executable on PATH, so it is a TOOL_NAME (its own production;
-    // internal `-` and `.` admitted) and `tree-sitter` / `python3.11` are
-    // spellable. An `envs` entry names an environment variable and stays the
-    // narrow IDENT: a shell cannot address `FOO-BAR`.
+    // after a probe header. JSON/lines decorate shell output.
     producer: ($) =>
       seq(
         choice(
           seq(optional(choice("json", "lines")), field("body", $.shell_block)),
-          seq("tools", $.tool_name_list),
-          seq("envs", $.env_name_list),
           field("body", $.exec_lua_block),
         ),
         $._newline,
-      ),
-
-    tool_name_list: ($) =>
-      seq(
-        "{",
-        alias($._tool_name, $.identifier),
-        repeat(seq(optional(","), alias($._tool_name, $.identifier))),
-        "}",
-      ),
-
-    env_name_list: ($) =>
-      seq(
-        "{",
-        alias($._lua_ident, $.identifier),
-        repeat(seq(optional(","), alias($._lua_ident, $.identifier))),
-        "}",
       ),
 
     // TOOL_NAME is its own production (CS-0201) and keeps the dot: an
@@ -381,26 +359,10 @@ module.exports = grammar({
     // module-prefix colon: a tool name has no namespace.
     _tool_name: ($) => token(/[A-Za-z_][A-Za-z0-9_.-]*/),
 
-    // A.3.2 `glob_list` — same brace shape as `name_list` (comma/whitespace
-    // separated, single physical line), holding quoted glob patterns with
-    // an optional `!` exclude prefix instead of bare IDENTs. Mirrors
-    // `name_list`'s convention of requiring the first entry syntactically
-    // (an empty `{}` MISSES the first `glob_pattern`, matching how an
-    // empty `tools {}`/`envs {}` is rejected above): the A-grammar prose
-    // (§22.5.2) requires a conforming implementation to reject an empty
-    // `glob_list`.
-    glob_list: ($) =>
-      seq(
-        "{",
-        $.glob_pattern,
-        repeat(seq(optional(","), $.glob_pattern)),
-        "}",
-      ),
-
     glob_pattern: ($) =>
       choice(
         $.string,
-        seq("!", $.string),
+        seq("!", alias(token.immediate(/"([^"\\]|\\.)*"/), $.string)),
       ),
 
     // ── Recipe body ────────────────────────────────────────────
@@ -410,7 +372,7 @@ module.exports = grammar({
         seq(
           $._recipe_indent,
           choice(
-            $.ingredients_step,
+            $.gather_step,
             $.seal_step,
             $.cook_step,
             $.test_step,
@@ -422,8 +384,7 @@ module.exports = grammar({
       ),
 
     // App. A.4 + CS-0078 multi-line patterns:
-    //   ingredients_step ::= "ingredients" (ingredient+ | probe_ref) NEWLINE
-    //   ingredient       ::= STRING | "!" STRING
+    //   input       ::= STRING | "!" STRING
     // CONT is an external token (_step_continuation_newline) emitted only
     // when the next line begins with `"` or `!"`; otherwise the declaration
     // terminates and the next line dispatches per App. A.4's priority order.
@@ -432,32 +393,29 @@ module.exports = grammar({
     // segment cap, so `ns:cards:items` lexes as one key; whether a
     // trailing segment selects a field is resolved at register time, not
     // in the grammar.
-    ingredients_step: ($) =>
+    gather_step: ($) =>
       choice(
         seq(
-          "ingredients",
-          choice($.string, $.ingredient_exclude),
-          repeat(seq(
-            optional($._step_continuation_newline),
-            choice($.string, $.ingredient_exclude),
-          )),
+          "gather",
+          choice($.string, $.gather_exclude),
+          repeat(seq(optional($._step_continuation_newline), choice($.string, $.gather_exclude))),
           $._newline,
         ),
         seq(
-          "ingredients",
-          field("probe", alias($._bare_probe_key, $.identifier)),
+          "gather",
+          field("source", alias($._bare_probe_key, $.identifier)),
+          repeat(seq(optional($._step_continuation_newline), $.string)),
           $._newline,
         ),
       ),
 
-    ingredient_exclude: ($) => seq("!", $.string),
+    gather_exclude: ($) => seq("!", $.string),
 
-    // Appendix A recipe-level determinant baseline. `unseal` is trailing-only
-    // and is therefore admitted below only as a cook modifier.
+    // Appendix A recipe-level determinant set.
     seal_step: ($) =>
       seq(
         "seal",
-        repeat1($._disposition_ref),
+        repeat1(choice($._disposition_ref, $.gather_exclude)),
         $._newline,
       ),
 
@@ -486,20 +444,7 @@ module.exports = grammar({
         $._newline,
       ),
 
-    cook_mods: ($) =>
-      choice(
-        seq(
-          repeat1(choice($.seal_group, $.unseal_group)),
-          optional($.share_mod),
-        ),
-        $.share_mod,
-      ),
-
-    seal_group: ($) =>
-      seq("seal", repeat1($._disposition_ref)),
-
-    unseal_group: ($) =>
-      seq("unseal", repeat1($._disposition_ref)),
+    cook_mods: ($) => $.share_mod,
 
     _disposition_ref: ($) =>
       choice(
@@ -511,7 +456,7 @@ module.exports = grammar({
     share_mod: ($) => choice("local", "pinned", "nondet"),
 
     // §8.4.2 (CS-0089): `cook (LUA_EXPR)` — a parenthesised Lua expression
-    // in the output slot, evaluated once per ingredient at register time.
+    // in the output slot, evaluated once per input at register time.
     // Balanced-paren interior with single-level quoted-string opacity
     // (mirrors the §7.1.1 chore-param scanner; Lua long-brackets are NOT
     // handled, per the documented v1 limitation in §8.4.2).
@@ -539,24 +484,12 @@ module.exports = grammar({
         "}",
       ),
 
-    // CS-0159: a `test` is a cacheable unit, so it takes the INPUT half of
-    // the trailing tail — seal/unseal. No `share_mod`: local/pinned/nondet
-    // state a fact about an output artifact and a test produces none, so
-    // they are rejected here (App. A, §8.4.3.3).
     test_step: ($) =>
       seq(
         "test",
         field("body", choice($.shell_block, $.exec_lua_block)),
-        optional($.test_mods),
         $._newline,
       ),
-
-    // CS-0159 §8.4.3.3. Deliberately NOT `cook_mods`: a test takes the input
-    // half of the tail only. `share_mod` (local/pinned/nondet) states a fact
-    // about an output artifact and a test produces none, so it has no slot
-    // here — a `test { … } local` fails to parse rather than reducing to a
-    // node the Rust parser must then reject.
-    test_mods: ($) => repeat1(choice($.seal_group, $.unseal_group)),
 
     lua_line: ($) =>
       seq(

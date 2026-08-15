@@ -5,9 +5,10 @@ Cookfile
   recipes:
     Recipe name="build" line=8
       deps: []
-      ingredients: ["src/main.c"]
+      inputs: ["src/main.c"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/main"] body=ShellBlock(["$<CC> $<CFLAGS> $<in> -o $<out>"])
   chores:
   register_blocks: []

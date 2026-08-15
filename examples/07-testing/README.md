@@ -9,12 +9,12 @@ it doesn't.
 
 ```
 recipe check: app
-    ingredients "tests/*.sh"
+    gather "tests/*.sh"
     test { ./$<in> }
     test { ! grep -q lowercase $<app> }
 ```
 
-- `ingredients "tests/*.sh"` + `test { ./$<in> }` is **one-to-one**: every
+- `gather "tests/*.sh"` + `test { ./$<in> }` is **one-to-one**: every
   script under `tests/` runs as its own test unit, `$<in>` naming the
   current script.
 - `test { ! grep -q lowercase $<app> }` is a **naked** one-shot test — no

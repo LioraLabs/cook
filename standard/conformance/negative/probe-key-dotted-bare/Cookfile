@@ -1,2 +1,2 @@
 probe cc.version
-    envs { PATH }
+    lines { echo "$PATH" }

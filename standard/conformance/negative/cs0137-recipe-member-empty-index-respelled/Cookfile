@@ -2,9 +2,9 @@ probe scenes
     >{ return { { id = "a" }, { id = "b" } } }
 
 recipe render
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.out" { echo "$<in.id>" > $<out> }
 
 recipe mux
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.mp4" { cat $<render[]> > $<out> }

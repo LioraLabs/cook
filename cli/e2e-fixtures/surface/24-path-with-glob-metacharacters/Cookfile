@@ -6,5 +6,5 @@
 # changed. The metachar-free sibling keeps the unit looking alive.
 
 recipe bundle
-    ingredients "pages/*.tsx"
+    gather "pages/*.tsx"
     cook "out/bundle.txt" { mkdir -p out && cat $<in> > $<out> }

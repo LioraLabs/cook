@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::ast::*;
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
@@ -98,7 +96,7 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
 ///    Always `false` when `allow_exclude` is false; the caller may ignore.
 ///  * `leftover` — the unparsed remainder of the line where collection
 ///    stopped. For `cook`, this is the text starting at the body opener
-///    (`{` or `>{`). For `ingredients`, this is empty (no trailing clause).
+///    (`{` or `>{`). For `gather`, this is empty (no trailing clause).
 ///  * `new_pos` — token-stream position pointing at the first token of the
 ///    line where collection stopped (e.g. the line containing the body
 ///    opener for `cook`, or the line that broke the pattern run). NOTE: this differs
@@ -108,7 +106,7 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
 ///
 /// The caller must inspect `leftover` to decide whether the stopping line
 /// is well-formed (e.g. begins with `{` or `>{` for cook, is empty for
-/// ingredients).
+/// gather).
 pub(crate) fn collect_quoted_patterns_multiline(
     initial_text: &str,
     initial_line: usize,
@@ -171,11 +169,12 @@ pub(crate) fn collect_quoted_patterns_multiline(
     }
 }
 
-/// Parse an ingredients declaration. Patterns may span multiple physical
+/// Parse a gather declaration. Patterns may span multiple physical
 /// lines as long as each continuation line begins with `"` or `!"`.
 /// Returns (includes, excludes, new_pos).
-pub(crate) fn parse_ingredients_line(
+pub(crate) fn parse_gather_line(
     text: &str,
+    keyword: &str,
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
@@ -188,7 +187,7 @@ pub(crate) fn parse_ingredients_line(
     if !leftover.trim().is_empty() {
         return Err(ParseError::Parse {
             line,
-            message: format!("ingredients: expected '\"' or '!\"', found: {}", leftover),
+            message: format!("{keyword}: expected '\"' or '!\"', found: {leftover}"),
         });
     }
     let mut includes = Vec::new();
@@ -211,18 +210,18 @@ pub(crate) fn parse_ingredients_line(
     Ok((includes, excludes, pos))
 }
 
-
-/// Parse an `ingredients <probe>` member source (COOK-88). A bare probe key
-/// (`IDENT (":" IDENT)?`) used as an iteration driver; returns the desugared
+/// Parse a bare `gather` member source. A declaration or probe key used as an
+/// iteration driver returns the desugared
 /// `MemberSourceStep`. The lexical discriminator (quote vs bare ident) is
 /// decided by the caller in `recipe.rs`.
-pub(crate) fn parse_ingredients_probe_source(
+pub(crate) fn parse_gather_bare_source(
     rest: &str,
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
+    gather: bool,
 ) -> Result<(MemberSourceStep, usize), ParseError> {
-    // CS-0201: `-` is in PROBE_SEG. It was missing here, so `ingredients
+    // CS-0201: `-` is in PROBE_SEG. It was missing here, so `gather
     // cc-version` scanned only `cc` and then reported the remainder as
     // "unexpected trailing content '-version'" — blaming the trailer for a
     // charset the declaration had already accepted.
@@ -232,66 +231,69 @@ pub(crate) fn parse_ingredients_probe_source(
     if end == 0 {
         return Err(ParseError::Parse {
             line,
-            message: "ingredients: expected a \"glob\" pattern or a probe key".to_string(),
+            message: "gather: expected a \"glob\" pattern or a bare source name".to_string(),
         });
     }
     let key = rest[..end].to_string();
-    // COOK-190 / §22.5.10: the source ref is `probe_ref (":" IDENT)?` — a
-    // probe key of at most two `:`-separated segments (§22.5.2), plus one
-    // optional trailing `:field` selector. Validate the shape here so a
-    // malformed ref (empty segment, non-ident start, 4+ segments) fails at
-    // parse time instead of surfacing as a bogus "no such probe" register
-    // error. Which colon is key vs selector is resolved against the probe
-    // registry in the register pre-pass, not here.
-    // CS-0201: the segment cap is gone. It was three here (a two-segment key
-    // plus an optional selector), but the cap was only ever enforced on the
-    // surface declaration and never by `cook.probe()`, so modules mint
-    // three-segment keys as their ordinary case and `cc:find:raylib:field`
-    // was unspellable. Which colon is key and which is selector is still
-    // resolved against the probe registry in the register pre-pass, not here.
+    // CS-0201: source refs admit any number of key segments. Which final
+    // colon belongs to the key and which introduces a selector is resolved
+    // against the probe registry in the register pre-pass, not here.
     if !cook_contracts::probe_key::is_valid_bare(&key) {
+        let message = cook_contracts::probe_key::bare_key_error("gather", &key)
+            .replacen("probe key", "bare source name", 1);
         return Err(ParseError::Parse {
             line,
-            message: cook_contracts::probe_key::bare_key_error("ingredients", &key),
+            message,
         });
     }
-    // CS-0197: quoted file globs MAY trail the probe key. Each is an
+    // CS-0197: quoted file globs MAY trail the bare source name. Each is an
     // ordinary "PATTERN" (the two-category discriminator of §22.5.10 holds:
-    // bare = the probe source, quoted = literal filesystem globs); they fold
+    // bare = a named source, quoted = literal filesystem globs); they fold
     // into every member unit's declared inputs. Anything else trailing the
     // key is still an error.
-    let mut extra_ingredients: Vec<String> = Vec::new();
+    let mut extra_gather: Vec<String> = Vec::new();
     let mut leftover = rest[end..].trim();
     while !leftover.is_empty() {
         let Some(stripped) = leftover.strip_prefix('"') else {
             return Err(ParseError::Parse {
                 line,
                 message: format!(
-                    "ingredients: unexpected trailing content '{leftover}' after probe key                      (only quoted \"glob\" patterns may follow the source)"
+                    "gather: unexpected trailing content '{leftover}' after source name (only quoted \"glob\" patterns may follow the source)"
                 ),
             });
         };
         let Some(close) = stripped.find('"') else {
             return Err(ParseError::Parse {
                 line,
-                message: "ingredients: unterminated \" in trailing glob pattern".to_string(),
+                message: "gather: unterminated \" in trailing glob pattern".to_string(),
             });
         };
         let pat = &stripped[..close];
         if pat.is_empty() {
             return Err(ParseError::Parse {
                 line,
-                message: "ingredients: empty trailing glob pattern".to_string(),
+                message: "gather: empty trailing glob pattern".to_string(),
             });
         }
-        extra_ingredients.push(pat.to_string());
+        extra_gather.push(pat.to_string());
         leftover = stripped[close + 1..].trim();
     }
     let mut pos = current_pos + 1;
     while pos < tokens.len() && tokens[pos].line <= line {
         pos += 1;
     }
-    Ok((MemberSourceStep { source: MemberSource::ProbeKey(key), extra_ingredients }, pos))
+    let source = if gather {
+        MemberSource::GatherKey(key)
+    } else {
+        MemberSource::ProbeKey(key)
+    };
+    Ok((
+        MemberSourceStep {
+            source,
+            extra_gather,
+        },
+        pos,
+    ))
 }
 
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the
@@ -356,18 +358,13 @@ fn scan_balanced_paren_expr<'a>(
     })
 }
 
-/// Build the parsed disposition + per-unit unseal set from a modifier tail.
-fn cook_disposition_from_tail(
-    tail: &str,
-    line: usize,
-) -> Result<(Disposition, BTreeSet<String>), ParseError> {
+fn cook_disposition_from_tail(tail: &str, line: usize) -> Result<Disposition, ParseError> {
     let m = crate::disposition::parse_cook_modifiers(tail, line)?;
-    let disposition = Disposition {
-        seal: m.seal,
+    Ok(Disposition {
+        seal: Default::default(),
         sharing: m.sharing,
         record: m.record,
-    };
-    Ok((disposition, m.unseal))
+    })
 }
 
 pub(crate) fn parse_cook_line(
@@ -376,7 +373,7 @@ pub(crate) fn parse_cook_line(
     tokens: &[Located<Token>],
     current_pos: usize,
     source_lines: &[&str],
-) -> Result<(CookStep, BTreeSet<String>, usize), ParseError> {
+) -> Result<(CookStep, usize), ParseError> {
     let rest = rest.trim();
 
     // §8.4.2 Lua-expression form: `cook (EXPR) >{ ... }`. Detected by a
@@ -402,7 +399,7 @@ pub(crate) fn parse_cook_line(
 
         if leftover.is_empty() {
             // Declaration-only Lua-expr cook step is meaningless: there's
-            // no body to evaluate, and the unit's ingredients can't drive
+            // no body to evaluate, and the unit's inputs can't drive
             // anything. Reject early — §8.4.2 implies a body-bearing step.
             return Err(ParseError::Parse {
                 line,
@@ -419,18 +416,15 @@ pub(crate) fn parse_cook_line(
             });
         }
 
-        let (body, tail, new_pos) = parse_body_payload(
-            leftover,
-            line,
-            tokens,
-            current_pos,
-            source_lines,
-            "cook",
-        )?;
-        let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
+        let (body, tail, new_pos) =
+            parse_body_payload(leftover, line, tokens, current_pos, source_lines, "cook")?;
+        let disposition = cook_disposition_from_tail(&tail, line)?;
         return Ok((
-            CookStep { outputs, body: Some(body), disposition },
-            unseal,
+            CookStep {
+                outputs,
+                body: Some(body),
+                disposition,
+            },
             new_pos,
         ));
     }
@@ -490,12 +484,21 @@ pub(crate) fn parse_cook_line(
     // the line `leftover` came from. Read its line number off the token.
     let body_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
 
-    let (body, tail, new_pos) =
-        parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
-    let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
+    let (body, tail, new_pos) = parse_body_payload(
+        after_pattern,
+        body_line,
+        tokens,
+        pos_after_patterns,
+        source_lines,
+        "cook",
+    )?;
+    let disposition = cook_disposition_from_tail(&tail, line)?;
     Ok((
-        CookStep { outputs, body: Some(body), disposition },
-        unseal,
+        CookStep {
+            outputs,
+            body: Some(body),
+            disposition,
+        },
         new_pos,
     ))
 }

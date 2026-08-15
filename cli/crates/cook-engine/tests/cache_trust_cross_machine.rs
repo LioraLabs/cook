@@ -12,7 +12,7 @@
 //!   * `generate` (`record`)     — warm hit reuses the recording, no re-generate.
 //!   * `pin` (`pinned`)          — cold miss in both stores is a HARD ERROR.
 //!
-//! The host signal is an `envs { SIMHOST }` probe; flipping SIMHOST
+//! The host signal is a shell probe over `SIMHOST`; flipping SIMHOST
 //! simulates moving to a different machine. Per-unit runlogs make a re-run
 //! observable; `record` counts via a byte-appended side file. The shared store
 //! is a LocalBackend rooted at `.cook/cloud.toml`'s cache_dir, in a SEPARATE
@@ -36,27 +36,27 @@ fn cook_binary() -> std::path::PathBuf {
 }
 
 const COOKFILE: &str = r#"probe host
-    envs { SIMHOST }
+    lines { echo "$SIMHOST" }
 
 recipe portable
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/portable.txt" {
-        cp src/in.txt out/portable.txt
+        cp $<in> out/portable.txt
         echo ran >> out/portable.runlog
     }
 
 recipe hostdep
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     seal host
     cook "out/host.txt" {
-        printf 'built\n' > out/host.txt
+        : $<in>; printf 'built\n' > out/host.txt
         echo ran >> out/host.runlog
     }
 
 recipe scratch
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/scratch.txt" {
-        printf 'scratch-only-marker\n' > out/scratch.txt
+        : $<in>; printf 'scratch-only-marker\n' > out/scratch.txt
         echo ran >> out/scratch.runlog
     } local
 
@@ -67,9 +67,9 @@ recipe generate
     } nondet
 
 recipe pin
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/pin.txt" {
-        cp src/in.txt out/pin.txt
+        cp $<in> out/pin.txt
         echo ran >> out/pin.runlog
     } pinned
 "#;

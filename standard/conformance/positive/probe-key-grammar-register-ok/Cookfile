@@ -2,17 +2,17 @@ probe cc-version
     lines { echo one }
 
 probe demo:cc-version
-    envs { PATH }
+    lines { echo "$PATH" }
 
 probe cc:find:raylib
-    envs { PATH }
+    lines { echo "$PATH" }
 
 probe "odd+spelling"
-    envs { PATH }
+    lines { echo "$PATH" }
 
 recipe build
-    ingredients cc-version
-    seal demo:cc-version cc:find:raylib "odd+spelling"
+    gather cc-version
+    seal demo:cc-version cc:find:raylib
     cook "out/$<in>.stamp" {
-        echo "$<in>" > $<out>
+        echo '$<in>' > $<out>
     }

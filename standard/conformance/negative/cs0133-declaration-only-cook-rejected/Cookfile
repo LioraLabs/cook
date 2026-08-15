@@ -1,4 +1,4 @@
 recipe "build"
-    ingredients "src/*.c"
+    seal "src/*.c"
     cook "bin/app"
     gcc src/main.c -o bin/app

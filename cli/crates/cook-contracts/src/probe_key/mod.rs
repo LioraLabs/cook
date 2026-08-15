@@ -78,7 +78,7 @@ pub fn is_tool_name(s: &str) -> bool {
 }
 
 /// The diagnostic for a bare key that does not match the grammar. One wording,
-/// so `seal`, `ingredients` and the declaration cannot blame different things
+/// so `seal`, `gather` and the declaration cannot blame different things
 /// for the same cause.
 pub fn bare_key_error(site: &str, key: &str) -> String {
     let hint = if key.contains('.') {

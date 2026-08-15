@@ -1,4 +1,0 @@
-recipe build
-    seal a b
-    cook "x.o" { cc -c x.c -o x.o } unseal a
-    cook "y.o" { cc -c y.c -o y.o }

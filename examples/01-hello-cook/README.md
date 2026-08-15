@@ -1,15 +1,15 @@
 # 01 — hello, cook
 
-The smallest useful Cookfile: one `recipe`, an `ingredients` glob, and one
+The smallest useful Cookfile: one `recipe`, a `gather` glob, and one
 `cook` step that fans out — one unit of work per input file.
 
 ```
 recipe build
-    ingredients "notes/*.md"
+    gather "notes/*.md"
     cook "out/$<in.stem>.html" { sed ... $<in> > $<out> }
 ```
 
-- `ingredients "notes/*.md"` declares the recipe's inputs.
+- `gather "notes/*.md"` declares the recipe's inputs.
 - `cook "out/$<in.stem>.html"` declares one output **per input** —
   `$<in.stem>` is the input's basename without extension.
 - The `{ ... }` body is shell; `$<in>` and `$<out>` are substituted per unit.

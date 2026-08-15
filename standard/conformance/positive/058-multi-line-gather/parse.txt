@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      inputs: ["neo/sys/*.cpp", "neo/sys/posix/*.cpp"]
+      excludes: ["neo/sys/sdl/*.cpp"]
+      steps:
+        Gather
+        Cook outputs=["build/sys.o"] body=ShellBlock(["cat $<in> > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

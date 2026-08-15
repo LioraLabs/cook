@@ -71,16 +71,6 @@ declaration ordering, duplicate imports and config blocks, and chore parameter
 well-formedness. These are properties of the file, not of the program, and each
 one is a rejection rather than an inference.
 
-**Known divergence.** One grammar is spelled four ways here. A hyphenated or
-dotted probe key is declarable (`probe cc-version`, CS-0131) and referenceable
-through a sigil, but `seal cc-version` is rejected as a "malformed probe ref"
-by `disposition.rs`, and `ingredients cc-version` is rejected as "unexpected
-trailing content" by `cook_line.rs`. The `ingredients` half is a residual the
-Standard records (App. E, CS-0131); the `seal` half is not recorded anywhere,
-and the two rejections blame different things for the same cause. Consolidating
-onto one `PROBE_SEG` predicate is the fix; by the `cook-contracts` admission
-bar, that predicate is pure shared law and wants a single home.
-
 ## Cook Standard claim
 
 This crate claims **Cook Standard v0.18**.

@@ -1,8 +1,8 @@
 pub mod ast;
-pub mod lexer;
 pub(crate) mod brace_scan;
 pub(crate) mod cook_line;
 pub(crate) mod disposition;
+pub mod lexer;
 pub(crate) mod lua_block;
 pub(crate) mod probe;
 pub(crate) mod recipe;
@@ -17,6 +17,8 @@ pub(crate) mod shell_block;
 /// Move this constant in lockstep with `standard/VERSION` when the parser
 /// catches up to a new cut. See `cli/crates/cook-lang/CONFORMANCE.md`.
 pub const COOK_STANDARD_VERSION: &str = "0.18";
+
+pub use brace_scan::shell_placeholder_contexts;
 
 use ast::*;
 use lexer::*;
@@ -36,7 +38,10 @@ pub enum ParseError {
 /// Validate an import path token and classify it as tree-relative or sigil-anchored.
 /// Per §7.2, returns Err for paths containing `..`, absolute paths (other than `//` sigils),
 /// and sigil paths with `..` after the sigil.
-fn validate_and_classify_import_path(raw: &str, line: usize) -> Result<ast::ImportPath, ParseError> {
+fn validate_and_classify_import_path(
+    raw: &str,
+    line: usize,
+) -> Result<ast::ImportPath, ParseError> {
     if let Some(after_sigil) = raw.strip_prefix("//") {
         // Sigil-anchored. Reject `..` segments after the sigil and leading `/`.
         if after_sigil.starts_with('/') {
@@ -205,9 +210,10 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 }
                 callable_decls.insert(name.clone(), (CallableKind::Recipe, recipe_line));
                 pos += 1;
-                let (recipe, new_pos) =
+                let (recipe, inline_probes, new_pos) =
                     parse_recipe(name, deps, recipe_line, &tokens, pos, &source_lines)?;
                 recipes.push(recipe);
+                probes.extend(inline_probes);
                 pos = new_pos;
             }
             Token::ChoreHeader { name, params, deps } => {
@@ -246,7 +252,10 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                         pos,
                         &source_lines,
                     )?;
-                    top_level_module_calls.push(ast::TopLevelModuleCall { code, line: header_line });
+                    top_level_module_calls.push(ast::TopLevelModuleCall {
+                        code,
+                        line: header_line,
+                    });
                     pos = new_pos;
                 } else {
                     return Err(ParseError::Parse {
@@ -321,12 +330,28 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
             Token::ProbeHeader { name, deps } => {
                 let probe_line = tok.line;
                 let name = name.clone();
+                if name.starts_with("@seal:") {
+                    return Err(ParseError::Parse { line: probe_line, message: "probe: keys beginning `@seal:` are reserved for inline file determinants".into() });
+                }
                 let deps = deps.clone();
                 pos += 1;
-                let (probe, new_pos) =
+                let (probe, inline_probes, new_pos) =
                     probe::parse_probe(name, deps, probe_line, &tokens, pos, &source_lines)?;
                 probes.push(probe);
+                probes.extend(inline_probes);
                 pos = new_pos;
+            }
+            Token::FilesHeader { name } => {
+                let line = tok.line; let name = name.clone(); pos += 1;
+                if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "files: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                let (probe, new_pos) = probe::parse_files_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
+            }
+            Token::ToolsHeader { name } => {
+                let line = tok.line; let name = name.clone(); pos += 1;
+                if name.starts_with("@seal:") { return Err(ParseError::Parse { line, message: "tools: keys beginning `@seal:` are reserved for inline file determinants".into() }); }
+                let (probe, new_pos) = probe::parse_tools_declaration(name, line, &tokens, pos, &source_lines)?;
+                probes.push(probe); pos = new_pos;
             }
             Token::RegisterHeader => {
                 let header_line = tok.line;
@@ -345,13 +370,25 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 pos += 1;
                 let (body, new_pos) =
                     parse_register_block_lua(&tokens, pos, header_line, &source_lines)?;
-                register_blocks.push(ast::RegisterBlock { body, line: header_line });
+                register_blocks.push(ast::RegisterBlock {
+                    body,
+                    line: header_line,
+                });
                 pos = new_pos;
             }
         }
     }
 
-    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks, top_level_module_calls, probes })
+    Ok(Cookfile {
+        config_blocks,
+        recipes,
+        chores,
+        uses,
+        imports,
+        register_blocks,
+        top_level_module_calls,
+        probes,
+    })
 }
 
 #[cfg(test)]

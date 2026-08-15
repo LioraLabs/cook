@@ -8,15 +8,14 @@
   "register"
   "use"
   "import"
-  "ingredients"
+  "gather"
   "cook"
   "test"
   "seal"
-  "unseal"
 ] @keyword
 
 (producer
-  ["json" "lines" "tools" "envs" "files"] @keyword)
+  ["json" "lines" "tools" "files"] @keyword)
 
 (share_mod) @keyword.modifier
 
@@ -50,10 +49,7 @@
 (probe_dep_list
   (string) @function)
 
-(tool_name_list
-  (identifier) @variable)
-
-(env_name_list
+(tool_set_line
   (identifier) @variable)
 
 ; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────
@@ -122,26 +118,23 @@
 (cook_step
   outputs: (string) @string.special)
 
-(ingredients_step
-  (string) @string)
-
-(ingredients_step
-  probe: (identifier) @variable)
-
-(ingredient_exclude
+(gather_exclude
   "!" @operator)
 
-(ingredient_exclude
+(gather_exclude
   (string) @string)
 
 (seal_step
   (identifier) @function)
 
-(seal_group
-  (identifier) @function)
+(files_declaration
+  name: (identifier) @function)
 
-(unseal_group
-  (identifier) @function)
+(tools_declaration
+  name: (identifier) @function)
+
+"files" @keyword
+"tools" @keyword
 
 ; ── Top-level module call (CS-0072) ─────────────────────────────
 

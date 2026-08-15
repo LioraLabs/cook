@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="emit" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out.txt"] body=ShellBlock(["cat <<'END' > out.txt", "} stays literal", "END"])

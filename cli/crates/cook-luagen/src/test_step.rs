@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::long_bracket::lua_chunk_literal;
-use crate::use_prelude::with_execute_prelude;
 use crate::template::{
     detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
     ConsultedEnv, PlateTestMode,
 };
+use crate::use_prelude::with_execute_prelude;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
@@ -23,7 +23,7 @@ pub enum CodegenError {
     },
     #[error(
         "test step at line {line} requires a non-empty source (one-to-one or \
-         many-to-one mode) — add an `ingredients` declaration or a preceding `cook` \
+         many-to-one mode) — add a `gather` declaration or a preceding `cook` \
          step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
@@ -58,7 +58,7 @@ pub(crate) fn generate_test_step(
     line: usize,
     uses: &[UseStatement],
     last_cook_index: Option<usize>,
-    has_ingredients: bool,
+    has_gather: bool,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     let mode = detect_plate_test_mode(&test_step.body)
@@ -67,35 +67,33 @@ pub(crate) fn generate_test_step(
         .map_err(|e| CodegenError::Placeholder { line, source: e })?;
 
     // CS-0024 §3.5: a OneToOne or ManyToOne test step requires a non-empty
-    // source — either a preceding cook step or at least one declared ingredient
+    // source — either a preceding cook step or at least one declared input
     // glob.  OneShot has no source at all, so the guard does not apply.
     if matches!(mode, PlateTestMode::OneToOne | PlateTestMode::ManyToOne)
         && last_cook_index.is_none()
-        && !has_ingredients
+        && !has_gather
     {
         return Err(CodegenError::EmptySource { line });
     }
 
     // Iteration source per §8.6.1: the preceding step's outputs, falling back
-    // to the resolved ingredient set. The `ingredients` local emitted by
-    // `recipe.rs` carries the §4.3 union; `recipe.ingredients[1]` would drop
+    // to the resolved input set. The `inputs` local emitted by
+    // `recipe.rs` carries the §4.3 union; `recipe.inputs[1]` would drop
     // globs 2..N.
     //
     // The chain is evaluated at REGISTER phase, through `cook.prior_outputs()`,
     // rather than resolved here to a parse-time local. `_cook_outputs_N` exists
     // only for a `cook` step the parser lowered, so a `test` following a unit
     // declared by `cook.add_unit` — how every module target-maker declares its
-    // units — saw no source and fell back to `ingredients` or to nothing. The
+    // units — saw no source and fell back to `inputs` or to nothing. The
     // engine covered for that by walking the unit's DAG predecessors, which is
     // exactly what CS-0186 removes. Asking at register phase sees every unit
     // however it was registered, and keeps the answer in the declaration.
     let src = format!("_test_src{line}");
     let source_expr = src.clone();
     out.push_str(&format!("    local {src} = cook.prior_outputs()\n"));
-    if has_ingredients {
-        out.push_str(&format!(
-            "    if #{src} == 0 then {src} = ingredients end\n"
-        ));
+    if has_gather {
+        out.push_str(&format!("    if #{src} == 0 then {src} = inputs end\n"));
     }
     // `last_cook_index` no longer selects the source; it survives only as the
     // "is there a preceding producing step at parse time" signal the
@@ -111,19 +109,19 @@ pub(crate) fn generate_test_step(
     //
     // The mode decides the shape, and the mode is the sigil deduction: a body
     // referencing the iteration item reads ONE item, so that is what its unit
-    // declares. What the source happens to BE — resolved ingredients, or the
+    // declares. What the source happens to BE — resolved inputs, or the
     // preceding cook step's outputs — decides only what `_test_in` holds.
     //
     // CS-0182 made the one-to-one narrowing conditional on the source being
-    // `ingredients`, on the ground that an upstream output declared as an input
+    // `inputs`, on the ground that an upstream output declared as an input
     // would be a reclassification. CS-0186 withdraws that: in one-to-one mode
     // the item IS what the unit reads (`test { ./$<in> }` runs one binary), so
     // declaring it is the declaration being accurate. The exclusion cost §8.6's
-    // own Example 8.6.1 any reuse at all — both units of `ingredients "src/*.c"`
+    // own Example 8.6.1 any reuse at all — both units of `gather "src/*.c"`
     // → `cook "build/$<in.stem>"` → `test { ./$<in> }` recorded all four paths,
     // so editing one source re-ran the whole fan-out.
     //
-    // Declaring the item rather than the ingredient behind it is also what
+    // Declaring the item rather than the input behind it is also what
     // restores early cutoff: the unit for `build/a` declares `build/a`, so
     // editing `src/a.c` re-runs it only if the rebuilt bytes actually moved.
     let inputs_field: String = match mode {
@@ -140,8 +138,7 @@ pub(crate) fn generate_test_step(
     };
     let inputs_field: &str = &inputs_field;
 
-    // CS-0159: the test unit's effective seal set (recipe baseline folded with
-    // this step's trailing seal/unseal by the parser). Emitted as a leading
+    // The test unit's recipe seal set. Emitted as a leading
     // `seal = {...}, ` field so every add_test arm below carries it uniformly;
     // empty when the test seals nothing, keeping existing goldens for
     // unsealed tests byte-identical.
@@ -165,10 +162,9 @@ pub(crate) fn generate_test_step(
             PlateTestMode::OneToOne => {
                 let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
-                let (cmd_expr, probe_keys) = expand_plate_test_body(
-                    &cmd_text, recipe_names, "_test_in", &mut consulted,
-                )
-                .map_err(|source| CodegenError::SigilResolve { line, source })?;
+                let (cmd_expr, probe_keys) =
+                    expand_plate_test_body(&cmd_text, recipe_names, "_test_in", &mut consulted)
+                        .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
                 out.push_str(&format!(
                     "    for _, _test_in in ipairs({}) do\n        cook.add_unit({{step_kind = \"test\", command = {}, {}{}line = {}, member = _test_in, consulted_env_keys = {}}})\n    end\n",
@@ -183,10 +179,9 @@ pub(crate) fn generate_test_step(
             PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
                 let cmd_text = cook_contracts::shell_block::compose(lines);
                 let mut consulted = ConsultedEnv::new();
-                let (cmd_expr, probe_keys) = expand_plate_test_body(
-                    &cmd_text, recipe_names, "\"\"", &mut consulted,
-                )
-                .map_err(|source| CodegenError::SigilResolve { line, source })?;
+                let (cmd_expr, probe_keys) =
+                    expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &mut consulted)
+                        .map_err(|source| CodegenError::SigilResolve { line, source })?;
                 reject_probe_refs_in_command(line, probe_keys)?;
                 out.push_str(&format!(
                     "    cook.add_unit({{step_kind = \"test\", command = {}, {}{}line = {}, consulted_env_keys = {}}})\n",
@@ -226,7 +221,7 @@ pub(crate) fn generate_test_step(
     // Standard §5.4.1: a `test` step's output is a passthrough of its
     // input list — independent of how the body uses (or ignores) the
     // source. Same source-availability guard as plate.
-    if last_cook_index.is_some() || has_ingredients {
+    if last_cook_index.is_some() || has_gather {
         out.push_str(&format!("    cook.passthrough({})\n", source_expr));
     }
 
@@ -320,4 +315,3 @@ fn reject_probe_refs_in_command(
         keys: probe_keys.into_iter().collect(),
     })
 }
-

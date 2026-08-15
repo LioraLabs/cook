@@ -1,2 +1,2 @@
-probe t
-    tools { cc --version }
+tools t
+    cc --version

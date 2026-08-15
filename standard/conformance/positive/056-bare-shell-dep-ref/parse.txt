@@ -5,10 +5,10 @@ Cookfile
   recipes:
     Recipe name="greet" line=14
       deps: []
-      ingredients: ["Cookfile"]
+      inputs: []
       excludes: []
       steps:
-        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""])
+        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""]) disposition=[local=false pinned=false record=false seal=["@seal:greet:15"]]
   chores:
     Chore name="shout" line=18
       params: []
@@ -17,3 +17,9 @@ Cookfile
         Shell interactive=true command="echo \"shout sees: $<greet>\""
   register_blocks: []
   top_level_module_calls: []
+  probes:
+    Probe name="@seal:greet:15" line=15
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Files globs=["Cookfile"] excludes=[]

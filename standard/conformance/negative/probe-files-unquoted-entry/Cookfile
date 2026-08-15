@@ -1,2 +1,2 @@
-probe srcs
-    files { src/*.ts }
+files srcs
+    src/*.ts

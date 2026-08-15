@@ -1,0 +1,7 @@
+recipe "build"
+    gather "neo/sys/*.cpp"
+                "neo/sys/posix/*.cpp"
+                !"neo/sys/sdl/*.cpp"
+    cook "build/sys.o" {
+        cat $<in> > $<out>
+    }

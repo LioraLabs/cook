@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="probe" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        cook_cc.register_finder(\"mylib\", function(_opts)\n            return { found = true, cflags = \"\", libs = \"-lmylib\", system_libs = {\"mylib\"}, include_dirs = {}, lib_dirs = {}, frameworks = {}, version = nil, tried = {} }\n        end)\n        local r = cook_cc.find(\"mylib\")\n        if not r.found then error(\"expected project-registered hit\") end")

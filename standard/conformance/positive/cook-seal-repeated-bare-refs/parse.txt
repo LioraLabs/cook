@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="package" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["pkg"] body=ShellBlock(["bundle"]) disposition=[local=false pinned=false record=false seal=["cards", "tools"]]

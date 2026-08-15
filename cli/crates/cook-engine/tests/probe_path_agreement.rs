@@ -1,7 +1,7 @@
 //! COOK-359: the two probe-evaluation paths must agree.
 //!
 //! Probe evaluation is implemented twice — `cook-register`'s
-//! `evaluate_prepass_probe` (which feeds an `ingredients <probe>` fan-out) and
+//! `evaluate_prepass_probe` (which feeds an `gather <probe>` fan-out) and
 //! `cook-engine`'s executor G4 path (which feeds sealed consumers). Both do the
 //! same thing around a different Lua VM: resolve inputs, compute a fingerprint,
 //! cache GET, run the producer on a miss, cache PUT, write
@@ -57,7 +57,7 @@ fn cook_binary() -> std::path::PathBuf {
 /// happens to change anyway. The runlogs sit outside `out/` so the orphaned-
 /// output sweeper leaves them alone.
 const COOKFILE: &str = r#"probe keyed:items
-    ingredients "src/dep.txt"
+    seal "src/dep.txt"
     json {
         echo ran >> keyed.runlog
         printf '["a"]\n'
@@ -74,16 +74,16 @@ recipe sealed_keyed
     cook "out/sealed_keyed.txt" { echo built > $<out> }
 
 recipe fanned_keyed
-    ingredients keyed:items
-    cook "out/fk-$<in>.txt" { echo "$<in>" > $<out> }
+    gather keyed:items
+    cook "out/fk-$<in>.txt" { echo '$<in>' > $<out> }
 
 recipe sealed_keyless
     seal keyless:items
     cook "out/sealed_keyless.txt" { echo built > $<out> }
 
 recipe fanned_keyless
-    ingredients keyless:items
-    cook "out/fl-$<in>.txt" { echo "$<in>" > $<out> }
+    gather keyless:items
+    cook "out/fl-$<in>.txt" { echo '$<in>' > $<out> }
 "#;
 
 /// A workspace with its own shared store, so one arm can never warm another's
@@ -108,7 +108,11 @@ fn arm() -> Arm {
     fs::create_dir_all(wd.join("out")).unwrap();
     fs::write(wd.join("src/dep.txt"), "dep-content\n").unwrap();
     fs::write(wd.join("Cookfile"), COOKFILE).unwrap();
-    Arm { _tmp: tmp, _cache: cache, wd }
+    Arm {
+        _tmp: tmp,
+        _cache: cache,
+        wd,
+    }
 }
 
 fn build(wd: &Path, recipe: &str) {
@@ -163,7 +167,7 @@ fn keyed_probe_costs_the_same_on_both_paths() {
     );
     assert_eq!(
         fanned_runs, 1,
-        "ingredients <probe> path: keyed probe producer ran {fanned_runs}x in \
+        "gather <probe> path: keyed probe producer ran {fanned_runs}x in \
          {RUNS} runs, expected 1 — the register pre-pass is not consulting the \
          cache (COOK-359)",
     );
@@ -198,7 +202,7 @@ fn keyless_probe_reproduces_on_both_paths() {
     );
     assert_eq!(
         fanned_runs, RUNS,
-        "ingredients <probe> path: keyless probe producer ran {fanned_runs}x in \
+        "gather <probe> path: keyless probe producer ran {fanned_runs}x in \
          {RUNS} runs, expected {RUNS} (CS-0178)",
     );
 }

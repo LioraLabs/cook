@@ -1,3 +1,0 @@
-probe srcs
-    ingredients "other/*.c"
-    files { "src/*.ts" }

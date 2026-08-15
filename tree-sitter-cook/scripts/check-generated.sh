@@ -36,6 +36,12 @@ cp src/scanner.c "$tmp/src/"
 
 ( cd "$tmp" && tree-sitter generate >/dev/null )
 
+if grep -Eq '(^|[[:space:]])(tool_name_list|glob_list)[[:space:]]*:' grammar.js \
+	|| grep -Eq '"(tool_name_list|glob_list)"[[:space:]]*:' src/grammar.json; then
+	echo "check-generated: removed probe-body files/tools list rules remain" >&2
+	exit 1
+fi
+
 differing=()
 for f in "${GENERATED[@]}"; do
 	if [ ! -f "$tmp/$f" ]; then

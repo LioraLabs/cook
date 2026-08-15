@@ -102,7 +102,7 @@ A declared variable is read two ways, which differ in type:
 
 Outside a `config_body`, `var` is read-only: a conforming implementation MUST reject an assignment through it. A declared value is a cache determinant of every unit that consulted it (§{exec.cache.abstract}), so a later mutation would invalidate a key already computed against it.
 
-A conforming implementation MUST NOT place a declared value into the process environment of any step it spawns. Reading one as a shell variable (`$NAME`) is therefore not a supported channel; the ambient environment reaches a build through exactly two declared doors: `host.env` inside a `config_body` (§{decl.config-sandbox}), and an `envs { }` probe (§{cat.probes.decl}), which records the host value as a keyed determinant.
+A conforming implementation MUST NOT place a declared value into the process environment of any step it spawns. Reading one as a shell variable is therefore not a supported channel. A `config_body` observes ambient environment through `host.env` (§{decl.config-sandbox}); a build step inherits ambient variables normally, and an ordinary named shell probe can observe and group values intended as shareable keyed determinants (§{steps.cook-disposition}).
 
 The sink is named `var` and not `env`: a config block's values are named build variables, not entries in any process environment. A conforming implementation MUST report a load-time error, pointing the author at the `var` sink, when a `config_body` reads a global named `env` (the pre-CS-0164 sink name).
 

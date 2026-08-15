@@ -88,7 +88,7 @@ A recipe's **output** is the output list of its last step, under the following r
 
 | Step kind | Output list |
 |---|---|
-| `ingredients` | Passthrough: the resolved ingredient paths (§{steps.ingredients}) |
+| `gather` | Passthrough: the resolved input paths (§{steps.gather}) |
 | `cook` (one-to-one) | The per-input outputs recorded at register time |
 | `cook` (many-to-one) | The single output path |
 | `test` | Passthrough: the step's input list |
@@ -101,7 +101,7 @@ A recipe assembled from register-phase API work units (a recipe body that regist
 ### 10.4.2. Example [#xref.dep-driven-example]
 ```cook
 recipe protos
-    ingredients "proto/*.proto"
+    gather "proto/*.proto"
 
 recipe compile_protos
     cook "build/obj/$<protos.stem>.pb.cc" { protoc --cpp_out=build/obj $<in> }
@@ -119,7 +119,7 @@ Rule. A `$<NAME>` bare reference in a `cook` shell block, **`test` shell block,*
 ### 10.5.1. Example [#xref.string-substitution-example]
 ```cook
 recipe libmath
-    ingredients "src/math/*.c"
+    gather "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
     cook "build/lib/libmath.a" { ar rcs $<out> $<in> }
 
@@ -134,7 +134,7 @@ The `$<libmath>` reference in `app`'s shell body expands at register time to `"b
 - **Granularity.** A dep-list reference (`recipe A: B`) MUST be interpreted at whole-recipe granularity: every unit of `A` waits for every unit of `B`. A placeholder reference (`$<B>` or `$<B.ACCESSOR>`) in a specific step of `A` MAY be refined by the implementation to a per-unit edge from that step's unit(s) to the unit(s) of `B` that produced the referenced output items. Coarse edges are always conformant; fine-grained refinement is an optimisation available to placeholder-sourced edges only.
 - **Validation and cycles.** An implementation MUST validate that the named recipe is defined in scope before the execute phase begins, and MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
 - **Every name reference creates its edge.** The edge set is a function of §{xref.resolution}, not a separate recognition of the shapes that look like references (CS-0210). If a token in a step or dep-list of `A` resolves to recipe `B` under §{xref.resolution} step 2, a conforming implementation MUST establish the `A → B` edge; it MUST NOT exclude the token on a test the resolution does not make. This binds the whole closed set, including the qualified forms of §{comp.qualified-refs}: a reference is excluded from the edge set only where §{xref.resolution} itself resolves it to something that is not a recipe — a builtin (step 1), a declared variable (step 3), a probe-value reference (§{cat.probes.templates}), or a hard error (step 4). This bullet and the next are complements: this one forbids losing an edge a reference implies, that one forbids inventing an edge no reference implies. Losing one is the more dangerous direction, because it leaves the build correct-looking and unordered rather than failing; see §{rationale.name-reference-evidence}.
-- **Only name references create edges.** A string equal to another recipe's output path does NOT establish a cross-recipe edge, wherever that literal appears: in an `ingredients` line, in a `cook` step's output pattern, or in the `inputs[]` / `outputs[]` entries of `cook.add_unit` (§{lua.add-unit}). All are literal path surfaces and none of them are name references. An implementation MUST NOT infer an edge from path-string equality on any of them. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. Note that not inferring an edge is not the same as staying silent: where such a match would otherwise become a silent read-after-write race, and the implementation can detect it from the source alone, the implementation rejects the build with a diagnostic rather than synthesising the missing ordering — see §{exec.read-after-write}, which states that rule and enumerates the surfaces it covers. That enumeration is narrower than this prohibition: this bullet binds every literal surface listed above, whether or not a match on it is detectable. See §{rationale.name-reference-evidence}.
+- **Only name references create edges.** A string equal to another recipe's output path does NOT establish a cross-recipe edge, wherever that literal appears: in  a `gather` line, in a `cook` step's output pattern, or in the `inputs[]` / `outputs[]` entries of `cook.add_unit` (§{lua.add-unit}). All are literal path surfaces and none of them are name references. An implementation MUST NOT infer an edge from path-string equality on any of them. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. Note that not inferring an edge is not the same as staying silent: where such a match would otherwise become a silent read-after-write race, and the implementation can detect it from the source alone, the implementation rejects the build with a diagnostic rather than synthesising the missing ordering — see §{exec.read-after-write}, which states that rule and enumerates the surfaces it covers. That enumeration is narrower than this prohibition: this bullet binds every literal surface listed above, whether or not a match on it is detectable. See §{rationale.name-reference-evidence}.
 
 ## 10.7. The `var.` placeholder namespace [#xref.var-namespace]
 
@@ -144,4 +144,4 @@ A placeholder `$<TOKEN>` whose `TOKEN` begins with `var.` is reserved as the exp
 
 The reserved namespace prevents resolution ambiguity. A Cookfile that declares both a recipe named `foo` and a variable `var.foo` will see bare `$<foo>` resolve to the recipe (per the rule order) and `$<var.foo>` resolve to the variable. The recipe-naming rules of §{lexical.keywords} forbid `var` as either the first or last dotted segment of a recipe name, so a recipe cannot be reached via `$<var.X>` form by construction.
 
-The pre-CS-0172 spelling of this namespace was `env.`, which named the process environment the declared values then shared. With the namespaces separated (§{decl.config}), `$<env.NAME>` is retired: a conforming implementation MUST reject it with a diagnostic naming both replacements — `$<var.NAME>` for a declared variable, and, for an ambient process variable, either an ordinary shell `$NAME` in the step body or an `envs { }` probe (§{cat.probes.decl}) when it must be a determinant.
+The pre-CS-0172 spelling of this namespace was `env.`, which named the process environment the declared values then shared. With the namespaces separated (§{decl.config}), `$<env.NAME>` is retired: a conforming implementation MUST reject it with a diagnostic naming both replacements — `$<var.NAME>` for a declared variable, and, for an ambient process variable, either an ordinary shell `$NAME` in the step body or an ordinary named shell probe sealed on the unit when it must be a determinant (§{steps.cook-disposition}).

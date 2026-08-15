@@ -65,6 +65,43 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Ok(out)
 }
 
+#[test]
+fn inline_file_seal_invalidates_without_fanout() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe build\n    seal \"det.txt\"\n    cook \"out.txt\" { cat det.txt > $<out> }\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("det.txt"), "one\n").unwrap();
+
+    run_cook(tmp.path(), &["build"]).unwrap();
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "one\n");
+
+    fs::write(tmp.path().join("det.txt"), "two\n").unwrap();
+    run_cook(tmp.path(), &["build"]).unwrap();
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "two\n");
+}
+
+#[test]
+fn inline_seal_resolution_errors_name_the_attempted_reading() {
+    let tmp = TempDir::new().unwrap();
+    for (operand, message) in [
+        ("missing_key", "lists probe key 'missing_key'"),
+        ("\"missing/**\"", "quoted file determinant"),
+    ] {
+        fs::write(
+            tmp.path().join("Cookfile"),
+            format!(
+                "recipe build\n    seal {operand}\n    cook \"out.txt\" {{ echo ok > $<out> }}\n"
+            ),
+        )
+        .unwrap();
+        let err = run_cook(tmp.path(), &["build"]).unwrap_err();
+        assert!(err.contains(message), "{operand}: {err}");
+    }
+}
+
 /// First run: probe executes, consumer unit reads its value, output
 /// file `done.marker` is produced and a probe artifact lands in
 /// `.cook/cache/`.  Second run: probe + consumer both cache-hit and
@@ -233,8 +270,8 @@ probe names
     lines { printf 'alpha\nbeta\n' }
 
 recipe render
-    ingredients names
-    cook "out/$<in>.txt" { mkdir -p out && echo $<in> > $<out> }
+    gather names
+    cook "out/$<in>.txt" { mkdir -p out && echo '$<in>' > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -252,7 +289,7 @@ probe cards
     >{ return { {id='a'}, {id='b'} } }
 
 recipe render
-    ingredients cards
+    gather cards
     cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
@@ -263,18 +300,18 @@ recipe render
 
 /// A native shell-block `probe` (`as json`) whose JSON array feeds a member fan-out
 /// (evaluated in the pre-pass VM, where cook.json_decode is available). Also
-/// exercises `ingredients` lowering to inputs.files.
+/// exercises a sealed file determinant on the probe.
 #[test]
 fn native_probe_member_fanout_as_json_end_to_end() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"x"},{"id":"y"}]"#).unwrap();
     let cookfile = r#"
 probe cards
-    ingredients "cards.json"
+    seal "cards.json"
     json { cat cards.json }
 
 recipe render
-    ingredients cards
+    gather cards
     cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
@@ -283,28 +320,54 @@ recipe render
     assert!(tmp.path().join("out/y.txt").exists(), "y.txt missing");
 }
 
-/// Editing a probe's `ingredients` input re-fingerprints the probe; the
+/// Editing a probe's sealed input re-fingerprints the probe; the
 /// member fan-out reflects the new data on the next run.
 #[test]
-fn native_probe_ingredient_edit_reinvalidates() {
+fn native_probe_gather_edit_reinvalidates() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"first"}]"#).unwrap();
     let cookfile = r#"
 probe cards
-    ingredients "cards.json"
+    seal "cards.json"
     json { cat cards.json }
 
 recipe render
-    ingredients cards
+    gather cards
     cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
-    assert!(tmp.path().join("out/first.txt").exists(), "first.txt missing");
-    // edit the ingredient -> re-fingerprint -> new member
+    assert!(
+        tmp.path().join("out/first.txt").exists(),
+        "first.txt missing"
+    );
+    // edit the input -> re-fingerprint -> new member
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
     assert!(tmp.path().join("out/second.txt").exists(), "second.txt missing after edit");
+}
+
+#[test]
+fn native_probe_seal_edit_reinvalidates() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"first"}]"#).unwrap();
+    let cookfile = r#"
+files cards_data
+    "cards.json"
+
+probe cards
+    seal cards_data
+    json { cat cards.json }
+
+recipe render
+    gather cards
+    cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/second.txt").exists());
 }
 
 /// A native `probe` and a `cook.probe()` API call with the same key MUST be
@@ -491,7 +554,7 @@ recipe build
 
 /// CS-0123: a probe whose produce decodes JSON is consumable
 /// through the demand-driven worker path (consumer unit's `probes` field),
-/// not just the `ingredients <probe>` pre-pass.
+/// not just the `gather <probe>` pre-pass.
 #[test]
 fn probe_json_decode_produce_demand_driven_consumer() {
     let tmp = TempDir::new().unwrap();

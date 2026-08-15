@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("        local s = [==[\n            this is opaque text\n            with } and ]] inside\n        ]==]\n        print(s)")

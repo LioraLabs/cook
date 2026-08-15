@@ -2,7 +2,7 @@
 # web_app receives the core.o path via the linking step in the root Cookfile.
 
 recipe web_obj
-    ingredients "src/app.c"
+    seal "src/app.c"
     cook "build/web.o" {
         mkdir -p build
         gcc -c src/app.c -o $<out>

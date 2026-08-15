@@ -5,9 +5,10 @@ Cookfile
   recipes:
     Recipe name="bundle" line=4
       deps: []
-      ingredients: ["*.c"]
+      inputs: ["*.c"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["out/all-$<suffix>.o"] body=ShellBlock(["cat $<in> > $<out>"])
   chores:
   register_blocks: []

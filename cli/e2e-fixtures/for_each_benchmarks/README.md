@@ -1,20 +1,19 @@
-# §8.3 `ingredients <probe>` Benchmarks (COOK-63 / CS-0091)
+# §8.2 `gather <probe>` Benchmarks (COOK-63 / CS-0091)
 
-Concrete coverage of Cook's **data-driven fan-out**: the `ingredients <probe>`
-form, the data-member counterpart to `ingredients "glob"`. Where `ingredients
-"glob"` drives one work unit per filesystem path, `ingredients <probe>` drives
-one unit per **data member** — a record or scalar — with the current member
-bound as `item`.
+Concrete coverage of Cook's **data-driven fan-out**: the `gather <probe>`
+form supplies a recipe with data members — records or scalars. In these
+recipes, accessor-bearing `cook` outputs and item-referencing `test` bodies
+fan out with the current member bound as `item`.
 
 ## Surface forms
 
-An `ingredients <probe>` line names exactly one **probe source** (Cook Standard
-§8.3):
+The benchmark's `gather <probe>` lines name exactly one **probe source** (Cook
+Standard §8.2):
 
 | Source | Meaning | Member typing |
 |---|---|---|
-| `ingredients <probe>` | An array-shaped probe value (§22.5.9) | each array element is a record/scalar |
-| `ingredients <probe>:<field>` | The array at the probe value's named field | each element of that array |
+| `gather <probe>` | An array-shaped probe value (§22.5.10) | each array element is a record/scalar |
+| `gather <probe>:<field>` | The array at the probe value's named field | each element of that array |
 
 The current member is available as:
 
@@ -23,7 +22,11 @@ The current member is available as:
   scalar's string form otherwise);
 - `$<in.FIELD>` — the value of record field `FIELD`.
 
-`cook` and `test` steps each produce **one unit per member**.
+The gather source supplies the recipe's members. An accessor-bearing `cook`
+output registers one unit per member; a later all-literal `cook` output
+registers one aggregate unit over the preceding outputs; an all-literal first
+`cook` step is rejected. Every consumer in this benchmark deliberately selects
+the per-member form (`test` selects it by referencing the item in its body).
 
 ## The recipes
 
@@ -39,7 +42,7 @@ purpose.
 ## Verifying
 
 **COOK-63 lands the parser + codegen.** The register-time runtime these recipes
-need — the §22.5.9 probe pre-pass that materialises an array probe value
+need — the §22.5.10 probe pre-pass that materialises an array probe value
 *before* registration and the whole-member `cook.member_to_string` rendering —
 is the **COOK-64** slice. Until then, verify at the level COOK-63 implements,
 with the transpiler:
@@ -52,7 +55,7 @@ cook emit-lua     # print the generated register-phase fan-out Lua
 `verify.sh` confirms each recipe lowers to the expected `for _, item in
 ipairs(_items)` fan-out: the right member source (`cook.probes.get` / `:field`
 index), `$<in.FIELD>` → `cook.member_to_string(item["FIELD"])`, bare `$<in>` →
-`cook.member_to_string(item)`, and one `cook.add_unit` / `cook.add_test` per
+`cook.member_to_string(item)`, and one `cook.add_unit` per
 member.
 
 ## Once COOK-64 lands

@@ -182,44 +182,30 @@ pub enum RegisterError {
         origin: Option<String>,
     },
 
-    /// COOK-64 §22.5.10: an `ingredients <probe>` source names a probe `KEY` that was
+    /// COOK-64 §22.5.10: a `gather <probe>` source names a probe `KEY` that was
     /// never declared via `cook.probe(...)`. Surfaced by the register pre-pass.
-    #[error("recipe '{recipe}': ingredients <probe> source names probe '{key}' but no such probe was declared")]
+    #[error("recipe '{recipe}': gather <probe> source names probe '{key}' but no such probe was declared")]
     MemberSourceProbeUndeclared { recipe: String, key: String },
 
     /// A probe the REGISTER PHASE resolved raised from its `produce` — as an
-    /// `ingredients <probe>` driver, a transitive `requires` of one, or a
+    /// `gather <probe>` driver, a transitive `requires` of one, or a
     /// register-phase `cook.probes.get` read (CS-0219). Route-neutral wording:
     /// naming a fan-out source here reported one the Cookfile need not have.
     #[error("probe '{key}': produce raised while resolving it at register phase: {message}")]
     ProbeProduceFailed { key: String, message: String },
 
-    /// COOK-64 §22.5.10: an `ingredients <probe>` source resolved to a non-array value.
+    /// COOK-64 §22.5.10: a `gather <probe>` source resolved to a non-array value.
     /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
     /// is the JSON value-kind that was found instead of a sequence.
     #[error(
-        "ingredients <probe> source '{selector}' must resolve to an array; got {shape} \
-         (an ingredients <probe> driver iterates the array's members; §22.5.10)"
+        "gather <probe> source '{selector}' must resolve to an array; got {shape} \
+         (a gather <probe> driver iterates the array's members; §22.5.10)"
     )]
     MemberSourceNotArray { selector: String, shape: String },
 
-    /// COOK-353: an `ingredients <probe>` source named a `files { … }` probe.
-    /// A `files` producer's value is a MAP of path → content hash (§22.5.2), so
-    /// it can never be the array an `ingredients <probe>` driver iterates. The
-    /// generic non-array diagnostic is technically correct here but unhelpful:
-    /// it reports a shape mismatch when the real answer is that this producer
-    /// kind is seal-only. Named separately so the fix can be stated.
-    #[error(
-        "ingredients <probe> source '{key}' names a `files {{ … }}` probe, whose value is a \
-         map of path to content hash — not the array an ingredients <probe> driver iterates \
-         (§22.5.2, §22.5.10). A `files` probe is a sealable DETERMINANT, not a driver: attach \
-         it with `seal {key}` and give the recipe its own `ingredients \"glob\"` to iterate."
-    )]
-    MemberSourceFilesProbe { key: String },
-
-    /// COOK-64 §22.5.10: an `ingredients <probe>`-feeding probe declares a file input that
+    /// COOK-64 §22.5.10: a `gather <probe>`-feeding probe declares a file input that
     /// is produced by a recipe in this Cookfile — i.e. a build artifact. An
-    /// `ingredients <probe>` source MUST be statically evaluable (it is resolved before
+    /// `gather <probe>` source MUST be statically evaluable (it is resolved before
     /// any recipe runs), so an artifact dependency is rejected.
     #[error(
         "probe '{key}' is resolved at register phase but depends on build artifact '{path}'; \
@@ -348,9 +334,7 @@ pub struct SessionCaptureState {
 
 impl SessionCaptureState {
     pub fn new() -> Self {
-        Self {
-            probes: Vec::new(),
-        }
+        Self { probes: Vec::new() }
     }
 }
 
@@ -488,9 +472,9 @@ pub use cook_cache::hash_str;
 // the crate root above and so are already accessible as
 // `cook_register::RegistrationSite{,Kind}`. No explicit re-export needed.
 pub use capture::RegistrationSource;
+pub use cook_contracts::registration::RegisteredWorkspace;
 pub use dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
 pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
-pub use cook_contracts::registration::RegisteredWorkspace;
 
 /// The artifact of a full `register_cookfile` pass.
 ///

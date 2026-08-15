@@ -12,7 +12,7 @@ list**, before the `using` clause is consulted. Three modes result:
 
 | Output pattern shape | Mode | Units produced |
 |---|---|---|
-| At least one output contains `{in.ACCESSOR}` | One-to-one over own inputs | One per ingredient |
+| At least one output contains `{in.ACCESSOR}` | One-to-one over own inputs | One per input |
 | At least one output contains `{dep.ACCESSOR}` | One-to-one over dep outputs | One per dep output |
 | All outputs are literal (no accessor) | Many-to-one | Exactly one |
 
@@ -112,16 +112,16 @@ cook emit-lua benchmarks | head -80
 cook menu
 ```
 
-The `menu` subcommand lists every recipe with its ingredient patterns, output patterns, and
+The `menu` subcommand lists every recipe with its input patterns, output patterns, and
 declared dependencies — a quick structural overview.
 
 ## Verifying the wart-fix (CS-0022 §3.5)
 
 Pre-CS-0022, a single-output Lua block always iterated per input — one unit per
-ingredient, `inputs` inside the body was always a singleton. CS-0022 fixes
+input, `inputs` inside the body was always a singleton. CS-0022 fixes
 this: iteration is owned by the output pattern. A literal output pattern
 (`"build/many_to_one_lua/all.out"`) means exactly one unit; `inputs` inside
-the body is the full ingredient list.
+the body is the full input list.
 
 After running `cook many_to_one_lua` (or `cook benchmarks`):
 

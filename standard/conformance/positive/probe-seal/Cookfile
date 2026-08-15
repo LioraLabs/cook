@@ -1,0 +1,3 @@
+probe services_raw
+    seal "data/services.json"
+    json { cat data/services.json }

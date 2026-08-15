@@ -1,0 +1,5 @@
+recipe verify
+    seal "src/*.c"
+    seal a b c
+    test { ./one.sh }
+    test { ./two.sh }

@@ -144,7 +144,9 @@ fn test_module_loads_and_adds_units() {
             end)
         end
         return m
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let rt = make_registry(dir.path());
     let lua_src = r#"
@@ -181,7 +183,9 @@ fn test_export_import_across_recipes() {
             })
         end
         return m
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let rt = make_registry(dir.path());
 
@@ -222,7 +226,9 @@ fn test_platform_available_in_module() {
         local m = {}
         m.detected_os = cook.platform.os
         return m
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let rt = make_registry(dir.path());
     let lua_src = r#"
@@ -432,15 +438,15 @@ fn test_add_unit_rejects_non_string_element_outputs() {
 }
 
 #[test]
-fn test_add_unit_rejects_non_table_ingredient_groups() {
-    let err = add_unit_reject(r#"command = "true", ingredient_groups = "x""#);
-    assert!(err.contains("ingredient_groups"), "got: {err}");
+fn test_add_unit_rejects_non_table_gather_groups() {
+    let err = add_unit_reject(r#"command = "true", gather_groups = "x""#);
+    assert!(err.contains("gather_groups"), "got: {err}");
 }
 
 #[test]
-fn test_add_unit_rejects_non_string_element_ingredient_groups() {
-    let err = add_unit_reject(r#"command = "true", ingredient_groups = {{1}}"#);
-    assert!(err.contains("ingredient_groups"), "got: {err}");
+fn test_add_unit_rejects_non_string_element_gather_groups() {
+    let err = add_unit_reject(r#"command = "true", gather_groups = {{1}}"#);
+    assert!(err.contains("gather_groups"), "got: {err}");
 }
 
 #[test]
@@ -557,7 +563,7 @@ fn test_add_unit_rejects_unknown_string_consulted_env_keys() {
 }
 
 #[test]
-fn test_resolve_ingredients_api() {
+fn test_resolve_gather_api() {
     use std::fs;
     use tempfile::tempdir;
 
@@ -567,14 +573,14 @@ fn test_resolve_ingredients_api() {
     fs::write(dir.path().join("skip.c"), "").unwrap();
 
     let lua = mlua::Lua::new();
-    // Must create the cook table first — register_resolve_ingredients adds to it
+    // Must create the cook table first — register_resolve_gather adds to it
     let cook = lua.create_table().unwrap();
     lua.globals().set("cook", cook).unwrap();
 
-    crate::context::register_resolve_ingredients(&lua, dir.path(), dir.path()).unwrap();
+    crate::context::register_resolve_gather(&lua, dir.path(), dir.path()).unwrap();
 
     let result: Vec<String> = lua
-        .load(r#"return cook.resolve_ingredients({"*.c"}, {"skip.c"})"#)
+        .load(r#"return cook.resolve_gather({"*.c"}, {"skip.c"})"#)
         .eval::<mlua::Table>()
         .unwrap()
         .sequence_values::<String>()
@@ -1600,7 +1606,7 @@ fn list_names_surface_recipe_never_carries_origin() {
     // surface paths).
     let lua_src = r#"
         cook.__register_surface("build",
-            {ingredients = {}, excludes = {}, requires = {}, __line = 7},
+            {gather = {}, excludes = {}, requires = {}, __line = 7},
             function() end)
     "#;
     let tmpdir = tempfile::TempDir::new().unwrap();
@@ -1621,7 +1627,7 @@ fn list_names_surface_chore_never_carries_origin() {
     // fixture.
     let lua_src = r#"
         cook.__register_surface_chore("release",
-            {ingredients = {}, excludes = {}, requires = {}, params = {},
+            {gather = {}, excludes = {}, requires = {}, params = {},
              origin = "cook_pnpm.workspace", __line = 3},
             function() end)
     "#;
@@ -1811,7 +1817,7 @@ fn register_cookfile_records_static_surface_recipe_with_line() {
     // table (the exact shape `cook-luagen` emits for `recipe NAME`).
     let lua_src = r#"
         cook.__register_surface("build",
-            {ingredients = {}, excludes = {}, requires = {}, __line = 7},
+            {gather = {}, excludes = {}, requires = {}, __line = 7},
             function()
                 cook.exec("touch ok.txt", 0)
             end)
@@ -1835,7 +1841,7 @@ fn register_cookfile_records_static_surface_recipe_with_line() {
 fn register_cookfile_records_static_surface_chore_with_kind_chore() {
     use crate::{register_cookfile, RecipeKind, RegisterSessionBuilder, RegistrationSource};
 
-    // Chores have no ingredients/excludes (parser-enforced), so omit
+    // Chores have no inputs/excludes (parser-enforced), so omit
     // those fields to verify the defaults in `parse_meta_lists` work.
     let lua_src = r#"
         cook.__register_surface_chore("clean",
@@ -1885,7 +1891,7 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
     // a plain `cook.recipe(...)` call as a register block would emit.
     let lua_src = r#"
         cook.__register_surface("build",
-            {ingredients = {}, excludes = {}, requires = {}, __line = 3},
+            {gather = {}, excludes = {}, requires = {}, __line = 3},
             function() end)
         cook.recipe("build", {requires = {}}, function() end)
     "#;
@@ -1910,7 +1916,7 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
 }
 
 // -----------------------------------------------------------------------
-// COOK-64 §22.5.10 — ingredients <probe> register pre-pass
+// COOK-64 §22.5.10 — gather <probe> register pre-pass
 // -----------------------------------------------------------------------
 
 /// Drive the full surface pipeline (parse → codegen → register) so the
@@ -1932,39 +1938,43 @@ fn register_surface(
 }
 
 #[test]
-fn registered_static_recipe_warns_once_per_declared_empty_ingredient() {
+fn registered_static_recipe_warns_once_per_declared_empty_input() {
     let dir = TempDir::new().unwrap();
     let registered = register_surface(
         dir.path(),
-        "recipe build\n    ingredients \"first.none\" \"second.none\"\n    cook \"out.txt\" { touch out.txt }\n",
+        "recipe build\n    gather \"first.none\" \"second.none\"\n    cook \"out.txt\" { printf '%s\\n' $<in> > out.txt }\n",
     )
     .unwrap();
-    assert_eq!(registered.warnings, vec![
-        "ingredient \"first.none\" matched 0 files (recipe build)",
-        "ingredient \"second.none\" matched 0 files (recipe build)",
-    ]);
+    assert_eq!(
+        registered.warnings,
+        vec![
+            "input \"first.none\" matched 0 files (recipe build)",
+            "input \"second.none\" matched 0 files (recipe build)",
+        ]
+    );
 }
 
 #[test]
 fn registered_dynamic_recipe_helper_repeats_do_not_duplicate_warning() {
     let dir = TempDir::new().unwrap();
     let lua = r#"
-cook.recipe("manual", {ingredients = {"missing.*"}, excludes = {}}, function()
-    cook.resolve_ingredients({"missing.*"}, {})
-    cook.resolve_ingredients({"missing.*"}, {})
+cook.recipe("manual", {inputs = {"missing.*"}, excludes = {}}, function()
+    cook.resolve_gather({"missing.*"}, {})
+    cook.resolve_gather({"missing.*"}, {})
 end)
 "#;
     let registered = register_cookfile(make_registry(dir.path()), lua, None).unwrap();
-    assert_eq!(registered.warnings, vec![
-        "ingredient \"missing.*\" matched 0 files (recipe manual)",
-    ]);
+    assert_eq!(
+        registered.warnings,
+        vec!["input \"missing.*\" matched 0 files (recipe manual)",]
+    );
 }
 
 #[test]
 fn member_fanout_probe_prepass_fans_out_units() {
     let dir = TempDir::new().unwrap();
     // A self-contained probe (no file inputs) returns a 3-element array; the
-    // pre-pass must resolve it so the `ingredients <probe>` body fans out one
+    // pre-pass must resolve it so the `gather <probe>` body fans out one
     // unit per card. Before COOK-64 the body errored on `cook.probes.get` returning nil.
     let cookfile = r#"
 register
@@ -1974,7 +1984,7 @@ register
     })
 
 recipe deal
-    ingredients cards
+    gather cards
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s\n' "$<in.name>" > $<out>
@@ -2010,7 +2020,7 @@ recipe deal
 #[test]
 fn member_fanout_probe_field_selector_indexes_named_array() {
     let dir = TempDir::new().unwrap();
-    // `ingredients catalog:items` iterates the array at the probe value's `items`
+    // `gather catalog:items` iterates the array at the probe value's `items`
     // field — the pre-pass stores the whole record; the body indexes `[items]`.
     let cookfile = r#"
 register
@@ -2020,7 +2030,7 @@ register
     })
 
 recipe build_catalog
-    ingredients catalog:items
+    gather catalog:items
     cook "build/$<in.id>.json" {
         mkdir -p build
         printf '%s\n' '$<in>' > $<out>
@@ -2034,8 +2044,7 @@ recipe build_catalog
 #[test]
 fn member_fanout_two_segment_probe_key_fans_out() {
     let dir = TempDir::new().unwrap();
-    // COOK-190: `ns:name` is the canonical probe naming; a two-segment key
-    // in ingredients position must resolve to the declared probe, not
+    // An exact multi-segment key in gather position must resolve to the declared probe, not
     // truncate to probe `cards` + field selector `list`.
     let cookfile = r#"
 register
@@ -2045,10 +2054,10 @@ register
     })
 
 recipe stamps
-    ingredients cards:list
+    gather cards:list
     cook "out/$<in>.stamp" {
         mkdir -p out
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -2059,8 +2068,8 @@ recipe stamps
 #[test]
 fn member_fanout_two_segment_key_with_field_selector_fans_out() {
     let dir = TempDir::new().unwrap();
-    // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
-    // trailing `:items` field selector. The pre-pass resolves via the final
+    // The exact `ns:cards:items` key is absent, so the pre-pass resolves the
+    // final `:items` as a field selector on `ns:cards`. It resolves via the final
     // colon (no probe `ns:cards:items` is declared) and stashes the selected
     // array under the verbatim ref.
     let cookfile = r#"
@@ -2071,7 +2080,7 @@ register
     })
 
 recipe build_cards
-    ingredients ns:cards:items
+    gather ns:cards:items
     cook "out/$<in.id>.json" {
         mkdir -p out
         printf '%s' '$<in>' > $<out>
@@ -2099,10 +2108,10 @@ register
     })
 
 recipe stamps
-    ingredients cards:list
+    gather cards:list
     cook "out/$<in>.stamp" {
         mkdir -p out
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -2115,9 +2124,9 @@ fn member_fanout_undeclared_two_segment_ref_error_names_full_ref() {
     let dir = TempDir::new().unwrap();
     let cookfile = r#"
 recipe stamps
-    ingredients nope:list
+    gather nope:list
     cook "out/$<in>.stamp" {
-        printf '%s' "$<in>" > $<out>
+        printf '%s' '$<in>' > $<out>
     }
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
@@ -2130,10 +2139,10 @@ recipe stamps
 #[test]
 fn member_fanout_undeclared_probe_rejected() {
     let dir = TempDir::new().unwrap();
-    // `ingredients nope` names a probe that was never declared.
+    // `gather nope` names a probe that was never declared.
     let cookfile = r#"
 recipe deal
-    ingredients nope
+    gather nope
     cook "build/$<in.id>.txt" {
         printf '%s\n' "$<in.id>" > $<out>
     }
@@ -2158,7 +2167,7 @@ register
     })
 
 recipe deal
-    ingredients cards
+    gather cards
     cook "build/$<in.id>.txt" {
         printf '%s\n' "$<in.id>" > $<out>
     }
@@ -2175,7 +2184,7 @@ fn member_fanout_probe_depending_on_build_artifact_rejected() {
     let dir = TempDir::new().unwrap();
     // `gen.json` exists (so the pre-pass produce succeeds) but is also the
     // declared output of recipe `gen` — i.e. a build artifact. An
-    // ingredients <probe> source must be statically evaluable, so the
+    // gather <probe> source must be statically evaluable, so the
     // dependency is rejected.
     fs::write(dir.path().join("gen.json"), r#"[{"id":"x"}]"#).unwrap();
     let cookfile = r#"
@@ -2191,7 +2200,7 @@ recipe gen
     }
 
 recipe consume
-    ingredients data
+    gather data
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
@@ -2208,7 +2217,7 @@ recipe consume
 fn member_fanout_unreachable_broken_probe_does_not_block_target() {
     let dir = TempDir::new().unwrap();
     // §22.5.10 demand-driven: building target `a` must NOT evaluate the probe of
-    // the unrelated `ingredients <probe>` recipe `b` — even though `b`'s probe
+    // the unrelated `gather <probe>` recipe `b` — even though `b`'s probe
     // resolves to a non-array (which would otherwise be a register error). `b`
     // registers with no units; `a` builds normally.
     let cookfile = r#"
@@ -2222,7 +2231,7 @@ recipe a
     }
 
 recipe b
-    ingredients bad
+    gather bad
     cook "build/$<in.id>.txt" {
         printf '%s' "$<in.id>" > $<out>
     }
@@ -2266,21 +2275,21 @@ register
     })
 
 recipe render
-    ingredients sceneprobe
+    gather sceneprobe
     cook "build/$<in.id>.silent.mp4" {
         mkdir -p build
         echo "$<in.id>" > $<out>
     }
 
 recipe tts
-    ingredients sceneprobe
+    gather sceneprobe
     cook "build/$<in.id>.wav" {
         mkdir -p build
         echo "$<in.id>" > $<out>
     }
 
 recipe mux
-    ingredients sceneprobe
+    gather sceneprobe
     cook "build/$<in.id>.mp4" {
         bin/mux --video $<render[in]> --audio $<tts[in]> --out $<out>
     }
@@ -2558,7 +2567,7 @@ register
     })
 
 recipe deal
-    ingredients cards
+    gather cards
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s\n' "$<in.name>" > $<out>
@@ -3283,14 +3292,16 @@ register
     end)
 
 recipe fan
-    ingredients items
+    gather items
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
     }
 "#;
     let err = register_surface_target(dir.path(), cookfile, "app")
-        .expect_err("forcing an unreachable probe-sourced member-fanout recipe must be a hard error")
+        .expect_err(
+            "forcing an unreachable probe-sourced member-fanout recipe must be a hard error",
+        )
         .to_string();
     assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
     assert!(err.contains("fan"), "error must name the recipe; got: {err}");
@@ -3322,7 +3333,7 @@ register
     end)
 
 recipe afan
-    ingredients items
+    gather items
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
@@ -3744,7 +3755,7 @@ register
     cook.recipe("bbb", {requires = {"afan"}}, function() end)
 
 recipe afan
-    ingredients items
+    gather items
     cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
@@ -4447,44 +4458,56 @@ fn cook_chore_body_gets_chore_unit_semantics() {
     );
 }
 
-/// COOK-353: a `files { … }` probe used as an `ingredients <probe>` source.
-///
-/// Two defects sat on top of each other. The `files` producer lowers to the
-/// reserved `@files-manifest` sentinel, which is deliberately not valid Lua;
-/// the executor intercepts it but the `ingredients <probe>` PRE-PASS did not,
-/// so the sentinel reached the register VM and the combination died with
-/// `syntax error: unexpected symbol near '@'` — an implementation detail
-/// leaking as a parse error.
-///
-/// With the sentinel intercepted, the real answer surfaces: a `files` probe's
-/// value is a MAP of path → content hash, so it can never be the array a
-/// driver iterates. That is a legitimate rejection, but the generic
-/// `MemberSourceNotArray` reports a shape mismatch when the actionable fact is that
-/// this producer kind is seal-only.
+/// A named files manifest is both sealable and gatherable. Gather iterates its
+/// path keys and each member unit declares the corresponding file input.
 #[test]
-fn files_probe_as_member_source_names_the_seal_only_kind() {
+fn named_files_gather_fans_out_and_declares_each_member_path() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(dir.path().join("src/a.txt"), "a\n").unwrap();
 
     let cookfile = r#"
-probe sites
-    files { "src/*.txt" }
+files sites
+    "src/*.txt"
 
 recipe grade
-    ingredients sites
-    cook "build/$<in>.out" { echo x > $<out> }
+    gather sites
+    cook "build/$<in.stem>.out" { echo x > $<out> }
+    cook "build/manifest.txt" { cat '$<in>' > $<out> }
 "#;
-    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
-    assert!(
-        matches!(err, RegisterError::MemberSourceFilesProbe { ref key } if key == "sites"),
-        "expected MemberSourceFilesProbe for 'sites', got {err:?}"
-    );
-    let rendered = err.to_string();
-    assert!(
-        rendered.contains("seal sites"),
-        "diagnostic must name the fix, got: {rendered}"
-    );
+    let registered = register_surface(dir.path(), cookfile).expect("named files gather registers");
+    let units = &registered.units_by_recipe["grade"].units;
+    assert_eq!(units.len(), 2);
+    assert_eq!(units[0].member.as_deref(), Some("src/a.txt"));
+    assert_eq!(units[0].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("src/a.txt")]);
+    assert_eq!(units[1].member, None);
+    assert_eq!(units[1].cache_meta.as_ref().unwrap().inputs,
+        vec![cook_contracts::cache::DeclaredInput::path("build/a.out")]);
+}
+
+#[test]
+fn gather_array_probe_keeps_record_members_and_trailing_inputs() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("shared.txt"), "shared\n").unwrap();
+    let registered = register_surface(dir.path(), r#"
+probe records
+    json { printf '[{"id":"a"},{"id":"b"}]' }
+
+recipe consume
+    gather records "shared.txt"
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
+"#,
+    )
+    .expect("array probe gather registers");
+    let units = &registered.units_by_recipe["consume"].units;
+    assert_eq!(units.len(), 2);
+    assert_eq!(units.iter().map(|u| u.member.as_deref().unwrap()).collect::<Vec<_>>(),
+        vec![r#"{"id":"a"}"#, r#"{"id":"b"}"#]);
+    for unit in units {
+        assert_eq!(unit.cache_meta.as_ref().unwrap().inputs,
+            vec![cook_contracts::cache::DeclaredInput::path("shared.txt")]);
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -4525,7 +4548,7 @@ fn a_sourceless_test_behind_a_bare_dep_has_no_key() {
     std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
     let registered = register_surface(
         dir.path(),
-        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+        "recipe gen\n    gather \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
          \nrecipe check: gen\n    test { cargo test }\n",
     )
     .unwrap();
@@ -4545,7 +4568,7 @@ fn a_sourceless_tests_declaration_does_not_absorb_an_unrelated_dep() {
     std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
     let registered = register_surface(
         dir.path(),
-        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+        "recipe gen\n    gather \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
          \nrecipe check: gen\n    test { cargo test }\n",
     )
     .unwrap();
@@ -4563,15 +4586,15 @@ fn a_sourceless_tests_declaration_does_not_absorb_an_unrelated_dep() {
 /// keyed, dep list or no dep list. Without this the rule above could be
 /// satisfied by never keying a test at all.
 #[test]
-fn a_test_with_its_own_ingredients_behind_a_dep_still_keys() {
+fn a_test_with_its_own_inputs_behind_a_dep_still_keys() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("seed.txt"), "s\n").unwrap();
     std::fs::create_dir_all(dir.path().join("t")).unwrap();
     std::fs::write(dir.path().join("t/case.txt"), "c\n").unwrap();
     let registered = register_surface(
         dir.path(),
-        "recipe gen\n    ingredients \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
-         \nrecipe check: gen\n    ingredients \"t/*.txt\"\n    test { wc -l t/case.txt }\n",
+        "recipe gen\n    gather \"seed.txt\"\n    cook \"build/gen.txt\" { cp $<in> $<out> }\n\
+         \nrecipe check: gen\n    gather \"t/*.txt\"\n    test { wc -l $<in> }\n",
     )
     .unwrap();
     let meta = test_unit_of(&registered, "check")
@@ -4755,14 +4778,22 @@ end)
     let foo = graph
         .nodes
         .iter()
-        .position(|n| matches!(&n.origin,
-            cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 0, .. }))
+        .position(|n| {
+            matches!(
+                &n.origin,
+                cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 0, .. }
+            )
+        })
         .expect("foo node");
     let bar = graph
         .nodes
         .iter()
-        .position(|n| matches!(&n.origin,
-            cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 1, .. }))
+        .position(|n| {
+            matches!(
+                &n.origin,
+                cook_contracts::unit_graph::NodeOrigin::Unit { unit_idx: 1, .. }
+            )
+        })
         .expect("bar node");
     assert!(
         graph.nodes[bar].deps.iter().any(|&(d, k)| d == foo
@@ -4966,11 +4997,7 @@ end)
 #[test]
 fn a_discovery_pass_does_not_run_produce_bodies() {
     let dir = TempDir::new().unwrap();
-    std::fs::write(
-        dir.path().join("Cookfile.lua"),
-        "-- placeholder\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("Cookfile.lua"), "-- placeholder\n").unwrap();
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.probe("p:boom", {

@@ -5,8 +5,8 @@
 # every output lands in one directory. When the output path is a REWRITE of
 # the input path (keep the subtree, swap a prefix, swap an extension), the
 # template vocabulary can't express it. The §8.4.2 form replaces the quoted
-# pattern with a parenthesised Lua expression, evaluated once per ingredient
-# at register time with `input` bound to that ingredient's path.
+# pattern with a parenthesised Lua expression, evaluated once per input
+# at register time with `input` bound to that input's path.
 #
 #   translate — shell body. docs/en/guide/intro.md → build/fr/guide/intro.md:
 #               the nested subtree survives because the expression rewrites
@@ -22,10 +22,10 @@
 
 # Naive "translation": rewrite the path docs/en/** → build/fr/**, and the
 # content Hello → Bonjour. One unit per markdown file (one-to-one over own
-# inputs); the iteration driver is the ingredients list, exactly as with a
+# inputs); the iteration driver is the gather list, exactly as with a
 # quoted `$<in.stem>` pattern.
 recipe translate
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("docs/en", "build/fr")) {
         sed 's/Hello/Bonjour/g' $<in> > $<out>
     }
@@ -35,7 +35,7 @@ recipe translate
 # expression must fit the single `cook` line). `input`/`output` are the
 # §23.1 bindings on the worker VM.
 recipe index
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("docs/en", "build/meta"):gsub("%.md$", ".json")) >{
         local lines = 0
         for _ in io.lines(input) do lines = lines + 1 end

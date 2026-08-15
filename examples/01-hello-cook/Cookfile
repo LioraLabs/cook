@@ -12,5 +12,5 @@
 #   cook              # exactly one node rebuilds
 
 recipe build
-    ingredients "notes/*.md"
+    gather "notes/*.md"
     cook "out/$<in.stem>.html" { sed -e 's|^# \(.*\)|<h1>\1</h1>|' -e 's|^- \(.*\)|<li>\1</li>|' $<in> > $<out> }

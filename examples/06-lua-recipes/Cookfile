@@ -21,7 +21,7 @@
 # Output path computed per input: docs/en/... -> out/... , .txt -> .rot
 # The >{ } body sees `input` and `output` for the current unit.
 recipe rot13
-    ingredients "docs/en/*.txt"
+    gather "docs/en/*.txt"
     cook (input:gsub("^docs/en/", "out/"):gsub("%.txt$", ".rot")) >{
         local f = assert(io.open(input, "r"))
         local text = f:read("*a")

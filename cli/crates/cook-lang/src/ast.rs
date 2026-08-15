@@ -85,11 +85,33 @@ pub struct TopLevelModuleCall {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChoreParam {
-    Required { name: String, line: usize, col: usize },
-    DefaultedString { name: String, default: String, line: usize, col: usize },
-    DefaultedLua { name: String, default_lua: String, line: usize, col: usize },
-    VariadicPlus { name: String, line: usize, col: usize },
-    VariadicStar { name: String, line: usize, col: usize },
+    Required {
+        name: String,
+        line: usize,
+        col: usize,
+    },
+    DefaultedString {
+        name: String,
+        default: String,
+        line: usize,
+        col: usize,
+    },
+    DefaultedLua {
+        name: String,
+        default_lua: String,
+        line: usize,
+        col: usize,
+    },
+    VariadicPlus {
+        name: String,
+        line: usize,
+        col: usize,
+    },
+    VariadicStar {
+        name: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 impl ChoreParam {
@@ -116,13 +138,13 @@ pub struct Chore {
 /// A `probe` declaration (§22.5). Native surface sugar over the register-phase
 /// `cook.probe()` API: lowering (COOK-68) emits the equivalent `cook.probe`
 /// call. `deps` is the make-style header dependency list (`probe N: a b`) and
-/// lowers to `inputs.requires`. `ingredients`/`excludes` are the file-input
+/// lowers to `inputs.requires`. `inputs`/`excludes` are the file-input
 /// fingerprint set (NOT an iteration driver — a probe yields one value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub name: String,
     pub deps: Vec<String>,
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub excludes: Vec<String>,
     pub produce: ProbeProduce,
     pub line: usize,
@@ -136,23 +158,25 @@ pub enum ProbeProduce {
     Lua(String),
     /// `{ … }` / `json { … }` / `lines { … }` — shell block (bare) or typed;
     /// value is stdout, typed by the leading kind keyword.
-    Shell { commands: Vec<String>, typing: ShellProduceType },
-    /// `tools { cc, ld }` — the brace content is a LIST of bare tool names
+    Shell {
+        commands: Vec<String>,
+        typing: ShellProduceType,
+    },
+    /// A top-level `tools NAME` declaration — its body is a list of tool names
     /// (NOT a shell body). Each is PATH-resolved and its binary hashed; the
     /// value is `{ NAME = { path, hash }, … }`. The hash is both the value and
     /// the re-run trigger (COOK-164).
     Tools(Vec<String>),
-    /// `envs { CFLAGS, LDFLAGS }` — the brace content is a LIST of bare
-    /// env-var names (NOT a shell body). The value is `{ NAME = value_or_nil,
-    /// … }`; reading the env records the consulted-env determinant (COOK-164).
-    Envs(Vec<String>),
-    /// `files { "src/*.ts" !"src/gen/*.ts" }` — the brace content is a LIST of
-    /// quoted glob patterns (NOT a shell body), `!"…"` excluding, following
-    /// `ingredients` pattern syntax. The expanded file set self-fingerprints
+    /// A top-level `files NAME` declaration (or inline file seal) — its body is
+    /// a list of quoted glob patterns, `!"…"` excluding, following
+    /// quoted `gather` pattern syntax. The expanded file set self-fingerprints
     /// and the value is `{ [path] = content_hash, … }` — per-file identity as
-    /// a sealable determinant (CS-0148). A `files` probe MUST NOT also declare
-    /// an `ingredients` line: the glob set IS its file-input fingerprint set.
-    Files { globs: Vec<String>, excludes: Vec<String> },
+    /// a sealable determinant (CS-0148); the glob set is also its file-input
+    /// fingerprint set.
+    Files {
+        globs: Vec<String>,
+        excludes: Vec<String>,
+    },
 }
 
 /// How a shell-block probe's stdout becomes the probe value (§22.5).
@@ -182,7 +206,7 @@ pub struct Cookfile {
 pub struct Recipe {
     pub name: String,
     pub deps: Vec<String>,
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub excludes: Vec<String>,
     pub steps: Vec<Step>,
     pub line: usize,
@@ -203,14 +227,14 @@ pub enum Body {
 ///
 /// The output slot accepts either a literal quoted pattern (with `$<...>`
 /// sigil substitution) or — under §8.4.2's one-to-one form — a single
-/// parenthesised Lua expression evaluated per-ingredient. CS-0089 / COOK-59.
+/// parenthesised Lua expression evaluated per-input. CS-0089 / COOK-59.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputPattern {
     /// Quoted string with `$<...>` sigils (the historical form).
     Quoted(String),
     /// Parenthesised Lua expression (`cook (EXPR) >{ … }`). Evaluated
-    /// per-ingredient at register time with `input` bound to the current
-    /// ingredient's path. Standard §8.4.2.
+    /// per-input at register time with `input` bound to the current
+    /// input's path. Standard §8.4.2.
     LuaExpr(String),
 }
 
@@ -268,62 +292,89 @@ pub struct CookStep {
 pub struct TestStep {
     pub body: Body,
     /// Effective `seal` refs — sorted, de-duplicated bare probe keys. Folded
-    /// from the recipe-level `seal` baseline plus this test's trailing
-    /// `seal`/`unseal` tail (§8.4.3, CS-0159). A test unit is a cacheable
+    /// from the recipe-level `seal` set (§8.4.3). A test unit is a cacheable
     /// unit, so it keys on its sealed probes' values exactly as a `cook`
     /// unit does (§17.4 rule 1).
     ///
     /// Unlike [`CookStep`], a test carries no `share_mod` — `local` /
     /// `pinned` / `nondet` state facts about an *output artifact*, and a test
-    /// produces a pass/fail record rather than artifacts. The test tail is
-    /// therefore the input half of `cook_mods` only.
+    /// produces a pass/fail record rather than artifacts. Tests admit no tail.
     pub seal: BTreeSet<String>,
 }
 
-/// The source of a member-source step's data members. Only a probe-key source
-/// remains after COOK-97: the `$(cmd)` shell-capture and `(LUA_EXPR)` reserved
-/// forms have been removed. CS-0091 / COOK-62 introduced the node; COOK-97
-/// drops the non-probe variants.
+/// The source of a member-source step's data members. Retained descriptors
+/// name probes or named files manifests; command and anonymous-Lua sources
+/// are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemberSource {
     /// A probe key, optionally selecting a nested array field (`cards`,
     /// `cards:items`). The probe's value MUST be an array (§22.5.10).
     ProbeKey(String),
+    /// A bare source spelled with `gather`; registration accepts an array
+    /// probe or a named `files` declaration.
+    GatherKey(String),
 }
 
-/// A member-source step — the internal `ingredients <probe>` desugar node (§8.2).
-/// At most one per recipe; mutually exclusive with `ingredients`. The current
-/// member binds as `$<in>` / `$<in.field>`. Source is always a `ProbeKey`
-/// (the `$(cmd)` shell-capture and `(LUA_EXPR)` anonymous-source forms were
-/// removed in COOK-97; see §8.2 and CS-0097).
+/// A member-source step — the internal bare-`gather` desugar node (§8.2).
+/// At most one per recipe; mutually exclusive with glob-pattern `gather`. The current
+/// member binds as `$<in>` / `$<in.field>`. Retained sources are named probes
+/// and named files manifests; command and anonymous-Lua sources are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberSourceStep {
     pub source: MemberSource,
-    /// CS-0197: quoted file globs trailing the probe key
-    /// (`ingredients cases "src/*.txt"`). Resolved at register time like
-    /// ordinary recipe ingredients and folded into EVERY member unit's
+    /// CS-0197: quoted file globs trailing the bare source name
+    /// (`gather cases "src/*.txt"`). Resolved at register time like
+    /// ordinary recipe inputs and folded into EVERY member unit's
     /// declared inputs — the coarse-grained answer to "what does each
     /// member's body read"; per-member precision is a future amendment.
-    pub extra_ingredients: Vec<String>,
+    pub extra_gather: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Step {
-    Shell { command: String, line: usize, interactive: bool },
+    /// Register-time file driver introduced by `gather`. The resolved paths
+    /// stay on [`Recipe::inputs`]; this marker preserves the spelling
+    /// long enough for whole-recipe static validation.
+    Gather {
+        line: usize,
+    },
+    Shell {
+        command: String,
+        line: usize,
+        interactive: bool,
+    },
     /// Execute-phase Lua line (`>` prefix). Coalesced into a body unit by
     /// codegen; runs on the worker VM at execute time.
-    Lua { code: String, line: usize },
+    Lua {
+        code: String,
+        line: usize,
+    },
     /// Execute-phase Lua block (`>{ … }` prefix). Same execution model as `Lua`.
-    LuaBlock { code: String, line: usize },
+    LuaBlock {
+        code: String,
+        line: usize,
+    },
     /// Register-phase inline Lua. Produced by an auto-classified bare
     /// module-call line (`ident.ident(...)`) in a recipe body (CS-0134);
     /// formerly also by the removed `>>` prefix.
-    InlineLua { code: String, line: usize },
-    Cook { step: CookStep, line: usize },
-    Test { step: TestStep, line: usize },
+    InlineLua {
+        code: String,
+        line: usize,
+    },
+    Cook {
+        step: CookStep,
+        line: usize,
+    },
+    Test {
+        step: TestStep,
+        line: usize,
+    },
     /// Register-phase data-member iteration driver (§8.2). Declarative.
-    MemberSource { step: MemberSourceStep, line: usize },
+    MemberSource {
+        step: MemberSourceStep,
+        line: usize,
+    },
 }
 
 #[cfg(test)]

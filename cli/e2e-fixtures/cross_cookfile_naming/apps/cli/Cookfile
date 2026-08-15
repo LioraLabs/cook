@@ -1,5 +1,5 @@
 recipe build
-    ingredients "src.txt"
+    seal "src.txt"
     cook "build/cli.bin" {
         mkdir -p build
         sed 's/^/[cli] /' src.txt > $<out>

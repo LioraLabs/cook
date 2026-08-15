@@ -6,5 +6,5 @@ One probe-key grammar at every site that names one (§{cat.probes.decl},
 
 with a quoted form accepting any non-empty spelling. This fixture declares a
 hyphenated key, a two-segment key, a three-segment key and a quoted key, then
-consumes one through `ingredients` and seals the other three — the four
+consumes one through `gather` and seals the other three — the four
 spellings and the three sites that used to disagree about them.

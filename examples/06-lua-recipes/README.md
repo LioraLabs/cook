@@ -10,7 +10,7 @@ path** — `cook (LUA_EXPR)` evaluates a Lua expression per input:
 
 ```
 recipe rot13
-    ingredients "docs/en/*.txt"
+    gather "docs/en/*.txt"
     cook (input:gsub("^docs/en/", "out/"):gsub("%.txt$", ".rot")) >{
         -- `input` and `output` are bound for the current unit
         ...

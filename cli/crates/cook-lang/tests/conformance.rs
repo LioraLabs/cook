@@ -203,6 +203,7 @@ fn repr_body(body: &Body) -> String {
 
 fn format_step(step: &Step) -> String {
     match step {
+        Step::Gather { .. } => "Gather".to_string(),
         Step::Shell { command, interactive, .. } => {
             format!("Shell interactive={} command={}", interactive, repr(command))
         }
@@ -232,11 +233,12 @@ fn format_step(step: &Step) -> String {
             }
             s
         }
-        // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).
+        // §8.x: gather desugar node — named probe or named files source.
         Step::MemberSource { step, .. } => format!(
             "MemberSource source={}",
             match &step.source {
                 MemberSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
+                MemberSource::GatherKey(k) => format!("GatherKey({})", repr(k)),
             },
         ),
         // CS-0159: render the effective seal set only when non-empty, so
@@ -309,7 +311,6 @@ fn format_probe(p: &Probe) -> String {
             format!("Shell typing={} commands={}", typing_str, repr_list(commands))
         }
         ProbeProduce::Tools(names) => format!("Tools names={}", repr_list(names)),
-        ProbeProduce::Envs(names) => format!("Envs names={}", repr_list(names)),
         ProbeProduce::Files { globs, excludes } => format!(
             "Files globs={} excludes={}",
             repr_list(globs),
@@ -317,11 +318,11 @@ fn format_probe(p: &Probe) -> String {
         ),
     };
     format!(
-        "    Probe name={} line={}\n      deps: {}\n      ingredients: {}\n      excludes: {}\n      produce: {}",
+        "    Probe name={} line={}\n      deps: {}\n      inputs: {}\n      excludes: {}\n      produce: {}",
         repr(&p.name),
         p.line,
         repr_list(&p.deps),
-        repr_list(&p.ingredients),
+        repr_list(&p.inputs),
         repr_list(&p.excludes),
         produce,
     )
@@ -366,7 +367,7 @@ fn format_cookfile(c: &Cookfile) -> String {
             r.line,
         ));
         out.push_str(&format!("      deps: {}\n", repr_list(&r.deps)));
-        out.push_str(&format!("      ingredients: {}\n", repr_list(&r.ingredients)));
+        out.push_str(&format!("      inputs: {}\n", repr_list(&r.inputs)));
         out.push_str(&format!("      excludes: {}\n", repr_list(&r.excludes)));
         out.push_str("      steps:\n");
         for s in &r.steps {

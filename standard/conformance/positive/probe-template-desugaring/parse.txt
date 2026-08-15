@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=7
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook.add_unit({\n        name = \"echo\",\n        inputs = {},\n        outputs = {\"build/done.txt\"},\n        probes = {\"test:greet\"},\n        command = \"echo $<test:greet.word> > build/done.txt\",\n    })"

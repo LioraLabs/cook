@@ -56,9 +56,9 @@ fn cook_binary() -> PathBuf {
 
 /// Deterministic declared output; undeclared runlog for the rebuild counter.
 const COOKFILE: &str = r#"recipe build
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/hello.txt" {
-        printf 'hello-deterministic\n' > out/hello.txt
+        : $<in>; printf 'hello-deterministic\n' > out/hello.txt
         echo ran >> out/build.runlog
     }
 "#;

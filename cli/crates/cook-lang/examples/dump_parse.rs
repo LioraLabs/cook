@@ -133,7 +133,7 @@ fn format_cookfile(c: &Cookfile) -> String {
             r.line,
         ));
         out.push_str(&format!("      deps: {}\n", repr_list(&r.deps)));
-        out.push_str(&format!("      ingredients: {}\n", repr_list(&r.ingredients)));
+        out.push_str(&format!("      inputs: {}\n", repr_list(&r.inputs)));
         out.push_str(&format!("      excludes: {}\n", repr_list(&r.excludes)));
         out.push_str("      steps:\n");
         for s in &r.steps {

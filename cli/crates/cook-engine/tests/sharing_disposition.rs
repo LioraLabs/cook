@@ -136,9 +136,9 @@ fn unannotated_unit_publishes_then_fetches_by_key() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,
@@ -200,9 +200,9 @@ fn local_unit_does_not_publish_to_shared_store() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     } local
 "#,
@@ -234,9 +234,9 @@ fn pinned_unit_cold_miss_is_hard_error() {
         wd,
         cache.path(),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     } pinned
 "#,

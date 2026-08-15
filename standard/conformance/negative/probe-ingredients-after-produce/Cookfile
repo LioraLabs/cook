@@ -1,3 +1,0 @@
-probe p
-    >{ return 1 }
-    ingredients "a"

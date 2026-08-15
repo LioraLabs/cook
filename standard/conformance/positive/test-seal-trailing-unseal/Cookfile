@@ -1,5 +1,0 @@
-recipe verify
-    ingredients "src/*.c"
-    seal a b
-    test { ./one.sh } unseal a seal c
-    test { ./two.sh }

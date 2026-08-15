@@ -13,9 +13,9 @@ CS-0134 makes the recipe body **purely declarative**. A `LuaBlockOpen` (`>{`) or
 
 A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 
-1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
-2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
-3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
+1. Prefix `gather` + separator (space, tab, or end of token) → `gather_step`.
+2. Prefix `seal` + separator → recipe-level `seal_step` (its operands contribute to the recipe seal set; §{steps.cook-disposition}).
+3. Prefix `unseal` + separator → rejected as removed by CS-0225; omit the ref from the recipe seal set.
 4. Prefix `cook` + separator → `cook_step`.
 5. Prefix `test` + separator → `test_step`.
 6. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
@@ -32,21 +32,21 @@ A `Content` token that matches none of rules 1–6 MUST be rejected. In particul
 
 A `Content` token inside a `recipe_body` whose trimmed text begins with the keyword `register` followed by a separator (space, tab, or end-of-line) MUST be rejected with the diagnostic "`register` blocks are top-level only; move this outside the recipe body". The rejection applies regardless of indentation depth: an indented `register` cannot be a `RegisterHeader` (which is column-0 only by §{lexical.line-classification}) and is also not a permitted step in this position. A `Content` token whose first token is the bare identifier `register` *without* a separator and without the module-call shape of rule 6 (e.g. bare `register_foo`) falls through to rule 7 and is rejected under the general rule above. The reference parser fires the keyword-specific rejection in `parse_recipe`'s step-dispatch loop (informative).
 
-A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items (App. A.3).
+A `recipe_body` MUST contain at most one `gather_step`. A conforming implementation MUST reject a recipe with two or more `gather_step` items (App. A.3).
 
-Every remaining `recipe_body` item — `ingredients_step`, `cook_step`, `test_step`, `module_call`, `comment`, `Blank` — is register-phase (App. A.3); CS-0134 leaves no `imperative_item` in a recipe body's top-level line sequence. The pre-CS-0134 **region ordering rule** (App. A.3, "Region ordering rule"; §{recipes.region-rule}) required every `declarative_item` to precede the first `imperative_item` of the recipe body; under CS-0134 that constraint is satisfied vacuously for recipe bodies (there being no `imperative_item` left to order against) and imposes no further requirement here. It is likewise vacuous for `chore` bodies: CS-0134 removes the register-phase `inline_lua_line` / `inline_lua_block` (`>>` / `>>{`) steps from the language, leaving a chore body with only execute-phase (imperative) step kinds — `shell_command`, `lua_line`, `lua_block` — and therefore no declarative region to order against (§{chores.body}).
+Every remaining `recipe_body` item — `gather_step`, `cook_step`, `test_step`, `module_call`, `comment`, `Blank` — is register-phase (App. A.3); CS-0134 leaves no `imperative_item` in a recipe body's top-level line sequence. The pre-CS-0134 **region ordering rule** (App. A.3, "Region ordering rule"; §{recipes.region-rule}) required every `declarative_item` to precede the first `imperative_item` of the recipe body; under CS-0134 that constraint is satisfied vacuously for recipe bodies (there being no `imperative_item` left to order against) and imposes no further requirement here. It is likewise vacuous for `chore` bodies: CS-0134 removes the register-phase `inline_lua_line` / `inline_lua_block` (`>>` / `>>{`) steps from the language, leaving a chore body with only execute-phase (imperative) step kinds — `shell_command`, `lua_line`, `lua_block` — and therefore no declarative region to order against (§{chores.body}).
 
 ### Example 8.1.1
 
 ```cook
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cc.configure()
     cook "bin/$<in.stem>" { cc $<in> -o $<out> }
     test { ./bin/app }
 ```
 
-The four body lines dispatch, in order, to: `ingredients_step`, `module_call` (rule 6 — register-phase; before CS-0134 this line would have needed to be written `>> cc.configure()`), `cook_step`, and `test_step`.
+The four body lines dispatch, in order, to: `gather_step`, `module_call` (rule 6 — register-phase; before CS-0134 this line would have needed to be written `>> cc.configure()`), `cook_step`, and `test_step`.
 
 ### Example 8.1.2
 
@@ -63,17 +63,36 @@ The `cook-lang` parser test `test_empty_interactive_step_errors` pinned rejectio
 
 The reference parser at `cli/crates/cook-lang` enforces the CS-0134 cascade in `parse_recipe`'s step-dispatch loop (informative); `parse_chore`'s step-dispatch loop keeps the `>`/`>{` steps and loose (implicitly-interactive) shell commands a chore body admits, but — like every other context — no longer accepts an `@` line (CS-0134).
 
-## 8.2. Ingredients [#steps.ingredients]
-A recipe body MAY contain at most one `ingredients_step` (§{grammar-appendix.recipes}, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.
+## 8.2. Gathered inputs [#steps.gather]
+A `gather_step` is introduced by `gather` followed by either one or more quoted
+`input` items or one bare source name. Quoted items resolve the same
+include-minus-exclude path set as the quoted `gather` form. A bare name
+selects a top-level `files` declaration or an array-valued probe (including the
+existing `<key>:<field>` selection); quoted globs MAY trail it and are inputs of
+every member unit. A files-backed gather binds each matched path as `$<in>` and
+declares that path as the member unit's input. It is not a work unit and adds no
+DAG node.
 
-The `ingredients_step` is introduced by the keyword `ingredients` followed by one or more `ingredient` items (§{grammar-appendix.steps}, `ingredients_step`). Each item is either:
+`gather` says what the recipe's command text names. A recipe containing
+`gather` MUST name its gathered set from at least one `cook` or `test` step,
+through `$<in>`, `$<in.ACCESSOR>`, or the corresponding execute-Lua `input` /
+`inputs` binding. Otherwise the implementation MUST reject it at load time
+with a diagnostic stating that the command never names the gathered files and
+directing the author to `seal` them instead. Conversely, a recipe with no
+`gather` or dependency-output driver MUST reject such an own-input reference
+with a diagnostic stating that nothing gathers what the command references.
+Both predicates are static and MUST NOT consult the filesystem. [added CS-0224]
+
+A recipe body MAY contain at most one `gather_step` (§{grammar-appendix.recipes}, "At-most-one-gather rule"). A second `gather` line within the same recipe body MUST be rejected.
+
+The `gather_step` is introduced by the keyword `gather` followed by one or more `input` items (§{grammar-appendix.steps}, `gather_step`). Each item is either:
 
 | Form | Meaning |
 |---|---|
-| `STRING`        | **include**: the quoted text is a glob pattern added to the ingredient set. |
-| `!` `STRING`    | **exclude**: the quoted text is a glob pattern subtracted from the ingredient set. |
+| `STRING`        | **include**: the quoted text is a glob pattern added to the input set. |
+| `!` `STRING`    | **exclude**: the quoted text is a glob pattern subtracted from the input set. |
 
-A conforming implementation MUST accept an `ingredients` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
+A conforming implementation MUST accept  a `gather` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
 
 The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by §{recipes} and is resolved by the execution model (§{exec.phases}).
 
@@ -81,24 +100,24 @@ The glob language itself — which characters are wildcards, whether `**` matche
 
 ```cook
 recipe lib
-    ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
+    gather "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
     cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
-The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
+The input set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
 
 ### Note 8.2.1 — overload rule
 
-An `ingredients` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members; a bare identifier is a **probe key** yielding the probe's array members (§{cat.probes}, §22.5.9). The two forms are mutually exclusive within a recipe. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+A `gather` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members. A bare gather source selects either a named `files` declaration, whose resolved manifest keys are path members, or an ordinary probe, whose resolved value MUST be an array and whose array elements are members (§{cat.probes}, §22.5.10). A non-array ordinary probe is rejected; a `tools` declaration is not iterable. The quoted and bare forms are mutually exclusive within a recipe. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
 
-The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
+The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_gather_with_excludes` and `test_gather_excludes_only`.
 
 ## 8.3. Step kinds — overview [#steps.overview]
-A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, CS-0134 requires a conforming implementation to recognise exactly the following five step kinds — all of them register-phase:
+A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, a conforming implementation recognises the following five step kinds — all of them register-phase:
 
 | § | Step kind | Introduced by | Phase |
 |---|---|---|---|
-| §{steps.ingredients} | `ingredients_step` | keyword `ingredients` | register |
+| §{steps.gather} | `gather_step` | keyword `gather` | register |
 | §{steps.cook-disposition.seal} | `seal_step` | keyword `seal` | register |
 | §{steps.cook-single}, §{steps.cook-multi} | `cook_step`           | keyword `cook` | register |
 | §{steps.test}      | `test_step`           | keyword `test` | register |
@@ -108,9 +127,9 @@ The phase column classifies each step kind by **when its body is evaluated**: ev
 
 A `Content` token inside a recipe body is classified into exactly one of the kinds above using the step-dispatch priority of §{grammar-appendix.steps} ("Step-dispatch priority"), reproduced here for convenience:
 
-1. `ingredients` + separator → `ingredients_step` (§{steps.ingredients}).
+1. `gather` + separator → `gather_step` (§{steps.gather}).
 2. `seal` + separator → recipe-level `seal_step` (§{steps.cook-disposition}).
-3. `unseal` + separator → rejected as a recipe-level step (`unseal` is trailing-only; §{steps.cook-disposition}).
+3. `unseal` + separator → rejected as removed by CS-0225; omit the ref from the recipe seal set.
 4. `cook` + separator → `cook_step` (§{steps.cook-single}, §{steps.cook-multi}).
 5. `test` + separator → `test_step` (§{steps.test}).
 6. `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` → `module_call`, register-phase (§{steps.dispatch}, §{toplevel.module-call}).
@@ -158,12 +177,12 @@ After the output pattern(s), the body-dispatch order of §{grammar-appendix.step
 
 ```cook
 recipe lib
-    ingredients "lib/*.c"
+    gather "lib/*.c"
     cook "build/obj/$<in.stem>.o" { gcc -c $<in> -o $<out> }
     cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
-The first `cook` is a one-to-one mapping from each ingredient to one object file, where `$<in>` is the loop member. The second is a many-to-one mapping producing a single archive from the collected set, where `$<in>` is the unit's full input set, space-joined. Both use the inline (one-line) `shell_block` body form.
+The first `cook` is a one-to-one mapping from each input to one object file, where `$<in>` is the loop member. The second is a many-to-one mapping producing a single archive from the collected set, where `$<in>` is the unit's full input set, space-joined. Both use the inline (one-line) `shell_block` body form.
 
 ### Note 8.4.1
 
@@ -174,18 +193,27 @@ A `cook_step`'s **iteration mode** is determined by its output pattern list, bef
 
 | Output pattern shape | Mode | Driver | Units produced |
 |---|---|---|---|
-| At least one output contains `$<in.ACCESSOR>` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§{steps.ingredients}) | One per input |
-| At least one output contains `$<lib.ACCESSOR>` (dep-driven accessor, §{xref.dep-driven}) | **One-to-one over dep outputs** | `lib`'s output list (§{xref.dep-recipe-output}) | One per `lib` output |
+| At least one output contains an accessor for its current driver (`$<in.ACCESSOR>` or `$<lib.ACCESSOR>`) | **One-to-one over driver outputs** | The gathered input set or `lib`'s output list (§{xref.dep-driven}) | One per driver output |
 | All outputs are literal (no accessor placeholders) | **Many-to-one** (the "one" refers to *one unit*, not one output) | None — one unit runs with the full input list visible | Exactly one |
-| The recipe carries an `ingredients <probe>` source (§{steps.ingredients}) | **One-to-one over data members** | The probe's resolved member list | One per member |
+| At least one output contains `$<in.ACCESSOR>` and the recipe carries a `gather <probe>` source (§{steps.gather}) | **One-to-one over data members** | The source's resolved member list | One per member |
 
 A conforming implementation MUST reject, with a load-time diagnostic, a `cook_step` whose output patterns mix iteration sources — that is, where two outputs select different drivers (one bears `$<in.ACCESSOR>` while another bears `$<libmath.ACCESSOR>`, or one bears `$<in.ACCESSOR>` while another is literal). All output patterns of a single `cook_step` MUST share one driver.
 
 The iteration mode determines the number of work units produced; it is orthogonal to the `cook_step`'s declared output count. Each mode admits any number of declared outputs (one or more), as detailed in §{steps.cook-multi}.
 
-When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}), the output-pattern rule of this section selects between two modes (CS-0155; before that amendment every step was member-iterated "regardless of its output-pattern accessors", which left literal-output steps registering one colliding unit per member over raw record text):
+`gather` does not select cardinality. An accessor-bearing output fans out; an
+all-literal output remains many-to-one. Thus `gather "src/*.c"` followed by a
+literal-output step produces exactly one unit whose `$<in>` is the complete
+gathered set. [added CS-0224]
 
-- A `cook_step` with at least one accessor-bearing output is in **one-to-one over data members** mode: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no ingredient path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by an `ingredients <probe>` source.
+When the recipe carries  a `gather <probe>` source (§{steps.gather}), the output-pattern rule of this section selects between two modes (CS-0155; before that amendment every step was member-iterated "regardless of its output-pattern accessors", which left literal-output steps registering one colliding unit per member over raw record text):
+
+The gather source supplies the recipe's members. An accessor-bearing `cook`
+output registers one unit per member; a later all-literal `cook` output
+registers one aggregate unit over the preceding outputs; an all-literal first
+`cook` step is rejected.
+
+- A `cook_step` with at least one accessor-bearing output is in **one-to-one over data members** mode: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no input path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by  a `gather <probe>` source.
 - A `cook_step` whose outputs are all literal is the ordinary **many-to-one** gather of this section, and its input list is the *preceding* `cook_step`'s collected outputs — exactly the chained-step rule that applies in a glob-driven recipe: one unit, `$<in>` expanding to that collected list, space-joined. Data members are records, not file paths, so there is nothing path-shaped for a *first* step to gather: a conforming implementation MUST reject a literal-output `cook_step` with no preceding `cook_step` in a probe-driven recipe with a register-phase diagnostic that names the recipe and directs the author to fan out first or to aggregate member values in a `>{ … }` Lua body via `cook.probes.get` (§{cat.probes.consumer}).
 
 ### Example 8.4.1.2
@@ -195,7 +223,7 @@ probe services
     json { echo '[ {"name":"web"}, {"name":"api"} ]' }
 
 recipe configs
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" { render $<in.name> > $<out> }
     cook "build/manifest.txt"    { cat $<in> > $<out> }
 ```
@@ -206,7 +234,7 @@ The first `cook` fans out: one unit per record, `$<in.name>` a record field. The
 
 ```cook
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one: $<in> is the loop member
     cook "build/app" { gcc $<in> -o $<out> }               # many-to-one: $<in> is the collected input set
 ```
@@ -225,10 +253,10 @@ cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body NEWLINE
 
 A conforming implementation MUST accept the Lua-expression form under the following rules.
 
-1. **Evaluation.** The expression is evaluated **once per ingredient**, at register time, against the Cookfile-scope Lua VM (the same VM used for chore-parameter Lua-expression defaults, §{chores.params}).
-2. **Bindings.** The expression sees the name `input` in scope: the current ingredient's path, a Lua `string`. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the expression instead sees `item` bound to the current data member (a table for record members, a string/number/boolean for scalar members) rather than `input`. The expression MAY also reference register-phase locals visible to the recipe — top-level Lua bindings, `config` block writes, and locals established by a `register` block (§{decl.register}) or a recipe-body `module_call` (§{steps.dispatch}, rule 6). The standard library is available subject to the §{lua} sandbox in effect at register time.
+1. **Evaluation.** The expression is evaluated **once per input**, at register time, against the Cookfile-scope Lua VM (the same VM used for chore-parameter Lua-expression defaults, §{chores.params}).
+2. **Bindings.** The expression sees the name `input` in scope: the current input's path, a Lua `string`. When the recipe is driven by  a `gather <probe>` source (§{steps.gather}), the expression instead sees `item` bound to the current data member (a table for record members, a string/number/boolean for scalar members) rather than `input`. The expression MAY also reference register-phase locals visible to the recipe — top-level Lua bindings, `config` block writes, and locals established by a `register` block (§{decl.register}) or a recipe-body `module_call` (§{steps.dispatch}, rule 6). The standard library is available subject to the §{lua} sandbox in effect at register time.
 3. **Return value.** The expression's return value MUST coerce to a non-empty string under the same coercion rules the Standard applies to chore Lua-expression defaults (§{chores.params}): `string` verbatim, `number` via Lua `tostring`, `boolean` to `"true"` or `"false"`; any other type — including `nil`, `table`, `function`, `thread`, `userdata` — is a register-phase diagnostic. The empty string is likewise a register-phase diagnostic.
-4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode or **one-to-one over data members** mode (§{steps.iteration-mode}); in the data-member case the expression sees `item` rather than `input` (rule 2). The expression is evaluated per iteration element, so dep-driven and many-to-one modes — neither of which iterates element-by-element — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `ingredients_step`, or whose iteration source resolves to the empty set, with a register-phase diagnostic.
+4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode or **one-to-one over data members** mode (§{steps.iteration-mode}); in the data-member case the expression sees `item` rather than `input` (rule 2). The expression is evaluated per iteration element, so dep-driven and many-to-one modes — neither of which iterates element-by-element — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `gather_step`, or whose iteration source resolves to the empty set, with a register-phase diagnostic.
 5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) { ... }`) with a register-phase diagnostic naming the offending tokens.
 6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) and `shell_block` (`{ ... }`) are both admitted; the body is mandatory (CS-0133). The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
 
@@ -236,23 +264,23 @@ A conforming implementation MUST accept the Lua-expression form under the follow
 
 ```cook
 recipe translate-fr
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("/en/", "/fr/")) >{
         fs.write(output, transform(fs.read(input)))
     }
 ```
 
-The expression `input:gsub("/en/", "/fr/")` runs once per matched ingredient with `input` bound to that ingredient's path; the resulting string becomes the unit's `outputs[1]`. The `exec_lua_block` sees the `input` and `output` bindings per §{lua.using-block-globals}; `output` is the same string the Lua-expression produced.
+The expression `input:gsub("/en/", "/fr/")` runs once per matched input with `input` bound to that input's path; the resulting string becomes the unit's `outputs[1]`. The `exec_lua_block` sees the `input` and `output` bindings per §{lua.using-block-globals}; `output` is the same string the Lua-expression produced.
 
 ### Example 8.4.2.2
 
 ```cook
 recipe thumbnail
-    ingredients "assets/photos/*.jpg"
+    gather "assets/photos/*.jpg"
     cook (input:gsub("assets/photos", "build/thumb")) { convert $<in> -resize 256x256 $<out> }
 ```
 
-Mixes the Lua-expression output form with a `shell_block` body. The shell block's `$<in>` and `$<out>` placeholders resolve to the iteration's ingredient path and the Lua-expression's evaluated string, respectively.
+Mixes the Lua-expression output form with a `shell_block` body. The shell block's `$<in>` and `$<out>` placeholders resolve to the iteration's input path and the Lua-expression's evaluated string, respectively.
 
 ### Note 8.4.2.1 — Cache key impact [#steps.cook-lua-expr-output.cache]
 
@@ -260,11 +288,11 @@ The expression's resolved string is recorded as the unit's `outputs[1]`, and so 
 
 ### Note 8.4.2.2 — Why one-to-one only [#steps.cook-lua-expr-output.rationale]
 
-The Lua-expression form's defining feature is per-ingredient evaluation: each ingredient produces one unit whose output path is the expression evaluated with `input` bound to that ingredient. Dep-driven iteration (§{xref.dep-driven}) iterates over a *dependency's* output list, not over the step's own ingredient list, so `input` would have no canonical meaning. Many-to-one iteration runs the unit exactly once over the full input list, so per-ingredient evaluation has no addressable iteration. The restriction is therefore not a guard against unsafe semantics but a consequence of the bind-`input`-per-ingredient contract.
+The Lua-expression form's defining feature is per-input evaluation: each input produces one unit whose output path is the expression evaluated with `input` bound to that input. Dep-driven iteration (§{xref.dep-driven}) iterates over a *dependency's* output list, not over the step's own input list, so `input` would have no canonical meaning. Many-to-one iteration runs the unit exactly once over the full input list, so per-input evaluation has no addressable iteration. The restriction is therefore not a guard against unsafe semantics but a consequence of the bind-`input`-per-input contract.
 
 ### Note 8.4.2.3 — Register-phase diagnostic shape [#steps.cook-lua-expr-output.diagnostic]
 
-A conforming implementation rejecting the resolved output value MUST surface a register-phase diagnostic whose message identifies (a) the offending ingredient path and (b) the rule violated (non-string return, empty string). The reference implementation emits `cook (LUA_EXPR) returned non-string or empty value for input <PATH>` from the per-ingredient register-phase guard; an alternative implementation MAY phrase the message differently but MUST carry equivalent information.
+A conforming implementation rejecting the resolved output value MUST surface a register-phase diagnostic whose message identifies (a) the offending input path and (b) the rule violated (non-string return, empty string). The reference implementation emits `cook (LUA_EXPR) returned non-string or empty value for input <PATH>` from the per-input register-phase guard; an alternative implementation MAY phrase the message differently but MUST carry equivalent information.
 
 ### 8.4.3. Cook-step disposition [#steps.cook-disposition]
 
@@ -272,113 +300,111 @@ A conforming implementation rejecting the resolved output value MUST surface a r
 
 > **Body = what it's made of. `cook` = one unit (≥1 output). Tail = what to do with that unit.**
 
-A unit's cache participation is declared by two surfaces — *inputs* and *output-facts* — which split along a seam that was already there: `seal`/`unseal` name a determinant **input**, and `local`/`pinned`/`nondet` state a **fact about the unit's output**. They are therefore the different kinds they are.
+A unit's cache participation is declared by two surfaces — *inputs* and *output-facts*. `seal` names determinant **inputs** for the recipe, while `local`/`pinned`/`nondet` state a **fact about one unit's output**.
 
 | Concept | Written as | Where | Scope |
 |---|---|---|---|
-| File inputs | `ingredients "…"` | body line | recipe-wide |
-| Probe inputs | `seal <probes>` | body line | recipe-wide |
+| File inputs | `gather "…"` | body line | recipe-wide |
+| Determinant inputs | `seal <probe-or-glob> …` | body line | recipe-wide |
 | The unit | `cook "out1" "out2" { … }` | body line | one key, ≥1 output |
-| Per-unit identity tweak | `… seal/unseal <probes>` | tail of the `cook` | that unit |
 | Disposition | `… local / pinned / nondet` | tail of the `cook` | that unit |
 
-**One rule:** a body line names a recipe-wide input; a tail tunes one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
+**One rule:** a body line names a recipe-wide input; a tail states an output fact about one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
 
-A `probe_ref` (used by `seal`/`unseal` everywhere) follows §{grammar-appendix.probe} exactly: `BARE_PROBE_KEY | STRING`, module-prefixable with no cap on segment count (`cc:toolchain`, `cc:find:raylib`), the quoted `STRING` form admitted as at every other site that names a probe key (CS-0201, superseding the rejections this clause used to state). A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` (§{steps.ingredients}), not `seal`.
+A `seal_operand` follows the language-wide quoted-versus-bare law: a bare
+`BARE_PROBE_KEY` names a probe or top-level declaration, while a quoted
+`STRING` is a file glob and `!STRING` excludes matches from the quoted set on
+that line. Quoted operands desugar to one anonymous `files` probe; they are
+invalidate-only, never bind `$<in>`, and never make the recipe iterate. To
+consume paths as data, use `gather` (§{steps.gather}), not `seal`.
+The implementation-reserved `@seal:` probe-key prefix identifies those
+anonymous declarations and MUST be rejected on every author-written
+declaration surface, including `cook.probe`; compiler-generated anonymous
+declarations register through an implementation-private path.
+An unmatched quoted glob MUST be rejected as an unresolved file determinant;
+an unresolved bare operand MUST instead identify the attempted probe key.
 
-**A seal/unseal ref is ALWAYS a probe name.** There is no `env.X` / `tool.X` ambient-determinant ref form — neither a way to seal an environment variable inline nor a way to seal a tool by file path. `probe_ref` is therefore complete as written above; it needs no extension. The referenced probe MAY be any probe — a shell or Lua probe, a `tools` probe, or an `envs` probe (§{cat.probes.decl}) — but the surface is uniform: every seal ref is just a probe name. The two ambient-determinant paths fold through that one surface:
+There is no inline environment or tool determinant form. Those determinants
+remain named declarations:
 
-- **Unconsumed environment.** An ambient environment variable that no unit consumes (so §{exec.cache.lua-variable-reads} does not auto-fold it) is folded by declaring an `envs` probe over the variable(s) and sealing that probe by name — `seal <envsprobe>`. The `envs` probe's value is a cached, shareable fingerprint over the named variables (§{cat.probes.decl}). Environment a unit *does* consume continues to auto-fold via §{exec.cache.lua-variable-reads}, unchanged.
-- **Tool determinants.** A toolchain is folded by sealing a `tools` probe (§{cat.probes.decl}) by name. The asymmetry with environment is deliberate: tools want cached, shared fingerprinting — exactly what a probe provides — whereas an `env.X` inline ref would have provided neither grouping, naming, nor shareability. Both ambient kinds therefore resolve to the same uniform "seal a named probe" surface, with no `env.X` / `tool.X` special forms to parse.
+- **Unconsumed environment.** An ambient environment variable that no unit consumes (so §{exec.cache.lua-variable-reads} does not auto-fold it) is folded by declaring an ordinary shell probe over the variable(s), for example `lines { echo "$CFLAGS"; echo "$LDFLAGS" }`, and sealing that probe by name. The probe is named, can group multiple variables, and is shareable; because it has no declared source it re-observes on every reached invocation, while consuming units key on its value (§{cat.probes.exec}, §{exec.cache.single-key}). Environment a unit *does* consume continues to auto-fold via §{exec.cache.lua-variable-reads}, unchanged.
+- **Tool determinants.** A toolchain is folded by sealing a `tools` declaration (§{cat.probes.decl}) by name. Both ambient kinds therefore resolve to the same uniform "seal a named probe" surface, with no inline environment or tool special forms to parse.
 
-#### 8.4.3.1. `seal` / `unseal` steps [#steps.cook-disposition.seal]
+#### 8.4.3.1. `seal` steps [#steps.cook-disposition.seal]
 
-`seal` and `unseal` are recipe-body **steps** — a second input stream, sibling of `ingredients`, declaring *determinant* probe inputs (probe values folded into the unit cache key) alongside `ingredients`' *file* inputs. A conforming implementation MUST enforce, at parse time:
+`seal` is a recipe-body **step** — a second input stream, sibling of `gather`, declaring *determinant* inputs alongside `gather`' consumed inputs. A conforming implementation MUST enforce, at parse time:
 
-1. **Recipe-level `seal` is the baseline.** A `seal <probes>` step adds its `probe_ref`s to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero refs) MUST be rejected — seal/unseal are always explicitly named. A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
+1. **Recipe-level `seal` is the baseline.** A `seal <operands>` step adds the named refs and anonymous file determinant to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero operands) MUST be rejected. An exclusion MUST be immediately adjacent to `!` and a seal line containing exclusions MUST contain at least one quoted include. A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
 2. **Additive and order-independent.** Multiple recipe-level `seal` steps union their refs. The baseline applies to every cacheable unit regardless of textual position (it is *declarative*, not positional): `seal` after a `cook` or `test` still applies to it. The effective set is sorted and de-duplicated.
-3. **Recipe-level `unseal` is rejected.** `unseal` is a trailing modifier on a `cook` or `test` step only (rule 5). The recipe is the outermost seal scope; there is nothing inherited to release, so a recipe-level `unseal` would read as a no-op and MUST be rejected.
+3. **There is one tier.** Trailing `seal` and every `unseal` position were removed by CS-0225. A conforming implementation MUST reject them with migration diagnostics: trailing `seal` names the recipe-level step, and `unseal` says not to put the ref in the recipe's seal set.
 
-**Recipe boundaries break seals implicitly.** The recipe is the outermost seal scope; nothing propagates across recipe dependency edges. A downstream recipe folds an upstream's determinants in transitively via the upstream's OUTPUT CONTENT hashes (consumed as `ingredients`), so re-sealing downstream would double-count. There are exactly two seal tiers — recipe baseline and per-unit tail — and no config-default inheritance tier.
+**Recipe boundaries break seals implicitly.** The recipe is the outermost seal scope; nothing propagates across recipe dependency edges. A downstream recipe folds an upstream's determinants in transitively via the upstream's OUTPUT CONTENT hashes (consumed as `gather`), so re-sealing downstream would double-count. There is exactly one seal tier — the recipe seal set — and no per-unit or config-default inheritance tier.
 
-> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *named-only*: every determinant a unit keys on is an explicitly named probe ref. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). This note fixes the boundary such a form would have to draw, so that introducing one later cannot silently change today's keys. A blanket seal would have to enumerate a *universe* comprising (a) the unit's *visible-but-unconsumed* probes — probes declared in the Cookfile that the unit neither consumes as `ingredients <probe>` data nor names in its effective seal set — plus (b) ambient determinants not modelled as probes at all (consulted environment beyond §{exec.cache.lua-variable-reads}, host/machine identity, tool identity). The current surface declares no such universe: a unit keys on exactly the probes named in its effective seal set and nothing more (§{exec.cache.single-key}). Any future blanket form is a NEW determinant set, not a re-reading of the named-only one, and MUST be introduced under its own change ID with its own key-version bump.
+> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *explicit-only*: every determinant is an explicitly named probe ref or file glob. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). An explicit file glob is not a blanket: its author names the filesystem set directly. Any future blanket form is a NEW determinant set, not a re-reading of this one, and MUST be introduced under its own change ID with its own key-version bump.
 
 #### 8.4.3.2. Trailing modifiers (`cook_mods`) [#steps.cook-disposition.tail]
 
 ```ebnf
-cook_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
+cook_mods ::= share_mod?
 share_mod ::= "local" | "pinned" | "nondet"
 ```
 
 The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line (a cook step always has a body, CS-0133). Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
 
-4. **Per-unit seal/unseal adjust the baseline.** A unit's *effective seal set* is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated. Bare trailing `seal`/`unseal` (no refs) MUST be rejected. A trailing `unseal` affects only the unit it is written on: it MUST NOT alter the effective set of any sibling unit.
-5. **`unseal` is trailing-only.** `unseal <probes>` removes refs from this unit's effective set; it is valid only here (not as a recipe-level step, rule 3).
-6. **`share_mod` is a single optional slot.** At most one of `local` / `pinned` / `nondet` MAY appear, and it MUST be the last token — nothing can follow it. The three are mutually exclusive by construction (a single slot). `local` opts out of sharing (§{exec.cache.sharing}); `pinned` is designated-producer / fetch-only (§{exec.cache.sharing}); `nondet` declares the output intrinsically non-reproducible, waiving byte-equivalence (§{exec.cache.record}).
-7. **`record` is renamed `nondet`.** The v3 `record` disposition is renamed `nondet` (it states a *fact* — the output is nondeterministic — rather than an imperative policy). The `record` keyword in `cook_mods` MUST be rejected with a migration diagnostic.
-8. **Non-reserved words.** `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words. `seal`/`unseal` are recognised as steps only at a recipe-body line position; `local`/`pinned`/`nondet` only in the trailing `cook_mods` position. A recipe-body line whose first token is `local`/`pinned`/`nondet` (followed by other content or alone) is an ordinary `shell_command` (§{steps.shell}).
+4. **`share_mod` is a single optional slot.** At most one of `local` / `pinned` / `nondet` MAY appear. `local` opts out of sharing (§{exec.cache.sharing}); `pinned` is designated-producer / fetch-only (§{exec.cache.sharing}); `nondet` declares the output intrinsically non-reproducible, waiving byte-equivalence (§{exec.cache.record}).
+5. **`record` is renamed `nondet`.** The `record` keyword in `cook_mods` MUST be rejected with a migration diagnostic.
+6. **Non-reserved words.** `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words. `seal` is recognised as a step only at a recipe-body line position; `local`/`pinned`/`nondet` only in the trailing `cook_mods` position.
 
-#### 8.4.3.3. Trailing modifiers on a `test` step (`test_mods`) [#steps.cook-disposition.test-tail]
+#### 8.4.3.3. Test units [#steps.cook-disposition.test-tail]
 
-```ebnf
-test_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)*
-```
-
-A `test` unit is a cacheable unit (§{exec.cache.test-unit}), so it takes the **input** half of `cook_mods` — and only that half. A conforming implementation MUST enforce:
-
-9. **`seal`/`unseal` behave exactly as on a `cook` step.** Rules 1-5 and 8 apply unchanged, reading "cacheable unit" for "cook unit": the recipe baseline reaches the test, the tail adjusts it, and the effective set is `(baseline ∪ trailing seals) − trailing unseals`. The `probe_ref` shape is identical (§{grammar-appendix.probe}; CS-0201 admits the quoted form and multi-segment keys).
-10. **`share_mod` is NOT admitted on a `test` step.** `local`, `pinned`, and `nondet` state a fact about an *output artifact* (§{exec.cache.sharing}, §{exec.cache.record}), and a test produces a pass/fail record rather than artifacts — there is nothing for them to describe. A conforming implementation MUST reject any of these keywords in a `test_mods` position, with a diagnostic naming the keyword and the reason. The removed `record` keyword (rule 7) is likewise rejected here.
-
-The seam is the one §8.4.3 already draws: `seal`/`unseal` name a determinant **input**, which every cacheable unit has; `local`/`pinned`/`nondet` state a fact about an **output**, which only a `cook` unit has. `test` therefore inherits exactly the input half. This is why the tail is spelled `test_mods` rather than reusing `cook_mods`: the two tails are different productions, not one production with a runtime check.
-
-> **Note 8.4.3.3 — why a test seals at all (informative).** A test's cache key already folds the *content* of the files it consumes (§{exec.cache.test-unit} rule 1). What it cannot see is everything that is not a file: the compiler the binary under test was built with, a service version the suite runs against, a feature flag read from the environment. Before CS-0159 the only way to re-run a test on such a change was to make it uncacheable — losing reuse entirely — or to thread a sentinel file through the recipe. Sealing states the determinant directly: the test re-runs when the sealed probe's value changes, and is reused when it does not. §{exec.cache.test-unit} rule 1 had specified this fold since CS-0138; CS-0159 supplies the surface that makes a test's effective seal set expressible.
+A `test` unit carries the recipe seal set exactly as a `cook` unit does. It admits no trailing modifiers: `seal`/`unseal` were removed by CS-0225, and output dispositions do not apply because a test produces no artifact.
 
 ### Example 8.4.3.1 — the whole surface once
 
-The probes `toolchain`, `flags`, and `rev` are declared elsewhere (§{cat.probes}):
+The probes `toolchain` and `flags` are declared elsewhere (§{cat.probes}):
 
 ```cook
 recipe build
-    ingredients "src/*.c"          # ┐ recipe-wide inputs
+    gather "src/*.c"          # ┐ recipe-wide inputs
     seal toolchain flags           # ┘ → identity
     cook "bin/app" "bin/app.map" { cc … -Wl,-Map=bin/app.map }  # one unit, two files, one key
     cook "bin/app.dbg" { cc -g … } local                       # separate unit, kept local
-    cook "bin/plugin"  { cc … } seal rev                       # also keyed on the git rev
+    cook "bin/plugin"  { cc … }                                # same recipe seal set
     cook "gen/ver.h"   { … } nondet                            # non-reproducible → reuse stored copy
 ```
 
-`bin/app`/`bin/app.map` form one unit (one key, two outputs) sealed on `toolchain` and `flags`; `bin/app.dbg` is the same baseline but kept `local`; `bin/plugin` additionally seals on `rev`; `gen/ver.h` is `nondet`. A multi-output *unit* carries one tail; several *separate* `cook` steps wanting the same disposition repeat the word (an accepted rough edge — split the recipe, or add a recipe-level default later without breaking the grammar).
+`bin/app`/`bin/app.map` form one unit (one key, two outputs). Every unit is sealed on `toolchain` and `flags`; `bin/app.dbg` is kept `local`; `gen/ver.h` is `nondet`.
 
-### Example 8.4.3.2 — per-unit unseal
+### Example 8.4.3.2 — one seal tier
 
 ```cook
 recipe build
-    seal a b
-    cook "x.o" { cc -c x.c -o x.o } unseal a seal c
+    seal a b c
+    cook "x.o" { cc -c x.c -o x.o }
 ```
 
-The effective seal set of `x.o` is `{b, c}`: baseline `{a, b}`, plus trailing `seal c`, minus trailing `unseal a`.
+The recipe seal set `{a, b, c}` applies to `x.o`.
 
 ### Example 8.4.3.3 — a sealed test
 
 ```cook
 recipe check
-    ingredients "tests/*.c"
+    gather "tests/*.c"
     seal toolchain                                  # ┐ baseline: both units
     cook "build/$<in.stem>" { cc $<in> -o $<out> }  # ┘
     test { ./build/$<in.stem> }                     # keyed on toolchain too
-    test { ./scripts/lint.sh } unseal toolchain seal lint_config
+    test { ./scripts/lint.sh }
 ```
 
-The baseline reaches both `test` units, exactly as it reaches the `cook`. The first test re-runs when the compiler changes even though its consumed binary might be restored byte-identically from cache. The second test is a linter that does not care about the compiler: it releases `toolchain` and seals the linter's own config probe instead, for an effective set of `{lint_config}`. The `unseal` on the second test does not affect the first.
+The recipe seal set reaches both `test` units, exactly as it reaches the `cook`. A change to `toolchain` therefore re-runs both tests even when the consumed binary is restored byte-identically from cache.
 
 ### Note 8.4.3.2 — Conformance fixtures [#steps.cook-disposition.fixtures]
 
-Positive: `standard/conformance/positive/cook-disposition-seal-line`, `cook-disposition-seal-stacked`, `cook-disposition-local-line`, `cook-disposition-pinned-line`, `cook-disposition-nondet`, `cook-disposition-trailing-seal-unseal`, `cook-disposition-seal-order-independent`, `cook-disposition-seal-multi-cook-baseline`, `cook-disposition-unseal-one-unit-only`, `cook-disposition-seal-envs-probe`, `cook-disposition-seal-tools-probe`.
+Positive: `standard/conformance/positive/cook-disposition-seal-line`, `cook-disposition-seal-stacked`, `cook-disposition-local-line`, `cook-disposition-pinned-line`, `cook-disposition-nondet`, `cook-disposition-seal-order-independent`, `cook-disposition-seal-multi-cook-baseline`, `cook-disposition-seal-envs-probe`, `cook-disposition-seal-tools-probe`.
 
-Negative: `standard/conformance/negative/cook-disposition-local-and-pinned`, `cook-disposition-double-share-mod`, `cook-disposition-bare-seal`, `cook-disposition-recipe-unseal`, `cook-disposition-record-renamed`.
+Negative: `standard/conformance/negative/cook-disposition-local-and-pinned`, `cook-disposition-double-share-mod`, `cook-disposition-bare-seal`, `cook-disposition-record-renamed`.
 
-Test-unit seal (CS-0159) — positive: `test-seal-baseline`, `test-seal-trailing`, `test-seal-trailing-unseal`, `test-seal-only-recipe`. Negative: `test-seal-bare`, `test-seal-share-mod`.
+Test-unit seal (CS-0159) — positive: `test-seal-baseline`, `test-seal-all-units`, `test-seal-multiple-refs`, `test-seal-only-recipe`. Negative: `test-seal-bare`, `test-seal-share-mod`.
 
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the body:
@@ -395,7 +421,7 @@ Like the single-output form, a multi-output `cook_step` MUST have a body (CS-013
 
 ```cook
 recipe generate
-    ingredients "src/*.rs"
+    gather "src/*.rs"
     cook "staging/out.js" "staging/out.wasm" {
         ./fake-generator.sh
         mkdir -p staging
@@ -410,7 +436,7 @@ One `cook` step declares two outputs produced together by a sequence of shell co
 
 ```cook
 recipe build_lua
-    ingredients "src/*.rs"
+    gather "src/*.rs"
     cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")
@@ -430,22 +456,22 @@ The same two outputs are produced by a Lua block. The `inputs` and `outputs` nam
 The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic, and under CS-0022 with a bare-string-removal diagnostic. Since CS-0099 the `using` token itself is rejected at this position with the migration diagnostic of §{grammar-appendix.steps} ("`using` is rejected"); conformance fixture `cs0099-using-keyword-rejected` pins it.
 
 ## 8.6. `test` step [#steps.test]
-A `test_step` (§{grammar-appendix.steps}, `test_step`) registers a work unit that is **reported as a test**. It has a body — either a `shell_block` or an `exec_lua_block` (§{grammar-appendix.steps}) — and admits no leading `STRING`. The body follows the keyword directly, and MAY be followed by a `test_mods` tail (§{steps.cook-disposition.test-tail}).
+A `test_step` (§{grammar-appendix.steps}, `test_step`) registers a work unit that is **reported as a test**. It has a body — either a `shell_block` or an `exec_lua_block` (§{grammar-appendix.steps}) — and admits no leading `STRING` or trailing modifiers. The body follows the keyword directly.
 
 **What makes a unit a test (CS-0186).** The kind selects the **reporter**, and nothing else: a test unit is a target of the implementation's test runner, contributes to its pass/fail tally and to the process exit status of §{exec.exit-status}, and is named in its report. That is the whole of the distinction. In every other respect it is an ordinary work unit — registered by the one registration function (§{lua.add-unit}, CS-0185), scheduled by the same graph, and cached by the same rules under the same key (§{exec.cache.single-key}).
 
 This section formerly drew the distinction the other way round, as a unit that "reports pass/fail rather than producing artifacts". The two halves of that are separate claims and only the first is the definition. A test declares no outputs (§{lua.add-unit} requires it), but declaring no outputs is a *consequence* of what a test is for, not the thing that makes it one: it decides that a cache hit replays a verdict instead of restoring bytes (§{exec.cache.effect-kind}), which is a fact about caching that an output-less step kind which is **not** a test would share. A conforming implementation MUST NOT infer either property from the other (§{lua.add-unit}, CS-0185), which is what keeps that door open.
 
 ```ebnf
-test_step ::= "test" body test_mods? NEWLINE
+test_step ::= "test" body NEWLINE
 body      ::= shell_block | exec_lua_block
 ```
 
 A conforming implementation MUST accept both `test { ... }` (a `shell_block` body) and `test >{ ... }` (an `exec_lua_block` body), and MUST reject any leading `STRING`.
 
-Iteration is decided by a single signal — whether the body references the iteration item (§{steps.iteration-mode-plate-test}). A shell body containing `$<in>` / `$<in.ACCESSOR>`, or a Lua body binding `input`, puts the step in **one-to-one** mode: a fan-out over the iteration source with one cached pass/fail unit per item. Each unit keys on its own item alone — whatever the source is — so editing one item re-runs one unit and no other (§{exec.cache.test-unit} rule 1, CS-0182 as extended by CS-0186). A body that references no iteration item is a **single unit** — one node — whose caching is derived from the recipe's declared file source: when the recipe supplies a source (`ingredients`, or an upstream `cook`'s outputs) the unit is keyed on the whole source set (the engine's `ManyToOne`); when the recipe supplies no source at all the unit runs uncached on every invocation (the engine's `OneShot`). Whether a test is cached at all is **derived**, not declared — it follows from what the recipe gives the step to iterate, exactly as for a `cook_step`. A step iterating an `ingredients <probe>` source is cached on its **member** even though it names no file (§{exec.cache.test-unit} rule 1, CS-0186).
+Iteration is decided by a single signal — whether the body references the iteration item (§{steps.iteration-mode-plate-test}). A shell body containing `$<in>` / `$<in.ACCESSOR>`, or a Lua body binding `input`, puts the step in **one-to-one** mode: a fan-out over the iteration source with one cached pass/fail unit per item. Each unit keys on its own item alone — whatever the source is — so editing one item re-runs one unit and no other (§{exec.cache.test-unit} rule 1, CS-0182 as extended by CS-0186). A body that references no iteration item is a **single unit** — one node. When the recipe supplies a source (`gather`, or an upstream `cook`'s outputs), the unit is keyed on the whole source set (the engine's `ManyToOne`). With no source but a non-empty recipe seal set it receives a seal-only key under §{exec.cache.seal-only-key}; with neither source nor seal it runs uncached (the engine's `OneShot`). A step iterating a `gather <probe>` source is cached on its **member** even though it names no file (§{exec.cache.test-unit} rule 1, CS-0186).
 
-What a cached test unit is keyed *on*, however, IS declarable: a test is a cacheable unit, so it participates in the seal surface on the same footing as a `cook` unit (§{steps.cook-disposition.test-tail}, §{exec.cache.test-unit} rule 1). Seal narrows reuse of a key that already exists; it never mints one. A `seal` therefore MUST NOT make a source-less test cacheable — a seal ref is an *invalidate-only* determinant (§{steps.cook-disposition}), not an input source, so a source-less `test { cargo test }` sealed on a toolchain probe still runs uncached on every invocation. Its real inputs remain opaque to Cook, and a key built from the seal alone would be a false green.
+What a cached test unit is keyed *on*, however, IS declarable: a test is a cacheable unit, so it carries the recipe seal set on the same footing as a `cook` unit (§{steps.cook-disposition.test-tail}, §{exec.cache.test-unit} rule 1). Whether a sourceless observing unit receives a key is defined by §{exec.cache.seal-only-key} (CS-0223).
 
 This is the deliberate parallel with `cook` (§{steps.iteration-mode}): the iteration accessor lives wherever the step's defining payload is — the output pattern for `cook`, the body for `test`. CS-0022's hazard (a body `$<in>` conflicting with a literal output pattern) cannot arise for `test`, which has no output pattern for the body signal to conflict with.
 
@@ -453,7 +479,7 @@ This is the deliberate parallel with `cook` (§{steps.iteration-mode}): the iter
 
 The rule reaches dependents, not siblings. A unit that merely runs alongside a failed test is unaffected, so a test runner (§{exec.exit-status}) still executes and reports the whole suite rather than halting at the first failure. Blocking is a consequence of the dependency edge, never of shared scheduling.
 
-**Trailing content after the body is `test_mods`, and nothing else.** The only tokens admitted after the body's closing `}` are the `test_mods` of §{steps.cook-disposition.test-tail}; a conforming implementation MUST reject any other trailing token. When the rejected trailing token is `should_fail`, `timeout`, or `as`, a conforming implementation SHOULD emit a did-you-mean diagnostic naming the removed modifier and the v1.0 migration path:
+**Trailing content after the body is rejected.** A conforming implementation MUST reject every token after the body's closing `}`. When the rejected trailing token is `seal` or `unseal`, it MUST emit the CS-0225 migration diagnostic of §{steps.cook-disposition.test-tail}. When it is `should_fail`, `timeout`, or `as`, a conforming implementation SHOULD emit a did-you-mean diagnostic naming the removed modifier and the v1.0 migration path:
 
 - `should_fail`: "`should_fail` was removed in v1.0; invert the check in the body, e.g. `test { ! grep -q foo $<in> }`".
 - `timeout`: "`timeout` was removed in v1.0".
@@ -469,17 +495,18 @@ A `test_step` has two author-facing modes, selected by whether its body referenc
 |---|---|---|
 | `$<in>` / `$<in.ACCESSOR>` (shell) or `input` (Lua) present | non-empty (required) | **one-to-one** — one cached pass/fail unit per item |
 | absent | a source is declared (non-empty) | **single unit**, keyed on the whole source set (engine `ManyToOne`) |
-| absent | no source declared | **single unit**, uncached, runs every invocation (engine `OneShot`) |
+| absent | no source, non-empty recipe seal set | **single unit**, keyed on the seal set (CS-0223) |
+| absent | neither source nor seal | **single unit**, uncached, runs every invocation (engine `OneShot`) |
 
 A shell body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder), so a shell single-unit body runs its command once over the unit. A Lua single-unit body MAY bind `inputs` to observe the collected source set. A Lua body MUST NOT reference both `input` and `inputs`.
 
-The **iteration source** for a `test_step` is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode.
+The **iteration source** for a `test_step` is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved gather (§{steps.gather}) if no `cook_step` precedes it. When the recipe is driven by  a `gather <probe>` source (§{steps.gather}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode.
 
 A conforming implementation MUST reject:
 - A Lua-block body that references both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
 - A one-to-one `test_step` (its body references the iteration item) whose iteration source resolves empty — a fan-out over nothing is an author error.
 
-A `test_step` with no declared source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always (the engine's one-shot disposition); it simply does not consult the source. A single-unit `test_step` whose declared source resolves empty is likewise not rejected: with no resolved inputs it has no cache key and degrades to the same always-run behavior.
+A `test_step` with no declared source is admitted. A non-empty recipe seal set gives it the seal-only key of §{exec.cache.seal-only-key}; with neither resolved source nor seal it has no cache key and runs uncached (the engine's one-shot disposition).
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
 
@@ -487,7 +514,7 @@ The Lua identifier scan operates on the same lexical text the brace-balance lexe
 
 ```cook
 recipe smoke
-    ingredients "tests/*.c"
+    gather "tests/*.c"
     cook "build/$<in.stem>" { cc $<in> -o $<out> }
     test { ./$<in> }
 ```
@@ -501,13 +528,13 @@ recipe check
     test { cargo test }
 ```
 
-No preceding `cook` and no `ingredients`: the step has no source at all, so it is one-shot and runs uncached on every invocation of `check`.
+No preceding `cook`, no `gather`, and no recipe seal: the step has neither source nor seal, so it is one-shot and runs uncached on every invocation of `check`.
 
 ### Example 8.6.3
 
 ```cook
 recipe coverage
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/bin/$<in.stem>.test" { cc $<in> -o $<out> }
     test >{
         for _, bin in ipairs(inputs) do
@@ -551,7 +578,7 @@ When a `lua_line` or `lua_block` opens a `cook` / `test` / `probe` step's body, 
 
 When a `lua_line` or `lua_block` occurs as a standalone step inside a `chore` body, its `lua_code` payload runs during the execute phase on the chore's single drain thread; the execution model for chore-body imperative steps — which is the single-drain rule of §{chores.default-interactive}, NOT the (CS-0134-vacuous) recipe body-bundling of §{exec.body-bundling} — is specified in §{chores}.
 
-Register-phase Lua inside a recipe body — the role the removed `>>` / `>>{` prefixes used to fill — is now written as a bare **module call** (§{steps.dispatch}, rule 6): `ns.fn(...)`, dispatched and evaluated in the recipe-registration Lua scope alongside `ingredients` / `cook` / `test` (§{steps.dispatch}, §{toplevel.module-call}).
+Register-phase Lua inside a recipe body — the role the removed `>>` / `>>{` prefixes used to fill — is now written as a bare **module call** (§{steps.dispatch}, rule 6): `ns.fn(...)`, dispatched and evaluated in the recipe-registration Lua scope alongside `gather` / `cook` / `test` (§{steps.dispatch}, §{toplevel.module-call}).
 
 ### 8.7.3. Examples [#steps.lua-examples]
 
@@ -621,7 +648,7 @@ A `@` embedded inside a `cook` step's `{ ... }` shell-block body, or elsewhere i
 
 ## 8.9. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
 
-Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placeholder of the form `$<NAME[in]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
+Inside  a `gather <probe>` fan-out body (§{steps.gather}), a placeholder of the form `$<NAME[in]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
 
 `$<NAME[in]>` performs three jobs simultaneously:
 
@@ -631,9 +658,9 @@ Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placehol
 
 **Same-probe precondition (v1).** Consumer and producer MUST iterate the same probe. The `[in]` index indexes into the producer's member map using the consumer's current `item` key; if the two recipes are driven by different probes, the key might not exist. Cross-probe joins via declared alignment keys are a tracked follow-up and MUST NOT be attempted in this version. A conforming implementation that detects a same-probe violation at register time SHOULD emit a diagnostic; otherwise the missing-key lookup produces a register-phase error at `cook.dep_output_member`.
 
-**Fan-out body only.** `$<NAME[in]>` MUST NOT appear outside an `ingredients <probe>` fan-out body. A conforming implementation MUST reject it with a load-time error if no `ingredients <probe>` driver is present in the recipe.
+**Fan-out body only.** `$<NAME[in]>` MUST NOT appear outside  a `gather <probe>` fan-out body. A conforming implementation MUST reject it with a load-time error if no `gather <probe>` driver is present in the recipe.
 
-**Bracket index (CS-0137).** The only valid bracket content in v1.0 is the literal `in` — the current member binding, the same binding `$<in>` reads (§{steps.ingredients}). A conforming implementation MUST reject the pre-v1.0 empty-bracket spelling `$<NAME[]>` with a did-you-mean diagnostic containing "`$<NAME[]>` was respelled `$<NAME[in]>` in v1.0", and MUST reject any other bracket content (`$<NAME[key]>`, `$<NAME[in.FIELD]>`, …) with a diagnostic noting that member-field joins are not part of v1.0. The bracketed-index position is reserved so 1.x keyed joins can be admitted additively. `$<NAME[in]>` where `NAME` is not a recipe in scope is a load-time error naming the unknown recipe — a trailing bracket group never falls through to env-var lookup.
+**Bracket index (CS-0137).** The only valid bracket content in v1.0 is the literal `in` — the current member binding, the same binding `$<in>` reads (§{steps.gather}). A conforming implementation MUST reject the pre-v1.0 empty-bracket spelling `$<NAME[]>` with a did-you-mean diagnostic containing "`$<NAME[]>` was respelled `$<NAME[in]>` in v1.0", and MUST reject any other bracket content (`$<NAME[key]>`, `$<NAME[in.FIELD]>`, …) with a diagnostic noting that member-field joins are not part of v1.0. The bracketed-index position is reserved so 1.x keyed joins can be admitted additively. `$<NAME[in]>` where `NAME` is not a recipe in scope is a load-time error naming the unknown recipe — a trailing bracket group never falls through to env-var lookup.
 
 **Relation to `$<NAME>`.** Both forms record a recipe-level dependency on `NAME`. `$<NAME>` substitutes the full output list (useful in a many-to-one step that needs all of `NAME`'s artifacts); `$<NAME[in]>` substitutes only the current-member output (useful in a fan-out step that needs to stay per-member). The two forms MAY coexist in the same Cookfile but MUST NOT coexist in the same step unless `NAME` differs between the two placeholders. Bare `$<NAME>` keeps its single uniform meaning in **every** position — all of `NAME`'s terminal outputs, space-joined — including inside a fan-out body whose recipe iterates the same probe as `NAME`. There is no context-dependent narrowing of the bare form to a per-member value and no rejection of the bare form inside fan-out bodies; per-member access is always spelled explicitly with `[in]`. See §{rationale.member-index}.
 
@@ -644,15 +671,15 @@ probe scenes
     json { echo '[{"id":"intro"},{"id":"outro"}]' }
 
 recipe render
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.silent.mp4" { ffmpeg -i $<in.id>.blend $<out> }
 
 recipe tts
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.wav" { tts $<in.id> $<out> }
 
 recipe mux
-    ingredients scenes
+    gather scenes
     cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }
 ```
 

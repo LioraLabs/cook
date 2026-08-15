@@ -11,14 +11,14 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cook_cache::{CacheContext, ThreadSafeCacheManager};
-use cook_contracts::cache::cas::artifact_kind;
-use cook_contracts::{CommandFailure, WorkPayload};
 use cook_cache::backend::DeterminantManifest;
 use cook_cache::{
     artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
+use cook_cache::{CacheContext, ThreadSafeCacheManager};
+use cook_contracts::cache::cas::artifact_kind;
+use cook_contracts::{CommandFailure, WorkPayload};
 use cook_dag::Dag;
 use cook_execute::{WorkItem, WorkerPool};
 
@@ -349,7 +349,11 @@ fn run_interactive_on_main(
     // hand-written as a pair of `from_bytes(&[])` calls that read like an
     // oversight.
     let outcome = cook_shell::run(
-        &cook_shell::Spawn { command: cmd, working_dir, stdio: cook_shell::Stdio::Inherited },
+        &cook_shell::Spawn {
+            command: cmd,
+            working_dir,
+            stdio: cook_shell::Stdio::Inherited,
+        },
         env_vars,
     )
     .map_err(|e| e.message().to_string())?;
@@ -560,7 +564,14 @@ pub fn execute_dag(
         is_failure: bool,
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
     ) {
-        finish_recipe_node_inner(trackers, recipe_name, is_cached, is_failure, false, event_tx);
+        finish_recipe_node_inner(
+            trackers,
+            recipe_name,
+            is_cached,
+            is_failure,
+            false,
+            event_tx,
+        );
     }
 
     fn finish_recipe_node_inner(
@@ -711,7 +722,15 @@ pub fn execute_dag(
             event_tx,
         );
         for &dep_id in dag.node(node_id).dependents() {
-            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name, blocked_results);
+            cancel_subtree(
+                dag,
+                dep_id,
+                cancelled,
+                event_tx,
+                trackers,
+                &node_name,
+                blocked_results,
+            );
         }
     }
 
@@ -790,13 +809,14 @@ pub fn execute_dag(
         // about the tree, and the unit read nothing. What is refused is SERVING
         // a hit for a unit with nothing whose movement could invalidate it.
         //
-        // The member arm is why the predicate takes all three terms. A fan-out
-        // unit over `ingredients <probe>` may declare no file by design and is
-        // keyed on its member, which reaches the key through `command_hash`.
+        // The member arm is why the predicate is not just an input check. A
+        // fan-out unit over `gather <probe>` may declare no file by design
+        // and is keyed on its member, which reaches the key through `command_hash`.
         if !cook_contracts::cache::record::has_something_to_key_on(
             meta.output_paths.len(),
             current_inputs.len(),
             meta.member_keyed,
+            !meta.seal_keys.is_empty(),
         ) {
             return CacheDecision::Miss(None);
         }
@@ -1064,11 +1084,7 @@ pub fn execute_dag(
                     e.outputs.iter().map(|r| r.path.to_string()).collect();
                 for entry in &meta.output_paths {
                     if let Some(root) = entry.strip_suffix('/') {
-                        cook_cache::reconcile_dir_output(
-                            &work_node.working_dir,
-                            root,
-                            &kept,
-                        );
+                        cook_cache::reconcile_dir_output(&work_node.working_dir, root, &kept);
                     }
                 }
             }
@@ -1148,11 +1164,7 @@ pub fn execute_dag(
                 outcome.restored_outputs.iter().cloned().collect();
             for out in &meta.output_paths {
                 if let Some(root) = out.strip_suffix('/') {
-                    cook_cache::reconcile_dir_output(
-                        &work_node.working_dir,
-                        root,
-                        &kept,
-                    );
+                    cook_cache::reconcile_dir_output(&work_node.working_dir, root, &kept);
                 }
             }
             // COOK-269: a cold fetch restores the outputs but previously
@@ -1322,7 +1334,15 @@ pub fn execute_dag(
             *finished += 1;
             let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
             for dep_id in dependents {
-                cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
+                cancel_subtree(
+                    dag,
+                    dep_id,
+                    cancelled,
+                    event_tx,
+                    trackers,
+                    &payload.display_name(),
+                    blocked_results,
+                );
             }
             return 0;
         }
@@ -1339,11 +1359,7 @@ pub fn execute_dag(
                     if dir.is_dir() {
                         let empty: std::collections::BTreeSet<String> =
                             std::collections::BTreeSet::new();
-                        cook_cache::reconcile_dir_output(
-                            &work_node.working_dir,
-                            root,
-                            &empty,
-                        );
+                        cook_cache::reconcile_dir_output(&work_node.working_dir, root, &empty);
                     }
                 }
             }
@@ -1505,7 +1521,12 @@ pub fn execute_dag(
                     let decision = if force_rerun {
                         CacheDecision::Miss(Some("forced by --rerun".to_string()))
                     } else {
-                        check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store())
+                        check_node_cache(
+                            work_node,
+                            cache_managers,
+                            cache_ctx,
+                            &pool.probe_value_store(),
+                        )
                     };
                     let (served, cause) = match decision {
                         CacheDecision::Hit => (true, None),
@@ -1609,21 +1630,25 @@ pub fn execute_dag(
                             emit(
                                 event_tx,
                                 EngineEvent::TestStarted {
-                                id: test_id.clone(),
-                                recipe: work_node.recipe_name.clone(),
-                                name: test_name.clone(),
-                                line: line as u32,
-                                iteration_item: iteration_item.clone(),
-                            });
-                            emit(event_tx, EngineEvent::TestPassed {
-                                id: test_id.clone(),
-                                duration,
-                                cached: true,
-                                should_fail: false,
+                                    id: test_id.clone(),
+                                    recipe: work_node.recipe_name.clone(),
+                                    name: test_name.clone(),
+                                    line: line as u32,
+                                    iteration_item: iteration_item.clone(),
+                                },
+                            );
+                            emit(
+                                event_tx,
+                                EngineEvent::TestPassed {
+                                    id: test_id.clone(),
+                                    duration,
+                                    cached: true,
+                                    should_fail: false,
                                     stdout: stdout.clone(),
                                     stderr: stderr.clone(),
-                                line: line as u32,
-                            });
+                                    line: line as u32,
+                                },
+                            );
                             // Register the node under its derived name (CS-0160)
                             // before completing it. `NodeCompleted` only updates a
                             // node that already exists and is Running, so without
@@ -1635,23 +1660,35 @@ pub fn execute_dag(
                             // the test path in line. The progress model marks the
                             // node Completed on this event, so the `NodeCompleted`
                             // below finds it non-Running and does not double-count.
-                            emit(event_tx, EngineEvent::NodeCacheHit {
-                                recipe: work_node.recipe_name.clone(),
-                                unit: id,
-                                node_name: test_name.clone(),
-                                artifact: None,
-                                kind: NodeKind::Test,
-                            });
+                            emit(
+                                event_tx,
+                                EngineEvent::NodeCacheHit {
+                                    recipe: work_node.recipe_name.clone(),
+                                    unit: id,
+                                    node_name: test_name.clone(),
+                                    artifact: None,
+                                    kind: NodeKind::Test,
+                                },
+                            );
                             // Emit NodeCompleted so the recipe tracker counts this node.
-                            emit(event_tx, EngineEvent::NodeCompleted {
-                                recipe: work_node.recipe_name.clone(),
-                                unit: id,
-                                node_name: test_name.clone(),
-                                elapsed: duration,
-                                kind: NodeKind::Test,
-                                cache_key: node_cache_key(work_node),
-                            });
-                            finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+                            emit(
+                                event_tx,
+                                EngineEvent::NodeCompleted {
+                                    recipe: work_node.recipe_name.clone(),
+                                    unit: id,
+                                    node_name: test_name.clone(),
+                                    elapsed: duration,
+                                    kind: NodeKind::Test,
+                                    cache_key: node_cache_key(work_node),
+                                },
+                            );
+                            finish_recipe_node(
+                                trackers,
+                                &work_node.recipe_name,
+                                true,
+                                false,
+                                event_tx,
+                            );
 
                             let namespace = crate::id::id_namespace(&test_id);
                             let recipe = crate::id::id_recipe(&test_id);
@@ -1756,9 +1793,9 @@ pub fn execute_dag(
                     // genuinely the scheduler's: dispatch, events, node
                     // completion, and fingerprint propagation.
                     //
-                    // CS-0172: an `envs { }` probe records AMBIENT PROCESS
-                    // environment values (§22.5.2) — the whole point of the
-                    // probe is to make a host value a keyed determinant — so
+                    // An `inputs.env` probe records ambient process environment
+                    // values — the whole point of the input is to make a host
+                    // value a keyed determinant — so
                     // the lookup reads the process environment, not the
                     // declared-variable namespace. The two were the same table
                     // before CS-0172, which let a config block redefine what
@@ -1800,7 +1837,7 @@ pub fn execute_dag(
 
                             // A value already in hand: the cache served it, or
                             // the producer kind is synthesised (CS-0148
-                            // `files { }`, CS-0214 `tools { }`). Either way no
+                            // top-level `files`/`tools` declarations). Either way no
                             // worker is involved, so the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
@@ -1814,8 +1851,8 @@ pub fn execute_dag(
                                     // CS-0204: no VM ran on either arm of this
                                     // branch. A cache hit's identity is already
                                     // the folded one `lookup` settled on; a
-                                    // synthesised value (`files { }`,
-                                    // `tools { }`) comes from the declared
+                                    // synthesised value (top-level `files` or
+                                    // `tools`) comes from the declared
                                     // FILES / TOOLS section and loads nothing.
                                     &[],
                                 );
@@ -1934,7 +1971,7 @@ pub fn execute_dag(
                             // "fingerprint resolution failed" into the middle of
                             // it, which was true of the one error `lookup` could
                             // return when it was written and false of the
-                            // CS-0214 one it can return now (a `tools { }` name
+                            // CS-0214 one it can return now (a top-level `tools` name
                             // that does not resolve on PATH is a statement about
                             // the host, not about a fingerprint).
                             let err_msg = e.to_string();
@@ -1950,11 +1987,25 @@ pub fn execute_dag(
                                 },
                             );
                             failures.push((id, work_node.recipe_name.clone(), err_msg.clone()));
-                            finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
+                            finish_recipe_node(
+                                trackers,
+                                &work_node.recipe_name,
+                                false,
+                                true,
+                                event_tx,
+                            );
                             *finished += 1;
                             let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                             for dep_id in dependents {
-                                cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name, blocked_results);
+                                cancel_subtree(
+                                    dag,
+                                    dep_id,
+                                    cancelled,
+                                    event_tx,
+                                    trackers,
+                                    &node_name,
+                                    blocked_results,
+                                );
                             }
                             return 0;
                         }
@@ -1998,7 +2049,12 @@ pub fn execute_dag(
             Some(payload) => {
                 // Check cache before executing.
                 // COOK-162: `pinned` cold-miss aborts the node like a failed step.
-                let miss_cause = match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                let miss_cause = match check_node_cache(
+                    work_node,
+                    cache_managers,
+                    cache_ctx,
+                    &pool.probe_value_store(),
+                ) {
                     CacheDecision::Hit => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         if cache_ctx.replay_logs {
@@ -2120,17 +2176,19 @@ pub fn execute_dag(
                             },
                         );
                         failures.push((id, work_node.recipe_name.clone(), msg));
-                        finish_recipe_node(
-                            trackers,
-                            &work_node.recipe_name,
-                            false,
-                            true,
-                            event_tx,
-                        );
+                        finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
                         *finished += 1;
                         let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                         for dep_id in dependents {
-                            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
+                            cancel_subtree(
+                                dag,
+                                dep_id,
+                                cancelled,
+                                event_tx,
+                                trackers,
+                                &payload.display_name(),
+                                blocked_results,
+                            );
                         }
                         return 0;
                     }
@@ -2309,7 +2367,11 @@ pub fn execute_dag(
                     // only in-flight item, so the next `rx.recv()` returns
                     // it — no lock-step protocol needed.
                     let result: Result<(), String> = match &work_node.payload {
-                        Some(WorkPayload::Interactive { cmd, line, is_chore: _ }) => {
+                        Some(WorkPayload::Interactive {
+                            cmd,
+                            line,
+                            is_chore: _,
+                        }) => {
                             // CS-0050: parent-dir creation is a no-op for
                             // chore bodies (no cache_meta) but kept for
                             // uniformity.
@@ -2340,9 +2402,10 @@ pub fn execute_dag(
                                         .collect();
                                     pool.submit(WorkItem {
                                         id,
-                                        payload: work_node.payload.clone().expect(
-                                            "chore-window LuaChunk node missing payload",
-                                        ),
+                                        payload: work_node
+                                            .payload
+                                            .clone()
+                                            .expect("chore-window LuaChunk node missing payload"),
                                         recipe_name: work_node.recipe_name.clone(),
                                         working_dir: work_node.working_dir.clone(),
                                         env_vars: env_vars_hashmap,
@@ -2368,9 +2431,9 @@ pub fn execute_dag(
                                             if work_result.success {
                                                 Ok(())
                                             } else {
-                                                Err(work_result.error.unwrap_or_else(
-                                                    || "lua chunk failed".into(),
-                                                ))
+                                                Err(work_result
+                                                    .error
+                                                    .unwrap_or_else(|| "lua chunk failed".into()))
                                             }
                                         }
                                         Err(e) => {
@@ -2487,13 +2550,7 @@ pub fn execute_dag(
                     );
                 }
                 if failed_idx.is_some() {
-                    finish_recipe_node(
-                        &mut recipe_trackers,
-                        &chore_recipe,
-                        false,
-                        true,
-                        &event_tx,
-                    );
+                    finish_recipe_node(&mut recipe_trackers, &chore_recipe, false, true, &event_tx);
                 }
 
                 if let Some(k) = failed_idx {
@@ -2929,7 +2986,6 @@ pub fn execute_dag(
                     line: line_no,
                     exit_code: result.exit_code,
                 });
-
             }
 
             let newly_ready = dag.complete(result.id);
@@ -3431,24 +3487,27 @@ fn publish_completion(
         let mode = std::os::unix::fs::PermissionsExt::mode(&lstat.permissions());
         #[cfg(not(unix))]
         let mode = 0o644u32;
-        let (body, kind, target): (Vec<u8>, Option<String>, Option<String>) =
-            if ft.is_symlink() {
-                let t = std::fs::read_link(&abs_output)
-                    .ok()
-                    .and_then(|p| p.to_str().map(String::from));
-                // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
-                match t {
-                    Some(t) => (Vec::new(), Some(artifact_kind::SYMLINK.to_string()), Some(t)),
-                    None => continue,
-                }
-            } else if ft.is_dir() {
-                (Vec::new(), Some(artifact_kind::DIR.to_string()), None)
-            } else {
-                match std::fs::read(&abs_output) {
-                    Ok(b) => (b, None, None),
-                    Err(_) => continue,
-                }
-            };
+        let (body, kind, target): (Vec<u8>, Option<String>, Option<String>) = if ft.is_symlink() {
+            let t = std::fs::read_link(&abs_output)
+                .ok()
+                .and_then(|p| p.to_str().map(String::from));
+            // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
+            match t {
+                Some(t) => (
+                    Vec::new(),
+                    Some(artifact_kind::SYMLINK.to_string()),
+                    Some(t),
+                ),
+                None => continue,
+            }
+        } else if ft.is_dir() {
+            (Vec::new(), Some(artifact_kind::DIR.to_string()), None)
+        } else {
+            match std::fs::read(&abs_output) {
+                Ok(b) => (b, None, None),
+                Err(_) => continue,
+            }
+        };
         let artifact_k = artifact_key(&cloud_k, out_idx as u32, output_path);
         let mut artifact_meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.clone(),
@@ -3671,10 +3730,8 @@ fn publish_completion(
                 .iter()
                 .map(|r| r.path.to_string())
                 .collect();
-            let existing = cook_cache::read_module_input_sets(
-                cache_ctx.backend.as_ref(),
-                &declared_key,
-            );
+            let existing =
+                cook_cache::read_module_input_sets(cache_ctx.backend.as_ref(), &declared_key);
             // Merge and wire form are both the shared law, so the probe store
             // and this one cannot drift on what "newest first, deduplicated,
             // capped" means or on how it is written down.

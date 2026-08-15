@@ -5,7 +5,7 @@
 //! cache key at all, look the key up, run `produce` on a miss, publish the
 //! result, and materialise the canonical local copy. Only step five differs
 //! between phases, and only in WHICH Lua VM runs the source: the register VM
-//! for an `ingredients <probe>` pre-pass, a worker VM for a sealed consumer.
+//! for a `gather <probe>` pre-pass, a worker VM for a sealed consumer.
 //! That one difference is why the sequence was written twice; [`ProduceRunner`]
 //! makes it a parameter so it stops being a reason.
 //!
@@ -20,7 +20,7 @@
 //!   * The caller owns scheduling, the VM, event emission, and diagnostics. It
 //!     is handed [`Evaluated`] and decides what to say about it.
 //!
-//! Producer-kind interception lives here on purpose. COOK-353 was a `files { }`
+//! Declaration-value interception lives here on purpose. COOK-353 was a top-level `files`
 //! probe whose reserved `@files-manifest` sentinel the executor intercepted and
 //! the pre-pass did not, so the sentinel reached the register VM and died as a
 //! Lua syntax error on a bare `@`. A new producer kind can now only be taught
@@ -102,7 +102,7 @@ impl std::fmt::Display for ProbeError {
 /// Note for callers: "no backend" must mean genuinely no backend. COOK-359's
 /// root cause was a caller that passed `None` because nobody had wired the
 /// context, which silently converted every GET into a miss and made an
-/// `ingredients <probe>` driver re-produce on every invocation for the life of
+/// `gather <probe>` driver re-produce on every invocation for the life of
 /// the feature.
 pub struct CacheAccess<'a> {
     pub backend: &'a dyn cook_cache::backend::CacheBackend,
@@ -180,8 +180,8 @@ pub struct Lookup {
     pub tool_paths: BTreeMap<String, String>,
     pub warnings: Vec<String>,
     /// `Some` when the value is already determined without running a VM:
-    /// either the cache served it, or the producer kind is synthesised
-    /// (CS-0148 `files { }`, CS-0214 `tools { }`). `None` means the caller
+    /// either the cache served it, or a top-level `files`/`tools` declaration's
+    /// value is synthesised. `None` means the caller
     /// must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
@@ -207,7 +207,10 @@ pub fn lookup(
     // 1. Resolve declared inputs (env / tools / files / upstream fingerprints).
     let inputs =
         cook_cache::probe::resolve_probe_inputs(probe, ctx.working_dir, env_lookup, upstream_fps)
-            .map_err(|message| ProbeError::ResolveInputs { key: key.to_string(), message })?;
+            .map_err(|message| ProbeError::ResolveInputs {
+            key: key.to_string(),
+            message,
+        })?;
 
     // 2. Fingerprint. §22.5.4 sections 1-3 are always present; 4-7 are empty
     //    unless declared.
@@ -236,7 +239,7 @@ pub fn lookup(
         }
     }
 
-    // 4b. CS-0214 §22.5.2: a `tools { }` producer fails, by name, when it
+    // 4b. CS-0214: a top-level `tools` declaration fails, by name, when it
     //     cannot obtain a declared tool's identity. The rule used to live
     //     inside the emitted produce body, which put it behind the cache: a
     //     stored value could serve a probe whose tool had since been
@@ -264,14 +267,14 @@ pub fn lookup(
             let Some(path) = tool_paths.get(name) else {
                 return Err(ProbeError::Produce {
                     key: key.to_string(),
-                    message: format!("tools probe: '{name}' not found on PATH"),
+                    message: format!("tools declaration: '{name}' not found on PATH"),
                 });
             };
             if digest == &[0u8; 32] {
                 return Err(ProbeError::Produce {
                     key: key.to_string(),
                     message: format!(
-                        "tools probe: '{name}' resolved to {path} but its bytes \
+                        "tools declaration: '{name}' resolved to {path} but its bytes \
                          could not be read, so it has no identity to record"
                     ),
                 });
@@ -353,7 +356,13 @@ pub fn lookup(
         None => None,
     };
 
-    Ok(Lookup { fingerprint, keyless, tool_paths, warnings, resolved })
+    Ok(Lookup {
+        fingerprint,
+        keyless,
+        tool_paths,
+        warnings,
+        resolved,
+    })
 }
 
 /// What [`record`] did.
@@ -445,7 +454,11 @@ pub fn record(
         ));
     }
 
-    Recorded { fingerprint: stored_fingerprint, warnings, published }
+    Recorded {
+        fingerprint: stored_fingerprint,
+        warnings,
+        published,
+    }
 }
 
 /// The candidate module-path sets to try, newest first.
@@ -493,7 +506,12 @@ fn fold_candidate(declared: &[u8; 32], working_dir: &Path, paths: &[String]) -> 
     }
     let hashed: Vec<(String, [u8; 32])> = paths
         .iter()
-        .map(|p| (p.clone(), cook_cache::hash_file_sha256(&working_dir.join(p))))
+        .map(|p| {
+            (
+                p.clone(),
+                cook_cache::hash_file_sha256(&working_dir.join(p)),
+            )
+        })
         .collect();
     cook_contracts::context::fold_module_sources(declared, &hashed)
 }
@@ -538,9 +556,13 @@ pub fn evaluate(
     let (bytes, module_paths, source) = match found.resolved.take() {
         Some((bytes, source)) => (bytes, Vec::new(), source),
         None => {
-            let produced = runner
-                .run(key, &probe.produce_source)
-                .map_err(|message| ProbeError::Produce { key: key.to_string(), message })?;
+            let produced =
+                runner
+                    .run(key, &probe.produce_source)
+                    .map_err(|message| ProbeError::Produce {
+                        key: key.to_string(),
+                        message,
+                    })?;
             (produced.bytes, produced.module_paths, ValueSource::Produced)
         }
     };
@@ -567,12 +589,12 @@ pub fn evaluate(
     })
 }
 
-/// CS-0148: a `files { }` producer is intercepted, never run.
+/// CS-0148: a top-level `files` declaration's value is synthesised, never run.
 fn is_files_manifest(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
 }
 
-/// CS-0214: a `tools { }` producer is intercepted, never run.
+/// CS-0214: a top-level `tools` declaration's value is synthesised, never run.
 fn is_tools_identity(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE
 }

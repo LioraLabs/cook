@@ -10,7 +10,7 @@
 #   json  { shell }  structured data (arrays fan out; see 05 for records)
 #   >{ lua }         computed in Lua, may read upstream probes
 #
-# A probe can declare `ingredients` (file inputs that re-fingerprint it)
+# A probe can declare a `seal` (file inputs that re-fingerprint it)
 # and depend on other probes (`probe b: a`) — cook resolves the chain in
 # dependency order before anything runs.
 #
@@ -25,11 +25,11 @@
 probe greeting
     { echo "hello from cook" }
 
-# A list: one member per line of data/targets.txt. The `ingredients` line
+# A list: one member per line of data/targets.txt. The `seal` line
 # makes the file itself a fingerprint input — edit it and the probe
 # (and everything downstream) re-keys.
 probe target_list
-    ingredients "data/targets.txt"
+    seal "data/targets.txt"
     lines { cat data/targets.txt }
 
 # A probe depending on a probe: Lua body reads the upstream value with
@@ -41,8 +41,8 @@ probe target_count: target_list
 
 # Consume a probe as an iteration source: one unit per member.
 recipe targets
-    ingredients target_list
-    cook "out/$<in>.cfg" { printf 'target = %s\n' "$<in>" > $<out> }
+    gather target_list
+    cook "out/$<in>.cfg" { printf 'target = %s\n' '$<in>' > $<out> }
 
 chore clean
     rm -rf out

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="app" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_verb.bin({ sources = { \"src/main.cpp\" } })"

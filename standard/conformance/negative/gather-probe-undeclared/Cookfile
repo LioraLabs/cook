@@ -1,0 +1,5 @@
+recipe deal
+    gather nope
+    cook "build/$<in.id>.txt" {
+        printf '%s\n' "$<in.id>" > $<out>
+    }

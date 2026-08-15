@@ -17,9 +17,9 @@ When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§{lua.
 | `outputs` | table  | A 1-indexed sequence of the unit's output paths, in the order recorded. |
 | `input`   | string | `inputs[1]`, or the empty string if `inputs` is empty. |
 | `output`  | string | `outputs[1]`, or the empty string if `outputs` is empty. |
-| `input_N` | table  | For each ingredient group `g` at 1-based index `N` in the unit's `ingredient_groups`, `input_N` is a 1-indexed sequence of the paths in `g`. |
+| `input_N` | table  | For each input group `g` at 1-based index `N` in the unit's `gather_groups`, `input_N` is a 1-indexed sequence of the paths in `g`. |
 
-A conforming implementation MUST bind `input_N` for every ingredient group recorded, in increasing `N`. Groups not recorded MUST NOT be implicitly bound — a reference to `input_3` when only two groups exist MUST read as `nil` rather than as an empty table.
+A conforming implementation MUST bind `input_N` for every input group recorded, in increasing `N`. Groups not recorded MUST NOT be implicitly bound — a reference to `input_3` when only two groups exist MUST read as `nil` rather than as an empty table.
 
 ### Example 23.1.1
 
@@ -27,7 +27,7 @@ For the multi-output Lua-block `cook` step
 
 ```cook
 recipe build_lua
-    ingredients "src/*.rs"
+    gather "src/*.rs"
     cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")
@@ -40,7 +40,7 @@ recipe build_lua
     }
 ```
 
-the execute-phase worker binds `inputs` to the resolved ingredient paths, `outputs` to `{ "staging-lua/out.js", "staging-lua/out.wasm" }`, `input` to `inputs[1]`, `output` to `"staging-lua/out.js"`, and `input_1` to the first (and only) ingredient group.
+the execute-phase worker binds `inputs` to the resolved input paths, `outputs` to `{ "staging-lua/out.js", "staging-lua/out.wasm" }`, `input` to `inputs[1]`, `output` to `"staging-lua/out.js"`, and `input_1` to the first (and only) input group.
 
 ### Note 23.1.1
 

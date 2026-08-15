@@ -1,5 +1,5 @@
 recipe touch
-    ingredients "Cookfile"
+    seal "Cookfile"
     cook (input .. ".out") >{
         local f = io.open(output, "w")
         f:write("FOO=" .. tostring(cook.env.FOO))

@@ -42,32 +42,20 @@ probe tag-list
         (shell_content)))))
 
 ================
-Tools and envs name-list producers
+Top-level tools declaration
 ================
 
-probe toolchain
-    tools { cc, ld }
-
-probe build-env
-    envs { CC CFLAGS }
+tools toolchain
+    cc ld
 
 ---
 
 (source_file
-  (probe
-    (probe_header
-      name: (identifier))
-    (producer
-      (tool_name_list
-        (identifier)
-        (identifier))))
-  (probe
-    (probe_header
-      name: (identifier))
-    (producer
-      (env_name_list
-        (identifier)
-        (identifier)))))
+  (tools_declaration
+    name: (identifier)
+    (tool_set_line
+      (identifier)
+      (identifier))))
 
 ================
 Lua producer
@@ -138,66 +126,41 @@ probe "quoted:key"
 Invalid producer name lists
 ================
 
-probe empty
-    tools {}
-
-probe comma
-    envs { CC, }
+tools empty
 
 ---
 
 (source_file
   (ERROR
-    (probe_header
-      name: (identifier))
-    (lua_code)))
+    (identifier)))
 
 ================
 Hyphenated tool names (CS-0181)
 ================
 
-probe generate:tool
-    tools { tree-sitter, pkg-config }
+tools generate:tool
+    tree-sitter pkg-config
 
 ---
 
 (source_file
-  (probe
-    (probe_header
-      name: (identifier))
-    (producer
-      (tool_name_list
-        (identifier)
-        (identifier)))))
+  (tools_declaration
+    name: (identifier)
+    (tool_set_line
+      (identifier)
+      (identifier))))
 
 ================
 A tool name may not start with a dash (CS-0181)
 ================
 
-probe flagname
-    tools { --version }
+tools flagname
+    --version
 
 ---
 
 (source_file
   (ERROR
-    (probe_header
-      name: (identifier))
-    (lua_code)))
-
-================
-envs is not widened to hyphens (CS-0181)
-================
-
-probe envdash
-    envs { CC-FLAGS }
-
----
-
-(source_file
-  (ERROR
-    (probe_header
-      name: (identifier))
     (identifier)
     (lua_code)))
 
@@ -223,7 +186,7 @@ Probe declaration rejects a dotted bare key (CS-0201)
 ================
 
 probe cc.version
-    envs { PATH }
+    lines { echo "$PATH" }
 
 ---
 
@@ -232,22 +195,6 @@ probe cc.version
     (probe_header
       (identifier))
     (lua_code)))
-
-================
-Probe with ingredients and producer
-================
-
-probe cards
-    ingredients "data/*.json" !"data/old.json"
-    json { cat data/*.json }
-
----
-
-(source_file
-  (probe
-    (probe_header (identifier))
-    (ingredients_step (string) (ingredient_exclude (string)))
-    (producer (shell_block (shell_content)))))
 
 ================
 Removed produce introducer is rejected
@@ -259,7 +206,11 @@ probe old
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (import_name)
+    (lua_code)))
 
 ================
 Removed produce as json is rejected
@@ -271,7 +222,11 @@ probe old-json
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (import_name)
+    (lua_code)))
 
 ================
 Removed produce as lines is rejected
@@ -283,7 +238,11 @@ probe old-lines
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (import_name)
+    (lua_code)))
 
 ================
 Probe missing producer is rejected
@@ -294,7 +253,9 @@ probe empty
 ---
 
 (source_file
-  (ERROR (probe_header (identifier))))
+  (ERROR
+    (probe_header
+      (identifier))))
 
 ================
 Probe duplicate producers are rejected
@@ -308,43 +269,14 @@ probe duplicate
 
 (source_file
   (probe
-    (probe_header (identifier))
-    (producer (shell_block (shell_content))))
-  (ERROR (import_name) (lua_code)))
-
-================
-Probe duplicate ingredients are rejected
-================
-
-probe duplicate-inputs
-    ingredients "one"
-    ingredients "two"
-    { echo done }
-
----
-
-(source_file
+    (probe_header
+      (identifier))
+    (producer
+      (shell_block
+        (shell_content))))
   (ERROR
-    (probe_header (identifier))
-    (ingredients_step (string))
     (import_name)
     (lua_code)))
-
-================
-Probe ingredients after producer are rejected
-================
-
-probe late-inputs
-    { echo done }
-    ingredients "late"
-
----
-
-(source_file
-  (probe
-    (probe_header (identifier))
-    (producer (shell_block (shell_content))))
-  (ERROR (import_name) (lua_code)))
 
 ================
 Probe body rejects non-producer item
@@ -356,7 +288,11 @@ probe bad-body
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (import_name)
+    (lua_code)))
 
 ================
 JSON wrong-body rejection
@@ -368,7 +304,10 @@ probe bad-json
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (lua_code)))
 
 ================
 Tools wrong-body rejection
@@ -380,7 +319,11 @@ probe bad-tools
 ---
 
 (source_file
-  (ERROR (probe_header (identifier)) (lua_code)))
+  (ERROR
+    (probe_header
+      (identifier))
+    (import_name)
+    (lua_code)))
 
 ================
 Producer keywords are contextual outside probes
@@ -396,80 +339,63 @@ chore keyword-lines
 
 (source_file
   (chore
-    (chore_header (identifier))
-    (shell_command (shell_content))
-    (shell_command (shell_content))
-    (shell_command (shell_content))
-    (shell_command (shell_content))))
+    (chore_header
+      (identifier))
+    (shell_command
+      (shell_content))
+    (shell_command
+      (shell_content))
+    (shell_command
+      (shell_content))
+    (shell_command
+      (shell_content))))
 
 ================
-Files producer with includes and an exclude (CS-0148)
+Top-level files declaration with multi-line includes and an exclude (CS-0222)
 ================
 
-probe srcs
-    files { "src/*.ts" "config/*.json" !"src/gen/*.ts" }
+files srcs
+    "src/*.ts" "config/*.json"
+    !"src/gen/*.ts"
 
 ---
 
 (source_file
-  (probe
-    (probe_header
-      name: (identifier))
-    (producer
-      (glob_list
-        (glob_pattern
-          (string))
-        (glob_pattern
-          (string))
-        (glob_pattern
-          (string))))))
-
-================
-Files producer combined with ingredients is rejected (CS-0148)
-================
-
-probe srcs
-    ingredients "other/*.c"
-    files { "src/*.ts" }
-
----
-
-(source_file
-  (ERROR
-    (probe_header
-      name: (identifier))
-    (ingredients_step
-      (string))
-    (import_name)
-    (lua_code)))
+  (files_declaration
+    name: (identifier)
+    (file_set_line
+      (glob_pattern
+        (string))
+      (glob_pattern
+        (string)))
+    (file_set_line
+      (glob_pattern
+        (string)))))
 
 ================
 Empty files glob-list is rejected
 ================
 
-probe empty-files
-    files { }
+files empty-files
 
 ---
 
 (source_file
   (ERROR
-    (probe_header
-      name: (identifier))))
+    (identifier)))
 
 ================
 Unquoted entry in a files glob-list is rejected (CS-0148)
 ================
 
-probe srcs
-    files { src/*.ts }
+files srcs
+    src/*.ts
 
 ---
 
 (source_file
   (ERROR
-    (probe_header
-      name: (identifier))
+    (identifier)
     (import_name)
     (lua_code)))
 
@@ -486,4 +412,5 @@ probe srcs
   (ERROR
     (probe_header
       name: (identifier))
+    (import_name)
     (lua_code)))

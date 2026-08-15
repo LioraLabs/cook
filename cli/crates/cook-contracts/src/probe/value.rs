@@ -13,7 +13,7 @@
 
 use serde_json::Value as JsonValue;
 
-/// The reserved `produce` string of a `files { … }` probe (CS-0148). Not
+/// The reserved `produce` string of a top-level `files` declaration (CS-0148). Not
 /// executable Lua (a bare `@` is a syntax error), so no hand-written produce
 /// body can collide with it. The engine intercepts a probe whose
 /// `produce_source` equals this sentinel and synthesises its value from the
@@ -22,7 +22,7 @@ use serde_json::Value as JsonValue;
 /// the re-run trigger and the value can never drift.
 pub const FILES_MANIFEST_PRODUCE: &str = "@files-manifest";
 
-/// Build the canonical value bytes of a `files { … }` probe (CS-0148): a JSON
+/// Build the canonical value bytes of a top-level `files` declaration (CS-0148): a JSON
 /// object mapping each workspace-relative path to the lowercase hex of its
 /// content hash, or the literal `"<missing>"` when the file could not be read
 /// (all-zero hash, mirroring §22.5.4's missing-file fold). Encoded via
@@ -40,7 +40,7 @@ pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
     encode_canonical_json(&JsonValue::Object(map))
 }
 
-/// The reserved `produce` string of a `tools { … }` probe (CS-0214). Same
+/// The reserved `produce` string of a top-level `tools` declaration (CS-0214). Same
 /// interception contract as [`FILES_MANIFEST_PRODUCE`] and deliberately a
 /// different spelling: the two are compared by equality, so one string could
 /// not stand for both without routing one producer kind's synthesis to the
@@ -54,7 +54,7 @@ pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
 /// could not run at all on a host without GNU coreutils.
 pub const TOOLS_IDENTITY_PRODUCE: &str = "@tools-identity";
 
-/// Build the canonical value bytes of a `tools { … }` probe (CS-0214): a JSON
+/// Build the canonical value bytes of a top-level `tools` declaration (CS-0214): a JSON
 /// object keyed by tool name, each entry `{ "hash": "<lowercase hex>" }`.
 ///
 /// The pairs are the probe's resolved `inputs.tools` — the same
@@ -187,7 +187,7 @@ pub fn probe_file_name(key: &str) -> String {
 /// `$<KEY.NAME.path>` substitution addresses (§22.5.7, CS-0192). Both MUST
 /// see the same view, so both MUST build it through this one function.
 ///
-/// The canonical value of a `tools { }` producer carries identity only
+/// The canonical value of a top-level `tools` declaration carries identity only
 /// (`{ NAME = { hash } }`); the resolved path is location, recorded fresh
 /// each run, so a consumer always reads where the tool resolves NOW and a
 /// cached value can never replay a stale location.

@@ -5,13 +5,13 @@ Cookfile
   recipes:
     Recipe name="libfoo" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_cc.lib(\"foo\", {\n        sources = { \"src/lib.cpp\" },\n        export_defines = { \"USE_FOO\" },\n    })"
     Recipe name="build" line=9
       deps: ["libfoo"]
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_cc.bin(\"app\", {\n        sources = { \"src/main.cpp\" },\n        links = { \"foo\" },\n    })"

@@ -5,10 +5,10 @@ Cookfile
   recipes:
     Recipe name="art" line=4
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
-        MemberSource source=ProbeKey("cards")
+        MemberSource source=GatherKey("cards")
         Cook outputs=["o/$<in.id>.svg", "o/$<in.id>-dark.svg"] body=ShellBlock(["gen $<in.id>"])
   chores:
   register_blocks: []
@@ -16,6 +16,6 @@ Cookfile
   probes:
     Probe name="cards" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Shell typing=Json commands=["cat data/cards.json"]

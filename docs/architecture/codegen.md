@@ -34,7 +34,7 @@ This document covers transformation rules only — what shape of AST node produc
 
 | Recipe field | Lua key | Shape |
 |---|---|---|
-| `ingredients` | `ingredients` | `{"glob1", "glob2"}` |
+| `inputs` | `inputs` | `{"glob1", "glob2"}` |
 | `excludes` | `excludes` | `{"pat1", "pat2"}` |
 | `deps` | `requires` | `{"recipe1"}` |
 
@@ -42,21 +42,21 @@ An empty metadata table is `{}`. Examples:
 
 ```lua
 cook.recipe("clean", {}, function() ... end)
-cook.recipe("compile", {ingredients = {"src/*.c"}}, function() ... end)
-cook.recipe("build", {ingredients = {"src/*.c"}, excludes = {"src/_*"}, requires = {"deps"}}, function() ... end)
+cook.recipe("compile", {inputs = {"src/*.c"}}, function() ... end)
+cook.recipe("build", {inputs = {"src/*.c"}, excludes = {"src/_*"}, requires = {"deps"}}, function() ... end)
 ```
 
-### Local `ingredients`
+### Local `inputs`
 
-If the recipe declares any ingredients, the recipe body opens with (`recipe.rs:683-688`):
+If the recipe declares any inputs, the recipe body opens with (`recipe.rs:683-688`):
 
 ```lua
-    local ingredients = cook.resolve_ingredients({"<includes>"}, {"<excludes>"})
+    local inputs = cook.resolve_gather({"<includes>"}, {"<excludes>"})
 ```
 
-This local is the Standard §4.3 *resolved ingredient set* — the union of include globs minus the union of excludes, flattened to a single array. It is the iteration source for the first cook step (when no prior cook step exists) and for plate/test steps that fall back through to ingredients.
+This local is the Standard §4.3 *resolved input set* — the union of include globs minus the union of excludes, flattened to a single array. It is the iteration source for the first cook step (when no prior cook step exists) and for plate/test steps that fall back through to inputs.
 
-The unrelated table-of-tables `recipe.ingredients[N]` (per-pattern groups) is still available to Lua bodies via the `recipe` global, but codegen never iterates it directly — using `recipe.ingredients[1]` would silently drop every glob past the first.
+The unrelated table-of-tables `recipe.inputs[N]` (per-pattern groups) is still available to Lua bodies via the `recipe` global, but codegen never iterates it directly — using `recipe.inputs[1]` would silently drop every glob past the first.
 
 ---
 
@@ -111,7 +111,7 @@ Output-pattern coherence is enforced separately by `check_multi_output_coherence
 The cook step's input list (`cook_step.rs:128-134`) is determined by:
 
 1. The previous cook step's outputs (`_cook_outputs_<prev>`), if any.
-2. Otherwise the resolved `ingredients` local, if the recipe has ingredients.
+2. Otherwise the resolved `inputs` local, if the recipe has inputs.
 3. Otherwise an empty Lua table `{}`.
 
 For `OneToOne` / `OneToMany` over a `DepDriven` pattern, the iteration source is replaced by `cook.dep_output_list("<dep>")` (`cook_step.rs:148-149, 248-249`) — a runtime helper that returns the named recipe's output list.
@@ -133,14 +133,14 @@ cook "bin/app"
 One output per input. Emits a `for` loop. Inside the loop body, `_cook_in` is bound to the current iteration item and `_cook_out` is the expanded output pattern.
 
 ```text
-ingredients "src/*.c"
+gather "src/*.c"
 cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 ```lua
     local _cook_outputs_1 = {}
     cook.step_group(function()
-    for _, _cook_in in ipairs(ingredients) do
+    for _, _cook_in in ipairs(inputs) do
         local _cook_out = "build/" .. path.stem(_cook_in) .. ".o"
         cook.add_unit({inputs = {_cook_in}, output = _cook_out, command = "set -e\ngcc -c " .. _cook_in .. " -o " .. _cook_out, consulted_env_keys = {}})
         table.insert(_cook_outputs_1, _cook_out)
@@ -148,12 +148,12 @@ cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
     end)
 ```
 
-For a dep-driven output pattern (e.g. `build/$<protos.stem>.o`), the loop iterates `cook.dep_output_list("protos")` instead of `ingredients`, and inside the body `$<protos.stem>` lowers to `path.stem(_cook_in)` (`template.rs:294-307`) — dep-driven iteration normalizes the dep output to `_cook_in`.
+For a dep-driven output pattern (e.g. `build/$<protos.stem>.o`), the loop iterates `cook.dep_output_list("protos")` instead of `inputs`, and inside the body `$<protos.stem>` lowers to `path.stem(_cook_in)` (`template.rs:294-307`) — dep-driven iteration normalizes the dep output to `_cook_in`.
 
-When the `using_clause` is a `LuaBlock` (`cook_step.rs:182-189`), the emitted unit carries `lua_code = [[<source>]]` and an `ingredient_groups` field populated with `{recipe.ingredients[1], recipe.ingredients[2], ...}` — the per-pattern groups, which the worker exposes as `input_1`, `input_2`, etc.:
+When the `using_clause` is a `LuaBlock` (`cook_step.rs:182-189`), the emitted unit carries `lua_code = [[<source>]]` and an `gather_groups` field populated with `{recipe.inputs[1], recipe.inputs[2], ...}` — the per-pattern groups, which the worker exposes as `input_1`, `input_2`, etc.:
 
 ```lua
-        cook.add_unit({inputs = {_cook_in}, output = _cook_out, lua_code = [[<USER LUA>]], ingredient_groups = {recipe.ingredients[1]}, consulted_env_keys = "*"})
+        cook.add_unit({inputs = {_cook_in}, output = _cook_out, lua_code = [[<USER LUA>]], gather_groups = {recipe.inputs[1]}, consulted_env_keys = "*"})
 ```
 
 ### ManyToOne
@@ -185,7 +185,7 @@ cook "build/$<in.stem>.js" "build/$<in.stem>.wasm" { gen $<in> }
 ```
 
 ```lua
-    for _, _cook_in in ipairs(ingredients) do
+    for _, _cook_in in ipairs(inputs) do
         local _cook_outs = {
             "build/" .. path.stem(_cook_in) .. ".js",
             "build/" .. path.stem(_cook_in) .. ".wasm",
@@ -207,7 +207,7 @@ cook "out/parser.rs" "out/parser.h" { lalrpop src/grammar.lalrpop --out-dir out 
 
 ```lua
     local _cook_outs = {"out/parser.rs", "out/parser.h"};
-    local _cook_ins = _cook_outputs_0;  -- or `ingredients`
+    local _cook_ins = _cook_outputs_0;  -- or `inputs`
     local _cook_in = table.concat(_cook_outputs_0, " ");
     cook.add_unit({inputs = _cook_ins, outputs = _cook_outs, command = "set -e\nlalrpop src/grammar.lalrpop --out-dir out", consulted_env_keys = {}})
     table.insert(_cook_outputs_N, _cook_outs[1])
@@ -251,7 +251,7 @@ The Lua free-identifier scan (`template.rs:413`) skips string literals (`"..."`,
 
 ### Input source
 
-`plate_step.rs:40-44`: the previous cook step's outputs (`_cook_outputs_N`), else the resolved `ingredients` local. A `OneToOne` or `ManyToOne` plate with no source at all is rejected with `EmptySource` (`plate_step.rs:27-32`) — Standard CS-0024 §3.5.
+`plate_step.rs:40-44`: the previous cook step's outputs (`_cook_outputs_N`), else the resolved `inputs` local. A `OneToOne` or `ManyToOne` plate with no source at all is rejected with `EmptySource` (`plate_step.rs:27-32`) — Standard CS-0024 §3.5.
 
 ### Six emission shapes
 
@@ -361,7 +361,7 @@ Special note on shadowing: a bare ident that matches both an in-scope recipe and
 
 ## Cross-recipe References (`dep_ref.rs`)
 
-Cook used to express cross-recipe dependencies via runtime ingredient-serves matching — recipe A would consume recipe B's outputs implicitly through a shared file pattern. That model is gone. Today, dependencies are *explicit* placeholders resolved at codegen time, and the dep edge is recorded into the recipe's `requires` set.
+Cook used to express cross-recipe dependencies via runtime input-serves matching — recipe A would consume recipe B's outputs implicitly through a shared file pattern. That model is gone. Today, dependencies are *explicit* placeholders resolved at codegen time, and the dep edge is recorded into the recipe's `requires` set.
 
 `cli/crates/cook-luagen/src/dep_ref.rs:49` (`extract_dep_refs`) walks every step in a recipe and returns a sorted set of `DepRef { recipe_name, accessor }` for every `$<NAME>` / `$<NAME.ACCESSOR>` it finds. The classification rules in `parse_dep_token` (`dep_ref.rs:126`), evaluated in order:
 
@@ -424,7 +424,7 @@ $<env.HOME>     → cook.require_env("HOME")    ; forced env lookup, even if HOM
 ### Worked example
 
 ```text
-ingredients "src/*.c"
+gather "src/*.c"
 cook "build/$<in.stem>.o" { $<CC> $<CFLAGS> -c $<in> -o $<out> }
 ```
 
@@ -513,4 +513,4 @@ Beyond per-template builtin checks, `validate_accessor_placement` (`recipe.rs:22
 - **Placeholder violations inside shell-block bodies** — wrong mode, wrong output count, malformed `out_0`, etc. (`recipe.rs:264-273`)
 - **`$<lib.X>` in plate / test / bare shell bodies** — these have no output pattern, so cannot declare a driver for dep-accessor iteration (the §5.4 firewall). (`recipe.rs:289-326`, `check_command` at `recipe.rs:569`)
 
-The companion `warn_empty_output_refs` (`recipe.rs:96`) produces non-fatal warnings when a `$<NAME>` reference targets a recipe with no cook steps and no ingredients — the reference still lowers (to the empty string at runtime), but the user almost certainly meant something else.
+The companion `warn_empty_output_refs` (`recipe.rs:96`) produces non-fatal warnings when a `$<NAME>` reference targets a recipe with no cook steps and no inputs — the reference still lowers (to the empty string at runtime), but the user almost certainly meant something else.

@@ -312,12 +312,12 @@ recipe consumer : middle
 
 /// The `$<producer>` sigil is a name reference and thus a §10.6 edge. It
 /// orders producer first, so §16.1.2 MUST NOT fire even though the consumer
-/// ALSO names the literal path in `inputs[]`.
+/// does not need a separate gathered file source.
 #[test]
 fn sigil_edge_does_not_fire() {
     let tmp = setup(
         r#"recipe producer
-    ingredients "src.c"
+    gather "src.c"
     cook "build/gen.a" {
         mkdir -p build
         cp $<in> $<out>
@@ -543,13 +543,13 @@ recipe all: producer consumer
 }
 
 // ---------------------------------------------------------------------------
-// The narrowed scope — `ingredients` literals are NOT covered (Note 16.1.2.2)
+// The narrowed scope — `gather` literals are NOT covered (Note 16.1.2.2)
 // ---------------------------------------------------------------------------
 
-/// **§16.1.2 does not cover `ingredients`-sourced literals, and this pins that
+/// **§16.1.2 does not cover `gather`-sourced literals, and this pins that
 /// exclusion as deliberate.**
 ///
-/// An `ingredients` pattern is a filesystem glob resolved against disk at
+/// A `gather` pattern is a filesystem glob resolved against disk at
 /// register time (§21.2.1); a literal is just a glob with no metacharacters.
 /// On a COLD build `build/gen.a` does not exist, so the pattern matches ZERO
 /// files, contributes no input entry, and there is nothing for the rule to
@@ -567,7 +567,7 @@ recipe all: producer consumer
 /// no edge is inferred from this path match, which is what the
 /// `raw_path_cross_recipe_edge.rs` tripwire guards.
 #[test]
-fn ingredients_sourced_literal_is_not_covered_on_cold_build() {
+fn gather_sourced_literal_is_not_covered_on_cold_build() {
     let tmp = setup(
         r#"recipe producer
         cook.add_unit({
@@ -577,7 +577,7 @@ fn ingredients_sourced_literal_is_not_covered_on_cold_build() {
         })
 
 recipe consumer
-    ingredients "build/gen.a"
+    gather "build/gen.a"
     cook "out.bin" { cp $<in> $<out> }
 
 recipe all : producer consumer
@@ -588,7 +588,7 @@ recipe all : producer consumer
     assert!(!ok, "the cold build still fails on its own terms:\n{combined}");
     assert!(
         !combined.contains("read-after-write with no ordering edge"),
-        "§16.1.2 MUST NOT claim to cover an `ingredients`-sourced literal: on \
+        "§16.1.2 MUST NOT claim to cover a `gather`-sourced literal: on \
          a cold build the glob matches 0 files and no input entry exists. If \
          this fires, the rule's scope changed and Note 16.1.2.2 / CS-0144 are \
          now wrong:\n{combined}"

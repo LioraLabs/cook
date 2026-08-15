@@ -96,12 +96,12 @@ fn chain_workspace(root: &Path) {
         root,
         "Cookfile",
         "recipe gen\n\
-         \x20   ingredients \"src.txt\"\n\
-         \x20   cook \"mid.txt\" {\n        cat src.txt > mid.txt\n    }\n\
+         \x20   gather \"src.txt\"\n\
+         \x20   cook \"mid.txt\" {\n        cat $<in> > mid.txt\n    }\n\
          \n\
          recipe build: gen\n\
-         \x20   ingredients \"mid.txt\"\n\
-         \x20   cook \"out.txt\" {\n        cat mid.txt > out.txt\n    }\n",
+         \x20   gather \"mid.txt\"\n\
+         \x20   cook \"out.txt\" {\n        cat $<in> > out.txt\n    }\n",
     );
 }
 
@@ -205,7 +205,10 @@ fn unknown_level_and_format_are_rejected_by_name() {
 fn unit_level_refuses_past_max_nodes_rather_than_emitting_a_blob() {
     let tmp = TempDir::new().unwrap();
     barrier_workspace(tmp.path());
-    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--max-nodes", "1"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--level", "unit", "--max-nodes", "1"],
+    );
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("not readable in any format"), "{err}");
@@ -278,7 +281,10 @@ fn both_machine_readable_documents_carry_the_same_schema_version() {
     let tmp = TempDir::new().unwrap();
     chain_workspace(tmp.path());
 
-    let whole = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    let whole = cook(
+        tmp.path(),
+        &["why", "build", "--level", "unit", "--format", "json"],
+    );
     assert_ok(&whole);
     let whole: serde_json::Value = serde_json::from_str(&stdout(&whole)).expect("valid json");
     let version = whole["schema_version"].clone();
@@ -461,7 +467,10 @@ fn a_forced_unit_reports_no_key_and_names_its_cause() {
     assert_ok(&cook(tmp.path(), &["build"]));
     write(tmp.path(), "src.txt", "two\n");
 
-    let out = cook(tmp.path(), &["why", "build", "--unit", "build", "--format", "json"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "build", "--format", "json"],
+    );
     assert_ok(&out);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     let unit = v["units"]
@@ -509,7 +518,10 @@ fn a_local_miss_names_the_determinant_that_changed() {
     assert_ok(&cook(tmp.path(), &["build"]));
     write(tmp.path(), "src.txt", "two\n");
 
-    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "gen", "--format", "json"],
+    );
     assert_ok(&out);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     let unit = &v["units"][0];
@@ -547,7 +559,10 @@ fn a_hit_reports_why_it_last_ran_from_the_recorded_observation() {
     // This build records the cause; afterwards the unit is a hit again.
     assert_ok(&cook(tmp.path(), &["build"]));
 
-    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "gen", "--format", "json"],
+    );
     assert_ok(&out);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     let unit = &v["units"][0];
@@ -579,7 +594,10 @@ fn live_and_historical_causes_are_reported_independently() {
     // history still remembers the previous run.
     write(tmp.path(), "src.txt", "three\n");
 
-    let out = cook(tmp.path(), &["why", "build", "--unit", "gen", "--format", "json"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "gen", "--format", "json"],
+    );
     assert_ok(&out);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     let unit = &v["units"][0];
@@ -617,7 +635,10 @@ fn additive_workspace(root: &Path) {
 fn a_declared_barrier_renders_alongside_its_fine_cover() {
     let tmp = TempDir::new().unwrap();
     additive_workspace(tmp.path());
-    let out = cook(tmp.path(), &["why", "consumer", "--level", "unit", "--format", "json"]);
+    let out = cook(
+        tmp.path(),
+        &["why", "consumer", "--level", "unit", "--format", "json"],
+    );
     assert_ok(&out);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
     let edges = v["edges"].as_array().unwrap();

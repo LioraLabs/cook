@@ -143,7 +143,7 @@ fn a_failing_block_is_reported_without_the_compose_prelude() {
     std::fs::write(tmp.path().join("src.txt"), "hi\n").expect("write source");
     std::fs::write(
         tmp.path().join("Cookfile"),
-        "recipe build\n    ingredients \"src.txt\"\n    cook \"out/$<in.stem>.o\" {\n        echo working\n        false\n    }\n",
+        "recipe build\n    gather \"src.txt\"\n    cook \"out/$<in.stem>.o\" {\n        echo working\n        false\n    }\n",
     )
     .expect("write Cookfile");
     let out = Command::new(cook_bin())

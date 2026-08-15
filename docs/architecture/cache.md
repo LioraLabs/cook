@@ -287,7 +287,7 @@ now flows through per-step `env_contribution` and explicit `input_paths`.
 
 The one recipe-level structure that survives is `RecipeCache.globs`: a
 `BTreeMap<glob, BTreeSet<path>>` of glob expansions from the last run. The
-engine re-expands ingredient globs at the start of each build; entries
+engine re-expands input globs at the start of each build; entries
 referencing now-deleted files are pruned, and added files force the
 dependent steps to rebuild via `InputSetChanged`.
 

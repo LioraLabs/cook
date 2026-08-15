@@ -1,2 +1,2 @@
-Pins §22.5.2: `tools { cc, ld }` parses the brace content as a LIST
-of bare tool names (not a shell body), yielding `ProbeProduce::Tools`. COOK-164.
+Pins §22.5.2: a top-level `tools NAME` declaration parses its indented body as
+a list of bare tool names, yielding `ProbeProduce::Tools`. COOK-164.

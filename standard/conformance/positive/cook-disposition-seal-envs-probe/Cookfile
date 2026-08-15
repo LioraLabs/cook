@@ -1,5 +1,5 @@
 probe flags
-    envs { CFLAGS, LDFLAGS }
+    lines { echo "$CFLAGS"; echo "$LDFLAGS" }
 
 recipe build
     seal flags

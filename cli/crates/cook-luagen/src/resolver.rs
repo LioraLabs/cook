@@ -57,18 +57,25 @@ pub enum BuiltinKind {
 #[non_exhaustive]
 pub enum Resolved {
     Builtin(BuiltinKind),
-    Recipe { name: String, accessor: Option<String> },
+    Recipe {
+        name: String,
+        accessor: Option<String>,
+    },
     /// COOK-96 / COOK-221 / CS-0137: `$<recipe[in]>` — the recipe's terminal
     /// output for the CURRENT iteration member. Resolved per consumer member
     /// inside a fan-out body.
-    RecipeMember { name: String },
+    RecipeMember {
+        name: String,
+    },
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
     /// `key` is the probe key (everything before the first `.` or `[`).
     /// CS-0195 removed the pre-built `access` Lua expression: every emission
     /// site now renders through one substitution helper keyed by the IDENT,
     /// so nothing needs a ready-made `cook.probes.get(...)` chain.
-    ProbeRef { key: String },
+    ProbeRef {
+        key: String,
+    },
     Error(ResolveError),
 }
 
@@ -76,12 +83,21 @@ pub enum Resolved {
 #[non_exhaustive]
 pub enum ResolveError {
     #[error("placeholder $<{ident}>: '{builtin}' is not valid in {mode:?} mode")]
-    BuiltinWrongMode { ident: String, builtin: String, mode: IterMode },
+    BuiltinWrongMode {
+        ident: String,
+        builtin: String,
+        mode: IterMode,
+    },
     #[error("placeholder $<{ident}>: '{builtin}' requires {required} declared output(s); step declares {actual}")]
-    BuiltinWrongOutputCount { ident: String, builtin: String, required: String, actual: usize },
+    BuiltinWrongOutputCount {
+        ident: String,
+        builtin: String,
+        required: String,
+        actual: usize,
+    },
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
-    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside an `ingredients <probe>` fan-out body")]
+    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside a bare-`gather` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
     #[error("placeholder $<{ident}>: `$<{name}[]>` was respelled `$<{name}[in]>` in v1.0")]
     RecipeMemberEmptyIndex { ident: String, name: String },
@@ -93,13 +109,13 @@ pub enum ResolveError {
     /// longer backs declared variables. `$<var.NAME>` is the explicit spelling
     /// for a declared variable; an ambient process variable is read either as
     /// an ordinary shell variable (`$NAME` — a step inherits the environment)
-    /// or, when it must be a cache determinant, through an `envs { }` probe.
+    /// or, when it must be a cache determinant, through a named shell probe.
     #[error(
         "placeholder $<env.{key}>: the `env.` prefix is retired — a declared \
          variable is `$<{key}>` (or `$<var.{key}>` to disambiguate from a \
          recipe of the same name). For an ambient process variable use `${key}` \
-         in the step body, or declare an `envs {{ {key} }}` probe to make it a \
-         determinant."
+         in the step body, or declare and seal `probe host:{key}` with \
+         `lines {{ echo \"${key}\" }}` to make it a determinant."
     )]
     RetiredEnvPrefix { key: String },
     /// CS-0187: `$<file:PATH>` is removed. Without a diagnostic the retired
@@ -110,8 +126,8 @@ pub enum ResolveError {
     /// the same reasoning CS-0172 applied to the retired `env.` prefix.
     #[error(
         "placeholder $<file:{path}>: the `file:` prefix is retired (CS-0187). \
-         Declare the file as an input instead: a `files {{ \"{path}\" }}` probe \
-         sealed on the unit that reads it (`seal <probe>`) makes its content a \
+         Declare `files NAME` with `\"{path}\"`, then seal `NAME` on the unit \
+         that reads it; this makes the file content a \
          cache determinant, and the step body names the path directly."
     )]
     RetiredFilePrefix { path: String },
@@ -133,7 +149,7 @@ enum BuiltinMatch {
 /// other ident.
 ///
 /// Deliberately *not* wired into [`resolve`]: `in` is the member binding only
-/// inside a data-driven (`ingredients <probe>`) recipe body, so only
+/// inside a data-driven (bare-`gather`) recipe body, so only
 /// the member-fanout codegen path (`template::expand_member_fanout_template`) consults it.
 /// In a glob recipe, `$<in>` keeps its file-path meaning via `match_builtin`.
 pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
@@ -157,7 +173,7 @@ pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
 /// classified before the recipe shape is known:
 ///
 ///  - in a glob recipe, `X` is a path accessor ([`match_builtin`]);
-///  - in an `ingredients <probe>` fan-out recipe, `X` is a member field with
+///  - in a bare-`gather` fan-out recipe, `X` is a member field with
 ///    an author-chosen name ([`match_member_sigil`]) — `$<in.id>` over
 ///    `[{"id":"intro"}]` is ordinary, and narrowing this to the accessor set
 ///    made every such recipe look like a literal-output gather step and be
@@ -282,7 +298,10 @@ pub fn recipe_ref(ident: &str, recipes_in_scope: &BTreeSet<String>) -> Option<Re
         // and the edge it implies is still recipe-level — the producer builds
         // first. §{xref.dep-implications} permits a finer per-unit refinement;
         // it does not permit no edge.
-        Resolved::RecipeMember { name } => Some(RecipeRef { name, accessor: None }),
+        Resolved::RecipeMember { name } => Some(RecipeRef {
+            name,
+            accessor: None,
+        }),
         Resolved::Builtin(_)
         | Resolved::EnvRuntime(_)
         | Resolved::ProbeRef { .. }
@@ -306,7 +325,9 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // lives in `sigil` so cook-register's `cook.add_unit` capture reads the
     // same walker (COOK-357).
     if let Some(r) = crate::sigil::probe_ref(ident) {
-        return Resolved::ProbeRef { key: r.key().to_string() };
+        return Resolved::ProbeRef {
+            key: r.key().to_string(),
+        };
     }
 
     // COOK-221 / CS-0137: `$<recipe[in]>` — per-member cross-recipe output.
@@ -320,9 +341,7 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
             let name = ident[..open].to_string();
             let index = &ident[open + 1..ident.len() - 1];
             return match index {
-                "in" if ctx.recipes_in_scope.contains(&name) => {
-                    Resolved::RecipeMember { name }
-                }
+                "in" if ctx.recipes_in_scope.contains(&name) => Resolved::RecipeMember { name },
                 "in" => Resolved::Error(ResolveError::RecipeMemberUnknownRecipe {
                     ident: ident.to_string(),
                     name,
@@ -347,7 +366,10 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     }
     // Try recipe (own-name or recipe.accessor).
     if ctx.recipes_in_scope.contains(ident) {
-        return Resolved::Recipe { name: ident.to_string(), accessor: None };
+        return Resolved::Recipe {
+            name: ident.to_string(),
+            accessor: None,
+        };
     }
     if let Some(r) = accessor_ref(ident, ctx.recipes_in_scope) {
         return Resolved::Recipe {
@@ -359,7 +381,9 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // that disambiguates a variable from a same-named recipe; the pre-CS-0172
     // `env.` prefix is retired along with the process-env namespace it named.
     if let Some(key) = ident.strip_prefix("env.") {
-        return Resolved::Error(ResolveError::RetiredEnvPrefix { key: key.to_string() });
+        return Resolved::Error(ResolveError::RetiredEnvPrefix {
+            key: key.to_string(),
+        });
     }
     let var_key = ident.strip_prefix("var.").unwrap_or(ident);
     Resolved::EnvRuntime(var_key.to_string())

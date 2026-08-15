@@ -1,0 +1,1 @@
+command never names the gathered files; seal them instead

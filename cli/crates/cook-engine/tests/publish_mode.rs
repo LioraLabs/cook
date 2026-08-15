@@ -143,9 +143,9 @@ fn publish_off_serves_prepopulated_and_publishes_nothing() {
     let wd = tmp.path();
 
     let cookfile = r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#;
@@ -238,9 +238,9 @@ fn publish_off_fresh_build_succeeds_and_publishes_nothing() {
         cache.path(),
         &cloud_toml_publish_off(cache.path()),
         r#"recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,
@@ -304,10 +304,10 @@ fn publish_off_probe_build_succeeds_and_publishes_nothing() {
     { echo PUBOFF }
 
 recipe make
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     seal tag
     cook "out/art.txt" {
-        cp src/in.txt out/art.txt
+        cp $<in> out/art.txt
         echo ran >> out/art.runlog
     }
 "#,

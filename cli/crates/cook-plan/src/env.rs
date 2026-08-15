@@ -12,8 +12,8 @@
 //! whole point of which is that a config body's inputs are declared — could
 //! be bypassed by simply not declaring them. Both layers are gone. A step
 //! still inherits the ambient environment as ordinary shell variables (`$HOME`
-//! in a step body works); reading one as a *keyed determinant* is what the
-//! `envs { ... }` probe (§22) is for.
+//! in a step body works); an ordinary named shell probe can observe an ambient
+//! value that must be a keyed determinant (§8.4.3).
 
 use std::collections::HashMap;
 
@@ -25,9 +25,7 @@ use super::error::PipelineError;
 /// run, so an explicit CLI override wins over a config-block default
 /// regardless of how the block was authored. Overriding a name no config
 /// block declared is an error, raised at that point (§5.3.1).
-pub fn parse_cli_overrides(
-    overrides: &[String],
-) -> Result<HashMap<String, String>, PipelineError> {
+pub fn parse_cli_overrides(overrides: &[String]) -> Result<HashMap<String, String>, PipelineError> {
     let mut map = HashMap::new();
     for set_arg in overrides {
         if let Some(eq_pos) = set_arg.find('=') {

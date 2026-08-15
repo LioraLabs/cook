@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="consume" line=4
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        MemberSource source=GatherKey("records")
+        Cook outputs=["out/$<in.id>.txt"] body=ShellBlock(["printf '%s\\n' \"$<in.id>\" > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="records" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Shell typing=Json commands=["printf '[{\"id\":\"a\"}]'"]

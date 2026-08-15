@@ -106,7 +106,7 @@ fn seeded_project(cache_dir: &Path) -> TempDir {
     fs::write(
         dir.path().join("Cookfile"),
         r#"recipe build
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     cook "out/$<in.stem>.up" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe other

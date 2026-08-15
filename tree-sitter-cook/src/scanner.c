@@ -584,7 +584,7 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
     // so reject only step-shaped openers. Returning false leaves the keyword
     // for error recovery instead of silently classifying the line as shell.
     if (!word_truncated &&
-        ((len == 11 && strcmp(word, "ingredients") == 0) ||
+        ((len == 6 && strcmp(word, "gather") == 0) ||
          (len == 4 && strcmp(word, "cook") == 0) ||
          (len == 4 && strcmp(word, "test") == 0))) {
       while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
@@ -595,20 +595,16 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
                        (lexer->lookahead == '{' || lexer->lookahead == '>');
       bool cook_lua_output = len == 4 && strcmp(word, "cook") == 0 &&
                              lexer->lookahead == '(';
-      bool bare_ingredients = false;
-      if (len == 11 && strcmp(word, "ingredients") == 0 &&
+      bool bare_gather = false;
+      if (len == 6 && strcmp(word, "gather") == 0 &&
           (iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
         while (iswalnum(lexer->lookahead) || lexer->lookahead == '_' ||
                lexer->lookahead == '.' || lexer->lookahead == '-' ||
-               lexer->lookahead == ':') {
-          lexer->advance(lexer, false);
-        }
-        while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-          lexer->advance(lexer, false);
-        }
-        bare_ingredients = lexer->lookahead == '\n' || lexer->lookahead == 0;
+               lexer->lookahead == ':') lexer->advance(lexer, false);
+        while (lexer->lookahead == ' ' || lexer->lookahead == '\t') lexer->advance(lexer, false);
+        bare_gather = lexer->lookahead == '\n' || lexer->lookahead == 0;
       }
-      if (quoted_step || test_body || cook_lua_output || bare_ingredients) {
+      if (quoted_step || test_body || cook_lua_output || bare_gather) {
         return false;
       }
     }
@@ -661,7 +657,7 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
 // ── Top-level keyword check ────────────────────────────────────
 // Returns true if the buffer (length len) matches a top-level Cookfile
 // keyword that implicitly terminates a config/register body
-// (§{toplevel.termination}, App. A.2): recipe, chore, probe, config,
+// (§{toplevel.termination}, App. A.2): recipe, chore, probe, files, tools, config,
 // use, import, register. The `register` keyword joins this set per
 // CS-0072; `probe` joins per COOK-67 (App. A.3.2).
 
@@ -669,6 +665,8 @@ static bool is_toplevel_keyword(const char *buf, int len) {
   return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
          (len == 5 && strncmp(buf, "chore", 5) == 0) ||
          (len == 5 && strncmp(buf, "probe", 5) == 0) ||
+         (len == 5 && strncmp(buf, "files", 5) == 0) ||
+         (len == 5 && strncmp(buf, "tools", 5) == 0) ||
          (len == 6 && strncmp(buf, "config", 6) == 0) ||
          (len == 3 && strncmp(buf, "use", 3) == 0) ||
          (len == 6 && strncmp(buf, "import", 6) == 0) ||
@@ -977,9 +975,9 @@ static bool scan_module_call_tail(TSLexer *lexer) {
 
 // ── Step-pattern continuation newline (CS-0078) ────────────────
 // Emitted between successive `STRING` (or `!STRING`) tokens in
-// `cook_step` and `ingredients_step` when the next pattern lives on
+// `cook_step` and `gather_step` when the next pattern lives on
 // a subsequent line. Per App. A.4: continuation lines beginning with
-// `"` (or `!"` for `ingredients`) extend the same declaration. A
+// `"` (or `!"` for `gather`) extend the same declaration. A
 // non-quote first token on the next line terminates the declaration
 // silently — the scanner returns false in that case and the grammar
 // dispatches per App. A.4's step-priority order.
@@ -1005,7 +1003,7 @@ static bool scan_step_continuation_newline(TSLexer *lexer) {
   }
   if (c == '!') {
     // Mark before consuming `!` so the grammar sees the `!` next as
-    // the start of an ingredient_exclude. We need a second char of
+    // the start of an gather_exclude. We need a second char of
     // lookahead — peek by advancing.
     lexer->mark_end(lexer);
     lexer->advance(lexer, false);

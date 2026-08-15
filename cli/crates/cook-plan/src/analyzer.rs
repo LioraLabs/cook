@@ -31,7 +31,7 @@ pub enum GraphError {
 
 /// Metadata about a recipe used for dependency resolution.
 ///
-/// `ingredients` are file paths consumed by the recipe.
+/// `inputs` are file paths consumed by the recipe.
 /// `serves` are file paths produced by the recipe.
 /// `requires` are explicit named dependencies on other recipes.
 /// `orders` are names reached only through fine-grained per-unit references
@@ -40,7 +40,7 @@ pub enum GraphError {
 /// but they never become a whole-recipe barrier — `run` keeps the coarse
 /// `RecipeUnits.deps` restricted to the recipe's own declared `requires`.
 pub struct RecipeInfo {
-    pub ingredients: Vec<String>,
+    pub inputs: Vec<String>,
     pub serves: Vec<String>,
     pub requires: Vec<String>,
     pub orders: Vec<String>,
@@ -55,7 +55,7 @@ pub struct RecipeInfo {
 /// Edges come from explicit `requires` declarations and from `orders` —
 /// names a recipe reaches only through fine-grained per-unit references. Both
 /// establish closure membership and are cycle-checked; only `requires` also
-/// becomes a coarse whole-recipe barrier (see `RecipeInfo`). Path-string equality between an ingredient
+/// becomes a coarse whole-recipe barrier (see `RecipeInfo`). Path-string equality between an input
 /// and another recipe's cook-output is opaque and does NOT produce an
 /// edge — see Cook Standard §10.6 and rationale App. C.16.1.
 fn build_adjacency<'a>(

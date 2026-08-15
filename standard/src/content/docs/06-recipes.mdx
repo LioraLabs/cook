@@ -4,7 +4,7 @@ sidebar:
   order: 6
 ---
 # 6. Recipes [#recipes]
-> **Normative.** This chapter defines the shape of a recipe declaration: the header, the optional dependency list, the purely-declarative recipe body (CS-0134), and the at-most-one-ingredients rule. Step kinds are defined in §{steps}; chores are in §{chores}.
+> **Normative.** This chapter defines the shape of a recipe declaration: the header, the optional dependency list, the purely-declarative recipe body (CS-0134), and the at-most-one-gather rule. Step kinds are defined in §{steps}; chores are in §{chores}.
 
 ## 6.1. Recipe header [#recipes.header-forms]
 A `recipe` is the form `recipe_header NEWLINE recipe_body` (App. A.3). The `recipe_header` is the form `"recipe" name (":" dependency_list)?`, where `name` is either a `BARE_IDENTIFIER` or a double-quoted `STRING` (App. A.5, `name`). An optional `:` introduces a dependency list (§{recipes.dep-list}).
@@ -75,10 +75,10 @@ The first recipe lists three dependencies as bare identifiers. The second uses q
 
 ## 6.3. Recipe body — purely declarative [#recipes.region-rule]
 
-As of CS-0134 a `recipe_body` is **purely declarative**: it admits only register-phase items — `ingredients_step`, `cook_step`, `test_step`, and bare `module_call` lines (auto-classified as register-phase, §{steps.dispatch}) — together with structural `comment` and blank lines. A recipe body has **no imperative region**: standalone execute-phase steps (`lua_line` `>`, `lua_block` `>{`) and loose `shell_command` lines are NOT admitted at the top level of a recipe body; the `@` interactive prefix and its `interactive_command` step kind, together with the register sigils `>>` / `>>{`, are removed from the language entirely and rejected everywhere (§{lexical.line-classification}, §{lexical.line-prefixes}). A recipe's execute-phase work is expressed exclusively inside the block body of a `cook` or `test` step (`>{ … }` / `{ … }`, §{steps.cook-single}, §{steps.test}).
+As of CS-0134 a `recipe_body` is **purely declarative**: it admits only register-phase items — `gather_step`, `cook_step`, `test_step`, and bare `module_call` lines (auto-classified as register-phase, §{steps.dispatch}) — together with structural `comment` and blank lines. A recipe body has **no imperative region**: standalone execute-phase steps (`lua_line` `>`, `lua_block` `>{`) and loose `shell_command` lines are NOT admitted at the top level of a recipe body; the `@` interactive prefix and its `interactive_command` step kind, together with the register sigils `>>` / `>>{`, are removed from the language entirely and rejected everywhere (§{lexical.line-classification}, §{lexical.line-prefixes}). A recipe's execute-phase work is expressed exclusively inside the block body of a `cook` or `test` step (`>{ … }` / `{ … }`, §{steps.cook-single}, §{steps.test}).
 
 Because every admitted recipe-body item is register-phase, its items MAY appear in **any order**. The two-region ordering rule of prior versions — which required declarative-region steps to precede imperative-region steps and forbade their interleaving — is **REMOVED by CS-0134**; a recipe body has no imperative region to order against, so the constraint no longer exists.
 
-**At-most-one-ingredients rule (normative).** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe body that contains two or more `ingredients_step` items; the diagnostic MUST identify the offending line and the line of the prior `ingredients_step`.
+**At-most-one-gather rule (normative).** A `recipe_body` MUST contain at most one `gather_step`. A conforming implementation MUST reject a recipe body that contains two or more `gather_step` items; the diagnostic MUST identify the offending line and the line of the prior `gather_step`.
 
 See App. C (§{rationale.recipe-body-regions}) for the rationale behind collapsing the register/execute split onto body position rather than intra-body ordering.

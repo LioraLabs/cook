@@ -112,13 +112,13 @@
         <span class="tok-kw">CFLAGS</span> <span class="tok-str">"-Wall -Wextra"</span><br>
         <br>
         <span class="tok-kw">recipe</span> <span class="tok-str">"lib"</span><br>
-        <span>&nbsp;&nbsp;</span><span class="tok-kw">ingredients</span> <span class="tok-str">"lib/*.c"</span> <span class="tok-str">"include/*.h"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">gather</span> <span class="tok-str">"lib/*.c"</span> <span class="tok-str">"include/*.h"</span><br>
         <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"build/obj/{stem}.o"</span> <span class="tok-kw">using</span> <span class="tok-str">"{CC} {CFLAGS} -Iinclude -c {in} -o {out}"</span><br>
         <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"build/libmath.a"</span> <span class="tok-kw">using</span> <span class="tok-str">"{AR} rcs {out} {all}"</span><br>
         <span class="tok-kw">end</span><br>
         <br>
         <span class="tok-kw">recipe</span> <span class="tok-str">"build"</span>: <span class="tok-str">"lib"</span><br>
-        <span>&nbsp;&nbsp;</span><span class="tok-kw">ingredients</span> <span class="tok-str">"src/*.c"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">gather</span> <span class="tok-str">"src/*.c"</span><br>
         <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"bin/app"</span> <span class="tok-kw">using</span> <span class="tok-str">"{CC} {CFLAGS} {all} -Iinclude -Lbuild -lmath -lm -o {out}"</span><br>
         <span class="tok-kw">end</span>
       </div>
@@ -151,7 +151,7 @@
     <div class="feature-card">
       <div class="feature-icon">👀</div>
       <h3>File Watching</h3>
-      <p><code class="inline-code">cook serve</code> — watches your ingredients and re-runs on change. Built in.</p>
+      <p><code class="inline-code">cook serve</code> — watches gathered inputs and re-runs on change. Built in.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">☁️</div>

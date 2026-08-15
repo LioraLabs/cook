@@ -6,7 +6,7 @@
 # and source line) and always run to completion — there are no modifiers.
 #
 # `check` shows both test shapes:
-#   - one-to-one: `ingredients "tests/*.sh"` + `test { ./$<in> }` runs
+#   - one-to-one: `gather "tests/*.sh"` + `test { ./$<in> }` runs
 #     every script under tests/ as its own test, one unit per script.
 #   - naked one-shot: a single `test { ... }` with no iteration source.
 #     `!` inverts a check that expects failure (no more `should_fail`).
@@ -19,11 +19,11 @@
 #   cook test --rerun-failed # after a red run: only the failures
 
 recipe app
-    ingredients "src/greeting.txt"
+    gather "src/greeting.txt"
     cook "out/app.txt" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe check: app
-    ingredients "tests/*.sh"
+    gather "tests/*.sh"
     test { ./$<in> }
     test { ! grep -q lowercase $<app> }
 

@@ -17,10 +17,10 @@
 #   cook summary             # per-member join across recipes
 #   cook why render          # each member's cache key, attributed
 
-# Layer 1 — read the manifest. `ingredients` declares the file input, so
+# Layer 1 — read the manifest. `seal` declares the file input, so
 # editing the manifest re-fingerprints this probe and everything downstream.
 probe services_raw
-    ingredients "data/services.json"
+    seal "data/services.json"
     json { cat data/services.json }
 
 # Layer 2 — enrich each record in Lua (a probe can depend on a probe;
@@ -40,7 +40,7 @@ probe services: services_raw
 
 # One unit per record. `$<in.FIELD>` reads the record's fields.
 recipe render
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" {
         printf 'service  = %s\nurl      = %s\nreplicas = %s\n' \
             "$<in.name>" "$<in.url>" "$<in.replicas>" > $<out>
@@ -49,7 +49,7 @@ recipe render
 # A second recipe iterating the SAME source can join the first one
 # per-member: `$<render[in]>` is "render's output for THIS member".
 recipe summary: render
-    ingredients services
+    gather services
     cook "build/summary/$<in.name>.txt" {
         printf '== %s ==\n' "$<in.name>" > $<out>
         cat $<render[in]> >> $<out>

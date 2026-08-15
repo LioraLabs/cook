@@ -1,5 +1,5 @@
 recipe app
-    ingredients "src/greeting.txt"
+    gather "src/greeting.txt"
     cook "out/app.txt" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe check: app

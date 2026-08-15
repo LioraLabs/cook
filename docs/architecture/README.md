@@ -89,7 +89,7 @@ cli/crates/
 
 - **Interactive steps and chores drain the pool.** Steps marked interactive (with `@`), and chore windows, cannot share the process with other concurrent work. Before running one, the executor drains all in-flight work and runs it on the main thread. → see [scheduler.md](scheduler.md)
 
-- **Dependencies are explicit, not ingredient-derived.** Cross-recipe edges come from explicit `requires` and from name-reference placeholders (`{lib}`, `{lib.accessor}`) resolved by `cook-luagen`. Path-string equality between an ingredient and another recipe's cook-output is *not* a dependency edge — see Cook Standard § 5.6 and rationale B.5.N. → see [supporting-modules.md](supporting-modules.md)
+- **Dependencies are explicit, not input-derived.** Cross-recipe edges come from explicit `requires` and from name-reference placeholders (`{lib}`, `{lib.accessor}`) resolved by `cook-luagen`. Path-string equality between an input and another recipe's cook-output is *not* a dependency edge — see Cook Standard § 5.6 and rationale B.5.N. → see [supporting-modules.md](supporting-modules.md)
 
 - **Workspace-aware imports.** A Cookfile may `import "path/to/sub" as alias` to mount another Cookfile under a namespace. Imports are resolved by `cook-engine::pipeline::workspace`; tree-relative paths are validated, sigil-anchored paths (`//path/from/root`) jump to the workspace root. → see [supporting-modules.md](supporting-modules.md)
 

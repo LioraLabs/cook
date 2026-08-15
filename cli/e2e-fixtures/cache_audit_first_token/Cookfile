@@ -11,7 +11,7 @@ config
     var.STAMP = "default"
 
 recipe build
-    ingredients "src/in.txt"
+    gather "src/in.txt"
     cook "build/out.txt" {
         mkdir -p build
         ./build_tool.sh $<in> $<out>

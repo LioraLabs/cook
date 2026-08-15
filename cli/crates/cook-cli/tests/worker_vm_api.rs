@@ -61,7 +61,7 @@ fn fs_api_in_cook_body_lua_block_end_to_end() {
     fs::write(tmp.path().join("docs/en/a.md"), "hello world\n").unwrap();
     let cookfile = r#"
 recipe translate
-    ingredients "docs/en/**/*.md"
+    gather "docs/en/**/*.md"
     cook (input:gsub("/en/", "/fr/")) >{
         fs.write(output, fs.read(input):upper())
     }

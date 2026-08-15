@@ -3,18 +3,23 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="check" line=4
+    Recipe name="check" line=5
       deps: []
-      ingredients: ["src/main.ts"]
+      inputs: []
       excludes: []
       steps:
-        Cook outputs=["build/check.stamp"] body=ShellBlock(["echo ok > $<out>"]) disposition=[local=false pinned=false record=false seal=["srcs"]]
+        Cook outputs=["build/check.stamp"] body=ShellBlock(["echo ok > $<out>"]) disposition=[local=false pinned=false record=false seal=["@seal:check:6", "srcs"]]
   chores:
   register_blocks: []
   top_level_module_calls: []
   probes:
     Probe name="srcs" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Files globs=["src/*.ts", "config/*.json"] excludes=["src/gen/*.ts"]
+    Probe name="@seal:check:6" line=6
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Files globs=["src/main.ts"] excludes=[]

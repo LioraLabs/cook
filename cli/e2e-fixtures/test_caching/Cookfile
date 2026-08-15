@@ -18,7 +18,7 @@ recipe deterministic
 
 # Iterated test — should cache N entries (one per iteration).
 recipe iterated
-    ingredients "src/*.txt"
+    gather "src/*.txt"
     cook "build/iterated/$<in.stem>.out" {
         mkdir -p build/iterated
         sleep $<SLEEP>

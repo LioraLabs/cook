@@ -1,5 +1,5 @@
 recipe site
-    ingredients "pages/*.md"
+    gather "pages/*.md"
     cook "build/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
 
 chore release: site

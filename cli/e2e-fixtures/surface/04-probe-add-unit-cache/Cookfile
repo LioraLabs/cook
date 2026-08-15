@@ -6,7 +6,7 @@
 # about: a probe keyed on something reuses its value while that something
 # holds still.
 probe demo:nonce
-    ingredients "seed.txt"
+    seal "seed.txt"
     >{
         local stamp = cook.sh("date +%s%N"):gsub("%s+$", "")
         return { stamp = stamp }

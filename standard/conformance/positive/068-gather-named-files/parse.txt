@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="objects" line=4
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        MemberSource source=GatherKey("sources")
+        Cook outputs=["build/$<in.stem>.o"] body=ShellBlock(["cc -c '$<in>' -o $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="sources" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      produce: Files globs=["src/*.c"] excludes=[]

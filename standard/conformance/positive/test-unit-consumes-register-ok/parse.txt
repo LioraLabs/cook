@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="noop" line=6
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Test body=LuaBlock("cook.sh(\"true\")")

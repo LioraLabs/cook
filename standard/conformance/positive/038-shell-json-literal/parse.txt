@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="emit" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["out.json"] body=ShellBlock(["echo '{\"key\": \"value\"}' > $<out>"])

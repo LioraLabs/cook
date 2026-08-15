@@ -261,7 +261,7 @@ fn test_pool_executes_lua_chunk_writing_multiple_outputs() {
                 dir.path().join("a.txt").to_string_lossy().into_owned(),
                 dir.path().join("b.txt").to_string_lossy().into_owned(),
             ],
-            ingredient_groups: vec![vec!["src.rs".to_string()]],
+            gather_groups: vec![vec!["src.rs".to_string()]],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -355,7 +355,7 @@ fn test_pool_lua_chunk_sees_input_output_globals() {
             code: code.to_string(),
             inputs: vec!["hello".to_string()],
             outputs: vec![out_path.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -435,7 +435,7 @@ fn test_pool_fs_api_uses_per_item_working_dir() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![out1.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -456,7 +456,7 @@ fn test_pool_fs_api_uses_per_item_working_dir() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![out2.to_string_lossy().into_owned()],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -564,7 +564,10 @@ fn a_failing_command_reports_its_exit_code_on_the_result() {
     pool.submit(WorkItem {
         process_env_vars: HashMap::new(),
         id: 0,
-        payload: WorkPayload::Shell { cmd: "exit 7".to_string(), line: 1 },
+        payload: WorkPayload::Shell {
+            cmd: "exit 7".to_string(),
+            line: 1,
+        },
         recipe_name: "r".to_string(),
         working_dir: dir.path().to_path_buf(),
         env_vars: HashMap::new(),
@@ -600,7 +603,7 @@ fn run_lua_chunk_in_worker_at_line(line: usize, code: &str) -> WorkResult {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line,
@@ -814,7 +817,7 @@ fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -847,10 +850,7 @@ fn cook_load_module_resolves_share_lua_5_4_init() {
     let dir = TempDir::new().unwrap();
     let share_pkg = installed_share(dir.path()).join("share_only_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share path");
-    fs::write(
-        share_pkg.join("init.lua"),
-        "return { from_share = true }",
-    ).expect("write init.lua");
+    fs::write(share_pkg.join("init.lua"), "return { from_share = true }").expect("write init.lua");
 
     let code = r#"
             local m = cook.load_module("share_only_pkg")
@@ -916,10 +916,7 @@ fn cook_load_module_ignores_the_retired_top_level_candidates() {
     // The only candidate: init.lua under share/lua/5.4/<name>/.
     let share_pkg = share_dir.join("dup_pkg");
     fs::create_dir_all(&share_pkg).expect("mkdir share pkg");
-    fs::write(
-        share_pkg.join("init.lua"),
-        "return { from = 'share' }",
-    ).expect("write share module");
+    fs::write(share_pkg.join("init.lua"), "return { from = 'share' }").expect("write share module");
 
     let code = r#"
             local m = cook.load_module("dup_pkg")
@@ -1036,7 +1033,7 @@ fn cook_probes_get_returns_nil_for_stored_null_without_error() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1085,7 +1082,7 @@ fn cook_probes_get_reads_from_probe_value_store() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1127,11 +1124,13 @@ fn cook_probes_set_on_execute_vm_raises_deprecation_error() {
 #[test]
 fn cook_cache_is_hard_error_with_did_you_mean() {
     let result = run_lua_chunk_in_worker(r#"return cook.cache.get("x")"#);
-    assert!(!result.success, "expected cook.cache.get to be a hard error");
-        let err = result.error.as_deref().unwrap_or("");
     assert!(
-        err.contains("cook.cache' was renamed to 'cook.probes'")
-            && err.contains("cook.probes.get"),
+        !result.success,
+        "expected cook.cache.get to be a hard error"
+    );
+    let err = result.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("cook.cache' was renamed to 'cook.probes'") && err.contains("cook.probes.get"),
         "rename diagnostic must name the new spelling; got: {err}"
     );
 }
@@ -1145,9 +1144,8 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
 
     // Pre-populate with scoped key format `"<label>:<key>"`.
     {
-        let bytes = cook_contracts::probe_value::encode_canonical_json(
-            &serde_json::json!("gcc-14"),
-        );
+        let bytes =
+            cook_contracts::probe_value::encode_canonical_json(&serde_json::json!("gcc-14"));
         pool.probe_value_store().insert("cc:compiler", bytes);
         }
 
@@ -1164,7 +1162,7 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
             code: code.to_string(),
             inputs: vec![],
             outputs: vec![],
-            ingredient_groups: vec![],
+            gather_groups: vec![],
             step_kind: cook_contracts::StepKind::Cook,
             is_chore: false,
             line: 0,
@@ -1190,8 +1188,12 @@ fn cook_probes_scope_set_on_execute_vm_raises_deprecation_error() {
     let result = run_lua_chunk_in_worker(r#"
             local s = cook.probes.scope("foo")
             s.set("x", 1)
-        "#);
-    assert!(!result.success, "expected scoped cook.probes.set to fail on execute VM");
+        "#,
+    );
+    assert!(
+        !result.success,
+        "expected scoped cook.probes.set to fail on execute VM"
+    );
     let err = result.error.as_deref().unwrap_or("");
     assert!(
         err.contains("deprecated"),

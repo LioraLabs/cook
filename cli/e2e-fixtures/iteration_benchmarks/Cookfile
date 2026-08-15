@@ -5,7 +5,7 @@ config
 # N inputs => N units, each producing 1 output.
 # $<in.stem> in the output pattern drives own-input iteration.
 recipe one_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/one_to_one_shell
         sleep $<SLEEP>
@@ -16,7 +16,7 @@ recipe one_to_one_shell
 # Same iteration shape as mode 1 but the body is Lua.
 # `input` / `output` are the singleton per-iteration bindings (§6.4).
 recipe one_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/one_to_one_lua/$<in.stem>.out" >{
         os.execute("mkdir -p build/one_to_one_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
@@ -29,7 +29,7 @@ recipe one_to_one_lua
 # N inputs => N units, each producing 2 outputs.
 # Both output patterns share $<in.stem> — same driver, two outputs per unit.
 recipe one_to_many_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/one_to_many_shell/$<in.stem>.a.out" "build/one_to_many_shell/$<in.stem>.b.out" {
         mkdir -p build/one_to_many_shell
         sleep $<SLEEP>
@@ -41,7 +41,7 @@ recipe one_to_many_shell
 # All inputs => 1 unit, 1 literal output.
 # $<in> expands to the space-joined full input list.
 recipe many_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/many_to_one_shell/all.out" {
         mkdir -p build/many_to_one_shell
         sleep $<SLEEP>
@@ -54,7 +54,7 @@ recipe many_to_one_shell
 # A literal output pattern means exactly one unit; `inputs` in the
 # Lua body sees the FULL list. Read build/many_to_one_lua/all.out to verify.
 recipe many_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/many_to_one_lua/all.out" >{
         os.execute("mkdir -p build/many_to_one_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
@@ -69,7 +69,7 @@ recipe many_to_one_lua
 # Mode 6: Many-to-one, multi-output, shell block.
 # 1 unit, 2 literal outputs. $<out_1>/$<out_2> name them in order.
 recipe many_to_one_multi_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/many_to_one_multi_shell/all.a.out" "build/many_to_one_multi_shell/all.b.out" {
         mkdir -p build/many_to_one_multi_shell
         sleep $<SLEEP>
@@ -80,7 +80,7 @@ recipe many_to_one_multi_shell
 # Mode 7: Many-to-one, multi-output, Lua block.
 # 1 unit, 2 literal outputs. outputs[1]/outputs[2] in Lua.
 recipe many_to_one_multi_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/many_to_one_multi_lua/all.a.out" "build/many_to_one_multi_lua/all.b.out" >{
         os.execute("mkdir -p build/many_to_one_multi_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
@@ -95,7 +95,7 @@ recipe many_to_one_multi_lua
 # stage1 — driver for dep_driven.
 # One-to-one over own inputs. stage2 (dep_driven) will iterate over stage1's outputs.
 recipe stage1
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/stage1/$<in.stem>.staged" {
         mkdir -p build/stage1
         sleep $<SLEEP>
@@ -115,7 +115,7 @@ recipe dep_driven
 # libfoo — many-to-one, single output.
 # Simulates archiving all inputs into one library.
 recipe libfoo
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/lib/libfoo.a" {
         mkdir -p build/lib
         sleep $<SLEEP>
@@ -134,9 +134,9 @@ recipe app_with_lib
 
 # Second-stage mode 1: One-to-one, shell (was a `plate` step; CS-0135
 # removed plate — the un-sandboxed per-item pass is now a second, cached
-# `cook` step driven by the same declared ingredients).
+# `cook` step driven by the same declared gather).
 recipe plate_one_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/plate_one_to_one_shell
         sleep $<SLEEP>
@@ -153,7 +153,7 @@ recipe plate_one_to_one_shell
 # it's a Lua block with a literal output, where `inputs` is the full
 # collected source list — same shape as many_to_one_lua above.
 recipe plate_many_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_many_to_one_shell/$<in.stem>.out" {
         mkdir -p build/plate_many_to_one_shell
         sleep $<SLEEP>
@@ -168,9 +168,9 @@ recipe plate_many_to_one_shell
 
 # Second-stage mode 3: One-shot, shell (was a one-shot `plate` step).
 # Literal output, no $<in.stem> in the pattern => runs once regardless of
-# the declared ingredients (same rule as test_one_shot_shell below).
+# the declared gather (same rule as test_one_shot_shell below).
 recipe plate_one_shot_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_one_shot_shell/$<in.stem>.out" {
         mkdir -p build/plate_one_shot_shell
         sleep $<SLEEP>
@@ -184,7 +184,7 @@ recipe plate_one_shot_shell
 # Second-stage mode 4: One-to-one, Lua (was a `plate >{ }` step referencing
 # `input`).
 recipe plate_one_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_one_to_one_lua/$<in.stem>.out" {
         mkdir -p build/plate_one_to_one_lua
         sleep $<SLEEP>
@@ -200,7 +200,7 @@ recipe plate_one_to_one_lua
 # Second-stage mode 5: Many-to-one, Lua (was a `plate >{ }` step
 # referencing `inputs`).
 recipe plate_many_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_many_to_one_lua/$<in.stem>.out" {
         mkdir -p build/plate_many_to_one_lua
         sleep $<SLEEP>
@@ -215,7 +215,7 @@ recipe plate_many_to_one_lua
 
 # Second-stage mode 6: One-shot, Lua (was a one-shot `plate >{ }` step).
 recipe plate_one_shot_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/plate_one_shot_lua/$<in.stem>.out" {
         mkdir -p build/plate_one_shot_lua
         sleep $<SLEEP>
@@ -229,7 +229,7 @@ recipe plate_one_shot_lua
 # Test mode 1: One-to-one, shell.
 # $<in> iterates over cook outputs; checks each output file exists.
 recipe test_one_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/test_one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/test_one_to_one_shell
         sleep $<SLEEP>
@@ -243,7 +243,7 @@ recipe test_one_to_one_shell
 # per-item or one-shot only) — it moves to the Lua block form, where
 # `inputs` is the full collected source list.
 recipe test_many_to_one_shell
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/test_many_to_one_shell/all.out" {
         mkdir -p build/test_many_to_one_shell
         sleep $<SLEEP>
@@ -257,7 +257,7 @@ recipe test_many_to_one_shell
 # Body references neither $<in> nor the collected inputs; runs once
 # unconditionally.
 recipe test_one_shot_shell
-    ingredients "src/inputs/*.txt"
+    seal "src/inputs/*.txt"
     cook "build/test_one_shot_shell/all.out" {
         mkdir -p build/test_one_shot_shell
         sleep $<SLEEP>
@@ -268,7 +268,7 @@ recipe test_one_shot_shell
 # Test mode 4: One-to-one, Lua.
 # `input` iterates over cook outputs; asserts each file is readable.
 recipe test_one_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/test_one_to_one_lua/$<in.stem>.out" {
         mkdir -p build/test_one_to_one_lua
         sleep $<SLEEP>
@@ -283,7 +283,7 @@ recipe test_one_to_one_lua
 # Test mode 5: Many-to-one, Lua.
 # `inputs` gives the full list; asserts count is greater than zero.
 recipe test_many_to_one_lua
-    ingredients "src/inputs/*.txt"
+    gather "src/inputs/*.txt"
     cook "build/test_many_to_one_lua/all.out" {
         mkdir -p build/test_many_to_one_lua
         sleep $<SLEEP>
@@ -296,7 +296,7 @@ recipe test_many_to_one_lua
 # Test mode 6: One-shot, Lua.
 # No source binding; runs once unconditionally.
 recipe test_one_shot_lua
-    ingredients "src/inputs/*.txt"
+    seal "src/inputs/*.txt"
     cook "build/test_one_shot_lua/all.out" {
         mkdir -p build/test_one_shot_lua
         sleep $<SLEEP>

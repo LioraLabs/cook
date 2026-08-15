@@ -2,7 +2,7 @@
 # apps/web. Produces a compiled object file as its terminal output.
 
 recipe core_lib
-    ingredients "src/core.c"
+    seal "src/core.c"
     cook "build/core.o" {
         mkdir -p build
         gcc -c src/core.c -o $<out>

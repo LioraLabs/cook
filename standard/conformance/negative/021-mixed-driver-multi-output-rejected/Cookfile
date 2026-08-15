@@ -1,8 +1,9 @@
 recipe "libmath"
-    ingredients "src/math/*.c"
+    gather "src/math/*.c"
+    cook "build/lib/$<in.stem>.o" { cc -c $<in> -o $<out> }
 
 recipe "build"
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "$<in.stem>.o" "$<libmath.stem>.bin" {
         do-stuff
     }

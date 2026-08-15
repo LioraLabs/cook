@@ -2,5 +2,5 @@ probe cards
     json { cat data/cards.json }
 
 recipe art
-    ingredients cards
+    gather cards
     cook "o/$<in.id>.svg" "o/$<in.id>-dark.svg" { gen $<in.id> }

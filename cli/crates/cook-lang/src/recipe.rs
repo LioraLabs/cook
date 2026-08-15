@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::ast::*;
 use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
-use crate::disposition::{parse_seal_refs, parse_test_modifiers};
+use crate::disposition::{parse_seal_operands, removed_trailing_seal, removed_unseal};
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
@@ -152,7 +152,7 @@ pub(crate) fn parse_config_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (column-0 Content matching the module-call
             // shape) is also a terminator as of CS-0072. Check the raw source
             // line to distinguish column-0 from indented Content.
@@ -232,7 +232,7 @@ pub(crate) fn parse_register_block_lua(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => break,
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => break,
             // Top-level module_call (Content matching <id>.<id>(...) shape)
             // is also a terminator (CS-0072 §4.1.1 clause b).
             // Only column-0 Content can be top-level: check the raw source line.
@@ -273,27 +273,16 @@ pub(crate) fn parse_register_block_lua(
     Ok((body, pos))
 }
 
-/// COOK-171 / CS-0159: fold the recipe-level `seal` baseline into each
-/// *cacheable unit's* effective seal set, then apply that unit's per-unit
-/// trailing `unseal`. `effective(unit) = (base ∪ step_seals) − step_unseals`.
+/// Fold the recipe seal set into each cacheable unit.
 ///
 /// Both `cook` and `test` steps are cacheable units, so the baseline applies
 /// to both (§8.4.3 rule 1, CS-0159). Scope is declarative and
 /// order-independent — a recipe-level `seal` applies to every unit in the
 /// recipe regardless of textual position — so the fold runs once at recipe
-/// finalize, after the whole body has been parsed. `unseals` carries
-/// `(index-into-steps, that-unit's-unseal-set)` pairs, keyed by step index so
-/// one map serves both step kinds.
-fn apply_base_seal(
-    steps: &mut [Step],
-    base: &BTreeSet<String>,
-    unseals: &[(usize, BTreeSet<String>)],
-) {
-    use std::collections::HashMap;
-    let unseal_by: HashMap<usize, &BTreeSet<String>> =
-        unseals.iter().map(|(i, s)| (*i, s)).collect();
-    for (i, step) in steps.iter_mut().enumerate() {
-        // The effective-set slot differs per step kind; the fold does not.
+/// finalize, after the whole body has been parsed.
+fn apply_base_seal(steps: &mut [Step], base: &BTreeSet<String>) {
+    for step in steps {
+        // The seal slot differs per step kind; the fold does not.
         let seal: &mut BTreeSet<String> = match step {
             Step::Cook { step, .. } => &mut step.disposition.seal,
             Step::Test { step, .. } => &mut step.seal,
@@ -301,11 +290,6 @@ fn apply_base_seal(
         };
         for r in base {
             seal.insert(r.clone());
-        }
-        if let Some(u) = unseal_by.get(&i) {
-            for r in u.iter() {
-                seal.remove(r);
-            }
         }
     }
 }
@@ -315,7 +299,6 @@ fn finalize_base_seal(
     recipe_line: usize,
     steps: &mut [Step],
     base: &BTreeSet<String>,
-    unseals: &[(usize, BTreeSet<String>)],
 ) -> Result<(), ParseError> {
     // CS-0159: a `test`-only recipe is a legitimate seal target — a test unit
     // keys on its sealed probes exactly as a cook unit does (§17.4 rule 1), so
@@ -330,8 +313,22 @@ fn finalize_base_seal(
             message: format!("seal on recipe {name}: no cook or test units to apply to"),
         });
     }
-    apply_base_seal(steps, base, unseals);
+    apply_base_seal(steps, base);
     Ok(())
+}
+
+fn reject_test_tail(tail: &str, line: usize) -> Result<(), ParseError> {
+    let Some(word) = tail.split_whitespace().next() else {
+        return Ok(());
+    };
+    Err(match word {
+        "seal" => removed_trailing_seal("test", line),
+        "unseal" => removed_unseal(line),
+        "should_fail" => ParseError::Parse { line, message: "test: should_fail was removed in v1.0 — invert the check in the body instead".to_string() },
+        "timeout" => ParseError::Parse { line, message: "test: timeout was removed in v1.0 — enforce a deadline from inside the test body instead".to_string() },
+        "as" => ParseError::Parse { line, message: "test: as was removed in v1.0 — test steps no longer take a custom name".to_string() },
+        other => ParseError::Parse { line, message: format!("unexpected text after test body: '{other}'") },
+    })
 }
 
 pub(crate) fn parse_recipe(
@@ -341,22 +338,19 @@ pub(crate) fn parse_recipe(
     tokens: &[Located<Token>],
     start: usize,
     source_lines: &[&str],
-) -> Result<(Recipe, usize), ParseError> {
+) -> Result<(Recipe, Vec<Probe>, usize), ParseError> {
     let mut pos = start;
-    let mut ingredients = Vec::new();
+    let mut inputs = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
-    // §{steps.ingredients}: glob-pattern `ingredients` and `ingredients <probe>`
-    // (probe member source) are mutually exclusive within a recipe, and at most
-    // one probe source is allowed per recipe.
+    // §{steps.gather}: glob-pattern and bare-source `gather` are mutually
+    // exclusive within a recipe, and at most one bare source is allowed.
     let mut member_source_seen = false;
 
-    // COOK-171: recipe-level `seal` baseline (the determinant set applied to
-    // every cook in the recipe) and each cook's per-unit trailing `unseal`
-    // set. Both are folded into the cooks' effective seal sets at finalize
-    // (`apply_base_seal`), so recipe-level seals are order-independent.
+    // The recipe seal set is folded into every cacheable unit at finalize, so
+    // recipe-level seals are order-independent.
     let mut base_seal: BTreeSet<String> = BTreeSet::new();
-    let mut cook_unseals: Vec<(usize, BTreeSet<String>)> = Vec::new();
+    let mut inline_probes = Vec::new();
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -370,23 +364,20 @@ pub(crate) fn parse_recipe(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => {
-                finalize_base_seal(
-                    &name,
-                    recipe_line,
-                    &mut steps,
-                    &base_seal,
-                    &cook_unseals,
-                )?;
+            | Token::ProbeHeader { .. }
+            | Token::FilesHeader { .. }
+            | Token::ToolsHeader { .. } => {
+                finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
                 return Ok((
                     Recipe {
                         name,
                         deps,
-                        ingredients,
+                        inputs,
                         excludes,
                         steps,
                         line: recipe_line,
                     },
+                    inline_probes,
                     pos,
                 ));
             }
@@ -405,140 +396,128 @@ pub(crate) fn parse_recipe(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         // column-0 module call terminates the recipe body.
-                        finalize_base_seal(
-                            &name,
-                            recipe_line,
-                            &mut steps,
-                            &base_seal,
-                            &cook_unseals,
-                        )?;
+                        finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
                         return Ok((
                             Recipe {
                                 name,
                                 deps,
-                                ingredients,
+                                inputs,
                                 excludes,
                                 steps,
                                 line: recipe_line,
                             },
+                            inline_probes,
                             pos,
                         ));
                     }
                     // CS-0134: an indented bare module call is register-phase Lua.
                     let (code, new_pos) =
                         collect_module_call(text, tok.line, tokens, pos, source_lines)?;
-                    steps.push(Step::InlineLua { code, line: tok.line });
+                    steps.push(Step::InlineLua {
+                        code,
+                        line: tok.line,
+                    });
                     pos = new_pos;
                     continue;
                 }
                 // COOK-171: `seal` is a recipe-body step (a determinant input
-                // stream, sibling of `ingredients`). It contributes to the
+                // stream, sibling of `gather`). It contributes to the
                 // recipe-level baseline applied to every cook at finalize.
                 if let Some(rest) = strip_keyword(text, "seal") {
-                    let refs: Vec<String> =
-                        rest.split_whitespace().map(str::to_string).collect();
-                    if refs.is_empty() {
+                    if rest.trim().is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message: "seal: a recipe-level `seal` step requires at least one probe ref"
                                 .to_string(),
                         });
                     }
-                    for r in parse_seal_refs(&refs, tok.line)? {
+                    let parsed = parse_seal_operands(rest, tok.line, &name)?;
+                    for r in parsed.refs {
                         base_seal.insert(r);
                     }
+                    inline_probes.extend(parsed.inline_probe);
                     pos += 1;
                     continue;
                 }
-                // COOK-171: recipe-level `unseal` is rejected — `unseal` is a
-                // trailing modifier on a `cook` or `test` step only (CS-0159).
-                // The recipe is the outermost seal scope, so there is nothing
-                // inherited to release.
+                // CS-0225 removed every `unseal` position.
                 if strip_keyword(text, "unseal").is_some() {
+                    return Err(removed_unseal(tok.line));
+                }
+                if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "unseal is a trailing modifier on a `cook` or `test` step, not \
-                                  a recipe-level step (the recipe is the outermost seal scope; \
-                                  there is nothing to release)"
-                            .to_string(),
+                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".to_string(),
                     });
                 }
-                if let Some(rest) = strip_keyword(text, "ingredients") {
+                let gather = strip_keyword(text, "gather");
+                if let Some(rest) = gather {
                     if member_source_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message:
-                                "a recipe may declare at most one `ingredients <probe>` source"
-                                    .to_string(),
+                            message: "a recipe may declare at most one bare `gather` source"
+                                .to_string(),
                         });
                     }
                     let head = rest.trim_start();
                     if head.starts_with('"') || head.starts_with('!') {
-                        // Glob ingredients (existing path).
-                        if !ingredients.is_empty() || !excludes.is_empty() {
+                        // Glob inputs (existing path).
+                        if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "duplicate 'ingredients' line".to_string(),
+                                message: "duplicate 'gather' line".to_string(),
                             });
                         }
                         let (inc, exc, new_pos) =
-                            parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
-                        ingredients = inc;
+                            parse_gather_line(rest, "gather", tok.line, tokens, pos, source_lines)?;
+                        inputs = inc;
                         excludes = exc;
+                        steps.push(Step::Gather { line: tok.line });
                         pos = new_pos;
                         continue;
                     } else {
-                        // COOK-88: bare identifier => probe member source. Desugar to MemberSource.
-                        if !ingredients.is_empty() || !excludes.is_empty() {
+                        // COOK-88: bare identifier => named member source. Desugar to MemberSource.
+                        if !inputs.is_empty() || !excludes.is_empty() {
                             return Err(ParseError::Parse {
                                 line: tok.line,
-                                message: "ingredients: cannot mix glob patterns with a probe source"
+                                message: "gather: cannot mix glob patterns with a bare source"
                                     .to_string(),
                             });
                         }
-                        let (fe, new_pos) =
-                            crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos)?;
+                        let (fe, new_pos) = crate::cook_line::parse_gather_bare_source(
+                            rest, tok.line, tokens, pos, true,
+                        )?;
                         member_source_seen = true;
-                        steps.push(Step::MemberSource { step: fe, line: tok.line });
+                        steps.push(Step::MemberSource {
+                            step: fe,
+                            line: tok.line,
+                        });
                         pos = new_pos;
                         continue;
                     }
                 } else if let Some(rest) = strip_keyword(text, "cook") {
-                    // COOK-171: parse_cook_line resolves the trailing `cook_mods`
-                    // (per-unit seal/unseal + share_mod) onto the step's
-                    // disposition. The `as` modifier rejection (CS-0061) is folded
-                    // into the modifier parser. The recipe-level seal baseline is
-                    // applied later at finalize (`apply_base_seal`).
-                    let (cook_step, unseal, new_pos) =
+                    // `cook_mods` is the optional share disposition. The recipe
+                    // seal set is applied later at finalize.
+                    let (cook_step, new_pos) =
                         parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;
-                    let idx = steps.len();
                     steps.push(Step::Cook {
                         step: cook_step,
                         line: tok.line,
                     });
-                    if !unseal.is_empty() {
-                        cook_unseals.push((idx, unseal));
-                    }
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
-                    // CS-0159: a `test` step takes the input half of the
-                    // trailing modifier tail (`seal`/`unseal`); the recipe-level
-                    // baseline is folded in later at finalize
-                    // (`apply_base_seal`), so per-unit seals here are additive
-                    // and the unseals are recorded against this step's index.
+                    // Tests admit no tail; the recipe seal set is folded in at finalize.
                     let (body, trailing, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "test",
                     )?;
-                    let mods = parse_test_modifiers(&trailing, tok.line)?;
-                    let idx = steps.len();
+                    reject_test_tail(&trailing, tok.line)?;
                     steps.push(Step::Test {
-                        step: TestStep { body, seal: mods.seal },
+                        step: TestStep {
+                            body,
+                            seal: BTreeSet::new(),
+                        },
                         line: tok.line,
                     });
-                    if !mods.unseal.is_empty() {
-                        cook_unseals.push((idx, mods.unseal));
-                    }
                     pos = new_pos;
                     continue;
                 } else if text.starts_with('@') {
@@ -624,24 +603,19 @@ pub(crate) fn parse_recipe(
     }
 
     // COOK-171: fold the recipe-level seal baseline into each cook at finalize.
-    finalize_base_seal(
-        &name,
-        recipe_line,
-        &mut steps,
-        &base_seal,
-        &cook_unseals,
-    )?;
+    finalize_base_seal(&name, recipe_line, &mut steps, &base_seal)?;
 
     // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
     Ok((
         Recipe {
             name,
             deps,
-            ingredients,
+            inputs,
             excludes,
             steps,
             line: recipe_line,
         },
+        inline_probes,
         pos,
     ))
 }
@@ -660,10 +634,10 @@ pub(crate) fn parse_chore(
 
     let chore_banned = |keyword: &str, line: usize| -> ParseError {
         let kind_descriptor = match keyword {
-            "ingredients" => "inputs",
-            "cook"        => "outputs",
-            "test"        => "tested outputs",
-            _             => "targets",
+            "inputs" => "inputs",
+            "cook" => "outputs",
+            "test" => "tested outputs",
+            _ => "targets",
         };
         ParseError::Parse {
             line,
@@ -685,9 +659,15 @@ pub(crate) fn parse_chore(
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
-            | Token::ProbeHeader { .. } => {
+            | Token::ProbeHeader { .. } | Token::FilesHeader { .. } | Token::ToolsHeader { .. } => {
                 return Ok((
-                    Chore { name, params, deps, steps, line: chore_line },
+                    Chore {
+                        name,
+                        params,
+                        deps,
+                        steps,
+                        line: chore_line,
+                    },
                     pos,
                 ));
             }
@@ -704,14 +684,23 @@ pub(crate) fn parse_chore(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         return Ok((
-                            Chore { name, params, deps, steps, line: chore_line },
+                            Chore {
+                                name,
+                                params,
+                                deps,
+                                steps,
+                                line: chore_line,
+                            },
                             pos,
                         ));
                     }
                 }
                 let text = text.clone();
                 if strip_keyword(&text, "ingredients").is_some() {
-                    return Err(chore_banned("ingredients", tok.line));
+                    return Err(ParseError::Parse { line: tok.line,
+                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
+                } else if strip_keyword(&text, "gather").is_some() {
+                    return Err(chore_banned("gather", tok.line));
                 } else if strip_keyword(&text, "cook").is_some() {
                     return Err(chore_banned("cook", tok.line));
                 } else if strip_keyword(&text, "test").is_some() {
@@ -755,7 +744,10 @@ pub(crate) fn parse_chore(
                 pos += 1;
             }
             Token::LuaLine(code) => {
-                steps.push(Step::Lua { code: code.clone(), line: tok.line });
+                steps.push(Step::Lua {
+                    code: code.clone(),
+                    line: tok.line,
+                });
                 pos += 1;
             }
             Token::LuaBlockOpen => {
@@ -774,7 +766,10 @@ pub(crate) fn parse_chore(
                 let (code, block_tail, new_pos) =
                     collect_lua_block(block_line, after_open, tokens, pos, source_lines)?;
                 crate::shell_block::reject_stray_tail(&block_tail, block_line, "chore")?;
-                steps.push(Step::LuaBlock { code, line: block_line });
+                steps.push(Step::LuaBlock {
+                    code,
+                    line: block_line,
+                });
                 pos = new_pos;
             }
             Token::InlineLuaLine(_) => {
@@ -800,5 +795,14 @@ pub(crate) fn parse_chore(
     }
 
     // EOF terminates
-    Ok((Chore { name, params, deps, steps, line: chore_line }, pos))
+    Ok((
+        Chore {
+            name,
+            params,
+            deps,
+            steps,
+            line: chore_line,
+        },
+        pos,
+    ))
 }

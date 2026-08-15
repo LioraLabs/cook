@@ -12,7 +12,7 @@
 # `test_bare_shell_dep_ref_lowers_to_register_time_eval`.
 
 recipe greet
-    ingredients "Cookfile"
+    seal "Cookfile"
     cook "build/greeting.txt" { echo "hello" }
 
 chore shout: greet

@@ -5,12 +5,14 @@ Cookfile
   recipes:
     Recipe name="protos" line=1
       deps: []
-      ingredients: ["proto/a.proto", "proto/b.proto"]
+      inputs: ["proto/a.proto", "proto/b.proto"]
       excludes: []
       steps:
-    Recipe name="compile_protos" line=4
+        Gather
+        Cook outputs=["build/proto/$<in.stem>.proto"] body=ShellBlock(["cp $<in> $<out>"])
+    Recipe name="compile_protos" line=5
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["build/obj/$<protos.stem>.pb.cc"] body=ShellBlock(["protoc --cpp_out=build/obj $<in>"])

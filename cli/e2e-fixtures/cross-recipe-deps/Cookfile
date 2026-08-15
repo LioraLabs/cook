@@ -5,7 +5,7 @@
 # dependencies automatically — no explicit : dep syntax needed.
 
 recipe libmath
-    ingredients "src/math/*.c"
+    gather "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" {
         mkdir -p build/obj/math && gcc -c $<in> -Isrc -o $<out>
     }
@@ -14,7 +14,7 @@ recipe libmath
     }
 
 recipe libstr
-    ingredients "src/str/*.c"
+    gather "src/str/*.c"
     cook "build/obj/str/$<in.stem>.o" {
         mkdir -p build/obj/str && gcc -c $<in> -Isrc -o $<out>
     }
@@ -23,7 +23,7 @@ recipe libstr
     }
 
 recipe app
-    ingredients "src/main.c"
+    gather "src/main.c"
     cook "build/obj/main.o" {
         mkdir -p build/obj && gcc -c $<in> -Isrc -o $<out>
     }

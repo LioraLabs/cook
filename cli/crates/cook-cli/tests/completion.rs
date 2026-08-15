@@ -50,7 +50,7 @@ fn fixture() -> tempfile::TempDir {
     std::fs::write(
         dir.path().join("ns/Cookfile"),
         r#"recipe unit
-    ingredients "src/b.in"
+    gather "src/b.in"
     cook "out/n.txt" { cp $<in> $<out> }
 "#,
     )
@@ -68,11 +68,11 @@ config release
     var.MODE = "release"
 
 recipe deploy
-    ingredients "src/a.in"
+    gather "src/a.in"
     cook "out/d.txt" { cp $<in> $<out> }
 
 recipe test
-    ingredients "src/a.in"
+    gather "src/a.in"
     cook "out/t.txt" { cp $<in> $<out> }
 
 chore tidy
@@ -180,11 +180,11 @@ fn module_internal_recipes_are_not_offered_but_stay_runnable() {
     std::fs::write(
         dir.path().join("Cookfile"),
         r#"recipe deploy
-    ingredients "src/a.in"
+    gather "src/a.in"
     cook "out/d.txt" { cp $<in> $<out> }
 
 recipe __internal_helper
-    ingredients "src/a.in"
+    gather "src/a.in"
     cook "out/h.txt" { cp $<in> $<out> }
 "#,
     )
@@ -232,7 +232,7 @@ fn emitting_the_registration_script_does_not_run_the_cookfile() {
     f:close()
 
 recipe deploy
-    ingredients "src/a.in"
+    gather "src/a.in"
     cook "out/d.txt" {{ cp $<in> $<out> }}
 "#,
             marker.display()

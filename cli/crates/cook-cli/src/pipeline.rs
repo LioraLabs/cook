@@ -13,11 +13,11 @@
 //! directly anymore — that's the engine's concern.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{OnceLock, mpsc};
+use std::sync::{mpsc, OnceLock};
 
 use cook_contracts::CommandFailure;
-use cook_plan::{self as pipeline, ParsedCookfile, PipelineError, RegisterMode, Workspace};
 use cook_engine::RegisteredWorkspace;
+use cook_plan::{self as pipeline, ParsedCookfile, PipelineError, RegisterMode, Workspace};
 
 use crate::cli::Globals;
 use crate::error::CookError;
@@ -106,9 +106,7 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
         // produce one path. Classified with RecipeCollision — both are "the
         // Cookfile declares two things sharing one identity", and both are
         // fixed by editing the Cookfile, not by re-running.
-        PipelineError::DuplicateOutput { .. } => {
-            CookError::RecipeCollision(format!("error: {e}"))
-        }
+        PipelineError::DuplicateOutput { .. } => CookError::RecipeCollision(format!("error: {e}")),
         // `Other` is where a register-phase Lua error lands, wire and all.
         PipelineError::UnknownConfig { .. }
         | PipelineError::Workspace(_)
@@ -217,7 +215,10 @@ fn bridge_engine_to_progress_events(
 
         while let Ok(event) = engine_rx.recv() {
             let pe = match event {
-                cook_engine::EngineEvent::BuildStarted { recipes, total_nodes } => {
+                cook_engine::EngineEvent::BuildStarted {
+                    recipes,
+                    total_nodes,
+                } => {
                     let topos: Vec<RecipeTopo> = recipes
                         .into_iter()
                         .map(|r| {
@@ -367,7 +368,12 @@ fn bridge_engine_to_progress_events(
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
+                    let nid = intern_interactive_node(
+                        &recipe,
+                        &node_name,
+                        &mut interactive_node_ids,
+                        &mut next_node,
+                    );
                     cook_progress::ProgressEvent::NodeSkipped {
                         recipe: rid,
                         node: nid,
@@ -427,9 +433,18 @@ fn bridge_engine_to_progress_events(
                         stream,
                     }
                 }
-                cook_engine::EngineEvent::InteractiveStart { recipe, node_name, chore_step_count } => {
+                cook_engine::EngineEvent::InteractiveStart {
+                    recipe,
+                    node_name,
+                    chore_step_count,
+                } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
+                    let nid = intern_interactive_node(
+                        &recipe,
+                        &node_name,
+                        &mut interactive_node_ids,
+                        &mut next_node,
+                    );
                     cook_progress::ProgressEvent::InteractiveStart {
                         recipe: rid,
                         node: nid,
@@ -446,7 +461,12 @@ fn bridge_engine_to_progress_events(
                     failed_step,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = intern_interactive_node(&recipe, &node_name, &mut interactive_node_ids, &mut next_node);
+                    let nid = intern_interactive_node(
+                        &recipe,
+                        &node_name,
+                        &mut interactive_node_ids,
+                        &mut next_node,
+                    );
                     cook_progress::ProgressEvent::InteractiveEnd {
                         recipe: rid,
                         node: nid,
@@ -659,18 +679,17 @@ fn run_with_progress(
             cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
-                CookError::RecipeNotFound(name)
-            }
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => CookError::RecipeNotFound(name),
             other => CookError::Other(other.to_string()),
         },
     )?;
     let mut reachable: BTreeSet<String> = edges.keys().cloned().collect();
 
     if globals.affected {
-        let since = globals.since.as_deref().ok_or_else(|| {
-            CookError::Other("--affected requires --since=<git-ref>".to_string())
-        })?;
+        let since = globals
+            .since
+            .as_deref()
+            .ok_or_else(|| CookError::Other("--affected requires --since=<git-ref>".to_string()))?;
         let changed = cook_engine::affected::git::changed_paths(&project_root, since)
             .map_err(|e| CookError::Other(format!("git diff failed: {e}")))?;
         reachable = cook_engine::affected::compute_affected(
@@ -818,7 +837,7 @@ fn build_registered_workspace(
     // recipe set before the register pass runs bodies.
     pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
-    // COOK-359: the register pass evaluates probes — an `ingredients <probe>`
+    // COOK-359: the register pass evaluates probes — a `gather <probe>`
     // driver's value decides the DAG's shape, so it must be known before any
     // recipe body runs. That evaluation needs a backend for the same reason the
     // execute phase does: §22.5.8's cache-hit clause names no consumption path,
@@ -828,7 +847,7 @@ fn build_registered_workspace(
     // This was `None`. Not "no cache configured" — nobody had wired it, and
     // every caller in the tree passed the literal, so the register-side GET/PUT
     // block had never run against a backend in any invocation. An
-    // `ingredients <probe>` driver re-produced on every single build while the
+    // `gather <probe>` driver re-produced on every single build while the
     // identical probe consumed through a seal was served from cache.
     //
     // It goes in the probe slot ONLY. The `cache_ctx` argument below stays
@@ -837,20 +856,15 @@ fn build_registered_workspace(
     // installing it as registration app_data no longer moves any
     // unconfigured key; registered units finally carry the configured
     // project segment and the [cache] ignore_env denylist.
-    let cache_ctx = cook_engine::build_cache_ctx_for_cli(
-        &resolve_project_root(globals)?,
-        globals.no_publish,
-    )
-    .map_err(engine_error_to_cook_error)?;
-    let registered = pipeline::register_workspace(
-        &workspace,
-        config,
-        &globals.set,
-        mode,
-        Some(cache_ctx),
-    )
-    .map_err(pipeline_error_to_cook_error)?;
-    for warning in &registered.warnings { eprintln!("cook: warning: {warning}"); }
+    let cache_ctx =
+        cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
+            .map_err(engine_error_to_cook_error)?;
+    let registered =
+        pipeline::register_workspace(&workspace, config, &globals.set, mode, Some(cache_ctx))
+            .map_err(pipeline_error_to_cook_error)?;
+    for warning in &registered.warnings {
+        eprintln!("cook: warning: {warning}");
+    }
     warn_if_invoked_builtin_is_registered(
         registered
             .names
@@ -877,17 +891,19 @@ pub fn cmd_cache_verify(
     let (_, registered) = build_registered_workspace(
         globals,
         config,
-        RegisterMode::Dispatch { name: recipe_name, argv: &[] },
+        RegisterMode::Dispatch {
+            name: recipe_name,
+            argv: &[],
+        },
     )?;
     let (edges, reachable) =
         resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     let project_root = resolve_project_root(globals)?;
 
-    let report = cook_engine::verify::verify_cache(
-        &project_root, &registered, &edges, &reachable, num_jobs,
-    )
-    .map_err(CookError::Other)?;
+    let report =
+        cook_engine::verify::verify_cache(&project_root, &registered, &edges, &reachable, num_jobs)
+            .map_err(CookError::Other)?;
 
     if args.json {
         print_verify_json(&report);
@@ -986,7 +1002,10 @@ pub fn cmd_run(
     let (_, registered) = build_registered_workspace(
         globals,
         config,
-        RegisterMode::Dispatch { name: recipe_name, argv },
+        RegisterMode::Dispatch {
+            name: recipe_name,
+            argv,
+        },
     )?;
 
     // No inferred-dep pass: cross-recipe edges come from `RecipeUnits.dep_edges`
@@ -1142,22 +1161,20 @@ pub fn cmd_test(
             .filter(|n| test_bearing.contains(*n))
             .cloned()
             .collect(),
-        Some(TestScope::Recipe(name)) => {
-            cook_plan::analyzer::dependency_edges(&recipe_infos, name)
-                .map_err(|e| match e {
-                    cook_plan::analyzer::GraphError::CycleDetected(s) => {
-                        crate::error::CookError::Other(format!("dependency cycle involving: {s}"))
-                    }
-                    cook_plan::analyzer::GraphError::UnknownRecipe(s) => {
-                        crate::error::CookError::RecipeNotFound(s)
-                    }
-                    other => crate::error::CookError::Other(other.to_string()),
-                })?
-                .keys()
-                .filter(|n| !chore_names.contains(*n))
-                .cloned()
-                .collect()
-        }
+        Some(TestScope::Recipe(name)) => cook_plan::analyzer::dependency_edges(&recipe_infos, name)
+            .map_err(|e| match e {
+                cook_plan::analyzer::GraphError::CycleDetected(s) => {
+                    crate::error::CookError::Other(format!("dependency cycle involving: {s}"))
+                }
+                cook_plan::analyzer::GraphError::UnknownRecipe(s) => {
+                    crate::error::CookError::RecipeNotFound(s)
+                }
+                other => crate::error::CookError::Other(other.to_string()),
+            })?
+            .keys()
+            .filter(|n| !chore_names.contains(*n))
+            .cloned()
+            .collect(),
         Some(TestScope::Namespace(ns)) => {
             let prefix = format!("{ns}.");
             recipe_infos
@@ -1232,19 +1249,19 @@ pub fn cmd_test(
         // gets `finish` called below with an empty slice.
         Vec::new()
     } else {
-        let edges = cook_plan::analyzer::dependency_edges_multi(
-            &recipe_infos,
-            &candidate_recipe_names,
-        )
-        .map_err(|e| match e {
-            cook_plan::analyzer::GraphError::CycleDetected(name) => {
-                crate::error::CookError::Other(format!("dependency cycle involving: {name}"))
-            }
-            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
-                crate::error::CookError::RecipeNotFound(name)
-            }
-            other => crate::error::CookError::Other(other.to_string()),
-        })?;
+        let edges =
+            cook_plan::analyzer::dependency_edges_multi(&recipe_infos, &candidate_recipe_names)
+                .map_err(|e| match e {
+                    cook_plan::analyzer::GraphError::CycleDetected(name) => {
+                        crate::error::CookError::Other(format!(
+                            "dependency cycle involving: {name}"
+                        ))
+                    }
+                    cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
+                        crate::error::CookError::RecipeNotFound(name)
+                    }
+                    other => crate::error::CookError::Other(other.to_string()),
+                })?;
         let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
 
         let reporter_for_cb = reporter.clone();
@@ -1427,9 +1444,7 @@ fn resolve_test_scope(
 /// Lua-registered recipes (e.g. via `cook_cc.bin`) appear here the same way
 /// they do in `cook list` — register-phase is enough to materialise their
 /// names.
-fn collect_workspace_recipe_names(
-    globals: &Globals,
-) -> Option<std::collections::BTreeSet<String>> {
+fn collect_workspace_recipe_names(globals: &Globals) -> Option<std::collections::BTreeSet<String>> {
     let workspace_root =
         pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
     let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
@@ -1766,9 +1781,7 @@ pub fn cmd_serve(
             cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
-                CookError::RecipeNotFound(name)
-            }
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => CookError::RecipeNotFound(name),
             // Io/Parse cannot be produced by topological_sort (pure graph op).
             e => CookError::Other(e.to_string()),
         })?;
@@ -1778,7 +1791,7 @@ pub fn cmd_serve(
     let globs = CookWatcher::collect_globs_for_recipes(&serve_registered, &order);
     if globs.is_empty() {
         return Err(CookError::Other(
-            "nothing to watch: no recipes in the chain have ingredients".to_string(),
+            "nothing to watch: no recipes in the chain gather inputs".to_string(),
         ));
     }
 
@@ -1837,13 +1850,11 @@ fn split_recipe_prefix(name: &str) -> &str {
 // cmd_affected — list recipes that would be invalidated since --since=<ref>
 // ---------------------------------------------------------------------------
 
-pub fn cmd_affected(
-    globals: &Globals,
-    args: &crate::cli::AffectedArgs,
-) -> Result<(), CookError> {
-    let since = globals.since.as_deref().ok_or_else(|| {
-        CookError::Other("cook affected requires --since=<git-ref>".to_string())
-    })?;
+pub fn cmd_affected(globals: &Globals, args: &crate::cli::AffectedArgs) -> Result<(), CookError> {
+    let since = globals
+        .since
+        .as_deref()
+        .ok_or_else(|| CookError::Other("cook affected requires --since=<git-ref>".to_string()))?;
     let project_root = resolve_project_root(globals)?;
 
     let (_, registered) = build_registered_workspace(globals, None, RegisterMode::Introspect)?;
@@ -1921,7 +1932,6 @@ pub fn cmd_affected(
 // cmd_why — explain the cache key per unit (read-only; runs nothing)
 // ---------------------------------------------------------------------------
 
-
 /// Derive the `(edges, reachable)` pair that `cook run` would consume for
 /// `targets`, using the EXACT derivation `run_with_progress` / `cmd_run`
 /// rely on: `build_recipe_infos_from_registered` → `dependency_edges_multi`
@@ -1939,9 +1949,7 @@ fn resolve_reachable_closure(
             cook_plan::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
-            cook_plan::analyzer::GraphError::UnknownRecipe(name) => {
-                CookError::RecipeNotFound(name)
-            }
+            cook_plan::analyzer::GraphError::UnknownRecipe(name) => CookError::RecipeNotFound(name),
             other => CookError::Other(other.to_string()),
         },
     )?;
@@ -1980,7 +1988,10 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     let (_, registered) = build_registered_workspace(
         globals,
         config,
-        RegisterMode::Dispatch { name: recipe_name, argv: &[] },
+        RegisterMode::Dispatch {
+            name: recipe_name,
+            argv: &[],
+        },
     )?;
 
     let (edges, reachable) =
@@ -2051,23 +2062,27 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     // Per-recipe cache managers anchored at each recipe's prefix's working_dir.
     // The graph uses these only for input-file staleness; the cache verdict
     // comes from `report` above.
-    let graph_cache_managers: BTreeMap<String, Arc<cook_engine::cook_cache::ThreadSafeCacheManager>> =
-        reachable
-            .iter()
-            .map(|name| {
-                let prefix = split_recipe_prefix(name);
-                let wd = registered
-                    .working_dir_by_prefix
-                    .get(prefix)
-                    .cloned()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."));
-                let cache_dir = cook_contracts::layout::cache_dir(&wd);
-                (
-                    name.clone(),
-                    Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(cache_dir)),
-                )
-            })
-            .collect();
+    let graph_cache_managers: BTreeMap<
+        String,
+        Arc<cook_engine::cook_cache::ThreadSafeCacheManager>,
+    > = reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_prefix(name);
+            let wd = registered
+                .working_dir_by_prefix
+                .get(prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = cook_contracts::layout::cache_dir(&wd);
+            (
+                name.clone(),
+                Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(
+                    cache_dir,
+                )),
+            )
+        })
+        .collect();
 
     let dag = cook_graph::build_dag(&cook_graph::DagInputs {
         target: recipe_name,
@@ -2101,7 +2116,6 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     }
     Ok(())
 }
-
 
 /// `cook cache dump <recipe>` — print a recipe's cache index as readable TOML
 /// (CS-0166).

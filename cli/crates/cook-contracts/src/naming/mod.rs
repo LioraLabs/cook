@@ -61,7 +61,7 @@ pub fn is_bare_name_start(c: char) -> bool {
 ///
 /// One production, FIVE spellings before this existed: `cook-lang`'s lexer
 /// (which parses `recipe NAME`, `chore NAME` and `config NAME`), `cook-lang`'s
-/// `tools { … }` validator (the live `TOOL_NAME` check), `cook-cli`'s argv
+/// top-level `tools` declaration validator (the live `TOOL_NAME` check), `cook-cli`'s argv
 /// partitioner (which decides whether `@foo.bar` is a preset selector),
 /// `probe_key::is_tool_name`, and a diagnostic heuristic in `cook-plan`.
 ///

@@ -31,7 +31,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use cook_register::{register_cookfile, RegisterSessionBuilder, SharedMemberOutputs, SharedTerminalOutputs};
+use cook_register::{
+    register_cookfile, RegisterSessionBuilder, SharedMemberOutputs, SharedTerminalOutputs,
+};
 
 use super::env::parse_cli_overrides;
 use super::error::PipelineError;
@@ -183,10 +185,12 @@ fn member_base_builder(
 ) -> Result<RegisterSessionBuilder, PipelineError> {
     let _ = is_root;
     let cli_overrides = parse_cli_overrides(env_overrides)?;
-    Ok(RegisterSessionBuilder::new(member.dir.clone(), HashMap::new())
-        .with_cli_overrides(cli_overrides)
-        .with_selected_config(config.map(|s| s.to_string()))
-        .with_qualified_prefix(prefix.to_string()))
+    Ok(
+        RegisterSessionBuilder::new(member.dir.clone(), HashMap::new())
+            .with_cli_overrides(cli_overrides)
+            .with_selected_config(config.map(|s| s.to_string()))
+            .with_qualified_prefix(prefix.to_string()),
+    )
 }
 
 /// Workspace members in root-first order: `(member, canonical_dir, prefix,
@@ -199,11 +203,9 @@ fn member_base_builder(
 /// members importees-first / root-last instead (see
 /// [`cookfile_registration_order`]) because cross-Cookfile terminal-output
 /// lookups need producers registered before consumers.
-fn members_root_first(
-    workspace: &Workspace,
-) -> Vec<(&LoadedCookfile, PathBuf, String, bool)> {
-    let root_canon = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
+fn members_root_first(workspace: &Workspace) -> Vec<(&LoadedCookfile, PathBuf, String, bool)> {
+    let root_canon =
+        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
     let mut out = vec![(&workspace.root, root_canon, String::new(), true)];
     for (canonical_path, loaded) in &workspace.imports {
         let prefix = find_full_prefix(workspace, canonical_path);
@@ -239,7 +241,7 @@ pub fn register_workspace(
     env_overrides: &[String],
     mode: RegisterMode<'_>,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
-    // Backend for the `ingredients <probe>` pre-pass only — see
+    // Backend for the `gather <probe>` pre-pass only — see
     // `register_cookfile`'s parameter of the same name (COOK-359).
 ) -> Result<RegisteredWorkspace, PipelineError> {
     let shared_outputs: SharedTerminalOutputs =
@@ -373,13 +375,8 @@ pub fn register_workspace(
             RegisterMode::Introspect | RegisterMode::Enumerate => builder,
         };
 
-        let registered =
-            register_cookfile(
-                builder,
-                &member.lua_source,
-                cache_ctx.clone(),
-            )
-                .map_err(map_register_error)?;
+        let registered = register_cookfile(builder, &member.lua_source, cache_ctx.clone())
+            .map_err(map_register_error)?;
         merge_into(&mut ws, &prefix, &alias_qp, registered);
         ws.working_dir_by_prefix
             .insert(prefix.clone(), member.dir.clone());

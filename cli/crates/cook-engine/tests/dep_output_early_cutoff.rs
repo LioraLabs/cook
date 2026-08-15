@@ -45,7 +45,7 @@ fn write_fixture(wd: &std::path::Path, copy_cmd: &str) {
         wd.join("Cookfile"),
         format!(
             r#"recipe lib
-    ingredients "src.txt"
+    gather "src.txt"
     cook "build/lib.txt" {{
         mkdir -p build
         {copy_cmd}
@@ -58,8 +58,8 @@ recipe useref: lib
     }}
 
 recipe tcheck: lib
-    ingredients "t.txt"
-    test {{ : $<lib>; true }}
+    gather "t.txt"
+    test {{ : $<in> $<lib>; true }}
 "#
         ),
     )
@@ -90,7 +90,7 @@ fn byte_identical_dep_output_keeps_consuming_test_cached() {
     let cache_tmp = tempfile::tempdir().expect("cache tempdir");
     let wd = tmp.path();
     // Variant A: lib copies with `cp`.
-    write_fixture(wd, "cp src.txt build/lib.txt");
+    write_fixture(wd, "cp $<in> build/lib.txt");
     write_isolated_cache_config(wd, cache_tmp.path());
 
     // Run 1 (cold): build the cook consumer + run the test to populate caches.
@@ -118,7 +118,7 @@ fn byte_identical_dep_output_keeps_consuming_test_cached() {
     // Change lib's COMMAND to `cat > …` — different command text, byte-identical
     // output (still a copy of src.txt).
     let sha_before = fs::read(wd.join("build/lib.txt")).unwrap();
-    write_fixture(wd, "cat src.txt > build/lib.txt");
+    write_fixture(wd, "cat $<in> > build/lib.txt");
 
     // Run 3: lib re-runs (command changed) but produces byte-identical output.
     // CONTROL — the sibling cook step `useref` must stay cached (early cutoff).
@@ -181,10 +181,10 @@ fn a_transitive_deps_output_change_leaves_the_test_cached() {
             wd.join("Cookfile"),
             format!(
                 r#"recipe lib
-    ingredients "src.txt"
+    gather "src.txt"
     cook "build/lib.txt" {{
         mkdir -p build
-        cp src.txt build/lib.txt
+        cp $<in> build/lib.txt
     }}
 
 recipe app: lib

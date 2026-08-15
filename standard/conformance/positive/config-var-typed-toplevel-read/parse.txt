@@ -5,9 +5,10 @@ Cookfile
   recipes:
     Recipe name="build" line=15
       deps: []
-      ingredients: ["src/main.c"]
+      inputs: ["src/main.c"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/main"] body=ShellBlock(["cc $<optimize> $<in> -o $<out>"])
   chores:
   register_blocks: [RegisterBlock body="    local flags = var.optimize\n    if var.symbols then flags = flags .. \" -g\" end\n    CFLAGS = flags .. \" -j\" .. var.jobs" line=10]

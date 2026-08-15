@@ -5,15 +5,17 @@ Cookfile
   recipes:
     Recipe name="compile" line=1
       deps: []
-      ingredients: ["src/a.c"]
+      inputs: ["src/a.c"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/lib.a"] body=ShellBlock(["ar rcs $<out> $<in>"])
     Recipe name="link" line=7
       deps: []
-      ingredients: ["build/lib.a"]
+      inputs: ["build/lib.a"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/app"] body=ShellBlock(["cc -o $<out> $<in>"])
   chores:
   register_blocks: []

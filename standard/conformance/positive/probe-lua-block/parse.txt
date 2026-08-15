@@ -9,6 +9,6 @@ Cookfile
   probes:
     Probe name="p" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       produce: Lua("return {}")

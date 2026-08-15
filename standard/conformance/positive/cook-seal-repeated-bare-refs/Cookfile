@@ -1,2 +1,3 @@
 recipe package
-    cook "pkg" { bundle } seal cards tools unseal stale volatile
+    seal cards tools
+    cook "pkg" { bundle }

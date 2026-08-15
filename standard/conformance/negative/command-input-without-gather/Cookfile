@@ -1,0 +1,2 @@
+recipe objects
+    cook "build/object.o" { cc -c $<in> -o $<out> }

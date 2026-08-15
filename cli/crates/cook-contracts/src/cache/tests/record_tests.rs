@@ -143,7 +143,7 @@ fn an_observing_unit_obeys_the_same_determinant_rule() {
 }
 
 // ---------------------------------------------------------------------------
-// has_something_to_key_on — §17.4 rule 1, all three terms (CS-0186)
+// has_something_to_key_on — §17.4 rule 1 (CS-0186, CS-0223)
 //
 // The predicate two sites share: registration asks it of the declared input
 // list, the ready-time check asks it of the resolved one. Each arm below is a
@@ -156,31 +156,36 @@ fn an_observing_unit_obeys_the_same_determinant_rule() {
 /// command text alone would be a false green.
 #[test]
 fn nothing_at_all_is_not_keyable() {
-    assert!(!has_something_to_key_on(0, 0, false));
+    assert!(!has_something_to_key_on(0, 0, false, false));
 }
 
 /// A declared output is enough on its own: a `cook` unit always has one, which
 /// is why this rule never fires for one.
 #[test]
 fn an_output_alone_is_keyable() {
-    assert!(has_something_to_key_on(1, 0, false));
+    assert!(has_something_to_key_on(1, 0, false, false));
 }
 
 /// A declared input is enough on its own — the ordinary observing unit.
 #[test]
 fn an_input_alone_is_keyable() {
-    assert!(has_something_to_key_on(0, 1, false));
+    assert!(has_something_to_key_on(0, 1, false, false));
 }
 
 /// The arm CS-0186 added, and the one with no coverage until now. A unit
-/// fanned out over `ingredients <probe>` may declare no file at all: its member
+/// fanned out over a bare `gather` may declare no file at all: its member
 /// is an observable input (§17.1 observable 5), it reaches the key through the
 /// command hash, and editing one member must re-run that unit alone. Refusing
 /// this arm is what left a data-member `test` fan-out re-running every
 /// invocation while its `cook` sibling cached per member.
 #[test]
 fn a_materialised_member_alone_is_keyable() {
-    assert!(has_something_to_key_on(0, 0, true));
+    assert!(has_something_to_key_on(0, 0, true, false));
+}
+
+#[test]
+fn a_seal_alone_is_keyable() {
+    assert!(has_something_to_key_on(0, 0, false, true));
 }
 
 /// The ready-time reading of the same call: a declaration that RESOLVED to
@@ -190,6 +195,6 @@ fn a_materialised_member_alone_is_keyable() {
 /// declared input and no resolved one.
 #[test]
 fn a_declaration_resolving_to_nothing_is_not_keyable() {
-    assert!(has_something_to_key_on(0, 1, false), "as declared");
-    assert!(!has_something_to_key_on(0, 0, false), "as resolved");
+    assert!(has_something_to_key_on(0, 1, false, false), "as declared");
+    assert!(!has_something_to_key_on(0, 0, false, false), "as resolved");
 }

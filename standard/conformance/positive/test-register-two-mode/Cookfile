@@ -1,5 +1,5 @@
 recipe suite
-    ingredients "t/*.sh"
+    gather "t/*.sh"
     cook "build/$<in.stem>" { cp $<in> $<out> }
     test { ./$<in> }
 

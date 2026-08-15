@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="pack" line=1
+      deps: []
+      inputs: ["src/*.c"]
+      excludes: ["src/excluded.c"]
+      steps:
+        Gather
+        Cook outputs=["build/$<in.stem>.o"] body=ShellBlock(["cp $<in> $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

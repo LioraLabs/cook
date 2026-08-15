@@ -20,9 +20,14 @@ fn cook_binary() -> std::path::PathBuf {
     path
 }
 
-const COOKFILE: &str = "recipe build\n    ingredients \"src.txt\"\n    cook \"out/app.txt\" { sed 's/^/[app] /' src.txt > $<out> }\n";
+const COOKFILE: &str = "recipe build\n    gather \"src.txt\"\n    cook \"out/app.txt\" { sed 's/^/[app] /' $<in> > $<out> }\n";
 
-fn mk_checkout(root: &Path, name: &str, shared_store: &Path, project: Option<&str>) -> std::path::PathBuf {
+fn mk_checkout(
+    root: &Path,
+    name: &str,
+    shared_store: &Path,
+    project: Option<&str>,
+) -> std::path::PathBuf {
     let dir = root.join(name);
     fs::create_dir_all(dir.join(".cook")).unwrap();
     let project_line = project

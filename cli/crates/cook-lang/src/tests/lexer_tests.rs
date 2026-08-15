@@ -535,18 +535,22 @@ fn former_reserved_words_allowed_as_chore_params() {
         assert!(
             crate::parse(&input).is_ok(),
             "chore param named '{}' must parse (CS-0132), got err",
-                word
-            );
-        }
+            word
+        );
     }
+}
 
-    #[test]
-    fn former_reserved_words_allowed_as_undotted_decl_names() {
-        // CS-0132: the reserved-segment ban no longer applies to undotted
-        // recipe/chore DECLARATION names.
-        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
-        let recipe = format!("recipe {}\n    ingredients \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
-        assert!(crate::parse(&recipe).is_ok(), "recipe named '{}' must parse (CS-0132)", word);
+#[test]
+fn former_reserved_words_allowed_as_undotted_decl_names() {
+    // CS-0132: the reserved-segment ban no longer applies to undotted
+    // recipe/chore DECLARATION names.
+    for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+        let recipe = format!("recipe {}\n    gather \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
+        assert!(
+            crate::parse(&recipe).is_ok(),
+            "recipe named '{}' must parse (CS-0132)",
+            word
+        );
         let chore = format!("chore {}\n    > do_thing()\n", word);
         assert!(crate::parse(&chore).is_ok(), "chore named '{}' must parse (CS-0132)", word);
     }
@@ -570,7 +574,7 @@ fn dotted_env_decl_name_still_reserved_diagnostic() {
 #[test]
 fn recipe_named_all_is_allowed() {
     // all is no longer a reserved recipe segment.
-    let src = "recipe all\n    ingredients \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
+    let src = "recipe all\n    gather \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
     assert!(crate::parse(src).is_ok(), "recipe all must parse");
 }
 
@@ -781,7 +785,7 @@ fn probe_name_accepts_three_or_more_segments() {
 #[test]
 fn probe_name_accepts_hyphens_in_every_segment() {
     // The COOK-408 case: declarable and sigil-referenceable, but `seal` and
-    // `ingredients` rejected it, so the key could be neither pinned nor
+    // `gather` rejected it, so the key could be neither pinned nor
     // consumed.
     let t = tokenize("probe demo:cc-version").unwrap();
     assert_eq!(t[0].value, Token::ProbeHeader { name: "demo:cc-version".into(), deps: vec![] });
@@ -894,8 +898,14 @@ fn the_name_form_is_unchanged() {
 #[test]
 fn containment_violations_are_refused_with_their_own_reasons() {
     for (src, needle) in [
-        ("use ../shared/helpers.lua\n", "'..' segments are not permitted"),
-        ("use /opt/cook/helpers.lua\n", "absolute paths are not permitted"),
+        (
+            "use ../shared/helpers.lua\n",
+            "'..' segments are not permitted",
+        ),
+        (
+            "use /opt/cook/helpers.lua\n",
+            "absolute paths are not permitted",
+        ),
         // The sigil must report as a sigil, not as the absolute path it also
         // is: the remedy is different.
         ("use //lua/helpers.lua\n", "'//' workspace-root sigil"),

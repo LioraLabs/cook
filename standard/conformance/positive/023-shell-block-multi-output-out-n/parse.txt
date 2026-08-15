@@ -5,9 +5,10 @@ Cookfile
   recipes:
     Recipe name="gen" line=1
       deps: []
-      ingredients: ["src/module.idl"]
+      inputs: ["src/module.idl"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/module.js", "build/module.wasm"] body=ShellBlock(["emcc $<in> -o $<out_1> --wasm $<out_2>"])
   chores:
   register_blocks: []

@@ -1,2 +1,0 @@
-probe sdk
-    envs { SDKROOT, CC }

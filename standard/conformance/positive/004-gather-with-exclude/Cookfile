@@ -1,0 +1,3 @@
+recipe "pack"
+    gather "src/*.c" !"src/excluded.c"
+    cook "build/$<in.stem>.o" { cp $<in> $<out> }

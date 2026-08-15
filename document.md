@@ -11,7 +11,7 @@ Every Cookfile snippet below is real v1.0 syntax.
 
 1. [Installation](#installation)
 2. [Your first recipe](#your-first-recipe)
-3. [Ingredients and the cook step](#ingredients-and-the-cook-step)
+3. [Gather and the cook step](#gather-and-the-cook-step)
 4. [Connecting recipes](#connecting-recipes)
 5. [Tests](#tests)
 6. [Chores](#chores)
@@ -116,11 +116,11 @@ cook clean      # remove the build output
 A **recipe** is a named bundle of work. It starts with the keyword `recipe`, a
 name, and (optionally) a colon-separated list of dependencies. The indented body
 below *declares* the work: here, a single `cook` step naming an output
-(`build/hello.txt`) and the command that produces it. Add an `ingredients` line
+(`build/hello.txt`) and the command that produces it. Add a `gather` line
 to build from input files, as the next sections show.
 
 A recipe body is **declarative**: a list of inputs and outputs, not a script.
-The step kinds it may contain are `ingredients`, `cook`, `test`, `seal`, and
+The step kinds it may contain are `gather`, `cook`, `test`, `seal`, and
 module calls. A loose shell command (`echo hi` on its own line) is *not* one of
 them: imperative, run-every-time commands belong in a [chore](#chores). This is
 the one thing to unlearn if you're coming from `make` or `npm scripts`.
@@ -141,19 +141,19 @@ Handy from day one:
 cook menu       # list every recipe and chore in the workspace
 ```
 
-## Ingredients and the cook step
+## Gather and the cook step
 
 Real builds have a shape: take input files, transform each, produce outputs,
-don't redo the transform if nothing changed. `ingredients` and `cook` describe
+don't redo the transform if nothing changed. `gather` and `cook` describe
 exactly that.
 
-**`ingredients`** declares the input file set. Patterns are quoted globs; a
-recipe may have at most one `ingredients` line. Combine includes and excludes
+**`gather`** declares the input file set. Patterns are quoted globs; a
+recipe may have at most one `gather` line. Combine includes and excludes
 (exclude is `!` immediately followed by a quoted pattern):
 
 ```
 recipe lib
-    ingredients "src/*.c" !"src/scratch.c"
+    gather "src/*.c" !"src/scratch.c"
     cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
@@ -161,20 +161,20 @@ recipe lib
 on the output pattern:
 
 - **One-to-one**: the output pattern contains an input accessor, so cook
-  iterates one unit per ingredient (runnable in parallel):
+  iterates one unit per input (runnable in parallel):
 
   ```
   recipe compile
-      ingredients "src/*.c"
+      gather "src/*.c"
       cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
   ```
 
 - **Many-to-one**: no input accessor in the output, so one unit consumes every
-  ingredient (`$<in>` expands to all of them, space-separated):
+  input (`$<in>` expands to all of them, space-separated):
 
   ```
   recipe archive
-      ingredients "build/*.o"
+      gather "build/*.o"
       cook "build/libmath.a" { ar rcs $<out> $<in> }
   ```
 
@@ -184,7 +184,7 @@ pipeline in one recipe, with every step cached independently:
 
 ```
 recipe assets
-    ingredients "images/*.png"
+    gather "images/*.png"
     cook "build/$<in.stem>.webp" { cwebp -q 80 $<in> -o $<out> }   # one WebP per image
     cook "build/manifest.txt"    { printf '%s\n' $<in> > $<out> }  # $<in> = those WebPs
 ```
@@ -216,7 +216,7 @@ referenced by index:
 
 ```
 recipe wasm
-    ingredients "src/lib.rs"
+    gather "src/lib.rs"
     cook "out/app.js" "out/app.wasm" {
         wasm-pack build
         cp pkg/app.js $<out_1>
@@ -231,7 +231,7 @@ command:
 
 ```
 recipe compile
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
@@ -301,11 +301,11 @@ build` in `backend/Cookfile` and import it. (More on composition in
 
 A `test` step checks the things a `cook` step produced. It declares no outputs;
 its exit code is the verdict. A `test` inherits the preceding `cook` step's
-outputs as its inputs (or the recipe's ingredients if no `cook` ran):
+outputs as its inputs (or the recipe's gather if no `cook` ran):
 
 ```
 recipe check
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>" { gcc $<in> -o $<out> }
     test { ./$<in> --selftest }
 ```
@@ -316,7 +316,7 @@ that's *expected* to fail, invert the command with `!`:
 
 ```
 recipe lint
-    ingredients "src/*.c"
+    gather "src/*.c"
     test { ! grep -q TODO $<in> }
 ```
 
@@ -335,7 +335,7 @@ cook test --report-junit results.xml
 ## Chores
 
 Recipes build files. **Chores** are for everything else: clean the tree, run the
-formatter, deploy, open a picker. They have no ingredients, no outputs, and no
+formatter, deploy, open a picker. They have no gathered inputs, no outputs, and no
 cache: a chore runs every time you invoke it, by design. Shell commands in a
 chore body are interactive by default (they get a real TTY), so `fzf` and friends
 just work.
@@ -386,7 +386,7 @@ config release
     var.MODE = "release"
 
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { gcc -c -DMODE=$<MODE> $<in> -o $<out> }
 ```
 
@@ -417,38 +417,38 @@ probe greeting
     { echo hello }                        # bare: a string
 
 probe target_list
-    ingredients "data/targets.txt"
+    seal "data/targets.txt"
     lines { cat data/targets.txt }        # an array, one per line
 
 probe services
-    ingredients "data/services.json"
+    seal "data/services.json"
     json { cat data/services.json }       # structured data
 
 probe count: services
     >{ return { n = #cook.probes.get("services") } }   # a Lua value
 ```
 
-An `ingredients` line on a probe declares the files its body reads, so the value
+A `seal` line on a probe declares the files its body reads, so the value
 recomputes exactly when they change. Probes depend on other probes with the same
 colon syntax as recipes; a `>{ lua }` body reads its upstreams with
 `cook.probes.get`.
 
-Three more forms run nothing of yours; they *record a determinant*:
+Top-level declarations can record file and tool determinant sets:
 
 ```
-probe compiler
-    tools { cc }                          # the resolved identity of an executable
+tools compiler
+    cc                                     # the resolved identity of an executable
+
+files sources
+    "src/**/*.c" !"src/gen/**"             # a file set, hashed per file
 
 probe build_env
-    envs { HOSTNAME TERM }                # environment values
-
-probe sources
-    files { "src/**/*.c" !"src/gen/**" }  # a file set, hashed per file
+    lines { echo "$HOSTNAME"; echo "$TERM" } # grouped environment values
 ```
 
-`tools` records which `cc` resolved and its content hash. `envs` records the
-named environment values. `files` records each matched path's content hash
-(`ingredients` glob syntax), so editing, adding, or removing any matched file
+`tools` records which `cc` resolved and its content hash. The ordinary named
+shell probe groups environment observations for sealing. `files` records each matched path's content hash
+(`gather` glob syntax), so editing, adding, or removing any matched file
 changes the value.
 
 Probes are demand-driven: one only runs when something scheduled actually
@@ -480,13 +480,13 @@ error naming the placeholder, not silently-interpolated text. (Execute-phase
 Lua bodies have no sigils; they read the same values with
 `cook.probes.get("key")`, which cook detects and wires identically.)
 
-**Fan out over one.** Point a recipe's `ingredients` at a probe (bare name, not
+**Fan out over one.** Point a recipe's `gather` at a probe (bare name, not
 a quoted glob) and the recipe runs once per member. Record fields are
 addressable as `$<in.FIELD>`:
 
 ```
 recipe render
-    ingredients services
+    gather services
     cook "build/$<in.name>.conf" {
         printf 'url = %s\n' "$<in.url>" > $<out>
     }
@@ -502,7 +502,7 @@ probe can join to a sibling's per-member output with `$<render[in]>`:
 
 ```
 recipe summary: render
-    ingredients services
+    gather services
     cook "build/$<in.name>.txt" { cat $<render[in]> > $<out> }
 ```
 
@@ -516,7 +516,7 @@ unit in the recipe:
 
 ```
 recipe app
-    ingredients "src/*.c"
+    gather "src/*.c"
     seal compiler build_env
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
 ```
@@ -526,7 +526,7 @@ every unit misses, attributably: `cook why` prints the sealed determinant that
 changed. A sealed probe is never interpolated; it is a declared determinant,
 nothing more. Sealing is the backbone of shared-cache correctness, and
 [Caching and cache trust](#caching-and-cache-trust) shows how it composes with
-`files` to cover inputs your `ingredients` line can't hold.
+`files` to cover inputs your `gather` line can't hold.
 
 ## Caching and cache trust
 
@@ -561,18 +561,18 @@ recipe misc
     cook "build/blurb.txt"   { llm gen > $<out> } nondet # non-reproducible; reuse the recording
 ```
 
-Sealing composes with the `files` producer to solve a common bind: a recipe
-whose `ingredients` line is already an iteration driver (a probe fan-out) has
+Sealing composes with a top-level `files` declaration to solve a common bind: a recipe
+whose `gather` line is already an iteration driver (a probe fan-out) has
 no place to declare the *other* files its command reads. Name them as a
-`files` probe and seal it: every unit's key now carries each file's hash, and
+`files` declaration and seal it: every unit's key now carries each file's hash, and
 `cook why` attributes a miss to the exact file that changed:
 
 ```
-probe sources
-    files { "packages/*/src/*.ts" "packages/*/tsconfig.json" }
+files sources
+    "packages/*/src/*.ts" "packages/*/tsconfig.json"
 
 recipe typecheck
-    ingredients packages                # the fan-out driver occupies this slot
+    gather packages                # the fan-out driver occupies this slot
     seal sources                        # so the source files ride the key instead
     cook "build/$<in.name>.stamp" { tsc -p $<in.dir> --noEmit && echo ok > $<out> }
 ```
@@ -674,7 +674,7 @@ Cook runs in two phases, and Lua appears in both:
 
   ```
   recipe upper
-      ingredients "src/*.txt"
+      gather "src/*.txt"
       cook "build/$<in.stem>.txt" >{
           local text = fs.read(input)
           fs.write(output, text:upper())
@@ -834,7 +834,7 @@ collides with a subcommand.
 | `cook init` | scaffold a starter Cookfile and `.gitignore` |
 | `cook menu` / `cook list` | list recipes and chores, with each chore's parameters |
 | `cook test [scope]` | run tests (`--filter`, `--fail-fast`, `--rerun-failed`, `--report-json`, `--report-junit`) |
-| `cook serve [recipe]` | watch ingredients and re-run on change |
+| `cook serve [recipe]` | watch gather and re-run on change |
 
 **Investigation**
 

@@ -17,7 +17,7 @@ fn make_recipe(name: &str, steps: Vec<Step>) -> Recipe {
     Recipe {
         name: name.to_string(),
         deps: vec![],
-        ingredients: vec![],
+        inputs: vec![],
         excludes: vec![],
         steps,
         line: 1,
@@ -116,9 +116,9 @@ fn test_extract_dep_refs_from_cook_step() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
-                body: Some(Body::ShellBlock(
-                    vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
-                )),
+                body: Some(Body::ShellBlock(vec![
+                    "gcc -o $<out> $<in> $<libmath> $<libstr>".to_string(),
+                ])),
                 disposition: Default::default(),
             },
             line: 2,
@@ -140,7 +140,9 @@ fn test_extract_dep_refs_from_cook_step() {
         "app",
         vec![Step::Cook {
             step: CookStep {
-                outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.pb.cc".to_string())],
+                outputs: vec![OutputPattern::Quoted(
+                    "build/$<protos.stem>.pb.cc".to_string(),
+                )],
                 body: None,
                 disposition: Default::default(),
             },
@@ -308,7 +310,7 @@ fn cs_0022_shell_block_dep_ref_extraction() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                 body: Some(Body::ShellBlock(vec![
-                    "gcc -o $<out> main.c $<libmath>".to_string(),
+                    "gcc -o $<out> main.c $<libmath>".to_string()
                 ])),
                 disposition: Default::default(),
             },

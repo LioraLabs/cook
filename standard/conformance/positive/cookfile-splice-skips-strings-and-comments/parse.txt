@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="app" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_edit.bin({\n        -- links = { \"stale\" },\n        opts    = { links = { \"nested\" } },\n        sources = { [[src/a}b.cpp]] },\n        links   = { \"mathlib\" },\n    })"

@@ -35,7 +35,7 @@ Second, block locality. Brace-balanced blocks (§{lexical.brace-blocks}) are col
 
 Third, authoring model. Cookfile authors think in steps, not in expressions, and one step per line is the idiom every existing example reinforces. There is no authoring convenience the multi-token model would unlock.
 
-The cost is that a `Content` token must be re-examined by the step-dispatch cascade (App. A.4) to distinguish `ingredients`, `cook`, `test`, module calls, and — in a chore body — shell commands (CS-0134 removed the `@` interactive-command kind and rejects loose shell in recipe bodies). That re-examination is a small, linear, keyword-prefix test — cheaper than a general tokenizer would be and easier to reason about.
+The cost is that a `Content` token must be re-examined by the step-dispatch cascade (App. A.4) to distinguish `gather`, `cook`, `test`, module calls, and — in a chore body — shell commands (CS-0134 removed the `@` interactive-command kind and rejects loose shell in recipe bodies). That re-examination is a small, linear, keyword-prefix test — cheaper than a general tokenizer would be and easier to reason about.
 
 ### C.3.3. Why `BARE_IDENTIFIER` is ASCII-only [#rationale.ascii-identifiers]
 The `BARE_IDENTIFIER` character class in App. A.5 is ASCII — no Unicode letters, no Unicode digits, no confusables. The reason is interoperability with the shell.
@@ -45,11 +45,11 @@ Most `BARE_IDENTIFIER` values end up as filesystem-visible artefacts: recipe nam
 The cost is paid by authors working in non-Latin scripts, who can still use a `STRING`-form recipe name (App. A.5 allows `name ::= BARE_IDENTIFIER | STRING`) at the price of double quoting. The escape hatch keeps the simple case simple and charges the complexity only to the users who actually need it.
 
 ### C.3.4. Why keywords are reserved contextually, not globally [#rationale.contextual-keywords]
-The Cookfile language defines step keywords (`recipe`, `config`, `cook`, `ingredients`, `using`, `use`, `import`, `end`, `test`) and reserved recipe segments (`stem`, `name`, `ext`, `dir`, `in`, `out`); neither set is reserved globally. A recipe named `backend.build` is accepted because `build` is not on the reserved-segment list; `backend.stem` is rejected because `stem` is. A `Content` line whose first word is `recipes_cleanup` or `configure` is dispatched as a `shell_command`, not as a declaration, because the step-keyword rule requires a separator after the keyword.
+The Cookfile language defines step keywords (`recipe`, `config`, `cook`, `gather`, `using`, `use`, `import`, `end`, `test`) and reserved recipe segments (`stem`, `name`, `ext`, `dir`, `in`, `out`); neither set is reserved globally. A recipe named `backend.build` is accepted because `build` is not on the reserved-segment list; `backend.stem` is rejected because `stem` is. A `Content` line whose first word is `recipes_cleanup` or `configure` is dispatched as a `shell_command`, not as a declaration, because the step-keyword rule requires a separator after the keyword.
 
 Global reservation would have been simpler to specify but would have broken the most common shell idioms. Cookfiles frequently call tools named `configure`, `cook-book`, `tester`, `using-*` — forbidding those as shell commands to protect a handful of language keywords would be a poor trade. The contextual rule instead places the reservation only where it is needed: the final segment of a recipe name, where the `$<stem>`-style substitution rule would otherwise collide with a literal segment of the same name.
 
-The cost is that the step-dispatch cascade in App. A.4 must insist on a separator after each step keyword (`recipe`, `config`, `cook`, `ingredients`, `using`, `use`, `import`, `end`, `test`) so that a `Content` line whose first word is `recipes_cleanup` or `configure` is not misclassified as a declaration. That cost is borne by the Standard and the implementation, not by the author.
+The cost is that the step-dispatch cascade in App. A.4 must insist on a separator after each step keyword (`recipe`, `config`, `cook`, `gather`, `using`, `use`, `import`, `end`, `test`) so that a `Content` line whose first word is `recipes_cleanup` or `configure` is not misclassified as a declaration. That cost is borne by the Standard and the implementation, not by the author.
 
 ### C.3.7. Why the `@` interactive prefix was removed [#rationale.at-not-lexical]
 A natural reading of pre-CS-0134 Cookfiles suggested that `@` was a third line prefix alongside `>` and `>{`, marking a shell command as interactive. The Standard never defined it as a lexical prefix — and CS-0134 removed it from the language altogether.
@@ -116,7 +116,7 @@ Module functions in the wild record work: they call `cook.add_unit`, `cook.step_
 A user who wants to do execute-phase work via a module function does so where execute-phase Lua now lives: a `>{ … }` block body of a `cook` / `test` step, or a `>` / `>{ … }` step inside a chore body. There the module function's body runs at execute with the execute-phase API surface (§{rationale.execute-phase-api}). The split is now carried by **body position** rather than by an arrow count: register-phase at the recipe-body top level, execute-phase inside a block body or chore.
 
 ### C.6.10. Why the recipe body is purely declarative [#rationale.recipe-body-regions]
-A `recipe_body` is **purely declarative** (§{recipes.region-rule}): it carries only register-phase items — `ingredients` / `cook` / `test` steps and bare `module_call` lines — and its execute-phase work lives exclusively inside the block body of a `cook` or `test` step (`>{ … }` / `{ … }`). CS-0134 arrived at this shape after an intermediate design that partitioned the body into a declarative region followed by an imperative region, enforced by a parse-time out-of-order error. This entry records why the whole intra-body ordering apparatus was dropped in favour of body position.
+A `recipe_body` is **purely declarative** (§{recipes.region-rule}): it carries only register-phase items — `gather` / `cook` / `test` steps and bare `module_call` lines — and its execute-phase work lives exclusively inside the block body of a `cook` or `test` step (`>{ … }` / `{ … }`). CS-0134 arrived at this shape after an intermediate design that partitioned the body into a declarative region followed by an imperative region, enforced by a parse-time out-of-order error. This entry records why the whole intra-body ordering apparatus was dropped in favour of body position.
 
 The two earlier alternatives both failed. **Free interleaving** of register and execute steps was tried first, and produced two footguns. Body-unit diagnostics became fragile: a `> print(x)` after a `cook` step coalesced into one body unit, a later `cook` recorded another, a third `> print(x)` yet another, scattering a recipe's units so failures cited line numbers without context. And scope-sharing across the register/execute boundary became impossible to reason about — a user who wrote `>> local x = …` then `> print(x)` expected the local to print, but `x` was a register-phase Lua local invisible to the execute worker VM. The **region-ordering rule** fixed interleaving but kept both surfaces in the same body, so the reader still had to track a mid-body phase transition and the scope discontinuity that rode along with it.
 
@@ -157,13 +157,13 @@ Second, the parse-time step-kind ban is naturally expressed at the production le
 
 Third, the syntactic peerage models the semantic peerage. Chores and recipes are equally first-class — a recipe may depend on a chore, a chore on a recipe — and giving them peer keywords is an accurate model of that. A modifier shape would suggest one is a special case of the other.
 
-The cost is a new keyword to remember. Cook's keyword surface remains small (`recipe`, `chore`, `config`, `use`, `import`, `ingredients`, `cook`, `test`, `using`); even with `chore` added, the set is well within "memorable in one sitting" range.
+The cost is a new keyword to remember. Cook's keyword surface remains small (`recipe`, `chore`, `config`, `use`, `import`, `gather`, `cook`, `test`, `using`); even with `chore` added, the set is well within "memorable in one sitting" range.
 
-### C.6.15. Why chore bans `ingredients`, `cook`, `test` [#rationale.chore-banned-steps]
+### C.6.15. Why chore bans `gather`, `cook`, `test` [#rationale.chore-banned-steps]
 
-The three banned step kinds — `ingredients`, `cook`, `test` — share a common property: each declares part of a build-graph node (inputs, outputs, validation). A chore is by definition a body that does NOT participate in the build graph: it always runs, it produces no cacheable output, and its outputs are not consumed by other recipes via the cross-recipe-reference mechanism (§{xref}).
+The three banned step kinds — `gather`, `cook`, `test` — share a common property: each declares part of a build-graph node (inputs, outputs, validation). A chore is by definition a body that does NOT participate in the build graph: it always runs, it produces no cacheable output, and its outputs are not consumed by other recipes via the cross-recipe-reference mechanism (§{xref}).
 
-Allowing a `cook` step inside a chore body would be incoherent: either (a) the engine ignores the cook step's output declaration, in which case it serves no purpose, or (b) the engine treats it as a build target despite the chore's no-cache rule, in which case the rule is violated. The same argument applies to `ingredients` (declares inputs, but a chore has no cache to invalidate against) and `test` (validates a cook step's output, but no cook step).
+Allowing a `cook` step inside a chore body would be incoherent: either (a) the engine ignores the cook step's output declaration, in which case it serves no purpose, or (b) the engine treats it as a build target despite the chore's no-cache rule, in which case the rule is violated. The same argument applies to `gather` (declares inputs, but a chore has no cache to invalidate against) and `test` (validates a cook step's output, but no cook step).
 
 Banning module calls was considered and rejected. A module call typically expands into a sequence of register-phase declarative steps, some of which might be `cook` steps and would be caught by the recipe-body region rule's existing diagnostics. A flat ban would be over-strict — a module that exposes a `cleanup()` function returning no `cook.add_unit` calls is a perfectly valid chore body call. The conservative choice is therefore to allow `module_call` in chore bodies; module authors who emit `cook` units inside a chore-context call see a diagnostic at the `cook.add_unit` site (per §{chores.no-caching}) rather than at parse time.
 
@@ -273,9 +273,9 @@ The trade-off is a single ordering constraint at register time: `cook.dep_output
 
 ### C.13.N. Name references as the sole implicit-dep source
 
-CS-0009 removed the implicit cross-recipe dependency rule based on byte-equality between an ingredient path of one recipe and a cook-output path of another (old §{xref.string-substitution}). Under the new rule (§{exec.cross-recipe-ordering}), only name references (§{xref}) establish cross-recipe edges.
+CS-0009 removed the implicit cross-recipe dependency rule based on byte-equality between an input path of one recipe and a cook-output path of another (old §{xref.string-substitution}). Under the new rule (§{exec.cross-recipe-ordering}), only name references (§{xref}) establish cross-recipe edges.
 
-The motivation is conservatism about hidden coupling. The string-match rule coupled scheduling to filesystem path coincidence: a refactor that renamed `build/lib/libmath.a` to `build/artifact/libmath.a` would silently rewire the DAG, with no diagnostic pointing at the recipe boundary that shifted. Authors routinely write output paths that happen to match an unrelated recipe's ingredient, particularly in large workspaces where paths are constructed algorithmically. The edge can surprise.
+The motivation is conservatism about hidden coupling. The string-match rule coupled scheduling to filesystem path coincidence: a refactor that renamed `build/lib/libmath.a` to `build/artifact/libmath.a` would silently rewire the DAG, with no diagnostic pointing at the recipe boundary that shifted. Authors routinely write output paths that happen to match an unrelated recipe's input, particularly in large workspaces where paths are constructed algorithmically. The edge can surprise.
 
 The rule is also redundant once name references exist. Any dep the author meant to express by path equality can be expressed by `$<lib>` or `$<lib.ACCESSOR>` in the consuming recipe, or by `: lib` in the header. The former creates a fine-grained edge at the placeholder site (§{xref.dep-implications}) — strictly more precise than the path-match rule, which always produced a whole-recipe edge.
 
@@ -299,7 +299,7 @@ A zero-arg `path.*` addition not in the accessor set remains reachable from step
 
 ## C.16. On §{exec.ord} Cross-recipe ordering [#rationale.ordering]
 
-§{exec.cross-recipe-ordering} admits exactly one source of ordering — a name reference — and §{xref.dep-implications} says what does not count as one. The subsections below record why those two rules survived a mechanism (§{lua.cook-require-recipe}) that at first reading looks like an exception to them, and why the two diagnostics that sit alongside them (§{exec.output-uniqueness}, §{exec.read-after-write}) are deliberately scoped differently from each other and from their §{lua.add-unit-output-globs} cousin. The subsections above (§{rationale.exec}, in particular the "Name references as the sole implicit-dep source" note recording CS-0009's removal of the ingredient/serves byte-equality rule — the note this Standard's older text cited as "App. B.5.N" before the v0.10 reorg renumbered App. B into App. C) give the historical background these sections build on.
+§{exec.cross-recipe-ordering} admits exactly one source of ordering — a name reference — and §{xref.dep-implications} says what does not count as one. The subsections below record why those two rules survived a mechanism (§{lua.cook-require-recipe}) that at first reading looks like an exception to them, and why the two diagnostics that sit alongside them (§{exec.output-uniqueness}, §{exec.read-after-write}) are deliberately scoped differently from each other and from their §{lua.add-unit-output-globs} cousin. The subsections above (§{rationale.exec}, in particular the "Name references as the sole implicit-dep source" note recording CS-0009's removal of the input/serves byte-equality rule — the note this Standard's older text cited as "App. B.5.N" before the v0.10 reorg renumbered App. B into App. C) give the historical background these sections build on.
 
 ### C.16.1. Why a name reference is evidence and a path match is not [#rationale.name-reference-evidence]
 
@@ -527,18 +527,18 @@ Directory outputs (CS-0119) reuse this same glob terminality machinery — a tra
 
 The `cook.probe()` Lua API predates the native `probe` declaration by several Standard revisions. Until CS-0091 (data-driven fan-out), probes were primarily a module-author tool: `cook_cc` hoists compiler-detection probes out of recipe bodies so that all recipes share a single cached probe value rather than each shelling out independently. In that context, the string-`produce` form was acceptable — module authors write Lua fluently, the `[[ ]]` long-string quoting is idiomatic, and the call site is small relative to the surrounding module machinery.
 
-CS-0091 changed the economics. Data-driven fan-out via `ingredients <probe>` makes probes the primary mechanism for data-driven builds: any Cookfile author who wants one output per JSON record, one deploy per host, or one test per case writes a probe. The population is no longer "module authors" — it is every author writing a data-driven build. At that scale, the ergonomic friction of the string API became a first-class concern:
+CS-0091 changed the economics. Data-driven fan-out via `gather <probe>` makes probes the primary mechanism for data-driven builds: any Cookfile author who wants one output per JSON record, one deploy per host, or one test per case writes a probe. The population is no longer "module authors" — it is every author writing a data-driven build. At that scale, the ergonomic friction of the string API became a first-class concern:
 
 - **No lexer or editor support.** A `produce = [[ … ]]` long-string is opaque to syntax highlighters, language servers, and linters. Indentation, keyword completion, and error underlining stop at the string boundary.
 - **`[[ ]]` escaping hazards.** A `produce` body that embeds a Lua string containing `]]` must use a level-qualified long string (`[=[ … ]=]`), which is non-obvious and easy to get wrong silently.
 - **Table-of-tables ceremony.** Expressing the `produce`, `inputs.files`, and `inputs.requires` fields in a nested table literal has more syntactic noise than the information content warrants. The resulting call is longer than the logic it encodes.
-- **Discoverability.** A new Cook user reading a Cookfile that uses `ingredients <probe>` finds the probe declaration buried inside a `register` block, co-located with arbitrary Lua, rather than at top level where the Cookfile's data sources belong.
+- **Discoverability.** A new Cook user reading a Cookfile that uses `gather <probe>` finds the probe declaration buried inside a `register` block, co-located with arbitrary Lua, rather than at top level where the Cookfile's data sources belong.
 
 The native `probe` declaration (§{cat.probes.decl}) is pure sugar over the retained `cook.probe()` API. Every native probe lowers to an equivalent `cook.probe()` call at codegen time; the API is not deprecated and remains the correct surface for probes that declare `env` or `tools` fingerprint inputs (not yet expressible natively — deferred to a future native-surface extension). The mapping is direct:
 
 | Native form | API equivalent |
 |---|---|
-| `ingredients "glob" !"glob"` | `inputs.files = {"glob", "!glob"}` |
+| `gather "glob" !"glob"` | `inputs.files = {"glob", "!glob"}` |
 | Header dep list `probe X: dep1 dep2` | `inputs.requires = {"dep1", "dep2"}` |
 | `json { sh }` | `produce = [[ return cook.json_decode(cook.sh("sh")) ]]` |
 | `lines { sh }` | `produce = [[ … cook.sh lines split … ]]` |

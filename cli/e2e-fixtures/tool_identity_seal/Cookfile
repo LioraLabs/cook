@@ -1,6 +1,6 @@
 # COOK-277 / CS-0157+CS-0158: canonical tool identity.
 #
-#   relocated:  a `tools { }` sealed value carries the binary's content hash
+#   relocated:  a top-level `tools` declaration's sealed value carries the binary's content hash
 #               ONLY — moving the same bytes to a different PATH location
 #               must not re-key the sealing unit (over-keying half).
 #   upgraded:   a toolchain whose BYTES change must re-key the sealing unit
@@ -8,8 +8,8 @@
 #   readview:   `$<probe.NAME.path>` still resolves for consumers, freshly,
 #               from the per-run metadata channel — never from the value.
 
-probe demo:tc
-    tools { mycc }
+tools demo:tc
+    mycc
 
 probe demo:id
     >{
@@ -19,7 +19,7 @@ probe demo:id
 
 recipe app
     seal demo:tc
-    ingredients "x.c"
+    seal "x.c"
     cook "out.txt" { mycc x.c out.txt }
 
 recipe showpath

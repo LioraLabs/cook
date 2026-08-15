@@ -1,5 +1,5 @@
 recipe greet
-    ingredients "src.txt"
+    seal "src.txt"
     cook "out.txt" {
         echo ${HOME:-fallback} >> $<out>
         echo ${USER%suffix} >> $<out>

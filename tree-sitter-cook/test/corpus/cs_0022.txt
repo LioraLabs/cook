@@ -59,7 +59,7 @@ in.accessor in output
 ====================
 
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/{in.stem}.o" {
         gcc -c {in} -o {out}
     }
@@ -70,7 +70,7 @@ recipe build
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (ingredients_step
+    (gather_step
       (string))
     (cook_step
       outputs: (string)

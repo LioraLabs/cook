@@ -1,0 +1,18 @@
+# A gather line with multiple includes and excludes
+# resolves to (union of includes) \ (union of excludes), order-independent.
+# Pinned here because the codegen used to use only the first pattern
+# as the iteration source, silently dropping every include glob past the
+# first. This Cookfile parses cleanly and codegens; the codegen-positive
+# harness asserts the latter.
+
+recipe build
+    gather "src/*.c" "include/*.h" !"src/skip.c" !"include/skip.h"
+    cook "build/$<in.stem>.o" { touch $<out> }
+
+recipe show
+    gather "src/*.c" "include/*.h"
+    cook "build/$<in.stem>.log" { echo "$<in>" }
+
+recipe check
+    gather "tests/*.sh" "extra/*.sh"
+    test { bash "$<in>" }

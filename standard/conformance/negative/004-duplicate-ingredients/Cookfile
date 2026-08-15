@@ -1,3 +1,0 @@
-recipe "pack"
-    ingredients "a.c"
-    ingredients "b.c"

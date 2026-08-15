@@ -4,10 +4,10 @@ use super::*;
 fn paths(inputs: &[cook_contracts::cache::DeclaredInput]) -> Vec<String> {
     inputs.iter().map(|e| e.path.clone()).collect()
 }
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::BodyCaptureState;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Convenience accessor used throughout the unit_api test module: borrow
 /// the body slot and panic if it's `None`. The slot is set to `Some(...)`
@@ -67,7 +67,10 @@ fn test_add_unit_basic() {
                 inputs = {"main.c"},
                 output = "main",
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -103,7 +106,10 @@ fn test_add_unit_rejects_function_valued_command() {
                 inputs = {},
                 output = "out/x.txt",
             })
-        "#).exec().unwrap_err();
+        "#,
+        )
+        .exec()
+        .unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("`command` must be a string"), "got: {msg}");
     assert!(msg.contains("function"), "error must name the received type; got: {msg}");
@@ -129,7 +135,10 @@ fn test_add_unit_no_cache() {
                 command = "echo hello",
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -147,7 +156,10 @@ fn test_add_unit_interactive_flag() {
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -167,7 +179,10 @@ fn test_add_unit_sequential_by_default() {
     lua.load(r#"
             cook.add_unit({ command = "step1" })
             cook.add_unit({ command = "step2" })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -185,7 +200,10 @@ fn test_step_group_makes_parallel() {
                 cook.add_unit({ command = "unit_a" })
                 cook.add_unit({ command = "unit_b" })
             end)
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -205,7 +223,10 @@ fn test_step_group_sequential_after() {
                 cook.add_unit({ command = "parallel_unit" })
             end)
             cook.add_unit({ command = "sequential_unit" })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 2);
@@ -266,7 +287,10 @@ fn test_add_unit_outputs_plural() {
                 inputs = {"a.c"},
                 outputs = {"a.o", "a.d"},
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -292,7 +316,9 @@ fn test_add_unit_outputs_and_output_conflict_errors() {
                 output = "a.o",
                 outputs = {"a.o", "a.d"},
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
     assert!(
         result.is_err(),
         "expected error when both `output` and `outputs` are provided"
@@ -310,7 +336,7 @@ fn test_add_unit_lua_code_one_to_one() {
                 inputs = {"main.c"},
                 output = "main.o",
                 lua_code = "print('hi')",
-                ingredient_groups = {{"a.c", "b.c"}},
+                gather_groups = {{"a.c", "b.c"}},
             })
         "#,
     )
@@ -325,7 +351,7 @@ fn test_add_unit_lua_code_one_to_one() {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind: _,
             is_chore: _,
             line: _,
@@ -334,7 +360,7 @@ fn test_add_unit_lua_code_one_to_one() {
             assert_eq!(inputs, &vec!["main.c".to_string()]);
             assert_eq!(outputs, &vec!["main.o".to_string()]);
             assert_eq!(
-                ingredient_groups,
+                gather_groups,
                 &vec![vec!["a.c".to_string(), "b.c".to_string()]]
             );
         }
@@ -353,7 +379,7 @@ fn test_add_unit_lua_code_multi_output_block_step() {
                 inputs = {"src.rs"},
                 outputs = {"a.js", "a.wasm"},
                 lua_code = "os.execute('wasm-pack build')",
-                ingredient_groups = {{"src.rs"}},
+                gather_groups = {{"src.rs"}},
             })
         "#,
     )
@@ -367,18 +393,15 @@ fn test_add_unit_lua_code_multi_output_block_step() {
             code,
             inputs,
             outputs,
-            ingredient_groups,
+            gather_groups,
             step_kind: _,
             is_chore: _,
             line: _,
         } => {
             assert_eq!(code, "os.execute('wasm-pack build')");
             assert_eq!(inputs, &vec!["src.rs".to_string()]);
-            assert_eq!(
-                outputs,
-                &vec!["a.js".to_string(), "a.wasm".to_string()]
-            );
-            assert_eq!(ingredient_groups, &vec![vec!["src.rs".to_string()]]);
+            assert_eq!(outputs, &vec!["a.js".to_string(), "a.wasm".to_string()]);
+            assert_eq!(gather_groups, &vec![vec!["src.rs".to_string()]]);
         }
         other => panic!("expected LuaChunk, got {other:?}"),
     }
@@ -437,7 +460,10 @@ fn add_unit_populates_consulted_env_from_keys_list() {
                 output = "main",
                 consulted_env_keys = {"FOO_TEST_VAR_X"},
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -544,8 +570,15 @@ fn add_unit_inside_chore_marks_payload_is_chore_true() {
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
+        "#,
+    )
+    .exec()
+    .unwrap();
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -569,8 +602,15 @@ fn add_unit_inside_chore_marks_lua_chunk_is_chore_true() {
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
-    capture_state.borrow_mut().as_mut().unwrap().current_chore_active = false;
+        "#,
+    )
+    .exec()
+    .unwrap();
+    capture_state
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .current_chore_active = false;
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -593,7 +633,10 @@ fn add_unit_outside_chore_marks_payload_is_chore_false() {
                 interactive = true,
                 cache = false,
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     assert_eq!(state.units.len(), 1);
@@ -618,7 +661,10 @@ fn add_unit_reads_discovered_inputs_table() {
                 command = "gcc -c src/a.c -o build/a.o",
                 discovered_inputs = { from = ".cook/deps/a.d", format = "make" },
             })
-        "#).exec().expect("exec");
+        "#,
+    )
+    .exec()
+    .expect("exec");
 
     let st = body_ref(&capture_state);
     let unit: &CapturedUnit = st.units.last().expect("one unit");
@@ -639,7 +685,9 @@ fn add_unit_rejects_unsupported_discovered_inputs_format() {
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "x.d", format = "ninja" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     let err = result.expect_err("expected error for unsupported format").to_string();
     assert!(err.contains("ninja"), "diagnostic must name the unsupported format; got: {err}");
@@ -657,7 +705,9 @@ fn add_unit_rejects_absolute_discovered_from() {
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "/etc/secrets.d", format = "make" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     let err = result.expect_err("expected error for absolute path").to_string();
     assert!(
@@ -677,7 +727,9 @@ fn add_unit_rejects_dotdot_discovered_from() {
                 inputs = { "x" }, output = "y", command = "true",
                 discovered_inputs = { from = "../escape.d", format = "make" },
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     let err = result.expect_err("expected error for '..' path").to_string();
     assert!(err.contains(".."), "diagnostic must contain '..'; got: {err}");
@@ -710,17 +762,14 @@ fn add_unit_rejects_directory_input() {
         &lua,
         capture_state.clone(),
         "vendor",
-            terminal_outputs,
-            tmp.path().to_path_buf(),
-        )
-        .unwrap();
-
-        lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value(
-            "__cook_cookfile_path",
-        "Cookfile".to_string(),
+        terminal_outputs,
+        tmp.path().to_path_buf(),
     )
-    .expect("set");
+    .unwrap();
+
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     let result = lua
         .load(
@@ -780,17 +829,14 @@ fn add_unit_accepts_file_inputs() {
         &lua,
         capture_state.clone(),
         "vendor",
-            terminal_outputs,
-            tmp.path().to_path_buf(),
-        )
-        .unwrap();
-
-        lua.set_app_data(fake_cache_ctx());
-        lua.set_named_registry_value(
-            "__cook_cookfile_path",
-        "Cookfile".to_string(),
+        terminal_outputs,
+        tmp.path().to_path_buf(),
     )
-    .expect("set");
+    .unwrap();
+
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     // Real file (exists) and a not-yet-built output (does not exist).
     lua.load(
@@ -835,11 +881,8 @@ fn add_unit_rejects_directory_in_outputs_plural() {
     .unwrap();
 
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value(
-        "__cook_cookfile_path",
-        "Cookfile".to_string(),
-    )
-    .expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     let result = lua
         .load(
@@ -880,7 +923,8 @@ fn add_unit_captures_probes_field() {
                 probes = { "cc:zlib", "cc:compiler" },
                 command = "true",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -905,7 +949,8 @@ fn add_unit_lua_code_probe_get_call_captures_probes_field() {
                 outputs = { "out.txt" },
                 lua_code = "local v = cook.probes.get(\"cc:zlib\")",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -952,7 +997,8 @@ fn add_unit_lua_code_probe_get_unions_with_explicit_probes_without_dup() {
                 outputs = { "out.txt" },
                 command = "echo 'cook.probes.get(\"cc:zlib\")'",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -977,7 +1023,8 @@ fn add_unit_seal_field_sets_cache_meta_and_probes() {
                 command = "cc",
                 seal = { "host" },
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1012,7 +1059,8 @@ fn add_unit_local_pinned_disposition_booleans() {
                     output = "out.txt",
                     sharing = "local",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
@@ -1035,7 +1083,8 @@ fn add_unit_local_pinned_disposition_booleans() {
                     output = "out.txt",
                     sharing = "pinned",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
@@ -1057,7 +1106,8 @@ fn add_unit_local_pinned_disposition_booleans() {
                     command = "echo neither",
                     output = "out.txt",
                 })
-            "#)
+            "#,
+        )
         .exec()
         .unwrap();
         let state = body_ref(&capture_state);
@@ -1081,7 +1131,8 @@ fn add_unit_without_probes_defaults_to_empty() {
                 command = "echo hello",
                 cache = false,
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1102,7 +1153,9 @@ fn add_unit_probes_non_list_errors() {
                 cache = false,
                 probes = "not-a-list",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     assert!(result.is_err(), "probes must be a list, not a string");
     let err = result.unwrap_err().to_string();
@@ -1123,7 +1176,9 @@ fn add_unit_legacy_requires_field_is_rejected() {
                 requires = { "cc:zlib" },
                 command = "true",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     assert!(result.is_err(), "legacy `requires` field must be rejected");
     let err = result.unwrap_err().to_string();
@@ -1151,7 +1206,9 @@ fn add_unit_legacy_requires_field_as_string_is_rejected() {
                 requires = "cc:zlib",
                 command = "true",
             })
-        "#).exec();
+        "#,
+        )
+        .exec();
 
     assert!(result.is_err(), "legacy `requires` field must be rejected even when non-table");
     let err = result.unwrap_err().to_string();
@@ -1184,7 +1241,8 @@ fn add_unit_command_with_probe_template_keeps_its_command_and_gains_its_key() {
                 cache = false,
                 command = "echo $<demo:k.v> > out.txt",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1233,7 +1291,8 @@ fn probe_reference_does_not_change_the_payload_kind() {
                             cache = false, command = "echo plain > a.txt" })
             cook.add_unit({ name = "sigil", inputs = {}, outputs = {"b.txt"},
                             cache = false, command = "echo $<demo:k> > b.txt" })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1265,10 +1324,11 @@ fn add_unit_command_with_file_ref_sigil_is_rejected() {
                 cache = false,
                 command = "render --tokens $<file:tokens.css> > out.txt",
             })
-        "#)
-    .exec()
-    .unwrap_err()
-    .to_string();
+        "#,
+        )
+        .exec()
+        .unwrap_err()
+        .to_string();
 
     assert!(
         err.contains("not supported in raw cook.add_unit command strings"),
@@ -1291,7 +1351,10 @@ fn add_unit_retains_member_and_outputs() {
                 command = "echo hi",
                 member = "{\"id\":\"s1\"}",
             })
-        "#).exec().unwrap();
+        "#,
+    )
+    .exec()
+    .unwrap();
 
     let state = body_ref(&capture_state);
     let u = state.units.last().expect("a unit was captured");
@@ -1314,7 +1377,8 @@ fn add_unit_record_flag_threads_to_cache_meta() {
                 command = "cc",
                 record = true,
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1341,7 +1405,8 @@ fn add_unit_record_defaults_false() {
                 outputs = { "x.o" },
                 command = "cc",
             })
-        "#)
+        "#,
+    )
     .exec()
     .unwrap();
 
@@ -1385,11 +1450,8 @@ fn add_unit_accepts_directory_output_trailing_slash() {
     .unwrap();
 
     lua.set_app_data(fake_cache_ctx());
-    lua.set_named_registry_value(
-        "__cook_cookfile_path",
-        "Cookfile".to_string(),
-    )
-    .expect("set");
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+        .expect("set");
 
     // pkg/ already exists as a directory; the trailing slash signals
     // CS-0119 directory-output semantics — must be accepted, not rejected.
@@ -1518,4 +1580,3 @@ fn a_test_unit_in_a_step_group_is_grouped_like_any_other_unit() {
 // uses the register-phase `cook.dep_output` surface, which this harness does
 // not bind; duplicating it here with a hand-set body field would test the
 // harness rather than the wiring.
-

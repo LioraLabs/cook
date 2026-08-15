@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="objects" line=1
+      deps: []
+      inputs: ["src/*.c"]
+      excludes: ["src/generated.c"]
+      steps:
+        Gather
+        Cook outputs=["build/$<in.stem>.o"] body=ShellBlock(["cc -c $<in> -o $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

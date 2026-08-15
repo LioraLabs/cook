@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="build" line=1
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         Cook outputs=["a.o"] body=ShellBlock(["cc -c a.c -o a.o"]) disposition=[local=false pinned=false record=false seal=["host"]]

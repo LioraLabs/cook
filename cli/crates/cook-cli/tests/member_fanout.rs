@@ -94,7 +94,7 @@ register
     })
 
 recipe gen
-    ingredients recs
+    gather recs
     cook "out/$<in.id>.txt" {
         mkdir -p out
         printf '%s' "$<in.tag>" > $<out>
@@ -155,7 +155,7 @@ recipe gen
     );
 }
 
-/// COOK-190: a two-segment probe key (`ns:name`) consumed in ingredients
+/// An exact multi-segment probe key (`ns:name`) consumed by gather
 /// position — the issue's exact repro shape, native `probe` DSL. Must fan
 /// out one unit per member and stay per-member cached on a second run.
 #[test]
@@ -177,11 +177,11 @@ fn member_fanout_two_segment_probe_key_end_to_end() {
     lines {{ printf "alpha-{uniq}\nbeta-{uniq}\ngamma-{uniq}\n" }}
 
 recipe stamps
-    ingredients cards:list
+    gather cards:list
     cook "out/$<in>.stamp" {{
         mkdir -p out
-        echo "$<in>" >> ran.log
-        echo "member: $<in>" > $<out>
+        echo '$<in>' >> ran.log
+        echo 'member: $<in>' > $<out>
     }}
 "#
     );

@@ -5,7 +5,7 @@ Cookfile
   recipes:
     Recipe name="game" line=3
       deps: []
-      ingredients: []
+      inputs: []
       excludes: []
       steps:
         InlineLua code="cook_edit.bin({\n        sources = { \"src/main.cpp\" },  -- entry point\n        standard = cxx_std,\n    })"

@@ -5,9 +5,10 @@ Cookfile
   recipes:
     Recipe name="maps" line=1
       deps: []
-      ingredients: ["src/*.map"]
+      inputs: ["src/*.map"]
       excludes: []
       steps:
+        Gather
         Cook outputs=["build/$<in.stem>.aas48", "build/$<in.stem>.aas96", "build/$<in.stem>.aas120"] body=ShellBlock(["runaas $<in>"])
   chores:
   register_blocks: []

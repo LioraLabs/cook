@@ -19,7 +19,7 @@ A conforming implementation MAY register and execute different recipes concurren
 
 ```cook
 recipe build
-    ingredients "src/*.c"
+    gather "src/*.c"
     cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 

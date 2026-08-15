@@ -25,21 +25,21 @@ use ./lua/release.lua
 
 # The toolchain and the crate sources determine the binary; the workspace
 # manifest and lock drive it. Naming the sources as a `files` probe rather than
-# as ingredients keeps that split honest — they are a sealable determinant, not
+# as a gather keeps that split honest — they are a sealable determinant, not
 # cargo's iteration driver (§22.5.2) — and it means a toolchain bump re-cuts the
 # binary instead of silently reusing one built by a different rustc.
-probe cook:toolchain
-    tools { cargo rustc }
+tools cook:toolchain
+    cargo rustc
 
-probe cook:sources
-    files { "cli/crates/**/*.rs" "cli/crates/**/Cargo.toml" }
+files cook:sources
+    "cli/crates/**/*.rs" "cli/crates/**/Cargo.toml"
 
 # The cook that the self-host gate runs under. It has to be built from the tree
 # being tagged: the cook on PATH was installed by getcook.sh, which can only
 # ever serve the *previous* release, so gating with it would never catch a
 # change in this tree that breaks cook's ability to drive its own Cookfiles.
 recipe cook-bin
-    ingredients "cli/Cargo.toml" "cli/Cargo.lock"
+    seal "cli/Cargo.toml" "cli/Cargo.lock"
     seal cook:toolchain cook:sources
     cook "cli/target/release/cook" {
         cargo build --release -p cook-cli --manifest-path cli/Cargo.toml
@@ -57,7 +57,7 @@ recipe cook-bin
 # rock. Gating it here means the binary this repo is about to self-host and ship
 # under has been shown to export the API, rather than assumed to.
 recipe lua-symbols-exported: cook-bin
-    ingredients "scripts/check-lua-symbols.sh"
+    seal "scripts/check-lua-symbols.sh"
     test { scripts/check-lua-symbols.sh $<cook-bin> }
 
 # `examples/` is what a stranger reads first and the README tour points at it,
@@ -66,11 +66,11 @@ recipe lua-symbols-exported: cook-bin
 # drives; the example sources determine. Module-dependent examples are excluded
 # — `examples/modules/monorepo` needs network and a pnpm toolchain — and the
 # script says so on success rather than skipping them quietly.
-probe examples:sources
-    files { "examples/**/Cookfile" "examples/**/*.lua" "examples/**/src/**" }
+files examples:sources
+    "examples/**/Cookfile" "examples/**/*.lua" "examples/**/src/**"
 
 recipe examples: cook-bin
-    ingredients "scripts/check-examples.sh"
+    seal "scripts/check-examples.sh"
     seal examples:sources
     test { COOK=$<cook-bin> scripts/check-examples.sh }
 
@@ -78,13 +78,13 @@ recipe examples: cook-bin
 # They once drifted three cuts apart (v0.15 vs v0.18) because nothing compared
 # them, and `bump_claim` silently matched no pattern in grammar.js for several
 # cuts running.
-probe claim:sites
-    files { "standard/VERSION" "cli/crates/cook-lang/src/lib.rs" "cli/crates/cook-lang/*.md" "tree-sitter-cook/grammar.js" "tree-sitter-cook/*.json" }
+files claim:sites
+    "standard/VERSION" "cli/crates/cook-lang/src/lib.rs" "cli/crates/cook-lang/*.md" "tree-sitter-cook/grammar.js" "tree-sitter-cook/*.json"
 
 # The tag is what a downstream implementor reads the claim off, so the sites
 # have to agree at exactly this moment. The script drives; the sites determine.
 recipe claim-in-sync
-    ingredients "scripts/check-claim.sh"
+    seal "scripts/check-claim.sh"
     seal claim:sites
     test { scripts/check-claim.sh }
 

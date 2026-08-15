@@ -1,5 +1,5 @@
 recipe "maps"
-    ingredients "src/*.map"
+    gather "src/*.map"
     cook "build/$<in.stem>.aas48"
          "build/$<in.stem>.aas96"
          "build/$<in.stem>.aas120" {

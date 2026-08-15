@@ -1,2 +1,0 @@
-recipe "pack"
-    ingredients "src/*.c" !"src/excluded.c"

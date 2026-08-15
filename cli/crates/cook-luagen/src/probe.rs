@@ -1,4 +1,5 @@
 use cook_contracts::lua_string;
+use cook_contracts::registration::INLINE_SEAL_PROBE_NAME;
 use cook_lang::ast::{Probe, ProbeProduce, ShellProduceType, UseStatement};
 
 use crate::long_bracket::wrap_lua_string;
@@ -7,14 +8,35 @@ use crate::long_bracket::wrap_lua_string;
 /// `probe` declaration. Pure surface sugar over the register-phase API
 /// (§22.5.2); the runtime is unchanged.
 pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement]) {
+    let inline_files = match &probe.produce {
+        ProbeProduce::Files { globs, excludes } if probe.name.starts_with("@seal:") => {
+            let local = format!("_cook_inline_seal_{}", probe.line);
+            out.push_str(&format!(
+                "local {local} = cook.resolve_gather({{{}}}, {{{}}})\n",
+                quoted_list(globs),
+                quoted_list(excludes),
+            ));
+            out.push_str(&format!(
+                "if #{local} == 0 then error(\"seal: quoted file determinant on line {} matched no files\", 0) end\n",
+                probe.line,
+            ));
+            Some(local)
+        }
+        _ => None,
+    };
+    let register = if inline_files.is_some() {
+        format!("cook.{INLINE_SEAL_PROBE_NAME}")
+    } else {
+        "cook.probe".into()
+    };
     out.push_str(&format!(
-        "cook.probe(\"{}\", {{\n",
+        "{register}(\"{}\", {{\n",
         lua_string::escape_double_quoted(&probe.name)
     ));
     out.push_str("  inputs = {\n");
-    if !probe.ingredients.is_empty() || !probe.excludes.is_empty() {
+    if !probe.inputs.is_empty() || !probe.excludes.is_empty() {
         let inc = probe
-            .ingredients
+            .inputs
             .iter()
             .map(|s| lua_string::literal(s))
             .collect::<Vec<_>>()
@@ -26,7 +48,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
-            "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
+            "    files = cook.resolve_gather({{{}}}, {{{}}}),\n",
             inc, exc
         ));
     }
@@ -39,28 +61,28 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
     }
-    // COOK-164: `tools { … }` / `envs { … }` declares the named tools/env-vars
-    // as probe inputs so the fingerprint machinery (resolve_probe_inputs) folds
-    // each tool's binary hash / each env value into the probe fingerprint. This
+    // A top-level `tools NAME` declaration records its named tools as probe inputs so the fingerprint
+    // machinery folds each binary hash into the probe fingerprint. This
     // is what makes the hash/value the re-run trigger — the produce body only
     // computes the VALUE; the determinant lives in these declared inputs.
     match &probe.produce {
         ProbeProduce::Tools(names) => {
             out.push_str(&format!("    tools = {{{}}},\n", quoted_list(names)));
         }
-        ProbeProduce::Envs(names) => {
-            out.push_str(&format!("    env = {{{}}},\n", quoted_list(names)));
-        }
-        // CS-0148: `files { … }` declares its glob set as `inputs.files` —
+        // CS-0148: a top-level `files NAME` declaration records its glob set as `inputs.files` —
         // register-time glob resolution, each file's content hash folding into
         // the fingerprint. The parser guarantees a `files` probe has no
-        // `ingredients` line, so this is the only `files =` emission.
+        // second file-set declaration, so this is the only `files =` emission.
         ProbeProduce::Files { globs, excludes } => {
-            out.push_str(&format!(
-                "    files = cook.resolve_ingredients({{{}}}, {{{}}}),\n",
-                quoted_list(globs),
-                quoted_list(excludes),
-            ));
+            if let Some(local) = &inline_files {
+                out.push_str(&format!("    files = {local},\n"));
+            } else {
+                out.push_str(&format!(
+                    "    files = cook.resolve_gather({{{}}}, {{{}}}),\n",
+                    quoted_list(globs),
+                    quoted_list(excludes),
+                ));
+            }
         }
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
     }
@@ -89,7 +111,7 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         // CS-0205: a probe's `produce` body is execute-phase Lua like any
         // other, so a `use` alias it names is bound the same way. The other
         // arms are generated Lua that can never name a user alias, and the
-        // `files { }` and `tools { }` arms MUST stay byte-identical to their
+        // Top-level `files` and `tools` declaration arms MUST stay byte-identical to their
         // reserved sentinels — `cook-probe` compares them by equality to
         // intercept the producer.
         ProbeProduce::Lua(code) => crate::use_prelude::with_execute_prelude(uses, code),
@@ -133,31 +155,6 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         // freshly-resolved `path` into the READ view and `cook why` displays it
         // from the same channel.
         ProbeProduce::Tools(_) => cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string(),
-        ProbeProduce::Envs(names) => {
-            // CS-0172: read the AMBIENT PROCESS environment via `os.getenv`.
-            // An `envs { }` probe is the specced channel for making a host
-            // environment value a keyed determinant (§22.5.2), so it must read
-            // the process environment — not the declared-variable namespace.
-            // Before CS-0172 it read `cook.env`, which was both at once; a
-            // config block could therefore silently redefine what an `envs`
-            // probe recorded about the host. The re-run trigger is the declared
-            // `inputs.env` (see emit_probe). An unset var assigns nil, which Lua
-            // never stores as a table key, so the key is OMITTED from the
-            // resulting JSON object (§22.5.2).
-            let mut out = String::from("local _e = {}\n");
-            for name in names {
-                // `name` is a validated bare IDENT, so a quoted-string key is
-                // safe. A long-bracket `[[name]]` would be ambiguous as a table
-                // index — `_e[[[name]]]`.
-                out.push_str(&format!(
-                    "_e[\"{}\"] = os.getenv(\"{}\")\n",
-                    lua_string::escape_double_quoted(name),
-                    lua_string::escape_double_quoted(name)
-                ));
-            }
-            out.push_str("return _e");
-            out
-        }
         // CS-0148: the reserved sentinel — not Lua, never dispatched to a
         // worker. The engine synthesises the value `{ [path] = hash }` from
         // the probe's resolved `inputs.files` (see emit_probe), the same

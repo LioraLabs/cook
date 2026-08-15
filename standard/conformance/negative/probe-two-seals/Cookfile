@@ -1,0 +1,4 @@
+probe x
+    seal a
+    seal b
+    >{ return 1 }

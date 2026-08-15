@@ -1,7 +1,8 @@
-probe srcs
-    files { "src/*.ts" "config/*.json" !"src/gen/*.ts" }
+files srcs
+    "src/*.ts" "config/*.json"
+    !"src/gen/*.ts"
 
 recipe check
-    ingredients "src/main.ts"
+    seal "src/main.ts"
     seal srcs
     cook "build/check.stamp" { echo ok > $<out> }

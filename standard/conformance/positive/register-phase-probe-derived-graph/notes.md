@@ -2,7 +2,7 @@ Pins Standard §{cat.probes.member-source} ("Register-phase reads") and
 §{lua.add-unit-after} / CS-0219: the two halves of "a module scans, then draws
 the graph the scan describes".
 
-`scan:mods` is not a fan-out source. No recipe declares `ingredients
+`scan:mods` is not a fan-out source. No recipe declares `gather
 scan:mods`, so the §22.5.10 pre-pass has no reason to evaluate it and does not.
 The read in `cook_modgraph.compile_all` is therefore step 2 of §21's
 register-phase lookup and nothing else: declared probe, resolved at the moment

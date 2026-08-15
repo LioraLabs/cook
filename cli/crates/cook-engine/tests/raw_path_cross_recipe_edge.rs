@@ -169,16 +169,16 @@ fn sigil_path_does_order_producer_before_consumer() {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe producer
-    ingredients "src.c"
+    gather "src.c"
     cook "build/gen.a" {
         mkdir -p build
         cp $<in> $<out>
     }
 
 recipe consumer
-    ingredients "src.c"
+    gather "src.c"
     cook "out.bin" {
-        cp $<producer> $<out>
+        : $<in>; cp $<producer> $<out>
     }
 "#,
     )
@@ -241,7 +241,7 @@ fn raw_path_input_folds_into_consumer_cache_key() {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe producer
-    ingredients "src.c"
+    gather "src.c"
     cook "build/gen.a" {
         mkdir -p build
         cp $<in> $<out>

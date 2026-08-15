@@ -11,7 +11,7 @@ probe greeting
     { echo "hello from cook" }          # one string, from shell
 
 probe target_list
-    ingredients "data/targets.txt"      # file input → fingerprints the probe
+    seal "data/targets.txt"             # file input → fingerprints the probe
     lines { cat data/targets.txt }      # a list, one member per line
 
 probe target_count: target_list         # probe depending on a probe
@@ -19,8 +19,8 @@ probe target_count: target_list         # probe depending on a probe
 ```
 
 (there is also `json { ... }` for structured data — example 05 fans out
-over JSON records — plus `tools { ... }` / `envs { ... }` for fingerprinting
-tool paths and environment variables, which example 10 uses as a host key.)
+over JSON records. Top-level `tools` declarations fingerprint tool identities;
+example 10 uses an ordinary named shell probe as a host key.)
 
 ## The demo
 
@@ -31,7 +31,7 @@ $ echo "qa" >> data/targets.txt
 $ cook targets            # ONE new unit runs; dev/staging/prod stay cached
 ```
 
-`ingredients target_list` makes the probe an iteration source: the member
+`gather target_list` makes the probe an iteration source: the member
 set is resolved at register time, the DAG is sized from it, and each member
 gets its own cache entry. Data grows → only new work runs.
 

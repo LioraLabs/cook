@@ -1,0 +1,3 @@
+probe x
+    >{ return 1 }
+    seal a

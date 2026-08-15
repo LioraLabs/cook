@@ -11,10 +11,10 @@ use cook_contracts::RecipeUnits;
 use crate::capture::install_cook_api;
 use crate::context::setup_recipe_context;
 use crate::dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
-use crate::var_api::{install_var_api, VarKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
+use crate::var_api::{install_var_api, VarKeyset};
 use crate::{
     BodyCaptureState, RegisterError, RegistrationSite, RegistrationSiteKind,
     SessionCaptureState, SharedBodySlot, SharedSessionCaptureState,
@@ -23,7 +23,7 @@ use crate::{
 pub struct RegisterSessionBuilder {
     working_dir: PathBuf,
     workspace_root: PathBuf,
-    ingredient_warnings: Rc<RefCell<Vec<String>>>,
+    gather_warnings: Rc<RefCell<Vec<String>>>,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     /// Explicit CLI `--set KEY=VALUE` overrides, kept separate so they can be
     /// re-applied to `cook.env` after the config block runs (CLI wins over
@@ -91,7 +91,7 @@ impl RegisterSessionBuilder {
         Self {
             working_dir,
             workspace_root,
-            ingredient_warnings: Rc::new(RefCell::new(Vec::new())),
+            gather_warnings: Rc::new(RefCell::new(Vec::new())),
             env_vars: Rc::new(RefCell::new(env_vars)),
             cli_overrides: HashMap::new(),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
@@ -186,10 +186,7 @@ impl RegisterSessionBuilder {
     /// answer this for itself. The names are seeds, not the whole answer: this
     /// pass still closes over its own `requires` graph from each of them, so a
     /// caller supplies the boundary-crossing entry points and nothing more.
-    pub fn with_reachable_names(
-        mut self,
-        names: std::collections::BTreeSet<String>,
-    ) -> Self {
+    pub fn with_reachable_names(mut self, names: std::collections::BTreeSet<String>) -> Self {
         self.reachable_names = names;
         self
     }
@@ -239,7 +236,7 @@ impl RegisterSessionBuilder {
 pub fn register_cookfile(
     builder: RegisterSessionBuilder,
     lua_source: &str,
-    // One context for unit-registration identity AND the `ingredients
+    // One context for unit-registration identity AND the `inputs
     // <probe>` pre-pass backend. COOK-359 split them because wiring identity
     // would have put the checkout directory's name into recipe_namespace and
     // thence the cloud key; CS-0196 made key-side identity configured-or-
@@ -308,9 +305,9 @@ pub fn register_cookfile(
     //     because `cook.chore` (CS-0176) checks its namespace prefix against
     //     `current_module` and so must close over this handle at install time.
     //     `install_remaining_apis` registers the loader itself over it below.
-    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
-        ModuleLoaderState::new(builder.working_dir.clone()),
-    ));
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(ModuleLoaderState::new(
+        builder.working_dir.clone(),
+    )));
 
     // 5. Install the full register-phase API surface (`cook.*` core,
     //    fs/path/platform sandboxing, module loader,
@@ -324,7 +321,7 @@ pub fn register_cookfile(
     let prepass_store: crate::module_loader::SharedPrepassStore =
         Rc::new(RefCell::new(BTreeMap::new()));
     // CS-0219: one owner for register-phase probe resolution. The pre-pass
-    // below fills it for `ingredients <probe>` drivers; a register-phase
+    // below fills it for `gather <probe>` drivers; a register-phase
     // `cook.probes.get` read fills it on demand for whatever a body asks for.
     let probe_resolver = Rc::new(RegisterProbeResolver::new(
         probe_registry.clone(),
@@ -514,8 +511,9 @@ pub fn register_cookfile(
     // fires ahead of the forcer.
     {
         let forcer_driver = driver.clone();
-        *recipe_forcer.borrow_mut() =
-            Some(Rc::new(move |lua: &Lua, name: &str| forcer_driver.force(lua, name)));
+        *recipe_forcer.borrow_mut() = Some(Rc::new(move |lua: &Lua, name: &str| {
+            forcer_driver.force(lua, name)
+        }));
     }
 
     for name in &topo {
@@ -673,7 +671,7 @@ pub fn register_cookfile(
         .map(|(key, reg)| (key.clone(), reg.probe.clone()))
         .collect();
 
-    let warnings = builder.ingredient_warnings.borrow().clone();
+    let warnings = builder.gather_warnings.borrow().clone();
     Ok(crate::RegisteredCookfile {
         names,
         units_by_recipe,
@@ -1096,6 +1094,7 @@ impl BodyDriver {
             params_meta,
             source_line,
             skip_member_fanout_body,
+            file_member_source,
             origin,
         ): (
             LuaRegistryKey,
@@ -1105,6 +1104,7 @@ impl BodyDriver {
             String,
             Vec<crate::capture::ChoreParamMeta>,
             usize,
+            bool,
             bool,
             Option<String>,
         );
@@ -1125,10 +1125,28 @@ impl BodyDriver {
                 && matches!(
                     recipe.member_source,
                     Some(crate::capture::MemberSourceDescriptor::Probe { .. })
+                        | Some(crate::capture::MemberSourceDescriptor::Gather { .. })
                 );
+            file_member_source = match &recipe.member_source {
+                Some(crate::capture::MemberSourceDescriptor::Gather { source_ref }) => {
+                    let probes = self.probe_registry.borrow();
+                    resolve_probe_ref(source_ref, &probes).is_some_and(|(key, field)| {
+                        field.is_none() && probes.probes.get(key).is_some_and(|r| {
+                            r.probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+                        })
+                    })
+                }
+                _ => false,
+            };
 
-            // Run recipe context setup (ingredient resolution).
-            setup_recipe_context(lua, recipe, &builder.working_dir, &builder.workspace_root, &builder.ingredient_warnings)?;
+            // Run recipe context setup (input resolution).
+            setup_recipe_context(
+                lua,
+                recipe,
+                &builder.working_dir,
+                &builder.workspace_root,
+                &builder.gather_warnings,
+            )?;
 
             // The `LuaRegistryKey` doesn't impl Clone, so we materialize the
             // function now and stash it for the call below; the registry
@@ -1243,14 +1261,8 @@ impl BodyDriver {
             if is_target {
                 // Targeted chore: bind argv and call with __cook_params.
                 let argv = &builder.target_argv;
-                let (bound, prelude) = build_chore_params_table(
-                    lua,
-                    &params_meta,
-                    argv,
-                    name,
-                    source_line,
-                    &origin,
-                )?;
+                let (bound, prelude) =
+                    build_chore_params_table(lua, &params_meta, argv, name, source_line, &origin)?;
                 // Store the prelude on the body slot so cook.add_unit can
                 // prepend it to lua_code units captured in this chore body.
                 self.set_chore_prelude(prelude);
@@ -1273,14 +1285,8 @@ impl BodyDriver {
                 // disjunct, `cook.require_recipe` on a chore would silently
                 // register zero units — and the no-target branch is the one
                 // `cook list` and most tests take.
-                let (bound, prelude) = build_chore_params_table(
-                    lua,
-                    &params_meta,
-                    &[],
-                    name,
-                    source_line,
-                    &origin,
-                )?;
+                let (bound, prelude) =
+                    build_chore_params_table(lua, &params_meta, &[], name, source_line, &origin)?;
                 self.set_chore_prelude(prelude);
                 func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
             } else {
@@ -1370,6 +1376,10 @@ impl BodyDriver {
         for unit in &mut body.units {
             if let Some(meta) = unit.cache_meta.as_mut() {
                 meta.recipe_name = name.to_string();
+                if let (true, Some(path)) = (file_member_source, unit.member.clone()) {
+                    let input = cook_contracts::cache::DeclaredInput::path(path);
+                    if !meta.inputs.contains(&input) { meta.inputs.push(input); }
+                }
             }
         }
 
@@ -1657,7 +1667,10 @@ fn build_chore_params_table(
                 table.set(name.as_str(), value).map_err(RegisterError::Lua)?;
                 prelude.push_str(&format!("local {} = {}\n", name, lua_string::literal(value)));
             }
-            ChoreParamMeta::DefaultedLua { name, default_key_name } => {
+            ChoreParamMeta::DefaultedLua {
+                name,
+                default_key_name,
+            } => {
                 if let Some(arg) = argv_iter.next() {
                     table.set(name.as_str(), arg.as_str()).map_err(RegisterError::Lua)?;
                     prelude.push_str(&format!("local {} = {}\n", name, lua_string::literal(arg)));
@@ -1683,10 +1696,9 @@ fn build_chore_params_table(
                     // Non-coercible types (Nil, Table, Function, Thread,
                     // UserData, LightUserData, Error) raise ChoreParamDefaultLuaNonString.
                     let coerced: Option<String> = match &result {
-                        mlua::Value::String(s) => s.to_str()
-                            .map_err(RegisterError::Lua)?
-                            .to_string()
-                            .into(),
+                        mlua::Value::String(s) => {
+                            s.to_str().map_err(RegisterError::Lua)?.to_string().into()
+                        }
                         mlua::Value::Integer(n) => Some(n.to_string()),
                         mlua::Value::Number(n) => Some(n.to_string()),
                         mlua::Value::Boolean(b) => Some(b.to_string()),
@@ -1778,7 +1790,6 @@ fn build_chore_params_table(
     Ok((table, prelude))
 }
 
-
 /// Local DFS-based topological sort of recipe names by their declared
 /// `requires`. Returns names in dependency-first order (a recipe appears
 /// after every recipe it requires that is also present in `deps`).
@@ -1849,7 +1860,7 @@ fn local_topological_sort(
 ///
 /// Every probe-sourced member source opens its body with
 /// `local _items = cook.probes.get("<ref>")`, `<ref>` being the verbatim
-/// `ingredients <ref>` source ref carried by codegen. That value does not
+/// `gather <ref>` source ref carried by codegen. That value does not
 /// exist until the feeding probe runs, and probes normally run as DAG nodes
 /// in the execute phase — far too late for register-time fan-out. So we
 /// evaluate every member-source probe (and its transitive probe
@@ -1867,8 +1878,8 @@ fn local_topological_sort(
 /// the generated body actually reads. When no `CacheContext` is wired
 /// (tests / `list_names`), `produce` runs uncached.
 ///
-/// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
-/// were removed in COOK-97.
+/// Both retained member-source descriptors name probes and require this
+/// pre-pass; `Gather` additionally admits named files manifests.
 fn run_member_source_prepass(
     lua: &Lua,
     member_source_drivers: &[(String, crate::capture::MemberSourceDescriptor)],
@@ -1890,11 +1901,15 @@ fn run_member_source_prepass(
     // driver's body — which would call `cook.probes.get` on an unevaluated probe
     // — is skipped rather than erroring.
     let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
-    let drivers: Vec<(&str, &str)> = member_source_drivers
+    let drivers: Vec<(&str, &str, bool)> = member_source_drivers
         .iter()
         .filter(|(name, _)| driver_reachable(name))
-        .map(|(name, MemberSourceDescriptor::Probe { source_ref })| {
-            (name.as_str(), source_ref.as_str())
+        .map(|(name, source)| {
+            let (source_ref, gather) = match source {
+                MemberSourceDescriptor::Probe { source_ref } => (source_ref, false),
+                MemberSourceDescriptor::Gather { source_ref } => (source_ref, true),
+            };
+            (name.as_str(), source_ref.as_str(), gather)
         })
         .collect();
     if drivers.is_empty() {
@@ -1904,10 +1919,10 @@ fn run_member_source_prepass(
     // COOK-190: resolve each ref against the registry (exact key match wins,
     // else trailing `:field` selector). A ref that names no declared probe
     // under either interpretation is rejected, naming the full ref.
-    let mut resolved: Vec<(&str, &str, Option<&str>)> = Vec::new();
-    for (recipe, source_ref) in &drivers {
+    let mut resolved: Vec<(&str, &str, Option<&str>, bool)> = Vec::new();
+    for (recipe, source_ref, gather) in &drivers {
         match resolve_probe_ref(source_ref, probe_registry) {
-            Some((key, field)) => resolved.push((source_ref, key, field)),
+            Some((key, field)) => resolved.push((source_ref, key, field, *gather)),
             None => {
                 return Err(RegisterError::MemberSourceProbeUndeclared {
                     recipe: (*recipe).to_string(),
@@ -1923,7 +1938,7 @@ fn run_member_source_prepass(
     //
     // The registry borrow above is released for the duration: a `produce` body
     // runs author Lua on this VM, and that Lua may declare or read probes.
-    let keys: Vec<String> = resolved.iter().map(|(_, k, _)| (*k).to_string()).collect();
+    let keys: Vec<String> = resolved.iter().map(|(_, k, _, _)| (*k).to_string()).collect();
     drop(probe_registry_guard);
     for key in &keys {
         resolver.resolve(lua, key)?;
@@ -1932,7 +1947,8 @@ fn run_member_source_prepass(
 
     // §22.5.10 non-array diagnostic: a driver's resolved source must be a
     // sequence. With a `:field` selector, the named field must be the array.
-    for (source_ref, key, field) in &resolved {
+    let mut files_members = Vec::new();
+    for (source_ref, key, field, gather) in &resolved {
         let store = prepass_store.borrow();
         let value = store.get(*key).expect("driver probe evaluated above");
         let (resolved_value, selector): (&serde_json::Value, String) = match field {
@@ -1947,32 +1963,26 @@ fn run_member_source_prepass(
             },
             None => (value, (*source_ref).to_string()),
         };
-        if !matches!(resolved_value, serde_json::Value::Array(_)) {
-            // COOK-353: name the `files` case specifically. Its value is a map
-            // by construction, so "got map/record" describes the symptom while
-            // the cause is that the author reached for a driver where this
-            // producer kind only ever works as a seal.
-            if field.is_none()
-                && probe_registry.probes.get(*key).is_some_and(|r| {
-                    r.probe.produce_source
-                        == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
-                })
-            {
-                return Err(RegisterError::MemberSourceFilesProbe {
-                    key: (*key).to_string(),
-                });
-            }
+        let files_source = field.is_none() && probe_registry.probes.get(*key).is_some_and(|r| {
+            r.probe.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE
+        });
+        if *gather && files_source {
+            let paths = resolved_value.as_object().expect("files declaration yields a manifest")
+                .keys().cloned().map(serde_json::Value::String).collect();
+            files_members.push(((*source_ref).to_string(), serde_json::Value::Array(paths)));
+        } else if !matches!(resolved_value, serde_json::Value::Array(_)) {
             return Err(RegisterError::MemberSourceNotArray {
                 selector,
                 shape: json_shape(resolved_value).to_string(),
             });
         }
     }
+    prepass_store.borrow_mut().extend(files_members);
 
     // COOK-190: the body reads `cook.probes.get("<verbatim ref>")`. For a
     // `key:field` selector, stash the selected array under the verbatim ref
     // (validated array-shaped by the diagnostic loop above).
-    for (source_ref, key, field) in &resolved {
+    for (source_ref, key, field, _) in &resolved {
         let Some(f) = field else { continue };
         let items = {
             let store = prepass_store.borrow();
@@ -1987,10 +1997,9 @@ fn run_member_source_prepass(
     Ok(())
 }
 
-/// COOK-190 / §22.5.10: resolve an `ingredients <probe>` source ref against
-/// the probe registry. Probe keys are canonically two-segment (`ns:name`),
-/// so a `:` in the ref is ambiguous between a two-segment key and a
-/// `key:field` selector. A declared probe whose key equals the entire ref
+/// Resolve a `gather <probe>` source ref against the probe registry. Keys
+/// admit any number of segments, so the final `:` may separate either key
+/// segments or a `key:field` selector. A declared probe whose key equals the entire ref
 /// wins; otherwise the segment after the final `:` is a field selector on
 /// the remaining (declared) key. `None` when neither interpretation names a
 /// declared probe.
@@ -2011,7 +2020,7 @@ fn resolve_probe_ref<'a>(
 /// Everything the register phase needs to turn a declared probe key into a
 /// materialised value, and the record of which keys it has (CS-0219).
 ///
-/// One owner for two callers that used to be one. The `ingredients <probe>`
+/// One owner for two callers that used to be one. The `gather <probe>`
 /// pre-pass resolves the probes a reachable recipe's fan-out cardinality
 /// depends on, before any body runs; a register-phase `cook.probes.get` read
 /// resolves whichever probe a body actually asks for, at the moment it asks.
@@ -2208,16 +2217,15 @@ impl RegisterProbeResolver {
         self.state.borrow_mut().in_progress.pop();
         recursed?;
 
-        // CS-0172: `envs { }` probe determinants are ambient process
-        // environment values (§22.5.2), not declared variables — see the
-        // matching lookup in `cook-engine`'s executor.
+        // `inputs.env` probe determinants are ambient process environment
+        // values, not declared variables; modules retain this lower-level API.
         let env_lookup = |name: &str| std::env::var(name).ok();
 
         // Everything from resolving the declared inputs to materialising the
         // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
         // call the executor makes, so the two phases cannot drift again: the
         // fingerprint, the CS-0178 keylessness rule, the cache lookup and
-        // publish, the CS-0148 `files { }` interception, and the CS-0102 local
+        // publish, the CS-0148 top-level `files` value synthesis, and the CS-0102 local
         // copy all have one implementation. The register VM is the only
         // phase-specific part, and it is the parameter.
         let eval_ctx = cook_probe::eval::EvalCtx {
@@ -2322,13 +2330,13 @@ impl cook_probe::eval::ProduceRunner for RegisterVmRunner<'_> {
         }
         let bytes = run_prepass_produce(self.lua, key, source)?;
         let module_paths = match &observer {
-            Some(o) => cook_contracts::layout::relative_module_paths(
-                self.working_dir,
-                &o.take(),
-            ),
+            Some(o) => cook_contracts::layout::relative_module_paths(self.working_dir, &o.take()),
             None => Vec::new(),
         };
-        Ok(cook_probe::eval::Produced { bytes, module_paths })
+        Ok(cook_probe::eval::Produced {
+            bytes,
+            module_paths,
+        })
     }
 }
 
@@ -2362,7 +2370,7 @@ fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_j
 /// could only ever have observed a stale or absent file.
 ///
 /// `resolved` is every key the register phase materialised, whether reached as
-/// an `ingredients <probe>` fan-out driver, as a transitive `inputs.requires`
+/// a `gather <probe>` fan-out driver, as a transitive `inputs.requires`
 /// of one, or by a register-phase `cook.probes.get` read (CS-0219). Checking
 /// the drivers alone would leave the read as a hole in the rule, and the rule
 /// is what lets cook resolve the whole graph before the first command runs.
@@ -2453,9 +2461,7 @@ fn json_shape(v: &serde_json::Value) -> &'static str {
 /// single colliding name are all preserved in the error.
 ///
 /// Re-used by `list_names` in Task 2.4.
-fn detect_collisions(
-    recipes: &[crate::capture::RegisteredRecipe],
-) -> Result<(), RegisterError> {
+fn detect_collisions(recipes: &[crate::capture::RegisteredRecipe]) -> Result<(), RegisterError> {
     use std::collections::BTreeMap;
     let mut by_name: BTreeMap<&str, Vec<RegistrationSite>> = BTreeMap::new();
     for r in recipes {
@@ -2541,9 +2547,9 @@ pub fn list_names(
     // it evaluates the top-level chunk, so `use cook_cc` runs the module and
     // its `cook.chore` registrations, which is exactly how `cook menu` comes
     // to list module-provided verbs.
-    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
-        ModuleLoaderState::new(builder.working_dir.clone()),
-    ));
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(ModuleLoaderState::new(
+        builder.working_dir.clone(),
+    )));
 
     // Install the full API surface via the shared helper — byte-identical
     // to `register_cookfile`'s installation, which is exactly why `cook
@@ -2767,7 +2773,7 @@ fn install_all_apis(
         builder.qualified_prefix.clone(),
         builder.alias_qualified_prefixes.clone(),
     )?;
-    crate::context::register_resolve_ingredients(lua, &builder.working_dir, &builder.workspace_root)?;
+    crate::context::register_resolve_gather(lua, &builder.working_dir, &builder.workspace_root)?;
     // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
     // the shared implementation lives in cook-lua-stdlib so the worker VMs
     // in cook-execute install byte-identical behaviour.

@@ -8,8 +8,8 @@ config
 # CS-0181 the determinant could not be named — `tools` took the narrow IDENT and
 # `tree-sitter` has a hyphen. So a developer whose PATH resolved a different CLI
 # regenerated tracked files in place with no key moving to say why.
-probe generate:tool
-    tools { tree-sitter }
+tools generate:tool
+    tree-sitter
 
 # The determinant above says WHICH CLI ran; it cannot say which one SHOULD.
 # That gap is the whole bug: with a different CLI on PATH the key moved
@@ -36,7 +36,7 @@ recipe ts-cli-pinned
 # see it, so they are declared — and a restore now covers everything
 # `tree-sitter generate` writes, which is what `check-generated` diffs.
 recipe generate: ts-cli-pinned
-    ingredients "grammar.js"
+    seal "grammar.js"
     seal generate:tool
     cook "src/parser.c" "src/node-types.json" "src/grammar.json"
         "src/tree_sitter/alloc.h" "src/tree_sitter/array.h" "src/tree_sitter/parser.h" {
@@ -44,7 +44,7 @@ recipe generate: ts-cli-pinned
     }
 
 recipe test: ts-cli-pinned
-    ingredients "test/corpus/*.txt"
+    seal "test/corpus/*.txt"
     seal generate:tool
     test { : $<generate> && tree-sitter test }
 
@@ -63,7 +63,7 @@ recipe test: ts-cli-pinned
 # v0.10.1 was tagged off it. Per-fixture keys retire both failure modes: nothing
 # is under-declared, and nothing re-runs that did not change.
 recipe conformance: parser-lib
-    ingredients "//standard/conformance/positive/*/Cookfile"
+    gather "//standard/conformance/positive/*/Cookfile"
         "//standard/conformance/negative/*/Cookfile"
     test { node scripts/conformance.mjs --case $<in> }
 
@@ -77,7 +77,7 @@ chore conformance-all: parser-lib
 
 # The rendered Standard bundles the wasm parser for in-browser highlighting.
 recipe wasm: generate ts-cli-pinned
-    ingredients "grammar.js" "src/scanner.c"
+    seal "grammar.js" "src/scanner.c"
     seal generate:tool
     cook "../standard/public/tree-sitter-cook.wasm" {
         mkdir -p ../standard/public
@@ -90,7 +90,7 @@ recipe wasm: generate ts-cli-pinned
 # grades its fixture against this artifact instead of building a parser of its
 # own. Declaring it once as a dependency is what keeps the fan-out affordable.
 recipe parser-lib: generate ts-cli-pinned
-    ingredients "src/scanner.c"
+    seal "src/scanner.c"
     seal generate:tool
     cook "build/parser/cook.so" {
         mkdir -p build/parser
@@ -98,13 +98,13 @@ recipe parser-lib: generate ts-cli-pinned
         tree-sitter build . -o $<out>
     }
 
-# The Rust binding compiles the generated parser. Sealed rather than declared
-# as ingredients because nothing here consumes $<in>.
-probe rust:tools
-    tools { cargo cc }
+# The Rust binding compiles the generated parser. Sealed rather than gathered
+# because nothing here consumes $<in>.
+tools rust:tools
+    cargo cc
 
-probe rust:files
-    files { "bindings/rust/*.rs" "src/*.c" "src/tree_sitter/*.h" "src/node-types.json" "queries/*.scm" "Cargo.toml" "Cargo.lock" }
+files rust:files
+    "bindings/rust/*.rs" "src/*.c" "src/tree_sitter/*.h" "src/node-types.json" "queries/*.scm" "Cargo.toml" "Cargo.lock"
 
 recipe rust: generate
     seal rust:tools rust:files

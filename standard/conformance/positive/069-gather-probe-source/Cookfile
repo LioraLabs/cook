@@ -1,0 +1,6 @@
+probe records
+    json { printf '[{"id":"a"}]' }
+
+recipe consume
+    gather records
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }

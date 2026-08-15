@@ -23,7 +23,7 @@ fn project() -> TempDir {
     fs::write(dir.path().join("src/b.txt"), "world\n").unwrap();
     fs::write(
         dir.path().join("Cookfile"),
-        "recipe build\n    ingredients \"src/*.txt\"\n    \
+        "recipe build\n    gather \"src/*.txt\"\n    \
          cook \"out/$<in.stem>.up\" { tr 'a-z' 'A-Z' < $<in> > $<out> }\n",
     )
     .unwrap();
