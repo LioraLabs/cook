@@ -60,6 +60,7 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     const stepsDispatch = section(stepsDoc, '## 8.1. Step-dispatch cascade', '## 8.2. Gathered inputs');
     const appDispatch = section(grammarDoc, '**Step-dispatch priority (normative).**', '## A.5. Primitives');
     const appTestModes = section(grammarDoc, '**Test mode coherence', '**`>>{` is rejected as a body.**');
+    const sourceLists = section(grammarDoc, '**Source-list kinds (normative).**', '**Module-prefix colon disambiguation (normative).**');
     const cacheIdentity = section(cacheDoc, '#### 17.1.1.1. Effect kind', '#### 17.1.1.2.');
     const sharing = section(cacheDoc, '### 17.1.3. Sharing and disposition effect', '## 17.2.');
     const probeDecl = section(probesDoc, '## 22.5.2.', '## 22.5.3.');
@@ -102,6 +103,10 @@ const assertContract = ({ stepsDoc = steps, grammarDoc = grammar, cacheDoc = cac
     const normalizedAppModes = normalize(appTestModes);
     expect(normalizedAppModes).toContain('keyed on its source set (engine `ManyToOne`), on a non-empty recipe seal set when source-less (CS-0223), or runs uncached (engine `OneShot`) only when it has neither source nor seal');
     expect(normalizedAppModes).not.toMatch(/\b(?:unit|test)[^.]*\b(?:source-less|no source)\b[^.]*\balways\b[^.]*\b(?:bypasses? (?:the )?cache|uncached|no cache key)\b/i);
+
+    const normalizedSourceLists = normalize(sourceLists);
+    expect(normalizedSourceLists).toMatch(/both list forms admit one or more entries across one or more indented physical lines/i);
+    expect(normalizedSourceLists).not.toMatch(/both list forms (?:are|must be) (?:written|contained) on a single physical line/i);
 
     const normalizedSharing = normalize(sharing);
     expect(normalizedSharing).toContain('a declared input, a materialised data member (§{exec.cache.test-unit} rule 1), or a non-empty seal set (§{exec.cache.seal-only-key})');
@@ -163,6 +168,21 @@ describe('Language v2 Standard contract', () => {
 
     const appMutation = grammar.replace('test_step             ::= "test" body NEWLINE', 'test_step             ::= "test" body\n                            test_mods? NEWLINE');
     expect(() => assertContract({ grammarDoc: appMutation })).toThrow();
+  });
+
+  it('rejects a single-line-only named determinant list claim', () => {
+    const multilineClaim = /Both\s+list\s+forms\s+admit\s+one\s+or\s+more\s+entries\s+across\s+one\s+or\s+more\s+indented\s+physical\s+lines\./;
+    const reflowed = grammar.replace(
+      multilineClaim,
+      'Both list forms admit one or more entries\n  across one or more indented physical lines.',
+    );
+    expect(() => assertContract({ grammarDoc: reflowed })).not.toThrow();
+
+    const mutated = reflowed.replace(
+      multilineClaim,
+      'Both list forms are written\n  on a single physical line.',
+    );
+    expect(() => assertContract({ grammarDoc: mutated })).toThrow();
   });
 
   it('rejects a universal no-source cache bypass but permits the no-seal case', () => {

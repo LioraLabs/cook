@@ -153,8 +153,8 @@ implementation MUST reject a declaration with no entries and a `files`
 declaration with no include pattern, a tool entry that is not a `TOOL_NAME`, a glob entry that
 is not a quoted `STRING`, and a body (in particular a `>{ … }`
 `exec_lua_block`) supplied where a name or glob list is required
-(§{cat.probes.decl}). Both list forms are written on a single physical line
-(unlike a multi-line `shell_block`).
+(§{cat.probes.decl}). Both list forms admit one or more entries across one or
+more indented physical lines.
 
 **Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
 
