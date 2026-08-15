@@ -1157,17 +1157,47 @@
           "value": "seal"
         },
         {
-          "type": "REPEAT1",
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_disposition_ref"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "gather_exclude"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
           "content": {
-            "type": "CHOICE",
+            "type": "SEQ",
             "members": [
               {
-                "type": "SYMBOL",
-                "name": "_disposition_ref"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_step_continuation_newline"
+                  },
+                  {
+                    "type": "BLANK"
+                  }
+                ]
               },
               {
-                "type": "SYMBOL",
-                "name": "gather_exclude"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_disposition_ref"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "gather_exclude"
+                  }
+                ]
               }
             ]
           }

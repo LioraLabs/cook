@@ -119,3 +119,55 @@ recipe verify
     (test_step
       body: (shell_block
         (shell_content)))))
+
+==================
+Seal step (multi-line continuation, CS-0238)
+==================
+
+recipe verify
+    seal "src/**/*.ts"
+        "package.json"
+        !"src/generated/**"
+    seal toolchain
+    test { pnpm vitest run }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (string)
+      (string)
+      (gather_exclude
+        (string)))
+    (seal_step
+      (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content)))))
+
+==================
+Seal continuation stops at a bare operand line (CS-0238)
+==================
+
+recipe verify
+    seal "a.ts"
+    seal host tools
+    test { true }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (string))
+    (seal_step
+      (identifier)
+      (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content)))))

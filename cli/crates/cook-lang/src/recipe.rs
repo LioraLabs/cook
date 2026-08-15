@@ -431,12 +431,23 @@ pub(crate) fn parse_recipe(
                                 .to_string(),
                         });
                     }
-                    let parsed = parse_seal_operands(rest, tok.line)?;
+                    // CS-0238: quoted operands may continue onto following
+                    // lines. CS-0236 keys the anonymous probe on the operand
+                    // CONTENT, so a wrapped step and its one-line spelling
+                    // produce the same key — and no operand can contain the
+                    // `\n` that fold joins records with (App. A.4).
+                    let (operands, last_line) =
+                        collect_seal_continuation(rest, tok.line, source_lines);
+                    let parsed = parse_seal_operands(&operands, tok.line)?;
                     for r in parsed.refs {
                         base_seal.insert(r);
                     }
                     inline_probes.extend(parsed.inline_probe);
-                    pos += 1;
+                    // Skip every token on a consumed continuation line, or it
+                    // reaches the body's catch-all as a loose shell command.
+                    while pos < tokens.len() && tokens[pos].line <= last_line {
+                        pos += 1;
+                    }
                     continue;
                 }
                 // CS-0225 removed every `unseal` position.

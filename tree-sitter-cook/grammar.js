@@ -411,11 +411,23 @@ module.exports = grammar({
 
     gather_exclude: ($) => seq("!", $.string),
 
-    // Appendix A recipe-level determinant set.
+    // Appendix A determinant set: a recipe-body step, and the optional head
+    // of a probe_body. One rule, so both positions get the same continuation.
+    //
+    // CS-0238: operands after the first MAY sit on continuation lines, under
+    // the same CS-0078 rule gather_step and cook_step use. The CONT token only
+    // fires on a `"` / `!"` lookahead, so a _disposition_ref in bare form is
+    // reachable only on the `seal` keyword's own line — a bare key opening a
+    // line terminates the step and dispatches per App. A.4, which is what
+    // keeps stacked `seal` steps meaning what they mean.
     seal_step: ($) =>
       seq(
         "seal",
-        repeat1(choice($._disposition_ref, $.gather_exclude)),
+        choice($._disposition_ref, $.gather_exclude),
+        repeat(seq(
+          optional($._step_continuation_newline),
+          choice($._disposition_ref, $.gather_exclude),
+        )),
         $._newline,
       ),
 

@@ -338,8 +338,8 @@ A unit's cache participation is declared by two surfaces — *inputs* and *outpu
 
 A `seal_operand` follows the language-wide quoted-versus-bare law: a bare
 `BARE_PROBE_KEY` names a probe or top-level declaration, while a quoted
-`STRING` is a file glob and `!STRING` excludes matches from the quoted set on
-that line. Quoted operands desugar to one anonymous `files` probe; they are
+`STRING` is a file glob and `!STRING` excludes matches from the quoted set of
+that step. Quoted operands desugar to one anonymous `files` probe; they are
 invalidate-only, never bind `$<in>`, and never make the recipe iterate. To
 consume paths as data, use `gather` (§{steps.gather}), not `seal`.
 The implementation-reserved `@seal:` probe-key prefix identifies those
@@ -359,7 +359,7 @@ remain named declarations:
 
 `seal` is a recipe-body **step** — a second input stream, sibling of `gather`, declaring *determinant* inputs alongside `gather`'s consumed inputs. A conforming implementation MUST enforce, at parse time:
 
-1. **Recipe-level `seal` is the baseline.** A `seal <operands>` step adds the named refs and anonymous file determinant to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero operands) MUST be rejected. An exclusion MUST be immediately adjacent to `!` and a seal line containing exclusions MUST contain at least one quoted include. A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
+1. **Recipe-level `seal` is the baseline.** A `seal <operands>` step adds the named refs and anonymous file determinant to the recipe's determinant baseline, which applies to **every cacheable unit** in the recipe — every `cook` unit *and* every `test` unit (§{steps.test}; CS-0159). Bare `seal` (zero operands) MUST be rejected. An exclusion MUST be immediately adjacent to `!` and a `seal` step containing exclusions MUST contain at least one quoted include. The step, not the physical line, is the unit both rules are asked over: a `seal` step MAY span continuation lines (CS-0238, §{grammar-appendix.steps}, "Multi-line patterns"). A recipe whose baseline is non-empty but which declares no cacheable unit at all MUST be rejected: the seal has nowhere to land.
 2. **Additive and order-independent.** Multiple recipe-level `seal` steps union their refs. The baseline applies to every cacheable unit regardless of textual position (it is *declarative*, not positional): `seal` after a `cook` or `test` still applies to it. The effective set is sorted and de-duplicated.
 3. **There is one tier.** Trailing `seal` and every `unseal` position were removed by CS-0225. A conforming implementation MUST reject them with migration diagnostics: trailing `seal` names the recipe-level step, and `unseal` says not to put the ref in the recipe's seal set.
 4. **An unresolvable ref is a `seal` diagnostic.** A named ref that resolves to no declaration MUST be rejected, and the rejection MUST be stated in terms of the `seal` step the author wrote: it MUST name `seal`, quote the ref, and name the declaration kinds a ref resolves against — a `probe`, a top-level `files`, or a top-level `tools`. An implementation that folds seal refs into some internal consumer list MUST NOT let the ref inherit that list's diagnostic; §{cat.probes.consumer} rule 1's mandated sentence describes the `probes` field of `cook.add_unit`, which is API surface a Cookfile author never wrote. (CS-0235.)

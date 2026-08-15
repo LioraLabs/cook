@@ -31,7 +31,8 @@ tools vitest:tools
     node pnpm
 
 recipe vitest: ts.wasm
-    seal "src/plugins/**/*.ts" "scripts/*.ts" "src/content/docs/**/*.mdx" "package.json" "pnpm-lock.yaml" "vitest.config.ts"
+    seal "src/plugins/**/*.ts" "scripts/*.ts" "src/content/docs/**/*.mdx"
+        "package.json" "pnpm-lock.yaml" "vitest.config.ts"
     seal vitest:tools
     test { pnpm vitest run }
 

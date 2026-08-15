@@ -1,0 +1,6 @@
+recipe verify
+    seal "src/**/*.ts"
+        "package.json"
+        !"src/generated/**"
+    seal toolchain
+    test { pnpm vitest run }

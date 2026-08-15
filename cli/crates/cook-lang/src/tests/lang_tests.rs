@@ -2839,3 +2839,134 @@ fn cs0229_ingredients_is_a_removed_keyword() {
         .expect_err("the old input keyword must be rejected");
     assert!(err.to_string().contains("`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants"), "got: {err}");
 }
+
+// ── CS-0238: `seal` multi-line continuation ─────────────────────────────
+
+/// COOK-482. The ticket's exact repro. Before CS-0238 the continuation line
+/// fell through to the recipe body's catch-all and was reported as a loose
+/// shell command (CS-0134) — a rule the author had not broken.
+#[test]
+fn cs0238_seal_continuation_line_joins_the_same_step() {
+    let cf = parse("recipe t\n    seal \"a.ts\" \"b.ts\"\n        \"c.ts\"\n    test { true }\n")
+        .expect("a quoted continuation line must join the seal step");
+    // All three globs collect into ONE anonymous determinant. Found by the
+    // reserved prefix rather than a literal name: how that name is spelled is
+    // CS-0236's business (a content fold), not this test's.
+    let probe = cf
+        .probes
+        .iter()
+        .find(|p| p.name.starts_with("@seal:"))
+        .unwrap_or_else(|| panic!("expected an anonymous @seal: determinant, got: {:?}", cf.probes));
+    match &probe.produce {
+        ProbeProduce::Files { globs, excludes } => {
+            assert_eq!(globs, &["a.ts", "b.ts", "c.ts"]);
+            assert!(excludes.is_empty(), "got: {excludes:?}");
+        }
+        other => panic!("expected a Files producer, got {other:?}"),
+    }
+    assert!(first_test_seal(&cf).contains(&probe.name), "seal set {:?} lacks {}", first_test_seal(&cf), probe.name);
+}
+
+/// COOK-482. `!"…"` continues too, exactly as it does for `gather` — and the
+/// "exclusions need an include" rule is asked over the STEP, so an exclusion
+/// on a continuation line is satisfied by an include on the keyword's line.
+#[test]
+fn cs0238_seal_continuation_admits_excludes() {
+    let cf = parse("recipe t\n    seal \"src/**\"\n        !\"src/gen/**\"\n    test { true }\n")
+        .expect("a `!\"…\"` continuation line must join the seal step");
+    let probe = cf.probes.iter().find(|p| p.name.starts_with("@seal:")).expect("anonymous @seal: determinant");
+    match &probe.produce {
+        ProbeProduce::Files { globs, excludes } => {
+            assert_eq!(globs, &["src/**"]);
+            assert_eq!(excludes, &["src/gen/**"]);
+        }
+        other => panic!("expected a Files producer, got {other:?}"),
+    }
+}
+
+/// COOK-482. The continuation trigger is the leading quote, not the operand
+/// kind. A bare key on its own line terminates the seal and dispatches per
+/// §8.1 — which is what keeps the stacked-`seal` idiom meaning what it means.
+#[test]
+fn cs0238_bare_key_line_terminates_the_seal_and_stacks() {
+    let cf = parse("recipe t\n    seal \"a.ts\"\n    seal host tools\n    test { true }\n")
+        .expect("stacked seals must still union");
+    let seal = first_test_seal(&cf);
+    assert!(seal.contains("host") && seal.contains("tools"), "got: {seal:?}");
+    assert!(seal.iter().any(|r| r.starts_with("@seal:")), "got: {seal:?}");
+}
+
+/// COOK-482. `seal_step` is ONE production with two positions: the recipe body
+/// and the optional head of a `probe_body`. A fix at the recipe site alone
+/// would leave the probe site rejecting what the production admits.
+#[test]
+fn cs0238_probe_body_seal_continues_too() {
+    let cf = parse(
+        "probe services\n    seal \"data/services.json\"\n        \"data/extra.json\"\n    json { cat data/services.json }\n",
+    )
+    .expect("a probe-body seal must take a continuation line");
+    let services = cf.probes.iter().find(|p| p.name == "services").expect("services");
+    let inline = cf.probes.iter().find(|p| p.name.starts_with("@seal:")).expect("anonymous @seal: determinant");
+    assert_eq!(services.deps, vec![inline.name.clone()]);
+    match &inline.produce {
+        ProbeProduce::Files { globs, .. } => {
+            assert_eq!(globs, &["data/services.json", "data/extra.json"])
+        }
+        other => panic!("expected a Files producer, got {other:?}"),
+    }
+}
+
+/// COOK-482 / CS-0238. A quoted operand MUST NOT span a physical line. The
+/// continuation resumes only when the accumulated text is not inside a quote,
+/// so an operand value can never contain the join separator's newline — the
+/// invariant CS-0236's `@seal:<hash>` record fold rests on. `gather` rejects
+/// the same shape ("unterminated string"); `seal` says it in its own words.
+#[test]
+fn cs0238_quoted_operand_may_not_span_a_line() {
+    let msg = parse_err("recipe t\n    seal \"a\n\"\n    test { true }\n");
+    assert!(msg.contains("unterminated quoted file glob"), "got: {msg}");
+}
+
+/// COOK-482 / CS-0238. The sharpest attack on the no-token-spans-a-line
+/// guarantee: an ODD trailing backslash escapes the closing quote, so the
+/// operand is still open at end of line. A collector that resumed on the next
+/// line's leading `"` would let that quote close the operand, yielding one
+/// value containing the break — the shape CS-0236's `@seal:<hash>` fold cannot
+/// tolerate, since two distinct operand sets could then fold to one key.
+#[test]
+fn cs0238_odd_trailing_backslash_does_not_reach_across_the_break() {
+    let msg = parse_err("recipe t\n    seal \"a.ts\\\n        \"b.ts\"\n    test { true }\n");
+    assert!(msg.contains("unterminated quoted file glob"), "got: {msg}");
+}
+
+/// COOK-482 / CS-0238. An EVEN trailing backslash is an escaped backslash, so
+/// the quote closes and the continuation is ordinary. Pinned as the companion
+/// to the odd case: the rule is quote balance, not "a backslash near the end".
+#[test]
+fn cs0238_even_trailing_backslash_still_continues() {
+    let cf = parse("recipe t\n    seal \"a.ts\\\\\"\n        \"b.ts\"\n    test { true }\n")
+        .expect("an escaped backslash closes the quote normally");
+    let p = cf.probes.iter().find(|p| p.name.starts_with("@seal:")).expect("anonymous @seal: determinant");
+    match &p.produce {
+        ProbeProduce::Files { globs, .. } => assert_eq!(globs, &["a.ts\\\\", "b.ts"]),
+        other => panic!("expected a Files producer, got {other:?}"),
+    }
+}
+
+/// COOK-482 / CS-0238. CRLF input leaves no `\r` in an operand. Worth pinning
+/// because the continuation reads raw source lines rather than lexer tokens,
+/// which is exactly where a stray carriage return would survive into a glob
+/// and, through it, into a cache key.
+#[test]
+fn cs0238_crlf_leaves_no_carriage_return_in_an_operand() {
+    let cf = parse("recipe t\r\n    seal \"a.ts\"\r\n        \"b.ts\"\r\n    test { true }\r\n")
+        .expect("CRLF source must parse");
+    let p = cf.probes.iter().find(|p| p.name.starts_with("@seal:")).expect("anonymous @seal: determinant");
+    match &p.produce {
+        ProbeProduce::Files { globs, .. } => {
+            assert_eq!(globs, &["a.ts", "b.ts"]);
+            assert!(!globs.iter().any(|g| g.contains('\r')), "got: {globs:?}");
+        }
+        other => panic!("expected a Files producer, got {other:?}"),
+    }
+}

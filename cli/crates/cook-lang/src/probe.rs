@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::cook_line::strip_keyword;
+use crate::cook_line::{collect_seal_continuation, strip_keyword};
 use crate::disposition::parse_seal_operands;
 use crate::lexer::*;
 use crate::ParseError;
@@ -82,11 +82,19 @@ pub(crate) fn parse_probe(
                                 .into(),
                         });
                     }
-                    let parsed = parse_seal_operands(rest, tok.line)?;
+                    // CS-0238: the recipe-body and probe-body `seal` are one
+                    // production, so they take the same continuation.
+                    let (operands, last_line) =
+                        collect_seal_continuation(rest, tok.line, source_lines);
+                    let parsed = parse_seal_operands(&operands, tok.line)?;
                     deps.extend(parsed.refs);
                     inline_probes.extend(parsed.inline_probe);
                     seal_seen = true;
-                    pos += 1;
+                    // Skip every token on a consumed continuation line, or it
+                    // reaches the producer branch as a bare-string body.
+                    while pos < tokens.len() && tokens[pos].line <= last_line {
+                        pos += 1;
+                    }
                     continue;
                 } else {
                     if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {

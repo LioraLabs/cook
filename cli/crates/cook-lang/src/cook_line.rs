@@ -169,6 +169,73 @@ pub(crate) fn collect_quoted_patterns_multiline(
     }
 }
 
+/// CS-0238: extend a `seal` step across continuation lines.
+///
+/// `seal_operand` collection follows the same CS-0078 rule `gather` and `cook`
+/// already use: a following physical line whose first non-whitespace character
+/// is `"` (or `!` immediately followed by `"`) belongs to the same step.
+///
+/// The trigger is the leading quote, not the operand kind. A bare
+/// `BARE_PROBE_KEY` opening a line is indistinguishable from a new step or a
+/// module call, so it terminates the `seal` and dispatches per §8.1 — which is
+/// what keeps the stacked-`seal` idiom (App. A.4, "Multi-line patterns").
+///
+/// Unlike `collect_quoted_patterns_multiline` this joins TEXT rather than
+/// parsing operands: a `seal` operand list is `BARE_PROBE_KEY | STRING |
+/// "!" STRING`, and `parse_seal_operands` is the one place that splits it.
+///
+/// A single `seal_operand` MUST NOT span a physical line. Continuation resumes
+/// only from a position that is not inside a quote, so an operand's value can
+/// never contain the line break — it is a boundary between operands, never a
+/// character within one. `gather` rejects the same shape via its unterminated-
+/// string error; `seal` falls through to `parse_seal_operands`, which says it
+/// in its own words. Anything folding operand records into a key (CS-0236's
+/// `@seal:<hash>`) may rely on no record containing a newline.
+///
+/// Returns the joined operand text and the last physical line consumed. Both
+/// `seal_step` positions — the recipe body and a `probe_body`'s optional head
+/// — route through here, because they are one production.
+pub(crate) fn collect_seal_continuation(
+    initial_text: &str,
+    line: usize,
+    source_lines: &[&str],
+) -> (String, usize) {
+    let mut text = initial_text.to_string();
+    let mut last = line;
+    // `line` is 1-based, so `source_lines[last]` is the line AFTER it.
+    while let Some(next) = source_lines.get(last).map(|l| l.trim_start()) {
+        let continues =
+            next.starts_with('"') || (next.starts_with('!') && next.get(1..2) == Some("\""));
+        // An open quote is not a continuation point: the next line's leading
+        // `"` would CLOSE the operand rather than open a new one, letting one
+        // value straddle the break.
+        if !continues || ends_inside_quote(&text) {
+            break;
+        }
+        text.push(' ');
+        text.push_str(next);
+        last += 1;
+    }
+    (text, last)
+}
+
+/// Whether `text` ends with an unclosed `"`, under the same escape rules
+/// `parse_seal_operands` scans with (a `\` inside a quote escapes the next
+/// character). Kept beside the collector because the two must agree.
+fn ends_inside_quote(text: &str) -> bool {
+    let (mut quoted, mut escaped) = (false, false);
+    for ch in text.chars() {
+        if quoted && escaped {
+            escaped = false;
+        } else if quoted && ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            quoted = !quoted;
+        }
+    }
+    quoted
+}
+
 /// Parse a gather declaration. Patterns may span multiple physical
 /// lines as long as each continuation line begins with `"` or `!"`.
 /// Returns (includes, excludes, new_pos).

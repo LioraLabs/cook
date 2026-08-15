@@ -260,7 +260,9 @@ pub(crate) fn parse_seal_operands(
     if globs.is_empty() && !excludes.is_empty() {
         return Err(ParseError::Parse {
             line,
-            message: "seal: an excluded glob requires a quoted include glob on the same line"
+            // CS-0238: the rule is asked over the STEP, which may span
+            // continuation lines, not over one physical line.
+            message: "seal: an excluded glob requires a quoted include glob in the same `seal` step"
                 .into(),
         });
     }
