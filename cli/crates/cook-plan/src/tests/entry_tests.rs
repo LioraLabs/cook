@@ -59,11 +59,7 @@ fn test_resolve_workspace_root_explicit_override_outside_invoked_rejects() {
 fn test_resolve_workspace_root_tree_inference() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("apps/web")).unwrap();
-    fs::write(
-        dir.path().join("Cookfile"),
-        "import web ./apps/web\nrecipe \"x\"\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("Cookfile"), "import web ./apps/web\nrecipe \"x\"\n").unwrap();
     fs::write(dir.path().join("apps/web/Cookfile"), "recipe \"build\"\n").unwrap();
 
     let invoked = dir.path().join("apps/web/Cookfile");
@@ -80,13 +76,8 @@ fn test_resolve_workspace_root_tree_inference_skip_no_cookfile_ancestor() {
     fs::write(
         dir.path().join("Cookfile"),
         "import leaf ./intermediate/leaf\nrecipe \"x\"\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("intermediate/leaf/Cookfile"),
-        "recipe \"build\"\n",
-    )
-    .unwrap();
+    ).unwrap();
+    fs::write(dir.path().join("intermediate/leaf/Cookfile"), "recipe \"build\"\n").unwrap();
 
     let invoked = dir.path().join("intermediate/leaf/Cookfile");
     let root = resolve_workspace_root(&invoked, None).unwrap();
@@ -100,11 +91,7 @@ fn test_resolve_workspace_root_skips_candidate_that_doesnt_anchor_sigils() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("top/lib")).unwrap();
     fs::create_dir_all(dir.path().join("inner/leaf")).unwrap();
-    fs::write(
-        dir.path().join("Cookfile"),
-        "import inner ./inner\nrecipe \"x\"\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("Cookfile"), "import inner ./inner\nrecipe \"x\"\n").unwrap();
     fs::write(
         dir.path().join("inner/Cookfile"),
         "import lib //top/lib\nimport leaf ./leaf\nrecipe \"y\"\n",
@@ -191,11 +178,7 @@ fn test_discover_entry_nearest_cookfile_wins() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
     fs::create_dir_all(dir.path().join("apps/rust/src")).unwrap();
-    fs::write(
-        dir.path().join("apps/rust/Cookfile"),
-        "recipe build\n    echo member\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("apps/rust/Cookfile"), "recipe build\n    echo member\n").unwrap();
     let found = discover_entry_cookfile(&dir.path().join("apps/rust/src"), None).unwrap();
     assert_eq!(
         found,
@@ -217,11 +200,7 @@ fn test_discover_entry_falls_through_to_root_cookfile() {
 fn test_discover_entry_stops_at_cookroot_boundary() {
     // A decoy Cookfile ABOVE the .cookroot boundary must not be selected.
     let dir = tempfile::tempdir().unwrap();
-    fs::write(
-        dir.path().join("Cookfile"),
-        "recipe build\n    echo decoy\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
     fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
     fs::write(dir.path().join("proj/.cookroot"), "").unwrap();
     let err = discover_entry_cookfile(&dir.path().join("proj/sub"), None).unwrap_err();
@@ -235,11 +214,7 @@ fn test_discover_entry_boundary_dir_itself_is_checked() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
     fs::write(dir.path().join("proj/.cookroot"), "").unwrap();
-    fs::write(
-        dir.path().join("proj/Cookfile"),
-        "recipe build\n    echo x\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("proj/Cookfile"), "recipe build\n    echo x\n").unwrap();
     let found = discover_entry_cookfile(&dir.path().join("proj/sub"), None).unwrap();
     assert_eq!(found, std::fs::canonicalize(dir.path().join("proj/Cookfile")).unwrap());
 }
@@ -248,11 +223,7 @@ fn test_discover_entry_boundary_dir_itself_is_checked() {
 fn test_discover_entry_stop_at_explicit_root() {
     // --root bounds the walk like .cookroot does.
     let dir = tempfile::tempdir().unwrap();
-    fs::write(
-        dir.path().join("Cookfile"),
-        "recipe build\n    echo decoy\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
     fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
     let err =
         discover_entry_cookfile(&dir.path().join("proj/sub"), Some(&dir.path().join("proj")))
@@ -265,11 +236,7 @@ fn test_discover_entry_non_ancestor_stop_at_errors_instead_of_unbounding() {
     // --root that is NOT an ancestor of the start dir must not silently
     // unbound the walk (and select a Cookfile above the intended boundary).
     let dir = tempfile::tempdir().unwrap();
-    fs::write(
-        dir.path().join("Cookfile"),
-        "recipe build\n    echo decoy\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
     fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
     fs::create_dir_all(dir.path().join("elsewhere")).unwrap();
     let err = discover_entry_cookfile(

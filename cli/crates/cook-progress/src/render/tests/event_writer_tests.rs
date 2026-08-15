@@ -23,9 +23,7 @@ fn render_one(state: &BuildState, ev: &ProgressEvent, opts: EventWriterOptions) 
 #[test]
 fn node_completed_compile_kind_emits_compiled_verb() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "lvm.c".into(),
@@ -318,18 +316,14 @@ fn internal_recipe_shows_module_tag_and_no_summary() {
 #[test]
 fn node_started_with_cause_prints_rebuilding_line() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     let ev = ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "next build".into(),
         artifact: Some("apps/web/.next".into()),
         fallback_label: "next build".into(),
         kind: NodeKind::Cooked,
-        cause: Some(
-            "input changed: apps/web/app/.well-known/workflow/v1/manifest.json (+2 more)".into(),
-        ),
+        cause: Some("input changed: apps/web/app/.well-known/workflow/v1/manifest.json (+2 more)".into()),
         cache_key: None,
     };
     state.apply(&ev);
@@ -345,9 +339,7 @@ fn node_started_with_cause_prints_rebuilding_line() {
 #[test]
 fn node_started_without_cause_stays_silent() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     let ev = ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "x.c".into(), artifact: Some("x.o".into()),
@@ -406,9 +398,7 @@ fn finished_all_cached_says_all_cached() {
 #[test]
 fn node_failed_dumps_indented_stderr() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "lvm.c".into(), artifact: None,
@@ -431,14 +421,8 @@ fn node_failed_dumps_indented_stderr() {
 #[test]
 fn quiet_suppresses_per_node_lines_but_keeps_recipe_summary() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
-    let opts = EventWriterOptions {
-        colored: false,
-        quiet: true,
-        ..Default::default()
-    };
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+    let opts = EventWriterOptions { colored: false, quiet: true, ..Default::default() };
 
     let started = ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -478,9 +462,7 @@ fn verbose_emits_node_output_lines() {
     // The live-stdout tag must use the node's own full output path
     // (its `display()` label) — not its raw node name/command text.
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "lvm.c".into(),
@@ -491,16 +473,10 @@ fn verbose_emits_node_output_lines() {
             cache_key: None,
         });
     let ev = ProgressEvent::NodeOutput {
-        recipe: RecipeId::new(0),
-        node: NodeId::new(0),
-        line: "warning: unused".into(),
-        stream: Stream::Stderr,
+        recipe: RecipeId::new(0), node: NodeId::new(0),
+        line: "warning: unused".into(), stream: Stream::Stderr,
     };
-    let opts = EventWriterOptions {
-        colored: false,
-        verbose: true,
-        ..Default::default()
-    };
+    let opts = EventWriterOptions { colored: false, verbose: true, ..Default::default() };
     let out = render_one(&state, &ev, opts);
     assert_eq!(out, "[lib/build/obj/lvm.o] (stderr) warning: unused\n");
 }
@@ -522,18 +498,8 @@ fn upstream_failed_skips_collapse_to_one_line() {
     let mut state = BuildState::new();
     state.apply(&ProgressEvent::BuildStarted {
         recipes: vec![
-            RecipeTopo {
-                id: RecipeId::new(1),
-                name: "lua".into(),
-                deps: vec![],
-                expected_nodes: 2,
-            },
-            RecipeTopo {
-                id: RecipeId::new(2),
-                name: "luac".into(),
-                deps: vec![],
-                expected_nodes: 2,
-            },
+            RecipeTopo { id: RecipeId::new(1), name: "lua".into(), deps: vec![], expected_nodes: 2 },
+            RecipeTopo { id: RecipeId::new(2), name: "luac".into(), deps: vec![], expected_nodes: 2 },
         ],
         total_nodes: 4,
     });
@@ -562,9 +528,7 @@ fn upstream_failed_skips_collapse_to_one_line() {
 #[test]
 fn terminal_interactive_end_suppresses_subsequent_output() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
 
     let opts = EventWriterOptions { colored: false, ..Default::default() };
     let mut w = EventWriter::new(opts);
@@ -619,9 +583,7 @@ fn terminal_interactive_end_suppresses_subsequent_output() {
 #[test]
 fn node_completed_no_artifact_emits_no_line() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "@45".into(),
@@ -645,9 +607,7 @@ fn node_completed_no_artifact_emits_no_line() {
 #[test]
 fn node_completed_no_artifact_verbose_still_prints() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "@45".into(), artifact: None, fallback_label: "@45".into(),
@@ -669,9 +629,7 @@ fn node_completed_no_artifact_verbose_still_prints() {
 #[test]
 fn node_cache_hit_no_artifact_emits_no_line() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     state.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "@45".into(), artifact: None, fallback_label: "@45".into(),
@@ -693,9 +651,7 @@ fn node_cache_hit_no_artifact_emits_no_line() {
 #[test]
 fn recipe_completed_zero_nodes_emits_no_line() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     let ev = ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(0),
@@ -710,9 +666,7 @@ fn recipe_completed_zero_nodes_emits_no_line() {
 #[test]
 fn recipe_completed_one_node_still_prints() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     let ev = ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(100),
@@ -727,9 +681,7 @@ fn recipe_completed_one_node_still_prints() {
 #[test]
 fn recipe_completed_chore_kind_uses_chore_detail() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     let ev = ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(4910),
@@ -745,9 +697,7 @@ fn recipe_completed_chore_kind_uses_chore_detail() {
 #[test]
 fn chore_window_failure_renders_step_index_and_chore_name() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     // Apply NodeStarted with the chore name as both name and (no) artifact.
     // In the real engine flow, the chore-window failure path emits NodeFailed
     // with `name = chore_recipe`; here we synthesize that view of the state.
@@ -779,9 +729,7 @@ fn chore_window_failure_renders_step_index_and_chore_name() {
 #[test]
 fn interactive_start_with_at_tag_drops_the_tag() {
     let mut state = empty_state();
-    state.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
 
     let ev = ProgressEvent::InteractiveStart {
         recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),

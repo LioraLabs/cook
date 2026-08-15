@@ -34,8 +34,8 @@ fn rejects_unclosed_block() {
     match err {
         ParseError::Parse { message, .. } => assert!(message.contains("unclosed")),
         _ => panic!("wrong error"),
+        }
     }
-}
 
     #[test]
     fn respects_nested_braces_in_content() {
@@ -73,8 +73,8 @@ fn cs_0022_inline_block_no_close_collects_multiline() {
     match err {
         ParseError::Parse { message, .. } => assert!(message.contains("unclosed")),
         _ => panic!("wrong error"),
+        }
     }
-}
 
     // ── CS-0035: heredoc state carries across shell-block lines ──
 

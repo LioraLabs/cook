@@ -16,7 +16,11 @@ fn load_falls_back_to_log_files_when_events_jsonl_absent() {
          exit_code = 0\n",
     )
     .unwrap();
-    fs::write(nodes.join("parser.c.log"), "[out] hello\n[err] oops\n").unwrap();
+    fs::write(
+        nodes.join("parser.c.log"),
+        "[out] hello\n[err] oops\n",
+    )
+    .unwrap();
 
     let (view, diag) = load(&dir).unwrap();
     assert!(diag.events_jsonl_missing);

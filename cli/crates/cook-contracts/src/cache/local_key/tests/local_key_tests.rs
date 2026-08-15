@@ -14,7 +14,13 @@ fn key(outputs: &[&str], inputs: &[&str], command_hash: u64, env: u64) -> String
 
 /// The same, with an effective seal key set — the determinant §17.1.1.1
 /// exclusion 3 requires the identity to separate units by.
-fn keyed(outputs: &[&str], inputs: &[&str], command_hash: u64, env: u64, seal: &[&str]) -> String {
+fn keyed(
+    outputs: &[&str],
+    inputs: &[&str],
+    command_hash: u64,
+    env: u64,
+    seal: &[&str],
+) -> String {
     let outputs: Vec<String> = outputs.iter().map(|s| s.to_string()).collect();
     let inputs: Vec<crate::cache::DeclaredInput> =
         inputs.iter().map(|s| (*s).into()).collect();
@@ -126,16 +132,10 @@ fn neither_the_recipe_nor_the_cookfile_reaches_the_identity() {
     let outputs: Vec<String> = vec![];
     let inputs: Vec<crate::cache::DeclaredInput> = vec!["a.c".into()];
     let seal = std::collections::BTreeSet::new();
-    let here = build_local_cache_key("Cookfile", "check", &outputs, &inputs, 0xbeef, 0, &seal);
-    let moved = build_local_cache_key(
-        "sub/Cookfile",
-        "verify",
-        &outputs,
-        &inputs,
-        0xbeef,
-        0,
-        &seal,
-    );
+    let here =
+        build_local_cache_key("Cookfile", "check", &outputs, &inputs, 0xbeef, 0, &seal);
+    let moved =
+        build_local_cache_key("sub/Cookfile", "verify", &outputs, &inputs, 0xbeef, 0, &seal);
     assert_eq!(here, moved);
 }
 

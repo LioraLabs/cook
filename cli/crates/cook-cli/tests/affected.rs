@@ -128,7 +128,10 @@ recipe b
 
 recipe c : a b
 "#;
-    let dir = init_workspace(cookfile, &[("src/a.txt", "a-v1"), ("src/b.txt", "b-v1")]);
+    let dir = init_workspace(
+        cookfile,
+        &[("src/a.txt", "a-v1"), ("src/b.txt", "b-v1")],
+    );
     write(&dir, "src/a.txt", "a-v2");
     let out = run_cook(dir.path(), &["c", "--affected", "--since=HEAD"]);
     assert!(

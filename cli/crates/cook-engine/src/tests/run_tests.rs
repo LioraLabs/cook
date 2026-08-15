@@ -28,42 +28,42 @@ fn dummy_project_root() -> std::path::PathBuf {
         path
     }
 
-/// Build an empty `RegisteredWorkspace` for tests that exercise the
-/// pre-DAG-build entry paths (empty targets, finished-event emission).
-fn empty_registered_workspace() -> RegisteredWorkspace {
-    RegisteredWorkspace {
-        warnings: Vec::new(),
-        names: Vec::new(),
-        units_by_recipe: BTreeMap::new(),
-        probes: BTreeMap::new(),
-        working_dir_by_prefix: BTreeMap::new(),
-        alias_dirs_by_prefix: BTreeMap::new(),
-        terminal_outputs: BTreeMap::new(),
+    /// Build an empty `RegisteredWorkspace` for tests that exercise the
+    /// pre-DAG-build entry paths (empty targets, finished-event emission).
+    fn empty_registered_workspace() -> RegisteredWorkspace {
+        RegisteredWorkspace {
+            warnings: Vec::new(),
+            names: Vec::new(),
+            units_by_recipe: BTreeMap::new(),
+            probes: BTreeMap::new(),
+            working_dir_by_prefix: BTreeMap::new(),
+            alias_dirs_by_prefix: BTreeMap::new(),
+            terminal_outputs: BTreeMap::new(),
+        }
     }
-}
 
-#[test]
-fn test_run_empty_reachable_returns_ok_with_no_results() {
-    // Empty reachable set: no DAG to walk, no synthetic lifecycle events.
-    // run() should short-circuit cleanly and emit Finished{success:true}.
-    let ws = empty_registered_workspace();
-    let edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let reachable: BTreeSet<String> = BTreeSet::new();
-    let result = run(
-        &dummy_project_root(),
-        &ws,
-        &edges,
-        &reachable,
-        1,
-        &[],
+    #[test]
+    fn test_run_empty_reachable_returns_ok_with_no_results() {
+        // Empty reachable set: no DAG to walk, no synthetic lifecycle events.
+        // run() should short-circuit cleanly and emit Finished{success:true}.
+        let ws = empty_registered_workspace();
+        let edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let reachable: BTreeSet<String> = BTreeSet::new();
+        let result = run(
+            &dummy_project_root(),
+            &ws,
+            &edges,
+            &reachable,
+            1,
+            &[],
+            false,
+            false,
         false,
-        false,
-        false,
-        |_| {},
-    );
-    assert!(result.is_ok());
-    assert!(result.unwrap().test_results.is_empty());
-}
+            |_| {},
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().test_results.is_empty());
+    }
 
     #[test]
     fn test_run_unknown_recipe_in_reachable() {

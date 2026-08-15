@@ -49,10 +49,14 @@ fn tools_identity_sorts_keys_bytewise() {
     // The fingerprint's TOOLS section sorts by name (§22.5.3); the value must
     // agree, or two machines that declared the same tools in a different order
     // would seal on different bytes.
-    let forward =
-        encode_tools_identity(&[("cc".to_string(), GOLDEN_CC), ("ld".to_string(), GOLDEN_LD)]);
-    let reversed =
-        encode_tools_identity(&[("ld".to_string(), GOLDEN_LD), ("cc".to_string(), GOLDEN_CC)]);
+    let forward = encode_tools_identity(&[
+        ("cc".to_string(), GOLDEN_CC),
+        ("ld".to_string(), GOLDEN_LD),
+    ]);
+    let reversed = encode_tools_identity(&[
+        ("ld".to_string(), GOLDEN_LD),
+        ("cc".to_string(), GOLDEN_CC),
+    ]);
     assert_eq!(forward, reversed);
     let text = String::from_utf8(forward).unwrap();
     assert!(text.find("\"cc\"").unwrap() < text.find("\"ld\"").unwrap(), "{text}");
@@ -203,7 +207,9 @@ fn probe_file_name_is_injective() {
 #[test]
 fn merge_tool_paths_annotates_hash_bearing_entries() {
     let mut v = json!({"gcc": {"hash": "ab12"}, "ld": {"hash": "cd34"}});
-    let paths = std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]);
+    let paths = std::collections::BTreeMap::from([
+        ("gcc".to_string(), "/usr/bin/gcc".to_string()),
+    ]);
     super::merge_tool_paths(&mut v, &paths);
     assert_eq!(v["gcc"]["path"], json!("/usr/bin/gcc"));
     // No recorded path for ld: untouched.
@@ -214,7 +220,9 @@ fn merge_tool_paths_annotates_hash_bearing_entries() {
 fn merge_tool_paths_is_shape_scoped() {
     // An author-provided path is never overwritten.
     let mut v = json!({"gcc": {"hash": "ab12", "path": "/custom/gcc"}});
-    let paths = std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]);
+    let paths = std::collections::BTreeMap::from([
+        ("gcc".to_string(), "/usr/bin/gcc".to_string()),
+    ]);
     super::merge_tool_paths(&mut v, &paths);
     assert_eq!(v["gcc"]["path"], json!("/custom/gcc"));
 

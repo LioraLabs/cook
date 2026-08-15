@@ -9,12 +9,7 @@ fn err(text: &str) -> OutputChunk {
 
 #[test]
 fn the_scalar_half_carries_what_a_reader_needs_without_a_fetch() {
-    let o = Observation::new(
-        1_500,
-        1_753_600_000,
-        Some("input changed: a.c".into()),
-        4_200,
-    );
+    let o = Observation::new(1_500, 1_753_600_000, Some("input changed: a.c".into()), 4_200);
     assert_eq!(o.duration_ms(), 1_500);
     assert_eq!(o.recorded_at(), 1_753_600_000);
     assert_eq!(o.cause(), Some("input changed: a.c"));
@@ -89,7 +84,10 @@ fn truncation_is_recorded_and_survives_the_round_trip() {
 fn truncate_keeps_the_head_and_the_tail() {
     // Head and tail are what a reader needs: a compiler's first errors and its
     // summary. The middle of a runaway log is the part nobody scrolls to.
-    let log = OutputLog::new(vec![out("AAAA"), out("BBBB"), out("CCCC"), out("DDDD")], 0);
+    let log = OutputLog::new(
+        vec![out("AAAA"), out("BBBB"), out("CCCC"), out("DDDD")],
+        0,
+    );
     let t = log.truncate_to(8);
     let kept: Vec<String> = t.chunks().iter().map(|c| c.lossy().into_owned()).collect();
     assert_eq!(kept, vec!["AAAA", "DDDD"]);

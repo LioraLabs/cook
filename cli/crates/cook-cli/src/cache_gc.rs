@@ -129,10 +129,7 @@ pub(crate) fn sweep(
     let plan = plan_eviction(candidates, policy, now);
 
     if dry_run || plan.victims.is_empty() {
-        return Ok(Sweep {
-            plan,
-            outcome: None,
-        });
+        return Ok(Sweep { plan, outcome: None });
     }
 
     let backend = LocalBackend::new(store.to_path_buf());

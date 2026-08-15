@@ -1,22 +1,12 @@
 use super::*;
 
 fn ctx_oneone_single<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
-    ResolveCtx {
-        mode: IterMode::OneToOne,
-        outputs: OutputShape::Single,
-        recipes_in_scope: recipes,
-    }
+    ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: recipes }
 }
 fn ctx_oneshot_none<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
-    ResolveCtx {
-        mode: IterMode::OneShot,
-        outputs: OutputShape::None,
-        recipes_in_scope: recipes,
-    }
+    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: recipes }
 }
-fn empty() -> BTreeSet<String> {
-    BTreeSet::new()
-}
+fn empty() -> BTreeSet<String> { BTreeSet::new() }
 
 #[test]
 fn member_sigil_matches_in_head() {
@@ -396,17 +386,10 @@ fn cs_0210_recipe_ref_is_independent_of_mode_and_output_shape() {
         let expected = recipe_ref(ident, &names);
         for mode in modes {
             for outputs in shapes {
-                let ctx = ResolveCtx {
-                    mode,
-                    outputs,
-                    recipes_in_scope: &names,
-                };
+                let ctx = ResolveCtx { mode, outputs, recipes_in_scope: &names };
                 let via_resolve = match resolve(ident, &ctx) {
                     Resolved::Recipe { name, accessor } => Some(RecipeRef { name, accessor }),
-                    Resolved::RecipeMember { name } => Some(RecipeRef {
-                        name,
-                        accessor: None,
-                    }),
+                    Resolved::RecipeMember { name } => Some(RecipeRef { name, accessor: None }),
                     _ => None,
                 };
                 assert_eq!(

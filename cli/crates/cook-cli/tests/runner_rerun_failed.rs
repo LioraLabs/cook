@@ -70,7 +70,11 @@ fn rerun_failed_runs_only_previously_failed() {
 #[test]
 fn rerun_failed_with_no_state_warns_and_exits_zero() {
     let tmp = tempdir().unwrap();
-    fs::write(tmp.path().join("Cookfile"), "recipe r\n    test { true }\n").unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe r\n    test { true }\n",
+    )
+    .unwrap();
 
     // No prior run — no state file exists
     let out = Command::new(cook_binary())

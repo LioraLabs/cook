@@ -69,30 +69,9 @@ fn fixture() -> DagData {
 /// incremental case takes.
 fn facts() -> Annotations {
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: true,
-            observed_ms: Some(400),
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: true,
-            observed_ms: Some(600),
-        },
-    );
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: Some(2100),
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400) });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: Some(600) });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: Some(2100) });
     a
 }
 
@@ -189,30 +168,9 @@ fn collapsed_nodes_tally_hits_and_rebuilds() {
 #[test]
 fn a_mixed_node_is_distinguishable_from_a_uniform_one() {
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: true,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
@@ -225,13 +183,7 @@ fn a_mixed_node_is_distinguishable_from_a_uniform_one() {
 /// inflate every tally on the page.
 #[test]
 fn unannotated_units_are_unclassified_not_rebuilds() {
-    let g = aggregate(
-        &fixture(),
-        Level::Recipe,
-        UNIT_LEVEL_SOFT_CAP,
-        &Annotations::new(),
-    )
-    .unwrap();
+    let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &Annotations::new()).unwrap();
     let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
     assert_eq!((lib.hits, lib.rebuilds, lib.unclassified), (0, 0, 2));
     assert!(!lib.rebuilding());
@@ -242,30 +194,9 @@ fn unannotated_units_are_unclassified_not_rebuilds() {
 #[test]
 fn cascade_counts_units_downstream() {
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: true,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Unit, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib0 = g.nodes.iter().find(|n| n.id == "unit:lib:0").unwrap();
@@ -280,31 +211,10 @@ fn cascade_counts_units_downstream() {
 #[test]
 fn cascade_counts_downstream_units_that_currently_hit() {
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: true,
-            observed_ms: None,
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
     // The consumer still looks warm: its input has not been rebuilt yet.
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: true,
-            observed_ms: None,
-        },
-    );
+    a.insert("bin", "bin:0", UnitFacts { served: true, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
 
     let lib = g.nodes.iter().find(|n| n.id == "recipe:lib").unwrap();
@@ -336,14 +246,7 @@ fn cascade_is_transitive_and_counts_each_unit_once() {
     };
     let mut a = Annotations::new();
     for k in ["x:0", "x:1", "x:2"] {
-        a.insert(
-            "x",
-            k,
-            UnitFacts {
-                served: false,
-                observed_ms: None,
-            },
-        );
+        a.insert("x", k, UnitFacts { served: false, observed_ms: None });
     }
     let g = aggregate(&dag, Level::Unit, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let n0 = g.nodes.iter().find(|n| n.id == "unit:x:0").unwrap();
@@ -357,30 +260,9 @@ fn cascade_is_transitive_and_counts_each_unit_once() {
 #[test]
 fn text_marks_a_rebuilding_upstream() {
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: false, observed_ms: None });
+    a.insert("lib", "lib:1", UnitFacts { served: false, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let out = render(&g, Format::Text);
     assert!(out.contains("← rebuilding"), "{out}");
@@ -397,30 +279,9 @@ fn timing_renders_as_observation_and_admits_its_coverage() {
 
     // One of lib's two units never timed: coverage must be stated.
     let mut a = Annotations::new();
-    a.insert(
-        "lib",
-        "lib:0",
-        UnitFacts {
-            served: true,
-            observed_ms: Some(400),
-        },
-    );
-    a.insert(
-        "lib",
-        "lib:1",
-        UnitFacts {
-            served: true,
-            observed_ms: None,
-        },
-    );
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
+    a.insert("lib", "lib:0", UnitFacts { served: true, observed_ms: Some(400) });
+    a.insert("lib", "lib:1", UnitFacts { served: true, observed_ms: None });
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let partial = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let out = render(&partial, Format::Text);
     assert!(out.contains("(1 of 2 units)"), "{out}");
@@ -437,14 +298,7 @@ fn timing_renders_as_observation_and_admits_its_coverage() {
 #[test]
 fn a_never_observed_node_shows_no_duration_at_all() {
     let mut a = Annotations::new();
-    a.insert(
-        "bin",
-        "bin:0",
-        UnitFacts {
-            served: false,
-            observed_ms: None,
-        },
-    );
+    a.insert("bin", "bin:0", UnitFacts { served: false, observed_ms: None });
     let g = aggregate(&fixture(), Level::Recipe, UNIT_LEVEL_SOFT_CAP, &a).unwrap();
     let bin = g.nodes.iter().find(|n| n.id == "recipe:bin").unwrap();
     assert_eq!(bin.observed_ms, 0);

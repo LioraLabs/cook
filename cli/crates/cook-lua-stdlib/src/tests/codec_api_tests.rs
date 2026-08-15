@@ -19,8 +19,7 @@ fn test_json_decode_object() {
             assert(t.items[1] == 1)
             assert(t.items[2] == 2)
             assert(t.items[3] == 3)
-        "#,
-    )
+        "#)
     .exec()
     .unwrap();
 }
@@ -31,8 +30,7 @@ fn test_json_decode_null() {
     lua.load(r#"
             local t = cook.json_decode('{"a":null}')
             assert(t.a == nil)
-        "#,
-    )
+        "#)
     .exec()
     .unwrap();
 }
@@ -44,8 +42,7 @@ fn test_json_decode_nested() {
             local t = cook.json_decode('{"scripts":{"build":"tsc","test":"jest"}}')
             assert(t.scripts.build == "tsc")
             assert(t.scripts.test == "jest")
-        "#,
-    )
+        "#)
     .exec()
     .unwrap();
 }
@@ -75,8 +72,7 @@ catalogs:
             assert(t.catalog.typescript == "^5.4.0")
             assert(t.catalogs.internal["shared-utils"] == "workspace:*")
             assert(t.catalogs.internal.ui == "workspace:*")
-        "#,
-    )
+        "#)
     .exec()
     .unwrap();
 }

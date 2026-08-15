@@ -87,10 +87,7 @@ where
             view.set(
                 "get",
                 lua.create_function(move |lua, key: String| {
-                    get_view(
-                        lua,
-                        &cook_contracts::probe_key::scoped_key(&label_get, &key),
-                    )
+                    get_view(lua, &cook_contracts::probe_key::scoped_key(&label_get, &key))
                 })?,
             )?;
 

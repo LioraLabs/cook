@@ -3,11 +3,7 @@ use super::*;
 fn empty_recipes() -> BTreeSet<String> { BTreeSet::new() }
 
 fn ctx_os_n0(r: &BTreeSet<String>) -> ResolveCtx<'_> {
-    ResolveCtx {
-        mode: IterMode::OneShot,
-        outputs: OutputShape::None,
-        recipes_in_scope: r,
-    }
+    ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: r }
 }
 
 #[test]

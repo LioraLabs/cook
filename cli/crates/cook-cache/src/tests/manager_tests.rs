@@ -21,10 +21,7 @@ fn make_step_entry(command_hash: u64) -> StepEntry {
     }
 }
 
-fn make_cache_meta(
-    input_paths: Vec<String>,
-    output_paths: Vec<String>,
-) -> cook_contracts::CacheMeta {
+fn make_cache_meta(input_paths: Vec<String>, output_paths: Vec<String>) -> cook_contracts::CacheMeta {
     cook_contracts::CacheMeta {
         recipe_name: "test_recipe".into(),
         project_id: String::new(),

@@ -250,9 +250,7 @@ fn a_non_boolean_option_value_is_refused() {
 fn field_entries_comes_back_as_a_lua_sequence() {
     let (lua, dir) = setup(COOKFILE);
     let joined: String = lua
-        .load(
-            r#"return table.concat(cook.cookfile.field_entries("Cookfile", "app", "links"), "|")"#,
-        )
+        .load(r#"return table.concat(cook.cookfile.field_entries("Cookfile", "app", "links"), "|")"#)
         .eval()
         .unwrap();
     assert_eq!(joined, "\"mathlib\"");

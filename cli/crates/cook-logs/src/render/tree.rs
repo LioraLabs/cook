@@ -81,10 +81,5 @@ fn status_glyph(theme: &Theme, status: NodeStatus) -> (&'static str, ratatui::st
 
 fn apply_selection<'a>(line: Line<'a>, theme: &Theme) -> Line<'a> {
     let sel = theme.selection_style();
-    Line::from(
-        line.spans
-            .into_iter()
-            .map(|s| s.patch_style(sel))
-            .collect::<Vec<_>>(),
-    )
+    Line::from(line.spans.into_iter().map(|s| s.patch_style(sel)).collect::<Vec<_>>())
 }

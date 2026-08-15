@@ -61,7 +61,11 @@ fn test_no_imports_loads_root_only() {
 fn test_basic_import_loads_child() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("lib")).unwrap();
-    fs::write(dir.path().join("lib/Cookfile"), "recipe \"build\"\n").unwrap();
+    fs::write(
+        dir.path().join("lib/Cookfile"),
+        "recipe \"build\"\n",
+    )
+    .unwrap();
     fs::write(
         dir.path().join("Cookfile"),
         "import lib ./lib\nrecipe \"bundle\": \"lib.build\"\n",
@@ -87,7 +91,11 @@ fn test_dotdot_import_is_rejected_at_parse() {
     )
     .unwrap();
     fs::write(dir.path().join("b/Cookfile"), "recipe \"y\"\n").unwrap();
-    fs::write(dir.path().join("Cookfile"), "import a ./a\nrecipe \"z\"\n").unwrap();
+    fs::write(
+        dir.path().join("Cookfile"),
+        "import a ./a\nrecipe \"z\"\n",
+    )
+    .unwrap();
     let entry = dir.path().join("Cookfile");
     let root = std::fs::canonicalize(dir.path()).unwrap();
     let result = Workspace::load(&entry, &root, &[]);
@@ -154,11 +162,7 @@ fn test_diamond_via_sigil_dedups() {
     fs::create_dir_all(dir.path().join("shared/lib")).unwrap();
     fs::create_dir_all(dir.path().join("apps/a")).unwrap();
     fs::create_dir_all(dir.path().join("apps/b")).unwrap();
-    fs::write(
-        dir.path().join("shared/lib/Cookfile"),
-        "recipe \"shared\"\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("shared/lib/Cookfile"), "recipe \"shared\"\n").unwrap();
     fs::write(
         dir.path().join("apps/a/Cookfile"),
         "import shared //shared/lib\nrecipe \"a\"\n",
@@ -214,16 +218,8 @@ fn test_cycle_via_sigil_rejected() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("a")).unwrap();
     fs::create_dir_all(dir.path().join("b")).unwrap();
-    fs::write(
-        dir.path().join("a/Cookfile"),
-        "import b //b\nrecipe \"x\"\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("b/Cookfile"),
-        "import a //a\nrecipe \"y\"\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join("a/Cookfile"), "import b //b\nrecipe \"x\"\n").unwrap();
+    fs::write(dir.path().join("b/Cookfile"), "import a //a\nrecipe \"y\"\n").unwrap();
     fs::write(
         dir.path().join("Cookfile"),
         "import a ./a\nimport b ./b\nrecipe \"top\"\n",

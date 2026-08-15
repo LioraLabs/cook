@@ -103,12 +103,14 @@ fn a_future_schema_line_is_refused_by_the_summary_and_the_replay_alike() {
     let build_dir = tmp.path().join(".cook").join("logs").join(&build_id);
     let events = build_dir.join("events.jsonl");
 
-    let baseline_summary = crate::log_reader::list_builds(&tmp.path().join(".cook").join("logs"))
-        .unwrap()
-        .into_iter()
-        .find(|b| b.build_id == build_id)
-        .expect("build present")
-        .failed_count;
+    let baseline_summary = crate::log_reader::list_builds(
+        &tmp.path().join(".cook").join("logs"),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|b| b.build_id == build_id)
+    .expect("build present")
+    .failed_count;
 
     let (baseline_view, _) = crate::log_reader::load(&build_dir).unwrap();
     let baseline_nodes: usize =
@@ -123,12 +125,14 @@ fn a_future_schema_line_is_refused_by_the_summary_and_the_replay_alike() {
     ));
     std::fs::write(&events, text).unwrap();
 
-    let after_summary = crate::log_reader::list_builds(&tmp.path().join(".cook").join("logs"))
-        .unwrap()
-        .into_iter()
-        .find(|b| b.build_id == build_id)
-        .expect("build present")
-        .failed_count;
+    let after_summary = crate::log_reader::list_builds(
+        &tmp.path().join(".cook").join("logs"),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|b| b.build_id == build_id)
+    .expect("build present")
+    .failed_count;
 
     let (after_view, _) = crate::log_reader::load(&build_dir).unwrap();
     let after_nodes: usize = after_view.recipes.values().map(|r| r.nodes.len()).sum();

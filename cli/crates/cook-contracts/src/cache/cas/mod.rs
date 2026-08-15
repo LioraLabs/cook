@@ -227,12 +227,17 @@ pub struct DeterminantManifest {
 mod hex_u64_map {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;
-    pub fn serialize<S: Serializer>(m: &BTreeMap<String, u64>, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(
+        m: &BTreeMap<String, u64>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
         let rendered: BTreeMap<&String, String> =
             m.iter().map(|(k, v)| (k, format!("{v:016x}"))).collect();
         rendered.serialize(s)
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, u64>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<String, u64>, D::Error> {
         let raw: BTreeMap<String, String> = BTreeMap::deserialize(d)?;
         raw.into_iter()
             .map(|(k, v)| {
@@ -381,7 +386,11 @@ pub fn decode_path_sets(bytes: &[u8]) -> Vec<Vec<String>> {
 /// artifact is independently addressable in the backend via
 /// `SHA-256(cloud_key || u32_le(output_index) || output_path_bytes)`.
 /// See 2026-05-02 addendum spec §4.1.
-pub fn artifact_key(cloud_key: &CloudKey, output_index: u32, output_path: &str) -> CloudKey {
+pub fn artifact_key(
+    cloud_key: &CloudKey,
+    output_index: u32,
+    output_path: &str,
+) -> CloudKey {
     let mut h = Sha256::new();
     h.update(cloud_key);
     h.update(output_index.to_le_bytes());

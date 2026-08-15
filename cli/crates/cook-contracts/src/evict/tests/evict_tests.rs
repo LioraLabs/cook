@@ -155,11 +155,7 @@ fn zero_last_access_is_never_an_age_victim_but_is_lru_first() {
     // known, nonzero last_access) because 0 is the smallest u64.
     let known_newer = candidate(0x02, 10, 50, None);
     let size_policy = EvictPolicy::manual(Some(10), None); // target=10, evict exactly one
-    let size_plan = plan_eviction(
-        &[known_newer.clone(), unknown_mtime.clone()],
-        &size_policy,
-        1_000,
-    );
+    let size_plan = plan_eviction(&[known_newer.clone(), unknown_mtime.clone()], &size_policy, 1_000);
     assert_eq!(size_plan.victims, vec![unknown_mtime]);
 }
 

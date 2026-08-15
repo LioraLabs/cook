@@ -48,82 +48,22 @@ pub struct Verb {
 pub const fn verb_for(line: LineKind, kind: NodeKind) -> Verb {
     match line {
         LineKind::NodeCompleted => match kind {
-            NodeKind::Compile => Verb {
-                text: "Compiled",
-                color: VerbColor::Default,
-                bold: true,
-            },
-            NodeKind::Link => Verb {
-                text: "Linked",
-                color: VerbColor::Default,
-                bold: true,
-            },
-            NodeKind::Resolve => Verb {
-                text: "Resolved",
-                color: VerbColor::Default,
-                bold: true,
-            },
-            NodeKind::Generate => Verb {
-                text: "Generated",
-                color: VerbColor::Default,
-                bold: true,
-            },
-            NodeKind::Write => Verb {
-                text: "Wrote",
-                color: VerbColor::Default,
-                bold: true,
-            },
-            NodeKind::Test => Verb {
-                text: "Tested",
-                color: VerbColor::Green,
-                bold: true,
-            },
-            NodeKind::Cooked => Verb {
-                text: "Cooked",
-                color: VerbColor::Default,
-                bold: true,
-            },
+            NodeKind::Compile  => Verb { text: "Compiled",  color: VerbColor::Default, bold: true },
+            NodeKind::Link     => Verb { text: "Linked",    color: VerbColor::Default, bold: true },
+            NodeKind::Resolve  => Verb { text: "Resolved",  color: VerbColor::Default, bold: true },
+            NodeKind::Generate => Verb { text: "Generated", color: VerbColor::Default, bold: true },
+            NodeKind::Write    => Verb { text: "Wrote",     color: VerbColor::Default, bold: true },
+            NodeKind::Test     => Verb { text: "Tested",    color: VerbColor::Green,   bold: true },
+            NodeKind::Cooked   => Verb { text: "Cooked",    color: VerbColor::Default, bold: true },
         },
-        LineKind::NodeCached => Verb {
-            text: "Cached",
-            color: VerbColor::Dim,
-            bold: false,
-        },
-        LineKind::NodeSkipped => Verb {
-            text: "Skipped",
-            color: VerbColor::Yellow,
-            bold: false,
-        },
-        LineKind::NodeRebuilding => Verb {
-            text: "Rebuilding",
-            color: VerbColor::Yellow,
-            bold: false,
-        },
-        LineKind::NodeFailed => Verb {
-            text: "Failed",
-            color: VerbColor::Red,
-            bold: true,
-        },
-        LineKind::RecipeFinished => Verb {
-            text: "Finished",
-            color: VerbColor::Green,
-            bold: true,
-        },
-        LineKind::RecipeFailed => Verb {
-            text: "Failed",
-            color: VerbColor::Red,
-            bold: true,
-        },
-        LineKind::InteractiveRunning => Verb {
-            text: "Running",
-            color: VerbColor::Green,
-            bold: true,
-        },
-        LineKind::StatusBar => Verb {
-            text: "Cooking",
-            color: VerbColor::Default,
-            bold: true,
-        },
+        LineKind::NodeCached         => Verb { text: "Cached",    color: VerbColor::Dim,    bold: false },
+        LineKind::NodeSkipped        => Verb { text: "Skipped",   color: VerbColor::Yellow, bold: false },
+        LineKind::NodeRebuilding     => Verb { text: "Rebuilding", color: VerbColor::Yellow, bold: false },
+        LineKind::NodeFailed         => Verb { text: "Failed",    color: VerbColor::Red,    bold: true },
+        LineKind::RecipeFinished     => Verb { text: "Finished",  color: VerbColor::Green,  bold: true },
+        LineKind::RecipeFailed       => Verb { text: "Failed",    color: VerbColor::Red,    bold: true },
+        LineKind::InteractiveRunning => Verb { text: "Running",   color: VerbColor::Green,  bold: true },
+        LineKind::StatusBar          => Verb { text: "Cooking",   color: VerbColor::Default, bold: true },
     }
 }
 

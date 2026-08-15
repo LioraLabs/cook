@@ -967,28 +967,17 @@ fn a_semicolon_separated_table_keeps_its_separator() {
     // Lua admits `;` between table entries and `find_field_key` has always
     // accepted it as one. Appending a comma after it produces `{ a = 1;, b }`,
     // which does not load.
-    let created = splice_into_field(
-        "recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" }; })\n",
-        "app",
-        "links",
-        "\"math\"",
-        AbsentField::Create,
-    )
-    .unwrap();
+    let created =
+        splice_into_field("recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" }; })\n",
+            "app", "links", "\"math\"", AbsentField::Create).unwrap();
     assert_eq!(
         created,
         "recipe app\n    cook_cc.bin({ sources = { \"a.cpp\" }; links = { \"math\" } })\n"
     );
 
     // The same hazard on the append path, which had it before this entry.
-    let appended = splice_into_field(
-        "recipe app\n    cook_cc.bin({ links = { \"a\"; } })\n",
-        "app",
-        "links",
-        "\"b\"",
-        AbsentField::Refuse,
-    )
-    .unwrap();
+    let appended = splice_into_field("recipe app\n    cook_cc.bin({ links = { \"a\"; } })\n",
+        "app", "links", "\"b\"", AbsentField::Refuse).unwrap();
     assert_eq!(
         appended,
         "recipe app\n    cook_cc.bin({ links = { \"a\"; \"b\" } })\n"

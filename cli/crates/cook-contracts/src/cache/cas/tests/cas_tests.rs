@@ -256,7 +256,9 @@ fn artifact_meta_kind_none_not_serialised() {
 
 #[test]
 fn artifact_meta_mode_and_symlink_target_round_trip() {
-    let json = minimal_meta_json(r#", "mode": 493, "kind": "symlink", "target": "../sib""#);
+    let json = minimal_meta_json(
+        r#", "mode": 493, "kind": "symlink", "target": "../sib""#,
+    );
     let meta: ArtifactMeta = serde_json::from_str(&json).expect("parse");
     assert_eq!(meta.mode, 0o755);
     assert_eq!(meta.kind.as_deref(), Some("symlink"));

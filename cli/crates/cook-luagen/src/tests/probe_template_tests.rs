@@ -86,12 +86,8 @@ fn expand_command_template_multiple_probe_refs_collected() {
         recipes_in_scope: &r,
     };
     let mut env = ConsultedEnv::new();
-    let (lua, keys) = expand_command_template(
-        "$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>",
-        &ctx,
-        &mut env,
-    )
-    .unwrap();
+    let (lua, keys) =
+        expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env).unwrap();
     assert!(!lua.contains("function()"), "got: {}", lua);
     assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
     assert!(lua.contains("$<cc:compiler.path>"), "got: {}", lua);

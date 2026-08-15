@@ -11,7 +11,11 @@
 
 /// Resolve whether to emit color, based on the cli flag, the env, and
 /// whether stdout is a terminal.
-pub fn resolve_color_choice(cli_color: &str, no_color_env: Option<&str>, is_tty: bool) -> bool {
+pub fn resolve_color_choice(
+    cli_color: &str,
+    no_color_env: Option<&str>,
+    is_tty: bool,
+) -> bool {
     match cli_color {
         "always" => true,
         "never" => false,

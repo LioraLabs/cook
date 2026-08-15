@@ -5,11 +5,7 @@ use cook_contracts::cache::step::{FileRecord, StepEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn rec(path: &str, mtime: u64, hash: u64) -> FileRecord {
-    FileRecord {
-        path: path.into(),
-        mtime,
-        hash,
-    }
+    FileRecord { path: path.into(), mtime, hash }
 }
 
 fn step(inputs: Vec<FileRecord>, outputs: Vec<FileRecord>) -> StepEntry {
@@ -40,20 +36,16 @@ fn populated() -> RecipeCache {
     cache.steps.insert(
         "compile_main".to_string(),
         step(
-            vec![
-                rec("src/main.c", 1_700_000_000, 0x1234567890abcdef),
-                rec("src/common.h", 1_700_000_050, 0x5555555555555555),
-            ],
+            vec![rec("src/main.c", 1_700_000_000, 0x1234567890abcdef),
+                 rec("src/common.h", 1_700_000_050, 0x5555555555555555)],
             vec![rec("build/main.o", 1_700_000_100, 0xabcdef1234567890)],
         ),
     );
     cache.steps.insert(
         "compile_util".to_string(),
         step(
-            vec![
-                rec("src/util.c", 1_700_000_001, 0xfedcba9876543210),
-                rec("src/common.h", 1_700_000_050, 0x5555555555555555),
-            ],
+            vec![rec("src/util.c", 1_700_000_001, 0xfedcba9876543210),
+                 rec("src/common.h", 1_700_000_050, 0x5555555555555555)],
             vec![rec("build/util.o", 1_700_000_101, 0x0f0f0f0f0f0f0f0f)],
         ),
     );
@@ -90,12 +82,8 @@ fn step_with_no_outputs_round_trips() {
 fn step_observation_round_trips() {
     let mut cache = RecipeCache::new();
     let mut observed = step(vec![rec("src/main.c", 1, 2)], vec![]);
-    observed.observed = Some(Observation::new(
-        1_500,
-        1_753_600_000,
-        Some("input changed: src/main.c".into()),
-        42,
-    ));
+    observed.observed =
+        Some(Observation::new(1_500, 1_753_600_000, Some("input changed: src/main.c".into()), 42));
     cache.steps.insert("observed".to_string(), observed);
     assert_eq!(cache, decode(&encode(&cache)).expect("decode"));
 }
@@ -309,10 +297,7 @@ fn module_records_round_trip_alongside_inputs_and_outputs() {
     // BOTH and not merely for a single-step index.
     cache.steps.insert(
         "without".to_string(),
-        step(
-            vec![rec("src/util.c", 5, 0xee)],
-            vec![rec("build/util.o", 6, 0xff)],
-        ),
+        step(vec![rec("src/util.c", 5, 0xee)], vec![rec("build/util.o", 6, 0xff)]),
     );
 
     let decoded = decode(&encode(&cache)).expect("round trip");

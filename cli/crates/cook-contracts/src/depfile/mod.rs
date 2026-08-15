@@ -55,7 +55,10 @@ pub struct DepfileSyntax {
 /// being written concurrently it is not a function at all, and neither order is
 /// more correct than the other; a build racing its own generated headers has no
 /// defined input set to be right about.
-pub fn parse_prerequisites(content: &str, source_path: &str) -> Result<Vec<String>, DepfileSyntax> {
+pub fn parse_prerequisites(
+    content: &str,
+    source_path: &str,
+) -> Result<Vec<String>, DepfileSyntax> {
     // Locate the first ':' separating the target from the prerequisites.
     let colon_pos = match content.find(':') {
         Some(p) => p,

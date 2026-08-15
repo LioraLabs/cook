@@ -17,33 +17,23 @@ fn main() {
             status: StatusLineOptions::default(),
             status_enabled: true,
         };
-        let mut driver = Driver::new(Box::new(InlineRenderer::new(opts)), None);
+        let mut driver = Driver::new(
+            Box::new(InlineRenderer::new(opts)),
+            None,
+        );
         driver.run(rx).unwrap();
     });
 
     tx.send(ProgressEvent::BuildStarted {
         recipes: vec![
-            RecipeTopo {
-                id: RecipeId::new(0),
-                name: "deps".into(),
-                deps: vec![],
-                expected_nodes: 2,
-            },
-            RecipeTopo {
-                id: RecipeId::new(1),
-                name: "lib".into(),
-                deps: vec![RecipeId::new(0)],
-                expected_nodes: 3,
-            },
+            RecipeTopo { id: RecipeId::new(0), name: "deps".into(), deps: vec![], expected_nodes: 2 },
+            RecipeTopo { id: RecipeId::new(1), name: "lib".into(), deps: vec![RecipeId::new(0)], expected_nodes: 3 },
         ],
         total_nodes: 5,
     }).unwrap();
 
     thread::sleep(Duration::from_millis(200));
-    tx.send(ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    })
-    .unwrap();
+    tx.send(ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) }).unwrap();
     thread::sleep(Duration::from_millis(300));
     tx.send(ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),

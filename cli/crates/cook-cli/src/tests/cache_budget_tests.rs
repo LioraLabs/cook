@@ -88,12 +88,7 @@ fn budget_warning_reclaim_matches_what_the_printed_command_would_free() {
 /// label would render as a bare size with nothing in front of it.
 #[test]
 fn budget_warning_renders_an_empty_namespace_as_unattributed() {
-    let out = render_budget_warning(
-        3_000_000_000,
-        2_000_000_000,
-        "2GB",
-        Some(("", 1_500_000_000)),
-    );
+    let out = render_budget_warning(3_000_000_000, 2_000_000_000, "2GB", Some(("", 1_500_000_000)));
     assert!(
         out.contains("largest: (unattributed) 1.5 GB (50%)"),
         "expected the (unattributed) label, got:\n{out}"

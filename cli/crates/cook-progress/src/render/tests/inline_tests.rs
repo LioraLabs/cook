@@ -34,17 +34,10 @@ fn handle_routes_events_to_event_writer() {
     let mut state = BuildState::new();
     for ev in [
         ProgressEvent::BuildStarted {
-            recipes: vec![RecipeTopo {
-                id: RecipeId::new(0),
-                name: "lib".into(),
-                deps: vec![],
-                expected_nodes: 1,
-            }],
+            recipes: vec![RecipeTopo { id: RecipeId::new(0), name: "lib".into(), deps: vec![], expected_nodes: 1 }],
             total_nodes: 1,
         },
-        ProgressEvent::RecipeStarted {
-            recipe: RecipeId::new(0),
-        },
+        ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) },
         ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "x.c".into(), artifact: None, fallback_label: "x".into(),

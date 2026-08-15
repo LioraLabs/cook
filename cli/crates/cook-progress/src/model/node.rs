@@ -30,12 +30,7 @@ pub struct NodeState {
 }
 
 impl NodeState {
-    pub fn new(
-        id: NodeId,
-        name: String,
-        artifact: Option<PathBuf>,
-        fallback_label: String,
-    ) -> Self {
+    pub fn new(id: NodeId, name: String, artifact: Option<PathBuf>, fallback_label: String) -> Self {
         Self {
             id,
             name,

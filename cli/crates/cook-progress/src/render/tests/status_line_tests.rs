@@ -24,10 +24,7 @@ fn snap(total: usize, done: usize) -> StatusSnapshot {
     StatusSnapshot {
         total_nodes: total,
         done_nodes: done,
-        running: vec![RunningEntry {
-            started_at: Instant::now(),
-            display: "x.o".into(),
-        }],
+        running: vec![RunningEntry { started_at: Instant::now(), display: "x.o".into() }],
         started_at: Instant::now() - Duration::from_secs(1),
     }
 }

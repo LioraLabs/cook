@@ -60,7 +60,10 @@ fn print_logs_fallback(view: &BuildView) -> Result<(), ViewerError> {
         .map_err(|e| ViewerError::TerminalInit(e.to_string()))
 }
 
-fn write_logs_fallback<W: std::io::Write>(view: &BuildView, out: &mut W) -> std::io::Result<()> {
+fn write_logs_fallback<W: std::io::Write>(
+    view: &BuildView,
+    out: &mut W,
+) -> std::io::Result<()> {
     writeln!(out, "build {} (exit {:?})", view.build_id, view.exit_code)?;
     for recipe in view.recipes.values() {
         writeln!(out, "  {} [{:?}]", recipe.name, recipe.status)?;

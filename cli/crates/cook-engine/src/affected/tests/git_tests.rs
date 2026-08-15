@@ -148,13 +148,8 @@ fn shallow_clone_outside_depth_returns_no_merge_base() {
         Command::new("git")
             .arg("-C").arg(origin.path())
             .args(["rev-list", "--max-parents=0", "HEAD"])
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap()
-    .trim()
-    .to_string();
+            .output().unwrap().stdout
+    ).unwrap().trim().to_string();
 
     let err = changed_paths(shallow.path(), &c1_sha).unwrap_err();
     // Either RefNotFound (shallow doesn't have it) or NoMergeBase — both

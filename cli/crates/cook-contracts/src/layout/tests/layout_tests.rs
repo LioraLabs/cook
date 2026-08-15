@@ -230,10 +230,7 @@ mod module_load_laws {
         let msg = module_not_found_message(
             Path::new("/proj"),
             "foo",
-            ModuleTreeState {
-                legacy_present: false,
-                tree_present: true,
-            },
+            ModuleTreeState { legacy_present: false, tree_present: true },
         );
         assert!(msg.starts_with(
             "cook.load_module: module 'foo' not found under /proj/.cook/modules \
@@ -250,10 +247,7 @@ mod module_load_laws {
         let msg = module_not_found_message(
             Path::new("/proj"),
             "foo",
-            ModuleTreeState {
-                legacy_present: true,
-                tree_present: false,
-            },
+            ModuleTreeState { legacy_present: true, tree_present: false },
         );
         assert!(msg.contains("still exists"), "{msg}");
         assert!(msg.contains("cook modules install"), "{msg}");
@@ -270,10 +264,7 @@ mod module_load_laws {
         let msg = module_not_found_message(
             Path::new("/proj"),
             "foo",
-            ModuleTreeState {
-                legacy_present: false,
-                tree_present: false,
-            },
+            ModuleTreeState { legacy_present: false, tree_present: false },
         );
         assert!(msg.contains("no module tree here"), "{msg}");
         assert!(msg.contains("cook modules install"), "{msg}");

@@ -65,23 +65,11 @@ fn verdict_pass_is_ok_and_record_exempt_is_ok() {
 #[test]
 fn report_exit_code_zero_iff_all_ok() {
     let mut r = VerifyReport::default();
-    r.units.push(UnitReport {
-        recipe: "build".into(),
-        unit: "a.o".into(),
-        key: "k".into(),
-        verdict: UnitVerdict::Pass,
-    });
+    r.units.push(UnitReport { recipe: "build".into(), unit: "a.o".into(), key: "k".into(), verdict: UnitVerdict::Pass });
     assert_eq!(r.exit_code(), 0);
-    r.units.push(UnitReport {
-        recipe: "build".into(),
-        unit: "b.o".into(),
-        key: "k2".into(),
-        verdict: UnitVerdict::Divergence {
-            detail: "bytes differ".into(),
-        },
-    });
-    assert_ne!(r.exit_code(), 0);
-}
+    r.units.push(UnitReport { recipe: "build".into(), unit: "b.o".into(), key: "k2".into(), verdict: UnitVerdict::Divergence { detail: "bytes differ".into() } });
+        assert_ne!(r.exit_code(), 0);
+    }
 
     #[test]
     fn matching_bytes_pass() {

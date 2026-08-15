@@ -370,7 +370,11 @@ pub struct ModuleTreeState {
     pub tree_present: bool,
 }
 
-pub fn module_not_found_message(working_dir: &Path, name: &str, state: ModuleTreeState) -> String {
+pub fn module_not_found_message(
+    working_dir: &Path,
+    name: &str,
+    state: ModuleTreeState,
+) -> String {
     let mut msg = format!(
         "cook.load_module: module '{}' not found under {} (tried {})",
         name,

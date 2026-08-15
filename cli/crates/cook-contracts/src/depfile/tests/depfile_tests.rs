@@ -53,8 +53,11 @@ fn an_absolute_prerequisite_is_not_a_project_input() {
 /// it twice.
 #[test]
 fn a_source_does_not_depend_on_itself() {
-    let got =
-        parse_prerequisites("build/a.o: src/a.c include/a.h src/a.c\n", "src/a.c").expect("parses");
+    let got = parse_prerequisites(
+        "build/a.o: src/a.c include/a.h src/a.c\n",
+        "src/a.c",
+    )
+    .expect("parses");
     assert_eq!(got, vec!["include/a.h"]);
 }
 
@@ -71,8 +74,11 @@ fn an_empty_source_path_disables_the_self_skip() {
 /// compiler that happens not to repeat itself.
 #[test]
 fn one_path_named_twice_is_one_prerequisite() {
-    let got = parse_prerequisites("build/a.o: src/a.c include/a.h include/a.h\n", "src/a.c")
-        .expect("parses");
+    let got = parse_prerequisites(
+        "build/a.o: src/a.c include/a.h include/a.h\n",
+        "src/a.c",
+    )
+    .expect("parses");
     assert_eq!(got, vec!["include/a.h"]);
 }
 
@@ -81,7 +87,11 @@ fn one_path_named_twice_is_one_prerequisite() {
 /// change to every unit in the project.
 #[test]
 fn prerequisites_keep_first_occurrence_order() {
-    let got = parse_prerequisites("build/a.o: z.h a.h m.h a.h z.h\n", "").expect("parses");
+    let got = parse_prerequisites(
+        "build/a.o: z.h a.h m.h a.h z.h\n",
+        "",
+    )
+    .expect("parses");
     assert_eq!(got, vec!["z.h", "a.h", "m.h"]);
 }
 
@@ -112,8 +122,11 @@ fn a_target_with_no_prerequisites_is_an_empty_list() {
 /// its business, and a reader who deletes that filter should find this first.
 #[test]
 fn a_phony_target_stanza_comes_back_with_its_colon_attached() {
-    let got = parse_prerequisites("build/a.o: src/a.c include/a.h\ninclude/a.h:\n", "src/a.c")
-        .expect("parses");
+    let got = parse_prerequisites(
+        "build/a.o: src/a.c include/a.h\ninclude/a.h:\n",
+        "src/a.c",
+    )
+    .expect("parses");
     assert_eq!(got, vec!["include/a.h", "include/a.h:"]);
 }
 

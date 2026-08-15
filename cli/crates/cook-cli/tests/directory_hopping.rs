@@ -156,11 +156,7 @@ fn double_slash_target_rejected() {
 fn walk_up_does_not_escape_cookroot_boundary() {
     let tmp = TempDir::new().expect("tempdir");
     let outer = tmp.path();
-    write(
-        outer,
-        "Cookfile",
-        "recipe build\n    cook \"d.txt\" { echo DECOY > $<out> }\n",
-    );
+    write(outer, "Cookfile", "recipe build\n    cook \"d.txt\" { echo DECOY > $<out> }\n");
     std::fs::create_dir_all(outer.join("proj/sub")).unwrap();
     write(outer, "proj/.cookroot", "");
 

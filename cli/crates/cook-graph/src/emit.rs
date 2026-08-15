@@ -140,7 +140,10 @@ pub enum EmitError {
 
 /// Map a unit-level node id to its collapsed id at `level`, or `None` when the
 /// node is dropped by that level.
-fn collapse_id(level: Level, node: &crate::dag_data::NodeData) -> Option<String> {
+fn collapse_id(
+    level: Level,
+    node: &crate::dag_data::NodeData,
+) -> Option<String> {
     // File nodes are dropped above unit level: at recipe or group granularity
     // they outnumber the units several times over and say nothing about
     // ordering, which is the question these levels exist to answer.

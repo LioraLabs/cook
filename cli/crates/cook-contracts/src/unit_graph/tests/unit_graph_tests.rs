@@ -87,11 +87,7 @@ fn plan_records_provenance_per_edge_kind() {
         &["producer"],
         vec![
             unit(probe("cc:flags"), DepKind::Sequential, vec![]),
-            unit(
-                shell("gcc -c a.c"),
-                DepKind::StepGroup(0),
-                vec!["cc:flags".into()],
-            ),
+            unit(shell("gcc -c a.c"), DepKind::StepGroup(0), vec!["cc:flags".into()]),
             unit(shell("gcc -c b.c"), DepKind::StepGroup(0), vec![]),
             seq_unit("ld -o app a.o b.o"),
         ],
@@ -271,12 +267,7 @@ fn after_resolves_backward_references_and_normalises_leading_dot_slash() {
     let units = vec![
         group_unit_with("build foo", 0, &["build/foo.bmi"], &[]),
         group_unit_with("build bar", 0, &["build/bar.o"], &["./build/foo.bmi"]),
-        group_unit_with(
-            "build baz",
-            0,
-            &["build/baz.o"],
-            &["build/foo.bmi", "build/bar.o"],
-        ),
+        group_unit_with("build baz", 0, &["build/baz.o"], &["build/foo.bmi", "build/bar.o"]),
     ];
     assert_eq!(
         resolve_after(&units).expect("resolves"),
@@ -310,12 +301,7 @@ fn after_distinguishes_a_forward_reference_from_an_unknown_path() {
         }
     );
 
-    let unknown = vec![group_unit_with(
-        "build bar",
-        0,
-        &["build/bar.o"],
-        &["nope.bmi"],
-    )];
+    let unknown = vec![group_unit_with("build bar", 0, &["build/bar.o"], &["nope.bmi"])];
     assert_eq!(
         resolve_after(&unknown).expect_err("unknown path"),
         AfterError::NotDeclared {
@@ -382,12 +368,7 @@ fn plan_reports_an_unresolvable_after_entry_naming_the_recipe() {
     let ru = recipe(
         "gen",
         &[],
-        vec![group_unit_with(
-            "build bar",
-            0,
-            &["build/bar.o"],
-            &["missing.bmi"],
-        )],
+        vec![group_unit_with("build bar", 0, &["build/bar.o"], &["missing.bmi"])],
     );
     let err = plan(&[ru]).expect_err("unresolvable after");
     let msg = err.to_string();

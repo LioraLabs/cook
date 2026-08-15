@@ -178,7 +178,10 @@ fn cook_why_explains_shared_miss_via_producer_determinant_diff() {
         recorded_hash, "deadbeefdeadbeef",
         "sentinel must differ from the real recorded hash"
     );
-    let mutated = manifest_before.replace(&format!("\"{recorded_hash}\""), "\"deadbeefdeadbeef\"");
+    let mutated = manifest_before.replace(
+        &format!("\"{recorded_hash}\""),
+        "\"deadbeefdeadbeef\"",
+    );
     assert_ne!(
         mutated, manifest_before,
         "manifest mutation must have replaced the recorded input hash"

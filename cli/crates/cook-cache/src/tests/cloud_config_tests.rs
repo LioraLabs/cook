@@ -34,8 +34,7 @@ fn cloud_disabled_no_project_required() {
         write_toml(dir.path(), r#"
 [cloud]
 enabled = false
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert!(!cfg.cloud.enabled);
     // No project required when disabled.
@@ -48,8 +47,7 @@ fn cloud_enabled_requires_project() {
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
-"#,
-    );
+"#);
     let result = CloudConfig::load_or_default(dir.path());
     assert!(result.is_err(), "missing project must error when cloud.enabled=true");
 }
@@ -69,8 +67,7 @@ fn cloud_enabled_with_project_ok() {
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert!(cfg.cloud.enabled);
     assert_eq!(cfg.cloud.project.as_deref(), Some("cook"));
@@ -84,8 +81,7 @@ fn cache_ignore_env_parsed() {
         write_toml(dir.path(), r#"
 [cache]
 ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     let ignore = cfg.cache_ignore_env();
     assert_eq!(ignore.len(), 2);
@@ -150,8 +146,7 @@ max_retries = 7
 backoff_initial_ms = 250
 backoff_max_ms = 12000
 max_artifact_mib = 256
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     let bc = cfg.backend_config();
     assert_eq!(bc.timeout, Duration::from_secs(90));
@@ -177,8 +172,7 @@ fn cloud_enabled_requires_api_key() {
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-"#,
-    );
+"#);
     let result = CloudConfig::load_or_default(dir.path());
     match result {
         Err(CloudConfigError::MissingApiKey) => {}
@@ -200,8 +194,7 @@ fn cloud_enabled_uses_env_var_api_key() {
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-tok-9999"));
     // Cleanup so subsequent tests don't see this env var.
@@ -219,8 +212,7 @@ fn cloud_enabled_requires_endpoint() {
 [cloud]
 enabled = true
 project = "cook"
-"#,
-    );
+"#);
     let result = CloudConfig::load_or_default(dir.path());
     match result {
         Err(CloudConfigError::MissingEndpoint) => {}
@@ -243,8 +235,7 @@ fn cloud_empty_env_var_treated_as_unset() {
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-"#,
-    );
+"#);
     let result = CloudConfig::load_or_default(dir.path());
     match result {
         Err(CloudConfigError::MissingApiKey) => {}
@@ -274,17 +265,10 @@ enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
 api_key = "stale-toml-secret-should-be-ignored"
-"#,
-    );
-    let cfg =
-        CloudConfig::load_or_default(dir.path()).expect("legacy field is ignored, not rejected");
-    assert_eq!(
-        cfg.resolved_api_key().as_deref(),
-        Some("env-takes-precedence")
-    );
-    unsafe {
-        std::env::remove_var("COOK_CLOUD_API_KEY");
-    }
+"#);
+    let cfg = CloudConfig::load_or_default(dir.path()).expect("legacy field is ignored, not rejected");
+    assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-takes-precedence"));
+    unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
 }
 
 // ─── COOK-168: [cloud] publish field ─────────────────────────────────────
@@ -302,8 +286,7 @@ fn publish_false_parsed() {
         write_toml(dir.path(), r#"
 [cloud]
 publish = false
-"#,
-    );
+"#);
     let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
     assert!(!cfg.publish(), "publish = false must parse to false");
 }
@@ -316,8 +299,7 @@ fn publish_off_does_not_require_cloud_enabled() {
         write_toml(dir.path(), r#"
 [cloud]
 publish = false
-"#,
-    );
+"#);
     assert!(CloudConfig::load_or_default(dir.path()).is_ok());
 }
 

@@ -28,12 +28,9 @@ fn build_started_seeds_recipes_in_topo_order() {
 fn recipe_started_transitions_waiting_to_running() {
     let mut s = BuildState::new();
     s.apply(&ProgressEvent::BuildStarted {
-        recipes: topo(&[(0, "deps", &[], 2)]),
-        total_nodes: 2,
+        recipes: topo(&[(0, "deps", &[], 2)]), total_nodes: 2,
     });
-    s.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     assert_eq!(s.recipes[&RecipeId::new(0)].status, Status::Running);
     assert_eq!(s.totals.running, 1);
     assert_eq!(s.totals.waiting, 0);
@@ -101,12 +98,9 @@ fn cache_hit_preserves_node_kind_so_test_labels_are_not_command_text() {
 fn recipe_completed_marks_cached_when_all_cached() {
     let mut s = BuildState::new();
     s.apply(&ProgressEvent::BuildStarted {
-        recipes: topo(&[(0, "deps", &[], 2)]),
-        total_nodes: 2,
+        recipes: topo(&[(0, "deps", &[], 2)]), total_nodes: 2,
     });
-    s.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     s.apply(&ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(10),
@@ -121,12 +115,9 @@ fn recipe_completed_marks_cached_when_all_cached() {
 fn recipe_failed_records_first_error_summary() {
     let mut s = BuildState::new();
     s.apply(&ProgressEvent::BuildStarted {
-        recipes: topo(&[(0, "lib", &[], 1)]),
-        total_nodes: 1,
+        recipes: topo(&[(0, "lib", &[], 1)]), total_nodes: 1,
     });
-    s.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     s.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "x".into(), artifact: None, fallback_label: "x".into(),
@@ -153,12 +144,9 @@ fn recipe_failed_records_first_error_summary() {
 fn duplicate_recipe_completed_does_not_double_count_counters() {
     let mut s = BuildState::new();
     s.apply(&ProgressEvent::BuildStarted {
-        recipes: topo(&[(0, "deps", &[], 1)]),
-        total_nodes: 1,
+        recipes: topo(&[(0, "deps", &[], 1)]), total_nodes: 1,
     });
-    s.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     s.apply(&ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(10),
@@ -197,12 +185,9 @@ fn cached_node_count_sums_per_recipe() {
 fn duplicate_node_completed_does_not_double_count_progress() {
     let mut s = BuildState::new();
     s.apply(&ProgressEvent::BuildStarted {
-        recipes: topo(&[(0, "lib", &[], 2)]),
-        total_nodes: 2,
+        recipes: topo(&[(0, "lib", &[], 2)]), total_nodes: 2,
     });
-    s.apply(&ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    });
+    s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
     s.apply(&ProgressEvent::NodeStarted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "a".into(), artifact: None, fallback_label: "a".into(),

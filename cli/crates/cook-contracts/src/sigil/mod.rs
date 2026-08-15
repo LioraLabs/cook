@@ -79,6 +79,7 @@ fn try_match_placeholder(text: &str, start: usize) -> Option<PlaceholderSpan> {
     }
     i += 1;
 
+
     // Subsequent characters: ALPHA | DIGIT | _ | . | : | [ | ]
     while i < bytes.len() && is_ident_continue(bytes[i]) {
         i += 1;
@@ -127,6 +128,7 @@ impl ProbeRef {
     pub fn path(&self) -> &[Seg] {
         &self.path
     }
+
 }
 
 /// Parse a probe-shaped IDENT, or `None` when `ident` is not one.
@@ -197,6 +199,7 @@ fn is_alpha(b: u8) -> bool {
 fn is_ident_continue(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':' || b == b'[' || b == b']' || b == b'-'
 }
+
 
 pub mod subst;
 

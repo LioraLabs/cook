@@ -44,6 +44,7 @@ fn linear_chain_a_b_c() {
 
     // Complete c -> nothing new.
     assert!(dag.complete(c).is_empty());
+
 }
 
 // ── diamond pattern ────────────────────────────────────────────────
@@ -75,6 +76,7 @@ fn diamond_a_bc_d() {
     // Complete c -> d is now ready.
     assert_eq!(dag.complete(c), vec![d]);
     assert_eq!(dag.node(d).remaining_deps(), 0);
+
 }
 
 // ── parallel roots ─────────────────────────────────────────────────

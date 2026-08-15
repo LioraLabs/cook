@@ -5,10 +5,7 @@ fn probe_fingerprint_is_deterministic_for_same_inputs() {
     let inputs = ProbeFingerprintInputs {
         key: "cc:zlib".into(),
         produce_source: "return run_pkg_config(\"zlib\")".into(),
-        env: vec![
-            ("CC".into(), Some("gcc".into())),
-            ("PATH".into(), Some("/usr/bin".into())),
-        ],
+        env: vec![("CC".into(), Some("gcc".into())), ("PATH".into(), Some("/usr/bin".into()))],
         tools: vec![("pkg-config".into(), [0u8; 32])],
         files: vec![],
         upstream_probes: vec![],
@@ -32,26 +29,14 @@ fn probe_fingerprint_changes_when_env_value_changes() {
 #[test]
 fn probe_fingerprint_is_invariant_to_input_order() {
     let a = ProbeFingerprintInputs {
-        key: "cc:x".into(),
-        produce_source: "".into(),
-        env: vec![
-            ("A".into(), Some("1".into())),
-            ("B".into(), Some("2".into())),
-        ],
-        tools: vec![],
-        files: vec![],
-        upstream_probes: vec![],
+        key: "cc:x".into(), produce_source: "".into(),
+        env: vec![("A".into(), Some("1".into())), ("B".into(), Some("2".into()))],
+        tools: vec![], files: vec![], upstream_probes: vec![],
     };
     let b = ProbeFingerprintInputs {
-        key: "cc:x".into(),
-        produce_source: "".into(),
-        env: vec![
-            ("B".into(), Some("2".into())),
-            ("A".into(), Some("1".into())),
-        ],
-        tools: vec![],
-        files: vec![],
-        upstream_probes: vec![],
+        key: "cc:x".into(), produce_source: "".into(),
+        env: vec![("B".into(), Some("2".into())), ("A".into(), Some("1".into()))],
+        tools: vec![], files: vec![], upstream_probes: vec![],
     };
     assert_eq!(compute_probe_fingerprint(&a), compute_probe_fingerprint(&b));
 }
@@ -124,18 +109,9 @@ fn folding_module_content_moves_the_fingerprint() {
 #[test]
 fn folding_is_order_independent() {
     let declared = [7u8; 32];
-    let one = [
-        ("a.lua".to_string(), [1u8; 32]),
-        ("b.lua".to_string(), [2u8; 32]),
-    ];
-    let other = [
-        ("b.lua".to_string(), [2u8; 32]),
-        ("a.lua".to_string(), [1u8; 32]),
-    ];
-    assert_eq!(
-        fold_module_sources(&declared, &one),
-        fold_module_sources(&declared, &other)
-    );
+    let one = [("a.lua".to_string(), [1u8; 32]), ("b.lua".to_string(), [2u8; 32])];
+    let other = [("b.lua".to_string(), [2u8; 32]), ("a.lua".to_string(), [1u8; 32])];
+    assert_eq!(fold_module_sources(&declared, &one), fold_module_sources(&declared, &other));
 }
 
 /// A path is part of the fold, not just its bytes: two modules swapping

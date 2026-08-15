@@ -65,7 +65,11 @@ fn filter_restricts_test_set() {
 #[test]
 fn filter_with_zero_matches_exits_zero() {
     let tmp = tempdir().unwrap();
-    fs::write(tmp.path().join("Cookfile"), "recipe r\n    test { true }\n").unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe r\n    test { true }\n",
+    )
+    .unwrap();
 
     // Pattern that matches no recipe names
     let out = Command::new(cook_binary())

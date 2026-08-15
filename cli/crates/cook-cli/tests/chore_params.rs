@@ -733,10 +733,9 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     ).unwrap();
 
     // argv: target, host, version, then two variadic elements.
-    let out = run_cook_raw(
-        tmp.path(),
-        &["demo", "production", "myhost", "v1.2.3", "a.lua", "b.lua"],
-    );
+    let out = run_cook_raw(tmp.path(), &[
+        "demo", "production", "myhost", "v1.2.3", "a.lua", "b.lua",
+    ]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");

@@ -39,10 +39,7 @@ impl BuildState {
 
     pub fn apply(&mut self, event: &ProgressEvent) {
         match event {
-            ProgressEvent::BuildStarted {
-                recipes,
-                total_nodes,
-            } => {
+            ProgressEvent::BuildStarted { recipes, total_nodes } => {
                 self.ingest_topology(recipes, *total_nodes);
             }
             ProgressEvent::RecipeStarted { recipe } => {
@@ -67,12 +64,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::RecipeFailed {
-                recipe,
-                elapsed,
-                completed,
-                total,
-            } => {
+            ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
@@ -95,36 +87,16 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeStarted {
-                recipe,
-                node,
-                name,
-                artifact,
-                fallback_label,
-                kind,
-                cause: _,
-                cache_key: _,
-            } => {
+            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind, cause: _, cache_key: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
-                    let mut ns = NodeState::new(
-                        *node,
-                        name.clone(),
-                        artifact.clone(),
-                        fallback_label.clone(),
-                    );
+                    let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), fallback_label.clone());
                     ns.status = NodeStatus::Running;
                     ns.started_at = Some(Instant::now());
                     ns.kind = *kind;
                     r.nodes.insert(*node, ns);
                 }
             }
-            ProgressEvent::NodeCompleted {
-                recipe,
-                node,
-                elapsed: _,
-                kind: _,
-                cache_key: _,
-            } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed: _, kind: _, cache_key: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let bumped = if let Some(n) = r.nodes.get_mut(node) {
                         if n.status == NodeStatus::Running {
@@ -143,12 +115,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeFailed {
-                recipe,
-                node,
-                elapsed: _,
-                error,
-            } => {
+            ProgressEvent::NodeFailed { recipe, node, elapsed: _, error } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let bumped = if let Some(n) = r.nodes.get_mut(node) {
                         if n.status == NodeStatus::Running {
@@ -170,13 +137,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeCacheHit {
-                recipe,
-                node,
-                name,
-                artifact,
-                kind,
-            } => {
+            ProgressEvent::NodeCacheHit { recipe, node, name, artifact, kind } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     if let Entry::Vacant(e) = r.nodes.entry(*node) {
@@ -191,12 +152,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeSkipped {
-                recipe,
-                node,
-                name,
-                reason,
-            } => {
+            ProgressEvent::NodeSkipped { recipe, node, name, reason } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     if let Entry::Vacant(e) = r.nodes.entry(*node) {
@@ -264,12 +220,7 @@ impl BuildState {
         for topo in recipes {
             self.recipes.insert(
                 topo.id,
-                RecipeState::new(
-                    topo.id,
-                    topo.name.clone(),
-                    topo.deps.clone(),
-                    topo.expected_nodes,
-                ),
+                RecipeState::new(topo.id, topo.name.clone(), topo.deps.clone(), topo.expected_nodes),
             );
         }
         self.totals.waiting = recipes.len();

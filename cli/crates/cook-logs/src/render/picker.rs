@@ -32,11 +32,8 @@ pub fn draw(f: &mut Frame, area: Rect, builds: &[BuildSummary], cursor: usize) {
         })
         .collect();
     f.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" select build "),
-        ),
+        Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(" select build ")),
         modal,
     );
 }

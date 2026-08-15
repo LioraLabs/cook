@@ -31,10 +31,7 @@ fn mk(id: &str, outcome: TestOutcome) -> TestResult {
 #[test]
 fn json_sidecar_schema_is_v1() {
     let tmp = tempdir().unwrap();
-    let results = vec![
-        mk("r:a", TestOutcome::Passed),
-        mk("r:b", TestOutcome::Failed),
-    ];
+    let results = vec![mk("r:a", TestOutcome::Passed), mk("r:b", TestOutcome::Failed)];
     write_json_sidecar(tmp.path(), None, &results).unwrap();
     let bytes = std::fs::read(tmp.path().join(".cook/test-report.json")).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

@@ -157,7 +157,9 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
     // `.meta.json` / `.provenance.json` sidecars are real disk usage this
     // total does not include. Say so, every time there's a nonzero total to
     // qualify.
-    out.push_str("(artifact bytes only; .meta.json / .provenance.json sidecars are not counted)\n");
+    out.push_str(
+        "(artifact bytes only; .meta.json / .provenance.json sidecars are not counted)\n",
+    );
 
     out.push('\n');
     out.push_str("By kind:\n");
@@ -258,6 +260,7 @@ pub(crate) fn human_size(bytes: u64) -> String {
         format!("{:.1} TB", b / TB)
     }
 }
+
 
 #[cfg(test)]
 #[path = "tests/cache_du_tests.rs"]

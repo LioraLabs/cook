@@ -51,10 +51,7 @@ impl ConsumesFilter {
         let mut rules = Vec::with_capacity(patterns.len());
         for p in patterns {
             let matcher = build(p).map_err(|e| (p.clone(), e))?;
-            rules.push(Rule {
-                matcher,
-                basename_only: !p.contains('/'),
-            });
+            rules.push(Rule { matcher, basename_only: !p.contains('/') });
         }
         Ok(Self { rules })
     }

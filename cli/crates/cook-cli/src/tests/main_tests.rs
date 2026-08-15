@@ -71,9 +71,10 @@ fn every_global_flag_clap_declares_is_peeled_by_partition_argv() {
     for line in cli_src.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("#[arg(") || pending.is_some() {
-            let attr = pending
-                .take()
-                .map_or_else(|| trimmed.to_string(), |prev| format!("{prev} {trimmed}"));
+            let attr = pending.take().map_or_else(
+                || trimmed.to_string(),
+                |prev| format!("{prev} {trimmed}"),
+            );
             // An `#[arg(...)]` may wrap across lines; accumulate until balanced.
             if attr.matches('(').count() > attr.matches(')').count() {
                 pending = Some(attr);

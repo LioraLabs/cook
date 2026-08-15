@@ -203,10 +203,15 @@ pub trait CacheBackend: Send + Sync {
     /// same key via [`CacheBackend::get_manifest`]. Diagnostic/verification
     /// data — NOT integrity-critical; a correct rebuild writes byte-identical
     /// content, so this is idempotent (last write wins on identical bytes).
-    fn put_manifest(&self, key: &CloudKey, manifest: &DeterminantManifest) -> BackendResult<()>;
+    fn put_manifest(
+        &self,
+        key: &CloudKey,
+        manifest: &DeterminantManifest,
+    ) -> BackendResult<()>;
 
     /// Fetch the determinant manifest for `key`. `Ok(None)` on miss or on a
     /// malformed/legacy sidecar (the manifest is best-effort diagnostic data;
     /// a missing manifest is never an error).
     fn get_manifest(&self, key: &CloudKey) -> BackendResult<Option<DeterminantManifest>>;
 }
+

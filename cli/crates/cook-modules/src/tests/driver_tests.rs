@@ -22,12 +22,7 @@ fn read_argv_log(path: &Path) -> Vec<String> {
 }
 
 fn clear_fake_env() {
-    for var in [
-        "FAKE_LUAROCKS_LOG",
-        "FAKE_LUAROCKS_EXIT",
-        "FAKE_LUAROCKS_STDOUT",
-        "FAKE_LUAROCKS_STDERR",
-    ] {
+    for var in ["FAKE_LUAROCKS_LOG", "FAKE_LUAROCKS_EXIT", "FAKE_LUAROCKS_STDOUT", "FAKE_LUAROCKS_STDERR"] {
         std::env::remove_var(var);
     }
 }

@@ -41,12 +41,7 @@ impl ModuleCache {
         } else {
             BTreeMap::new()
         };
-        Self {
-            module_name: module_name.to_string(),
-            cache_dir: cache_dir.to_path_buf(),
-            data,
-            dirty: false,
-        }
+        Self { module_name: module_name.to_string(), cache_dir: cache_dir.to_path_buf(), data, dirty: false }
     }
 
     pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
@@ -60,10 +55,7 @@ impl ModuleCache {
     }
 
     pub fn set_source_hash(&mut self, hash: u64) {
-        self.data.insert(
-            "_source_hash".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(hash)),
-        );
+        self.data.insert("_source_hash".to_string(), serde_json::Value::Number(serde_json::Number::from(hash)));
         self.dirty = true;
     }
 

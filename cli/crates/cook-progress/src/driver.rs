@@ -16,11 +16,7 @@ pub struct Driver {
 
 impl Driver {
     pub fn new(renderer: Box<dyn Renderer>, log_store: Option<LogStore>) -> Self {
-        Self {
-            state: BuildState::new(),
-            renderer,
-            log_store,
-        }
+        Self { state: BuildState::new(), renderer, log_store }
     }
 
     pub fn run(&mut self, rx: mpsc::Receiver<ProgressEvent>) -> io::Result<bool> {

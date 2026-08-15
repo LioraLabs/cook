@@ -2,11 +2,7 @@ use super::*;
 
 fn captured(command: &str, dir: &Path) -> Outcome {
     run::<&str, &str>(
-        &Spawn {
-            command,
-            working_dir: dir,
-            stdio: Stdio::Captured,
-        },
+        &Spawn { command, working_dir: dir, stdio: Stdio::Captured },
         std::iter::empty(),
     )
     .expect("spawn")
@@ -112,26 +108,12 @@ fn the_overlay_accepts_the_map_types_the_callers_actually_hold() {
         [("COOK_SHELL_MAP_PROBE".to_string(), "b".to_string())].into_iter().collect();
     let cmd = "printf '%s' \"$COOK_SHELL_MAP_PROBE\"";
 
-    let a = run(
-        &Spawn {
-            command: cmd,
-            working_dir: dir.path(),
-            stdio: Stdio::Captured,
-        },
-        &hash,
-    )
-    .expect("spawn");
+    let a = run(&Spawn { command: cmd, working_dir: dir.path(), stdio: Stdio::Captured }, &hash)
+        .expect("spawn");
     assert_eq!(a.stdout_lossy(), "h");
 
-    let b = run(
-        &Spawn {
-            command: cmd,
-            working_dir: dir.path(),
-            stdio: Stdio::Captured,
-        },
-        &btree,
-    )
-    .expect("spawn");
+    let b = run(&Spawn { command: cmd, working_dir: dir.path(), stdio: Stdio::Captured }, &btree)
+        .expect("spawn");
     assert_eq!(b.stdout_lossy(), "b");
 }
 
@@ -150,11 +132,7 @@ fn inherited_stdio_captures_nothing_but_still_reports_status() {
     // to attribute, and the exit status is the whole report.
     let dir = tempfile::tempdir().unwrap();
     let o = run::<&str, &str>(
-        &Spawn {
-            command: "exit 5",
-            working_dir: dir.path(),
-            stdio: Stdio::Inherited,
-        },
+        &Spawn { command: "exit 5", working_dir: dir.path(), stdio: Stdio::Inherited },
         std::iter::empty(),
     )
     .expect("spawn");
@@ -178,11 +156,7 @@ fn a_command_that_cannot_start_is_an_error_not_an_outcome() {
     // report a spawn problem rather than a build failure.
     let missing = Path::new("/definitely/not/a/directory/cook-shell-test");
     let e = run::<&str, &str>(
-        &Spawn {
-            command: "true",
-            working_dir: missing,
-            stdio: Stdio::Captured,
-        },
+        &Spawn { command: "true", working_dir: missing, stdio: Stdio::Captured },
         std::iter::empty(),
     );
     assert!(e.is_err());

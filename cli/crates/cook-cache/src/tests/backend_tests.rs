@@ -260,11 +260,8 @@ fn get_fails_closed_on_meta_tamper() {
             .expect("deserialize");
     let bogus = <Sha256 as Digest>::digest(b"not the real bytes");
     restored.content_hash = bogus.into();
-    std::fs::write(
-        &meta_path,
-        serde_json::to_vec(&restored).expect("serialize"),
-    )
-    .expect("rewrite");
+    std::fs::write(&meta_path, serde_json::to_vec(&restored).expect("serialize"))
+        .expect("rewrite");
 
     let got = get_bytes(&backend, &k).expect("get");
     assert!(
@@ -724,7 +721,9 @@ fn local_get_with_meta_returns_mode_and_kind() {
 const OLD_STAMP: filetime::FileTime = filetime::FileTime::from_unix_time(1_000_000_000, 0);
 
 fn mtime_of(path: &std::path::Path) -> filetime::FileTime {
-    filetime::FileTime::from_last_modification_time(&std::fs::metadata(path).expect("stat"))
+    filetime::FileTime::from_last_modification_time(
+        &std::fs::metadata(path).expect("stat"),
+    )
 }
 
 /// Case 1 — `get_with_meta` on a hit advances the blob's mtime.

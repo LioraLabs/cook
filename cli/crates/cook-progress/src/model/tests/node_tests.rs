@@ -104,6 +104,11 @@ fn label_returns_raw_name() {
 
 #[test]
 fn new_default_kind_is_cooked() {
-    let n = NodeState::new(NodeId::new(0), "x".into(), None, "".into());
+    let n = NodeState::new(
+        NodeId::new(0),
+        "x".into(),
+        None,
+        "".into(),
+    );
     assert_eq!(n.kind, crate::event::NodeKind::Cooked);
 }

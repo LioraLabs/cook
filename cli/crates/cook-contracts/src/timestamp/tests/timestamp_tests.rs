@@ -119,15 +119,7 @@ fn a_leap_second_parses_as_the_instant_after_the_minute() {
 /// "(unknown duration)" — or worse, a wrong number.
 #[test]
 fn everything_the_formatter_writes_the_parser_reads_back() {
-    for secs in [
-        0u64,
-        1,
-        86_399,
-        86_400,
-        951_782_400,
-        1_772_323_199,
-        4_102_444_800,
-    ] {
+    for secs in [0u64, 1, 86_399, 86_400, 951_782_400, 1_772_323_199, 4_102_444_800] {
         let rendered = format_rfc3339_secs(secs);
         assert_eq!(
             parse_rfc3339_ms(&rendered),

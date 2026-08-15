@@ -417,11 +417,7 @@ fn refresh_is_idempotent() {
 #[test]
 fn the_composed_use_binding_executes_against_the_installed_loader() {
     let tmp = tempfile::tempdir().unwrap();
-    write_module(
-        tmp.path(),
-        "greet",
-        "return { value = function() return \"bound\" end }",
-    );
+    write_module(tmp.path(), "greet", "return { value = function() return \"bound\" end }");
     let lua = vm_with_loader(tmp.path().to_path_buf());
 
     // Byte-for-byte what codegen puts at the top of a register chunk and in

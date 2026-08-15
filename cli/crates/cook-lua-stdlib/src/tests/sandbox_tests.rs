@@ -5,9 +5,7 @@ fn root() -> PathBuf {
 }
 
 fn confined() -> SandboxPolicy {
-    SandboxPolicy::Confined {
-        project_root: root(),
-    }
+    SandboxPolicy::Confined { project_root: root() }
 }
 
 #[test]
@@ -84,8 +82,6 @@ fn live_source_observes_post_install_changes() {
     let src = SandboxSource::Live(Arc::clone(&slot));
     assert!(matches!(src.resolve(), SandboxPolicy::Off));
 
-    *slot.lock().unwrap() = SandboxPolicy::Confined {
-        project_root: root(),
-    };
+    *slot.lock().unwrap() = SandboxPolicy::Confined { project_root: root() };
     assert!(matches!(src.resolve(), SandboxPolicy::Confined { .. }));
 }

@@ -20,19 +20,10 @@ fn driver_consumes_events_until_finished() {
     let mut driver = Driver::new(renderer, None);
 
     tx.send(ProgressEvent::BuildStarted {
-        recipes: vec![RecipeTopo {
-            id: RecipeId::new(0),
-            name: "deps".into(),
-            deps: vec![],
-            expected_nodes: 1,
-        }],
+        recipes: vec![RecipeTopo { id: RecipeId::new(0), name: "deps".into(), deps: vec![], expected_nodes: 1 }],
         total_nodes: 1,
-    })
-    .unwrap();
-    tx.send(ProgressEvent::RecipeStarted {
-        recipe: RecipeId::new(0),
-    })
-    .unwrap();
+    }).unwrap();
+    tx.send(ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) }).unwrap();
     tx.send(ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(10),

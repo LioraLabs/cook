@@ -17,7 +17,11 @@ fn write_file(dir: &Path, rel: &str, content: &str) {
 #[test]
 fn returns_not_found_for_missing_file() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let result = parse_make_depfile(&dir.path().join("nonexistent.d"), "src/a.c", dir.path());
+    let result = parse_make_depfile(
+        &dir.path().join("nonexistent.d"),
+        "src/a.c",
+        dir.path(),
+    );
     assert!(matches!(result, Err(DepfileError::NotFound)));
 }
 
@@ -34,10 +38,7 @@ fn a_syntax_failure_surfaces_as_malformed() {
     let result = parse_make_depfile(&wd.join(".cook/deps/a.d"), "src/a.c", wd);
 
     match result {
-        Err(DepfileError::Malformed {
-            byte_offset,
-            reason,
-        }) => {
+        Err(DepfileError::Malformed { byte_offset, reason }) => {
             assert_eq!(byte_offset, 0);
             assert!(reason.contains("no ':'"), "got {reason:?}");
         }
@@ -69,11 +70,8 @@ fn skips_nonexistent_paths() {
     let wd = dir.path();
     write_file(wd, "src/a.c", "");
     write_file(wd, "include/exists.h", "");
-    write_file(
-        wd,
-        ".cook/deps/a.d",
-        "build/a.o: src/a.c include/exists.h include/missing.h\n",
-    );
+    write_file(wd, ".cook/deps/a.d",
+        "build/a.o: src/a.c include/exists.h include/missing.h\n");
 
     let paths = parse_make_depfile(&wd.join(".cook/deps/a.d"), "src/a.c", wd).expect("ok");
 
@@ -96,11 +94,8 @@ fn a_repeated_missing_path_neither_appears_nor_reorders_the_rest() {
     write_file(wd, "src/a.c", "");
     write_file(wd, "keep.h", "");
     write_file(wd, "other.h", "");
-    write_file(
-        wd,
-        ".cook/deps/a.d",
-        "build/a.o: src/a.c gone.h keep.h gone.h keep.h other.h\n",
-    );
+    write_file(wd, ".cook/deps/a.d",
+        "build/a.o: src/a.c gone.h keep.h gone.h keep.h other.h\n");
 
     let paths = parse_make_depfile(&wd.join(".cook/deps/a.d"), "src/a.c", wd).expect("ok");
 
