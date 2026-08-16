@@ -282,6 +282,38 @@ pub fn lookup(
         }
     }
 
+    // 4c. COOK-510: a top-level `files` declaration fails, by name, when a
+    //     matched path EXISTS but its bytes cannot be read. Mirrors 4b above,
+    //     for the same reason: `hash_file_sha256` answers the identical
+    //     all-zero digest for "does not exist" and "exists but unreadable",
+    //     and §{cat.probes.decl} deliberately folds the former as the
+    //     placeholder `"<missing>"` — a glob matching nothing is ordinary.
+    //     Folding the latter the same way is not: the placeholder is
+    //     indistinguishable from a path that was never there, so it freezes
+    //     the synthesised manifest — and every unit that seals it — at a
+    //     value that can never again observe an edit to that file's content.
+    //     Checked ahead of the GET so it holds on hit and miss alike, the
+    //     same reason 4b is.
+    //
+    //     Only the synthesised producer is subject to this, mirroring CS-0214's
+    //     own scope: a hand-written body that happens to declare `inputs.files`
+    //     keeps folding an unreadable match as the all-zero digest, which is
+    //     what §22.5.4 says it does; that probe's value is the author's to
+    //     compute.
+    if is_files_manifest(probe) {
+        for (path, digest) in &inputs.files {
+            if digest == &[0u8; 32] && ctx.working_dir.join(path).exists() {
+                return Err(ProbeError::Produce {
+                    key: key.to_string(),
+                    message: format!(
+                        "files declaration: '{path}' exists but its bytes could not \
+                         be read, so it has no content to record"
+                    ),
+                });
+            }
+        }
+    }
+
     // 5. Cache GET, unless there is no key to look up.
     //
     // CS-0204 makes this two-level. The declared fingerprint identifies the

@@ -426,12 +426,22 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
 /// where a consumed dependency's outputs are materialised on disk (§17.1.1.2).
 /// A unit left with nothing to key on has no key and always runs (§17.4).
 ///
-/// `probe_units_by_node` — maps dag node id → `ProbeUnit` metadata (declared
-/// inputs for fingerprinting). Only nodes whose `WorkPayload` is
-/// `WorkPayload::Probe` need entries. When the map is empty or has no entry
-/// for a given probe node, probe caching is skipped for that node (the probe
-/// always executes). Populated by the call site in `run.rs` from
-/// `RecipeUnits.probes` cross-referenced by key.
+/// `probe_units_by_node` — maps dag node id → (`ProbeUnit` metadata (declared
+/// inputs for fingerprinting), the declaring member's working directory).
+/// Only nodes whose `WorkPayload` is `WorkPayload::Probe` need entries. When
+/// the map is empty or has no entry for a given probe node, probe caching is
+/// skipped for that node (the probe always executes). Populated by the call
+/// site in `run.rs` from `RecipeUnits.probes` cross-referenced by key.
+///
+/// COOK-510: the directory is the probe's OWN declaring Cookfile's working
+/// directory, not the consuming `WorkNode`'s. A `files` declaration's paths
+/// are Cookfile-relative (§{cat.probes.inputs}), and hashing them against
+/// whichever recipe happens to consume the probe silently reads past the
+/// declaring member's tree for any cross-member consumer — every path joins
+/// to nothing, every hash folds to the all-zero sentinel, and the value
+/// freezes at `"<missing>"` forever. `run.rs` resolves this once, from the
+/// same `working_dir_by_prefix` map the register pre-pass already keys off,
+/// so both phases hash a `files` declaration against one base.
 ///
 /// `dep_outputs` — read-only terminal-outputs snapshot threaded into each
 /// worker VM so execute-phase `cook.dep_output` / `dep_output_list` resolve
@@ -456,7 +466,7 @@ pub fn execute_dag(
     event_tx: Option<mpsc::Sender<EngineEvent>>,
     cache_ctx: Arc<CacheContext>,
     rerun_patterns: &[String],
-    probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
+    probe_units_by_node: &BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)>,
     dep_outputs: cook_execute::WorkerDepOutputs,
     published: &AtomicU64,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
@@ -1407,7 +1417,7 @@ pub fn execute_dag(
         rerun_patterns: &[String],
         blocked_results: &mut BlockedTestResults,
         // G4 (CS-0074): probe cache lookup state.
-        probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
+        probe_units_by_node: &BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)>,
         upstream_probe_fingerprints: &mut BTreeMap<String, [u8; 32]>,
         probe_fingerprint_by_node: &mut BTreeMap<usize, [u8; 32]>,
         keyless_probes: &mut std::collections::BTreeSet<String>,
@@ -1784,7 +1794,7 @@ pub fn execute_dag(
                 let probe_key = key.clone();
                 let node_name = format!("probe:{}", probe_key);
 
-                if let Some(probe_unit) = probe_units_by_node.get(&id) {
+                if let Some((probe_unit, declared_dir)) = probe_units_by_node.get(&id) {
                     // G4 (CS-0074): everything decided before a probe value
                     // exists — fingerprint, keylessness, tool locations, the
                     // cache lookup, and the producer kinds that need no VM —
@@ -1802,7 +1812,10 @@ pub fn execute_dag(
                     // the probe recorded about the host.
                     let env_lookup = |name: &str| std::env::var(name).ok();
                     let eval_ctx = cook_probe::eval::EvalCtx {
-                        working_dir: &work_node.working_dir,
+                        working_dir: declared_dir, // COOK-510: the probe's OWN
+                        // declaring member, not `work_node.working_dir` (the
+                        // consuming recipe's) — see the doc comment on
+                        // `probe_units_by_node`.
                         cache: Some(cook_probe::eval::CacheAccess {
                             backend: cache_ctx.backend.as_ref(),
                             project_root: &cache_ctx.project_root,

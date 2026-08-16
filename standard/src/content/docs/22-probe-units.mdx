@@ -203,15 +203,33 @@ follow lower to the same probe-value model:
   file — the same hashes the fingerprint's FILES section folds, so the re-run
   trigger and the value cannot diverge, and the value contains no
   machine-specific absolute paths (it stays portable across a shared store,
-  §{exec.cache.single-key}). A file that cannot be read at value time folds as
-  the literal string `"<missing>"`, mirroring §{cat.probes.inputs}'s
-  missing-file fold. Adding, removing, or editing a matched file changes the
+  §{exec.cache.single-key}). A matched path that does not exist at value time
+  folds as the literal string `"<missing>"`, mirroring §{cat.probes.inputs}'s
+  missing-file fold — a glob resolving to nothing it can find is ordinary. A
+  matched path that EXISTS but whose bytes cannot be read (permission denied)
+  MUST fail the probe with a diagnostic naming the path, in the same way and
+  for the same reason as the `tools` rule above: `"<missing>"` says the same
+  thing on every host, so two machines each failing to read a DIFFERENT
+  file's content would compose identical value bytes, and one could be served
+  a sealed artifact built from the other's actual content — permanently,
+  since nothing about an unreadable file's bytes ever changes to force a
+  re-fingerprint. An implementation MUST NOT distinguish the two states by the
+  content hash alone (both fold to the same missing-content digest); it MUST
+  check existence separately. (CS-0241.) Adding, removing, or editing a
+  matched file changes the
   value and therefore the key of every unit that seals this probe — `files` is
   the file-set twin of `tools`, and the idiomatic way to name a set of files
   as both a sealable determinant and a named `gather NAME` source. In gather
   position its manifest keys become the gathered members; each path is bound
   as the member while the hashes remain the determinant value. A conforming
   implementation MUST reject an empty or unquoted top-level `files` body.
+  A declared path resolves, and its content hashes, against the Cookfile that
+  DECLARES the `files` set — never against a consuming recipe's own working
+  directory, which may be a different Cookfile's when the probe is sealed by
+  a recipe elsewhere in the workspace. Both the register-phase resolution and
+  the execute-phase resolution MUST use this one base, so a cross-Cookfile
+  consumer sees the same value the declaring Cookfile's own recipes would.
+  (CS-0241.)
 
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
 implementation MUST reject either applied to a `>{ … }` Lua-block producer with a

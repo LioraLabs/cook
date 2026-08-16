@@ -401,29 +401,48 @@ where
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
+    let probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, PathBuf)> = (0..dag
+        .len())
         .filter_map(|node_idx| {
             let work_node = dag.node(node_idx).payload();
             if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
                 // The payload key is Cookfile-local, but `RegisteredWorkspace
                 // .probes` keys imported-Cookfile probes workspace-qualified
-                // (registers.rs `qualify`). A probe unit always registers in
+                // (registers.rs `qualify`). A probe unit usually registers in
                 // the same Cookfile as its surrounding recipe, and recipe
                 // local names never contain '.', so the recipe's qualified
-                // prefix locates the entry. Without this, every imported-
-                // Cookfile probe missed its metadata here and silently lost
-                // fingerprint caching (always re-ran); CS-0148's `files`
-                // sentinel made the miss loud by reaching a worker as Lua.
+                // prefix locates the entry in the common case. Without this,
+                // every imported-Cookfile probe missed its metadata here and
+                // silently lost fingerprint caching (always re-ran); CS-0148's
+                // `files` sentinel made the miss loud by reaching a worker as
+                // Lua. The `.or_else` fallback is what actually reaches a
+                // cross-member probe (whose payload key already arrives fully
+                // qualified against its OWN declaring prefix, not the
+                // consumer's).
                 let qualified = match work_node.recipe_name.rfind('.') {
                     Some(idx) => {
                         format!("{}.{}", &work_node.recipe_name[..idx], key)
                     }
                     None => key.clone(),
                 };
-                probe_units_by_key
-                    .get(&qualified)
-                    .or_else(|| probe_units_by_key.get(key))
-                    .map(|pu| (node_idx, pu.clone()))
+                // COOK-510: the base for hashing this probe's `files` paths
+                // is derived from the MATCHED key's own prefix — never from
+                // `work_node`, which is the CONSUMER — so it agrees with the
+                // register pre-pass's own base for the same probe.
+                let (matched_key, pu) = probe_units_by_key
+                    .get_key_value(&qualified)
+                    .or_else(|| probe_units_by_key.get_key_value(key))?;
+                let prefix = match matched_key.rfind('.') {
+                    Some(idx) => &matched_key[..idx],
+                    None => "",
+                };
+                let declared_dir = registered_workspace
+                    .working_dir_by_prefix
+                    .get(prefix)
+                    .cloned()
+                    .or_else(|| registered_workspace.working_dir_by_prefix.get("").cloned())
+                    .unwrap_or_else(|| work_node.working_dir.clone());
+                Some((node_idx, (pu.clone(), declared_dir)))
             } else {
                 None
             }

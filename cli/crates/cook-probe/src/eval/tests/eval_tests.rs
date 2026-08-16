@@ -356,6 +356,72 @@ fn cs0214_a_tools_probe_whose_binary_cannot_be_read_fails_rather_than_recording_
 }
 
 #[test]
+#[cfg(unix)]
+fn cook510_a_files_probe_whose_matched_path_cannot_be_read_fails_rather_than_recording_missing() {
+    // Mirrors cs0214_a_tools_probe_whose_binary_cannot_be_read_fails_rather_than_recording_zeros
+    // for the `files` side. `hash_file_sha256` answers the identical all-zero
+    // digest for "does not exist" and "exists but unreadable", and
+    // §{cat.probes.decl} folds the FORMER as the placeholder `"<missing>"`
+    // deliberately — a glob matching nothing is ordinary. Folding the LATTER
+    // the same way is not: the placeholder is indistinguishable from a path
+    // that was never there, so the synthesised manifest — and every unit
+    // sealing it — freezes at a value that can never again observe an edit to
+    // that file's content. This is the false-hit COOK-510 exists to close.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let unreadable = tmp.path().join("secret.txt");
+    std::fs::write(&unreadable, b"content nobody may read").unwrap();
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let mut unit = declares_file("ns:manifest", "secret.txt");
+    unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let result = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
+
+    // Root can read a mode-0000 file, so the unreadable state is not
+    // constructible when the suite runs as root — same caveat CS-0214's
+    // mirror test carries. Whichever way this lands, "<missing>" must never
+    // stand in for a file that is actually there.
+    match result {
+        Err(err) => {
+            assert!(err.message().contains("secret.txt"), "got: {err}");
+            assert!(err.message().contains("could not be read"), "got: {err}");
+        }
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.bytes).into_owned();
+            assert!(
+                !text.contains("<missing>"),
+                "a present-but-unreadable file must never fold as missing: {text}",
+            );
+        }
+    }
+}
+
+#[test]
+fn cook510_a_files_probe_whose_matched_path_is_genuinely_absent_still_folds_as_missing() {
+    // The regression guard for the test above: COOK-510 narrows the guard to
+    // "exists but unreadable", not "any unhashable path". A glob's compile-time
+    // resolution can still name a path that is gone by the time the probe
+    // evaluates (a file deleted between register and execute), and that stays
+    // the pre-existing, spec'd `"<missing>"` fold — no error.
+    let tmp = tempfile::tempdir().unwrap();
+    // Deliberately never created.
+    let mut unit = declares_file("ns:manifest", "gone.txt");
+    unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
+    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .expect("a genuinely absent match must not fail the probe");
+
+    let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
+    assert_eq!(
+        value.get("gone.txt").and_then(|v| v.as_str()),
+        Some("<missing>"),
+        "an absent match keeps folding as the spec'd placeholder, got {value}",
+    );
+}
+
+#[test]
 fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
     let tmp = tempfile::tempdir().unwrap();
     let store = tempfile::tempdir().unwrap();
