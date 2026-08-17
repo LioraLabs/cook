@@ -1,17 +1,41 @@
-//! Probe-units integration tests (CS-0074).
+//! Probe-units integration tests (CS-0074, CS-0243).
 //!
 //! End-to-end tests exercising the `cook.probe` API and demand-driven
 //! scheduling at the binary level — write a Cookfile in a tempdir,
 //! invoke `cook build`, and inspect filesystem outputs and `.cook/cache/`.
 //!
+//! CS-0243 removed the probe-value cache: a reached probe always observes.
+//! `.cook/cache/` still holds artifacts for ordinary `cook`-step units
+//! (including ones that seal a probe's value), just never a `probe_value`
+//! kind any more.
+//!
 //! Coverage:
 //!   * `probe_consumer_end_to_end_first_run_then_cache_hit` — a probe and
 //!     a consumer unit that references it; verifies the probe value reaches
-//!     the consumer, an artifact lands in `.cook/cache/`, and a second run
-//!     hits the cache with identical output.
+//!     the consumer and a second run produces identical output (the probe
+//!     re-observes; the consumer, keyed on the probe's unchanged value,
+//!     still cache-hits).
 //!   * `probe_unreached_is_not_executed` — a probe no recipe-reachable unit
 //!     consumes; verifies demand-driven scheduling prunes it (no
-//!     `probe_value` artifact written under `.cook/cache/`).
+//!     `probe_value` artifact written under `.cook/cache/`, which is now
+//!     true of every run, reached or not).
+//!
+//! COOK-527 Task 2 pins — CS-0243 cost no early cutoff, and the per-run
+//! probe-value store is not a cross-invocation source:
+//!   * `seal_hits_when_the_observed_value_is_unchanged_across_reobservation`
+//!     (pin 1) — a `seal`ed unit still cache-hits when two builds observe an
+//!     unchanged value, even though the probe itself re-produces every
+//!     time; a third build that changes the observed value must then miss,
+//!     which is what makes the first two builds' hits mean anything.
+//!   * `seal_a_to_b_to_a_revert_re_serves_the_original_artifact` (pin 2) — a
+//!     `seal`ed unit's A -> B -> A revert re-serves A's original artifact
+//!     from cache on the third build rather than rebuilding it.
+//!   * `probes_get_does_not_read_a_prior_invocations_materialised_file`
+//!     (pin 3b) — `cook.probes.get(key)` on a step that never demanded `key`
+//!     this invocation raises the §22.5.8 not-materialised error even when
+//!     an earlier invocation already materialised `.cook/probes/<key>.json`
+//!     on disk. Pin 3a (an unreached probe never executes) is already
+//!     covered by `probe_unreached_is_not_executed` above.
 
 use std::fs;
 use std::path::Path;
@@ -65,6 +89,35 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Ok(out)
 }
 
+/// Shared Cookfile shape for COOK-527 pins 1 and 2. A probe named `key`
+/// appends one byte to `probe-runs.log` every time its `produce` body runs
+/// and returns `input.txt`'s content as its value; a `seal`ed `cook` step
+/// appends a line to `marker.log` only when its command actually executes
+/// (never on a cache hit), and writes the probe's value to `out.txt`.
+fn watched_cookfile(key: &str) -> String {
+    format!(
+        r#"
+probe {key}
+    >{{
+        local log = io.open("probe-runs.log", "a")
+        log:write("x")
+        log:close()
+        local h = io.open("input.txt")
+        local content = h:read("*a")
+        h:close()
+        return {{ v = content }}
+    }}
+
+recipe build
+    seal {key}
+    cook "out.txt" {{
+        echo run >> marker.log
+        echo $<{key}.v> > $<out>
+    }}
+"#
+    )
+}
+
 #[test]
 fn inline_file_seal_invalidates_without_fanout() {
     let tmp = TempDir::new().unwrap();
@@ -106,10 +159,18 @@ fn inline_seal_resolution_errors_name_the_attempted_reading() {
     }
 }
 
-/// First run: probe executes, consumer unit reads its value, output
-/// file `done.marker` is produced and a probe artifact lands in
-/// `.cook/cache/`.  Second run: probe + consumer both cache-hit and
-/// `done.marker` is identical.
+/// First run: probe executes, consumer unit reads its value via `probes`,
+/// output file `done.marker` is produced and the consumer's artifact lands
+/// in `.cook/cache/`. Second run (CS-0243): the probe re-observes — it is
+/// keyless (`inputs = {}`), so it always re-produces, cache or no cache.
+///
+/// The consumer here uses `probes`, not `seal` (COOK-530): its key folds
+/// only the probe's FINGERPRINT (§22.5.6 rule 3), which is constant because
+/// the `produce` source string never changes — never the probe's observed
+/// VALUE (§22.5.7). `done.marker` comes out identical on both runs because
+/// this probe's produce body is deterministic and substitutes the same
+/// literal value into the command text each time, not because the
+/// consumer's key tracked the value.
 ///
 /// SHI-222 Phase 7 Task 7 carry-forward: the legacy `register` block
 /// that called `cook.add_unit` directly is reshaped so the `cook.add_unit`
@@ -155,7 +216,8 @@ recipe build
         String::from_utf8_lossy(&out1.stderr)
     );
 
-    // Probe artifact should exist in cache.
+    // The consumer's artifact (a `cook` step with a declared output) should
+    // exist in cache — CS-0243 leaves ordinary unit caching untouched.
     let cache_dir = tmp.path().join(".cook/cache");
     let entries: Vec<_> = fs::read_dir(&cache_dir)
         .unwrap_or_else(|_| panic!("cache dir {} missing", cache_dir.display()))
@@ -163,30 +225,29 @@ recipe build
         .collect();
     assert!(!entries.is_empty(), "expected at least one cache artifact after first run");
 
-    // Second run — should still succeed and produce the same output.
+    // Second run — should still succeed and produce the same output, even
+    // though the probe re-observed rather than being served from a store.
     let _out2 = run_cook(tmp.path(), &["build"]).expect("second run should succeed");
     let marker2 = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
-    assert_eq!(marker, marker2, "probe output should be identical on second run (cache hit)");
+    assert_eq!(marker, marker2, "probe output should be identical on second run");
 }
 
-/// CS-0074 probe-cache regression (SHI-222 Task 4.4 review C1).
-///
-/// The unified-DAG transitional shim aggregates per-recipe probes into a
-/// workspace-level map; the executor consults that map to enable the
-/// probe-value cache fast path on subsequent runs. If the shim drops the
-/// probes (which an earlier draft did), the cache lookup misses every time
-/// and the probe re-executes on every build.
+/// CS-0243: a reached probe always observes. There is no probe-value cache —
+/// a probe's produce body MUST run on every invocation in which the probe is
+/// reached, even when nothing it declares has changed.
 ///
 /// This test pins the contract with an observable side effect: the probe's
 /// produce body appends a single line to `probe-runs.log` each time it
 /// runs. After two `cook build` invocations the log MUST contain exactly
-/// one line — proving the second run took the cache fast path and did NOT
-/// re-invoke the produce body.
+/// TWO lines — proving the second run re-invoked the produce body rather
+/// than serving the first run's value from a store.
+///
+/// Inverts the pre-CS-0243 `probe_produce_does_not_re_execute_on_cache_hit`,
+/// which pinned the opposite law under the removed cache.
 ///
 /// The probe key and produce-source contents are uniquified per test
-/// invocation so the host-wide cache (~/.cache/cook/cloud/) cannot serve a
-/// stale hit from a prior `cargo test` run — the probe fingerprint folds
-/// in both the key and the produce source (§22.5.3).
+/// invocation so the host-wide cache (~/.cache/cook/cloud/) cannot leak
+/// state across `cargo test` runs.
 ///
 /// SHI-222 Phase 7 Task 7 carry-forward: same reshape as
 /// `probe_consumer_end_to_end_first_run_then_cache_hit` — the
@@ -194,7 +255,7 @@ recipe build
 /// composes against the CS-0077 register-pass contract (top-level
 /// `register` blocks execute with no active recipe `body_slot`).
 #[test]
-fn probe_produce_does_not_re_execute_on_cache_hit() {
+fn probe_produce_re_executes_on_every_invocation() {
     let tmp = TempDir::new().unwrap();
     // Uniquify the probe key per test invocation so we never collide with
     // a cached probe-value from a prior test run.
@@ -236,13 +297,13 @@ recipe build
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
-    // CS-0178: the probe MUST declare an input to be cacheable at all. A probe
-    // declaring none has no cache key and re-produces every run, which would
-    // make the "did the fast path engage" question this test asks
-    // unanswerable — the log would grow for a reason unrelated to the shim.
+    // A declared input is not what makes this probe re-produce any more (that
+    // was CS-0178's keyless rule, which governed the removed cache) — CS-0243
+    // means EVERY reached probe re-produces regardless. Kept anyway: it
+    // exercises the ordinary declared-input path rather than the keyless one.
     fs::write(tmp.path().join("seed.txt"), "seed\n").unwrap();
 
-    // First run: produce body MUST execute (cache miss).
+    // First run: produce body MUST execute.
     run_cook(tmp.path(), &["build"]).expect("first run should succeed");
     let log1 = fs::read_to_string(tmp.path().join("probe-runs.log"))
         .expect("probe-runs.log should exist after first run");
@@ -251,16 +312,16 @@ recipe build
         "first run: produce body should have executed exactly once, got log: {log1:?}"
     );
 
-    // Second run: probe-cache fast path MUST be taken — produce body MUST
-    // NOT re-execute. If the workspace-level `probes` map is empty (the
-    // C1 bug), the executor can't find the ProbeUnit by key, falls
-    // through to fresh execution, and the log grows to "ran\nran\n".
+    // Second run: CS-0243 — the probe is reached again with nothing about its
+    // declared inputs changed, and it MUST re-observe rather than being
+    // served the first run's value. The log growing to "ran\nran\n" is the
+    // side effect under test.
     run_cook(tmp.path(), &["build"]).expect("second run should succeed");
     let log2 = fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap();
     assert_eq!(
-        log2, "ran\n",
-        "second run: probe MUST hit cache and NOT re-execute produce body; \
-         got log: {log2:?} (expected \"ran\\n\")"
+        log2, "ran\nran\n",
+        "second run: a reached probe MUST re-execute produce every invocation; \
+         got log: {log2:?} (expected \"ran\\nran\\n\")"
     );
 }
 
@@ -399,11 +460,14 @@ recipe build
 /// MUST NOT be executed and MUST NOT write a probe-value artifact to
 /// `.cook/cache/`.
 ///
-/// Locks the §22.5.7 demand-driven scheduling contract at the binary level:
+/// Locks the §22.5.8 demand-driven scheduling contract at the binary level:
 /// declaring `cook.probe("test:unused", ...)` in the register phase is not
 /// sufficient to trigger its execution — only consumer demand (a unit with
 /// `probes = {...}` reachable from the requested recipe) causes the probe
-/// to run.
+/// to run. CS-0243 left this law untouched: no probe value is EVER written
+/// to `.cook/cache/` any more, reached or not, so this test's negative
+/// assertion is now unconditionally true of a reached probe too — its
+/// interesting case remains the unreached one, which is what it names.
 ///
 /// Detection scheme: walk `.cook/cache/` and inspect every `*.meta.json`
 /// sidecar; an `ArtifactMeta` with `kind = Some("probe_value")` serializes
@@ -467,11 +531,14 @@ recipe build
 /// CS-0102 (COOK-91): a probe completion materialises its value at
 /// `.cook/probes/<key>.json` as canonical JSON — UTF-8, two-space pretty
 /// printing, object keys sorted bytewise (alpha before zeta), exactly one
-/// trailing LF — and a warm rerun (cache hit) leaves the file byte-identical.
+/// trailing LF — and a warm rerun leaves the file byte-identical. CS-0243:
+/// the file is byte-identical because the produce body is deterministic and
+/// re-observes the same answer, not because anything was served from a
+/// store — there is none.
 ///
 /// The probe key and produce source are uniquified per invocation so the
-/// host-wide persistent cache (~/.cache/cook/cloud) cannot serve a stale
-/// value across `cargo test` runs.
+/// host-wide persistent cache (~/.cache/cook/cloud) cannot leak state across
+/// `cargo test` runs.
 #[test]
 fn probe_value_file_is_canonical_json_and_survives_warm_rerun() {
     let tmp = TempDir::new().unwrap();
@@ -547,7 +614,8 @@ recipe build
     let parsed: serde_json::Value = serde_json::from_slice(&bytes1).expect("must parse as JSON");
     assert_eq!(parsed, serde_json::json!({"alpha": [1, 2], "zeta": "last"}));
 
-    // Warm rerun (cache hit): the file must be byte-identical.
+    // Warm rerun: the probe re-observes (CS-0243, no cache), and because the
+    // produce body is deterministic the file must come out byte-identical.
     run_cook(tmp.path(), &["build"]).expect("second run should succeed");
     let bytes2 = fs::read(&probe_file).unwrap();
     assert_eq!(
@@ -587,4 +655,230 @@ recipe build
     run_cook(tmp.path(), &["build"]).expect("run should succeed");
     let marker = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
     assert!(marker.contains("hello-json"), "marker: {marker:?}");
+}
+
+/// COOK-527 pin 1. §22.5.8's **Always observe** rule survives its own early
+/// cutoff (CS-0243, backed by §17.1.1): a `seal`ed unit's cache key is a
+/// function of the probe's VALUE, so re-observing an unchanged value still
+/// hits even though the probe itself re-produces on every invocation
+/// (pinned elsewhere by `probe_produce_re_executes_on_every_invocation`).
+///
+/// The probe appends one byte to `probe-runs.log` every time its produce
+/// body runs — the direct observable of re-observation. The sealing `cook`
+/// step appends a line to `marker.log` only when its command actually RUNS,
+/// never on a cache hit (a restored artifact is not re-executed).
+///
+/// Three builds, not two. The first two touch nothing and must hold the
+/// marker log at one line; the third changes `input.txt`, and the marker
+/// log MUST then grow to two. The third build is the discriminator: two
+/// reviewers independently showed that the first two builds alone prove
+/// nothing, by two different mutations that left the two-build assertions
+/// passing regardless — deleting the `seal test:watched` line from this
+/// test's own Cookfile, and separately deleting the value fold at
+/// `seal.rs::seal_contribution` (COOK-527 Important). Both mutations still
+/// "hit" on an unchanged rebuild, because an UNSEALED unit also has a
+/// constant key and hits for the wrong reason. Only a changed-value build
+/// that then MISSES tells a real value fold apart from a constant key that
+/// never moves at all.
+#[test]
+fn seal_hits_when_the_observed_value_is_unchanged_across_reobservation() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = watched_cookfile("test:watched");
+    fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+
+    run_cook(tmp.path(), &["build"]).expect("first run should succeed");
+    let probe_log_1 = fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap();
+    let marker_1 = fs::read_to_string(tmp.path().join("marker.log")).unwrap();
+    assert_eq!(probe_log_1, "x", "probe must have produced exactly once so far");
+    assert_eq!(marker_1, "run\n", "unit must have executed exactly once so far");
+
+    // Second build: nothing touched.
+    run_cook(tmp.path(), &["build"]).expect("second run should succeed");
+    let probe_log_2 = fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap();
+    let marker_2 = fs::read_to_string(tmp.path().join("marker.log")).unwrap();
+    assert_eq!(
+        probe_log_2, "xx",
+        "CS-0243: a reached probe MUST re-produce every invocation, even \
+         when its declared value is unchanged; got probe-runs.log: {probe_log_2:?}"
+    );
+    assert_eq!(
+        marker_2, "run\n",
+        "early cutoff: the probe's value did not move, so the sealing \
+         unit's key did not move, so its command must NOT re-run; got \
+         marker.log: {marker_2:?}"
+    );
+
+    // Third build: input.txt changes, so the probe's observed value moves,
+    // and the sealing unit's key MUST move with it — the command MUST
+    // re-run. This is the discriminator described in the doc comment above:
+    // an unchanged-build hit alone cannot distinguish a real value fold from
+    // a unit that simply never re-keys; a changed-build miss can.
+    fs::write(tmp.path().join("input.txt"), "B").unwrap();
+    run_cook(tmp.path(), &["build"]).expect("third run should succeed");
+    let probe_log_3 = fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap();
+    let marker_3 = fs::read_to_string(tmp.path().join("marker.log")).unwrap();
+    assert_eq!(
+        probe_log_3, "xxx",
+        "CS-0243: the probe must have re-produced a third time; got \
+         probe-runs.log: {probe_log_3:?}"
+    );
+    assert_eq!(
+        marker_3, "run\nrun\n",
+        "the sealed value changed A -> B, so the sealing unit's key must \
+         have moved and its command must have re-run; got marker.log: \
+         {marker_3:?} (expected \"run\\nrun\\n\")"
+    );
+}
+
+/// COOK-527 pin 2. A -> B -> A revert re-serves the FIRST build's artifact
+/// from cache rather than rebuilding it — the sealing unit's key is a pure
+/// function of the sealed probe's current value, so an exact revert lands
+/// back on the exact key build 1 populated.
+///
+/// Same Cookfile shape and same COOK-530 trap as pin 1: `seal
+/// test:revertwatched` is what folds the probe's VALUE into the unit's key
+/// (not a bare `probes = {...}` reference or `$<key>` sigil alone).
+///
+/// `marker.log` is the discriminator that makes this test mean something:
+/// "out.txt reads A again" is equally true whether build 3 replayed the
+/// cached artifact or simply re-ran the command against input.txt == "A".
+/// Only `marker.log` staying at two lines (not growing to three) proves the
+/// third build was a cache hit rather than a re-run. `probe-runs.log`
+/// growing to three lines regardless is the free half of the claim: the
+/// probe re-observes on every invocation (CS-0243) independently of
+/// whether the unit sealing it hits or re-runs.
+#[test]
+fn seal_a_to_b_to_a_revert_re_serves_the_original_artifact() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = watched_cookfile("test:revertwatched");
+    fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+
+    // A.
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    run_cook(tmp.path(), &["build"]).expect("build A should succeed");
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "A\n");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap(),
+        "x",
+        "probe must have produced exactly once building A"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("marker.log")).unwrap(),
+        "run\n",
+        "unit must have executed exactly once building A"
+    );
+
+    // B.
+    fs::write(tmp.path().join("input.txt"), "B").unwrap();
+    run_cook(tmp.path(), &["build"]).expect("build B should succeed");
+    assert_eq!(fs::read_to_string(tmp.path().join("out.txt")).unwrap(), "B\n");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap(),
+        "xx",
+        "CS-0243: the probe must have re-produced a second time building B"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("marker.log")).unwrap(),
+        "run\nrun\n",
+        "unit must re-run when the sealed probe's value changed A -> B"
+    );
+
+    // Back to A, exactly.
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    run_cook(tmp.path(), &["build"]).expect("build A-again should succeed");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("out.txt")).unwrap(),
+        "A\n",
+        "reverted build must serve A again"
+    );
+    // CS-0243: the probe re-produces a third time even though the sealing
+    // unit below hits — a reached probe always observes, regardless of
+    // whether the unit that seals it re-runs or is served from cache. This
+    // is the free half of the A -> B -> A claim: three produce runs across
+    // three builds, while the sealing unit ran only twice.
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap(),
+        "xxx",
+        "CS-0243: the probe must have re-produced a third time even though \
+         the sealing unit below is served from cache"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("marker.log")).unwrap(),
+        "run\nrun\n",
+        "the marker must NOT grow a third time: A's artifact must be \
+         re-served from the content-addressed cache (the same key as the \
+         first build), not rebuilt by re-running the command"
+    );
+}
+
+/// COOK-527 pin 3(b). §22.5.8: `.cook/probes/<key>.json` is a per-invocation
+/// RECORD, never a cross-invocation source. `probe_unreached_is_not_executed`
+/// (above) pins pin 3(a) — an unreached probe never executes. This pins the
+/// other half, the one CS-0243's removal of `ProbeValueStore::attach_dir`
+/// from `execute_dag` was actually for: `cook.probes.get(key)` on a step
+/// that never demanded `key` THIS invocation must raise the not-materialised
+/// error even when an EARLIER invocation already materialised
+/// `.cook/probes/<key>.json` on disk. Before COOK-527 Task 1 removed the
+/// executor's `attach_dir` call, this second run would have silently served
+/// that stale file instead of raising.
+#[test]
+fn probes_get_does_not_read_a_prior_invocations_materialised_file() {
+    let tmp = TempDir::new().unwrap();
+    let key = "test:k527stale";
+
+    // First Cookfile: the probe IS demanded (sealed), so its value is
+    // materialised at `.cook/probes/<key>.json`.
+    let cookfile_demanding = format!(
+        r#"
+probe {key}
+    >{{ return "v1" }}
+
+recipe build
+    seal {key}
+    test {{ echo built }}
+"#
+    );
+    fs::write(tmp.path().join("Cookfile"), &cookfile_demanding).unwrap();
+    run_cook(tmp.path(), &["build"]).expect("first run should succeed");
+    let probe_file = tmp
+        .path()
+        .join(".cook")
+        .join("probes")
+        .join(format!("{key}.json"));
+    assert!(
+        probe_file.exists(),
+        "first run must materialise {}",
+        probe_file.display()
+    );
+
+    // Second Cookfile, same workspace: `key` is still declared but no
+    // longer demanded by anything (no seal, no probes={...}, no
+    // inputs.requires) — demand-driven scheduling prunes it entirely this
+    // run (see `probe_unreached_is_not_executed`), so nothing in THIS
+    // invocation ever inserts a value into the per-run ProbeValueStore for
+    // `key`. A separate step calls `cook.probes.get(key)` directly, but the
+    // key is built by concatenation rather than passed as a bare string
+    // literal — `cook_contracts::lua_scan::scan_probe_reads` only recognises
+    // a literal that is the WHOLE argument (§22.5.7's Lua-body static scan,
+    // CS-0152) as a demand, precisely so a dynamic-key read is not silently
+    // treated as one.
+    // The stale file from the first run is still sitting on disk the whole
+    // time.
+    let cookfile_stale_read = format!(
+        r#"
+probe {key}
+    >{{ return "v1" }}
+
+recipe build
+    test >{{ cook.probes.get("{key}" .. "") }}
+"#
+    );
+    fs::write(tmp.path().join("Cookfile"), &cookfile_stale_read).unwrap();
+    let err = run_cook(tmp.path(), &["build"])
+        .expect_err("cook.probes.get on an undemanded key must raise, not read the stale file");
+    assert!(
+        err.contains("not materialised") && err.contains(key),
+        "expected the §22.5.8 not-materialised error naming '{key}', got: {err}"
+    );
 }

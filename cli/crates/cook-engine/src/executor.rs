@@ -447,15 +447,14 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
 ///
 /// COOK-526: the bool is `run.rs`'s `resolved_probe_keys.contains(matched_key)`
 /// — true when THIS invocation's register pre-pass already ran this probe's
-/// `produce` (or served it from cache) before `execute_dag` ever started.
-/// When true and this node's own `lookup` misses (no cache entry, no
-/// synthesised value), G4 reads `.cook/probes/<key>.json` through the
-/// `ProbeValueStore` read-through instead of dispatching a worker — the
-/// register phase already wrote that file unconditionally, in `record`,
-/// regardless of `publish_enabled`. Deliberately independent of the CAS:
-/// probe-value caching is removed by the very next ticket in this
-/// milestone, and single-flighting a probe within one invocation must not
-/// depend on machinery being deleted out from under it.
+/// `produce` before `execute_dag` ever started. When true and no synthesised
+/// value applies, `cook_probe::eval::lookup` itself reads
+/// `.cook/probes/<key>.json` via `cook_probe::store::read_value` instead of
+/// this node dispatching a worker — the register phase already wrote that
+/// file unconditionally, in `record`, regardless of `publish_enabled`.
+/// Deliberately independent of the CAS (CS-0243 removed probe-value caching
+/// entirely): single-flighting a probe within one invocation is the register
+/// pre-pass / execute-phase channel above, not a cache tier.
 ///
 /// `dep_outputs` — read-only terminal-outputs snapshot threaded into each
 /// worker VM so execute-phase `cook.dep_output` / `dep_output_list` resolve
@@ -468,11 +467,13 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
 /// coarse — it counts publish *operations*, not objects or bytes — because
 /// nothing consumes the magnitude.
 ///
-/// It counts what *this* function publishes. The register-phase probe pre-pass
-/// runs before `execute_dag` and writes probe values to the CAS without
-/// consulting `publish_enabled` or this counter (COOK-339), so "counter is 0"
-/// means "this run published no outputs", not "the store is byte-identical".
-/// See `RunResult::published_count`.
+/// It counts what *this* function publishes. The register-phase probe
+/// pre-pass runs before `execute_dag`, but CS-0243 removed probe-value
+/// publishing entirely: the pre-pass's own write, `record`'s unconditional
+/// `.cook/probes/<key>.json`, is a local record outside the shared store, not
+/// a CAS object, so it no longer bypasses `publish_enabled` or this counter
+/// the way it did before probe-value caching was removed (COOK-339). See
+/// `RunResult::published_count`.
 pub fn execute_dag(
     dag: Dag<WorkNode>,
     num_workers: usize,
@@ -505,10 +506,15 @@ pub fn execute_dag(
     let total = dag.len();
     let (pool, rx) = WorkerPool::spawn_with_dep_outputs(num_workers, dep_outputs);
 
-    // CS-0102: the per-run store reads through to the canonical probe files.
-    pool.probe_value_store()
-        .attach_dir(cook_contracts::layout::probes_dir(&cache_ctx.project_root));
-
+    // CS-0243: the canonical `.cook/probes/<key>.json` file is a RECORD of
+    // what a past invocation observed, not a source for this one — a reached
+    // probe always observes afresh, so serving a `cook.probes.get` for an
+    // undemanded probe out of that file would be exactly the staleness this
+    // law forbids (§22.5.8 requires the not-materialised error instead). The
+    // per-run store is therefore seeded only by THIS run's own probe
+    // completions and is never attached to the on-disk directory here; `cook
+    // why` (why.rs) is the one reader that still attaches it, because it is
+    // deliberately reading the forensic record rather than answering a probe.
     let mut cancelled = vec![false; total];
     let mut pending: usize = 0; // how many work results we're waiting for
     let mut failures: Vec<(usize, String, String)> = Vec::new();
@@ -1790,15 +1796,20 @@ pub fn execute_dag(
                 )
             }
             Some(WorkPayload::Probe { key, .. }) => {
-                // G4 (CS-0074): probe cache lookup before worker dispatch.
+                // G4 (CS-0074, CS-0243): resolve-before-dispatch, not a cache
+                // lookup — there is no probe-value cache to consult.
                 //
                 // If the probe has a `ProbeUnit` entry in `probe_units_by_node`
                 // (populated by the call site from `RecipeUnits.probes`), we
-                // compute its fingerprint and attempt a cache GET. On a hit we
-                // insert the cached bytes directly into the ProbeValueStore
-                // and complete the node without dispatching to a worker, unblocking
-                // downstream consumers. On a miss (or when probe metadata is
-                // absent), we fall through to normal worker dispatch.
+                // compute its fingerprint and check whether a value is already
+                // resolved without a VM: a synthesised top-level `files`/`tools`
+                // declaration, or (COOK-526) a key THIS invocation's own
+                // register pre-pass already produced. Either way we insert the
+                // bytes directly into the ProbeValueStore and complete the node
+                // without dispatching to a worker, unblocking downstream
+                // consumers. Otherwise (or when probe metadata is absent), we
+                // fall through to normal worker dispatch, which always runs
+                // `produce`.
                 //
                 // The fingerprint is also stored in `probe_fingerprint_by_node`
                 // so that the completion handler (G5) can reuse it without
@@ -1832,11 +1843,7 @@ pub fn execute_dag(
                         // declaring member, not `work_node.working_dir` (the
                         // consuming recipe's) — see the doc comment on
                         // `probe_units_by_node`.
-                        cache: Some(cook_probe::eval::CacheAccess {
-                            backend: cache_ctx.backend.as_ref(),
-                            project_root: &cache_ctx.project_root,
-                            publish_enabled: cache_ctx.publish_enabled,
-                        }),
+                        project_root: Some(cache_ctx.project_root.as_path()),
                     };
                     match cook_probe::eval::lookup(
                         probe_unit,
@@ -1852,31 +1859,31 @@ pub fn execute_dag(
                         *prepass_resolved,
                     ) {
                         Ok(found) => {
-                            for w in &found.warnings {
-                                tracing::warn!("{w}");
-                            }
                             // Store the fingerprint now so G5 and downstream
-                            // probes find it whether this node hits or misses.
+                            // probes find it whether this node resolves
+                            // without a VM or falls through to produce.
                             probe_fingerprint_by_node.insert(id, found.fingerprint);
                             if found.keyless {
                                 keyless_probes.insert(probe_key.clone());
                             }
                             // CS-0157: where each declared tool resolves RIGHT
                             // NOW, as a per-run read view. Set before the
-                            // hit/miss fork so both paths carry it — a cached
-                            // value must not be the source of a location.
+                            // resolved-vs-must-produce fork so both paths
+                            // carry it — a value already in hand must not be
+                            // the source of a location.
                             if !found.tool_paths.is_empty() {
                                 pool.probe_value_store()
                                     .set_tool_paths(&probe_key, found.tool_paths.clone());
                             }
 
-                            // A value already in hand, by any of `lookup`'s
-                            // three routes: the cache served it, the producer
-                            // kind is synthesised (CS-0148 top-level
-                            // `files`/`tools` declarations), or this
-                            // invocation's own register pre-pass already
-                            // produced it (COOK-526). In all three no worker
-                            // is involved, so the node completes here.
+                            // A value already in hand, by either of `lookup`'s
+                            // two routes (CS-0243: there is no cache, so no
+                            // hit route): the producer kind is synthesised
+                            // (CS-0148 top-level `files`/`tools`
+                            // declarations), or this invocation's own
+                            // register pre-pass already produced it
+                            // (COOK-526). In both no worker is involved, so
+                            // the node completes here.
                             if let Some((bytes, source)) = found.resolved.as_ref() {
                                 let started = std::time::Instant::now();
                                 let recorded = cook_probe::eval::record(
@@ -1887,18 +1894,16 @@ pub fn execute_dag(
                                     bytes,
                                     *source,
                                     // CS-0204: no VM ran on either arm of this
-                                    // branch. A cache hit's identity is already
-                                    // the folded one `lookup` settled on; a
-                                    // synthesised value (top-level `files` or
-                                    // `tools`) comes from the declared
-                                    // FILES / TOOLS section and loads nothing.
+                                    // branch. A value `lookup` already
+                                    // resolved carries the fingerprint it
+                                    // settled on; a synthesised value
+                                    // (top-level `files` or `tools`) comes
+                                    // from the declared FILES / TOOLS section
+                                    // and loads nothing.
                                     &[],
                                 );
                                 for w in &recorded.warnings {
                                     tracing::warn!("{w}");
-                                }
-                                if recorded.published {
-                                    published.fetch_add(1, Ordering::Relaxed);
                                 }
                                 pool.probe_value_store().insert(&probe_key, bytes.clone());
                                 // Propagate the fingerprint so downstream probes
@@ -1908,23 +1913,12 @@ pub fn execute_dag(
                                     .insert(probe_key.clone(), recorded.fingerprint);
                                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                                 match source {
-                                    // A value that already existed before this
-                                    // dispatch: served by the cache, or
-                                    // (COOK-526) by this invocation's own
-                                    // register pre-pass. One report shape for
-                                    // both, because the user-visible fact is
-                                    // the same one — no VM ran here — and only
-                                    // the debug line distinguishes them.
-                                    cook_probe::eval::ValueSource::Cache
-                                    | cook_probe::eval::ValueSource::Prepass => {
+                                    // (COOK-526) Served by this invocation's
+                                    // own register pre-pass — no VM ran here.
+                                    cook_probe::eval::ValueSource::Prepass => {
                                         tracing::debug!(
-                                            "probe '{}': {} (fp={:x?})",
+                                            "probe '{}': served from this invocation's register pre-pass (fp={:x?})",
                                             probe_key,
-                                            match source {
-                                                cook_probe::eval::ValueSource::Prepass =>
-                                                    "served from this invocation's register pre-pass",
-                                                _ => "cache hit",
-                                            },
                                             &found.fingerprint[..4],
                                         );
                                         emit(
@@ -2062,7 +2056,7 @@ pub fn execute_dag(
                     }
                 }
 
-                // Cache miss (or no probe metadata) — dispatch to worker as G1.
+                // No value in hand — dispatch to worker.
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                 emit(
                     event_tx,
@@ -2846,12 +2840,13 @@ pub fn execute_dag(
         pending -= 1;
         finished += 1;
 
-        // G3/G5 (CS-0074): a result carrying probe output completes the probe.
-        // Publishing and materialising are `cook_probe::eval::record` — the
-        // same call the no-worker paths at dispatch make, so a probe's value
-        // reaches the store and `.cook/probes/` by one route however it was
-        // produced (COOK-359). What stays here is the scheduler's share:
-        // propagating the fingerprint and populating the per-run store.
+        // G3/G5 (CS-0074, CS-0243): a result carrying probe output completes
+        // the probe. Materialising the canonical local copy is
+        // `cook_probe::eval::record` — the same call the no-worker paths at
+        // dispatch make, so a probe's value reaches `.cook/probes/` by one
+        // route however it was produced (COOK-359). What stays here is the
+        // scheduler's share: propagating the fingerprint and populating the
+        // per-run store.
         if let Some(ref probe_out) = result.probe_output {
             if result.success {
                 match probe_fingerprint_by_node.get(&result.id) {
@@ -2859,15 +2854,8 @@ pub fn execute_dag(
                         let working_dir = dag.node(result.id).payload().working_dir.clone();
                         let eval_ctx = cook_probe::eval::EvalCtx {
                             working_dir: &working_dir,
-                            cache: Some(cook_probe::eval::CacheAccess {
-                                backend: cache_ctx.backend.as_ref(),
-                                project_root: &cache_ctx.project_root,
-                                publish_enabled: cache_ctx.publish_enabled,
-                            }),
+                            project_root: Some(cache_ctx.project_root.as_path()),
                         };
-                        // CS-0178 keylessness and COOK-168 publish suppression
-                        // are decided inside `record`; the counter follows what
-                        // it reports rather than re-deriving the condition.
                         let recorded = cook_probe::eval::record(
                             &probe_out.key,
                             &eval_ctx,
@@ -2880,7 +2868,7 @@ pub fn execute_dag(
                             &result.module_inputs,
                         );
                         // CS-0204: propagate the fingerprint the value is
-                        // actually STORED under, so a downstream probe that
+                        // logically identified by, so a downstream probe that
                         // `requires` this one rekeys when this one's module
                         // source moves. Done after `record` rather than before,
                         // because the folded identity is not known until the
@@ -2889,13 +2877,6 @@ pub fn execute_dag(
                             .insert(probe_out.key.clone(), recorded.fingerprint);
                         for w in &recorded.warnings {
                             tracing::warn!("{w}");
-                        }
-                        if recorded.published {
-                            published.fetch_add(1, Ordering::Relaxed);
-                            tracing::debug!(
-                                "probe '{}': cached output (fp={:x?})",
-                                probe_out.key, &fp[..4],
-                            );
                         }
                     }
                     None => {

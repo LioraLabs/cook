@@ -1436,27 +1436,24 @@ fn test_iteration_item_propagates() {
 }
 
 // -----------------------------------------------------------------
-// CS-0074 G4/G5: probe cache hit/miss/invalidation.
+// CS-0074/CS-0243 G4/G5: a reached probe always observes.
 //
-// These tests exercise the G4 (cache lookup before dispatch) and G5
-// (persist probe output to backend after worker returns) paths in
-// execute_dag. They require that:
-//   - A cache hit populates the ProbeValueStore and skips the
-//     worker (NodeCacheHit event, no NodeStarted).
-//   - A cache miss dispatches to the worker, which runs the produce
-//     source, and the result is persisted to the backend with
-//     kind=probe_value.
-//   - Changing a declared env var forces a different fingerprint and
-//     a cache miss even when a prior entry exists.
+// Before CS-0243 this block exercised the G4 (cache lookup before dispatch)
+// and G5 (persist probe output to backend after worker returns) paths in
+// execute_dag. Both are gone: there is no probe-value cache, so a probe
+// dispatch either resolves without a VM (a synthesised producer kind, or
+// COOK-526's cross-phase single-flight — see cook-probe's own tests) or runs
+// `produce` on the worker, full stop. The one surviving test below pins that
+// a value planted directly in the cache backend, at the exact key a probe
+// would have addressed under the old law, changes nothing: the probe still
+// executes.
 // -----------------------------------------------------------------
 
-/// A probe that IS cacheable. CS-0178 gives a probe declaring no inputs no
-/// cache key at all — it re-produces every run and publishes nothing — so a
-/// `ProbeInputs::default()` probe cannot be used to exercise the cache
-/// hit/miss path it was written to exercise. The declared env var is never
-/// set; an unset name still populates §22.5.4 section 4 as `<unset>`, which is
-/// deterministic and enough to make the probe keyed. Use `keyless_probe_unit`
-/// when the absence of a key is the point.
+/// A probe with one declared input (kept keyed, though CS-0243 made
+/// keyedness irrelevant to whether a value is served from a store — there is
+/// no store to serve from either way). The declared env var is never set; an
+/// unset name still populates §22.5.4 section 4 as `<unset>`, which is
+/// deterministic.
 fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
     cook_contracts::ProbeUnit {
         key: key.to_string(),
@@ -1465,31 +1462,6 @@ fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
         inputs: cook_contracts::ProbeInputs {
             env: vec!["COOK_TEST_PROBE_KEYING".to_string()],
             ..Default::default()
-        },
-    }
-}
-
-/// A probe declaring nothing: no `env`, `tools`, `files`, or `requires`.
-/// CS-0178 says this has no cache key.
-fn keyless_probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
-    cook_contracts::ProbeUnit {
-        key: key.to_string(),
-        produce_source: produce.to_string(),
-        produce_line: 1,
-        inputs: cook_contracts::ProbeInputs::default(),
-    }
-}
-
-fn probe_unit_with_env(key: &str, produce: &str, env_var: &str) -> cook_contracts::ProbeUnit {
-    cook_contracts::ProbeUnit {
-        key: key.to_string(),
-        produce_source: produce.to_string(),
-        produce_line: 1,
-        inputs: cook_contracts::ProbeInputs {
-            env: vec![env_var.to_string()],
-            tools: vec![],
-            files: vec![],
-            requires: vec![],
         },
     }
 }
@@ -1511,33 +1483,8 @@ fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
     }
 }
 
-fn probe_work_node_with_env(
-    key: &str,
-    produce: &str,
-    env_var: &str,
-    env_val: &str,
-    wd: PathBuf,
-) -> WorkNode {
-    let mut env_vars = BTreeMap::new();
-    env_vars.insert(env_var.to_string(), env_val.to_string());
-    WorkNode {
-        process_env_vars: std::collections::BTreeMap::new(),
-        payload: Some(WorkPayload::Probe {
-            key: key.to_string(),
-            produce: produce.to_string(),
-            line: 1,
-        }),
-        recipe_name: format!("probe:{}", key),
-        cache_meta: None,
-        working_dir: wd,
-        env_vars,
-        test_name: None,
-        member: None,
-    }
-}
-
 /// Compute the fingerprint for a ProbeUnit with no env/tool/file/upstream
-/// inputs, suitable for pre-seeding the backend in cache-hit tests.
+/// inputs, suitable for pre-seeding the backend in the CS-0243 test below.
 fn fingerprint_for(pu: &cook_contracts::ProbeUnit, wd: &std::path::Path) -> [u8; 32] {
     let inputs = cook_cache::resolve_probe_inputs(pu, wd, &|_| None, &BTreeMap::new())
         .expect("fingerprint resolution should succeed for simple probe");
@@ -1545,7 +1492,9 @@ fn fingerprint_for(pu: &cook_contracts::ProbeUnit, wd: &std::path::Path) -> [u8;
 }
 
 /// Pre-populate the cache backend with known bytes under the given
-/// fingerprint key. Used to set up the "cache hit" scenario for G4 tests.
+/// fingerprint key — a value planted directly, bypassing `cook_probe::eval`
+/// entirely, to prove that nothing on the probe dispatch path reads it back
+/// (CS-0243: there is no probe-value GET any more).
 fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 32], bytes: &[u8]) {
     let mut meta = cook_cache::ArtifactMeta {
         recipe_namespace: "probe:test".into(),
@@ -1558,397 +1507,13 @@ fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 3
         output_index: 0,
         output_path: "probe:test".into(),
         content_hash: cook_cache::ArtifactMeta::zero_content_hash(),
-        kind: None,
+        kind: Some(cook_contracts::cache::cas::artifact_kind::PROBE_VALUE.to_string()),
         seal_contribution: 0,
         mode: cook_cache::ArtifactMeta::default_mode(),
         target: None,
-    }
-    .as_probe_value();
+    };
     cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)
         .expect("seed_probe_cache: backend put failed");
-}
-
-// G4 test: pre-populate the cache with canned bytes; the probe's produce
-// source calls `error()` so execution would fail — but on a hit we MUST
-// skip dispatch and deliver the cached bytes without ever invoking produce.
-#[test]
-fn probe_cache_hit_skips_produce_execution() {
-    use std::sync::mpsc;
-
-    let (_wd, _tmp) = tmp_dir();
-    let wd = _wd.clone();
-    let cache_ctx = make_cache_ctx(&_tmp);
-
-    // Build the ProbeUnit and compute its fingerprint.
-    let pu = probe_unit("test:hit", "error('should not run')");
-    let fp = fingerprint_for(&pu, &wd);
-
-    // Seed the backend with the known bytes we expect to see in the store.
-    let expected_bytes =
-        cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
-    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &expected_bytes);
-
-    // Build a DAG with the probe node.
-    let mut dag = Dag::new();
-    let node_id = dag
-        .add_node(
-            probe_work_node("test:hit", "error('should not run')", wd),
-            &[],
-        )
-        .unwrap();
-
-    // Build probe_units_by_node: maps node 0 → (our ProbeUnit, its declared dir).
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-        BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
-
-    // Listen for events to verify NodeCacheHit (not NodeStarted).
-    let (tx, rx) = mpsc::channel();
-    let result = execute_dag(
-        dag,
-        2,
-        BTreeMap::new(),
-        Some(tx),
-        cache_ctx.clone(),
-        &[],
-        &probe_units_by_node,
-        std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
-    );
-    assert!(result.is_ok(), "expected Ok, got: {result:?}");
-
-    // Verify NodeCacheHit was emitted (not NodeStarted).
-    let events: Vec<_> = rx.try_iter().collect();
-    let cache_hits: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
-        .collect();
-    let node_started: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, EngineEvent::NodeStarted { .. }))
-        .collect();
-    assert_eq!(cache_hits.len(), 1, "expected exactly one NodeCacheHit; events: {events:#?}");
-    assert_eq!(node_started.len(), 0, "expected no NodeStarted on cache hit; events: {events:#?}");
-
-    // Also verify the cached bytes are still retrievable from the backend
-    // (the put_bytes call in the test harness must not corrupt the entry).
-    let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("post-hit get");
-    let stored = post.expect("cache entry must still exist after a hit read");
-    assert_eq!(stored, expected_bytes, "cached bytes must survive a hit read");
-
-    // CS-0102: the hit must also materialise the canonical local copy at
-    // .cook/probes/<key>.json with exactly the cached bytes.
-    let probe_file = _tmp.path().join(".cook").join("probes").join("test:hit.json");
-    assert!(
-        probe_file.exists(),
-        "cache hit must write {}",
-        probe_file.display()
-    );
-    assert_eq!(
-        std::fs::read(&probe_file).unwrap(),
-        expected_bytes,
-        ".cook/probes file must hold the exact cached bytes"
-    );
-}
-
-// G5 test: on a cache miss the worker executes the produce source, the
-// output is persisted to the backend with kind=probe_value, and the result
-// is available in the probe-value store.
-#[test]
-fn probe_cache_miss_persists_output() {
-    let (_wd, _tmp) = tmp_dir();
-    let wd = _wd.clone();
-    let cache_ctx = make_cache_ctx(&_tmp);
-
-    // Produce source: return the integer 42.
-    let produce = "return 42";
-    let pu = probe_unit("test:miss", produce);
-    let fp = fingerprint_for(&pu, &wd);
-
-    // Backend starts empty — cache miss guaranteed.
-    let pre = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("pre-check get");
-    assert!(pre.is_none(), "backend must be empty before the run");
-
-    let mut dag = Dag::new();
-    let node_id = dag
-        .add_node(probe_work_node("test:miss", produce, wd), &[])
-        .unwrap();
-
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-        BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
-
-    let result = execute_dag(
-        dag,
-        2,
-        BTreeMap::new(),
-        None,
-        cache_ctx.clone(),
-        &[],
-        &probe_units_by_node,
-        std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
-    );
-    assert!(result.is_ok(), "expected Ok, got: {result:?}");
-
-    // G5: verify the artifact was persisted to the backend.
-    let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("post-run get");
-    assert!(
-        post.is_some(),
-        "probe artifact must be persisted to cache backend after execution (G5)"
-    );
-
-    // CS-0102: the persisted value must be the canonical JSON rendering of 42.
-    let bytes = post.unwrap();
-    let expected = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!(42));
-    assert_eq!(
-        bytes, expected,
-        "persisted probe bytes must be the canonical JSON rendering"
-    );
-
-    // G5: verify the persisted bytes are retrievable from the backend.
-    // (G3 — probe-value store — is internal to execute_dag and not
-    // accessible after the function returns, but the G5 backend entry
-    // serves as equivalent evidence that the produce path ran to completion.)
-    let post2 = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("second get");
-    let persisted = post2.expect("artifact must still be in backend on second read");
-    assert_eq!(persisted, bytes, "persisted bytes must round-trip through backend");
-
-    // CS-0102: the miss path must also materialise .cook/probes/<key>.json
-    // with the same bytes (file == store == CAS).
-    let probe_file = _tmp.path().join(".cook").join("probes").join("test:miss.json");
-    assert!(
-        probe_file.exists(),
-        "cache miss must write {}",
-        probe_file.display()
-    );
-    assert_eq!(
-        std::fs::read(&probe_file).unwrap(),
-        expected,
-        ".cook/probes file must hold the exact persisted bytes"
-    );
-}
-
-// CS-0102 stale-artifact defence: a cache entry whose bytes are not
-// probe-value JSON (e.g. a pre-CS-0102 artifact) MUST be treated as a
-// miss — produce runs, no NodeCacheHit is emitted, and the entry is
-// overwritten with canonical JSON.
-#[test]
-fn probe_cache_hit_with_non_json_bytes_falls_through_to_miss() {
-    use std::sync::mpsc;
-
-    let (_wd, _tmp) = tmp_dir();
-    let wd = _wd.clone();
-    let cache_ctx = make_cache_ctx(&_tmp);
-
-    let produce = "return 7";
-    let pu = probe_unit("test:stale", produce);
-    let fp = fingerprint_for(&pu, &wd);
-
-    // Seed the backend with bytes that are NOT JSON (0x91 0xc3 is the old
-    // encoding of [true]).
-    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &[0x91, 0xc3]);
-
-    let mut dag = Dag::new();
-    let node_id = dag
-        .add_node(probe_work_node("test:stale", produce, wd), &[])
-        .unwrap();
-
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-        BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
-
-    let (tx, rx) = mpsc::channel();
-    let result = execute_dag(
-        dag,
-        2,
-        BTreeMap::new(),
-        Some(tx),
-        cache_ctx.clone(),
-        &[],
-        &probe_units_by_node,
-        std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
-    );
-    assert!(result.is_ok(), "expected Ok, got: {result:?}");
-
-    // The stale entry must NOT register as a cache hit.
-    let events: Vec<_> = rx.try_iter().collect();
-    let cache_hits: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
-        .collect();
-    assert_eq!(
-        cache_hits.len(),
-        0,
-        "non-JSON cached bytes must fall through to miss; events: {events:#?}"
-    );
-
-    // The backend entry must now hold the canonical JSON rendering of 7.
-    let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("post-run get")
-        .expect("entry must exist after the re-run");
-    assert_eq!(
-        post,
-        cook_contracts::probe_value::encode_canonical_json(&serde_json::json!(7)),
-        "stale entry must be overwritten with canonical JSON"
-    );
-}
-
-// G4/G5 invalidation test: changing a declared env var changes the probe's
-// fingerprint, causing a cache miss even when a prior entry exists under
-// the old fingerprint.
-#[test]
-fn probe_fingerprint_changes_invalidate_cache() {
-    let (_wd, _tmp) = tmp_dir();
-    let wd = _wd.clone();
-    let cache_ctx = make_cache_ctx(&_tmp);
-    let produce = "return 'result'";
-    let env_var = "PROBE_TEST_VAR";
-
-    // Build ProbeUnit for env_val="first".
-    let pu_v1 = probe_unit_with_env("test:inv", produce, env_var);
-    let fp_v1 = {
-        let inputs = cook_cache::resolve_probe_inputs(
-            &pu_v1,
-            &wd,
-            &|name| {
-                if name == env_var {
-                    Some("first".into())
-                } else {
-                    None
-                }
-            },
-            &BTreeMap::new(),
-        )
-        .unwrap();
-        cook_cache::compute_probe_fingerprint(&inputs)
-    };
-
-    // Build ProbeUnit for env_val="second".
-    let pu_v2 = probe_unit_with_env("test:inv", produce, env_var);
-    let fp_v2 = {
-        let inputs = cook_cache::resolve_probe_inputs(
-            &pu_v2,
-            &wd,
-            &|name| {
-                if name == env_var {
-                    Some("second".into())
-                } else {
-                    None
-                }
-            },
-            &BTreeMap::new(),
-        )
-        .unwrap();
-        cook_cache::compute_probe_fingerprint(&inputs)
-    };
-    assert_ne!(fp_v1, fp_v2, "fingerprints must differ when env var changes");
-
-    // An `inputs.env` probe determinant is read from the ambient process
-    // environment, so the simulated "machine change" is a real `set_var` rather
-    // than a value planted in the node's variable map.
-    std::env::set_var(env_var, "first");
-
-    // --- Run 1: env_val="first" → cache miss → populate backend under fp_v1 ---
-    {
-        let mut dag = Dag::new();
-        let node_id = dag
-            .add_node(
-                probe_work_node_with_env("test:inv", produce, env_var, "first", wd.clone()),
-                &[],
-            )
-            .unwrap();
-        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-            BTreeMap::new();
-        by_node.insert(node_id, (pu_v1, wd.clone(), false));
-
-        let result = execute_dag(
-            dag,
-            2,
-            BTreeMap::new(),
-            None,
-            cache_ctx.clone(),
-            &[],
-            &by_node,
-            std::sync::Arc::new(BTreeMap::new()),
-            &std::sync::atomic::AtomicU64::new(0),
-        );
-        assert!(result.is_ok(), "run1 expected Ok, got: {result:?}");
-    }
-
-    // Verify fp_v1 is now in the backend.
-    assert!(
-        cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v1)
-            .unwrap()
-            .is_some(),
-        "fp_v1 must be in backend after run1"
-    );
-    // fp_v2 must NOT be in the backend yet.
-    assert!(
-        cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v2)
-            .unwrap()
-            .is_none(),
-        "fp_v2 must not be in backend before run2"
-    );
-
-    std::env::set_var(env_var, "second");
-
-    // --- Run 2: env_val="second" → different fingerprint → cache miss ---
-    {
-        use std::sync::mpsc;
-        let mut dag = Dag::new();
-        let node_id = dag
-            .add_node(
-                probe_work_node_with_env("test:inv", produce, env_var, "second", wd.clone()),
-                &[],
-            )
-            .unwrap();
-        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-            BTreeMap::new();
-        by_node.insert(node_id, (pu_v2, wd.clone(), false));
-
-        let (tx, rx) = mpsc::channel();
-        let result = execute_dag(
-            dag,
-            2,
-            BTreeMap::new(),
-            Some(tx),
-            cache_ctx.clone(),
-            &[],
-            &by_node,
-            std::sync::Arc::new(BTreeMap::new()),
-            &std::sync::atomic::AtomicU64::new(0),
-        );
-        assert!(result.is_ok(), "run2 expected Ok, got: {result:?}");
-
-        // run2 must NOT have emitted a NodeCacheHit — the env change must
-        // force a miss even though fp_v1 is in the backend.
-        let events: Vec<_> = rx.try_iter().collect();
-        let cache_hits: Vec<_> = events
-            .iter()
-            .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
-            .collect();
-        assert_eq!(
-            cache_hits.len(),
-            0,
-            "run2 must not cache-hit because env var changed; events: {events:#?}"
-        );
-    }
-
-    // After run2, fp_v2 must now exist in the backend as well (G5 persisted it).
-    assert!(
-        cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v2)
-            .unwrap()
-            .is_some(),
-        "fp_v2 must be in backend after run2"
-    );
-
-    std::env::remove_var(env_var);
 }
 
 // ---------------------------------------------------------------------------
@@ -2072,65 +1637,19 @@ fn resolve_output_paths_expands_directory_output() {
 }
 
 // ---------------------------------------------------------------------------
-// CS-0178 / COOK-343 — a probe declaring no inputs has no cache key
+// CS-0243 — a reached probe always observes; there is no probe-value cache
 // ---------------------------------------------------------------------------
 
-/// §22.5.4's fingerprint sections 1-3 (marker, key, produce source) are
-/// constant for a given probe, and 4-7 are empty unless declared. A probe
-/// declaring nothing therefore had a CONSTANT fingerprint and was served from
-/// cache forever — it answered once and never observed again. The produce body
-/// here raises, so a cache hit is the only way the run can succeed: if the
-/// seeded entry is consulted the probe never executes and this passes, which
-/// is precisely the behaviour CS-0178 removes.
+/// Before CS-0243, a probe declaring no inputs (CS-0178 "keyless") ignored a
+/// seeded cache entry and a keyed one took it — two tests, one per branch.
+/// CS-0243 deleted the branch: a value planted directly in the cache
+/// backend, at the exact key a KEYED probe (the more interesting of the two
+/// old cases, since a keyed probe used to be the one that DID take the hit)
+/// would have addressed, is never read by any probe dispatch path. The
+/// produce body raises, so the seeded entry being consulted is the only way
+/// this run could succeed; it must fail.
 #[test]
-fn keyless_probe_ignores_a_seeded_cache_entry_and_re_executes() {
-    use std::sync::mpsc;
-
-    let (_wd, _tmp) = tmp_dir();
-    let wd = _wd.clone();
-    let cache_ctx = make_cache_ctx(&_tmp);
-
-    let pu = keyless_probe_unit("test:keyless", "error('produce ran')");
-    let fp = fingerprint_for(&pu, &wd);
-    let seeded = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
-    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &seeded);
-
-    let mut dag = Dag::new();
-    let node_id = dag
-        .add_node(
-            probe_work_node("test:keyless", "error('produce ran')", wd),
-            &[],
-        )
-        .unwrap();
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
-        BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
-
-    let (tx, _rx) = mpsc::channel();
-    let result = execute_dag(
-        dag,
-        2,
-        BTreeMap::new(),
-        Some(tx),
-        cache_ctx.clone(),
-        &[],
-        &probe_units_by_node,
-        std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
-    );
-
-    assert!(
-        result.is_err(),
-        "a keyless probe MUST re-produce rather than consult the store; the \
-         seeded entry was served instead, so the raising produce body never ran"
-    );
-}
-
-/// The keyed counterpart, pinning that the rule is about the *absence* of
-/// declared inputs and not about probes generally: the identical setup with
-/// one declared input takes the cache hit and never executes the body.
-#[test]
-fn keyed_probe_still_takes_the_seeded_cache_entry() {
+fn a_seeded_store_entry_is_ignored_and_the_probe_always_executes() {
     use std::sync::mpsc;
 
     let (_wd, _tmp) = tmp_dir();
@@ -2167,8 +1686,71 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
     );
 
     assert!(
-        result.is_ok(),
-        "a probe with a declared input keeps its key and its cache hit: {result:?}"
+        result.is_err(),
+        "a reached probe MUST always run produce, never consult a store; the \
+         seeded entry was served instead, so the raising produce body never ran"
+    );
+
+    // The seeded entry is left exactly as planted — nothing on the probe
+    // path reads OR writes it.
+    let still_there = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+        .expect("get after run");
+    assert_eq!(
+        still_there,
+        Some(seeded),
+        "the seeded entry must be untouched by a run that never consults it"
+    );
+}
+
+/// COOK-527 review (finding G): deleting `probe_cache_miss_persists_output`
+/// alongside the cache it pinned also dropped its non-cache assertion — that
+/// the EXECUTOR's produce path, not just `cook_probe::eval` in isolation,
+/// writes `.cook/probes/<key>.json` with the exact canonical bytes.
+/// `record`'s own doc calls that write load-bearing and unconditional, and
+/// COOK-526's cross-phase single-flight depends on it, so it needs coverage
+/// here rather than only at eval level and indirectly through surface
+/// fixtures.
+#[test]
+fn executor_produce_path_materialises_the_canonical_probes_file() {
+    let (_wd, _tmp) = tmp_dir();
+    let wd = _wd.clone();
+    let cache_ctx = make_cache_ctx(&_tmp);
+
+    let produce = "return 42";
+    let pu = probe_unit("test:materialise", produce);
+
+    let mut dag = Dag::new();
+    let node_id = dag
+        .add_node(probe_work_node("test:materialise", produce, wd), &[])
+        .unwrap();
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
+        BTreeMap::new();
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
+
+    let result = execute_dag(
+        dag,
+        2,
+        BTreeMap::new(),
+        None,
+        cache_ctx.clone(),
+        &[],
+        &probe_units_by_node,
+        std::sync::Arc::new(BTreeMap::new()),
+        &std::sync::atomic::AtomicU64::new(0),
+    );
+    assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+    let probe_file = _tmp.path().join(".cook").join("probes").join("test:materialise.json");
+    assert!(
+        probe_file.exists(),
+        "the executor's produce path must write {}",
+        probe_file.display()
+    );
+    let expected = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!(42));
+    assert_eq!(
+        std::fs::read(&probe_file).unwrap(),
+        expected,
+        ".cook/probes file must hold the exact canonical bytes the executor's produce path wrote"
     );
 }
 

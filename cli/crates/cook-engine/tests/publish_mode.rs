@@ -272,9 +272,11 @@ fn publish_off_fresh_build_succeeds_and_publishes_nothing() {
 }
 
 /// Test C: a fresh build that includes a `probe` succeeds under publish-off
-/// and uploads NOTHING — including the probe value. The probe-value put is the
-/// fifth shared-store upload site; publish-off must suppress it too so the
-/// §17.1.3 / CS-0111 "no artifact for ANY unit" guarantee holds. The probe's
+/// and uploads NOTHING. CS-0243 removed the probe-value cache and with it
+/// the probe-value upload site — a probe never uploads any more, on or off —
+/// so what this now confirms is that the SEALING UNIT's own artifact stays
+/// suppressed under publish-off with a probe among its determinants, keeping
+/// the §17.1.3 / CS-0111 "no artifact for ANY unit" guarantee. The probe's
 /// canonical local copy (`.cook/probes/<key>.json`) and the per-run store are
 /// still populated, so the consuming unit reads the value and runs to
 /// completion.
@@ -292,10 +294,12 @@ fn publish_off_probe_build_succeeds_and_publishes_nothing() {
 
     // A top-level `probe` plus a unit that seals on it. Executing a reachable
     // sealed unit forces the probe to run (its value folds into the unit's
-    // key), which exercises the probe-value upload site — the fifth shared-
-    // store put. Under publish-off it must upload nothing. (Sealing, as in
+    // key). CS-0243 removed the probe-value upload site entirely — a probe
+    // never uploads, publish-off or not — so what this exercises now is that
+    // the SEALING UNIT's own artifact upload is still suppressed under
+    // publish-off, with a probe as one of its determinants. (Sealing, as in
     // `seal_host_key_e2e.rs`, avoids entangling probe value-substitution
-    // syntax; the point here is purely that the probe's put is suppressed.)
+    // syntax; the point here is purely that the unit's put is suppressed.)
     write_fixture(
         wd,
         cache.path(),
@@ -330,14 +334,13 @@ recipe make
         "publish-off probe build: the local probe materialisation dir MUST exist"
     );
 
-    // (3) The shared store holds NOTHING — neither the unit artifact NOR the
-    //     probe value was uploaded.
+    // (3) The shared store holds NOTHING — the unit artifact was not
+    //     uploaded (publish-off), and no probe value ever is (CS-0243).
     let count = artifact_file_count(cache.path());
     assert_eq!(
         count,
         0,
-        "publish-off probe build: the shared store MUST remain empty — the probe \
-         value is a shared-store upload site and publish-off suppresses it too \
+        "publish-off probe build: the shared store MUST remain empty \
          (found {count} artifact file(s) under {})",
         cache.path().display(),
     );

@@ -1,6 +1,9 @@
 //! One test per rule that used to live in only one of the two copies
 //! (COOK-359). Each rule now has exactly one implementation, so it needs
 //! exactly one test — which is the point of the extraction.
+//!
+//! CS-0243 deleted the probe-value cache. Tests that used to pin cache-hit
+//! behaviour are inverted or removed; see the individual doc comments below.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,14 +11,9 @@ use std::path::Path;
 
 use cook_contracts::{ProbeInputs, ProbeUnit};
 
-use crate::eval::{
-    evaluate, probe_artifact_meta, CacheAccess, EvalCtx, Evaluated, ProbeError, Produced,
-    ProduceRunner,
-};
+use crate::eval::{evaluate, EvalCtx, ProbeError, Produced, ProduceRunner};
 
-/// Counts executions so a test can assert that `produce` did NOT run, which is
-/// the only way to tell a cache hit from a re-produce that happened to return
-/// the same bytes.
+/// Counts executions so a test can assert how many times `produce` ran.
 struct CountingRunner {
     value: Vec<u8>,
     runs: RefCell<usize>,
@@ -50,7 +48,7 @@ struct PoisonRunner;
 
 impl ProduceRunner for PoisonRunner {
     fn run(&self, key: &str, _source: &str) -> Result<Produced, String> {
-        panic!("produce ran for '{key}' when the value should have been served from cache");
+        panic!("produce ran for '{key}' when no VM should have been reached");
     }
 }
 
@@ -75,53 +73,38 @@ fn declares_tools(key: &str, tool: &str) -> ProbeUnit {
     probe(key, ProbeInputs { tools: vec![tool.to_string()], ..Default::default() })
 }
 
-fn backend(root: &Path) -> cook_cache::backend::LocalBackend {
-    cook_cache::backend::LocalBackend::new(root.to_path_buf())
-}
-
 fn no_env(_: &str) -> Option<String> {
     None
 }
 
-/// Evaluate with a wired backend.
-fn eval_cached(
-    unit: &ProbeUnit,
-    wd: &Path,
-    be: &cook_cache::backend::LocalBackend,
-    runner: &dyn ProduceRunner,
-    keyless_upstreams: &BTreeSet<String>,
-    upstream_fps: &BTreeMap<String, [u8; 32]>,
-    publish: bool,
-) -> Result<Evaluated, ProbeError> {
-    let ctx = EvalCtx {
-        working_dir: wd,
-        cache: Some(CacheAccess { backend: be, project_root: wd, publish_enabled: publish }),
-    };
-    evaluate(unit, &ctx, runner, &no_env, upstream_fps, keyless_upstreams)
+/// CS-0243: an evaluation with no project root wired, matching a workspace
+/// that has no resolved cache context.
+fn ctx(wd: &Path) -> EvalCtx<'_> {
+    EvalCtx { working_dir: wd, project_root: None }
 }
 
+/// CS-0243: a reached probe always observes. An unchanged declared input
+/// does not serve the first evaluation's bytes on the second — there is no
+/// store to serve them from. Inverts the pre-CS-0243
+/// `a_keyed_probe_is_served_from_cache_on_the_second_evaluation`.
 #[test]
-fn a_keyed_probe_is_served_from_cache_on_the_second_evaluation() {
+fn a_keyed_probe_re_executes_on_the_second_evaluation() {
     let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("dep.txt"), "content").unwrap();
-    let be = backend(store.path());
     let unit = declares_file("ns:keyed", "dep.txt");
+    let eval_ctx = ctx(tmp.path());
+    let runner = CountingRunner::new("[1]");
 
-    let first = eval_cached(
-        &unit, tmp.path(), &be, &CountingRunner::new("[1]"),
-        &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
-    assert!(!first.cache_hit);
+    let first =
+        evaluate(&unit, &eval_ctx, &runner, &no_env, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+    let second =
+        evaluate(&unit, &eval_ctx, &runner, &no_env, &BTreeMap::new(), &BTreeSet::new()).unwrap();
 
-    // A runner that panics if reached: the second evaluation must not produce.
-    let second = eval_cached(
-        &unit, tmp.path(), &be, &PoisonRunner,
-        &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
-    assert!(second.cache_hit);
+    assert_eq!(
+        runner.runs(), 2,
+        "a reached probe must run produce on every invocation, even with an \
+         unchanged declared input",
+    );
     assert_eq!(first.bytes, second.bytes);
     assert_eq!(first.fingerprint, second.fingerprint);
 }
@@ -129,48 +112,47 @@ fn a_keyed_probe_is_served_from_cache_on_the_second_evaluation() {
 #[test]
 fn cs0178_a_probe_declaring_nothing_is_keyless_and_always_reproduces() {
     let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    let be = backend(store.path());
     let unit = declares_nothing("ns:keyless");
     let runner = CountingRunner::new("[1]");
+    let eval_ctx = ctx(tmp.path());
 
     for _ in 0..3 {
-        let out = eval_cached(
-            &unit, tmp.path(), &be, &runner,
-            &BTreeSet::new(), &BTreeMap::new(), true,
-        )
-        .unwrap();
+        let out =
+            evaluate(&unit, &eval_ctx, &runner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+                .unwrap();
         assert!(out.keyless);
-        assert!(!out.cache_hit);
     }
     assert_eq!(runner.runs(), 3, "a keyless probe must re-produce every time");
 }
 
+/// CS-0243: no probe value is ever written anywhere but the local forensic
+/// record, `.cook/probes/<key>.json` — not a keyless probe, not a keyed one.
+/// Replaces the pre-CS-0243 `cs0178_a_keyless_probe_publishes_nothing`,
+/// which pinned that only keylessness suppressed publishing; there is no
+/// publishing left to suppress.
 #[test]
-fn cs0178_a_keyless_probe_publishes_nothing() {
+fn cs0243_no_probe_value_is_ever_written_outside_the_local_record() {
     let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    let be = backend(store.path());
+    std::fs::write(tmp.path().join("dep.txt"), "content").unwrap();
+    // Keyed, not keyless: proves the store is gone for every probe, not just
+    // the ones CS-0178 already exempted from a cache key.
+    let unit = declares_file("ns:keyed", "dep.txt");
+    let eval_ctx = ctx(tmp.path());
 
-    eval_cached(
-        &declares_nothing("ns:keyless"), tmp.path(), &be, &CountingRunner::new("[1]"),
-        &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
+    evaluate(&unit, &eval_ctx, &CountingRunner::new("[1]"), &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .unwrap();
 
-    // Skipping only the GET would leave a stable fingerprint addressing a
-    // stored value that another reader of a shared store could still be served.
+    let probes_dir = tmp.path().join(".cook").join("probes");
     assert_eq!(
-        file_count(store.path()), 0,
-        "a keyless probe wrote to the shared store",
+        file_count(tmp.path()),
+        file_count(&probes_dir) + 1, // + the pre-existing dep.txt
+        "a probe wrote somewhere other than .cook/probes",
     );
 }
 
 #[test]
 fn cs0178_keylessness_propagates_along_requires() {
     let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    let be = backend(store.path());
 
     // Declares a `requires` — so not keyless by its own declaration — but the
     // upstream it names is.
@@ -184,11 +166,11 @@ fn cs0178_keylessness_propagates_along_requires() {
     keyless_upstreams.insert("ns:keyless".to_string());
 
     let runner = CountingRunner::new("[1]");
+    let eval_ctx = ctx(tmp.path());
     for _ in 0..2 {
-        let out = eval_cached(
-            &unit, tmp.path(), &be, &runner, &keyless_upstreams, &upstream_fps, true,
-        )
-        .unwrap();
+        let out =
+            evaluate(&unit, &eval_ctx, &runner, &no_env, &upstream_fps, &keyless_upstreams)
+                .unwrap();
         assert!(
             out.keyless,
             "a probe requiring a keyless probe folds a constant upstream \
@@ -199,24 +181,6 @@ fn cs0178_keylessness_propagates_along_requires() {
 }
 
 #[test]
-fn cook168_publish_off_suppresses_the_upload_but_not_the_value() {
-    let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("dep.txt"), "content").unwrap();
-    let be = backend(store.path());
-
-    let out = eval_cached(
-        &declares_file("ns:keyed", "dep.txt"), tmp.path(), &be,
-        &CountingRunner::new("[1]"), &BTreeSet::new(), &BTreeMap::new(),
-        /*publish*/ false,
-    )
-    .unwrap();
-
-    assert_eq!(out.bytes, b"[1]");
-    assert_eq!(file_count(store.path()), 0, "publish-off still uploaded");
-}
-
-#[test]
 fn cs0148_a_files_producer_is_synthesised_and_never_reaches_a_vm() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("a.txt"), "alpha").unwrap();
@@ -224,10 +188,10 @@ fn cs0148_a_files_producer_is_synthesised_and_never_reaches_a_vm() {
     let mut unit = declares_file("ns:manifest", "a.txt");
     unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
 
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let eval_ctx = ctx(tmp.path());
     // COOK-353: the sentinel is deliberately not valid Lua, so a path that
     // tried to run it would die on a bare `@`. PoisonRunner proves no path does.
-    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+    let out = evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
         .unwrap();
 
     let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
@@ -243,11 +207,11 @@ fn cs0214_a_tools_producer_is_synthesised_from_the_hashes_its_fingerprint_folded
     let mut unit = declares_tools("ns:tc", "sh");
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
 
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let eval_ctx = ctx(tmp.path());
     // Before CS-0214 this producer was a Lua program shelling out to
     // `command -v` and `sha256sum`. PoisonRunner proves no VM is reached now,
     // which is also what makes the producer work on a host with no coreutils.
-    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+    let out = evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
         .unwrap();
 
     let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
@@ -279,28 +243,14 @@ fn cs0214_a_tools_probe_naming_an_unresolvable_tool_fails_by_name() {
     let mut unit = declares_tools("ns:tc", "cook-no-such-tool-COOK-416");
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
 
-    // §22.5.2 requires the failure. The old lowering raised it from inside the
-    // produce body, which put it BEHIND the cache: a stored value served the
-    // probe without the tool existing at all. So the interesting half of this
-    // rule is the cache HIT, and a test against an empty store would pass just
-    // as well with the check back below the GET. This one plants a value at the
-    // exact fingerprint the probe will compute, so the store answers, and the
-    // failure has to come from ahead of it.
-    let store = tempfile::tempdir().unwrap();
-    let be = backend(store.path());
-    let inputs = cook_cache::probe::resolve_probe_inputs(
-        &unit, tmp.path(), &no_env, &BTreeMap::new(),
-    )
-    .unwrap();
-    let fingerprint = cook_cache::compute_probe_fingerprint(&inputs);
-    let value = br#"{"cook-no-such-tool-COOK-416":{"hash":"00"}}"#;
-    let mut meta = probe_artifact_meta("ns:tc", value.len());
-    cook_cache::backend::put_bytes(&be, &fingerprint, value, &mut meta).unwrap();
-
-    let err = eval_cached(
-        &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap_err();
+    // §22.5.2 requires the failure ahead of any value resolution. Before
+    // CS-0243 the interesting case was a cache hit that this check had to
+    // outrun; with no cache left the ordering rule is simpler to state — the
+    // check runs before `lookup`'s resolved/produce fork, full stop —  and
+    // PoisonRunner proves no VM is reached either way.
+    let eval_ctx = ctx(tmp.path());
+    let err = evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+        .unwrap_err();
 
     assert!(
         err.message().contains("cook-no-such-tool-COOK-416"),
@@ -334,8 +284,9 @@ fn cs0214_a_tools_probe_whose_binary_cannot_be_read_fails_rather_than_recording_
 
     let mut unit = declares_tools("ns:tc", &tool.to_string_lossy());
     unit.produce_source = cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string();
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
-    let result = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
+    let eval_ctx = ctx(tmp.path());
+    let result =
+        evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
 
     // Root can read a mode-0111 file, so the unreadable state is not
     // constructible when the suite runs as root. The rule still holds there:
@@ -376,8 +327,9 @@ fn cook510_a_files_probe_whose_matched_path_cannot_be_read_fails_rather_than_rec
 
     let mut unit = declares_file("ns:manifest", "secret.txt");
     unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
-    let result = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
+    let eval_ctx = ctx(tmp.path());
+    let result =
+        evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new());
 
     // Root can read a mode-0000 file, so the unreadable state is not
     // constructible when the suite runs as root — same caveat CS-0214's
@@ -409,8 +361,8 @@ fn cook510_a_files_probe_whose_matched_path_is_genuinely_absent_still_folds_as_m
     // Deliberately never created.
     let mut unit = declares_file("ns:manifest", "gone.txt");
     unit.produce_source = cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string();
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
-    let out = evaluate(&unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
+    let eval_ctx = ctx(tmp.path());
+    let out = evaluate(&unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new())
         .expect("a genuinely absent match must not fail the probe");
 
     let value = cook_contracts::probe_value::decode_json(&out.bytes).unwrap();
@@ -422,54 +374,11 @@ fn cook510_a_files_probe_whose_matched_path_is_genuinely_absent_still_folds_as_m
 }
 
 #[test]
-fn cs0102_unparseable_cached_bytes_are_evicted_not_merely_ignored() {
-    let tmp = tempfile::tempdir().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("dep.txt"), "content").unwrap();
-    let be = backend(store.path());
-    let unit = declares_file("ns:keyed", "dep.txt");
-
-    // Learn the fingerprint, then poison that exact key.
-    let first = eval_cached(
-        &unit, tmp.path(), &be, &CountingRunner::new("[1]"),
-        &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
-    // CS-0055 conflict detection refuses to overwrite a key with differing
-    // bytes, so poisoning means replacing the entry, not writing over it.
-    let poison = b"not json at all";
-    cook_cache::backend::CacheBackend::delete(&be, &first.fingerprint).unwrap();
-    let mut meta = probe_artifact_meta("ns:keyed", poison.len());
-    cook_cache::backend::put_bytes(&be, &first.fingerprint, poison, &mut meta).unwrap();
-
-    let runner = CountingRunner::new("[1]");
-    let out = eval_cached(
-        &unit, tmp.path(), &be, &runner, &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
-
-    assert!(!out.cache_hit, "unparseable bytes must read as a miss");
-    assert_eq!(runner.runs(), 1, "the miss must re-produce");
-    assert!(
-        out.warnings.iter().any(|w| w.contains("not probe-value JSON")),
-        "the condition must be reported, got {:?}", out.warnings,
-    );
-    // Self-healed: the poisoned key now addresses valid bytes again, so the
-    // next reader of the shared store is not served the same garbage forever.
-    let served = eval_cached(
-        &unit, tmp.path(), &be, &PoisonRunner, &BTreeSet::new(), &BTreeMap::new(), true,
-    )
-    .unwrap();
-    assert!(served.cache_hit);
-    assert_eq!(served.bytes, b"[1]");
-}
-
-#[test]
 fn cs0102_the_canonical_local_copy_is_written_with_the_value_bytes() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let eval_ctx = ctx(tmp.path());
     let out = evaluate(
-        &declares_nothing("ns:local"), &ctx, &CountingRunner::new("[1]"),
+        &declares_nothing("ns:local"), &eval_ctx, &CountingRunner::new("[1]"),
         &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap();
@@ -483,9 +392,9 @@ fn cs0102_the_canonical_local_copy_is_written_with_the_value_bytes() {
 #[test]
 fn a_produce_failure_names_the_probe() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let eval_ctx = ctx(tmp.path());
     let err = evaluate(
-        &declares_nothing("ns:bad"), &ctx, &FailingRunner,
+        &declares_nothing("ns:bad"), &eval_ctx, &FailingRunner,
         &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap_err();
@@ -501,9 +410,9 @@ fn a_missing_upstream_fingerprint_is_a_resolve_error() {
         "ns:downstream",
         ProbeInputs { requires: vec!["ns:absent".to_string()], ..Default::default() },
     );
-    let ctx = EvalCtx { working_dir: tmp.path(), cache: None };
+    let eval_ctx = ctx(tmp.path());
     let err = evaluate(
-        &unit, &ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new(),
+        &unit, &eval_ctx, &PoisonRunner, &no_env, &BTreeMap::new(), &BTreeSet::new(),
     )
     .unwrap_err();
 

@@ -1,6 +1,6 @@
 # 04 — probes: computed values the cache can see.
 #
-# A probe is a named, memoized value producer that runs at register time.
+# A probe is a named observation that runs at register time and is re-run on every invocation.
 # Probe values are determinants: anything built from a probe re-keys when
 # the probe's value changes — and stays cached when it doesn't.
 #

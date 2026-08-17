@@ -43,14 +43,23 @@ pub fn read_value(dir: &Path, key: &str) -> Option<Vec<u8>> {
 }
 
 /// Per-run probe-value store (§22.5.8). The canonical value of a probe is
-/// the file [`materialize_value`] writes above (CS-0102); this store is a
-/// read-through byte cache of that file, shared by the engine scheduler
-/// and every worker's `cook.probes.get`. It is NOT a cross-VM shared-memory
-/// channel: writers (engine scheduler, register pre-pass) write the file
-/// first and seed this cache with the same bytes.
+/// the file [`materialize_value`] writes above (CS-0102). During a normal
+/// `execute_dag` run this store is populated by explicit [`ProbeValueStore::insert`]
+/// calls from the engine scheduler after `cook_probe::eval::lookup`/`record`
+/// resolves each value — CS-0243 removed the probe-value cache, so nothing
+/// here is ever read back from disk during that run. [`ProbeValueStore::get`]'s
+/// `dir`-backed fallback exists for exactly one other caller, `cook why`
+/// (`cook-engine::why`), which attaches a `.cook/probes` directory to read an
+/// EARLIER invocation's on-disk record when no scheduler ran in this process
+/// to populate the map. It is NOT a cross-VM shared-memory channel: within
+/// one run, the engine scheduler and every worker's `cook.probes.get` share
+/// this same in-memory map.
 ///
-/// Locking: one mutex guards the whole map, held across the read-through
-/// file load. Probe files are tiny; simplicity beats contention here, and
+/// Locking: one mutex guards the whole map. [`Self::get`] is still
+/// literally read-through — a map miss falls to [`read_value`] and inserts
+/// the result, and the `dir`-backed fallback is used exclusively by `cook why`. The lock is
+/// held across that whole path (miss, disk read, insert), not just the
+/// map lookup. Probe files are tiny; simplicity beats contention here, and
 /// double-checked locking is how the historical pool nil-index race
 /// (W13) family of bugs happens — don't.
 #[derive(Clone, Default)]
@@ -75,8 +84,11 @@ impl ProbeValueStore {
         Self::default()
     }
 
-    /// Point the read-through at a `.cook/probes` directory. Called once
-    /// per execute_dag run by the engine.
+    /// Point [`Self::get`]'s disk fallback at a `.cook/probes` directory.
+    /// `execute_dag` no longer calls this — CS-0243 removed the
+    /// probe-value cache the fallback used to read through. The only
+    /// caller left is `cook why` (`cli/crates/cook-engine/src/why.rs`),
+    /// reading an earlier invocation's on-disk records after the fact.
     pub fn attach_dir(&self, dir: PathBuf) {
         self.inner.lock().unwrap().dir = Some(dir);
     }

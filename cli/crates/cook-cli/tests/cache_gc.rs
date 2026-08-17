@@ -370,36 +370,41 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     // enough that a naive byte-hungry LRU (ignoring the exemption) would
     // take them before any file, and none of them touched since only
     // `--max-size` is passed (no `--older-than`, so the age pass never
-    // runs at all).
-    const EXEMPT_KINDS: &[&str] = &[
-        "discovered_input_sets",
-        "discovered_inputs",
-        "probe_value",
-        "symlink",
-        "dir",
-    ];
-    let exempt_keys: Vec<[u8; 32]> = EXEMPT_KINDS
+    // runs at all). CS-0243 (COOK-527) dropped `probe_value` from the real
+    // list: no probe value is ever written to the store any more, so a
+    // surviving entry of that kind is an orphan from an older version and
+    // must be reclaimable like a plain file, not exempt like these.
+    //
+    // Imports the real constant (COOK-527 review) rather than hand-copying
+    // it: a hand-copied list here had already drifted from
+    // `SIZE_SWEEP_EXEMPT_KINDS` — this file's own copy was missing
+    // `module_input_sets` — and nothing caught it, because a missing kind
+    // just meant fewer objects seeded, never a wrong assertion.
+    let exempt_keys: Vec<[u8; 32]> = cook_contracts::evict::SIZE_SWEEP_EXEMPT_KINDS
         .iter()
         .enumerate()
         .map(|(i, kind)| {
             fx.seed(100 + i as u32, 10_000, 50_000, Some(kind), "/Cookfile::exempt")
         })
         .collect();
+    let exempt_count = cook_contracts::evict::SIZE_SWEEP_EXEMPT_KINDS.len();
 
     // Non-vacuity: `cache du`'s `By kind:` breakdown must show `file` plus
-    // all five exempt kinds — if a sidecar were mis-seeded, `enumerate`
-    // would silently degrade it to `kind: None`, and this assertion catches
-    // that before the eviction assertions below could pass vacuously.
+    // every exempt kind — if a sidecar were mis-seeded, `enumerate` would
+    // silently degrade it to `kind: None`, and this assertion catches that
+    // before the eviction assertions below could pass vacuously.
     let kinds = fx.kinds_reported();
     assert!(kinds.contains("file"), "expected a 'file' kind row; got {kinds:?}");
-    for kind in EXEMPT_KINDS {
+    for kind in cook_contracts::evict::SIZE_SWEEP_EXEMPT_KINDS {
         assert!(kinds.contains(*kind), "expected a {kind:?} kind row; got {kinds:?}");
     }
 
-    // total_before = 5,000,000 (files) + 5 * 10,000 (exempt) = 5,050,000.
-    // target = 2,050,000 evicts exactly the 3 oldest files:
-    //   after evicting 3: running_total = 5,050,000 - 3,000,000 = 2,050,000 <= target (stop)
-    //   before evicting the 3rd: running_total = 3,050,000 > target (continue)
+    // total_before = 5,000,000 (files) + exempt_count * 10,000 (exempt).
+    // target = 2,050,000 evicts exactly the 3 oldest files: exempt objects
+    // are never evicted regardless of count, so only the file total moves
+    // the running total under target.
+    //   after evicting 3: running_total = total_before - 3,000,000 <= target (stop)
+    //   before evicting the 3rd: running_total = total_before - 2,000,000 > target (continue)
     let gc = fx.run(&["cache", "gc", "--max-size", "2050000"]);
     assert!(gc.status.success(), "gc must exit 0: {gc:?}");
     let text = String::from_utf8(gc.stdout).unwrap();
@@ -410,8 +415,17 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     assert_eq!(freed_size, "3.0 MB", "3 * 1,000,000 bytes must render as an exact 3.0 MB:\n{text}");
 
     let (count_before, count_after) = parse_transition_counts(&text);
-    assert_eq!(count_before, 10, "5 files + 5 exempt objects seeded:\n{text}");
-    assert_eq!(count_after, 7, "10 - 3 evicted = 7 remaining:\n{text}");
+    assert_eq!(
+        count_before,
+        5 + exempt_count,
+        "5 files + {exempt_count} exempt objects seeded:\n{text}"
+    );
+    assert_eq!(
+        count_after,
+        5 + exempt_count - 3,
+        "{} - 3 evicted remaining:\n{text}",
+        5 + exempt_count
+    );
 
     // The exact LRU tail: the 3 OLDEST files (index 0, 1, 2) are gone; the
     // 2 newest files (index 3, 4) survive.
@@ -424,7 +438,7 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     }
 
     // No exempt-kind object was touched, regardless of age.
-    for (kind, key) in EXEMPT_KINDS.iter().zip(&exempt_keys) {
+    for (kind, key) in cook_contracts::evict::SIZE_SWEEP_EXEMPT_KINDS.iter().zip(&exempt_keys) {
         assert_object_present(&fx.cache_dir, key, kind);
     }
 }

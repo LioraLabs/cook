@@ -546,6 +546,18 @@ The native `probe` declaration (§{cat.probes.decl}) is pure sugar over the reta
 
 The decision to ship native syntax as sugar rather than as a replacement reflects the Standard's general posture: the Lua API is the extension point; surface syntax is a readability layer over it. Authors who need capabilities the native form does not yet cover fall back to `cook.probe()` without ceremony.
 
+### C.22.2. Why a probe value is not cached across invocations [#rationale.probe-no-value-cache]
+
+§{cat.probes.exec} required an implementation to serve a probe's value from the content-addressed store whenever the probe's fingerprint hit, and CS-0243 removed the requirement and the store entry with it. The argument for removal is not that caching an observation is expensive to get right; it is that it is not a well-posed thing to get right.
+
+A cache is sound when the key covers everything the cached computation depends on. A probe is the construct whose whole purpose is to observe state the build does not produce and the author did not enumerate — which compiler is on the PATH, what the host reports about itself, what sits in a directory nobody declared. Its fingerprint folds what was *declared* (§{cat.probes.inputs}). The gap between those two sets is not an implementation defect to be closed; it is the definition of the construct. Every repair in this area widened the fold — module source (CS-0204), a tool identity that resolves but cannot be read (CS-0214), a matched file that exists but is unreadable (CS-0241) — and each repair was correct and none of them was the last one, because the next probe body reads something else.
+
+The comparison that settles it is with the construct next door. A recipe unit is cached, and soundly, because its inputs are declared, its outputs are declared, and the language refuses to infer a determinant the author did not write down (§{exec.cache.single-key}). That refusal is what makes the unit cache trustworthy, and it is exactly what made the probe cache untrustworthy: the same rule applied to a construct built to look past its own declarations. The language now gives each construct the treatment its declarations earn — units are cached, probes are observed — and an author whose observation is genuinely expensive is directed to express it as a unit, where the declarations that make caching sound are the ones the surface already demands.
+
+Removal costs less than it appears to, because the probe cache was never what made a build fast. A unit that seals a probe keys on the probe's *value*, so an observation that comes back with the same answer changes no key and cancels no hit; what the cache saved was the cost of asking, and asking is milliseconds against a build measured in seconds. Sharing the answer between machines, which §{exec.cache.portability} once mandated, was worth even less: for a declaration producer the reader must hash its own tree to compute the key it would fetch under, so it has the answer before it can ask for it, and for a host query the answer is a property of the machine that gave it and has no business travelling.
+
+What is deliberately kept is the record. The value is still written to `.cook/probes/<key>.json` on every completion, because "what did this build observe" is a question every cache-explanation surface has to answer and it cannot be reconstructed afterwards. A record that is never read back as a source cannot go stale, which is the distinction the whole removal turns on: the hazard was never in writing the value down.
+
 ## C.23. On §{lua.cook-on-register-complete} `cook.on_register_complete` [#rationale.on-register-complete]
 
 ### C.23.1. Why a run-last callback rather than an `all_recipe_names()` query [#rationale.on-register-complete-vs-query]

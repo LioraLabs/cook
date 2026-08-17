@@ -69,24 +69,22 @@ pub struct RunResult {
     /// skips walking the shared store entirely, which is what keeps a settled
     /// no-op build at zero added cost.
     ///
-    /// Read the gate precisely: this counts **published outputs**, which is
-    /// narrower than "the store did not grow". The register-phase probe
-    /// pre-pass writes probe values to the CAS outside every publish guard and
-    /// outside this counter (COOK-339), so a run can add a handful of
-    /// `probe_value` objects while this still reads 0. Those objects are
-    /// kilobytes against a budget in gigabytes, so the only consequence is
-    /// that an over-budget warning waits for the next run that publishes
-    /// something.
+    /// Read the gate precisely: this counts **published outputs**. It used to
+    /// be narrower than "the store did not grow", because the register-phase
+    /// probe pre-pass wrote probe values to the CAS outside every publish
+    /// guard and outside this counter (COOK-339), so a run could add a
+    /// handful of `probe_value` objects while this still read 0. CS-0243
+    /// removed the probe-value cache entirely — the pre-pass writes nothing
+    /// to the CAS any more — so that gap is gone and this counter is exact.
     ///
-    /// That bound is the honest one, and it is weaker than "one build later":
-    /// the budget check is stateless by design (no stamp file, no rate
+    /// The budget check is still stateless by design (no stamp file, no rate
     /// limiting), so *only* a publishing run reports. A store pushed over
-    /// budget — by the pre-pass writes above, by a concurrent project sharing
-    /// a `[cache] cache_dir`, or by an earlier run whose warning scrolled past
-    /// — stays quietly over budget for as long as subsequent runs publish
-    /// nothing. A settled build publishes nothing and therefore never warns;
-    /// that is the intended cadence, not a defect. `cook cache du` is the
-    /// on-demand way to ask regardless of what the last run published.
+    /// budget — by a concurrent project sharing a `[cache] cache_dir`, or by
+    /// an earlier run whose warning scrolled past — stays quietly over
+    /// budget for as long as subsequent runs publish nothing. A settled build
+    /// publishes nothing and therefore never warns; that is the intended
+    /// cadence, not a defect. `cook cache du` is the on-demand way to ask
+    /// regardless of what the last run published.
     pub published_count: u64,
 }
 

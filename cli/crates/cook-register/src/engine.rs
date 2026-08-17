@@ -2270,20 +2270,13 @@ impl RegisterProbeResolver {
         // Everything from resolving the declared inputs to materialising the
         // canonical local copy is `cook_probe::eval` (COOK-359). It is the same
         // call the executor makes, so the two phases cannot drift again: the
-        // fingerprint, the CS-0178 keylessness rule, the cache lookup and
-        // publish, the CS-0148 top-level `files` value synthesis, and the CS-0102 local
-        // copy all have one implementation. The register VM is the only
-        // phase-specific part, and it is the parameter.
+        // fingerprint, the CS-0178 keylessness rule, the CS-0148 top-level
+        // `files` value synthesis, and the CS-0102/CS-0243 local copy all
+        // have one implementation. The register VM is the only phase-specific
+        // part, and it is the parameter.
         let eval_ctx = cook_probe::eval::EvalCtx {
             working_dir: &self.working_dir,
-            cache: self
-                .cache_ctx
-                .as_ref()
-                .map(|ctx| cook_probe::eval::CacheAccess {
-                    backend: ctx.backend.as_ref(),
-                    project_root: &ctx.project_root,
-                    publish_enabled: ctx.publish_enabled,
-                }),
+            project_root: self.cache_ctx.as_ref().map(|ctx| ctx.project_root.as_path()),
         };
         let (upstream_fps, keyless) = {
             let state = self.state.borrow();
@@ -2326,7 +2319,7 @@ impl RegisterProbeResolver {
         let jv = cook_contracts::probe_value::decode_json(&evaluated.bytes).map_err(|e| {
             RegisterError::ProbeProduceFailed {
                 key: key.to_string(),
-                message: format!("decode cached value: {e}"),
+                message: format!("decode observed value: {e}"),
             }
         })?;
         self.store.borrow_mut().insert(key.to_string(), jv);

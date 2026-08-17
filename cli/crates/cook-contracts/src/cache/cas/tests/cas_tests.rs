@@ -207,28 +207,6 @@ fn artifact_meta_kind_round_trips_when_set() {
 }
 
 #[test]
-fn artifact_meta_as_probe_value_sets_kind() {
-    let meta = ArtifactMeta {
-        recipe_namespace: "ns".into(),
-        command_hash: 0,
-        env_contribution: 0,
-        seal_contribution: 0,
-        schema_version: 1,
-        size_bytes: 0,
-        tags: BTreeSet::new(),
-        consulted_env_keys: BTreeSet::new(),
-        output_index: 0,
-        output_path: "probe.bin".into(),
-        content_hash: ArtifactMeta::zero_content_hash(),
-        kind: None,
-        mode: ArtifactMeta::default_mode(),
-        target: None,
-    }
-    .as_probe_value();
-    assert_eq!(meta.kind.as_deref(), Some("probe_value"));
-}
-
-#[test]
 fn artifact_meta_kind_none_not_serialised() {
     let meta = ArtifactMeta {
         recipe_namespace: "ns".into(),
@@ -378,7 +356,10 @@ fn the_artifact_kind_wire_spellings_are_these_exact_strings() {
     assert_eq!(k::OBSERVATION, "observation");
 }
 
-// `artifact_meta_as_probe_value_sets_kind` above already pins the constructor
+// `artifact_meta_kind_round_trips_when_set` above already pins the wire form
 // against the literal `"probe_value"`, independently of the constant, which is
 // exactly the pairing wanted: one test says what the constant IS, the other
-// says the constructor writes that spelling.
+// says a sidecar carrying that spelling still round-trips. CS-0243 deleted
+// the constructor (`ArtifactMeta::as_probe_value`) that used to write the
+// kind — nothing does any more — but a store may still hold sidecars an
+// older version wrote, and those must keep decoding.

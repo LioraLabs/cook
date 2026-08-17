@@ -15,7 +15,7 @@ The **observable inputs** of a work unit are those of its properties that are de
 2. The list of input paths declared for the unit.
 3. The list of output paths declared for the unit.
 4. The recipe's resolved environment (§{lua}).
-5. For a unit produced by a `gather <probe>` source (§{steps.gather}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. (This composes with the probe-value cache of §{cat.probes.exec}, which fingerprints the member *set*: the two layers are independent.)
+5. For a unit produced by a `gather <probe>` source (§{steps.gather}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. The source probe itself is re-observed on every invocation and is never cached (§{cat.probes.exec}); what this observable keys is the member, so a member whose content did not move keeps its unit's key however the observation was arrived at.
 
 > **Note (informative).** An implementation MAY realise the materialised-member observable (5) by folding the canonical member rendering into the unit's command-text contribution (observable 1) rather than as a distinct fingerprint field; the two are observably equivalent because both make the member part of the inputs the fingerprint depends on. The reference implementation takes this approach: the codegen attaches the canonical member to each fan-out unit, which is mixed into the command hash at registration.
 
@@ -453,7 +453,7 @@ A conforming implementation that maintains a cache of recipe execution results M
 
 A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.
 
-Probe units (§{cat.probes}) participate in the same cache machinery: a probe's fingerprint addresses its canonical-JSON-serialised value (§{cat.probes.values}) in `CacheBackend`, and probe artifacts ride the same `events.jsonl` event stream and Cook Cloud wire protocol as file outputs.
+Probe units (§{cat.probes}) are outside these invariants, and deliberately so (CS-0243). A probe value is never stored, never published, and never transported: it is observed afresh on every invocation in which the probe is reached (§{cat.probes.exec}), so there is nothing about it for a portability invariant to hold. Portability of a *unit* that seals a probe is unaffected — the sealed values enter that unit's key by §{exec.cache.single-key}, and two machines that observe the same world compute the same key and share the same artifact, which is the sharing that was ever worth having here.
 
 ### Note 17.5.1 — Chore parameters and caching (informative) [#exec.cache.chore-params]
 

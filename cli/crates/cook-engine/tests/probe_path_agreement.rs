@@ -4,28 +4,27 @@
 //! `evaluate_prepass_probe` (which feeds an `gather <probe>` fan-out) and
 //! `cook-engine`'s executor G4 path (which feeds sealed consumers). Both do the
 //! same thing around a different Lua VM: resolve inputs, compute a fingerprint,
-//! cache GET, run the producer on a miss, cache PUT, write
-//! `.cook/probes/<key>.json`, decode. Only the VM genuinely differs.
+//! decide whether a value is already resolved without a VM, run the producer
+//! otherwise, write `.cook/probes/<key>.json`, decode. Only the VM genuinely
+//! differs — and, since CS-0243 (COOK-527), there is no cache GET or PUT left
+//! in either copy to have drifted.
 //!
-//! §22.5.8's cache-hit clause names no consumption path: when a probe's
-//! fingerprint addresses a stored artifact the implementation MUST load the
-//! cached bytes and skip execution. How a probe's value is CONSUMED is not
-//! part of its identity, so the same probe declaration must cost the same
-//! number of producer executions either way.
+//! §22.5.8's **Always observe** rule (CS-0243) names no consumption path: a
+//! reached probe's `produce` body MUST run, once, on every invocation,
+//! regardless of how its value is CONSUMED. That is still not part of the
+//! probe's identity, so the same probe declaration must cost the same number
+//! of producer executions either way — now trivially "every invocation" for
+//! BOTH a keyed and a keyless probe, where before CS-0243 keyedness was what
+//! made the two counts diverge (`keyed_probe_costs_the_same_on_both_paths`
+//! below inverted from "1 run in 3" to "3 runs in 3" for exactly that
+//! reason). The file's original point — one path re-producing on every
+//! invocation while the other one cached is a defect, not a feature some
+//! consumer can rely on — survives the flip: agreement between the paths is
+//! still the whole of what this file checks.
 //!
-//! This file pins that as an executable claim. It fails before the paths are
-//! unified: the register copy's cache block sits under
-//! `match cache_ctx { Some(ctx) => .., None => run_produce(..) }` and
-//! `cook-cli/src/pipeline.rs` hardcodes `None` into the function its own doc
-//! comment calls "the sole registration path for every command", so the block
-//! has never once run against a backend. The fan-out path therefore re-produces
-//! on every invocation regardless of what the probe declares.
-//!
-//! `keyless_probe_reproduces_on_both_paths` is the guard on the fix: CS-0178
-//! keylessness lives only in the executor copy, so switching the pre-pass cache
-//! on without porting it first would reintroduce COOK-343 on the fan-out path —
-//! and there the permanent hit lives in the SHARED store, which `rm -rf .cook`
-//! does not reach. That test passes today and must still pass afterwards.
+//! `keyless_probe_reproduces_on_both_paths` no longer distinguishes anything
+//! CS-0178 governs (every probe re-produces now, keyed or not) but is kept:
+//! it is still evidence that neither path regressed into caching anything.
 
 use std::fs;
 use std::path::Path;
@@ -46,11 +45,18 @@ fn cook_binary() -> std::path::PathBuf {
 
 /// Two probes, two consumption paths each.
 ///
-/// `keyed:items` declares a file input, so §22.5.8 gives it a cache key and one
-/// producer execution must serve every later run while `dep.txt` is unchanged.
-/// `keyless:items` declares nothing, so CS-0178 gives it NO key and it must
-/// re-produce every run. Each producer appends one line to its own runlog,
-/// which makes execution observable independently of the value.
+/// `keyed:items` declares a file input; `keyless:items` declares nothing.
+/// Before CS-0243 that distinction was everything — §22.5.8 gave the keyed
+/// probe a cache key so one producer execution served every later run while
+/// `dep.txt` stayed unchanged, and CS-0178 gave the keyless one no key so it
+/// re-produced every run. CS-0243 removed the cache the distinction was
+/// FOR: a reached probe re-produces every invocation regardless, keyed or
+/// not, so both probes now cost the same either way. `keyed:items` and its
+/// `seal "src/dep.txt"` are kept anyway — the fixture still proves a keyed
+/// probe's declared input plays no role in whether it re-produces, which is
+/// the CS-0243 rule stated the other way round. Each producer appends one
+/// line to its own runlog, which makes execution observable independently
+/// of the value.
 ///
 /// Both values are deterministic: the runlogs measure how often the producer
 /// RAN, never what it returned, so a divergence cannot hide behind a value that
@@ -159,17 +165,18 @@ fn keyed_probe_costs_the_same_on_both_paths() {
     let (fanned_runs, fanned_value) =
         measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
 
-    // §22.5.8: a keyed probe whose declared inputs have not moved is served
-    // from cache, so the producer runs exactly once across the whole series.
+    // CS-0243 (COOK-527): a reached probe always observes, so a keyed
+    // probe's declared inputs holding still buys it nothing any more — the
+    // producer runs once per invocation, every invocation, on both paths.
     assert_eq!(
-        sealed_runs, 1,
-        "seal path: keyed probe producer ran {sealed_runs}x in {RUNS} runs, expected 1",
+        sealed_runs, RUNS,
+        "seal path: keyed probe producer ran {sealed_runs}x in {RUNS} runs, \
+         expected {RUNS} (CS-0243)",
     );
     assert_eq!(
-        fanned_runs, 1,
+        fanned_runs, RUNS,
         "gather <probe> path: keyed probe producer ran {fanned_runs}x in \
-         {RUNS} runs, expected 1 — the register pre-pass is not consulting the \
-         cache (COOK-359)",
+         {RUNS} runs, expected {RUNS} (CS-0243)",
     );
     assert_eq!(
         sealed_runs, fanned_runs,
@@ -177,7 +184,10 @@ fn keyed_probe_costs_the_same_on_both_paths() {
          executions depending only on how its value was consumed",
     );
 
-    // The ticket's second acceptance criterion: byte-identical values.
+    // The ticket's second acceptance criterion: byte-identical values. Still
+    // meaningful post-CS-0243 — the producer is deterministic, so both paths
+    // must still agree on the canonical bytes even though each ran RUNS
+    // times rather than once.
     assert_eq!(
         sealed_value, fanned_value,
         "the two paths wrote different bytes to .cook/probes/keyed:items.json",

@@ -1,13 +1,22 @@
 //! The probe evaluation sequence, owned once (COOK-359).
 //!
-//! Evaluating a probe is the same seven steps wherever it happens: resolve the
+//! Evaluating a probe is the same steps wherever it happens: resolve the
 //! declared inputs, compute the fingerprint, decide whether the probe has a
-//! cache key at all, look the key up, run `produce` on a miss, publish the
-//! result, and materialise the canonical local copy. Only step five differs
-//! between phases, and only in WHICH Lua VM runs the source: the register VM
-//! for a `gather <probe>` pre-pass, a worker VM for a sealed consumer.
-//! That one difference is why the sequence was written twice; [`ProduceRunner`]
-//! makes it a parameter so it stops being a reason.
+//! cache key at all, decide whether a value is already resolved without
+//! running a VM, run `produce` otherwise, and materialise the canonical local
+//! copy. Only the produce step differs between phases, and only in WHICH Lua
+//! VM runs the source: the register VM for a `gather <probe>` pre-pass, a
+//! worker VM for a sealed consumer. That one difference is why the sequence
+//! was written twice; [`ProduceRunner`] makes it a parameter so it stops
+//! being a reason.
+//!
+//! CS-0243: a reached probe always observes. There is no probe-value cache —
+//! no GET, no PUT, no publish, no stored artifact. The only two ways a value
+//! is resolved without running a VM are not caching: a top-level
+//! `files`/`tools` declaration's value is synthesised fresh from the current
+//! tree, and a key this same invocation's register pre-pass already resolved
+//! is served from that pre-pass's own production (CS-0242's cross-phase
+//! single-flight). Neither reads a previous invocation's answer.
 //!
 //! What this module owns and what it does not:
 //!
@@ -15,8 +24,8 @@
 //!     inputs, and the pure rules for rendering and parsing a probe value. It
 //!     is forbidden stateful std access by its own layout test, so it can
 //!     describe a value but never fetch, store, or run one.
-//!   * This module owns what EVALUATING one does: filesystem, cache backend,
-//!     and the ordering between them.
+//!   * This module owns what EVALUATING one does: filesystem and the ordering
+//!     of the steps above.
 //!   * The caller owns scheduling, the VM, event emission, and diagnostics. It
 //!     is handed [`Evaluated`] and decides what to say about it.
 //!
@@ -96,39 +105,20 @@ impl std::fmt::Display for ProbeError {
     }
 }
 
-/// Cache access for one invocation. `None` on [`EvalCtx::cache`] means no
-/// backend is wired, and the sequence degrades to always-produce.
-///
-/// Note for callers: "no backend" must mean genuinely no backend. COOK-359's
-/// root cause was a caller that passed `None` because nobody had wired the
-/// context, which silently converted every GET into a miss and made an
-/// `gather <probe>` driver re-produce on every invocation for the life of
-/// the feature.
-pub struct CacheAccess<'a> {
-    pub backend: &'a dyn cook_cache::backend::CacheBackend,
-    /// Root under which `.cook/probes/` is written.
-    pub project_root: &'a Path,
-    /// COOK-168: false suppresses every shared-store upload for this
-    /// invocation. Fetch is unaffected.
-    pub publish_enabled: bool,
-}
-
 /// Everything the sequence needs that is neither the probe nor the VM.
 pub struct EvalCtx<'a> {
     /// Base for resolving the probe's declared `files` inputs.
     pub working_dir: &'a Path,
-    pub cache: Option<CacheAccess<'a>>,
+    /// Root under which `.cook/probes/` is written. `None` falls back to
+    /// `working_dir`, matching the behaviour of a workspace that has no
+    /// resolved project root.
+    pub project_root: Option<&'a Path>,
 }
 
 impl EvalCtx<'_> {
-    /// Where the canonical local copy goes. Falls back to `working_dir` when
-    /// no backend is wired, matching the behaviour of a workspace that has no
-    /// resolved project root.
+    /// Where the canonical local copy goes.
     fn probes_dir(&self) -> PathBuf {
-        let root = match &self.cache {
-            Some(c) => c.project_root,
-            None => self.working_dir,
-        };
+        let root = self.project_root.unwrap_or(self.working_dir);
         cook_contracts::layout::probes_dir(root)
     }
 }
@@ -143,8 +133,6 @@ pub struct Evaluated {
     /// doesn't), so it has no cache key. Callers propagate this into the set
     /// they pass as `keyless_upstreams` for probes that `require` it.
     pub keyless: bool,
-    /// True when the value came from the cache and `produce` never ran.
-    pub cache_hit: bool,
     /// CS-0157: where each declared tool resolves RIGHT NOW. Location
     /// metadata, deliberately outside the fingerprint and the canonical value,
     /// so it can never go stale inside a cached value.
@@ -156,20 +144,21 @@ pub struct Evaluated {
     pub warnings: Vec<String>,
 }
 
-/// Where a probe's bytes came from. Decides whether they get published.
+/// Where a probe's bytes came from. CS-0243: neither variant is ever
+/// published — there is no store to publish to. [`record`] keeps the
+/// distinction only to compute [`Recorded::fingerprint`] (CS-0204's module
+/// folding applies to a freshly produced value, never to one already
+/// resolved).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueSource {
-    /// Served by the cache. Already stored, so [`record`] must not re-publish.
-    Cache,
     /// Newly produced — by a VM, or synthesised for a producer kind that needs
-    /// none. Published subject to keylessness and `publish_enabled`.
+    /// none.
     Produced,
-    /// COOK-526: served from this SAME invocation's register pre-pass,
-    /// which already ran `produce` (or hit the cache) and already recorded
-    /// the value — `record`'s canonical-copy write is unconditional, so the
-    /// bytes are already on disk regardless of `publish_enabled`. Like
-    /// [`ValueSource::Cache`], [`record`] must not re-publish: publishing is
-    /// this variant's caller's business the first time, not the second.
+    /// COOK-526: served from this SAME invocation's register pre-pass, which
+    /// already ran `produce` and already materialised the value at
+    /// `.cook/probes/<key>.json` — `record`'s canonical-copy write is
+    /// unconditional. Deliberately not a cache tier (CS-0243): the bytes come
+    /// from THIS invocation's own production, never an earlier one's.
     Prepass,
 }
 
@@ -177,26 +166,29 @@ pub enum ValueSource {
 /// a key at all, where the declared tools resolve, and either the bytes (when
 /// no VM is needed) or nothing (when the caller must produce).
 pub struct Lookup {
-    /// This probe's identity as best known right now: the DECLARED fingerprint
-    /// on a miss, and on a cache hit the FULL one that the winning candidate
-    /// module set composed (CS-0204). Callers propagate it to downstream
-    /// `requires` and hand it back to [`record`], so a module edit rekeys the
-    /// whole downstream chain rather than just the probe that loaded it.
+    /// This probe's identity as best known right now: always the DECLARED
+    /// fingerprint (§22.5.4). CS-0243: there is no cache to consult, so
+    /// nothing here ever composes the FULL fingerprint — [`record`] does
+    /// that, folding in the loaded module set (CS-0204's `fold_candidate`),
+    /// after a value is actually produced. Callers hand this fingerprint to
+    /// [`record`] and propagate ITS result to downstream `requires`.
     pub fingerprint: [u8; 32],
     pub keyless: bool,
     pub tool_paths: BTreeMap<String, String>,
-    pub warnings: Vec<String>,
     /// `Some` when the value is already determined without running a VM.
-    /// Three ways, in the order [`lookup`] tries them: the cache served it; a
-    /// top-level `files`/`tools` declaration's value is synthesised; or this
-    /// same invocation's register pre-pass already produced it (COOK-526,
-    /// `prepass_resolved`). `None` means the caller must produce.
+    /// CS-0243: neither way below is a cache. Two ways, in the order
+    /// [`lookup`] tries them: a top-level `files`/`tools` declaration's value
+    /// is synthesised fresh from the current tree; or this same invocation's
+    /// register pre-pass already produced it (COOK-526, `prepass_resolved`).
+    /// `None` means the caller must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
 
-/// Steps 1-5: resolve inputs, fingerprint, decide keylessness, resolve tool
-/// locations, consult the cache, intercept producer kinds that need no VM, and
-/// serve a value this invocation's register pre-pass already produced.
+/// Resolve inputs, fingerprint, decide keylessness, resolve tool locations,
+/// intercept producer kinds that need no VM, and serve a value this
+/// invocation's register pre-pass already produced. CS-0243: there is no
+/// cache to consult — a probe's value is never served from a store that
+/// outlives the invocation.
 ///
 /// `upstream_fps` must already hold a fingerprint for every key in
 /// `probe.inputs.requires`; `keyless_upstreams` must hold the keys among them
@@ -219,7 +211,6 @@ pub fn lookup(
     prepass_resolved: bool,
 ) -> Result<Lookup, ProbeError> {
     let key = probe.key.as_str();
-    let mut warnings = Vec::new();
 
     // 1. Resolve declared inputs (env / tools / files / upstream fingerprints).
     let inputs =
@@ -331,104 +322,47 @@ pub fn lookup(
         }
     }
 
-    // 5. Cache GET, unless there is no key to look up.
+    // 5. Decide whether a VM is needed at all. CS-0243: there is no cache to
+    //    consult here, so `fingerprint` is simply the declared one from step
+    //    2. Two producer kinds never reach a VM: their produce strings are
+    //    the reserved `@files-manifest` and `@tools-identity` sentinels,
+    //    deliberately not valid Lua so that a path which tried to run one
+    //    would fail loudly. Each value is synthesised from the same pairs the
+    //    fingerprint's FILES / TOOLS section just folded, so trigger and
+    //    value are one computation and every phase agrees on the bytes.
     //
-    // CS-0204 makes this two-level. The declared fingerprint identifies the
-    // probe; the value is stored under the fingerprint that ALSO folds the
-    // content of the modules the body loaded, and which modules those are is
-    // knowable only by having run it. So the recorded candidate sets are read
-    // from a manifest keyed by the declared fingerprint, re-hashed against
-    // THIS machine's tree, and the composed full fingerprints probed
-    // newest-first. A set that no longer describes this tree composes a
-    // fingerprint nothing is stored under: a safe miss, never a wrong hit.
-    //
-    // A probe that has never loaded a module has no manifest, the single empty
-    // candidate composes the declared fingerprint unchanged, and this is
-    // byte-for-byte the pre-CS-0204 lookup.
-    let declared_fingerprint = fingerprint;
-    let mut fingerprint = declared_fingerprint;
-    let mut cached: Option<Vec<u8>> = None;
-    if let (Some(access), false) = (&ctx.cache, keyless) {
-        for candidate in module_candidates(access.backend, &declared_fingerprint) {
-            let full = fold_candidate(&declared_fingerprint, ctx.working_dir, &candidate);
-            match cook_cache::backend::get_bytes(access.backend, &full) {
-                Ok(Some(bytes)) if cook_contracts::probe_value::decode_json(&bytes).is_ok() => {
-                    // Only a DECODABLE value settles the identity. A candidate
-                    // that hit and then failed to parse is evicted below and
-                    // leaves the identity where it was, so the miss that
-                    // follows re-folds from the declared fingerprint rather
-                    // than from an already-folded one.
-                    fingerprint = full;
-                    cached = Some(bytes);
-                    break;
-                }
-                // CS-0102 stale-artifact defence, second layer behind the V2
-                // fingerprint marker. Evict rather than merely ignoring: a key
-                // that addresses unparseable bytes stays addressable to every
-                // other reader of a SHARED store until something removes it,
-                // and the put below then self-heals it.
-                Ok(Some(_)) => {
-                    warnings.push(format!(
-                        "probe '{key}': cached bytes are not probe-value JSON \
-                         (pre-CS-0102 artifact?); treating as miss"
-                    ));
-                    let _ = access.backend.delete(&full);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warnings.push(format!(
-                        "probe '{key}': cache backend error on get ({e}); treating as miss"
-                    ));
-                    break;
-                }
-            }
-        }
-    }
-
-    // 6. Decide whether a VM is needed at all. Two producer kinds never reach
-    //    one: their produce strings are the reserved `@files-manifest` and
-    //    `@tools-identity` sentinels, deliberately not valid Lua so that a path
-    //    which tried to run one would fail loudly. Each value is synthesised
-    //    from the same pairs the fingerprint's FILES / TOOLS section just
-    //    folded, so trigger and value are one computation and every phase
-    //    agrees on the bytes.
-    //
-    // 6b. COOK-526: nothing above found a value — but THIS invocation's
+    // 5b. COOK-526: nothing above found a value — but THIS invocation's
     //     register pre-pass may already have produced one for this exact key,
     //     before the execute phase existed (a `gather <probe>` fan-out, or a
     //     register-phase `cook.probes.get`). When it has, the bytes are
     //     already at `.cook/probes/<key>.json`: `record` below writes that
-    //     file unconditionally, independent of `publish_enabled`. Reading them
-    //     back is what re-running `produce` would answer (§22.5.8), so the
-    //     body runs at most once per key per invocation across both phases.
+    //     file unconditionally. Reading them back is what re-running
+    //     `produce` would answer (§22.5.8), so the body runs at most once per
+    //     key per invocation across both phases.
     //
-    //     Deliberately cache-independent — not a second cache tier. The
-    //     content-addressed probe-value cache is deleted by the next ticket in
-    //     this milestone (COOK-527), and single-flighting within one
-    //     invocation must not depend on it. It is last so a cache hit and the
-    //     synthesised producer kinds keep their existing meaning, and a
-    //     missing file falls through to an ordinary produce rather than
-    //     failing.
-    let resolved = match cached {
-        Some(bytes) => Some((bytes, ValueSource::Cache)),
-        None if is_files_manifest(probe) => Some((
+    //     Deliberately not a cache tier (CS-0243): the bytes read here are
+    //     always this SAME invocation's own production, never an earlier
+    //     invocation's. It is last so the synthesised producer kinds keep
+    //     their existing meaning, and a missing file falls through to an
+    //     ordinary produce rather than failing.
+    let resolved = match () {
+        _ if is_files_manifest(probe) => Some((
             cook_contracts::probe_value::encode_files_manifest(&inputs.files),
             ValueSource::Produced,
         )),
-        None if is_tools_identity(probe) => Some((
+        _ if is_tools_identity(probe) => Some((
             cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
-        None if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), key)
+        _ if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), key)
             .map(|bytes| (bytes, ValueSource::Prepass)),
-        None => None,
+        _ => None,
     };
 
     Ok(Lookup {
         fingerprint,
         keyless,
         tool_paths,
-        warnings,
         resolved,
     })
 }
@@ -442,78 +376,56 @@ pub struct Recorded {
     /// `requires` so a module edit rekeys the whole chain.
     pub fingerprint: [u8; 32],
     pub warnings: Vec<String>,
-    /// True when bytes were actually written to the shared store. Reported
-    /// rather than left for the caller to re-derive from source/keylessness/
-    /// `publish_enabled` — re-deriving it is how a rule ends up implemented
-    /// twice, which is the defect this crate exists to retire.
-    pub published: bool,
 }
 
-/// Steps 6-7: publish the value if it is new, then materialise the canonical
-/// local copy. Returns any non-fatal conditions; never prints.
+/// Materialise the canonical local copy. Returns any non-fatal conditions;
+/// never prints.
 ///
-/// Split from [`lookup`] because the executor produces asynchronously: it looks
-/// up at dispatch, hands a miss to a worker, returns to the scheduler, and
-/// records whatever the worker eventually sends back.
+/// CS-0243: this no longer publishes anywhere — there is no store. It
+/// survives as a separate step from [`lookup`] because the executor produces
+/// asynchronously: it looks up at dispatch, hands a miss to a worker, returns
+/// to the scheduler, and records whatever the worker eventually sends back.
 /// Takes the fingerprint and keylessness rather than a whole [`Lookup`], so a
 /// caller whose value arrived from a worker long after the lookup — the
 /// executor — can record it without reconstructing one.
+///
+/// `record`'s materialise call is load-bearing and unconditional: COOK-526's
+/// cross-phase single-flight (`lookup`'s `prepass_resolved` path) reads this
+/// exact file back within the same invocation.
 pub fn record(
     key: &str,
     ctx: &EvalCtx<'_>,
     fingerprint: &[u8; 32],
-    keyless: bool,
+    _keyless: bool,
     bytes: &[u8],
     source: ValueSource,
-    // CS-0204: the modules the `produce` body loaded. Empty on a cache hit
-    // (nothing ran) and for a body that loaded nothing, in which case every
-    // decision below is the pre-CS-0204 one.
+    // CS-0204: the modules the `produce` body loaded. Empty for a value that
+    // was already resolved (nothing ran) and for a body that loaded nothing,
+    // in which case every decision below is the pre-CS-0204 one.
+    //
+    // NOTE (COOK-528): this fingerprint machinery is production-dead once no
+    // value is ever stored under it, but it is left computing and propagating
+    // here deliberately — retiring it is the next ticket's work, not this
+    // one's.
     module_paths: &[String],
 ) -> Recorded {
     let mut warnings = Vec::new();
-    let mut published = false;
 
-    // CS-0204: a produced value is stored under the fingerprint that folds the
-    // module content it ran against, not under the declared one. `fingerprint`
-    // IS the declared one on this path, because a miss is what brought us here.
-    // On a cache hit nothing is published, so the caller's (already full)
-    // fingerprint passes through untouched.
+    // CS-0204: a produced value's true identity folds the module content it
+    // ran against, not just the declared fingerprint. `fingerprint` IS the
+    // declared one on this path. A value that was already resolved
+    // (`ValueSource::Prepass`) carries the caller's (already full)
+    // fingerprint through untouched.
     let stored_fingerprint = if source == ValueSource::Produced {
         fold_candidate(fingerprint, ctx.working_dir, module_paths)
     } else {
         *fingerprint
     };
 
-    // A keyless probe publishes nothing. Skipping only the GET would leave a
-    // stable fingerprint addressing a stored value that another reader — a
-    // verifier, another machine on the shared store, a future run under a
-    // changed rule — could still be served.
-    if let Some(access) = &ctx.cache {
-        if source == ValueSource::Produced && !keyless && access.publish_enabled {
-            let mut meta = probe_artifact_meta(key, bytes.len());
-            // Non-fatal: the value is already in hand for this invocation, so a
-            // publish failure costs later runs a hit and costs this one nothing.
-            match cook_cache::backend::put_bytes(
-                access.backend,
-                &stored_fingerprint,
-                bytes,
-                &mut meta,
-            ) {
-                Ok(()) => published = true,
-                Err(e) => warnings.push(format!(
-                    "probe '{key}': cache backend put failed ({e}); continuing without caching"
-                )),
-            }
-            // The bridge a cold reader crosses: without this, the value just
-            // published sits at a fingerprint no one else can compute.
-            if published && !module_paths.is_empty() {
-                warnings.extend(publish_module_manifest(access, fingerprint, module_paths));
-            }
-        }
-    }
-
-    // CS-0102: the canonical local copy at `.cook/probes/<key>.json`, holding
-    // the same bytes as the per-run store and the CAS artifact. Non-fatal.
+    // CS-0102/CS-0243: the canonical local copy at `.cook/probes/<key>.json`.
+    // Unconditional — this is the sole place a probe's value lands anywhere
+    // outside this invocation's own memory, a write-only forensic record
+    // never read back as a source across invocations. Non-fatal.
     let probes_dir = ctx.probes_dir();
     if let Err(e) = crate::store::materialize_value(&probes_dir, key, bytes) {
         warnings.push(format!(
@@ -525,36 +437,7 @@ pub fn record(
     Recorded {
         fingerprint: stored_fingerprint,
         warnings,
-        published,
     }
-}
-
-/// The candidate module-path sets to try, newest first.
-///
-/// Always at least one: the empty set, which folds to the declared
-/// fingerprint. That is the whole of the pre-CS-0204 behaviour for a probe
-/// that loads nothing, and a correct first guess for one whose manifest has
-/// been evicted (it misses, and the re-run republishes).
-fn module_candidates(
-    backend: &dyn cook_cache::backend::CacheBackend,
-    declared: &[u8; 32],
-) -> Vec<Vec<String>> {
-    cook_cache::path_set_candidates(read_module_manifest(backend, declared))
-}
-
-/// The recorded path sets under a probe's declared fingerprint. Absent,
-/// unreadable or malformed all decode to none, which the caller reads as
-/// "nothing to reconstruct from" and turns into a safe miss.
-fn read_module_manifest(
-    backend: &dyn cook_cache::backend::CacheBackend,
-    declared: &[u8; 32],
-) -> Vec<Vec<String>> {
-    let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
-    cook_cache::backend::get_bytes(backend, &manifest_key)
-        .ok()
-        .flatten()
-        .map(|b| cook_cache::decode_path_sets(&b))
-        .unwrap_or_default()
 }
 
 /// Compose the full fingerprint for one candidate set by hashing its paths
@@ -584,31 +467,6 @@ fn fold_candidate(declared: &[u8; 32], working_dir: &Path, paths: &[String]) -> 
     cook_contracts::context::fold_module_sources(declared, &hashed)
 }
 
-/// Record this run's module set under the DECLARED fingerprint so a cold
-/// reader can reconstruct the full one. Returns warnings; never fatal, because
-/// the value itself is already stored and a lost manifest costs a re-run.
-fn publish_module_manifest(
-    access: &CacheAccess<'_>,
-    declared: &[u8; 32],
-    observed: &[String],
-) -> Vec<String> {
-    let manifest_key = cook_contracts::context::probe_module_manifest_key(declared);
-    let existing = read_module_manifest(access.backend, declared);
-    // Merge and wire form are the shared law, so this store and the step store
-    // cannot drift on what the manifest means or on how it is written down.
-    let sets = cook_cache::merge_path_set(&existing, observed);
-    let json = cook_cache::encode_path_sets(&sets);
-    let mut meta = probe_artifact_meta(cook_cache::MODULE_INPUT_SETS_PATH, json.len());
-    meta.kind = Some(cook_contracts::cache::cas::artifact_kind::MODULE_INPUT_SETS.to_string());
-    match cook_cache::backend::put_bytes(access.backend, &manifest_key, &json, &mut meta) {
-        Ok(()) => Vec::new(),
-        Err(e) => vec![format!(
-            "probe module manifest: put failed ({e}); the value just published \
-             will not be reachable from a cold lookup until the next run"
-        )],
-    }
-}
-
 /// [`lookup`] + produce + [`record`], for a caller that produces synchronously.
 pub fn evaluate(
     probe: &ProbeUnit,
@@ -636,7 +494,6 @@ pub fn evaluate(
         }
     };
 
-    let mut warnings = std::mem::take(&mut found.warnings);
     let recorded = record(
         key,
         ctx,
@@ -646,15 +503,13 @@ pub fn evaluate(
         source,
         &module_paths,
     );
-    warnings.extend(recorded.warnings);
 
     Ok(Evaluated {
         bytes,
         fingerprint: recorded.fingerprint,
         keyless: found.keyless,
-        cache_hit: source == ValueSource::Cache,
         tool_paths: found.tool_paths,
-        warnings,
+        warnings: recorded.warnings,
     })
 }
 
@@ -666,28 +521,6 @@ fn is_files_manifest(probe: &ProbeUnit) -> bool {
 /// CS-0214: a top-level `tools` declaration's value is synthesised, never run.
 fn is_tools_identity(probe: &ProbeUnit) -> bool {
     probe.produce_source == cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE
-}
-
-/// Cache metadata for a stored probe value. Identical in both phases; it was
-/// duplicated field-for-field before.
-fn probe_artifact_meta(key: &str, size: usize) -> cook_cache::ArtifactMeta {
-    cook_cache::ArtifactMeta {
-        recipe_namespace: format!("probe:{key}"),
-        command_hash: 0,
-        env_contribution: 0,
-        seal_contribution: 0,
-        schema_version: cook_cache::CACHE_VERSION,
-        size_bytes: size as u64,
-        tags: BTreeSet::new(),
-        consulted_env_keys: BTreeSet::new(),
-        output_index: 0,
-        output_path: format!("probe:{key}"),
-        content_hash: cook_cache::ArtifactMeta::zero_content_hash(),
-        kind: None,
-        mode: cook_cache::ArtifactMeta::default_mode(),
-        target: None,
-    }
-    .as_probe_value()
 }
 
 #[cfg(test)]
