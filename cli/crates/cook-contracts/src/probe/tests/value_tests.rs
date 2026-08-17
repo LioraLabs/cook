@@ -1,6 +1,6 @@
 use super::{
     decode_json, encode_canonical_json, encode_files_manifest, encode_tools_identity,
-    probe_file_name, FILES_MANIFEST_PRODUCE, TOOLS_IDENTITY_PRODUCE,
+    probe_delta, probe_file_name, ProbeDelta, FILES_MANIFEST_PRODUCE, TOOLS_IDENTITY_PRODUCE,
 };
 use serde_json::json;
 
@@ -235,4 +235,161 @@ fn merge_tool_paths_is_shape_scoped() {
     let mut v = json!("scalar");
     super::merge_tool_paths(&mut v, &paths);
     assert_eq!(v, json!("scalar"));
+}
+
+// ── probe_delta tests (CS-0245) ──────────────────────────────────────────
+
+#[test]
+fn probe_delta_is_none_for_byte_identical_values() {
+    let bytes = encode_canonical_json(&json!({"a": 1}));
+    assert_eq!(probe_delta(Some(&bytes), &bytes), None);
+}
+
+#[test]
+fn probe_delta_reports_first_observation_with_no_prior() {
+    let current = encode_canonical_json(&json!("x86_64-linux"));
+    assert_eq!(probe_delta(None, &current), Some(ProbeDelta::FirstObservation));
+}
+
+#[test]
+fn probe_delta_names_added_removed_and_changed_files_manifest_entries() {
+    let prior = encode_files_manifest(&[
+        ("a.ts".to_string(), [0x01u8; 32]),
+        ("b.ts".to_string(), [0x02u8; 32]),
+    ]);
+    let current = encode_files_manifest(&[
+        ("a.ts".to_string(), [0x01u8; 32]), // unchanged — must NOT be named
+        ("b.ts".to_string(), [0x03u8; 32]), // changed
+        ("c.ts".to_string(), [0x04u8; 32]), // added
+    ]);
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Entries { added, removed, changed } = delta else {
+        panic!("expected Entries, got {delta:?}");
+    };
+    assert_eq!(added, vec![("c.ts".to_string(), "04".repeat(32))]);
+    assert_eq!(removed, Vec::<(String, String)>::new());
+    assert_eq!(
+        changed,
+        vec![("b.ts".to_string(), "02".repeat(32), "03".repeat(32))]
+    );
+}
+
+#[test]
+fn probe_delta_names_a_removed_files_manifest_entry() {
+    let prior = encode_files_manifest(&[
+        ("a.ts".to_string(), [0x01u8; 32]),
+        ("gone.ts".to_string(), [0x02u8; 32]),
+    ]);
+    let current = encode_files_manifest(&[("a.ts".to_string(), [0x01u8; 32])]);
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Entries { added, removed, changed } = delta else {
+        panic!("expected Entries, got {delta:?}");
+    };
+    assert!(added.is_empty());
+    assert!(changed.is_empty());
+    assert_eq!(removed, vec![("gone.ts".to_string(), "02".repeat(32))]);
+}
+
+#[test]
+fn probe_delta_names_a_moved_tools_identity_hash_both_renderings() {
+    let cc_old = [0x01u8; 32];
+    let cc_new = [0x02u8; 32];
+    let prior = encode_tools_identity(&[("cc".to_string(), cc_old)]);
+    let current = encode_tools_identity(&[("cc".to_string(), cc_new)]);
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Entries { added, removed, changed } = delta else {
+        panic!("expected Entries, got {delta:?}");
+    };
+    assert!(added.is_empty());
+    assert!(removed.is_empty());
+    assert_eq!(changed.len(), 1);
+    let (name, old, new) = &changed[0];
+    assert_eq!(name, "cc");
+    assert!(old.contains(&"01".repeat(32)), "{old}");
+    assert!(new.contains(&"02".repeat(32)), "{new}");
+}
+
+#[test]
+fn probe_delta_is_value_for_a_scalar() {
+    let prior = encode_canonical_json(&json!("x86_64-linux"));
+    let current = encode_canonical_json(&json!("aarch64-linux"));
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    assert!(matches!(delta, ProbeDelta::Value { .. }), "{delta:?}");
+}
+
+#[test]
+fn probe_delta_is_value_for_an_object_vs_scalar_shape_change() {
+    let prior = encode_canonical_json(&json!({"a": 1}));
+    let current = encode_canonical_json(&json!("scalar"));
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    assert!(matches!(delta, ProbeDelta::Value { .. }), "{delta:?}");
+}
+
+/// Pins the fix in `object_entries_diff`: `-0.0` and `0.0` are `Value`-equal
+/// in serde_json (see this module's header) but encode to different
+/// canonical bytes, and the seal fold hashes bytes. A `changed`-detection
+/// rule built on `JsonValue::PartialEq` would silently drop this entry from
+/// `changed` even though the unit's `seal_contribution` DID move — the
+/// query would then report a seal-changed miss naming no probe, which is
+/// exactly the "empty diff presented as the full account" §17.1.6.1
+/// forbids for a case that in fact has an entry to name.
+#[test]
+fn probe_delta_names_a_changed_entry_across_a_value_equal_float_pair() {
+    let prior = encode_canonical_json(&json!({"x": 0.0}));
+    let current = encode_canonical_json(&json!({"x": -0.0}));
+    // Sanity: this is genuinely the `Value`-equal-but-byte-different case the
+    // module header warns about, or this test pins nothing.
+    assert_eq!(json!(0.0_f64), json!(-0.0_f64), "test premise: Value-equal");
+    assert_ne!(prior, current, "test premise: byte-different");
+
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Entries { added, removed, changed } = delta else {
+        panic!("expected Entries, got {delta:?}");
+    };
+    assert!(added.is_empty());
+    assert!(removed.is_empty());
+    assert_eq!(changed, vec![("x".to_string(), "0.0".to_string(), "-0.0".to_string())]);
+}
+
+/// CS-0245 quoting consistency: a top-level scalar string renders unquoted in
+/// `ProbeDelta::Value`, the same way a string entry renders unquoted in
+/// `ProbeDelta::Entries` — a `host`-style probe is the case a user sees.
+#[test]
+fn probe_delta_value_unquotes_a_scalar_string_like_entries_does() {
+    let prior = encode_canonical_json(&json!("x86_64-linux"));
+    let current = encode_canonical_json(&json!("aarch64-linux"));
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Value { old, new } = delta else {
+        panic!("expected Value, got {delta:?}");
+    };
+    assert_eq!(old, "x86_64-linux", "must not carry JSON quotes: {old:?}");
+    assert_eq!(new, "aarch64-linux", "must not carry JSON quotes: {new:?}");
+}
+
+/// M-3 (seam review on 9eb2faf7): the entry-comparison fix that closed the
+/// `-0.0`/`0.0` gap above opened a smaller one. `render_entry` unquotes a
+/// JSON string so a hash reads as a hash, but comparing the RENDERED forms
+/// for `changed`-detection meant a bool `true` and a string `"true"` — two
+/// different types, byte-different canonical encodings — rendered to the
+/// identical text `true` and so compared equal, dropping a real entry out of
+/// `changed`. A unit sealing this key would then report a seal-changed miss
+/// naming no probe, exactly the failure `probe_delta_names_a_changed_entry_
+/// across_a_value_equal_float_pair` above claims to pin for the float case.
+#[test]
+fn probe_delta_names_a_bool_vs_string_changed_entry() {
+    let prior = encode_canonical_json(&json!({"x": true}));
+    let current = encode_canonical_json(&json!({"x": "true"}));
+    assert_ne!(prior, current, "test premise: byte-different");
+
+    let delta = probe_delta(Some(&prior), &current).expect("bytes moved");
+    let ProbeDelta::Entries { added, removed, changed } = delta else {
+        panic!("expected Entries, got {delta:?}");
+    };
+    assert!(added.is_empty());
+    assert!(removed.is_empty());
+    assert_eq!(
+        changed,
+        vec![("x".to_string(), "true".to_string(), "true".to_string())],
+        "a bool and a same-spelling string must still be named as changed"
+    );
 }

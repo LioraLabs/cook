@@ -27,6 +27,8 @@ fn ours() -> UnitDeterminants {
         consulted_env: BTreeMap::from([("CC".into(), "gcc".into())]),
         sealed_probes: BTreeMap::from([("host".into(), "\"x86_64\"".into())]),
         pending_inputs: BTreeMap::new(),
+        prior_invocation_probes: BTreeSet::new(),
+        probe_lookup_failures: BTreeMap::new(),
     }
 }
 

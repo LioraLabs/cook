@@ -213,6 +213,151 @@ pub fn merge_tool_paths(
     }
 }
 
+/// How a probe's value moved between two observations (CS-0245,
+/// §{exec.cache.why.determinants}): the single law both the local-miss
+/// attribution and the shared-miss `DeterminantDiff::Probe` rendering read
+/// through, so the two tiers cannot name a moved probe differently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeDelta {
+    /// No prior recorded value for this key.
+    FirstObservation,
+    /// Both sides decode to JSON objects: per-top-level-key differences.
+    /// `(entry key, rendered value)` for added/removed; `(entry key, old,
+    /// new)` for changed. Each list is sorted by entry key.
+    Entries {
+        added: Vec<(String, String)>,
+        removed: Vec<(String, String)>,
+        changed: Vec<(String, String, String)>,
+    },
+    /// Anything else: the whole values, compactly rendered.
+    Value { old: String, new: String },
+}
+
+/// The delta between a probe's prior recorded value and its current one, or
+/// `None` when the value did not move.
+///
+/// - `None` when `prior == Some(current)` **byte-for-byte** — byte equality,
+///   not `serde_json::Value` equality (`-0.0` vs `0.0`, see the module
+///   header), because this is what the seal fold hashes.
+/// - `prior == None` is [`ProbeDelta::FirstObservation`]: there is nothing to
+///   diff against, and this function never fabricates an old value.
+/// - [`ProbeDelta::Entries`] when BOTH sides decode via [`decode_json`] to
+///   JSON objects — top-level granularity only, which covers a `files`
+///   manifest (`path -> "hex"`) and a `tools` identity (`name ->
+///   {"hash": "hex"}`) under one rule. Each entry value is rendered with
+///   [`serde_json::to_string`] (compact, single line), except that a JSON
+///   string renders unquoted so a hash reads as a hash.
+/// - [`ProbeDelta::Value`] otherwise, including when either side fails to
+///   decode (rendered lossily) — a probe value is canonical JSON, so this is
+///   the defensive arm.
+///
+/// Pure: no I/O, no `Path`, no logging.
+pub fn probe_delta(prior: Option<&[u8]>, current: &[u8]) -> Option<ProbeDelta> {
+    let prior = match prior {
+        None => return Some(ProbeDelta::FirstObservation),
+        Some(p) => p,
+    };
+    if prior == current {
+        return None;
+    }
+    match (decode_json(prior), decode_json(current)) {
+        (Ok(JsonValue::Object(po)), Ok(JsonValue::Object(co))) => {
+            Some(object_entries_diff(po, co))
+        }
+        _ => Some(ProbeDelta::Value {
+            old: render_compact(prior),
+            new: render_compact(current),
+        }),
+    }
+}
+
+/// Top-level-only diff of two JSON objects, sorted by entry key.
+///
+/// Collected into `BTreeMap`s rather than trusting `serde_json::Map`'s own
+/// iteration order: that order is insertion order unless the crate's
+/// `preserve_order` feature is off, in which case it is already sorted — this
+/// function must not depend on which is true for whatever build enabled it
+/// transitively (see the module header's determinism note).
+fn object_entries_diff(
+    prior: serde_json::Map<String, JsonValue>,
+    current: serde_json::Map<String, JsonValue>,
+) -> ProbeDelta {
+    let prior: std::collections::BTreeMap<String, JsonValue> = prior.into_iter().collect();
+    let current: std::collections::BTreeMap<String, JsonValue> = current.into_iter().collect();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut changed = Vec::new();
+    let keys: std::collections::BTreeSet<&String> = prior.keys().chain(current.keys()).collect();
+    for k in keys {
+        match (prior.get(k), current.get(k)) {
+            (None, Some(v)) => added.push((k.clone(), render_entry(v))),
+            (Some(v), None) => removed.push((k.clone(), render_entry(v))),
+            (Some(a), Some(b)) => {
+                // M-3 (seam review on 9eb2faf7): compare the CANONICAL form
+                // (`serde_json::to_string`, which stays typed and quoted),
+                // not the rendered DISPLAY form `render_entry` produces.
+                // Comparing the rendered strings closed the `-0.0`/`0.0` gap
+                // the module header warns about but opened a smaller one of
+                // the same shape: `render_entry` unquotes a JSON string, so
+                // the bool `true` and the string `"true"` — or the number
+                // `0.0` and the string `"0.0"` — rendered identically and a
+                // byte-different, type-different entry silently dropped out
+                // of `changed`. Compare the typed encoding; render the
+                // display form separately, once, for the caller.
+                let (ca, cb) = (
+                    serde_json::to_string(a).unwrap_or_default(),
+                    serde_json::to_string(b).unwrap_or_default(),
+                );
+                if ca != cb {
+                    changed.push((k.clone(), render_entry(a), render_entry(b)));
+                }
+            }
+            _ => {}
+        }
+    }
+    ProbeDelta::Entries { added, removed, changed }
+}
+
+/// One entry value, compact — a JSON string unwraps to its bare text so a
+/// hash or a path reads as itself rather than as a quoted JSON literal.
+fn render_entry(v: &JsonValue) -> String {
+    match v {
+        JsonValue::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// Compact rendering of a whole probe value for [`ProbeDelta::Value`]. Valid
+/// canonical JSON renders through [`render_entry`] — the same function
+/// `Entries` renders each entry with — so a top-level JSON string unwraps to
+/// its bare text exactly as an entry value does; anything else renders as
+/// compact JSON. A value that fails to decode (the defensive arm
+/// `probe_delta` exists for) renders as lossy UTF-8 with the canonical
+/// trailing LF trimmed.
+///
+/// **Quoting consistency (deliberate, not an oversight):** an earlier version
+/// of this function kept JSON quotes on a top-level string (`"x86_64-linux"`)
+/// while `Entries`' `render_entry` unwrapped a string entry to bare text
+/// (`hex...` not `"hex..."`). A scalar probe — a `host` string is the case a
+/// user actually sees in a `ProbeDelta::Value` — should read the same way
+/// whether it arrived as a whole-value scalar or as one entry of an object,
+/// so both go through `render_entry` now. There is no case where the two
+/// rendering styles need to differ, and the DISPLAY form this pair produces
+/// is not the thing compared for equality — `probe_delta`'s equality check
+/// (and `object_entries_diff`'s per-entry one, M-3) is over the canonical
+/// encoding, so unwrapping a string here for readability cannot mask a real
+/// difference. It IS, however, machine-parsed downstream: `cook-cli`'s JSON
+/// renderer (`why_render.rs::probe_delta_json`) emits exactly these strings
+/// verbatim as its `old`/`new`/`value` fields, so a `cook why --format json`
+/// consumer parses this display form, and a change here changes that wire
+/// shape.
+fn render_compact(bytes: &[u8]) -> String {
+    match decode_json(bytes) {
+        Ok(v) => render_entry(&v),
+        Err(_) => String::from_utf8_lossy(bytes).trim_end().to_string(),
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/value_tests.rs"]
 mod tests;

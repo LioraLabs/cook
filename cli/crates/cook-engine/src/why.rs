@@ -88,6 +88,23 @@ pub struct UnitDeterminants {
     /// as this unit's determinant would be reporting a value the run will not
     /// use, which is the precise error CS-0173 exists to remove.
     pub pending_inputs: BTreeMap<String, String>,
+    /// CS-0245 / §17.1.6.1: keys of this unit's effective seal set whose
+    /// reported value came from a PRIOR invocation rather than being resolved
+    /// or produced by this one — case (c) of §17.1.6.1's trichotomy. Neither
+    /// this query's own fresh re-resolution (case a: a `files`/`tools`
+    /// declaration synthesised with no VM) nor this invocation's own
+    /// registration pre-pass (case b: a `gather <probe>` source or a
+    /// register-phase Lua read) produced the value; it is whatever a prior
+    /// invocation last materialised. Empty for a unit with no sealed probes at
+    /// all in either category.
+    pub prior_invocation_probes: BTreeSet<String>,
+    /// CS-0245 / §17.1.6.1: fresh-resolution failures for keys in this unit's
+    /// effective seal set — a `tools` name no longer on PATH (CS-0214), or a
+    /// `files` match that exists but cannot be read (CS-0241). Failing to
+    /// resolve fresh does not fail the query: the key falls back to its last
+    /// materialised value (and so is also in `prior_invocation_probes`), and
+    /// the failure text is carried here for the renderer.
+    pub probe_lookup_failures: BTreeMap<String, String>,
 }
 
 /// Diff the consumer determinants against a producer manifest, in a stable order
@@ -197,6 +214,25 @@ pub struct WhyUnit {
     /// the SHARED store could not serve this key, this names why the LOCAL
     /// index could not.
     pub local_cause: Option<String>,
+    /// CS-0245 / §17.1.6.1: `Some` ONLY when `local_cause` came from
+    /// `RebuildReason::SealChanged` — the local miss the executor would render
+    /// as `rebuild (seal changed)`. `None` for every other cause (including a
+    /// hit or a cold unit), so a renderer can tell "this is a seal-changed
+    /// miss" from the presence of the option alone, without re-matching
+    /// `local_cause`'s rendered text (`cause_summary()`'s string is not a
+    /// second source of truth for this — see the constitution's
+    /// duplicate-literals rule). Each entry names a sealed key and how its
+    /// value moved (§{cat.probes.exec}'s local per-probe record vs the value
+    /// this query just resolved).
+    ///
+    /// Can be `Some(vec![])` even on a genuine seal-changed miss (§17.1.6.1's
+    /// I5): the local per-probe record moves whenever a probe is REACHED,
+    /// while the unit's index record moves only when the unit last EXECUTED —
+    /// two different events. When the record cannot account for the
+    /// divergence, this is `Some(vec![])` and the renderer MUST say "the seal
+    /// set diverged, no entry nameable" rather than presenting an empty diff
+    /// as the full account.
+    pub seal_deltas: Option<Vec<(String, cook_contracts::probe_value::ProbeDelta)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,7 +243,15 @@ pub struct WhyReport {
 
 /// Build a read-only determinant explanation for `target`'s reachable closure.
 /// Executes nothing. `probes_dir` is `<workspace>/.cook/probes`; sealed probe
-/// values are read through from there (materialised on a prior run).
+/// values are read through from there (materialised on a prior run), except
+/// where this function's own CS-0245 fresh-resolution pass (below) has
+/// already inserted a value THIS query just observed.
+///
+/// `probe_snapshot` is the RAW `.cook/probes/` directory content (file name ->
+/// bytes) taken by the caller BEFORE registration ran — registration can
+/// overwrite a probe's own record file during this same invocation, so a
+/// snapshot taken any later would have already lost the value CS-0245's
+/// local-miss attribution needs as "prior".
 #[allow(clippy::too_many_arguments)]
 pub fn explain(
     target: &str,
@@ -217,6 +261,8 @@ pub fn explain(
     cache_ctx: &CacheContext,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     probes_dir: &Path,
+    project_root: &Path,
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
 ) -> Result<WhyReport, crate::EngineError> {
     let topo = cook_contracts::unit_graph::toposort_recipes(edges, reachable)
         .map_err(crate::EngineError::from)?;
@@ -241,6 +287,88 @@ pub fn explain(
     let probe_store = cook_probe::store::ProbeValueStore::new();
     if probes_dir.exists() {
         probe_store.attach_dir(probes_dir.to_path_buf());
+    }
+
+    // CS-0245 / §17.1.6.1 case (a): re-resolve every probe whose value can be
+    // observed with no VM — a top-level `files`/`tools` declaration,
+    // synthesised fresh from the current tree — so the key this report names
+    // is the key a run would compute, not what a PRIOR invocation last wrote
+    // to `.cook/probes/<key>.json`. Inserting into `probe_store` shadows
+    // exactly the file its disk fallback would otherwise read, so
+    // `seal.rs`'s fold (called per-unit below via `resolve_unit_determinants`)
+    // picks the fresh bytes up with no change to `seal.rs` itself.
+    //
+    // `fresh_resolved` and `probe_lookup_failures` feed §17.1.6.1's
+    // provenance obligation (`UnitDeterminants::prior_invocation_probes` /
+    // `::probe_lookup_failures`, populated per-unit below): a sealed key is
+    // case (a) — fresh here — case (b) — this invocation's own registration
+    // pre-pass produced it, `registered_workspace.resolved_probe_keys` — or
+    // else case (c), reported from a prior invocation.
+    let mut fresh_resolved: BTreeSet<String> = BTreeSet::new();
+    let mut probe_lookup_failures: BTreeMap<String, String> = BTreeMap::new();
+    for (matched_key, pu) in &registered_workspace.probes {
+        // COOK-510, load-bearing: the base for hashing this probe's `files`
+        // paths is the MATCHED KEY's own declaring prefix, never a consuming
+        // node's `working_dir` — copied verbatim from `run.rs`'s
+        // `probe_units_by_node` construction (run.rs:419-434). Collapsing to
+        // some other working_dir silently restores the zero-hash bug
+        // `cook510_a_cross_member` exists to catch.
+        //
+        // C-1 (seam review on 9eb2faf7): the prefix MUST be derived from the
+        // MAP KEY (`matched_key`), not `pu.key` — `ProbeUnit.key` is the
+        // Cookfile-LOCAL name (`cook-register/src/probe_api.rs`, never
+        // restamped), while `registered_workspace.probes` is keyed by the
+        // workspace-QUALIFIED string `cook-plan/src/registers.rs` mints via
+        // `probe_key::qualified_key(prefix, &key)`. Deriving the prefix from
+        // `pu.key` returned `""` for every imported member's probe — the
+        // local key never contains a dot — collapsing every member's
+        // `working_dir` onto the ROOT Cookfile's and silently zero-hashing
+        // (or plain misresolving) every non-root `files`/`tools` probe. The
+        // insert below stays on `pu.key`: that IS the local key `eval::record`
+        // named the file with and the key `CacheMeta.seal_keys` carries.
+        let prefix = cook_contracts::naming::import_prefix(matched_key);
+        let working_dir = registered_workspace
+            .working_dir_by_prefix
+            .get(prefix)
+            .or_else(|| registered_workspace.working_dir_by_prefix.get(""))
+            .cloned()
+            .unwrap_or_else(|| project_root.to_path_buf());
+        let ctx = cook_probe::eval::EvalCtx {
+            working_dir: &working_dir,
+            project_root: Some(project_root),
+        };
+        // `prepass_resolved: false` is mandatory (COOK-526's cross-phase
+        // single-flight arm): `true` would make `lookup` read the record file
+        // back, which is the stale value this whole pass exists to stop
+        // trusting. With `false`, only a `files`/`tools` sentinel resolves
+        // here (`Some((bytes, ValueSource::Produced))`); anything needing a
+        // `produce` body answers `None` and is left exactly as `probe_store`
+        // would otherwise have answered — its last materialised value via the
+        // disk fallback, including a value THIS invocation's own registration
+        // pre-pass just produced (case b, already on disk before this loop
+        // runs). Never calls `evaluate`, never constructs a `ProduceRunner`,
+        // never calls `record`: this query writes nothing (§17.1.6).
+        match cook_probe::eval::lookup(pu, &ctx, false) {
+            Ok(cook_probe::eval::Lookup {
+                resolved: Some((bytes, cook_probe::eval::ValueSource::Produced)),
+                ..
+            }) => {
+                probe_store.insert(&pu.key, bytes);
+                fresh_resolved.insert(pu.key.clone());
+            }
+            Ok(_) => {
+                // Needs a `produce` body (or, unreachably with
+                // `prepass_resolved: false`, a prepass serve) — leave the key
+                // on whatever `probe_store` answers.
+            }
+            Err(e) => {
+                // A `tools` name gone from PATH (CS-0214) or an unreadable
+                // `files` match (CS-0241) MUST NOT fail `cook why` — it falls
+                // back to the last materialised value, and the failure text
+                // is carried for the renderer.
+                probe_lookup_failures.insert(pu.key.clone(), e.message);
+            }
+        }
     }
 
     let mut units = Vec::new();
@@ -273,7 +401,15 @@ pub fn explain(
         //
         // The two other empty-output guards in this file and in verify.rs stay.
         // They mean "nothing in the CAS to publish", which remains correct.
-        let det = resolve_unit_determinants(node, meta, &probe_store, &predictions);
+        let det = resolve_unit_determinants(
+            node,
+            meta,
+            &probe_store,
+            &predictions,
+            &fresh_resolved,
+            &registered_workspace.resolved_probe_keys,
+            &probe_lookup_failures,
+        );
         // A unit waiting on bytes that do not exist yet has no computable key.
         // Report the cause and, deliberately, no key: a key over the stale or
         // absent bytes would be a number that matches nothing and means nothing.
@@ -287,6 +423,7 @@ pub fn explain(
                     },
                     local_hit: false,
                     local_cause: None,
+                    seal_deltas: None,
                     shared_present: None,
                     manifest_diff: None,
                     shared_output_hashes: BTreeMap::new(),
@@ -302,6 +439,8 @@ pub fn explain(
                     &det,
                     &key_hex,
                     &predictions,
+                    probe_snapshot,
+                    &probe_store,
                 );
                 (key_hex, c)
             }
@@ -329,6 +468,7 @@ pub fn explain(
             status: c.status,
             local_hit: c.local_hit,
             local_cause: c.local_cause,
+            seal_deltas: c.seal_deltas,
             shared_present: c.shared_present,
             determinants: det,
             line: node_line(node),
@@ -348,11 +488,15 @@ fn node_line(node: &WorkNode) -> u32 {
     node.payload.as_ref().map(|p| p.line()).unwrap_or(0) as u32
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_unit_determinants(
     node: &WorkNode,
     meta: &cook_contracts::CacheMeta,
     probe_store: &cook_probe::store::ProbeValueStore,
     predictions: &Predictions,
+    fresh_resolved: &BTreeSet<String>,
+    resolved_probe_keys: &BTreeSet<String>,
+    lookup_failures: &BTreeMap<String, String>,
 ) -> UnitDeterminants {
     let mut inputs = BTreeMap::new();
     let mut pending_inputs = BTreeMap::new();
@@ -391,6 +535,42 @@ fn resolve_unit_determinants(
     // so a shared-miss diff doesn't falsely report a probe difference against a
     // manifest that persisted the empty-string encoding.
     let sealed_probes = crate::seal::resolve_sealed_probes(&meta.seal_keys, probe_store);
+    // CS-0245 / §17.1.6.1's provenance obligation, scoped to this unit's
+    // effective seal set: a key is case (a) if `fresh_resolved` produced it
+    // just now, case (b) if this invocation's own registration pre-pass
+    // resolved it (`resolved_probe_keys`), else case (c) — reported from a
+    // prior invocation, and so belongs here.
+    //
+    // I-1 (seam review on 9eb2faf7): `meta.seal_keys` is the raw Lua `seal`
+    // list — Cookfile-LOCAL, never qualified anywhere
+    // (`cook-register/src/unit_api.rs:661`) — while `resolved_probe_keys`
+    // is workspace-QUALIFIED by construction (`registers.rs:772-774`,
+    // deliberately, to match the executor's G4 lookup). Comparing a bare key
+    // against a qualified set is always false for a non-empty prefix, so
+    // every probe an imported Cookfile's own register pre-pass genuinely
+    // resolved this invocation was reported as case (c) — a PRIOR
+    // invocation's value — which §17.1.6.1 case (b) says it is not. Qualify
+    // against THIS unit's own recipe (`node.recipe_name` is already
+    // workspace-qualified) through the shared law
+    // (`probe_key::qualify_for_recipe`, the same derivation `run.rs:419-434`
+    // uses), with the same bare-key fallback `run.rs:427-429` uses for a
+    // cross-member match whose declaring prefix differs from the consumer's.
+    let prior_invocation_probes: BTreeSet<String> = meta
+        .seal_keys
+        .iter()
+        .filter(|k| {
+            let qualified = cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k);
+            !fresh_resolved.contains(*k)
+                && !resolved_probe_keys.contains(&qualified)
+                && !resolved_probe_keys.contains(*k)
+        })
+        .cloned()
+        .collect();
+    let probe_lookup_failures: BTreeMap<String, String> = meta
+        .seal_keys
+        .iter()
+        .filter_map(|k| lookup_failures.get(k).map(|m| (k.clone(), m.clone())))
+        .collect();
     UnitDeterminants {
         command_hash: meta.command_hash,
         env_contribution: meta.env_contribution,
@@ -400,6 +580,8 @@ fn resolve_unit_determinants(
         consulted_env: meta.consulted_env.clone(),
         sealed_probes,
         pending_inputs,
+        prior_invocation_probes,
+        probe_lookup_failures,
     }
 }
 
@@ -430,6 +612,9 @@ struct Classification {
     /// CS-0174: on a local miss, the determinant that changed since this unit's
     /// previous fingerprint record. `None` on a hit or a cold unit.
     local_cause: Option<String>,
+    /// CS-0245: `Some` only when `local_cause` came from
+    /// `RebuildReason::SealChanged`. See `WhyUnit::seal_deltas`.
+    seal_deltas: Option<Vec<(String, cook_contracts::probe_value::ProbeDelta)>>,
     /// `None` when the shared tier is not consulted (`local` sharing or no key).
     shared_present: Option<bool>,
     manifest_diff: Option<Vec<DeterminantDiff>>,
@@ -450,6 +635,8 @@ fn classify(
     det: &UnitDeterminants,
     key_hex: &str,
     predictions: &Predictions,
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
+    probe_store: &cook_probe::store::ProbeValueStore,
 ) -> Classification {
     // I1: a declared input absent on disk means the unit cannot be a clean hit
     // and no real key exists (mirrors `hash_input_paths` returning None at
@@ -460,17 +647,20 @@ fn classify(
             status: CacheStatus::MissingInput { path: p },
             local_hit: false,
             local_cause: None,
+            seal_deltas: None,
             shared_present: None,
             manifest_diff: None,
             shared_output_hashes: BTreeMap::new(),
         };
     }
-    let (local_hit, local_cause) = local_step_hit(node, meta, det, cache_managers);
+    let (local_hit, local_cause, seal_deltas) =
+        local_step_hit(node, meta, det, cache_managers, probe_snapshot, probe_store);
     if meta.sharing.is_local() {
         return Classification {
             status: if local_hit { CacheStatus::LocalHit } else { CacheStatus::LocalOnlyMiss },
             local_hit,
             local_cause,
+            seal_deltas,
             shared_present: None,
             manifest_diff: None,
             shared_output_hashes: BTreeMap::new(),
@@ -512,6 +702,7 @@ fn classify(
             },
             local_hit,
             local_cause,
+            seal_deltas,
             shared_present: Some(shared),
             // An observing unit publishes no artifact list, so a
             // producer-shaped manifest diff would be noise either way.
@@ -536,6 +727,7 @@ fn classify(
         status,
         local_hit,
         local_cause,
+        seal_deltas,
         shared_present: Some(shared),
         manifest_diff,
         shared_output_hashes,
@@ -700,18 +892,35 @@ fn decode_key_hex(key_hex: &str) -> Option<[u8; 32]> {
 /// `None` means no attribution is available, not that nothing changed: a unit
 /// with no cache manager, no prior entry, or a `NoCacheEntry` verdict is cold,
 /// and there is no previous record to have diverged from.
+///
+/// CS-0245: the third element is `Some(per-key seal delta)` ONLY when the
+/// rebuild reason is `RebuildReason::SealChanged` — matched on the variant
+/// itself, never on `cause_summary()`'s string, so a rendering change to that
+/// string can never silently stop or start this attribution, and so a
+/// renderer downstream can branch on `Some`/`None` instead of re-matching the
+/// string itself (the constitution's duplicate-literals rule catches exactly
+/// that copy). Each entry's "prior" bytes come from `probe_snapshot` (taken
+/// before this invocation's own registration could overwrite a record file)
+/// and "current" from `probe_store` (already carrying this query's CS-0245
+/// fresh re-resolution). The inner `Vec` can be empty on a genuine
+/// seal-changed miss — §17.1.6.1's I5: the local per-probe record moves on
+/// every REACH, the index's seal digest only on the unit's last EXECUTION,
+/// two different events — and an empty result here is exactly that case, not
+/// a bug.
 fn local_step_hit(
     node: &WorkNode,
     meta: &cook_contracts::CacheMeta,
     det: &UnitDeterminants,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> (bool, Option<String>) {
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
+    probe_store: &cook_probe::store::ProbeValueStore,
+) -> (bool, Option<String>, Option<Vec<(String, cook_contracts::probe_value::ProbeDelta)>>) {
     let Some(cm) = cache_managers.get(&node.recipe_name) else {
-        return (false, None);
+        return (false, None, None);
     };
     let cache = cm.get_or_load(&meta.recipe_name);
     let Some(entry) = cache.steps.get(&meta.cache_key) else {
-        return (false, None);
+        return (false, None, None);
     };
     // Resolved by the same call `check_node_cache` makes, so the query judges
     // the unit against the set the build would (§17.1.1.2).
@@ -745,9 +954,42 @@ fn local_step_hit(
         meta.record,
     );
     match result {
-        cook_cache::RebuildResult::Skip => (true, None),
-        cook_cache::RebuildResult::Rebuild(reason) => (false, reason.cause_summary()),
+        cook_cache::RebuildResult::Skip => (true, None, None),
+        cook_cache::RebuildResult::Rebuild(reason) => {
+            let seal_deltas = if matches!(reason, cook_cache::RebuildReason::SealChanged) {
+                Some(seal_deltas_for(meta, probe_snapshot, probe_store))
+            } else {
+                None
+            };
+            let cause = reason.cause_summary();
+            (false, cause, seal_deltas)
+        }
     }
+}
+
+/// CS-0245: per-key delta for every sealed key this query can say anything
+/// about. A key absent from `probe_snapshot` reports `FirstObservation`
+/// (never a diff against a fabricated old value, per §17.1.6.1); a key with
+/// no current value in `probe_store` at all, or whose prior and current bytes
+/// are byte-identical, contributes nothing. A unit whose whole result is
+/// empty is §17.1.6.1's I5 case — the seal set diverged but no entry can be
+/// named — not a bug in this filter.
+fn seal_deltas_for(
+    meta: &cook_contracts::CacheMeta,
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
+    probe_store: &cook_probe::store::ProbeValueStore,
+) -> Vec<(String, cook_contracts::probe_value::ProbeDelta)> {
+    meta.seal_keys
+        .iter()
+        .filter_map(|key| {
+            let prior = probe_snapshot
+                .get(&cook_contracts::probe_value::probe_file_name(key))
+                .map(|v| v.as_slice());
+            let current = probe_store.get(key)?;
+            cook_contracts::probe_value::probe_delta(prior, &current)
+                .map(|delta| (key.clone(), delta))
+        })
+        .collect()
 }
 
 fn manifest_diff(
