@@ -678,6 +678,9 @@ pub fn register_cookfile(
         probes,
         final_env,
         warnings,
+        // COOK-526: captured before `probe_resolver` (and the registry Rc
+        // it borrows) goes out of scope at the end of this function.
+        resolved_probe_keys: probe_resolver.resolved_keys(),
         config_host_reads: host_reads.take(),
     })
 }

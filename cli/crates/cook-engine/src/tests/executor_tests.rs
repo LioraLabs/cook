@@ -1598,9 +1598,9 @@ fn probe_cache_hit_skips_produce_execution() {
         .unwrap();
 
     // Build probe_units_by_node: maps node 0 → (our ProbeUnit, its declared dir).
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
         BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone()));
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
 
     // Listen for events to verify NodeCacheHit (not NodeStarted).
     let (tx, rx) = mpsc::channel();
@@ -1676,9 +1676,9 @@ fn probe_cache_miss_persists_output() {
         .add_node(probe_work_node("test:miss", produce, wd), &[])
         .unwrap();
 
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
         BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone()));
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
 
     let result = execute_dag(
         dag,
@@ -1758,9 +1758,9 @@ fn probe_cache_hit_with_non_json_bytes_falls_through_to_miss() {
         .add_node(probe_work_node("test:stale", produce, wd), &[])
         .unwrap();
 
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
         BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone()));
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
 
     let (tx, rx) = mpsc::channel();
     let result = execute_dag(
@@ -1863,9 +1863,9 @@ fn probe_fingerprint_changes_invalidate_cache() {
                 &[],
             )
             .unwrap();
-        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
             BTreeMap::new();
-        by_node.insert(node_id, (pu_v1, wd.clone()));
+        by_node.insert(node_id, (pu_v1, wd.clone(), false));
 
         let result = execute_dag(
             dag,
@@ -1908,9 +1908,9 @@ fn probe_fingerprint_changes_invalidate_cache() {
                 &[],
             )
             .unwrap();
-        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+        let mut by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
             BTreeMap::new();
-        by_node.insert(node_id, (pu_v2, wd.clone()));
+        by_node.insert(node_id, (pu_v2, wd.clone(), false));
 
         let (tx, rx) = mpsc::channel();
         let result = execute_dag(
@@ -2102,9 +2102,9 @@ fn keyless_probe_ignores_a_seeded_cache_entry_and_re_executes() {
             &[],
         )
         .unwrap();
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
         BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone()));
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
 
     let (tx, _rx) = mpsc::channel();
     let result = execute_dag(
@@ -2149,9 +2149,9 @@ fn keyed_probe_still_takes_the_seeded_cache_entry() {
             &[],
         )
         .unwrap();
-    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf)> =
+    let mut probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)> =
         BTreeMap::new();
-    probe_units_by_node.insert(node_id, (pu, _wd.clone()));
+    probe_units_by_node.insert(node_id, (pu, _wd.clone(), false));
 
     let (tx, _rx) = mpsc::channel();
     let result = execute_dag(

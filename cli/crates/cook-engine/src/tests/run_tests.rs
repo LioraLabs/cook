@@ -1,24 +1,15 @@
 use super::*;
 
+/// COOK-526 folded this crate's `split_recipe_name` into the shared law
+/// (`cook_contracts::naming::import_prefix`); both of its call sites wanted
+/// the prefix half only. The cases it pinned are kept here as a regression
+/// guard against re-forking a local copy.
 #[test]
-fn test_split_recipe_name_with_prefix() {
-    let (prefix, local) = split_recipe_name("backend.proto.generate");
-    assert_eq!(prefix, "backend.proto");
-    assert_eq!(local, "generate");
-}
-
-#[test]
-fn test_split_recipe_name_no_prefix() {
-    let (prefix, local) = split_recipe_name("build");
-    assert_eq!(prefix, "");
-    assert_eq!(local, "build");
-}
-
-#[test]
-fn test_split_recipe_name_single_dot() {
-    let (prefix, local) = split_recipe_name("backend.build");
-    assert_eq!(prefix, "backend");
-    assert_eq!(local, "build");
+fn recipe_prefix_comes_from_the_shared_law() {
+    use cook_contracts::naming::import_prefix;
+    assert_eq!(import_prefix("backend.proto.generate"), "backend.proto");
+    assert_eq!(import_prefix("build"), "");
+    assert_eq!(import_prefix("backend.build"), "backend");
 }
 
 fn dummy_project_root() -> std::path::PathBuf {
@@ -36,6 +27,7 @@ fn dummy_project_root() -> std::path::PathBuf {
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),
+            resolved_probe_keys: Default::default(),
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
@@ -345,6 +337,7 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
         names: Vec::new(),
         units_by_recipe,
         probes,
+        resolved_probe_keys: Default::default(),
         working_dir_by_prefix,
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),

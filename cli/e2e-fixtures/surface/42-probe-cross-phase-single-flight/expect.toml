@@ -1,0 +1,12 @@
+# COOK-526 acceptance criterion (b): the register pre-pass (`gather <probe>`,
+# which needs the value at register time to fan out) and the executor
+# (`seal`, a DAG probe node) share ONE evaluation of the same probe key in
+# one invocation — not one produce execution per phase.
+
+[[run]]
+args = ["all"]
+[run.assert]
+exists = ["out/fanned-a.txt", "out/sealed.txt"]
+# Exactly one line: `produce` ran once for BOTH phases combined, not once
+# in the register pre-pass and again in the executor's own dispatch.
+equals = { "counter.log" = "ran\n" }

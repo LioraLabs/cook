@@ -416,3 +416,106 @@ fn a_unit_declaring_no_output_cannot_be_named_by_after() {
     let msg = resolve_after(&units).expect_err("not declared").to_string();
     assert!(msg.contains("declares no output cannot be named"), "{msg}");
 }
+
+/// COOK-526: N recipes demanding the same top-level (register-block-scope)
+/// probe key collapse onto ONE `SynthProbe` node, not one per demander.
+/// Before this fix `synthesised_probe_ids` was reset on every `for ru in
+/// recipe_units` iteration, so three recipes sharing one probe minted three
+/// nodes — three executor dispatches, three produce executions for a probe
+/// that should run once.
+#[test]
+fn plan_collapses_synth_probe_nodes_shared_across_recipes() {
+    let shared_probe = crate::ProbeUnit {
+        key: "shared".to_string(),
+        produce_source: "return 1".to_string(),
+        produce_line: 1,
+        inputs: crate::ProbeInputs::default(),
+    };
+    let mut r1 = recipe(
+        "r1",
+        &[],
+        vec![unit(shell("echo r1"), DepKind::Sequential, vec!["shared".into()])],
+    );
+    r1.probes = vec![shared_probe.clone()];
+    let mut r2 = recipe(
+        "r2",
+        &[],
+        vec![unit(shell("echo r2"), DepKind::Sequential, vec!["shared".into()])],
+    );
+    r2.probes = vec![shared_probe.clone()];
+    let mut r3 = recipe(
+        "r3",
+        &[],
+        vec![unit(shell("echo r3"), DepKind::Sequential, vec!["shared".into()])],
+    );
+    r3.probes = vec![shared_probe];
+
+    let g = plan(&[r1, r2, r3]).expect("plans");
+
+    let synth_ids: Vec<usize> = g
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| matches!(&n.origin, NodeOrigin::SynthProbe { .. }).then_some(i))
+        .collect();
+    assert_eq!(
+        synth_ids.len(),
+        1,
+        "expected exactly one SynthProbe node for one shared key, got {}: {}",
+        synth_ids.len(),
+        edge_list(&g),
+    );
+    let probe_id = synth_ids[0];
+
+    let c1 = unit_id(&g, "r1", 0);
+    let c2 = unit_id(&g, "r2", 0);
+    let c3 = unit_id(&g, "r3", 0);
+    assert!(has_edge(&g, probe_id, c1, EdgeProvenance::Probe), "{}", edge_list(&g));
+    assert!(has_edge(&g, probe_id, c2, EdgeProvenance::Probe), "{}", edge_list(&g));
+    assert!(has_edge(&g, probe_id, c3, EdgeProvenance::Probe), "{}", edge_list(&g));
+}
+
+/// Two different declaring Cookfiles' own same-named local probe must NOT
+/// collapse onto one node — the collapse identity is scoped by declaring
+/// prefix (`qualify_probe_key`), not by the bare local key alone, or an
+/// unrelated `member2.foo` would silently serve `member1.foo`'s value.
+#[test]
+fn plan_does_not_collapse_same_named_probes_from_different_members() {
+    let probe_a = crate::ProbeUnit {
+        key: "foo".to_string(),
+        produce_source: "return 1".to_string(),
+        produce_line: 1,
+        inputs: crate::ProbeInputs::default(),
+    };
+    let probe_b = crate::ProbeUnit {
+        key: "foo".to_string(),
+        produce_source: "return 2".to_string(),
+        produce_line: 1,
+        inputs: crate::ProbeInputs::default(),
+    };
+    let mut member1 = recipe(
+        "member1.r",
+        &[],
+        vec![unit(shell("echo a"), DepKind::Sequential, vec!["foo".into()])],
+    );
+    member1.probes = vec![probe_a];
+    let mut member2 = recipe(
+        "member2.r",
+        &[],
+        vec![unit(shell("echo b"), DepKind::Sequential, vec!["foo".into()])],
+    );
+    member2.probes = vec![probe_b];
+
+    let g = plan(&[member1, member2]).expect("plans");
+
+    let synth_count = g
+        .nodes
+        .iter()
+        .filter(|n| matches!(&n.origin, NodeOrigin::SynthProbe { .. }))
+        .count();
+    assert_eq!(
+        synth_count, 2,
+        "two members' own same-named local probe must not collapse: {}",
+        edge_list(&g)
+    );
+}

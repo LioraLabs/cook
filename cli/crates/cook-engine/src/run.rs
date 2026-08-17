@@ -96,18 +96,6 @@ pub struct OutputGlobWarning {
     pub recipe: String,
 }
 
-/// Split a namespaced recipe name into (prefix, local_name).
-///
-/// `"backend.proto.generate"` -> `("backend.proto", "generate")`
-/// `"build"` -> `("", "build")`
-pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
-    if let Some(dot_pos) = name.rfind('.') {
-        (name[..dot_pos].to_string(), name[dot_pos + 1..].to_string())
-    } else {
-        (String::new(), name.to_string())
-    }
-}
-
 /// Unified engine entry point.
 ///
 /// Walks the unified work-unit DAG across every reachable recipe in
@@ -395,13 +383,15 @@ where
     //    `CacheMeta` like every other unit's (CS-0186), and the engine expands
     //    any pattern among them when the unit is ready — impossible upfront,
     //    before the dependency that writes them has run.
-    let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
-        .probes
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let probe_units_by_key: &BTreeMap<String, cook_contracts::ProbeUnit> =
+        &registered_workspace.probes;
 
-    let probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, PathBuf)> = (0..dag
+    // COOK-526: the third element is whether the register pre-pass already
+    // resolved this exact probe key this invocation (`resolved_probe_keys`,
+    // qualified the same way `probes` is). When true, the executor's G4
+    // dispatch serves the value the register phase already produced and
+    // recorded, instead of running `produce` a second time.
+    let probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, PathBuf, bool)> = (0..dag
         .len())
         .filter_map(|node_idx| {
             let work_node = dag.node(node_idx).payload();
@@ -415,16 +405,21 @@ where
                 // every imported-Cookfile probe missed its metadata here and
                 // silently lost fingerprint caching (always re-ran); CS-0148's
                 // `files` sentinel made the miss loud by reaching a worker as
-                // Lua. The `.or_else` fallback is what actually reaches a
-                // cross-member probe (whose payload key already arrives fully
-                // qualified against its OWN declaring prefix, not the
-                // consumer's).
-                let qualified = match work_node.recipe_name.rfind('.') {
-                    Some(idx) => {
-                        format!("{}.{}", &work_node.recipe_name[..idx], key)
-                    }
-                    None => key.clone(),
-                };
+                // Lua.
+                //
+                // COOK-526: the derivation is the shared law
+                // (`probe_key::qualify_for_recipe`), the same one
+                // `unit_graph::plan` collapses probe nodes on — the two MUST
+                // agree, or the pre-pass channel below would answer for a key
+                // the planner named differently. The `.or_else` fallback is
+                // NOT part of that law and deliberately stays here: it is this
+                // site's lookup policy, reaching a cross-member probe whose
+                // payload key already arrives fully qualified against its OWN
+                // declaring prefix rather than the consumer's. `plan` needs no
+                // such fallback because it is deciding an identity, not
+                // resolving a name against a map.
+                let qualified =
+                    cook_contracts::probe_key::qualify_for_recipe(&work_node.recipe_name, key);
                 // COOK-510: the base for hashing this probe's `files` paths
                 // is derived from the MATCHED key's own prefix — never from
                 // `work_node`, which is the CONSUMER — so it agrees with the
@@ -432,17 +427,16 @@ where
                 let (matched_key, pu) = probe_units_by_key
                     .get_key_value(&qualified)
                     .or_else(|| probe_units_by_key.get_key_value(key))?;
-                let prefix = match matched_key.rfind('.') {
-                    Some(idx) => &matched_key[..idx],
-                    None => "",
-                };
+                let prefix = cook_contracts::naming::import_prefix(matched_key);
                 let declared_dir = registered_workspace
                     .working_dir_by_prefix
                     .get(prefix)
                     .cloned()
                     .or_else(|| registered_workspace.working_dir_by_prefix.get("").cloned())
                     .unwrap_or_else(|| work_node.working_dir.clone());
-                Some((node_idx, (pu.clone(), declared_dir)))
+                let prepass_resolved =
+                    registered_workspace.resolved_probe_keys.contains(matched_key);
+                Some((node_idx, (pu.clone(), declared_dir, prepass_resolved)))
             } else {
                 None
             }
@@ -674,10 +668,10 @@ pub fn cache_managers_for_cli(
     reachable
         .iter()
         .map(|name| {
-            let prefix = split_recipe_name(name).0;
+            let prefix = cook_contracts::naming::import_prefix(name);
             let wd = ws
                 .working_dir_by_prefix
-                .get(&prefix)
+                .get(prefix)
                 .cloned()
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             let cache_dir = cook_contracts::layout::cache_dir(&wd);

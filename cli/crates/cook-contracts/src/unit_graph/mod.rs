@@ -554,6 +554,17 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
     // (see "Leaf pass-through" in the module doc).
     let mut recipe_leaves: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
+    // COOK-526: a top-level probe's node identity across the WHOLE call,
+    // keyed by its declaring Cookfile's qualified identity (the shared law,
+    // `probe_key::qualify_for_recipe`) — not per-recipe. Before this, the per-recipe
+    // `synthesised_probe_ids` map below was reset on every loop iteration,
+    // so N recipes demanding the same top-level probe key minted N nodes:
+    // N executor dispatches, N produce executions, N `probe:<key>` progress
+    // rows. Populated once per qualified key, by whichever demanding recipe
+    // is topologically first to reach it; every later demander reuses the
+    // same node id instead of minting a new one.
+    let mut global_synth_by_qualified: BTreeMap<String, usize> = BTreeMap::new();
+
     for ru in recipe_units {
         // §22.1.3 / CS-0219: resolve this recipe's `after` entries to unit
         // indices up front, through the shared law. Registration already
@@ -608,8 +619,14 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             .collect();
 
         // Coarse cross-recipe deps: the leaves of every prerequisite recipe.
-        // Also inherited by synthesised probes as their root deps, so they
-        // cannot run before prerequisite recipes finish.
+        // Also inherited by a synthesised probe as its root deps — but only
+        // from the FIRST recipe to demand that probe key (COOK-526). One node
+        // now serves every demander of a key, and a later demander's
+        // `cross_deps` are deliberately NOT unioned onto it, so what a shared
+        // probe node cannot run before is the minting demander's prerequisite
+        // recipes, not the union of every demander's. §22.5.8 states that
+        // normatively; the reuse branch below carries the structural reason it
+        // cannot be the union.
         //
         // Asymmetry note: unlike `ru.dep_edges` (validated by the pre-walk
         // check above), a `ru.deps` entry naming a recipe absent from
@@ -693,6 +710,24 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         }
 
         for key in &ordered_synth {
+            // COOK-526: reuse an already-synthesised node for this exact
+            // (declaring Cookfile, local key) identity if an earlier
+            // recipe in this call already reached it. Deliberately NOT
+            // unioning this recipe's `cross_deps` (Barrier edges) onto the
+            // reused node: `nodes` is topo-ordered and a later demander's
+            // leaves can legitimately carry a HIGHER index than the
+            // earlier node being reused, which would violate "a node's
+            // deps reference only earlier nodes" — the invariant
+            // `dag_builder::build_dag` asserts and panics on. The first
+            // demander's Barrier deps stand for the node's whole lifetime;
+            // a probe that genuinely needs to follow a specific recipe's
+            // artifact should declare that artifact as a `files` input
+            // rather than ride an incidental consumer `requires`.
+            let qualified = crate::probe_key::qualify_for_recipe(&ru.recipe_name, key);
+            if let Some(&existing_id) = global_synth_by_qualified.get(&qualified) {
+                synthesised_probe_ids.insert(key.clone(), existing_id);
+                continue;
+            }
             let meta = probe_meta_by_key
                 .get(key.as_str())
                 .expect("synth_keys filtered on probe_meta_by_key membership");
@@ -718,6 +753,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                 },
                 deps: dedup_pairs(deps),
             });
+            global_synth_by_qualified.insert(qualified, id);
             synthesised_probe_ids.insert(key.clone(), id);
         }
 

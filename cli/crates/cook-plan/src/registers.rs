@@ -254,6 +254,7 @@ pub fn register_workspace(
         names: Vec::new(),
         units_by_recipe: BTreeMap::new(),
         probes: BTreeMap::new(),
+        resolved_probe_keys: std::collections::BTreeSet::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
@@ -756,15 +757,21 @@ fn merge_into(
         units.recipe_name = qualified.clone();
         ws.units_by_recipe.insert(qualified, units);
     }
+    // The probe-key qualification join is the shared law
+    // (`probe_key::qualified_key`); the engine's own derivation of the same
+    // string, and `unit_graph::plan`'s probe-node collapse identity, are the
+    // other two ends of it.
     for (key, probe) in rc.probes {
-        ws.probes.insert(
-            if prefix.is_empty() {
-                key
-            } else {
-                format!("{prefix}.{key}")
-            },
-            probe,
-        );
+        ws.probes
+            .insert(cook_contracts::probe_key::qualified_key(prefix, &key), probe);
+    }
+    // COOK-526: same qualification as `probes` immediately above — the two
+    // must agree, since the executor looks a node's probe up in `probes` by
+    // exactly the qualified string this set uses to answer "did the
+    // register pass already resolve this key this invocation".
+    for key in rc.resolved_probe_keys {
+        ws.resolved_probe_keys
+            .insert(cook_contracts::probe_key::qualified_key(prefix, &key));
     }
 }
 

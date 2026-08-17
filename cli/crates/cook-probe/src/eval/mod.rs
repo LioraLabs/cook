@@ -164,6 +164,13 @@ pub enum ValueSource {
     /// Newly produced — by a VM, or synthesised for a producer kind that needs
     /// none. Published subject to keylessness and `publish_enabled`.
     Produced,
+    /// COOK-526: served from this SAME invocation's register pre-pass,
+    /// which already ran `produce` (or hit the cache) and already recorded
+    /// the value — `record`'s canonical-copy write is unconditional, so the
+    /// bytes are already on disk regardless of `publish_enabled`. Like
+    /// [`ValueSource::Cache`], [`record`] must not re-publish: publishing is
+    /// this variant's caller's business the first time, not the second.
+    Prepass,
 }
 
 /// Everything decided before a value exists: the fingerprint, whether there is
@@ -179,27 +186,37 @@ pub struct Lookup {
     pub keyless: bool,
     pub tool_paths: BTreeMap<String, String>,
     pub warnings: Vec<String>,
-    /// `Some` when the value is already determined without running a VM:
-    /// either the cache served it, or a top-level `files`/`tools` declaration's
-    /// value is synthesised. `None` means the caller
-    /// must produce.
+    /// `Some` when the value is already determined without running a VM.
+    /// Three ways, in the order [`lookup`] tries them: the cache served it; a
+    /// top-level `files`/`tools` declaration's value is synthesised; or this
+    /// same invocation's register pre-pass already produced it (COOK-526,
+    /// `prepass_resolved`). `None` means the caller must produce.
     pub resolved: Option<(Vec<u8>, ValueSource)>,
 }
 
 /// Steps 1-5: resolve inputs, fingerprint, decide keylessness, resolve tool
-/// locations, consult the cache, and intercept producer kinds that need no VM.
+/// locations, consult the cache, intercept producer kinds that need no VM, and
+/// serve a value this invocation's register pre-pass already produced.
 ///
 /// `upstream_fps` must already hold a fingerprint for every key in
 /// `probe.inputs.requires`; `keyless_upstreams` must hold the keys among them
 /// that are themselves keyless. Both are the caller's to maintain, because
 /// ordering `requires` is a scheduling concern and scheduling is exactly what
 /// the two phases do differently for reasons that are not incidental.
+///
+/// `prepass_resolved` (COOK-526) says whether THIS invocation's register
+/// pre-pass already resolved this exact key. Only the execute phase may pass
+/// `true`: the register phase is the pre-pass, and a key consulting the
+/// channel it is in the middle of filling would find itself already resolved
+/// and serve its own previous run's file. [`evaluate`], the register phase's
+/// entry point, passes `false` for that reason.
 pub fn lookup(
     probe: &ProbeUnit,
     ctx: &EvalCtx<'_>,
     env_lookup: &dyn Fn(&str) -> Option<String>,
     upstream_fps: &BTreeMap<String, [u8; 32]>,
     keyless_upstreams: &BTreeSet<String>,
+    prepass_resolved: bool,
 ) -> Result<Lookup, ProbeError> {
     let key = probe.key.as_str();
     let mut warnings = Vec::new();
@@ -375,6 +392,23 @@ pub fn lookup(
     //    from the same pairs the fingerprint's FILES / TOOLS section just
     //    folded, so trigger and value are one computation and every phase
     //    agrees on the bytes.
+    //
+    // 6b. COOK-526: nothing above found a value — but THIS invocation's
+    //     register pre-pass may already have produced one for this exact key,
+    //     before the execute phase existed (a `gather <probe>` fan-out, or a
+    //     register-phase `cook.probes.get`). When it has, the bytes are
+    //     already at `.cook/probes/<key>.json`: `record` below writes that
+    //     file unconditionally, independent of `publish_enabled`. Reading them
+    //     back is what re-running `produce` would answer (§22.5.8), so the
+    //     body runs at most once per key per invocation across both phases.
+    //
+    //     Deliberately cache-independent — not a second cache tier. The
+    //     content-addressed probe-value cache is deleted by the next ticket in
+    //     this milestone (COOK-527), and single-flighting within one
+    //     invocation must not depend on it. It is last so a cache hit and the
+    //     synthesised producer kinds keep their existing meaning, and a
+    //     missing file falls through to an ordinary produce rather than
+    //     failing.
     let resolved = match cached {
         Some(bytes) => Some((bytes, ValueSource::Cache)),
         None if is_files_manifest(probe) => Some((
@@ -385,6 +419,8 @@ pub fn lookup(
             cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
+        None if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), key)
+            .map(|bytes| (bytes, ValueSource::Prepass)),
         None => None,
     };
 
@@ -583,7 +619,8 @@ pub fn evaluate(
     keyless_upstreams: &BTreeSet<String>,
 ) -> Result<Evaluated, ProbeError> {
     let key = probe.key.as_str();
-    let mut found = lookup(probe, ctx, env_lookup, upstream_fps, keyless_upstreams)?;
+    // `false`: this IS the register pre-pass. See `lookup`'s `prepass_resolved`.
+    let mut found = lookup(probe, ctx, env_lookup, upstream_fps, keyless_upstreams, false)?;
 
     let (bytes, module_paths, source) = match found.resolved.take() {
         Some((bytes, source)) => (bytes, Vec::new(), source),

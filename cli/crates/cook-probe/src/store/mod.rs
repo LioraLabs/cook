@@ -30,6 +30,18 @@ pub fn materialize_value(dir: &Path, key: &str, bytes: &[u8]) -> std::io::Result
     Ok(destination)
 }
 
+/// The bytes [`materialize_value`] last wrote for `key` under `dir`, or
+/// `None` when nothing has. The read half of the same one-file contract, so
+/// the filename is spelled once for both directions.
+///
+/// Free rather than a [`ProbeValueStore`] method because [`crate::eval`] needs
+/// it before any per-run store exists: COOK-526's cross-phase serve reads the
+/// value the REGISTER pass materialised, in a phase that holds only an
+/// `EvalCtx`.
+pub fn read_value(dir: &Path, key: &str) -> Option<Vec<u8>> {
+    std::fs::read(dir.join(cook_contracts::probe::value::probe_file_name(key))).ok()
+}
+
 /// Per-run probe-value store (§22.5.8). The canonical value of a probe is
 /// the file [`materialize_value`] writes above (CS-0102); this store is a
 /// read-through byte cache of that file, shared by the engine scheduler
@@ -97,8 +109,7 @@ impl ProbeValueStore {
             return Some(b.clone());
         }
         let dir = inner.dir.clone()?;
-        let bytes =
-            std::fs::read(dir.join(cook_contracts::probe::value::probe_file_name(key))).ok()?;
+        let bytes = read_value(&dir, key)?;
         inner.map.insert(key.to_string(), bytes.clone());
         Some(bytes)
     }

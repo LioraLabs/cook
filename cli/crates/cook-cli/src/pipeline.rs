@@ -1838,14 +1838,6 @@ pub fn cmd_serve(
 #[path = "tests/serve_glob_tests.rs"]
 mod serve_glob_tests;
 
-/// Split off the namespace prefix from a qualified recipe name.
-///
-/// `"backend.proto.generate"` → `"backend.proto"`
-/// `"build"` → `""`
-fn split_recipe_prefix(name: &str) -> &str {
-    name.rfind('.').map(|p| &name[..p]).unwrap_or("")
-}
-
 // ---------------------------------------------------------------------------
 // cmd_affected — list recipes that would be invalidated since --since=<ref>
 // ---------------------------------------------------------------------------
@@ -2047,7 +2039,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
                     step_groups: Vec::new(),
                     working_dir: registered
                         .working_dir_by_prefix
-                        .get(split_recipe_prefix(name))
+                        .get(cook_contracts::naming::import_prefix(name))
                         .cloned()
                         .unwrap_or_else(|| std::path::PathBuf::from(".")),
                     env_vars: std::collections::BTreeMap::new(),
@@ -2068,7 +2060,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     > = reachable
         .iter()
         .map(|name| {
-            let prefix = split_recipe_prefix(name);
+            let prefix = cook_contracts::naming::import_prefix(name);
             let wd = registered
                 .working_dir_by_prefix
                 .get(prefix)

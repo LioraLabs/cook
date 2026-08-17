@@ -38,8 +38,51 @@ pub fn internal_module_tag(name: &str) -> Option<&str> {
 }
 
 /// The part after the final `.`, or the whole string when there is no `.`.
+/// [`import_prefix`] is the other half of this same split: it keeps what
+/// this discards, and discards what this keeps.
 fn last_segment(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
+}
+
+// ---------------------------------------------------------------------------
+// Import-qualified names (§11, COOK-526)
+// ---------------------------------------------------------------------------
+
+/// The part before the final `.` in a workspace-qualified name — the import
+/// prefix a §11 composition stamped onto it — or `""` when there is none.
+/// [`last_segment`] is the other half: the part after the dot.
+///
+/// One derivation for both vocabularies that carry the prefix, because they
+/// are stamped by the same composition and read against the same
+/// `working_dir_by_prefix` map: a qualified RECIPE name
+/// (`"backend.proto.generate"` → `"backend.proto"`, `"build"` → `""`), and a
+/// qualified PROBE key (`"backend.cc:version"` → `"backend"`).
+///
+/// This was written out at eight sites before COOK-526 — `unit_graph::plan`'s
+/// probe-node collapse identity, `cook-engine::run`'s probe-metadata lookup
+/// (twice) and its `split_recipe_name`, `cook-cli`'s `split_recipe_prefix`,
+/// `cook-plan`'s two qualification joins, `cook-engine::affected`'s
+/// owner-directory normalisation, and `cook-execute`'s worker-side
+/// `cook.dep_output` resolution — and had already diverged in the lookup
+/// FALLBACK, which is a call-site policy rather than part of this derivation
+/// (see `cook-engine::run`'s `probe_units_by_node`). COOK-526 first landed it
+/// in `probe_key`, next to the probe-key mint functions that call it; it
+/// moved here once it turned out four of those eight sites were qualifying
+/// RECIPE names, which have nothing to do with the probe-key grammar.
+/// `import_prefix` is a fact about what a registered name means — this
+/// module's charter — not about how a probe key is spelled.
+///
+/// NOT this law, and deliberately left alone: `cook-engine::id`'s
+/// `id_namespace` / `id_recipe`. Those parse a different grammar
+/// (`<namespace>.<recipe>:<name>`, split on `:` first) and `id_recipe`
+/// answers with the SUFFIX after the last dot where this answers with the
+/// prefix before it. Same spelling, different question — the COOK-411 note in
+/// that file records the last time the two were confused.
+pub fn import_prefix(qualified: &str) -> &str {
+    match qualified.rfind('.') {
+        Some(idx) => &qualified[..idx],
+        None => "",
+    }
 }
 
 #[cfg(test)]
