@@ -1,10 +1,10 @@
-# NOTE: demo:compiler declares env/tools fingerprint inputs, which the native
-# `probe` declaration does not yet express (deferred to COOK-66). It therefore
-# stays on the register-phase `cook.probe()` API. See examples/probe-cache-share
-# for the native `probe` surface.
+# NOTE: demo:compiler declares `tools` inputs, which the native `probe`
+# declaration does not express in this shape (deferred to COOK-66). It
+# therefore stays on the register-phase `cook.probe()` API. See
+# examples/probe-cache-share for the native `probe` surface.
 register
     cook.probe("demo:compiler", {
-        inputs = { env = {"PATH"}, tools = {"cc"} },
+        inputs = { tools = {"cc"} },
         produce = [[
             local path = cook.sh("which cc"):gsub("%s+$", "")
             return { path = path }

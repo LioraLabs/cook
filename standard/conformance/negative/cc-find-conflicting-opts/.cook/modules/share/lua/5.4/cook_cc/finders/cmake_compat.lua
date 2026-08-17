@@ -27,7 +27,7 @@ end
 local function ensure_driver_probe()
     if driver_probe_registered then return end
     cook.probe(PROBE_KEY_DRIVER, {
-        inputs = { tools = { "cmake" }, env = { "CMAKE_PREFIX_PATH" } },
+        inputs = { tools = { "cmake" } },
         produce = produce_driver_body(),
     })
     driver_probe_registered = true

@@ -20,7 +20,7 @@ end
 local function ensure_probe()
     if probe_registered then return end
     cook.probe(PROBE_KEY, {
-        inputs = { tools = { "cc" }, env = { "LIBRARY_PATH" } },
+        inputs = { tools = { "cc" } },
         produce = produce_body(),
     })
     probe_registered = true

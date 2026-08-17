@@ -401,8 +401,8 @@ where
                 // local names never contain '.', so the recipe's qualified
                 // prefix locates the entry in the common case. Without this,
                 // every imported-Cookfile probe missed its metadata here and
-                // silently lost fingerprint caching (always re-ran); CS-0148's
-                // `files` sentinel made the miss loud by reaching a worker as
+                // reached a worker with no declaration behind it; CS-0148's
+                // `files` sentinel made the miss loud by arriving there as
                 // Lua.
                 //
                 // COOK-526: the derivation is the shared law

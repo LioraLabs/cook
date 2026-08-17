@@ -30,10 +30,12 @@ variables the config blocks resolved.
   that answered fewer questions than the code asked of it.
 - **The probe pre-pass calls the evaluator the executor calls.**
   `cook_probe::eval::evaluate`, with `RegisterVmRunner` supplying the one
-  genuinely phase-specific step (`engine.rs`). Fingerprinting, CS-0178
-  keylessness, cache lookup and publish, and the CS-0102 local copy have one
-  implementation. Before COOK-359 that sequence existed twice here, and this
-  side's cache block turned out never to have run at all.
+  genuinely phase-specific step (`engine.rs`). Resolving the declared
+  `tools`/`files` sets, deciding whether a value is already resolved without a
+  VM, and the CS-0102 local copy have one implementation. Before COOK-359 that
+  sequence existed twice here, and this side's cache block turned out never to
+  have run at all — CS-0243 has since deleted the cache lookup and publish
+  outright, and CS-0244 the fingerprint and the CS-0178 keylessness rule.
 - **A unit's identity is composed elsewhere, and is blind to where it was
   declared.** `cook_contracts::cache::local_key::build_local_cache_key` takes
   `_cookfile_path` and `_recipe` and has never used either, so moving a test

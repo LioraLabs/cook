@@ -1,74 +1,54 @@
-//! Resolve a ProbeUnit's declared inputs into ProbeFingerprintInputs by
-//! consulting the current env, PATH, filesystem, and upstream probe map.
+//! Resolve a ProbeUnit's declared `tools` and `files` sets to content
+//! digests, by consulting PATH and the filesystem right now.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use cook_contracts::ProbeUnit;
 use sha2::{Digest, Sha256};
 
-use cook_contracts::context::ProbeFingerprintInputs;
+/// A probe's declared `tools` and `files` sets, each resolved to
+/// `(name-or-path, 32-byte content digest)` pairs against the current host.
+///
+/// CS-0244: these are VALUE inputs, not key inputs. Nothing keys a probe any
+/// more; the pairs exist because four live callers in `cook_probe::eval` need
+/// them — the synthesised `@tools-identity` and `@files-manifest` values, and
+/// the CS-0214 / COOK-510 guards that refuse an all-zero digest standing in
+/// for an identity or a present-but-unreadable file.
+///
+/// A name or path that cannot be read contributes the all-zero digest rather
+/// than being dropped, which is exactly what those two guards test for.
+#[derive(Debug, Clone, Default)]
+pub struct ProbeInputDigests {
+    pub tools: Vec<(String, [u8; 32])>,
+    pub files: Vec<(String, [u8; 32])>,
+}
 
-/// Resolve a `ProbeUnit`'s declared inputs into `ProbeFingerprintInputs` by
-/// walking env/PATH/filesystem/upstream-fp-map.
-pub fn resolve_probe_inputs(
-    probe: &ProbeUnit,
-    working_dir: &Path,
-    env_lookup: &dyn Fn(&str) -> Option<String>,
-    upstream_fingerprints: &BTreeMap<String, [u8; 32]>,
-) -> Result<ProbeFingerprintInputs, String> {
-    let env: Vec<(String, Option<String>)> = probe
-        .inputs
-        .env
-        .iter()
-        .map(|name| (name.clone(), env_lookup(name)))
-        .collect();
-
-    let tools: Vec<(String, [u8; 32])> = probe
-        .inputs
-        .tools
-        .iter()
-        .map(|name| (name.clone(), resolve_tool_hash(name)))
-        .collect();
-
-    let files: Vec<(String, [u8; 32])> = probe
-        .inputs
-        .files
-        .iter()
-        .map(|path| (path.clone(), hash_file_sha256(&working_dir.join(path))))
-        .collect();
-
-    let upstream_probes: Vec<(String, [u8; 32])> = probe
-        .inputs
-        .requires
-        .iter()
-        .map(|k| {
-            let fp = upstream_fingerprints.get(k).copied().ok_or_else(|| {
-                format!(
-                    "probe '{}' requires upstream '{}' which has no fingerprint",
-                    probe.key, k,
-                )
-            })?;
-            Ok((k.clone(), fp))
-        })
-        .collect::<Result<_, String>>()?;
-
-    Ok(ProbeFingerprintInputs {
-        key: probe.key.clone(),
-        produce_source: probe.produce_source.clone(),
-        env,
-        tools,
-        files,
-        upstream_probes,
-    })
+/// Resolve a `ProbeUnit`'s declared `tools` and `files` against PATH and the
+/// filesystem. Infallible: `requires` is a scheduling edge (CS-0244) and
+/// resolves nothing here.
+pub fn resolve_probe_input_digests(probe: &ProbeUnit, working_dir: &Path) -> ProbeInputDigests {
+    ProbeInputDigests {
+        tools: probe
+            .inputs
+            .tools
+            .iter()
+            .map(|name| (name.clone(), resolve_tool_hash(name)))
+            .collect(),
+        files: probe
+            .inputs
+            .files
+            .iter()
+            .map(|path| (path.clone(), hash_file_sha256(&working_dir.join(path))))
+            .collect(),
+    }
 }
 
 /// Resolve a tool name to its current PATH location, freshly, every call.
 /// CS-0157: the resolved path is LOCATION metadata, not identity — it is
-/// deliberately excluded from probe fingerprints and canonical probe values,
-/// and deliberately NOT memoized here, so a consumer (the Lua read view,
-/// `cook why` display) always sees where the tool resolves NOW rather than a
-/// cached location that can go stale.
+/// deliberately excluded from canonical probe values, and deliberately NOT
+/// memoized here, so a consumer (the Lua read view, `cook why` display) always
+/// sees where the tool resolves NOW rather than a cached location that can go
+/// stale.
 pub fn resolve_tool_path(name: &str) -> Option<String> {
     which::which(name).ok().map(|p| p.to_string_lossy().into_owned())
 }
@@ -78,10 +58,11 @@ pub fn resolve_tool_path(name: &str) -> Option<String> {
 /// resolved path)` — the hash is the machine-independent identity a module
 /// folds into a sealed probe VALUE; the path is location metadata for
 /// invocation. `None` when the name does not resolve. Hashing goes through
-/// the same per-run memo as the fingerprint fold ([`crate::statmemo`]), so a
-/// module calling this never re-hashes a binary the fingerprint pass already
-/// read, and, since COOK-414, never sees a binary cook rebuilt mid-run at its
-/// pre-build bytes either.
+/// the same per-run memo as [`resolve_probe_input_digests`]
+/// ([`crate::statmemo`]), so a module calling this never re-hashes a binary a
+/// `tools` declaration
+/// already read, and, since COOK-414, never sees a binary cook rebuilt mid-run
+/// at its pre-build bytes either.
 pub fn tool_identity(name: &str) -> Option<(String, String)> {
     let path = which::which(name).ok()?;
     let hash = crate::statmemo::tool_hash_memo(&path);
@@ -100,13 +81,14 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
 
 /// SHA-256 of a file's bytes, or all-zero when it cannot be read.
 ///
-/// Public because CS-0204 hashes module source with it: the probe fingerprint
-/// folds every other file through the same function, and a second hasher over
-/// the same question is how two halves of one key come to disagree.
+/// Public because a probe's declared `files` and `tools` sets are hashed with
+/// it wherever they are read, and a second hasher over the same question is
+/// how two readings of one file come to disagree.
 ///
 /// COOK-414: cook-cache has two file hashes and they answer different
-/// questions. This one is IDENTITY THAT LEAVES THE MACHINE: the §22.5.3 probe
-/// fingerprint, the CS-0204 module-source fold, the cloud key underneath both.
+/// questions. This one is IDENTITY THAT LEAVES THE MACHINE: the digests a
+/// probe's declared `files`/`tools` sets fold into its VALUE, and the cloud
+/// key underneath a sealed consumer of that value.
 /// [`crate::check::hash_file`] is the other: xxh3 local content identity for
 /// `FileRecord` and the local cache key. The algorithm is part of each name
 /// because this function was once ALSO called `hash_file`, privately, in this

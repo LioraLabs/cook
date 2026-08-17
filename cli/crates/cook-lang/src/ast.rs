@@ -139,7 +139,7 @@ pub struct Chore {
 /// `cook.probe()` API: lowering (COOK-68) emits the equivalent `cook.probe`
 /// call. `deps` is the make-style header dependency list (`probe N: a b`) and
 /// lowers to `inputs.requires`. `inputs`/`excludes` are the file-input
-/// fingerprint set (NOT an iteration driver — a probe yields one value).
+/// declaration set (NOT an iteration driver — a probe yields one value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub name: String,

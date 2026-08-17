@@ -1,30 +1,30 @@
 //! COOK-359: the two probe-evaluation paths must agree.
 //!
-//! Probe evaluation is implemented twice — `cook-register`'s
-//! `evaluate_prepass_probe` (which feeds an `gather <probe>` fan-out) and
-//! `cook-engine`'s executor G4 path (which feeds sealed consumers). Both do the
-//! same thing around a different Lua VM: resolve inputs, compute a fingerprint,
-//! decide whether a value is already resolved without a VM, run the producer
-//! otherwise, write `.cook/probes/<key>.json`, decode. Only the VM genuinely
-//! differs — and, since CS-0243 (COOK-527), there is no cache GET or PUT left
-//! in either copy to have drifted.
+//! Probe evaluation is driven from two places — `cook-register`'s pre-pass
+//! (which feeds a `gather <probe>` fan-out) and `cook-engine`'s executor
+//! dispatch (which feeds sealed consumers). Both run the same
+//! `cook_probe::eval` sequence around a different Lua VM: resolve the declared
+//! `tools`/`files` sets, take a value a synthesised producer kind determines
+//! without a VM, run the producer otherwise, write `.cook/probes/<key>.json`,
+//! decode. Only the VM genuinely differs.
 //!
 //! §22.5.8's **Always observe** rule (CS-0243) names no consumption path: a
 //! reached probe's `produce` body MUST run, once, on every invocation,
-//! regardless of how its value is CONSUMED. That is still not part of the
-//! probe's identity, so the same probe declaration must cost the same number
-//! of producer executions either way — now trivially "every invocation" for
-//! BOTH a keyed and a keyless probe, where before CS-0243 keyedness was what
-//! made the two counts diverge (`keyed_probe_costs_the_same_on_both_paths`
-//! below inverted from "1 run in 3" to "3 runs in 3" for exactly that
-//! reason). The file's original point — one path re-producing on every
-//! invocation while the other one cached is a defect, not a feature some
-//! consumer can rely on — survives the flip: agreement between the paths is
-//! still the whole of what this file checks.
+//! regardless of how its value is CONSUMED. So the same probe declaration must
+//! cost the same number of producer executions either way. The file's original
+//! point — one path re-producing on every invocation while the other one
+//! cached is a defect, not a feature some consumer can rely on — survives the
+//! removal of the cache: agreement between the paths is still the whole of
+//! what this file checks.
 //!
-//! `keyless_probe_reproduces_on_both_paths` no longer distinguishes anything
-//! CS-0178 governs (every probe re-produces now, keyed or not) but is kept:
-//! it is still evidence that neither path regressed into caching anything.
+//! The two tests below are near-duplicates and both earn their place. The
+//! first additionally pins that the two paths write byte-identical values. The
+//! second covers a probe that declares NOTHING. That is not a separate code
+//! path — the resolver iterates the same empty vec zero times — but it is the
+//! case the retired CS-0178 keylessness rule used to single out, and the case
+//! an implementation could most cheaply turn back into a permanent hit. It is
+//! kept as a cheap regression guard on exactly that, not because the route
+//! through the resolver differs.
 
 use std::fs;
 use std::path::Path;
@@ -45,50 +45,45 @@ fn cook_binary() -> std::path::PathBuf {
 
 /// Two probes, two consumption paths each.
 ///
-/// `keyed:items` declares a file input; `keyless:items` declares nothing.
-/// Before CS-0243 that distinction was everything — §22.5.8 gave the keyed
-/// probe a cache key so one producer execution served every later run while
-/// `dep.txt` stayed unchanged, and CS-0178 gave the keyless one no key so it
-/// re-produced every run. CS-0243 removed the cache the distinction was
-/// FOR: a reached probe re-produces every invocation regardless, keyed or
-/// not, so both probes now cost the same either way. `keyed:items` and its
-/// `seal "src/dep.txt"` are kept anyway — the fixture still proves a keyed
-/// probe's declared input plays no role in whether it re-produces, which is
-/// the CS-0243 rule stated the other way round. Each producer appends one
-/// line to its own runlog, which makes execution observable independently
-/// of the value.
+/// `declaring:items` declares a file input; `bare:items` declares nothing.
+/// The declaration plays no role in whether a probe re-produces — that is
+/// CS-0243's rule stated the other way round — and both are here because the
+/// bare case is the one CS-0178 used to treat specially, not because it takes a
+/// different route through the resolver. Each producer
+/// appends one line to its own runlog, which makes execution observable
+/// independently of the value.
 ///
 /// Both values are deterministic: the runlogs measure how often the producer
 /// RAN, never what it returned, so a divergence cannot hide behind a value that
 /// happens to change anyway. The runlogs sit outside `out/` so the orphaned-
 /// output sweeper leaves them alone.
-const COOKFILE: &str = r#"probe keyed:items
+const COOKFILE: &str = r#"probe declaring:items
     seal "src/dep.txt"
     json {
-        echo ran >> keyed.runlog
+        echo ran >> declaring.runlog
         printf '["a"]\n'
     }
 
-probe keyless:items
+probe bare:items
     json {
-        echo ran >> keyless.runlog
+        echo ran >> bare.runlog
         printf '["a"]\n'
     }
 
-recipe sealed_keyed
-    seal keyed:items
-    cook "out/sealed_keyed.txt" { echo built > $<out> }
+recipe sealed_declaring
+    seal declaring:items
+    cook "out/sealed_declaring.txt" { echo built > $<out> }
 
-recipe fanned_keyed
-    gather keyed:items
+recipe fanned_declaring
+    gather declaring:items
     cook "out/fk-$<in>.txt" { echo '$<in>' > $<out> }
 
-recipe sealed_keyless
-    seal keyless:items
-    cook "out/sealed_keyless.txt" { echo built > $<out> }
+recipe sealed_bare
+    seal bare:items
+    cook "out/sealed_bare.txt" { echo built > $<out> }
 
-recipe fanned_keyless
-    gather keyless:items
+recipe fanned_bare
+    gather bare:items
     cook "out/fl-$<in>.txt" { echo '$<in>' > $<out> }
 "#;
 
@@ -159,23 +154,23 @@ fn measure(recipe: &str, runlog: &str, key: &str, n: usize) -> (usize, Vec<u8>) 
 const RUNS: usize = 3;
 
 #[test]
-fn keyed_probe_costs_the_same_on_both_paths() {
+fn a_probe_declaring_an_input_costs_the_same_on_both_paths() {
     let (sealed_runs, sealed_value) =
-        measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
+        measure("sealed_declaring", "declaring.runlog", "declaring:items", RUNS);
     let (fanned_runs, fanned_value) =
-        measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
+        measure("fanned_declaring", "declaring.runlog", "declaring:items", RUNS);
 
-    // CS-0243 (COOK-527): a reached probe always observes, so a keyed
-    // probe's declared inputs holding still buys it nothing any more — the
-    // producer runs once per invocation, every invocation, on both paths.
+    // CS-0243 (COOK-527): a reached probe always observes, so a declared
+    // input holding still buys the probe nothing — the producer runs once per
+    // invocation, every invocation, on both paths.
     assert_eq!(
         sealed_runs, RUNS,
-        "seal path: keyed probe producer ran {sealed_runs}x in {RUNS} runs, \
+        "seal path: producer ran {sealed_runs}x in {RUNS} runs, \
          expected {RUNS} (CS-0243)",
     );
     assert_eq!(
         fanned_runs, RUNS,
-        "gather <probe> path: keyed probe producer ran {fanned_runs}x in \
+        "gather <probe> path: producer ran {fanned_runs}x in \
          {RUNS} runs, expected {RUNS} (CS-0243)",
     );
     assert_eq!(
@@ -190,29 +185,36 @@ fn keyed_probe_costs_the_same_on_both_paths() {
     // times rather than once.
     assert_eq!(
         sealed_value, fanned_value,
-        "the two paths wrote different bytes to .cook/probes/keyed:items.json",
+        "the two paths wrote different bytes to .cook/probes/declaring:items.json",
     );
 }
 
+/// The same agreement for a probe that declares NOTHING. It runs the same
+/// resolver over an empty declaration rather than a different one, so this is a
+/// cheap regression guard rather than separate coverage: a probe with no
+/// declared inputs was the case CS-0178 used to single out before CS-0244
+/// retired the distinction, and it is the case most cheaply mistaken for a
+/// permanent hit. It still discriminates — it counts producer runs across both
+/// consumption paths, and fails if either stops re-producing.
 #[test]
-fn keyless_probe_reproduces_on_both_paths() {
+fn a_probe_declaring_nothing_behaves_as_one_declaring_an_input() {
     let (sealed_runs, _) =
-        measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
+        measure("sealed_bare", "bare.runlog", "bare:items", RUNS);
     let (fanned_runs, _) =
-        measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
+        measure("fanned_bare", "bare.runlog", "bare:items", RUNS);
 
-    // CS-0178: a probe declaring no inputs has no cache key and MUST re-produce
-    // on every invocation in which it is reached. Turning the pre-pass cache on
-    // without porting this rule would make a keyless driver a permanent hit in
-    // the shared store (COOK-343's failure mode, one path over).
+    // CS-0243: identical counts to the declaring probe above. A probe that
+    // declares nothing was, before CS-0244, the one case an implementation
+    // could most cheaply have turned into a permanent hit (COOK-343's failure
+    // mode); it re-produces on both paths like every other.
     assert_eq!(
         sealed_runs, RUNS,
-        "seal path: keyless probe producer ran {sealed_runs}x in {RUNS} runs, \
-         expected {RUNS} (CS-0178)",
+        "seal path: producer ran {sealed_runs}x in {RUNS} runs, \
+         expected {RUNS} (CS-0243)",
     );
     assert_eq!(
         fanned_runs, RUNS,
-        "gather <probe> path: keyless probe producer ran {fanned_runs}x in \
-         {RUNS} runs, expected {RUNS} (CS-0178)",
+        "gather <probe> path: producer ran {fanned_runs}x in \
+         {RUNS} runs, expected {RUNS} (CS-0243)",
     );
 }

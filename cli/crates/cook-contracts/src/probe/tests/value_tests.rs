@@ -46,9 +46,8 @@ fn the_tools_identity_encoding_is_these_exact_bytes() {
 
 #[test]
 fn tools_identity_sorts_keys_bytewise() {
-    // The fingerprint's TOOLS section sorts by name (§22.5.3); the value must
-    // agree, or two machines that declared the same tools in a different order
-    // would seal on different bytes.
+    // Two machines that declared the same tools in a different order must
+    // still seal on the same bytes, so the value sorts by name.
     let forward = encode_tools_identity(&[
         ("cc".to_string(), GOLDEN_CC),
         ("ld".to_string(), GOLDEN_LD),

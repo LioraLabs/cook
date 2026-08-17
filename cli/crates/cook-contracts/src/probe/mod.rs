@@ -6,8 +6,6 @@ pub mod value;
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProbeInputs {
     #[serde(default)]
-    pub env: Vec<String>,
-    #[serde(default)]
     pub tools: Vec<String>,
     #[serde(default)]
     pub files: Vec<String>,

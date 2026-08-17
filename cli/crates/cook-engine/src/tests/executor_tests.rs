@@ -1443,26 +1443,15 @@ fn test_iteration_item_propagates() {
 // execute_dag. Both are gone: there is no probe-value cache, so a probe
 // dispatch either resolves without a VM (a synthesised producer kind, or
 // COOK-526's cross-phase single-flight — see cook-probe's own tests) or runs
-// `produce` on the worker, full stop. The one surviving test below pins that
-// a value planted directly in the cache backend, at the exact key a probe
-// would have addressed under the old law, changes nothing: the probe still
-// executes.
+// `produce` on the worker, full stop.
 // -----------------------------------------------------------------
 
-/// A probe with one declared input (kept keyed, though CS-0243 made
-/// keyedness irrelevant to whether a value is served from a store — there is
-/// no store to serve from either way). The declared env var is never set; an
-/// unset name still populates §22.5.4 section 4 as `<unset>`, which is
-/// deterministic.
 fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
     cook_contracts::ProbeUnit {
         key: key.to_string(),
         produce_source: produce.to_string(),
         produce_line: 1,
-        inputs: cook_contracts::ProbeInputs {
-            env: vec!["COOK_TEST_PROBE_KEYING".to_string()],
-            ..Default::default()
-        },
+        inputs: cook_contracts::ProbeInputs::default(),
     }
 }
 
@@ -1481,39 +1470,6 @@ fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
         test_name: None,
         member: None,
     }
-}
-
-/// Compute the fingerprint for a ProbeUnit with no env/tool/file/upstream
-/// inputs, suitable for pre-seeding the backend in the CS-0243 test below.
-fn fingerprint_for(pu: &cook_contracts::ProbeUnit, wd: &std::path::Path) -> [u8; 32] {
-    let inputs = cook_cache::resolve_probe_inputs(pu, wd, &|_| None, &BTreeMap::new())
-        .expect("fingerprint resolution should succeed for simple probe");
-    cook_cache::compute_probe_fingerprint(&inputs)
-}
-
-/// Pre-populate the cache backend with known bytes under the given
-/// fingerprint key — a value planted directly, bypassing `cook_probe::eval`
-/// entirely, to prove that nothing on the probe dispatch path reads it back
-/// (CS-0243: there is no probe-value GET any more).
-fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 32], bytes: &[u8]) {
-    let mut meta = cook_cache::ArtifactMeta {
-        recipe_namespace: "probe:test".into(),
-        command_hash: 0,
-        env_contribution: 0,
-        schema_version: cook_cache::CACHE_VERSION,
-        size_bytes: bytes.len() as u64,
-        tags: std::collections::BTreeSet::new(),
-        consulted_env_keys: std::collections::BTreeSet::new(),
-        output_index: 0,
-        output_path: "probe:test".into(),
-        content_hash: cook_cache::ArtifactMeta::zero_content_hash(),
-        kind: Some(cook_contracts::cache::cas::artifact_kind::PROBE_VALUE.to_string()),
-        seal_contribution: 0,
-        mode: cook_cache::ArtifactMeta::default_mode(),
-        target: None,
-    };
-    cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)
-        .expect("seed_probe_cache: backend put failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -1640,31 +1596,28 @@ fn resolve_output_paths_expands_directory_output() {
 // CS-0243 — a reached probe always observes; there is no probe-value cache
 // ---------------------------------------------------------------------------
 
-/// Before CS-0243, a probe declaring no inputs (CS-0178 "keyless") ignored a
-/// seeded cache entry and a keyed one took it — two tests, one per branch.
-/// CS-0243 deleted the branch: a value planted directly in the cache
-/// backend, at the exact key a KEYED probe (the more interesting of the two
-/// old cases, since a keyed probe used to be the one that DID take the hit)
-/// would have addressed, is never read by any probe dispatch path. The
-/// produce body raises, so the seeded entry being consulted is the only way
-/// this run could succeed; it must fail.
+/// CS-0243/CS-0244: a probe dispatch consults no store. The `produce` body
+/// raises, so any route that could have answered this node without running it
+/// would make the run succeed; it must fail.
+///
+/// Before CS-0244 this test additionally planted a value in the cache backend
+/// at the exact fingerprint the probe would have addressed, and asserted it
+/// came back untouched. There is no fingerprint left to address anything by,
+/// so the seeding half is gone with the key it needed.
 #[test]
-fn a_seeded_store_entry_is_ignored_and_the_probe_always_executes() {
+fn a_probe_dispatch_always_runs_produce() {
     use std::sync::mpsc;
 
     let (_wd, _tmp) = tmp_dir();
     let wd = _wd.clone();
     let cache_ctx = make_cache_ctx(&_tmp);
 
-    let pu = probe_unit("test:keyed", "error('produce ran')");
-    let fp = fingerprint_for(&pu, &wd);
-    let seeded = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
-    seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &seeded);
+    let pu = probe_unit("test:always", "error('produce ran')");
 
     let mut dag = Dag::new();
     let node_id = dag
         .add_node(
-            probe_work_node("test:keyed", "error('produce ran')", wd),
+            probe_work_node("test:always", "error('produce ran')", wd),
             &[],
         )
         .unwrap();
@@ -1687,18 +1640,8 @@ fn a_seeded_store_entry_is_ignored_and_the_probe_always_executes() {
 
     assert!(
         result.is_err(),
-        "a reached probe MUST always run produce, never consult a store; the \
-         seeded entry was served instead, so the raising produce body never ran"
-    );
-
-    // The seeded entry is left exactly as planted — nothing on the probe
-    // path reads OR writes it.
-    let still_there = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
-        .expect("get after run");
-    assert_eq!(
-        still_there,
-        Some(seeded),
-        "the seeded entry must be untouched by a run that never consults it"
+        "a reached probe MUST always run produce; something answered the node \
+         without running it, so the raising produce body never ran"
     );
 }
 

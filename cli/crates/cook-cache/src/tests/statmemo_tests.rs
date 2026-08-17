@@ -148,7 +148,7 @@ fn same_relative_path_in_two_working_dirs_does_not_alias() {
 /// that an upstream node rebuilt minutes earlier in the same process; the same
 /// goes for a module calling `cook.tools.id` from an execute-phase body. The
 /// old memo answered from its first read forever, so the rebuilt tool was
-/// folded into a probe fingerprint, and into a sealed probe VALUE, at the bytes
+/// folded into a probe's observed VALUE at the bytes
 /// it had BEFORE cook rebuilt it. On a content-addressed store that crosses
 /// machines, that is a false hit, not a slow miss.
 #[test]

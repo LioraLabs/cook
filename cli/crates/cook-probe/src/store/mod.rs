@@ -73,7 +73,7 @@ struct Inner {
     map: BTreeMap<String, Vec<u8>>,
     /// CS-0157: per-run tool-path metadata, probe key → (tool name →
     /// freshly-resolved path). Populated by the engine when it resolves a
-    /// probe's declared `inputs.tools` for the fingerprint; merged into the
+    /// probe's declared `inputs.tools`; merged into the
     /// Lua READ VIEW by `cook.probes.get`. Never persisted, never part of
     /// the canonical value bytes, never folded into any key.
     tool_paths: BTreeMap<String, BTreeMap<String, String>>,

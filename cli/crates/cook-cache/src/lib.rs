@@ -60,15 +60,17 @@ pub use cook_contracts::cache::cas::{
 };
 pub use cook_contracts::cache::step::CACHE_VERSION as STEP_CACHE_VERSION;
 pub use cook_contracts::consumes::ConsumesFilter;
-pub use cook_contracts::context::{ProbeFingerprintInputs, compute_probe_fingerprint};
 pub use cook_contracts::envkey::{EnvDenylist, env_contribution};
 pub use cook_contracts::evict::{
     DEFAULT_LOW_WATER, EvictPlan, EvictPolicy, SIZE_SWEEP_EXEMPT_KINDS, is_size_sweep_exempt,
     plan_eviction,
 };
 pub use cook_contracts::pathlaw::{has_glob_meta, is_dir_output, is_terminal_output};
-pub use cook_contracts::{consumes, context, envkey, evict, hash_str};
-pub use probe::{hash_file_sha256, resolve_probe_inputs, resolve_tool_path, tool_identity};
+pub use cook_contracts::{consumes, envkey, evict, hash_str};
+pub use probe::{
+    ProbeInputDigests, hash_file_sha256, resolve_probe_input_digests, resolve_tool_path,
+    tool_identity,
+};
 pub use resolve::{
     empty_dirs_under, normalize_glob_pattern, reconcile_dir_output, resolve_declared_inputs,
     resolve_gather_glob, resolve_glob,

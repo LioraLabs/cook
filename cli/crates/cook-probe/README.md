@@ -8,8 +8,8 @@ afterwards.
 
 - It depends inward on `cook-contracts` for canonical probe value meaning.
 - It provides one evaluation sequence for registration and execution: resolve
-  declared inputs, fingerprint, decide keylessness, decide whether the value
-  is already resolved without running a VM (CS-0243's two no-VM cases; CS-0242's
+  the declared `tools`/`files` sets, decide whether the value is already
+  resolved without running a VM (CS-0243's two no-VM cases; CS-0242's
   cross-phase serve), produce otherwise, materialize, decode.
 - **CS-0243: a reached probe always observes.** There is no probe-value
   cache — no GET, no PUT, no publish, no stored artifact addressed by

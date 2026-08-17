@@ -1822,7 +1822,7 @@ fn register_cookfile_accepts_top_level_probe() {
     // aborted lua.load(...).exec() with "called outside a recipe body".
     let lua_src = r#"
         cook.probe("os.kernel", {
-            inputs = { env = {"PATH"} },
+            inputs = {},
             produce = "return { found = true }",
         })
         cook.recipe("hello", {requires = {}}, function()
@@ -4845,7 +4845,7 @@ fn a_register_body_reads_a_declared_probe_and_generates_the_graph_from_it() {
     let rt = make_registry(dir.path());
     let lua_src = r#"
 cook.probe("scan:mods", {
-    inputs = { env = {"COOK_319_SCAN_SALT"} },
+    inputs = {},
     produce = [[
         return {
             { name = "foo", imports = {} },
@@ -4997,9 +4997,9 @@ end)
     assert!(msg.len() < 2000, "message must not be a recursion trace: {} bytes", msg.len());
 }
 
-/// The same rule catches an UNDECLARED upstream, which is the silent-stale
-/// case: `cook_probe::eval` folds an upstream fingerprint only for keys in
-/// `inputs.requires`, so an undeclared read returns real data keyed on nothing.
+/// The same rule catches an UNDECLARED upstream, which is the silent-ordering
+/// case: only keys in `inputs.requires` are scheduled ahead of this body, so an
+/// undeclared read reaches whatever happens to have been resolved already.
 #[test]
 fn a_produce_body_reading_an_undeclared_upstream_is_rejected() {
     let dir = TempDir::new().unwrap();

@@ -202,9 +202,9 @@ fn adding_a_seal_key_moves_the_identity() {
 /// Every other test here is relational — these two differ, those two agree —
 /// so the whole digest could move and stay green. It is a LOCAL index key
 /// rather than a cross-machine one, but a silent change to it misses every
-/// test unit in every project at once, which is the same question
-/// `context_tests` asks of the probe fingerprint: not "which assertion do I
-/// update" but "did I mean to invalidate the world".
+/// test unit in every project at once. The question a golden vector asks is
+/// not "which assertion do I update" but "did I mean to invalidate the
+/// world".
 ///
 /// Computed with an independent xxh3 (Python's `xxhash`) rather than read off
 /// a passing run. The preimage, so it stays checkable: xxh3-64

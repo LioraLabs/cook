@@ -18,14 +18,14 @@ use serde_json::Value as JsonValue;
 /// body can collide with it. The engine intercepts a probe whose
 /// `produce_source` equals this sentinel and synthesises its value from the
 /// probe's resolved `inputs.files` — the same path→content-hash pairs the
-/// fingerprint's FILES section folds — instead of dispatching a worker, so
-/// the re-run trigger and the value can never drift.
+/// declaration resolves — instead of dispatching a worker, so the resolution
+/// and the value can never drift.
 pub const FILES_MANIFEST_PRODUCE: &str = "@files-manifest";
 
 /// Build the canonical value bytes of a top-level `files` declaration (CS-0148): a JSON
 /// object mapping each workspace-relative path to the lowercase hex of its
 /// content hash, or the literal `"<missing>"` when the file could not be read
-/// (all-zero hash, mirroring §22.5.4's missing-file fold). Encoded via
+/// (all-zero hash, mirroring §22.5.4's missing-file rule). Encoded via
 /// [`encode_canonical_json`], so the bytes are store-canonical.
 pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
     let mut map = serde_json::Map::new();
@@ -47,8 +47,8 @@ pub fn encode_files_manifest(files: &[(String, [u8; 32])]) -> Vec<u8> {
 /// other's.
 ///
 /// Before CS-0214 the `tools` lowering emitted a Lua program that resolved each
-/// name with `command -v` and digested it with `sha256sum`, while the probe's
-/// fingerprint resolved with `which` and digested with `sha2`. Two machineries
+/// name with `command -v` and digested it with `sha256sum`, while the engine's
+/// own resolution used `which` and `sha2`. Two machineries
 /// answering one question, at two different moments in the run, agreeing only
 /// because both happened to land on lowercase-hex SHA-256 — and the emitted one
 /// could not run at all on a host without GNU coreutils.
@@ -57,11 +57,10 @@ pub const TOOLS_IDENTITY_PRODUCE: &str = "@tools-identity";
 /// Build the canonical value bytes of a top-level `tools` declaration (CS-0214): a JSON
 /// object keyed by tool name, each entry `{ "hash": "<lowercase hex>" }`.
 ///
-/// The pairs are the probe's resolved `inputs.tools` — the same
-/// name→content-hash pairs the fingerprint's TOOLS section folds (§22.5.3) — so
-/// the re-run trigger and the value are one computation rather than two that
-/// agree. Keys sort bytewise via [`encode_canonical_json`], matching the sort
-/// the fingerprint applies to the same names.
+/// The pairs are the probe's resolved `inputs.tools`, so the digests the
+/// declaration resolves and the digests the value carries are one computation
+/// rather than two that agree. Keys sort bytewise via
+/// [`encode_canonical_json`].
 ///
 /// Identity only: the resolved PATH location is deliberately absent (CS-0157).
 /// A location in these bytes would fold into every sealing unit's key through

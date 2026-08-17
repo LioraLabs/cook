@@ -122,7 +122,7 @@ On the register-phase VM, `cook.probes.get(key)` returns the value previously st
 ### 24.4.2. `cook.probes.set` [#lua.cook-probes-set]
 **Signature.** `cook.probes.set(key: string, value: any) -> nil`
 
-> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Not available on the execute-phase VM; full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
+> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Not available on the execute-phase VM; full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for observed values.
 
 Stores `value` under `key`. Subsequent `cook.probes.get(key)` returns `value` (or its deserialisation-equal counterpart).
 
@@ -133,7 +133,7 @@ A register-phase write MUST be persisted by the implementation in a way that sur
 ### 24.4.3. `cook.probes.scope` [#lua.cook-probes-scope]
 **Signature.** `cook.probes.scope(label: string) -> table`
 
-> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
+> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for observed values.
 
 Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.probes.get(label .. ":" .. key)` and `cook.probes.set(label .. ":" .. key, value)` respectively — on whichever VM the view was created, with that phase's `get`/`set` semantics and restrictions (§{lua.cook-probes-get}, §{lua.cook-probes-set}). In particular, a scoped `set` on the execute-phase VM raises exactly as the unscoped form does, and a scoped `get` there reads the per-run store and reports the full prefixed `label:key` in the §{cat.probes.exec} unmaterialised-read error (CS-0152). The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
 
@@ -276,4 +276,4 @@ The function exists so a module can fold a **real toolchain identity** into a pr
 
 ### Note 24.9.1
 
-A conforming implementation MUST install `cook.tools.id` on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body behaves identically on the register pre-pass and the demand-driven worker path (the CS-0123 rule, applied to this API). The reference implementation backs both installs with the same per-run tool-hash memo the probe-fingerprint machinery uses, so calling `cook.tools.id` re-reads a binary only when the file it resolved to has changed since the memo last read it. (CS-0158, CS-0212.)
+A conforming implementation MUST install `cook.tools.id` on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body behaves identically on the register pre-pass and the demand-driven worker path (the CS-0123 rule, applied to this API). The reference implementation backs both installs with the same per-run tool-hash memo a top-level `tools` declaration's value resolution uses (§{cat.probes.decl}), so calling `cook.tools.id` re-reads a binary only when the file it resolved to has changed since the memo last read it. (CS-0158, CS-0212.)

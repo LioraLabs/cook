@@ -161,16 +161,16 @@ fn inline_seal_resolution_errors_name_the_attempted_reading() {
 
 /// First run: probe executes, consumer unit reads its value via `probes`,
 /// output file `done.marker` is produced and the consumer's artifact lands
-/// in `.cook/cache/`. Second run (CS-0243): the probe re-observes — it is
-/// keyless (`inputs = {}`), so it always re-produces, cache or no cache.
+/// in `.cook/cache/`. Second run (CS-0243): the probe re-observes, as every
+/// reached probe does.
 ///
-/// The consumer here uses `probes`, not `seal` (COOK-530): its key folds
-/// only the probe's FINGERPRINT (§22.5.6 rule 3), which is constant because
-/// the `produce` source string never changes — never the probe's observed
-/// VALUE (§22.5.7). `done.marker` comes out identical on both runs because
-/// this probe's produce body is deterministic and substitutes the same
-/// literal value into the command text each time, not because the
-/// consumer's key tracked the value.
+/// The consumer here uses `probes`, not `seal` (COOK-530): `probes` buys it a
+/// DAG edge and substitution, never a key (CS-0244 deleted the fingerprint
+/// fold that used to be §22.5.6 rule 3) — only `seal` carries a probe's
+/// observed VALUE into a consumer's key (§22.5.7). `done.marker` comes out
+/// identical on both runs because this probe's produce body is deterministic
+/// and substitutes the same literal value into the command text each time,
+/// not because the consumer's key tracked the value.
 ///
 /// SHI-222 Phase 7 Task 7 carry-forward: the legacy `register` block
 /// that called `cook.add_unit` directly is reshaped so the `cook.add_unit`
@@ -268,9 +268,9 @@ fn probe_produce_re_executes_on_every_invocation() {
             .as_nanos()
     );
     let probe_key = format!("test:counter-{uniq}");
-    // Embed the same uniquifier in the produce source itself so the
-    // fingerprint differs even from a same-key prior run (key changes
-    // already do this, but defence in depth is cheap).
+    // Embed the same uniquifier in the produce source itself, so a stray
+    // artifact from a same-key prior run cannot be mistaken for this one's
+    // (the key already uniquifies, but defence in depth is cheap).
     // Body-scope probe + body-scope consumer: the dag-builder wires the
     // consumer→probe edge from the consumer's `probes` field against the
     // probe `CapturedUnit` it finds in the same recipe body.
@@ -297,10 +297,10 @@ recipe build
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
-    // A declared input is not what makes this probe re-produce any more (that
-    // was CS-0178's keyless rule, which governed the removed cache) — CS-0243
-    // means EVERY reached probe re-produces regardless. Kept anyway: it
-    // exercises the ordinary declared-input path rather than the keyless one.
+    // A declared input is not what makes this probe re-produce: CS-0243 means
+    // EVERY reached probe re-produces regardless. Kept anyway, because it
+    // exercises the declared-`files` resolution path rather than the empty
+    // one.
     fs::write(tmp.path().join("seed.txt"), "seed\n").unwrap();
 
     // First run: produce body MUST execute.
@@ -385,8 +385,8 @@ recipe render
     assert!(tmp.path().join("out/y.txt").exists(), "y.txt missing");
 }
 
-/// Editing a probe's sealed input re-fingerprints the probe; the
-/// member fan-out reflects the new data on the next run.
+/// Editing a probe's sealed input changes the value it observes; the member
+/// fan-out reflects the new data on the next run.
 #[test]
 fn native_probe_gather_edit_reinvalidates() {
     let tmp = TempDir::new().unwrap();
@@ -406,7 +406,7 @@ recipe render
         tmp.path().join("out/first.txt").exists(),
         "first.txt missing"
     );
-    // edit the input -> re-fingerprint -> new member
+    // edit the input -> new observed value -> new member
     fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
     assert!(tmp.path().join("out/second.txt").exists(), "second.txt missing after edit");

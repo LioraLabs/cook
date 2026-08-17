@@ -77,15 +77,11 @@ pub fn install_cook_probe(
         // 2. Read opts.inputs sub-keys (all optional, default empty).
         let inputs = match opts.get::<LuaValue>("inputs") {
             Ok(LuaValue::Table(inp)) => {
-                let env = read_string_list(&inp, "env")?;
-                let tools = read_string_list(&inp, "tools")?;
-                let files = read_string_list(&inp, "files")?;
-                let requires = read_string_list(&inp, "requires")?;
+                reject_removed_env(&key, &inp)?;
                 ProbeInputs {
-                    env,
-                    tools,
-                    files,
-                    requires,
+                    tools: read_string_list(&inp, "tools")?,
+                    files: read_string_list(&inp, "files")?,
+                    requires: read_string_list(&inp, "requires")?,
                 }
             }
             Ok(LuaValue::Nil) | Err(_) => ProbeInputs::default(),
@@ -247,6 +243,33 @@ impl ProbeRegistry {
         stack.pop();
         state.insert(node, NodeState::Done);
         Ok(())
+    }
+}
+
+/// CS-0244: `opts.inputs.env` is removed surface and MUST be rejected.
+///
+/// Unlike `tools` and `files`, which each feed a probe's VALUE, `env` fed the
+/// probe fingerprint alone — no probe's value was ever built from it, because
+/// nothing wired a variable's current value into anything a `produce` body
+/// could read except by calling `os.getenv` itself. With the fingerprint gone
+/// the sub-key records nothing, so accepting it would silently promise a
+/// determinant that does not exist. The Cookfile-level `envs { }` spelling was
+/// already removed by CS-0226, in favour of an ordinary shell probe over the
+/// same variables sealed by name; this is the same replacement, one layer
+/// down.
+///
+/// The message names the offending probe key. The realistic offender is a
+/// module registering probes in a loop, and without the key the author gets a
+/// Lua traceback into vendored module code and no way to tell which probe.
+fn reject_removed_env(key: &str, inputs: &LuaTable) -> LuaResult<()> {
+    match inputs.get::<LuaValue>("env") {
+        Ok(LuaValue::Nil) | Err(_) => Ok(()),
+        Ok(_) => Err(LuaError::runtime(format!(
+            "cook.probe: probe '{key}': `opts.inputs.env` was removed \
+             (CS-0244); use an ordinary shell probe over the same variables, \
+             sealed by name — read them in the `produce` body so they land in \
+             the probe's value, e.g. `lines {{ echo \"$NAME\" }}`"
+        ))),
     }
 }
 
