@@ -7,9 +7,17 @@ exists = ["build/probed.txt"]
 args = ["build"]
 [run.assert]
 unchanged = ["build/probed.txt"]
-# unchanged alone proves the probe-value cache (a re-produced probe would
-# re-key the unit and change the nonce); the cached marker pins the unit
-# cache actually re-serving rather than re-executing identical bytes.
-# Four nodes — the seal producer, probe, record unit, and `test` observation —
-# all re-served from cache on the second run.
-output_contains = ["(4/4 cached)"]
+# CS-0243 (COOK-527): a reached probe always observes, so `demo:nonce` mints
+# a fresh nonce on this run too — its own node is NOT a cache hit, and under
+# CS-0243 no probe node ever is. `record` and `test` still hit their own unit
+# cache regardless (their key does not follow a bare `probes = {...}`
+# reference the way a `seal` would), which is what "unchanged" pins: the OLD
+# nonce's bytes are what `build/probed.txt` still holds, because the command
+# that would have written a new one never re-ran. The engine's own counter
+# below reports three of the four nodes cached — `record`, `test`, and the
+# synthesised `@seal:seed.txt` files probe that `demo:nonce`'s `seal
+# "seed.txt"` line lowers to — but that third node is a probe too, so being
+# counted as cached is a pre-existing reporting defect this fixture does not
+# fix (COOK-531), not a second exception to the law. `demo:nonce` itself is
+# the one node the count and the law agree is never cached.
+output_contains = ["(3/4 cached)"]

@@ -1,0 +1,24 @@
+# COOK-526. `gather <probe>` forces the register pre-pass to resolve
+# `shared` at register time (it needs the value to fan out). `sealed`
+# ALSO consumes `shared` at execute time via a DAG probe node. Before this
+# fix, the two phases each independently ran `produce`: the register
+# pre-pass once for the fan-out, and the executor a second time for the
+# DAG node's own dispatch — even though both are answering for the exact
+# same probe key in the exact same invocation. §22.5.8: a probe's produce
+# body MUST run at most once per build invocation.
+
+probe shared
+    json {
+        echo ran >> counter.log
+        printf '["a"]\n'
+    }
+
+recipe fanned
+    gather shared
+    cook "out/fanned-$<in>.txt" { echo '$<in>' > $<out> }
+
+recipe sealed
+    seal shared
+    cook "out/sealed.txt" { echo built > $<out> }
+
+recipe all: fanned sealed

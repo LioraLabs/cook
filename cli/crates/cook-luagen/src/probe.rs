@@ -67,18 +67,19 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
     }
-    // A top-level `tools NAME` declaration records its named tools as probe inputs so the fingerprint
-    // machinery folds each binary hash into the probe fingerprint. This
-    // is what makes the hash/value the re-run trigger — the produce body only
-    // computes the VALUE; the determinant lives in these declared inputs.
+    // A top-level `tools NAME` declaration records its named tools as probe
+    // inputs so the engine can resolve each binary's content hash and
+    // synthesise the probe's VALUE from it (CS-0214). There is no separate
+    // determinant: what a consumer seals is the value these digests compose.
     match &probe.produce {
         ProbeProduce::Tools(names) => {
             out.push_str(&format!("    tools = {{{}}},\n", quoted_list(names)));
         }
-        // CS-0148: a top-level `files NAME` declaration records its glob set as `inputs.files` —
-        // register-time glob resolution, each file's content hash folding into
-        // the fingerprint. The parser guarantees a `files` probe has no
-        // second file-set declaration, so this is the only `files =` emission.
+        // CS-0148: a top-level `files NAME` declaration records its glob set as
+        // `inputs.files` — register-time glob resolution, each file's content
+        // hash composing the synthesised manifest value. The parser guarantees
+        // a `files` probe has no second file-set declaration, so this is the
+        // only `files =` emission.
         ProbeProduce::Files { globs, excludes } => {
             if let Some(local) = &inline_files {
                 out.push_str(&format!("    files = {local},\n"));
@@ -138,14 +139,13 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         }
         // CS-0214: the second reserved sentinel, for the same reason as the
         // first. The engine synthesises `{ NAME = { hash } }` from the probe's
-        // resolved `inputs.tools` (see emit_probe) — the same name→content-hash
-        // pairs the fingerprint's TOOLS section folds — so the re-run trigger
-        // and the value are one computation.
+        // resolved `inputs.tools` (see emit_probe), so the digests a consumer
+        // seals and the digests the declaration resolved are one computation.
         //
         // Until CS-0214 this arm emitted a Lua program: `command -v` to
         // resolve, `sha256sum … | cut -d' ' -f1` to digest. That made the
-        // producer a second implementation of an identity the fingerprint
-        // already computed, in a different language, with a different
+        // producer a second implementation of an identity the declaration
+        // already resolved, in a different language, with a different
         // resolver, at a different moment in the run, agreeing only because
         // both happened to land on lowercase-hex SHA-256. It also could not
         // run at all on a host without GNU coreutils: stock macOS has
@@ -163,9 +163,9 @@ fn lower_produce(p: &ProbeProduce, uses: &[UseStatement]) -> String {
         ProbeProduce::Tools(_) => cook_contracts::probe_value::TOOLS_IDENTITY_PRODUCE.to_string(),
         // CS-0148: the reserved sentinel — not Lua, never dispatched to a
         // worker. The engine synthesises the value `{ [path] = hash }` from
-        // the probe's resolved `inputs.files` (see emit_probe), the same
-        // pairs the fingerprint folds, so trigger and value cannot drift and
-        // the keys stay workspace-relative (portable across machines).
+        // the probe's resolved `inputs.files` (see emit_probe), the same pairs
+        // the declaration resolved, so the two cannot drift and the keys stay
+        // workspace-relative (portable across machines).
         ProbeProduce::Files { .. } => {
             cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string()
         }

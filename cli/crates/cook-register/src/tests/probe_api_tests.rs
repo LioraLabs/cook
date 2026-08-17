@@ -24,7 +24,7 @@ fn cook_probe_registers_a_unit() {
 
     lua.load(r#"
             cook.probe("cc:zlib", {
-              inputs = { env = {"PKG_CONFIG_PATH"}, tools = {"pkg-config"} },
+              inputs = { tools = {"pkg-config"} },
               produce = "return { found = true }",
             })
         "#,
@@ -36,7 +36,6 @@ fn cook_probe_registers_a_unit() {
     let p = r.probes.get("cc:zlib").expect("probe registered");
     assert_eq!(p.probe.key, "cc:zlib");
     assert_eq!(p.probe.produce_source, "return { found = true }");
-    assert_eq!(p.probe.inputs.env, vec!["PKG_CONFIG_PATH"]);
     assert_eq!(p.probe.inputs.tools, vec!["pkg-config"]);
 }
 
@@ -92,7 +91,6 @@ fn cook_probe_omitting_inputs_defaults_to_empty() {
 
     let r = reg.borrow();
     let p = r.probes.get("cc:noinputs").expect("probe registered");
-    assert!(p.probe.inputs.env.is_empty());
     assert!(p.probe.inputs.tools.is_empty());
     assert!(p.probe.inputs.files.is_empty());
     assert!(p.probe.inputs.requires.is_empty());
@@ -204,4 +202,45 @@ fn multiple_distinct_probes_all_registered() {
     assert!(r.probes.contains_key("cc:zlib"));
     assert!(r.probes.contains_key("cc:openssl"));
     assert!(r.probes.contains_key("cc:lua"));
+}
+
+/// CS-0244: `opts.inputs.env` is removed surface. It fed the probe
+/// fingerprint alone — never a probe's value — so with the fingerprint gone
+/// accepting it would silently promise a determinant that does not exist. The
+/// diagnostic names the sub-key, the offending probe key and the entry, and
+/// points at the same shell probe CS-0226 already established for the
+/// Cookfile-level `envs { }` with its concrete `lines { … }` spelling.
+#[test]
+fn cs0244_cook_probe_rejects_inputs_env_by_name() {
+    let (lua, _reg, _cap) = setup("Cookfile");
+
+    let err = lua
+        .load(
+            r#"
+            cook.probe("host:cflags", {
+              inputs = { env = {"HOME"} },
+              produce = "return {}",
+            })
+        "#,
+        )
+        .exec()
+        .expect_err("opts.inputs.env must be rejected");
+
+    let msg = err.to_string();
+    assert!(msg.contains("inputs.env"), "the diagnostic must name the removed sub-key; got: {msg}");
+    assert!(msg.contains("CS-0244"), "the diagnostic must name the entry; got: {msg}");
+    // Without this the author of a module registering probes in a loop gets a
+    // traceback into vendored code and no way to tell which probe.
+    assert!(
+        msg.contains("host:cflags"),
+        "the diagnostic must name the offending probe key; got: {msg}",
+    );
+    assert!(
+        msg.contains("shell probe"),
+        "the diagnostic must direct the author to the replacement; got: {msg}",
+    );
+    assert!(
+        msg.contains(r#"lines { echo "$NAME" }"#),
+        "the diagnostic must carry the concrete replacement spelling; got: {msg}",
+    );
 }

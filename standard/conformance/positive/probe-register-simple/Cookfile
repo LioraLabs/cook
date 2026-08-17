@@ -1,6 +1,6 @@
 register
     cook.probe("test:simple", {
-        inputs = { env = {"PATH"} },
+        inputs = { tools = {"sh"} },
         produce = "return { found = true }",
     })
 

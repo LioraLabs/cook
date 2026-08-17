@@ -1887,7 +1887,7 @@ fn produce_files_lua_block_is_error() {
 }
 
 #[test]
-fn parse_probe_seal_adds_fingerprint_refs() {
+fn parse_probe_seal_synthesises_files_probe_and_wires_dep() {
     let src = "probe services\n    seal \"data/services.json\" !\"data/generated/**\"\n    json { cat data/services.json }\n";
     let cf = crate::parse(src).unwrap();
     // The ref is the anonymous determinant's own key, whatever it folds to

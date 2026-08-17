@@ -79,7 +79,10 @@ pub const SIZE_SWEEP_EXEMPT_KINDS: &[&str] = &[
     // the only route from a Lua-bodied unit's declared key to the full key its
     // artifacts sit under, so evicting it strands them.
     artifact_kind::MODULE_INPUT_SETS,
-    artifact_kind::PROBE_VALUE,
+    // CS-0243: no probe value is ever written to the store any more, so an
+    // entry of this kind still present is an orphan left by an older
+    // version. It is not a route to anything else the way the manifest kinds
+    // above are, so it must be reclaimable rather than exempt.
     artifact_kind::SYMLINK,
     artifact_kind::DIR,
 ];

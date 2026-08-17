@@ -1,0 +1,27 @@
+# COOK-526. Three independent recipes seal the SAME probe key. Before the
+# fix, `unit_graph::plan()` synthesised one `SynthProbe` node PER DEMANDING
+# RECIPE — three nodes, three executor dispatches, three produce executions
+# for a probe that should run exactly once per build invocation (§22.5.8).
+# The produce body appends one line to a counter file each time it runs, so
+# the number of executions is directly observable regardless of the value
+# the probe returns.
+
+probe shared
+    json {
+        echo ran >> counter.log
+        printf '"v1"\n'
+    }
+
+recipe one
+    seal shared
+    cook "out/one.txt" { echo built > $<out> }
+
+recipe two
+    seal shared
+    cook "out/two.txt" { echo built > $<out> }
+
+recipe three
+    seal shared
+    cook "out/three.txt" { echo built > $<out> }
+
+recipe all: one two three

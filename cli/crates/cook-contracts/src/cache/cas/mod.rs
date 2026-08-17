@@ -87,14 +87,6 @@ impl ArtifactMeta {
     pub fn default_mode() -> u32 {
         0o644
     }
-
-    /// Convenience: construct a probe-value artifact meta with
-    /// `kind = Some(artifact_kind::PROBE_VALUE)`. All other fields must be
-    /// filled in by the caller.
-    pub fn as_probe_value(mut self) -> Self {
-        self.kind = Some(artifact_kind::PROBE_VALUE.into());
-        self
-    }
 }
 
 /// The values [`ArtifactMeta::kind`] may take.
@@ -113,7 +105,10 @@ impl ArtifactMeta {
 /// ask for and could not enforce.
 pub mod artifact_kind {
     /// The canonical-JSON probe-output artifact (CS-0074, encoding revised by
-    /// CS-0102).
+    /// CS-0102). CS-0243 removed the probe-value cache: nothing writes this
+    /// kind any more. It stays classified so a store still holding entries
+    /// written by an older version can sweep them as orphans (they lost the
+    /// size-sweep exemption they used to hold).
     pub const PROBE_VALUE: &str = "probe_value";
     /// Target carried in `ArtifactMeta::target`; no body.
     pub const SYMLINK: &str = "symlink";

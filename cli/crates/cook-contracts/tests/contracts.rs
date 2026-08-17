@@ -497,7 +497,6 @@ fn work_payload_clone() {
 #[test]
 fn probe_inputs_default_is_empty() {
     let i = ProbeInputs::default();
-    assert!(i.env.is_empty());
     assert!(i.tools.is_empty());
     assert!(i.files.is_empty());
     assert!(i.requires.is_empty());
@@ -510,7 +509,6 @@ fn probe_unit_round_trips_through_serde() {
         produce_source: "return run_pkg_config(\"zlib\")".into(),
         produce_line: 42,
         inputs: ProbeInputs {
-            env: vec!["PKG_CONFIG_PATH".into()],
             tools: vec!["pkg-config".into()],
             files: vec![],
             requires: vec!["cc:compiler".into()],

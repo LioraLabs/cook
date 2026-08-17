@@ -391,7 +391,7 @@ Probe return types per kind:
 | `has-compile-flag` | boolean | `false` |
 | `has-link-flag` | boolean | `false` |
 
-Each check function MUST be idempotent: a repeat call with the same name and equivalent opts MUST NOT re-register the probe and MUST return the same sigil. Different opts produce different fingerprints and therefore different probe keys; conflict-on-same-key is by construction impossible.
+Each check function MUST be idempotent: a repeat call with the same name and equivalent opts MUST NOT re-register the probe and MUST return the same sigil. Different opts hash differently and therefore derive different probe keys; conflict-on-same-key is by construction impossible.
 
 The implementation MUST register each probe with `requires = { "cc:compiler:<override-or-auto>" }` so the toolchain probe is a transitive dependency of every check.
 

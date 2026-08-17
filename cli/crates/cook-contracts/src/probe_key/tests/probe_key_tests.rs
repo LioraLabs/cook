@@ -113,3 +113,46 @@ mod scoped_keys {
         assert!(msg.contains("must not contain ':'"), "names the rule: {msg}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Import-qualified keys (§11, COOK-526)
+// ---------------------------------------------------------------------------
+
+mod import_qualification {
+    use crate::naming::import_prefix;
+    use crate::probe_key::{qualified_key, qualify_for_recipe};
+
+    /// The standing agreement test for the derivation COOK-526 unified. Every
+    /// row is a spelling one of the eight former copies produced; they are run
+    /// through the one law and asserted identical, so a future re-fork of any
+    /// site fails here rather than in a build that quietly produces a probe
+    /// N times.
+    ///
+    /// All three shapes those copies had are in one table — prefix, join, and
+    /// the composition of the two — because they are three halves of one
+    /// answer: `registers.rs` MINTS the qualified string, `plan()` derives it
+    /// again as a collapse identity, and `run.rs` derives it a third time as
+    /// a lookup key into what `registers.rs` minted. Any two of them
+    /// disagreeing is a probe produced twice or not found at all.
+    #[test]
+    fn every_site_derives_the_same_qualified_key() {
+        // (recipe name, local probe key, expected qualified identity)
+        let rows = [
+            ("build", "shared", "shared"),
+            ("game.build", "shared", "game.shared"),
+            ("a.b.build", "cc:version", "a.b.cc:version"),
+            ("game.build", "cc:find:raylib", "game.cc:find:raylib"),
+        ];
+        for (recipe, key, expected) in rows {
+            let prefix = import_prefix(recipe);
+            // `unit_graph::plan` and `cook-engine::run` compose from a recipe
+            // name; `cook-plan::registers` composes from a prefix it already
+            // holds. All three must land on the same string.
+            assert_eq!(qualify_for_recipe(recipe, key), expected, "{recipe}/{key}");
+            assert_eq!(qualified_key(prefix, key), expected, "{recipe}/{key}");
+            // And the prefix half is recoverable from the joined form, which
+            // is what `run.rs` does to anchor the probe's declaring dir.
+            assert_eq!(import_prefix(expected), prefix, "{recipe}/{key}");
+        }
+    }
+}

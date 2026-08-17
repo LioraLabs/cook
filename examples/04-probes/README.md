@@ -1,8 +1,10 @@
 # 04 — probes
 
-A **probe** is a named, memoized value producer that runs before the build.
-Its value is a *determinant*: steps built from it re-key when it changes and
-stay cached when it doesn't. Probes are lazy — an undemanded probe never runs.
+A **probe** is a named observation that runs before the build, fresh every
+time it's demanded — its value is never itself cached. Steps built from it
+still re-key when its value changes and stay cached when it doesn't: the
+fan-out below bakes each member's content into that member's own command
+text. Probes are lazy — an undemanded probe never runs.
 
 Producer kinds:
 

@@ -10,9 +10,9 @@ sidebar:
 
 ## 22.5.1. Synopsis [#cat.probes.synopsis]
 
-A *probe unit* is a DAG unit whose output is a Lua value rather than a file. A conforming implementation MUST expose the register-phase API `cook.probe(key, opts)` (§{cat.probes.api}) and MUST treat probe units as ordinary participants in the execution DAG (§{cat.probes.exec}). Probe outputs MUST be cached using the same machinery as recipe outputs (§{exec.cache}), enabling cross-invocation memoisation and cross-machine sharing via Cook Cloud.
+A *probe unit* is a DAG unit whose output is a Lua value rather than a file. A conforming implementation MUST expose the register-phase API `cook.probe(key, opts)` (§{cat.probes.api}) and MUST treat probe units as ordinary participants in the execution DAG (§{cat.probes.exec}). A probe's value MUST be observed afresh on every invocation in which the probe is reached; it MUST NOT be stored, published, or shared across invocations (§{cat.probes.exec}). A unit that seals a probe (§{steps.cook-disposition.seal}) is where caching happens: sealing keys the unit on the probe's observed value (§{exec.cache.single-key}), and it is that unit's cache, not the probe's, that a conforming implementation shares.
 
-A unit MAY declare a dependency on one or more probe outputs via `probes = { key, ... }` on `cook.add_unit` (§{cat.probes.consumer}). The implementation MUST add a DAG edge from each named probe to the consuming unit and MUST fold each probe's fingerprint into the consumer's fingerprint, ensuring transitive invalidation.
+A unit MAY declare a dependency on one or more probe outputs via `probes = { key, ... }` on `cook.add_unit` (§{cat.probes.consumer}). The implementation MUST add a DAG edge from each named probe to the consuming unit, ordering the unit after the probe and enabling command-placeholder substitution (§{cat.probes.templates}); this edge does not by itself key the consumer — `seal` (§{exec.cache.single-key}) is what folds a probe's value into a unit's cache key.
 
 ## 22.5.2. Native probe declaration [#cat.probes.decl]
 
@@ -47,8 +47,8 @@ line after the producer. Each bare seal operand names an upstream probe key and
 joins the header dependency list (`probe NAME: a b`) in `inputs.requires`.
 Quoted operands desugar to an anonymous `files` probe whose key joins that same
 list; `!"…"` excludes matches with the same adjacency rule as a top-level
-`files` declaration. Thus file contents fold into this probe's fingerprint
-without becoming its producer or iteration source. Probe bodies use `seal` for
+`files` declaration. Thus file contents enter this probe's `inputs.requires`
+chain without becoming its producer or iteration source. Probe bodies use `seal` for
 determinants; `gather` is a recipe iteration declaration and is not admitted
 here.
 
@@ -76,9 +76,9 @@ its Cookfile or module owner: probe keys share one workspace namespace across
 imports, so this convention mitigates collisions. A named declaration is for a
 set worth naming; a single inline determinant should use the inline seal form.
 
-A probe's `seal` declares its **fingerprint inputs** — NOT an iteration driver.
+A probe's `seal` declares its **upstream dependencies** — NOT an iteration driver.
 A probe yields one value and never fans out; each named declaration contributes
-through `inputs.requires`, using the same fingerprint path as a header dependency.
+through `inputs.requires`, using the same dependency path as a header dependency.
 
 **Diagnostics.** A conforming implementation MUST reject the following probe
 bodies at parse time with a diagnostic that identifies the probe by name and
@@ -147,13 +147,12 @@ follow lower to the same probe-value model:
   Lua body. A conforming implementation MUST PATH-resolve each name and
   content-hash the resolved binary; the probe value is a JSON object keyed by
   tool name, each entry an object `{ "hash": <content hash> }`. The hash is
-  BOTH the probe value AND its re-run trigger: a change to the resolved binary
-  changes the hash, re-fingerprinting the probe and any dependent unit —
-  freshness without a `volatile` annotation. Because it is both, it MUST be
-  ONE computation: the hash an implementation places in the value MUST be the
-  same content hash it folds into the fingerprint's TOOLS section
-  (§{cat.probes.inputs}), obtained the same way, from the same resolution of
-  the same name — not a second computation that agrees. Two computations of one
+  the probe value: a change to the resolved binary changes the hash, and
+  because a probe's value is observed afresh on every invocation it is
+  reached (§{cat.probes.exec}), a sealing unit's key moves with it
+  automatically — freshness without a `volatile` annotation. The hash MUST be
+  ONE computation, from ONE resolution of the name: an implementation MUST
+  NOT compute it a second time elsewhere and rely on the two agreeing. Two computations of one
   identity may agree today and diverge on the run that matters, since they read
   the file at different moments and can resolve the name differently, and this
   identity keys a store that crosses machines
@@ -173,45 +172,65 @@ follow lower to the same probe-value model:
   consumers — merged into the value table returned by `cook.probes.get` (so
   `$<KEY.NAME.path>` resolves for invocation) and shown by the key
   explanation (§{exec.cache.why}) — while the canonical value bytes, the seal
-  fold, and the persisted probe artifact carry identity only. A consumer
-  therefore always reads where the tool resolves NOW; a cached value can
+  fold, and the `.cook/probes/<key>.json` record (§{cat.probes.exec}) carry
+  identity only. A consumer
+  therefore always reads where the tool resolves NOW; an observed value can
   never replay a stale location. (CS-0157.) A name that does
   not resolve on PATH MUST fail the declaration with a diagnostic naming the
   tool,
-  and MUST do so whether or not a value for this probe is available from a
-  cache: the failure is a statement about the host the run is on, so an
-  implementation that raises it only during production reports it only on cache
-  misses (CS-0214). A name that RESOLVES but whose bytes
+  and MUST do so regardless of whether this probe's value has already been
+  observed elsewhere in the same invocation: the failure is a statement about
+  the host the run is on, so an implementation that raises it only during
+  production reports it only when the probe is actually dispatched to a
+  worker VM (CS-0214). A name that RESOLVES but whose bytes
   cannot be read MUST fail the probe in the same way. An implementation MUST
   NOT record a placeholder digest for it: a value that says "unreadable" says
   the same thing on every host, so two machines each failing to read a
   DIFFERENT toolchain would compose identical value bytes, and one could be
   served a sealed artifact the other built. This case is reachable — PATH
   resolution tests for executability, not readability — and it is the one
-  place where §{cat.probes.inputs}'s missing-input fold, which is a
-  deliberately collision-tolerant fingerprint contribution, must not be
-  promoted into an identity. (CS-0214.) A
+  place where §{cat.probes.inputs}'s missing-input fold, a deliberately
+  collision-tolerant resolution result, must not be promoted into an
+  identity. (CS-0214.) A
   conforming implementation MUST reject an empty body.
 - `files NAME` (top-level declaration, CS-0148/CS-0222): the indented body is a
   whitespace-separated LIST of quoted glob patterns following
   `gather` pattern syntax (`!"…"` excludes; §{steps.gather}), NOT a
-  shell or Lua body. The glob set is the declaration's **file-input fingerprint
+  shell or Lua body. The glob set is the declaration's **file-input determinant
   set**: it resolves to a concrete file set whose per-file content hashes
   populate `inputs.files` (§{cat.probes.inputs}), exactly as a `gather`
   line would. The probe value is a JSON object keyed by each resolved file's
   workspace-relative path, each entry the lowercase-hex content hash of that
-  file — the same hashes the fingerprint's FILES section folds, so the re-run
-  trigger and the value cannot diverge, and the value contains no
+  file — computed once, from the same resolution `inputs.files` populates
+  (§{cat.probes.inputs}), so the value cannot diverge from itself, and it contains no
   machine-specific absolute paths (it stays portable across a shared store,
-  §{exec.cache.single-key}). A file that cannot be read at value time folds as
-  the literal string `"<missing>"`, mirroring §{cat.probes.inputs}'s
-  missing-file fold. Adding, removing, or editing a matched file changes the
+  §{exec.cache.single-key}). A matched path that does not exist at value time
+  folds as the literal string `"<missing>"`, mirroring §{cat.probes.inputs}'s
+  missing-file fold — a glob resolving to nothing it can find is ordinary. A
+  matched path that EXISTS but whose bytes cannot be read (permission denied)
+  MUST fail the probe with a diagnostic naming the path, in the same way and
+  for the same reason as the `tools` rule above: `"<missing>"` says the same
+  thing on every host, so two machines each failing to read a DIFFERENT
+  file's content would compose identical value bytes, and one could be served
+  a sealed artifact built from the other's actual content — permanently,
+  since nothing about an unreadable file's bytes ever changes to move the
+  value, and therefore the key of every unit that seals it. An implementation MUST NOT distinguish the two states by the
+  content hash alone (both fold to the same missing-content digest); it MUST
+  check existence separately. (CS-0241.) Adding, removing, or editing a
+  matched file changes the
   value and therefore the key of every unit that seals this probe — `files` is
   the file-set twin of `tools`, and the idiomatic way to name a set of files
   as both a sealable determinant and a named `gather NAME` source. In gather
   position its manifest keys become the gathered members; each path is bound
   as the member while the hashes remain the determinant value. A conforming
   implementation MUST reject an empty or unquoted top-level `files` body.
+  A declared path resolves, and its content hashes, against the Cookfile that
+  DECLARES the `files` set — never against a consuming recipe's own working
+  directory, which may be a different Cookfile's when the probe is sealed by
+  a recipe elsewhere in the workspace. Both the register-phase resolution and
+  the execute-phase resolution MUST use this one base, so a cross-Cookfile
+  consumer sees the same value the declaring Cookfile's own recipes would.
+  (CS-0241.)
 
 The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
 implementation MUST reject either applied to a `>{ … }` Lua-block producer with a
@@ -241,13 +260,12 @@ one trailing newline trimmed; `lines { … }` → newline-split array; `json { �
 reserved `opts.produce` string `"@files-manifest"` — not executable Lua (a bare
 `@` is a Lua syntax error, so no hand-written produce body collides with it);
 the engine intercepts that sentinel and synthesises the value directly from the
-resolved `inputs.files` pairs instead of dispatching a worker, which is what
-guarantees the value and the fingerprint's FILES section are computed from the
-same bytes. A `cook.probe()` caller MAY pass the sentinel with its own
-`inputs.files` to obtain the same synthesised manifest. Because the fingerprint
-folds the `opts.produce` source string (§{cat.probes.inputs}), editing a shell
-command or changing the producer kind changes the lowered string and therefore
-re-fingerprints; the fingerprint algorithm itself is unchanged.
+resolved `inputs.files` pairs instead of dispatching a worker — one computation,
+not two that could diverge. A `cook.probe()` caller MAY pass the sentinel with
+its own `inputs.files` to obtain the same synthesised manifest. Editing a shell
+command or changing the producer kind changes the lowered `opts.produce` source
+string, which is what the probe re-executes on the next invocation it is
+reached; the declaration lowering itself is otherwise unchanged.
 
 ## 22.5.3. The `cook.probe` API [#cat.probes.api]
 
@@ -270,7 +288,7 @@ probe key 'cc:zlib' declared at <file>:<line>; previously declared at <file>:<li
 | Key | Type | Required | Semantics |
 |---|---|---|---|
 | `inputs` | table | yes | Declared inputs (§{cat.probes.inputs}). MAY be an empty table. |
-| `produce` | string | yes | Lua source code (the body of a producing function); the implementation wraps it in `function() ... end` and invokes it on a worker VM during the execute phase on a cache miss. MUST return a serialisable value (§{cat.probes.values}). |
+| `produce` | string | yes | Lua source code (the body of a producing function); the implementation wraps it in `function() ... end` and invokes it on a worker VM during the execute phase each time the probe is reached (§{cat.probes.exec}). MUST return a serialisable value (§{cat.probes.values}). |
 
 A conforming implementation MUST raise a register-phase error if `opts.inputs` is absent or not a table, or if `opts.produce` is absent or not a string.
 
@@ -279,7 +297,6 @@ A conforming implementation MUST raise a register-phase error if `opts.inputs` i
 ```lua
 cook.probe("cc:zlib", {
   inputs = {
-    env   = { "PKG_CONFIG_PATH", "PATH" },
     tools = { "pkg-config" },
   },
   produce = [[
@@ -295,38 +312,13 @@ cook.probe("cc:zlib", {
 
 | Sub-key | Type | Semantics |
 |---|---|---|
-| `env` | list[string] | Env-var names. The current value of each named variable contributes to the probe's fingerprint. Reuses the env-contribution mechanism of §{exec.cache.abstract}. |
-| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the probe's value, which folds into the cache key of any unit that seals on this probe (§{exec.cache.single-key}). A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. A top-level `tools` declaration is stricter and MUST fail instead, because its value is an identity rather than a collision-tolerant fingerprint contribution (CS-0214, CS-0222). |
-| `files` | list[string] | File paths relative to the Cookfile root. The content hash of each file contributes to the fingerprint. A missing file folds as `(path, "<missing>")`. |
-| `requires` | list[string] | Upstream probe keys. Each named probe's full fingerprint is folded into this probe's fingerprint (chained invalidation). The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
+| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time. The resolved binary's identity is what a top-level `tools` declaration's **value** is built from (CS-0214, CS-0222), and its location populates the per-run tool-location view of §{cat.probes.named-sets} (CS-0157). A name that does not resolve on PATH resolves as the pair `(name, "<missing>")` — the **missing-input fold** — and the probe runs and SHOULD surface a diagnostic. A top-level `tools` declaration is stricter and MUST fail instead, because there the resolution IS the value a sealing unit is keyed on (§{exec.cache.single-key}) and `"<missing>"` says the same thing on every host (CS-0214, CS-0222). |
+| `files` | list[string] | File paths relative to the Cookfile root, resolved and content-hashed against the declaring Cookfile. A declared path that does not exist at resolution time resolves as the literal string `"<missing>"` in place of a content hash — the **missing-file fold**. That resolution is what a top-level `files` declaration's synthesised manifest **value** is built from (CS-0148). |
+| `requires` | list[string] | Upstream probe keys. Each named probe is an ordering edge and a failure-propagation edge (a `produce` failure propagates via DAG edge to every named consumer, §{cat.probes.exec}), and is the unit CS-0242's once-per-key dispatch counts over. It is NOT a keying mechanism: naming an upstream probe here does not fold that probe's value, or anything derived from it, into this probe's own value. The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
 
-A probe's fingerprint MUST be a 32-byte SHA-256 digest over the canonicalised byte representation of its inputs. The canonical representation is built by concatenating, in this fixed order, each of the following sections separated by an ASCII `LF` (0x0A):
+`opts.inputs.env` is retired (CS-0244). A conforming implementation MUST reject it with a register-phase diagnostic naming CS-0244 and directing the author to an ordinary shell probe over the same variables (§{cat.probes.decl}), sealed by name — the replacement CS-0226 already established for the `envs { }` producer this sub-key fed.
 
-1. The literal bytes `COOK_PROBE_FP_V2`.
-2. The probe `key` (UTF-8 bytes).
-3. The `produce` source string (UTF-8 bytes).
-4. The literal bytes `ENV`, followed by each declared env-var name and its current value (or the literal bytes `<unset>` if not set), `<name>=<value>`-formatted, sorted lexicographically by name.
-5. The literal bytes `TOOLS`, followed by each declared tool name and the 32-byte content hash of the resolved binary (32 zero bytes if missing), `<name>=<hex>`-formatted, sorted lexicographically by name.
-6. The literal bytes `FILES`, followed by each declared file path and its 32-byte content hash (32 zero bytes if missing), `<path>=<hex>`-formatted, sorted lexicographically by path.
-7. The literal bytes `UPSTREAM`, followed by each upstream probe key and its 32-byte fingerprint, `<key>=<hex>`-formatted, sorted lexicographically by key.
-
-The marker was bumped from `COOK_PROBE_FP_V1` by CS-0102 when the probe-value encoding changed from msgpack to canonical JSON, so artifacts written under the old encoding are never addressed by a conforming implementation.
-
-The implementation MAY include a non-cryptographic hash (e.g. xxh3_64) as an internal optimisation provided the final 32-byte fingerprint matches what a direct SHA-256 over the canonical bytes would produce.
-
-The seven sections above are the probe's **declared** fingerprint. A probe whose `produce` body loads a module has a second determinant that no declaration can carry, and §{cat.probes.module-source} says how it folds.
-
-### 22.5.4.1. Module source [#cat.probes.module-source]
-
-> **Normative (CS-0204).** A `produce` body that loads a module runs that module's code, so the module's content decides the probe's value. A conforming implementation MUST NOT serve a stored value for a probe whose loaded module source has changed. The subject is the resolved path of every module the body actually loaded, on the terms §{exec.cache.module-source} sets out in full: observed rather than predicted, both doors, memo hits included, and never a directory.
->
-> The seven declared sections cannot carry it. Sections 4 through 7 are resolved *before* the body runs, and which modules the body will load is knowable only by having run it. A conforming implementation MUST therefore address a probe's stored value by a **full fingerprint** that composes the declared fingerprint of §{cat.probes.inputs} with the current content of the loaded module set, and MUST make the empty set compose the declared fingerprint unchanged — so a probe that loads no module is addressed exactly as it was before this rule existed.
->
-> **Reconstruction.** A reader must be able to compute the full fingerprint before running the body, or a keyed probe could never hit its own cache again. A conforming implementation MUST therefore retain the loaded path sets of prior successful productions, retrievable by the **declared** fingerprint, and MUST, on lookup, re-hash each candidate set against its own working tree and probe the composed full fingerprint. The rules of §{exec.cache.discovered-candidates} govern the retention and the validation: recorded hashes MUST NOT substitute for current content, so a candidate that no longer describes the reader's tree composes a fingerprint nothing is stored under and misses. The retained collection MAY be bounded; evicting a set degrades to a re-production, never a wrong value.
->
-> **Propagation.** The fingerprint a probe contributes to a downstream `requires` (section 7 above) MUST be the FULL one. A module edit must invalidate the whole chain that depends on the value it changed, not only the probe that loaded it.
->
-> **Keyless probes.** CS-0178 keylessness is decided from the declaration and is unchanged: a probe that declares nothing has no key, stores nothing, and so has nothing for this rule to address.
+On a hand-written `produce` body, no `inputs` sub-key keys anything: the value is whatever the body returns, and no unit's cache key moves because of a declaration here. `requires` is the only sub-key that is a DAG edge — it orders this probe after each named upstream and propagates that upstream's failure. `files` and `tools` are resolved, not scheduled: a path and a tool name are not DAG nodes. A declared `tools` name is resolved on PATH, which is what populates the per-run tool-location view a *consumer* reads (§{cat.probes.named-sets}) — the body cannot read that view, since it cannot read its own unmaterialised value; the body's own tool-location surface is `cook.tools.id` (§{lua.cook-tools-id}), which needs no declaration at all. A declared `files` path carries one restriction — §{cat.probes.member-source}'s static-input rule, which forbids a probe the register pre-pass resolves from declaring a `files` input that is a declared recipe output of the same Cookfile. `seal` (§{exec.cache.single-key}) is the mechanism that keys a consumer on a probe's content: it folds the probe's *value* into the sealing unit's key. Whether a bare `probes` reference (§{cat.probes.consumer}) should do the same is COOK-530's open question, stated in full at §{cat.probes.templates}.
 
 ## 22.5.5. Value types [#cat.probes.values]
 
@@ -344,7 +336,7 @@ Returning a `function`, `userdata`, `thread`, a mixed-key table, or a table cont
 probe 'cc:zlib' returned a non-serialisable value at .cflags[3] (function)
 ```
 
-Probe values are serialised as **canonical JSON** for storage, materialisation, and cloud transport. The canonical rendering is UTF-8 JSON, pretty-printed with two-space indentation, object keys sorted bytewise ascending, with exactly one trailing LF. There is exactly ONE canonical byte sequence per value; a conforming implementation MUST use those bytes verbatim at every serialising site — the `.cook/probes/<key>.json` file (§{cat.probes.exec}), the `CacheBackend` artifact body (`kind: "probe_value"`), and wire transport — without re-encoding. Any hash over a probe value MUST be over the canonical bytes.
+Probe values are serialised as **canonical JSON** for storage, materialisation, and cloud transport. The canonical rendering is UTF-8 JSON, pretty-printed with two-space indentation, object keys sorted bytewise ascending, with exactly one trailing LF. There is exactly ONE canonical byte sequence per value; a conforming implementation MUST use those bytes verbatim at every serialising site — the `.cook/probes/<key>.json` file (§{cat.probes.exec}) and wire transport — without re-encoding. Any hash over a probe value MUST be over the canonical bytes.
 
 The JSON encoding imposes two constraints beyond the value-type list above: a `string` MUST be valid UTF-8, and a `number` MUST be finite (NaN and ±Inf are rejected). A violation MUST cause the probe to fail with the non-serialisable diagnostic above, naming the offending path.
 
@@ -358,8 +350,7 @@ A conforming implementation MUST, after the register pass completes:
    ```
    unit '<name>' lists probe key '<key>' in `probes` but no such probe was declared
    ```
-2. Add a DAG edge from each resolved probe to the consumer unit.
-3. Fold each resolved probe's fingerprint into the consumer unit's fingerprint.
+2. Add a DAG edge from each resolved probe to the consumer unit. This edge orders the unit after the probe and is what command-placeholder substitution (§{cat.probes.templates}) depends on; it does NOT key the consumer — `seal` (§{exec.cache.single-key}) is the mechanism that folds a probe's value into a unit's cache key.
 
 The relative order of `cook.probe` and `cook.add_unit` calls within one register pass is unconstrained; resolution is deferred to end-of-pass.
 
@@ -373,7 +364,7 @@ Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` pl
 >
 > A conforming implementation MUST make a unit's captured output independent of whether its command contains a probe reference. Whether it substitutes into the command text, rewrites the command into some other executable form, or does something else again, is its own affair, and no part of it is observable to a Cookfile author beyond the substituted values themselves.
 
-The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil is a probe-value reference when the part of its IDENT preceding any access path names a declared probe key, which is step 3 of §{xref.resolution}; the implementation MUST dispatch such a sigil to the cache-read path described here. Any other sigil retains its register-time semantics (builtins, recipe names, declared variables).
+The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil is a probe-value reference when the part of its IDENT preceding any access path names a declared probe key, which is step 3 of §{xref.resolution}; the implementation MUST dispatch such a sigil to the substitution path described here. Any other sigil retains its register-time semantics (builtins, recipe names, declared variables).
 
 > **Amended (CS-0240): the colon was the dispatch rule and is now only a lexing fact.** This section previously read "a sigil whose IDENT contains a colon is unambiguously a probe-value reference … a sigil whose IDENT contains no colon retains its existing register-time semantics", which left the sigil as the one bare-name position in the language resolving lexically rather than by lookup. Every other position that names a probe key — a `seal` operand, a `gather` source, a `probes = {…}` entry, a `cook.probes.get` argument — already resolved a colon-free key by name, and the native `probe` declaration (§{cat.probes.decl}) mints colon-free keys, so a probe was reachable through every surface except the one this section specifies.
 >
@@ -401,7 +392,9 @@ Addressing failures are diagnostics, never renderings. A `.field` segment applie
 
 > **Amended (CS-0192): the rendering used to be Lua's, by reference.** The previous rules required the value to be "a string (or coercible via `tostring`)", which handed an observable surface of this Standard to Lua's C library: a number rendered through `%.14g` (so `0.1 + 0.2` substituted as `0.3`), an absent member rendered as the four bytes `nil`, and a table rendered as its heap address — `table: 0x7f1788005660`, different bytes on the same command line on every run. App. E's CS-0192 entry records what changes observably, and the migration note.
 
-**Lua-body static scan (CS-0152).** An execute-phase Lua step body — a native `>{ … }` cook body (§{steps.cook-single} / §{steps.cook-multi}) or `cook.add_unit`'s `lua_code` string; the former lowers to the latter, so one capture-site rule covers both — has no `$<key>` sigil surface, but it consumes probe values all the same, via `cook.probes.get`. A conforming implementation MUST statically scan such a body's source for calls of the form `cook.probes.get("<key>")` (double- or single-quoted) whose first argument is a string literal constituting the entire argument — a literal followed by concatenation is not collected, and text inside comments or unrelated string literals MUST be excluded — and MUST union each discovered key into the unit's `probes` list. The unioned keys then follow §{cat.probes.consumer}'s end-of-pass rules unchanged: an unknown key raises that section's register-phase diagnostic; a known key gains the DAG edge, the fingerprint fold, and demand-driven scheduling under §{cat.probes.exec}, exactly as if the author had listed it. Non-literal keys — a variable or expression argument, a concatenation, a `cook.probes.scope(...)` chain — are exempt from the scan and are governed by §{cat.probes.exec}'s unmaterialised-read error. The scan is a deliberate overapproximation: it performs no reachability analysis, so a literal read in a conditionally-executed branch demands the probe unconditionally — matching the sigil scan above, which likewise demands a probe regardless of whether the line carrying the reference runs. Probe `produce` bodies are outside this rule's scope; they register via `cook.probe` and are ordered by `inputs.requires` (§{cat.probes.inputs}).
+**Lua-body static scan (CS-0152).** An execute-phase Lua step body — a native `>{ … }` cook body (§{steps.cook-single} / §{steps.cook-multi}) or `cook.add_unit`'s `lua_code` string; the former lowers to the latter, so one capture-site rule covers both — has no `$<key>` sigil surface, but it consumes probe values all the same, via `cook.probes.get`. A conforming implementation MUST statically scan such a body's source for calls of the form `cook.probes.get("<key>")` (double- or single-quoted) whose first argument is a string literal constituting the entire argument — a literal followed by concatenation is not collected, and text inside comments or unrelated string literals MUST be excluded — and MUST union each discovered key into the unit's `probes` list. The unioned keys then follow §{cat.probes.consumer}'s end-of-pass rules unchanged: an unknown key raises that section's register-phase diagnostic; a known key gains the DAG edge and demand-driven scheduling under §{cat.probes.exec}, exactly as if the author had listed it. Non-literal keys — a variable or expression argument, a concatenation, a `cook.probes.scope(...)` chain — are exempt from the scan and are governed by §{cat.probes.exec}'s unmaterialised-read error. The scan is a deliberate overapproximation: it performs no reachability analysis, so a literal read in a conditionally-executed branch demands the probe unconditionally — matching the sigil scan above, which likewise demands a probe regardless of whether the line carrying the reference runs. Probe `produce` bodies are outside this rule's scope; they register via `cook.probe` and are ordered by `inputs.requires` (§{cat.probes.inputs}).
+
+**A `probes` reference does not re-key its consumer.** Rule 2 of §{cat.probes.consumer} adds a DAG edge from each consumed probe to the consumer, which is the ordering this section's substitution depends on. It does not fold the probe's *value* into the consumer's key: `seal` (§{steps.cook-disposition.seal}) is the mechanism that folds a probe's value into a unit's key (§{exec.cache.single-key}); a bare `probes` reference orders and substitutes but does not key. COOK-530 tracks whether that gap should close.
 
 ### Example 22.5.7.1
 
@@ -421,17 +414,25 @@ Before the command runs, `$<cc:compiler.path>` and `$<cc:zlib.cflags>` are repla
 
 A probe unit MUST run at most once per build invocation.
 
-**Probes with no declared inputs have no cache key (CS-0178).** A probe whose fingerprint is formed from sections 1-3 of §{cat.probes.inputs} alone — the marker, the key, and the `produce` source string — declaring no `env`, `tools`, `files`, or `requires`, has NO cache key. A conforming implementation MUST re-produce such a probe on every invocation in which it is reached, MUST NOT consult the cache for it, and MUST NOT publish its value. Sections 1-3 are constant for a given probe, so a fingerprint built from them alone is stable for the life of the store: the probe would answer once and never observe again, which is the one thing a probe exists to do. For comparison, §{exec.cache.test-unit} rule 1 states the current test-unit law: a source-less test with a non-empty seal is keyed; only a test with neither source nor seal is one-shot. Probe keylessness is instead the rule above, for the unit kind whose whole purpose is observation.
+**A probe's `produce` body runs at most once per key, not once per node (CS-0242).** A probe's `produce` body MUST run at most once per build invocation. This binds the probe's *key*, not the unit synthesised for any one demander: when N recipes `seal` a probe, reference it in a `$<key>` sigil, list it in a unit's `probes` field, or `gather` it, in one invocation, the build owes that key exactly one execution of `produce` — never N. Demanders share one production.
 
-Keylessness propagates along `requires`: a probe that names a keyless probe in `inputs.requires` is itself keyless. Its own fingerprint would otherwise fold section 7 over an upstream fingerprint that is constant while the upstream's *value* moves, so it would be served from cache across a change it exists to notice.
+The rule holds across phases as well as across recipes. A key the register pre-pass has already resolved — to compute a `gather <probe>` fan-out's member set (§{cat.probes.member-source}), or by an ordinary register-phase `cook.probes.get` read (§{cat.probes.member-source}, CS-0219) — MUST NOT be produced a second time when the execute phase later dispatches a unit for that same key. The implementation MUST instead serve the value the register pre-pass recorded, which the **Always observe** rule below names as an explicit exception to its own dispatch requirement. The register pre-pass and the execute phase are two callers of one evaluation, not two evaluations.
 
-This rule does not reach forms that declare their inputs by construction. A top-level `tools` or `files` declaration lowers to `inputs.tools` or `inputs.files` (§{cat.probes.decl}), populating section 5 or 6, and is therefore **self-keying**. An ordinary shell probe over environment has no declared source and deliberately remains keyless: it re-observes whenever reached, while a unit sealing it keys on the probe's *value* (§{exec.cache.single-key}). Re-observing an unchanged environment leaves every consumer's key untouched and the build's early cutoff intact.
+Because one node serves every demander of a key, the ordering dependencies that bind that node are those of the demander that mints it — the first, in the implementation's own scheduling order — and not the union of every demander's. A conforming implementation MUST NOT be read as guaranteeing that a shared probe node runs after the prerequisite recipes of a demander OTHER than the minting one. A probe that must observe a specific recipe's artifact declares that artifact as a `files` input (§{cat.probes.inputs}), which orders it by data rather than by whichever consumer happened to reach it first; note that §{cat.probes.member-source}'s static-input rule forbids exactly that declaration for a probe the register pre-pass resolves.
 
-Demand-driven scheduling is unaffected: a keyless probe that no scheduled unit reaches still MUST NOT execute, and its fingerprint still MUST NOT be computed.
+None of this loosens the demand law below: "at most once" is a ceiling, not a floor. A probe no reachable recipe demands still does not execute at all, in either phase.
 
-**Cache hit.** When the probe's fingerprint addresses an existing artifact in the cache backend, the implementation MUST load the cached bytes, validate that they parse as JSON (a parse failure MUST be treated as a cache miss), populate the per-run probe-value store, and skip execution of the `produce` source.
+Serving the register phase's value at execute time is sound in the cases §{cat.probes.member-source}'s static-input rule covers, which is what that rule is for: a probe the register pre-pass resolves may not declare a `files` input that is one of the same Cookfile's declared recipe outputs, so for such a probe nothing declared can change between the moment the pre-pass resolves it and the moment the execute phase would otherwise have re-produced it, and re-running `produce` would answer what the pre-pass already answered. The rule is a static check over declarations, and its reach is exactly that: it compares declared paths literally, so a glob `files` entry or a pattern output is outside it; it does not reach a `produce` body that reads a build artifact by means other than a declared input, since no static rule can see that. A `produce` body that observes undeclared state was already outside every guarantee this section makes — its value may be served from the register pre-pass's own production, the cross-phase exception above, across the very change it observes (§{cat.probes.inputs}) — and this rule neither widens nor narrows that.
 
-**Cache miss.** When no cached artifact is found, the implementation MUST dispatch the probe to a worker VM, wrap the `produce` source string in `function() ... end`, parse and invoke the resulting function, capture the return value, validate it against §{cat.probes.values}, render it to canonical JSON (§{cat.probes.values}), store the artifact via the cache backend, and populate the per-run probe-value store. If the `produce` source string is malformed Lua, the resulting parse error MUST fail the unit with a diagnostic naming the probe key and the parse error.
+**Always observe (CS-0243).** A probe value MUST NOT be served from any store that outlives the invocation. There is no probe-value cache: no hit, no miss, and no stored artifact. A conforming implementation MUST NOT store, publish, or transport a probe's value, and MUST NOT read a value recorded by an earlier invocation. A probe that is reached therefore observes the world afresh on every invocation in which it is reached, which is the whole of what a probe is for; §{exec.cache.single-key} is where the observation is allowed to stop work, by keying a sealing unit on the probe's *value*, so a re-observation that answers what it answered before leaves every consumer's key — and the build's early cutoff — exactly where it was.
+
+A probe has no branch on this question the way a test unit does: §{exec.cache.test-unit} rule 1 states the test-unit law — a source-less test with a non-empty seal is keyed; only a test with neither source nor seal is one-shot. A probe answers no analogous question: every probe — declared inputs or none, sealed by a consumer or not — is always observed, uniformly.
+
+The implementation MUST dispatch the probe to a worker VM, wrap the `produce` source string in `function() ... end`, parse and invoke the resulting function, capture the return value, validate it against §{cat.probes.values}, render it to canonical JSON (§{cat.probes.values}), and populate the per-run probe-value store. If the `produce` source string is malformed Lua, the resulting parse error MUST fail the unit with a diagnostic naming the probe key and the parse error.
+
+Exactly two cases resolve without dispatching a VM, and neither is a store. A top-level `files` or `tools` declaration's value is **synthesised** directly from the resolved file/tool pairs (§{cat.probes.decl}) — the same pairs `inputs.files` / `inputs.tools` resolve — so the value is one computation over the current tree. A key this invocation's register pre-pass already resolved is served from **that pre-pass's own value**, the cross-phase exception stated above under CS-0242. Both observe the world on this invocation; neither reads a previous invocation's answer.
+
+**An expensive observation belongs in a recipe (CS-0243).** An author whose observation is too expensive to repeat on every invocation MUST NOT expect an implementation to memoise it: this section forbids exactly that. The construct for a memoised expensive computation is an ordinary cacheable unit (§{exec.cache.single-key}) — a recipe that declares its inputs, writes its result to a declared output, and is consumed downstream as a file. Such a unit is keyed, stored, shared, and served from cache by the whole of §{exec.cache}, and it re-runs when what it declared moves. A probe is the other thing: an observation of state the build does not produce, whose cost is the price of being told the truth each time. An observation that is not repeated is a memory, and a memory of the host is what §{exec.cache.single-key}'s refusal to infer machine identity exists to keep out of a key.
 
 The per-run probe-value store is keyed by probe key. Consumer units are dispatched after their `requires`-edge predecessors complete; at dispatch time, the store is fully populated for all required probes.
 
@@ -439,7 +440,7 @@ The per-run probe-value store is keyed by probe key. Consumer units are dispatch
 
 The wrapped `produce` function MAY raise a Lua error. A conforming implementation MUST treat a raised error as a unit failure and MUST propagate failure to every downstream consumer via the DAG edge, consistent with the general unit-failure semantics of §{exec.two-phase}.
 
-**Demand-driven scheduling.** A probe unit MUST NOT execute on an invocation unless at least one scheduled non-probe unit lists the probe's key in its `probes` field, directly or transitively through probe-on-probe `inputs.requires` chains. A conforming implementation MUST silently omit unreached probe nodes from the execution DAG. The implementation MUST NOT compute, look up, or persist the fingerprint of an unreached probe; MUST NOT emit a user-facing diagnostic; and MUST NOT log a warning at the user-facing diagnostic layer. Debug logging at lower verbosity tiers is permitted.
+**Demand-driven scheduling.** A probe unit MUST NOT execute on an invocation unless at least one scheduled non-probe unit lists the probe's key in its `probes` field, directly or transitively through probe-on-probe `inputs.requires` chains. A conforming implementation MUST silently omit unreached probe nodes from the execution DAG. The implementation MUST NOT observe an unreached probe at all; MUST NOT emit a user-facing diagnostic for it; and MUST NOT log a warning about it at the user-facing diagnostic layer. Debug logging at lower verbosity tiers is permitted.
 
 ### Example 22.5.8.1
 
@@ -465,12 +466,12 @@ recipe bar
 The bare `cook.add_unit(…)` line is a register-phase `module_call` step (§{steps.dispatch}, rule 7) — the CS-0134 form of what a pre-CS-0134 Cookfile wrote as `>>{ cook.add_unit(…) }`. Each `test { … }` block body is an execute-phase verification unit.
 
 `cook foo` MUST execute the `env:slow` probe and `u1` exactly once.
-`cook bar` MUST execute no probes; `env:slow` is unreached and its
-fingerprint MUST NOT be computed.
+`cook bar` MUST execute no probes; `env:slow` is unreached and MUST NOT
+be observed.
 
-**On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced for cache storage. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
+**On-disk layout.** No cache storage is involved (**Always observe**, above): a probe value is never written to the content-addressed store, so no artifact and no meta sidecar exist for it. An implementation whose store still holds probe-value artifacts written under an earlier revision of this Standard MUST NOT serve them, and SHOULD let its ordinary eviction policy reclaim them.
 
-In addition, on every probe completion — cache hit or miss, demand-driven or pre-pass (§{cat.probes.member-source}) — the implementation MUST materialise the canonical bytes at `.cook/probes/<file>` under the project root, where `<file>` is the probe key with the characters `_`, `/`, and `\` escaped for injectivity (the reference implementation rewrites `_` → `_5f`, `/` → `_2f`, `\` → `_5c`, so no two distinct keys share a file name), suffixed `.json`. This file is the canonical local copy of the probe value; the per-run probe-value store is a read-through cache of it.
+On every probe completion — demand-driven or pre-pass (§{cat.probes.member-source}) — the implementation MUST materialise the canonical bytes at `.cook/probes/<file>` under the project root, where `<file>` is the probe key with the characters `_`, `/`, and `\` escaped for injectivity (the reference implementation rewrites `_` → `_5f`, `/` → `_2f`, `\` → `_5c`, so no two distinct keys share a file name), suffixed `.json`. This file is the canonical local copy of the probe value. **Within** one invocation it is how the cross-phase rule above serves a key the register pre-pass already resolved. **Across** invocations it is a record and not a source: a conforming implementation MUST NOT read it as a probe's value on a later invocation, and in particular MUST NOT answer a `cook.probes.get` for an undemanded probe out of it — that read is the error this section requires, not a stale value. A post-hoc explanation surface (§{exec.cache.why}) reads the file precisely because it is a record of what was observed — except where §{exec.cache.why.determinants} has the query resolve a fresh value instead, or reuse one this invocation's own register pre-pass produced.
 
 ## 22.5.9. Cycle detection [#cat.probes.cycles]
 
@@ -500,24 +501,24 @@ The whole-member reference `$<in>` renders records as canonical JSON. In a shell
 
 **Recipe sources are not probe sources (CS-0239).** §{steps.gather}'s third `gather` form takes a `$<recipe>` reference rather than a bare name, and it is outside this section's pre-pass and source-ref machinery entirely: there is no probe to resolve, no array shape to check, and no `<key>:<field>` ambiguity to settle. Its members are the referenced recipe's declared output paths (§{xref.dep-recipe-output}), learned from that recipe's own registration, which the name reference has already ordered ahead of the gathering body (§{xref.dep-implications}). What the two sources DO share is the per-member fan-out this section specifies — one unit per member, an all-literal `cook` output aggregating rather than iterating, the same stale-output reconciliation when the member set shrinks. Two further properties follow from a recipe member being a **path**: `$<in.ACCESSOR>` is a path accessor, and the member path is a declared file input of the unit it drives, so a member re-runs when the artifact it reads changes rather than when its path string changes.
 
-**Pre-pass evaluation.** A probe that feeds a `gather <probe>` source MUST be evaluated **before unit registration completes**, because its array value supplies the recipe's member set and therefore the cardinality of accessor-bearing steps. A conforming implementation MUST resolve every such probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers the recipe's units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
+**Pre-pass evaluation.** A probe that feeds a `gather <probe>` source MUST be evaluated **before unit registration completes**, because its array value supplies the recipe's member set and therefore the cardinality of accessor-bearing steps. A conforming implementation MUST resolve every such probe of a reachable recipe (via `produce` execution, per §{cat.probes.exec}) before it registers the recipe's units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
 
 **Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a probe feeding a `gather <probe>` source MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.
 
-**Register-phase reads (CS-0219).** `cook.probes.get(key)` (§{lua.both}) invoked from register-phase Lua — a recipe body, a `register` block, a module body — MUST answer with the resolved value of the probe `key` declares, when `key` names a probe declared in this pass. Resolution follows this section's rules exactly: the same `produce`-or-cache sequence of §{cat.probes.exec}, the same fingerprint, the same published value. A key that was already resolved (by the pre-pass above, or by an earlier read) MUST be answered from the resolved value rather than re-produced; a probe MUST NOT be produced more than once per invocation. A key naming **no** declared probe is outside this rule and retains the meaning §{lua.api-overview} gives it.
+**Register-phase reads (CS-0219).** `cook.probes.get(key)` (§{lua.both}) invoked from register-phase Lua — a recipe body, a `register` block, a module body — MUST answer with the resolved value of the probe `key` declares, when `key` names a probe declared in this pass. Resolution follows this section's rules exactly: the same evaluation sequence of §{cat.probes.exec}, the same observed value. A key that was already resolved (by the pre-pass above, or by an earlier read) MUST be answered from the resolved value rather than re-produced; a probe MUST NOT be produced more than once per invocation. A key naming **no** declared probe is outside this rule and retains the meaning §{lua.api-overview} gives it.
 
 This is what lets a register-phase body **generate its units from data**: read the value, then register units whose commands, inputs, outputs and per-unit ordering edges (§{lua.add-unit-after}) are functions of it. The build DAG is still complete at the end of registration, and still does not grow afterwards. Nothing here interleaves execution with registration.
 
 Three constraints keep that true:
 
-- **Demand-driven.** A probe MUST NOT be resolved because it was declared. A register-phase read resolves the key it names, at the point it names it, and nothing else; a declared probe no register-phase read names MUST NOT be produced and MUST NOT have its fingerprint computed. An implementation MUST NOT satisfy this section by resolving every declared probe before the bodies run.
+- **Demand-driven.** A probe MUST NOT be resolved because it was declared. A register-phase read resolves the key it names, at the point it names it, and nothing else; a declared probe no register-phase read names MUST NOT be produced and MUST NOT be looked up or observed at all. An implementation MUST NOT satisfy this section by resolving every declared probe before the bodies run.
 
   The bound this gives is over **reads**, not over recipe reachability, and the difference is worth stating because it is easy to overclaim. Registration runs the bodies of the recipes the pass registers in order to discover their units, so a read in any body that runs demands its probe whether or not the build target reaches that recipe. This is the same overapproximation §{cat.probes.consumer}'s static Lua-body scan already makes for the execute phase, and for the same reason: an implementation that narrowed it would have to decide reachability before it knows what the bodies register. A **discovery** surface — one that lists what a Cookfile declares without registering units or executing anything (§{lua.reg.discovery}) — MAY skip resolution entirely and answer such a read as though no probe were declared, on the same grounds §{lua.cook-on-register-complete} lets it skip the finalizer queue.
-- **Reads from a `produce` body are confined to `inputs.requires`.** A `cook.probes.get` call made while a probe's `produce` source is running MUST name a key that probe declares in `inputs.requires` (§{cat.probes.inputs}); any other key MUST raise a register-phase error naming both probes and directing the author to declare it. The undeclared read is not merely undisciplined, it is unkeyed: §{cat.probes.inputs} folds an upstream's fingerprint into a probe's own only for its declared `requires`, so an undeclared upstream could move while the reader kept serving the value it computed against the old one. The rule also keeps a `produce` source meaning one thing in both phases — on a worker VM the same undeclared read raises §{cat.probes.exec}'s unmaterialised error, because nothing scheduled the upstream — and it is what makes a `produce` body naming its own key, or two naming each other, a diagnostic: those are not `requires` edges, so §{cat.probes.cycles}'s check cannot see them.
+- **Reads from a `produce` body are confined to `inputs.requires`.** A `cook.probes.get` call made while a probe's `produce` source is running MUST name a key that probe declares in `inputs.requires` (§{cat.probes.inputs}); any other key MUST raise a register-phase error naming both probes and directing the author to declare it. The undeclared read is not merely undisciplined, it is unordered: only a probe's declared `requires` gives it a dependency edge (§{cat.probes.inputs}) guaranteeing the named upstream has already produced its value by the time this body reads it; an undeclared upstream carries no such guarantee, so the read could race a production that has not happened yet. The rule also keeps a `produce` source meaning one thing in both phases — on a worker VM the same undeclared read raises §{cat.probes.exec}'s unmaterialised error, because nothing scheduled the upstream — and it is what makes a `produce` body naming its own key, or two naming each other, a diagnostic: those are not `requires` edges, so §{cat.probes.cycles}'s check cannot see them.
 - **A `produce` body registers nothing.** Evaluating a `produce` source MUST NOT register work units, and MUST NOT be able to reach the enclosing recipe body's capture state. A body-scope register API called from inside `produce` MUST raise that API's ordinary outside-a-recipe-body error (§{lua.add-unit}, §{lua.cook-exec}), exactly as it does when the same probe is resolved before any body runs. Otherwise a recipe's unit set would depend on whether the probe was answered from cache, which is registration output as a function of something other than registration input.
 - **Static inputs.** The static-input rule below binds **every** probe the register phase resolves, by whichever route it was reached, **including one first resolved by a `cook.on_register_complete` callback** (§{lua.cook-on-register-complete}) — so an implementation checking the rule mid-pass MUST re-check it after the callback queue drains. A read is not an exemption from it.
 
-**Static-input rule.** A probe resolved during the register phase — as a `gather <probe>` source, as a transitive `inputs.requires` of one, or by a register-phase `cook.probes.get` read — MUST be statically evaluable: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files`, `env`, and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
+**Static-input rule.** A probe resolved during the register phase — as a `gather <probe>` source, as a transitive `inputs.requires` of one, or by a register-phase `cook.probes.get` read — MUST be statically evaluable: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files` and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
 
 ```
 probe '<key>' is resolved at register phase but depends on build artifact '<path>'; a register-resolved probe must be statically evaluable
@@ -531,7 +532,7 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 
 **Non-array value.** An ordinary probe selected as a bare gather source whose resolved value (or selected field) is not an array-shaped table (§{cat.probes.values}) MUST surface a register-phase diagnostic naming the probe key and the resolved value's shape. This rejection does not apply to a named `files` declaration: its manifest keys are the members.
 
-**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's accessor-bearing (fan-out) steps (§{steps.gather}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed. A literal-output `cook_step` in the same recipe is not member-iterated: it gathers the preceding step's collected outputs per §{steps.iteration-mode} (CS-0155).
+**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's accessor-bearing (fan-out) steps (§{steps.gather}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}), so editing one element re-runs only its unit, while an edit that changes the probe's resolved array — a matched `files` declaration's content, a `tools` binary, or the `produce` body itself — changes the array on the next observation and re-runs only the members whose content moved. A literal-output `cook_step` in the same recipe is not member-iterated: it gathers the preceding step's collected outputs per §{steps.iteration-mode} (CS-0155).
 
 > **Note (informative).** An implementation must learn a recipe's `gather <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__member_source` descriptor naming the probe key (and optional field), whose shape and key spellings live in `cook_contracts::registration` so the codegen emitter and the register-phase parser share one declaration (COOK-390) — so the pre-pass resolves the probe from the recipe header without first executing the body. Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
@@ -539,7 +540,7 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 
 > **Informative.** This section is a build-log of reference-implementation milestones, retained for historical traceability; it states no requirement beyond those normative in the preceding sections of §22.5.
 
-CS-0102 retired the msgpack encoding referenced below in favour of canonical JSON (§{cat.probes.values}); the structural milestones stand as recorded.
+CS-0102 retired the msgpack encoding referenced below in favour of canonical JSON (§{cat.probes.values}); CS-0243 removed the probe-value cache that G4 and G5 below record the wiring of, so their `CacheBackend` get/put halves describe an implementation that no longer exists. CS-0244 further removed the fingerprint computation G4 and G5 describe (`resolve_probe_inputs`, `compute_probe_fingerprint`, `probe_fingerprint_by_node`, `upstream_probe_fingerprints`) along with the rest of the fingerprint machinery; there is no fingerprint left for a probe to have. The structural milestones stand as recorded.
 
 C4–C6 implemented: requires resolution (§22.5.6), cycle detection (§22.5.9), execute-VM guard (§22.5.3).
 

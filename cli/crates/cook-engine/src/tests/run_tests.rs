@@ -1,24 +1,15 @@
 use super::*;
 
+/// COOK-526 folded this crate's `split_recipe_name` into the shared law
+/// (`cook_contracts::naming::import_prefix`); both of its call sites wanted
+/// the prefix half only. The cases it pinned are kept here as a regression
+/// guard against re-forking a local copy.
 #[test]
-fn test_split_recipe_name_with_prefix() {
-    let (prefix, local) = split_recipe_name("backend.proto.generate");
-    assert_eq!(prefix, "backend.proto");
-    assert_eq!(local, "generate");
-}
-
-#[test]
-fn test_split_recipe_name_no_prefix() {
-    let (prefix, local) = split_recipe_name("build");
-    assert_eq!(prefix, "");
-    assert_eq!(local, "build");
-}
-
-#[test]
-fn test_split_recipe_name_single_dot() {
-    let (prefix, local) = split_recipe_name("backend.build");
-    assert_eq!(prefix, "backend");
-    assert_eq!(local, "build");
+fn recipe_prefix_comes_from_the_shared_law() {
+    use cook_contracts::naming::import_prefix;
+    assert_eq!(import_prefix("backend.proto.generate"), "backend.proto");
+    assert_eq!(import_prefix("build"), "");
+    assert_eq!(import_prefix("backend.build"), "backend");
 }
 
 fn dummy_project_root() -> std::path::PathBuf {
@@ -36,6 +27,7 @@ fn dummy_project_root() -> std::path::PathBuf {
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),
+            resolved_probe_keys: Default::default(),
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
@@ -249,3 +241,141 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
 // entry resolves against the tree is `cook_cache::resolve_declared_inputs`,
 // and is pinned beside it. Neither is an engine concern any more: the engine's
 // cache path no longer takes the DAG as an argument at all.
+
+/// COOK-510: a `files` declaration hashes against its OWN declaring member's
+/// working directory, never the consuming recipe's — proven cross-member.
+///
+/// No current Cookfile surface reaches this today: `seal`/`cook.probes.get`/
+/// the sigil cascade all resolve a probe key against the current Cookfile's
+/// own declarations only (CS-0240), and `dag_builder`'s `NodeOrigin::SynthProbe`
+/// synthesises a probe node only from the CONSUMING recipe's own
+/// `RecipeUnits.probes` (`register_cookfile` stamps every recipe in a
+/// Cookfile with that Cookfile's whole probe list — see
+/// `cli/crates/cook-register/src/engine.rs`, session_state.probes drained
+/// into every `RecipeUnits`). So the mismatch this test pins cannot yet be
+/// triggered by writing a Cookfile; this hand-builds the `RegisteredWorkspace`
+/// `run()`'s own doc comment says test helpers are entitled to (`registered
+/// results ... test helpers are fine`), which is the only way to exercise the
+/// two-prefix shape ahead of the surface work that will reach it (this
+/// milestone's later tickets touch the same seam — see COOK-526).
+///
+/// Setup: a probe declared under prefix `"member"` (its OWN directory holds
+/// the matched file); a consuming recipe registered under the ROOT prefix
+/// `""` (a DIFFERENT directory, containing no such file). Before COOK-510,
+/// `run.rs` handed the executor `work_node.working_dir` — the CONSUMER's
+/// directory — so the file join missed, the hash fell to all-zero, and the
+/// published manifest recorded `"<missing>"` forever, regardless of the
+/// declaring member's real content. After COOK-510, the base is derived from
+/// the probe's OWN qualified key, so it hashes against `member_dir` and
+/// produces the real content hash.
+#[test]
+fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
+    use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit};
+
+    let project_root = tempfile::tempdir().expect("project_root tempdir");
+    // Isolate the cache: never touch the user's real ~/.cache/cook/cloud.
+    std::fs::create_dir_all(project_root.path().join(".cook")).unwrap();
+    std::fs::write(
+        project_root.path().join(".cook/cloud.toml"),
+        format!(
+            "[cache]\ncache_dir = {:?}\n",
+            project_root.path().join("cache").to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let root_dir = project_root.path().join("root");
+    let member_dir = project_root.path().join("member");
+    std::fs::create_dir_all(root_dir.join("src")).unwrap(); // deliberately no a.txt here
+    std::fs::create_dir_all(member_dir.join("src")).unwrap();
+    std::fs::write(member_dir.join("src/a.txt"), b"declaring-member-content").unwrap();
+
+    let probe_meta = ProbeUnit {
+        key: "member.srcs".to_string(),
+        produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string(),
+        produce_line: 1,
+        inputs: ProbeInputs { files: vec!["src/a.txt".to_string()], ..Default::default() },
+    };
+
+    let mut probes = BTreeMap::new();
+    probes.insert("member.srcs".to_string(), probe_meta.clone());
+
+    let mut working_dir_by_prefix = BTreeMap::new();
+    working_dir_by_prefix.insert(String::new(), root_dir.clone());
+    working_dir_by_prefix.insert("member".to_string(), member_dir.clone());
+
+    let consumer = RecipeUnits {
+        recipe_name: "consumer".to_string(),
+        deps: vec![],
+        units: vec![CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "true".to_string(), line: 1 },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["member.srcs".to_string()],
+            unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
+            after: Vec::new(),
+            test_name: None,
+        }],
+        step_groups: vec![],
+        working_dir: root_dir.clone(),
+        env_vars: BTreeMap::new(),
+        terminal_outputs: vec![],
+        dep_edges: vec![],
+        // dag_builder's `NodeOrigin::SynthProbe` synthesises the probe node's
+        // metadata from the CONSUMING recipe's own `probes` list — this is
+        // the part no real Cookfile can populate cross-member today.
+        probes: vec![probe_meta],
+    };
+
+    let mut units_by_recipe = BTreeMap::new();
+    units_by_recipe.insert("consumer".to_string(), consumer);
+
+    let ws = RegisteredWorkspace {
+        warnings: Vec::new(),
+        names: Vec::new(),
+        units_by_recipe,
+        probes,
+        resolved_probe_keys: Default::default(),
+        working_dir_by_prefix,
+        alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
+    };
+
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    edges.insert("consumer".to_string(), vec![]);
+    let reachable: BTreeSet<String> = ["consumer"].iter().map(|s| s.to_string()).collect();
+
+    let result = run(
+        project_root.path(),
+        &ws,
+        &edges,
+        &reachable,
+        1,
+        &[],
+        false,
+        false,
+        false,
+        |_| {},
+    );
+    assert!(result.is_ok(), "run() failed: {:?}", result.err());
+
+    let manifest_path = cook_contracts::layout::probes_dir(project_root.path())
+        .join(cook_contracts::probe_value::probe_file_name("member.srcs"));
+    let bytes = std::fs::read(&manifest_path)
+        .unwrap_or_else(|e| panic!("expected {}: {e}", manifest_path.display()));
+    let value = cook_contracts::probe_value::decode_json(&bytes).unwrap();
+    let hash = value.get("src/a.txt").and_then(|v| v.as_str()).unwrap_or_else(|| {
+        panic!("expected src/a.txt in the manifest, got {value}")
+    });
+    assert_ne!(
+        hash, "<missing>",
+        "the probe hashed against the consumer's directory instead of its \
+         own declaring member's — this is the false-hit COOK-510 closes",
+    );
+    let expected = cook_contracts::render::lower_hex(&cook_cache::probe::hash_file_sha256(
+        &member_dir.join("src/a.txt"),
+    ));
+    assert_eq!(hash, expected, "must be the declaring member's real content hash");
+}

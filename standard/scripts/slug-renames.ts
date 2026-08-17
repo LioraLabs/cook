@@ -18,6 +18,13 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // the section inherited a name the language no longer has.
   'cat.probes.for-each':             'cat.probes.member-source',
 
+  // CS-0244: §22.5.4.1 "Module source" is deleted whole — the probe-fingerprint
+  // composition and propagation rule it stated has no fingerprint left to
+  // compose. Historical App. E entries (CS-0204, CS-0243) still cite the slug
+  // by name; it retires with no replacement rather than a redirect, since the
+  // rule itself is gone, not moved.
+  'cat.probes.module-source':        null,
+
   'exec':                            'exec.phases',
   'grammar':                         'toplevel.overview',
   'grammar.overview':                'toplevel.overview',

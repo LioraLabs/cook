@@ -403,14 +403,18 @@ which keeps it in the cache key. No accidental shell leaks.
 
 ## Probes and data-driven fan-out
 
-A **probe** is a named, cached value that the build graph can see: the output of
+A **probe** is a named observation that the build graph can see: the output of
 a shell command, the contents of a JSON file, a recorded tool identity, a Lua
-computation. Recipes consume probes three ways (reference, fan out, seal), and
-every one of them is visible to the cache.
+computation. A probe re-runs on every invocation in which it's reached —
+nothing about a probe's own value is ever cached. Recipes consume probes three
+ways (reference, fan out, seal); `seal` is the one that folds a probe's value
+into a unit's cache key, so a unit that only observes an unchanged world still
+hits.
 
 ### The probe shapes
 
-Four producer forms run a body and cache its value:
+Four producer forms run a body, fresh on every invocation that reaches them,
+and return its value:
 
 ```
 probe greeting
@@ -459,20 +463,23 @@ consumes it. Which brings us to the three ways of consuming.
 **Reference one in a step.** A `$<...>` sigil with a colon in its name is a
 probe reference (the colon is how cook tells it apart from a recipe or config
 reference, so name probes `namespace:thing` when you intend to reference them).
-One sigil interpolates the value, records the dependency edge, and folds the
-value into the unit's cache key:
+One sigil interpolates the value and records the dependency edge; pair it with
+`seal` (below) to also fold the probe's value into the unit's cache key:
 
 ```
 probe stack:node
     { node --version }
 
 recipe banner
+    seal stack:node
     cook "build/banner.txt" {
         echo "built with node $<stack:node>" > $<out>
     }
 ```
 
-Upgrade node and the banner rebuilds; nothing else does. `$<key>` substitutes a
+Upgrade node and the banner rebuilds; nothing else does — the probe itself
+re-observes on every build, but it's `seal` that makes the rebuild happen only
+when what it observed actually changed. `$<key>` substitutes a
 scalar value (a string verbatim, a number or boolean as its JSON literal);
 `$<key.field>` and `$<key.field[1]>` address into a table value, one-based. A
 placeholder that lands on a whole table, a null, or a missing field is an

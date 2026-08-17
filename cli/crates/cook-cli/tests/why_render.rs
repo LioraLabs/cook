@@ -59,6 +59,26 @@ fn assert_ok(o: &Output) {
     );
 }
 
+/// The `units[]` entry for `recipe`, or a panic naming what was expected.
+fn find_unit(v: &serde_json::Value, recipe: &str) -> serde_json::Value {
+    v["units"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["recipe"] == recipe)
+        .unwrap_or_else(|| panic!("expected a {recipe} unit: {v}"))
+        .clone()
+}
+
+/// `unit["determinants"]["sealed_probes"][key]`, parsed as the canonical JSON
+/// it is a string encoding of.
+fn sealed_probe_json(unit: &serde_json::Value, key: &str) -> serde_json::Value {
+    let raw = unit["determinants"]["sealed_probes"][key]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected a sealed_probes.{key} string: {unit}"));
+    serde_json::from_str(raw).expect("sealed_probes value is canonical JSON")
+}
+
 /// Point the shared store at a private per-test directory.
 ///
 /// Without this the host-wide `~/.cache/cook/cloud` serves these deterministic
@@ -607,6 +627,273 @@ fn live_and_historical_causes_are_reported_independently() {
     assert!(!unit["local_cause"].is_null() && !unit["last_cause"].is_null(), "{v}");
 }
 
+/// CS-0245 / COOK-529's own reason to exist, and the flip check for it: on
+/// `189fc4a9` `cook why` reads a sealed `files` probe's value from
+/// `.cook/probes/<key>.json`, which the LAST `cook build` wrote — so editing a
+/// sealed file after a build and asking `cook why` reports a stale `HIT`, while
+/// the next `cook build` prints `rebuild (seal changed)`. §17.1.6.1 now
+/// requires a `files`/`tools` declaration to be resolved FRESH at query time,
+/// so the two must agree.
+#[test]
+fn a_moved_sealed_files_probe_reports_a_local_seal_changed_miss() {
+    let tmp = TempDir::new().unwrap();
+    isolate_shared_cache(tmp.path());
+    write(tmp.path(), "src/a.ts", "one\n");
+    write(
+        tmp.path(),
+        "Cookfile",
+        "files srcs\n    \"src/*.ts\"\n\n\
+         recipe build\n    seal srcs\n    cook \"out.txt\" {\n        echo built > out.txt\n    }\n",
+    );
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    // Edit a file the `srcs` declaration matches. `.cook/probes/srcs.json`
+    // still holds the OLD hash — nothing re-runs `srcs` until something
+    // consults it again.
+    write(tmp.path(), "src/a.ts", "two\n");
+
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "out.txt", "--format", "json"],
+    );
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_hit"], false, "{v}");
+    assert_eq!(unit["local_cause"], "seal changed", "{v}");
+}
+
+// ---------------------------------------------------------------------------
+// COOK-529 / CS-0245: the delta behind the miss, not the whole sealed value
+// ---------------------------------------------------------------------------
+
+/// Three files sealed under one `files` declaration, so a delta test can tell
+/// the difference between "named the one that moved" and "dumped the set".
+fn three_sealed_files_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(root, "src/a.ts", "a-one\n");
+    write(root, "src/b.ts", "b-one\n");
+    write(root, "src/c.ts", "c-one\n");
+    write(
+        root,
+        "Cookfile",
+        "files srcs\n    \"src/*.ts\"\n\n\
+         recipe build\n    seal srcs\n    cook \"out.txt\" {\n        echo built > out.txt\n    }\n",
+    );
+}
+
+/// The block of lines directly under `  local-miss cause: seal changed`,
+/// i.e. everything indented one level deeper than the top-level determinant
+/// fields (`>= 4` leading spaces) until the first line that returns to that
+/// shallower indentation. Isolating this block is what makes the negative
+/// assertion in the next test meaningful: the untouched `sealed probes:`
+/// full-value dump (§17.1.6.1, kept deliberately per this ticket's Do Not
+/// list) legitimately mentions every file, so a whole-stdout `!contains`
+/// check would prove nothing.
+fn seal_delta_block(stdout: &str) -> String {
+    let mut in_block = false;
+    let mut out = String::new();
+    for line in stdout.lines() {
+        if line == "  local-miss cause: seal changed" {
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            if line.starts_with("    ") {
+                out.push_str(line);
+                out.push('\n');
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Test 1 (spec Evidence #1): edit ONE of three sealed files. The delta block
+/// names the probe key and the changed file, and does NOT name the two
+/// unchanged files — the negative half that makes this a delta rather than a
+/// dump.
+///
+/// M-5 (seam review on 9eb2faf7): this negative half was mutation-tested BY
+/// HAND, not by a second `#[test]` in this file — an earlier revision of this
+/// comment cited a test named `the_delta_block_negative_half_is_load_bearing`
+/// that does not exist here. The mutation: reverting `render_probe_delta_lines`
+/// (`why_render.rs`) to print the whole `sealed_probes` value again instead of
+/// the per-entry delta makes the `!block.contains("src/b.ts")` /
+/// `!block.contains("src/c.ts")` assertions below fail, which is what proves
+/// they are load-bearing rather than vacuously true.
+#[test]
+fn plain_text_local_miss_names_the_changed_file_and_not_the_others() {
+    let tmp = TempDir::new().unwrap();
+    three_sealed_files_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    write(tmp.path(), "src/a.ts", "a-two\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "out.txt"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("local-miss cause: seal changed"), "{s}");
+
+    let block = seal_delta_block(&s);
+    assert!(!block.is_empty(), "expected a delta block under the cause line: {s}");
+    assert!(block.contains("srcs:"), "probe key must be named: {block}");
+    assert!(block.contains("src/a.ts"), "changed path must be named: {block}");
+    assert!(!block.contains("src/b.ts"), "unchanged path leaked into the delta: {block}");
+    assert!(!block.contains("src/c.ts"), "unchanged path leaked into the delta: {block}");
+}
+
+/// Test 2 (spec Evidence #2): a file added to the sealed set and a file
+/// removed from it are each named as such, distinctly from a change.
+#[test]
+fn plain_text_local_miss_names_an_added_and_a_removed_file() {
+    let tmp = TempDir::new().unwrap();
+    three_sealed_files_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    std::fs::remove_file(tmp.path().join("src/b.ts")).unwrap();
+    write(tmp.path(), "src/d.ts", "d-one\n");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "out.txt"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    let block = seal_delta_block(&s);
+    assert!(block.contains("- src/b.ts") || block.contains("-b.ts"), "removed not named: {block}");
+    assert!(block.contains("+ src/d.ts") || block.contains("+d.ts"), "added not named: {block}");
+    assert!(block.contains("src/b.ts"), "removed path must be named: {block}");
+    assert!(block.contains("src/d.ts"), "added path must be named: {block}");
+    // a.ts and c.ts never moved: not in the delta block.
+    assert!(!block.contains("src/a.ts"), "{block}");
+    assert!(!block.contains("src/c.ts"), "{block}");
+}
+
+/// Test 3 (spec Evidence #3): the JSON `seal_deltas` structure carries the
+/// probe key and the changed entry as data, not as the rendered string.
+#[test]
+fn json_local_miss_carries_the_seal_delta_as_structured_data() {
+    let tmp = TempDir::new().unwrap();
+    three_sealed_files_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    write(tmp.path(), "src/a.ts", "a-two\n");
+
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "out.txt", "--format", "json"],
+    );
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_cause"], "seal changed", "{v}");
+    let deltas = unit["seal_deltas"].as_array().expect("seal_deltas array");
+    assert_eq!(deltas.len(), 1, "{v}");
+    let d = &deltas[0];
+    assert_eq!(d["key"], "srcs", "{v}");
+    assert_eq!(d["kind"], "entries", "{v}");
+    let changed = d["changed"].as_array().expect("changed array");
+    assert_eq!(changed.len(), 1, "{v}");
+    assert_eq!(changed[0]["key"], "src/a.ts", "{v}");
+    assert!(changed[0]["old"].is_string() && changed[0]["new"].is_string(), "{v}");
+    assert_ne!(changed[0]["old"], changed[0]["new"], "{v}");
+    // The two untouched files are absent from the delta entirely.
+    assert!(d["added"].as_array().unwrap().is_empty(), "{v}");
+    assert!(d["removed"].as_array().unwrap().is_empty(), "{v}");
+}
+
+/// Test 4 (spec Evidence #4): with `.cook/probes/` deleted between the build
+/// and the query, the report says first observation and fabricates no old
+/// value. Deleting the record alone is not enough to produce a local miss
+/// (CS-0245's fresh-resolution recomputes the same bytes from an unchanged
+/// tree), so the file is also edited — the genuine local-miss case whose
+/// "prior" side this ticket's snapshot can no longer see.
+#[test]
+fn first_observation_is_reported_when_the_prior_record_is_gone() {
+    let tmp = TempDir::new().unwrap();
+    three_sealed_files_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    std::fs::remove_dir_all(tmp.path().join(".cook/probes")).unwrap();
+    write(tmp.path(), "src/a.ts", "a-two\n");
+
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "out.txt", "--format", "json"],
+    );
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_cause"], "seal changed", "{v}");
+    let deltas = unit["seal_deltas"].as_array().expect("seal_deltas array");
+    assert_eq!(deltas.len(), 1, "{v}");
+    assert_eq!(deltas[0]["kind"], "first_observation", "{v}");
+    // No fabricated old value: a first-observation entry has no old/new/
+    // added/removed/changed payload at all.
+    assert!(deltas[0].get("old").is_none(), "{v}");
+    assert!(deltas[0].get("changed").is_none(), "{v}");
+
+    let out = cook(tmp.path(), &["why", "build", "--unit", "out.txt"]);
+    assert_ok(&out);
+    let block = seal_delta_block(&stdout(&out));
+    assert!(block.contains("first observation"), "{block}");
+    assert!(!block.contains("->"), "must not render a diff: {block}");
+}
+
+/// §17.1.6.1's I5: two recipes seal the SAME probe independently. Build `one`
+/// (its index now expects the probe's value at that moment). Edit the sealed
+/// file, then build `two` (a DIFFERENT recipe) — this reaches the probe and
+/// rewrites `.cook/probes/srcs.json` to the new value, but never touches
+/// `one`'s own index record. Querying `one` now finds a genuine seal-changed
+/// local miss (the value the index recorded no longer matches), yet the
+/// snapshot taken before this query's registration and the value resolved
+/// fresh are IDENTICAL (both are what `two`'s build already wrote) — the
+/// delta between them is empty even though the miss is real. §17.1.6.1
+/// requires the seal set be named as the differing determinant without a
+/// probe key or entry, and forbids presenting this as an empty diff.
+#[test]
+fn a_genuine_seal_changed_miss_with_no_nameable_entry_reads_as_such() {
+    let tmp = TempDir::new().unwrap();
+    isolate_shared_cache(tmp.path());
+    write(tmp.path(), "src/a.ts", "one\n");
+    write(
+        tmp.path(),
+        "Cookfile",
+        "files srcs\n    \"src/*.ts\"\n\n\
+         recipe one\n    seal srcs\n    cook \"out1.txt\" {\n        echo built1 > out1.txt\n    }\n\n\
+         recipe two\n    seal srcs\n    cook \"out2.txt\" {\n        echo built2 > out2.txt\n    }\n",
+    );
+    assert_ok(&cook(tmp.path(), &["one"]));
+    write(tmp.path(), "src/a.ts", "two\n");
+    assert_ok(&cook(tmp.path(), &["two"]));
+
+    let out = cook(
+        tmp.path(),
+        &["why", "one", "--unit", "out1.txt", "--format", "json"],
+    );
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["local_cause"], "seal changed", "genuine miss: {v}");
+    assert_eq!(
+        unit["seal_deltas"].as_array().unwrap().len(),
+        0,
+        "nothing nameable — this is I5, not a bug: {v}"
+    );
+
+    let out = cook(tmp.path(), &["why", "one", "--unit", "out1.txt"]);
+    assert_ok(&out);
+    let s = stdout(&out);
+    assert!(s.contains("local-miss cause: seal changed"), "{s}");
+    // The seal set is named as the differing determinant without a probe key
+    // or entry — not silence, and not an empty/partial diff presented as the
+    // full account.
+    let block = seal_delta_block(&s);
+    assert!(
+        block.contains("no probe or entry can be named"),
+        "must say WHY nothing is nameable, not print nothing: {block}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // CS-0202: the graph reports the engine's edges
 // ---------------------------------------------------------------------------
@@ -681,5 +968,371 @@ fn a_dep_through_a_unit_less_meta_target_is_not_hidden() {
             && e["kind"] == "barrier"),
         "the dep must forward through the unit-less middle to the real \
          producer: {v}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C-1 (seam review on 9eb2faf7): a workspace with an IMPORT.
+//
+// Every other test in this file drives a single root Cookfile — the shape
+// under which `import_prefix` collapses to `""` regardless of whether it is
+// derived from `ProbeUnit.key` (Cookfile-LOCAL, never restamped by
+// `cook-plan`'s registration merge) or from the map key
+// `registered_workspace.probes` is actually keyed by (workspace-QUALIFIED,
+// `cook-plan/src/registers.rs`'s `qualified_key(prefix, &key)`). Deriving
+// the prefix from `pu.key` returns `""` for EVERY probe in EVERY workspace,
+// so a bug in that derivation is invisible to a single-Cookfile test: `""`
+// happens to be correct there. Only an import makes the two derivations
+// disagree.
+// ---------------------------------------------------------------------------
+
+/// Root imports `./api`; the member declares a top-level `files` probe over
+/// its OWN tree (`api/src/*.ts`) and a recipe that seals it. Mirrors
+/// `cook-cli/tests/why.rs`'s `ROOT_COOKFILE`/`API_COOKFILE` import shape,
+/// with the member's recipe additionally sealing a `files` probe.
+fn import_with_member_files_probe_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(
+        root,
+        "Cookfile",
+        "import api ./api\n\n\
+         recipe build: api.compile\n\
+         \x20   cook \"build/top.txt\" {\n        mkdir -p build\n        echo top > $<out>\n    }\n",
+    );
+    write(
+        root,
+        "api/Cookfile",
+        "files srcs\n    \"src/*.ts\"\n\n\
+         recipe compile\n\
+         \x20   seal srcs\n\
+         \x20   cook \"build/api-build.stamp\" {\n        mkdir -p build\n        echo stamp > $<out>\n    }\n",
+    );
+    write(root, "api/src/a.ts", "a-one\n");
+}
+
+/// The C-1 repro, through the real binary. On `9eb2faf7` this fails BOTH
+/// ways: `local_hit` is `false` with a fabricated `local-miss cause: seal
+/// changed` and a `seal_deltas` entry naming a hash movement that never
+/// happened (evidence #1), and the member probe's own sealed value folds
+/// every path in `api/src/*.ts` to `"<missing>"` because the glob was
+/// resolved against the ROOT Cookfile's working directory instead of the
+/// member's (evidence #2) — `import_prefix` collapsed to `""` for a
+/// Cookfile-local probe key that never contains a `.`.
+#[test]
+fn import_member_probe_is_not_fabricated_as_a_miss() {
+    let tmp = TempDir::new().unwrap();
+    import_with_member_files_probe_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    // Nothing edited since the build that just ran.
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let unit = find_unit(&v, "api.compile");
+
+    // 1. No fabricated miss: the member's sealing unit is a clean local hit,
+    // with no local-miss cause and no seal delta.
+    assert_eq!(
+        unit["local_hit"], true,
+        "member unit must be a local hit with nothing edited: {v}"
+    );
+    assert!(unit["local_cause"].is_null(), "no local-miss cause on a hit: {v}");
+    assert_eq!(
+        unit["seal_deltas"].as_array().unwrap().len(),
+        0,
+        "no seal delta on a hit: {v}"
+    );
+
+    // 2. The member probe's sealed value carries ITS OWN real content hash —
+    // not the `"<missing>"` fold a glob resolved against the wrong working
+    // directory produces.
+    let srcs_raw = unit["determinants"]["sealed_probes"]["srcs"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected a sealed_probes.srcs string: {unit}"));
+    assert!(
+        !srcs_raw.contains("<missing>"),
+        "member probe must resolve its OWN files, not the root's: {srcs_raw}"
+    );
+    let srcs_value = sealed_probe_json(&unit, "srcs");
+    let hash = srcs_value["src/a.ts"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected src/a.ts in the files manifest: {srcs_raw}"));
+    assert_eq!(hash.len(), 64, "expected a sha256 hex digest, got: {hash}");
+    assert!(
+        hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "expected a hex digest, got: {hash}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Two members declaring the SAME-NAMED probe.
+//
+// The C-1 fixture above proves qualification against a SINGLE import — there
+// is only ever one `srcs` key in that whole workspace, so a bug that indexes
+// `fresh_resolved` / `probe_store` / `probe_lookup_failures` by the
+// Cookfile-LOCAL spelling instead of the workspace-qualified one is invisible
+// to it: with one declaring Cookfile, `<local>` and `<qualified>` name the
+// same probe, so the bug's wrong key and the fix's right key resolve to the
+// same slot and the pin cannot tell them apart. Only a SECOND member
+// declaring the identical local name (`srcs`, `t`) gives the collapse
+// something to collide with.
+// ---------------------------------------------------------------------------
+
+/// Root imports `a` and `b`; each declares a `files srcs` probe over its own
+/// tree AND a `tools t` probe (a's names a real tool, `sh`; b's names a
+/// bogus one), both sealed by a `compile` recipe that also cooks a stamp.
+/// `a/src/a.ts` and `b/src/b.ts` differ in content so a fold of the wrong
+/// member's manifest is visible. `deps` is root `build`'s declared
+/// dependency list, verbatim — e.g. `"a.compile"` keeps `b` registered into
+/// the workspace (so its same-named `srcs`/`t` keys exist in
+/// `registered_workspace.probes`, available to collide) but out of
+/// `build`'s closure, while `"a.compile b.compile"` puts both members
+/// inside it; each caller states its own.
+fn two_members_same_named_probes_workspace(root: &Path, deps: &str) {
+    isolate_shared_cache(root);
+    write(
+        root,
+        "Cookfile",
+        &format!(
+            "import a ./a\n\
+             import b ./b\n\n\
+             recipe build: {deps}\n\
+             \x20   cook \"build/top.txt\" {{\n        mkdir -p build\n        echo top > $<out>\n    }}\n"
+        ),
+    );
+    for (member, tool, content) in [("a", "sh", "a-one\n"), ("b", "definitely-not-a-real-binary-xyz", "b-one\n")]
+    {
+        write(
+            root,
+            &format!("{member}/Cookfile"),
+            &format!(
+                "files srcs\n    \"src/*.ts\"\n\n\
+                 tools t\n    {tool}\n\n\
+                 recipe compile\n\
+                 \x20   seal srcs\n\
+                 \x20   seal t\n\
+                 \x20   cook \"build/{member}-build.stamp\" {{\n        mkdir -p build\n        echo stamp > $<out>\n    }}\n"
+            ),
+        );
+        write(root, &format!("{member}/src/{member}.ts"), content);
+    }
+}
+
+/// Pin A: the reviewer's reproduction, both symptoms, `b` OUTSIDE the
+/// closure. On unpatched code this fails BOTH ways: (1) the whole
+/// workspace's `registered_workspace.probes` is walked and every insert is
+/// keyed by `pu.key` (`"srcs"`, `"t"`), so whichever of `a`/`b` sorts last in
+/// the `BTreeMap` overwrites the other's fresh value in the shared
+/// `probe_store` — `a.compile`'s own `srcs` reads back as `b`'s manifest,
+/// reported as a fabricated local miss with a delta naming files that never
+/// moved; and (2) `b`'s bogus `t` is resolved at all (nothing scopes the
+/// pass to `build`'s closure) and its lookup failure is keyed `"t"`, the
+/// same bare key `a.compile`'s own (successfully resolved) `t` looks up
+/// under, attributing b's failure to a's report.
+#[test]
+fn two_members_same_named_probe_is_not_collapsed_when_the_other_is_outside_the_closure() {
+    let tmp = TempDir::new().unwrap();
+    two_members_same_named_probes_workspace(tmp.path(), "a.compile");
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let unit = find_unit(&v, "a.compile");
+
+    // 1. No fabricated miss: nothing edited since the build that just ran.
+    assert_eq!(unit["local_hit"], true, "a.compile must be a local hit: {v}");
+    assert!(unit["local_cause"].is_null(), "no local-miss cause on a hit: {v}");
+    assert_eq!(
+        unit["seal_deltas"].as_array().unwrap().len(),
+        0,
+        "no seal delta on a hit: {v}"
+    );
+
+    // 2. `a.compile`'s own `srcs` manifest, not `b`'s.
+    let srcs_value = sealed_probe_json(&unit, "srcs");
+    assert!(
+        srcs_value.get("src/a.ts").is_some(),
+        "a.compile's srcs manifest must contain its own src/a.ts: {srcs_value}"
+    );
+    assert!(
+        srcs_value.get("src/b.ts").is_none(),
+        "a.compile's srcs manifest must not contain b's src/b.ts: {srcs_value}"
+    );
+
+    // 3. b's bogus tool, never in this closure, must not be attributed to
+    // a.compile's report.
+    assert_eq!(
+        unit["determinants"]["probe_lookup_failures"]
+            .as_object()
+            .unwrap()
+            .len(),
+        0,
+        "a.compile must carry no probe_lookup_failures — b's bogus tool is out of closure: {v}"
+    );
+}
+
+/// Pin B: qualification with BOTH members INSIDE the closure — the half Pin
+/// A's scoping (case 2 above) would otherwise mask, because Pin A never lets
+/// `b`'s probes reach the fresh-resolution pass at all. With both
+/// `a.compile` and `b.compile` sealing their own `srcs`/`t`, only correct
+/// qualification (never the bare local key) keeps `fresh_values` /
+/// `fresh_resolved` / `probe_lookup_failures` from collapsing the two into
+/// one slot, chosen by `BTreeMap` order.
+///
+/// No build is asserted: `b.compile`'s bogus tool WILL fail an actual build
+/// once `b` is in the closure, and that failure is irrelevant to what this
+/// pin checks. `cook why` is read-only (`why.rs`'s own docstring: "Executes
+/// nothing") and reports over the declared tree with no build required —
+/// `a_never_run_workspace_reports_no_timing_rather_than_zero` above already
+/// pins that a never-built workspace is a legal `cook why` query.
+///
+/// Deliberately NOT asserted: hit/miss status or cache keys. With two
+/// members in one closure, the shared `.cook/probes/<local-key>.json` record
+/// file collides — PRE-EXISTING (reproduces on base `2f83088e`) and owned by
+/// COOK-535, not this ticket. Encoding that behaviour here in either
+/// direction would make this pin fail the moment COOK-535 lands its own fix.
+#[test]
+fn two_members_same_named_probe_is_not_collapsed_when_both_are_inside_the_closure() {
+    let tmp = TempDir::new().unwrap();
+    two_members_same_named_probes_workspace(tmp.path(), "a.compile b.compile");
+
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let a_unit = find_unit(&v, "a.compile");
+    let b_unit = find_unit(&v, "b.compile");
+
+    let a_manifest = sealed_probe_json(&a_unit, "srcs");
+    assert!(
+        a_manifest.get("src/a.ts").is_some(),
+        "a.compile's srcs manifest must contain its own src/a.ts: {a_manifest}"
+    );
+    assert!(
+        a_manifest.get("src/b.ts").is_none(),
+        "a.compile's srcs manifest must not contain b's src/b.ts: {a_manifest}"
+    );
+    let b_manifest = sealed_probe_json(&b_unit, "srcs");
+    assert!(
+        b_manifest.get("src/b.ts").is_some(),
+        "b.compile's srcs manifest must contain its own src/b.ts: {b_manifest}"
+    );
+    assert!(
+        b_manifest.get("src/a.ts").is_none(),
+        "b.compile's srcs manifest must not contain a's src/a.ts: {b_manifest}"
+    );
+
+    assert_eq!(
+        a_unit["determinants"]["probe_lookup_failures"]
+            .as_object()
+            .unwrap()
+            .len(),
+        0,
+        "a.compile's own tool resolves fine and must carry no lookup failure: {a_unit}"
+    );
+    let b_failures = b_unit["determinants"]["probe_lookup_failures"].as_object().unwrap();
+    assert!(
+        b_failures.keys().any(|k| k == "t"),
+        "b.compile must name its own bogus tool as a lookup failure: {b_unit}"
+    );
+    let b_failure_text = b_failures.get("t").unwrap().as_str().unwrap();
+    assert!(
+        b_failure_text.contains("definitely-not-a-real-binary-xyz"),
+        "b.compile's failure must name the bogus tool: {b_failure_text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Root and an imported member declare the SAME-NAMED probe, and only the
+// ROOT's copy is ever resolved by a `gather` driver.
+//
+// This is a different collision from the pair above: those pin
+// `resolved_probe_keys`' MEMBERSHIP test against `registered_workspace.probes`
+// (I-1, `why.rs`), where a bare-key fallback was never present to begin with.
+// This one pins `resolve_unit_determinants`'s `prior_invocation_probes`
+// filter, which used to carry a THIRD clause —
+// `!resolved_probe_keys.contains(*k)`, the bare Cookfile-local spelling —
+// alongside the qualified check directly above it. `resolved_probe_keys` is
+// qualified by a probe's DECLARING prefix (single insert site,
+// `cook-plan/src/registers.rs:772-775`); `meta.seal_keys` is always
+// Cookfile-LOCAL (`cook-register/src/unit_api.rs:658-661`). For a root
+// recipe the deleted clause was a no-op — `qualified == *k` already, so it
+// tested nothing the line above it didn't. For an imported member's recipe,
+// a bare hit could only ever match a DIFFERENT Cookfile's same-named probe:
+// never this member's own. A single-Cookfile workspace cannot exercise this
+// at all, because with an empty import prefix the local and qualified
+// spellings of a key are the same string — the collision needs a SECOND
+// Cookfile declaring the identical local name for the two namespaces to ever
+// disagree.
+// ---------------------------------------------------------------------------
+
+/// Root declares `probe p` and fans out over it with `gather p` — the only
+/// way `cook why`'s own register pre-pass resolves a `produce`-body probe
+/// eagerly (case (b) of §17.1.6.1), which is what puts the bare string `"p"`
+/// into `resolved_probe_keys` (a root probe is qualified with an empty
+/// prefix, so its qualified spelling IS `"p"`). Root also imports member
+/// `a`, which declares its OWN, unrelated `probe p` — also a `produce` body,
+/// referenced only via `seal p` and a `$<p.v>` substitution in `a.compile`'s
+/// command, never a `gather` — so nothing in this invocation's register pass
+/// resolves it, and `cook why` (read-only, no VM calls on a `produce` body)
+/// can't resolve it fresh either. `a.compile`'s `p` can only ever be
+/// reported from a prior invocation: case (c).
+fn root_and_member_share_probe_name_workspace(root: &Path) {
+    isolate_shared_cache(root);
+    write(
+        root,
+        "Cookfile",
+        "probe p\n    >{ return { {v = \"root\"} } }\n\n\
+         import a ./a\n\n\
+         recipe fan\n\
+         \x20   gather p\n\
+         \x20   cook \"build/$<in.v>.txt\" {\n        mkdir -p build\n        echo $<in.v> > $<out>\n    }\n\n\
+         recipe build: a.compile fan\n\
+         \x20   cook \"build/top.txt\" {\n        mkdir -p build\n        echo top > $<out>\n    }\n",
+    );
+    write(
+        root,
+        "a/Cookfile",
+        "probe p\n    >{ return { v = \"member-a\" } }\n\n\
+         recipe compile\n\
+         \x20   seal p\n\
+         \x20   cook \"build/a-build.stamp\" {\n        mkdir -p build\n        echo $<p.v> > $<out>\n    }\n",
+    );
+}
+
+/// The reviewer's C-2 reproduction. On `9eb2faf7` (the deleted clause still
+/// present) this fails: `a.compile`'s `p` is reported as case (b) — this
+/// invocation's own registration pre-pass resolved it — because the bare
+/// key `"p"` the deleted clause tested is exactly the ROOT's `"p"`, which
+/// `gather p` did resolve this invocation. The member's own `p` was never
+/// touched by anything but a prior `cook build`; §17.1.6.1 case (c) requires
+/// it be named as such, and `prior_invocation_probes` MUST carry it.
+#[test]
+fn member_probe_shadowed_by_roots_resolved_bare_key_is_still_named_prior_invocation() {
+    let tmp = TempDir::new().unwrap();
+    root_and_member_share_probe_name_workspace(tmp.path());
+    assert_ok(&cook(tmp.path(), &["build"]));
+
+    let out = cook(tmp.path(), &["why", "build", "--level", "unit", "--format", "json"]);
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    let unit = find_unit(&v, "a.compile");
+
+    let prior = unit["determinants"]["prior_invocation_probes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected a prior_invocation_probes array: {unit}"));
+    assert!(
+        prior.iter().any(|k| k == "p"),
+        "a.compile's own p, never touched by a gather, must be named as reported \
+         from a prior invocation, not shadowed by the root's resolved bare \"p\": {unit}"
+    );
+
+    // The human render carries the same fact as a marker beside the value.
+    let plain = cook(tmp.path(), &["why", "build", "--unit", "a.compile"]);
+    assert_ok(&plain);
+    let text = stdout(&plain);
+    assert!(
+        text.contains("    p  [prior invocation] ="),
+        "plain render must mark a.compile's p as a prior invocation: {text}"
     );
 }

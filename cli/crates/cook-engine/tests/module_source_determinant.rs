@@ -9,8 +9,14 @@
 //!    is edited. This is the ticket's repro verbatim.
 //! 2. A run with nothing edited is fully cached. Without this the first bar is
 //!    equally satisfied by a unit that rebuilds forever, which is not a fix.
-//! 3. A probe's `produce` body gets the same treatment, through a fingerprint
-//!    that folds no module source until CS-0204 (§{cat.probes.module-source}).
+//! 3. A probe's `produce` body loads a module too, and CS-0243 (COOK-527)
+//!    removed the probe-value cache that bar 2's treatment depended on for a
+//!    probe — a reached probe now always re-produces, module edited or not.
+//!    What survives is one level up: a consumer that SEALS the probe keys on
+//!    its VALUE, so an unchanged value (module unmoved) still early-cuts-off
+//!    the consumer even though the probe body ran again, and a changed value
+//!    (module moved, CS-0204 folded into what the body returns) still forces
+//!    the consumer to rebuild.
 //! 4. Two "machines" sharing one content-addressed store do not serve each
 //!    other a result produced under different module content. This is the bar
 //!    that makes the bug worse than staleness: the key is portable by design,
@@ -131,12 +137,19 @@ fn editing_a_module_rebuilds_the_body_that_loaded_it() {
     );
 }
 
-/// The same rule through the probe fingerprint. The probe declares an
-/// input so it is keyed at all (CS-0178 keylessness would otherwise make
-/// it re-produce every run and prove nothing), and the consumer seals on it so
-/// a changed value reaches the consumer's key.
+/// CS-0243 (COOK-527) retired the probe-value cache this test used to pin:
+/// before it, a keyed probe that loaded a module hit its own cache on a
+/// settled run and only re-produced when the module moved. Now a reached
+/// probe always re-produces — module edited or not — so `probelog` grows by
+/// one on EVERY `cook emit`, settled or not. The module-content determinant
+/// (CS-0204) survives one level up: the consumer's `seal mod:answer` keys
+/// ITS OWN cache on the probe's *value*, so a settled run's unchanged value
+/// still early-cuts-off `out.txt`'s rebuild even though the probe body ran
+/// again to produce it, and only the module edit — which changes the value
+/// — forces the consumer to rebuild. This is CS-0243's own "not a
+/// regression" argument (App. C.22.2), pinned end to end.
 #[test]
-fn editing_a_module_reproduces_the_probe_that_loaded_it() {
+fn a_settled_probe_still_reproduces_but_its_sealing_consumer_still_early_cuts_off() {
     let store = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let wd = tmp.path();
@@ -159,21 +172,30 @@ fn editing_a_module_reproduces_the_probe_that_loaded_it() {
     assert_eq!(fs::read_to_string(wd.join("out.txt")).unwrap().trim(), "ORIGINAL");
     assert_eq!(runs(wd, "probelog"), 1);
 
-    // The probe's own cache must still work: a settled run re-produces nothing.
+    // CS-0243: the probe re-produces on this settled run too — there is no
+    // probe-value cache left to hit. Its value comes out unchanged (the
+    // module didn't move), so `emit`'s own seal-keyed cache still early-cuts
+    // off: `out.txt` is untouched and byte-identical.
     build(wd, "emit");
     assert_eq!(
         runs(wd, "probelog"),
-        1,
-        "a keyed probe that loads a module must still hit its own cache"
+        2,
+        "a reached probe must re-produce every invocation, settled or not"
+    );
+    assert_eq!(
+        fs::read_to_string(wd.join("out.txt")).unwrap().trim(),
+        "ORIGINAL",
+        "the consumer must still early-cut-off on an unchanged probe value"
     );
 
     write_helper(wd, "REVISED");
     build(wd, "emit");
-    assert_eq!(runs(wd, "probelog"), 2, "the module moved, so produce must run");
+    assert_eq!(runs(wd, "probelog"), 3, "produce must run on this invocation too");
     assert_eq!(
         fs::read_to_string(wd.join("out.txt")).unwrap().trim(),
         "REVISED",
-        "the probe's value came from module code that changed"
+        "the probe's new value came from module code that changed, so the \
+         sealing consumer's key moved and it rebuilt"
     );
 }
 

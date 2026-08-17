@@ -24,7 +24,7 @@ fn setup_with_module(
     lua.globals().set("cook", cook).unwrap();
 
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state.clone(), cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state.clone()).unwrap();
     register_cache_api(
         &lua,
         state.clone(),
@@ -72,7 +72,7 @@ fn test_load_module_not_found() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
     let result = lua.load(r#"cook.load_module("nonexistent")"#).exec();
     assert!(result.is_err());
 }
@@ -93,7 +93,7 @@ fn test_load_module_init_lua() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
     let result: bool = lua
         .load(r#"local m = cook.load_module("mymod") return m.from_init"#)
         .eval()
@@ -174,7 +174,7 @@ fn test_load_module_cycle_two_modules_raises() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
 
     let err = lua
         .load(r#"cook.load_module("a")"#)
@@ -212,7 +212,7 @@ fn test_load_module_self_cycle_raises() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
 
     let err = lua
         .load(r#"cook.load_module("solo")"#)
@@ -241,7 +241,7 @@ fn test_load_module_recovers_after_error() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state.clone(), cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state.clone()).unwrap();
 
     let _ = lua.load(r#"cook.load_module("boom")"#).exec();
     // After the failure the in-flight marker must be gone: a retry raises
@@ -368,7 +368,7 @@ fn test_load_module_resolves_share_lua_flat() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
 
     let tag: String = lua
         .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
@@ -393,7 +393,7 @@ fn test_load_module_resolves_share_lua_init() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
 
     let tag: String = lua
         .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
@@ -428,7 +428,7 @@ fn test_retired_top_level_candidates_are_not_resolved() {
         .set("cook", lua.create_table().unwrap())
         .unwrap();
     let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
-    register_module_loader(&lua, state, cook_lua_stdlib::ModuleObserver::new()).unwrap();
+    register_module_loader(&lua, state).unwrap();
 
     let tag: String = lua
         .load(r#"local m = cook.load_module("rockmod") return m.tag"#)

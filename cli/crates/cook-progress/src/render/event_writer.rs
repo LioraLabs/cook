@@ -12,8 +12,9 @@
 //!   a single dim `Cached <recipe> (N nodes)` line — the dominant warm-build
 //!   case prints one line per recipe instead of one per node.
 //! - **Probe grouping**: `probe:<module>:<key>` nodes collapse into a single
-//!   `Resolved <module> toolchain` line per recipe; fully-cached probe sets
-//!   stay silent.
+//!   `Resolved <module> toolchain` line per recipe; a probe set where none of
+//!   them ran — every one served from this invocation's own register
+//!   pre-pass — stays silent.
 //! - **Cascaded skip collapsing**: a buffer of pending `Skipped(UpstreamFailed)`
 //!   events flushed when a non-skip event arrives or `Finished` fires.
 //!
@@ -353,7 +354,8 @@ impl EventWriter {
     }
 
     /// Print the grouped `Resolved <module> toolchain` line if any of the
-    /// recipe's probes actually ran; a fully-cached probe set stays silent.
+    /// recipe's probes actually ran; a probe set where none did — every one
+    /// served from this invocation's own register pre-pass — stays silent.
     /// Returns how many probes ran (consumed either way).
     fn flush_probes<W: Write>(&mut self, out: &mut W, state: &BuildState, recipe: RecipeId) -> io::Result<usize> {
         let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(0) };

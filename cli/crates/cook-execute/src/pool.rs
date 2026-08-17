@@ -894,7 +894,7 @@ fn probe_not_materialised_error(key: &str) -> mlua::Error {
 fn probes_set_deprecated_error() -> mlua::Error {
     mlua::Error::runtime(
         "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
-         Use cook.probe to declare memoised probe values.",
+         Use cook.probe to declare a probe and return the value from its produce body.",
     )
 }
 
@@ -1019,12 +1019,8 @@ fn resolve_worker_dep_output<'a>(
     self_fqn: &str,
     name: &str,
 ) -> Option<&'a Vec<String>> {
-    let self_prefix = self_fqn.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
-    if self_prefix.is_empty() {
-        dep_outputs.get(name)
-    } else {
-        dep_outputs.get(&format!("{self_prefix}.{name}"))
-    }
+    let self_prefix = cook_contracts::naming::import_prefix(self_fqn);
+    dep_outputs.get(&cook_contracts::probe_key::qualified_key(self_prefix, name))
 }
 
 /// Install read-only `cook.dep_output` / `cook.dep_output_list` on the

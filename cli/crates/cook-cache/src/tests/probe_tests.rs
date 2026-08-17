@@ -1,49 +1,65 @@
 use super::*;
 use std::path::PathBuf;
 
-#[test]
-fn resolve_probe_inputs_with_no_inputs_succeeds() {
-    let probe = ProbeUnit {
+fn probe(inputs: cook_contracts::ProbeInputs) -> ProbeUnit {
+    ProbeUnit {
         key: "cc:x".into(),
         produce_source: "return 1".into(),
         produce_line: 1,
-        inputs: cook_contracts::ProbeInputs::default(),
-    };
-    let r = resolve_probe_inputs(&probe, &PathBuf::from("."), &|_| None, &BTreeMap::new());
-    assert!(r.is_ok());
+        inputs,
+    }
 }
 
 #[test]
-fn missing_upstream_fingerprint_errors() {
-    let mut probe = ProbeUnit {
-        key: "cc:x".into(),
-        produce_source: "return 1".into(),
-        produce_line: 1,
-        inputs: cook_contracts::ProbeInputs::default(),
-    };
-    probe.inputs.requires = vec!["cc:missing".into()];
-    let r = resolve_probe_inputs(&probe, &PathBuf::from("."), &|_| None, &BTreeMap::new());
-    let err = r.unwrap_err();
-    assert!(err.contains("cc:missing"), "got: {}", err);
-    assert!(err.contains("cc:x"), "got: {}", err);
+fn a_probe_declaring_nothing_resolves_to_empty_sets() {
+    let values = resolve_probe_input_digests(
+        &probe(cook_contracts::ProbeInputs::default()),
+        &PathBuf::from("."),
+    );
+    assert!(values.tools.is_empty());
+    assert!(values.files.is_empty());
 }
 
+/// CS-0244: `requires` is a scheduling edge, not a resolved input. A probe
+/// naming an upstream resolves without consulting it — the ordering is carried
+/// by the DAG (`unit_graph::plan`), never by a value looked up here.
 #[test]
-fn env_lookup_propagates_to_fingerprint_inputs() {
-    let mut probe = ProbeUnit {
-        key: "k".into(),
-        produce_source: "".into(),
-        produce_line: 1,
-        inputs: cook_contracts::ProbeInputs::default(),
-    };
-    probe.inputs.env = vec!["MY_VAR".into()];
-    let lookup = |name: &str| match name {
-        "MY_VAR" => Some("value".into()),
-        _ => None,
-    };
-    let r =
-        resolve_probe_inputs(&probe, &PathBuf::from("."), &lookup, &BTreeMap::new()).unwrap();
-    assert_eq!(r.env, vec![("MY_VAR".into(), Some("value".into()))]);
+fn a_declared_requires_resolves_nothing_and_cannot_fail() {
+    let values = resolve_probe_input_digests(
+        &probe(cook_contracts::ProbeInputs {
+            requires: vec!["cc:missing".into()],
+            ..Default::default()
+        }),
+        &PathBuf::from("."),
+    );
+    assert!(values.tools.is_empty());
+    assert!(values.files.is_empty());
+}
+
+/// A declared file that does not exist resolves to the all-zero digest rather
+/// than being dropped: COOK-510's guard in `cook_probe::eval` is written
+/// against exactly that digest.
+#[test]
+fn a_declared_file_resolves_to_its_content_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("present"), b"alpha").unwrap();
+    let values = resolve_probe_input_digests(
+        &probe(cook_contracts::ProbeInputs {
+            files: vec!["present".into(), "absent".into()],
+            ..Default::default()
+        }),
+        dir.path(),
+    );
+    assert_eq!(
+        values.files,
+        vec![
+            (
+                "present".to_string(),
+                hash_file_sha256(&dir.path().join("present"))
+            ),
+            ("absent".to_string(), [0u8; 32]),
+        ],
+    );
 }
 
 /// COOK-414: a golden vector for the PROBE-side file hash, computed outside
@@ -57,9 +73,9 @@ fn env_lookup_propagates_to_fingerprint_inputs() {
 ///
 /// This is the other of cook-cache's two file hashes, and the two answer
 /// different questions: `check::hash_file` is xxh3 local content identity,
-/// this is the SHA-256 identity that §22.5.3 folds into a probe fingerprint
-/// and CS-0204 folds over module source. Both feed keys that cross machines,
-/// so both are pinned to a number rather than to their own past behaviour.
+/// this is the SHA-256 identity a probe's declared `files`/`tools` sets fold
+/// into its value. That value crosses machines through a sealed consumer's
+/// key, so it is pinned to a number rather than to its own past behaviour.
 #[test]
 fn the_sha256_file_hash_is_this_exact_digest() {
     let dir = tempfile::tempdir().unwrap();
@@ -71,26 +87,8 @@ fn the_sha256_file_hash_is_this_exact_digest() {
     );
 }
 
-/// An unreadable path contributes the all-zero digest rather than an error, and
-/// the §22.5.3 fold depends on that: a file that VANISHES must compose a
-/// different fingerprint from the one it composed while it existed, not drop
-/// out of the fold.
 #[test]
 fn an_unreadable_path_hashes_to_all_zero() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(hash_file_sha256(&dir.path().join("nope")), [0u8; 32]);
-}
-
-#[test]
-fn missing_env_value_becomes_none() {
-    let mut probe = ProbeUnit {
-        key: "k".into(),
-        produce_source: "".into(),
-        produce_line: 1,
-        inputs: cook_contracts::ProbeInputs::default(),
-    };
-    probe.inputs.env = vec!["UNSET_VAR".into()];
-    let r =
-        resolve_probe_inputs(&probe, &PathBuf::from("."), &|_| None, &BTreeMap::new()).unwrap();
-    assert_eq!(r.env, vec![("UNSET_VAR".into(), None)]);
 }

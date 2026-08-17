@@ -69,24 +69,22 @@ pub struct RunResult {
     /// skips walking the shared store entirely, which is what keeps a settled
     /// no-op build at zero added cost.
     ///
-    /// Read the gate precisely: this counts **published outputs**, which is
-    /// narrower than "the store did not grow". The register-phase probe
-    /// pre-pass writes probe values to the CAS outside every publish guard and
-    /// outside this counter (COOK-339), so a run can add a handful of
-    /// `probe_value` objects while this still reads 0. Those objects are
-    /// kilobytes against a budget in gigabytes, so the only consequence is
-    /// that an over-budget warning waits for the next run that publishes
-    /// something.
+    /// Read the gate precisely: this counts **published outputs**. It used to
+    /// be narrower than "the store did not grow", because the register-phase
+    /// probe pre-pass wrote probe values to the CAS outside every publish
+    /// guard and outside this counter (COOK-339), so a run could add a
+    /// handful of `probe_value` objects while this still read 0. CS-0243
+    /// removed the probe-value cache entirely — the pre-pass writes nothing
+    /// to the CAS any more — so that gap is gone and this counter is exact.
     ///
-    /// That bound is the honest one, and it is weaker than "one build later":
-    /// the budget check is stateless by design (no stamp file, no rate
+    /// The budget check is still stateless by design (no stamp file, no rate
     /// limiting), so *only* a publishing run reports. A store pushed over
-    /// budget — by the pre-pass writes above, by a concurrent project sharing
-    /// a `[cache] cache_dir`, or by an earlier run whose warning scrolled past
-    /// — stays quietly over budget for as long as subsequent runs publish
-    /// nothing. A settled build publishes nothing and therefore never warns;
-    /// that is the intended cadence, not a defect. `cook cache du` is the
-    /// on-demand way to ask regardless of what the last run published.
+    /// budget — by a concurrent project sharing a `[cache] cache_dir`, or by
+    /// an earlier run whose warning scrolled past — stays quietly over
+    /// budget for as long as subsequent runs publish nothing. A settled build
+    /// publishes nothing and therefore never warns; that is the intended
+    /// cadence, not a defect. `cook cache du` is the on-demand way to ask
+    /// regardless of what the last run published.
     pub published_count: u64,
 }
 
@@ -94,18 +92,6 @@ pub struct RunResult {
 pub struct OutputGlobWarning {
     pub pattern: String,
     pub recipe: String,
-}
-
-/// Split a namespaced recipe name into (prefix, local_name).
-///
-/// `"backend.proto.generate"` -> `("backend.proto", "generate")`
-/// `"build"` -> `("", "build")`
-pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
-    if let Some(dot_pos) = name.rfind('.') {
-        (name[..dot_pos].to_string(), name[dot_pos + 1..].to_string())
-    } else {
-        (String::new(), name.to_string())
-    }
 }
 
 /// Unified engine entry point.
@@ -395,35 +381,60 @@ where
     //    `CacheMeta` like every other unit's (CS-0186), and the engine expands
     //    any pattern among them when the unit is ready — impossible upfront,
     //    before the dependency that writes them has run.
-    let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
-        .probes
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let probe_units_by_key: &BTreeMap<String, cook_contracts::ProbeUnit> =
+        &registered_workspace.probes;
 
-    let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
+    // COOK-526: the third element is whether the register pre-pass already
+    // resolved this exact probe key this invocation (`resolved_probe_keys`,
+    // qualified the same way `probes` is). When true, the executor's G4
+    // dispatch serves the value the register phase already produced and
+    // recorded, instead of running `produce` a second time.
+    let probe_units_by_node: BTreeMap<usize, (cook_contracts::ProbeUnit, PathBuf, bool)> = (0..dag
+        .len())
         .filter_map(|node_idx| {
             let work_node = dag.node(node_idx).payload();
             if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
                 // The payload key is Cookfile-local, but `RegisteredWorkspace
                 // .probes` keys imported-Cookfile probes workspace-qualified
-                // (registers.rs `qualify`). A probe unit always registers in
+                // (registers.rs `qualify`). A probe unit usually registers in
                 // the same Cookfile as its surrounding recipe, and recipe
                 // local names never contain '.', so the recipe's qualified
-                // prefix locates the entry. Without this, every imported-
-                // Cookfile probe missed its metadata here and silently lost
-                // fingerprint caching (always re-ran); CS-0148's `files`
-                // sentinel made the miss loud by reaching a worker as Lua.
-                let qualified = match work_node.recipe_name.rfind('.') {
-                    Some(idx) => {
-                        format!("{}.{}", &work_node.recipe_name[..idx], key)
-                    }
-                    None => key.clone(),
-                };
-                probe_units_by_key
-                    .get(&qualified)
-                    .or_else(|| probe_units_by_key.get(key))
-                    .map(|pu| (node_idx, pu.clone()))
+                // prefix locates the entry in the common case. Without this,
+                // every imported-Cookfile probe missed its metadata here and
+                // reached a worker with no declaration behind it; CS-0148's
+                // `files` sentinel made the miss loud by arriving there as
+                // Lua.
+                //
+                // COOK-526: the derivation is the shared law
+                // (`probe_key::qualify_for_recipe`), the same one
+                // `unit_graph::plan` collapses probe nodes on — the two MUST
+                // agree, or the pre-pass channel below would answer for a key
+                // the planner named differently. The `.or_else` fallback is
+                // NOT part of that law and deliberately stays here: it is this
+                // site's lookup policy, reaching a cross-member probe whose
+                // payload key already arrives fully qualified against its OWN
+                // declaring prefix rather than the consumer's. `plan` needs no
+                // such fallback because it is deciding an identity, not
+                // resolving a name against a map.
+                let qualified =
+                    cook_contracts::probe_key::qualify_for_recipe(&work_node.recipe_name, key);
+                // COOK-510: the base for hashing this probe's `files` paths
+                // is derived from the MATCHED key's own prefix — never from
+                // `work_node`, which is the CONSUMER — so it agrees with the
+                // register pre-pass's own base for the same probe.
+                let (matched_key, pu) = probe_units_by_key
+                    .get_key_value(&qualified)
+                    .or_else(|| probe_units_by_key.get_key_value(key))?;
+                let prefix = cook_contracts::naming::import_prefix(matched_key);
+                let declared_dir = registered_workspace
+                    .working_dir_by_prefix
+                    .get(prefix)
+                    .cloned()
+                    .or_else(|| registered_workspace.working_dir_by_prefix.get("").cloned())
+                    .unwrap_or_else(|| work_node.working_dir.clone());
+                let prepass_resolved =
+                    registered_workspace.resolved_probe_keys.contains(matched_key);
+                Some((node_idx, (pu.clone(), declared_dir, prepass_resolved)))
             } else {
                 None
             }
@@ -655,10 +666,10 @@ pub fn cache_managers_for_cli(
     reachable
         .iter()
         .map(|name| {
-            let prefix = split_recipe_name(name).0;
+            let prefix = cook_contracts::naming::import_prefix(name);
             let wd = ws
                 .working_dir_by_prefix
-                .get(&prefix)
+                .get(prefix)
                 .cloned()
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             let cache_dir = cook_contracts::layout::cache_dir(&wd);

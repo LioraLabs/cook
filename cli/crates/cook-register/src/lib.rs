@@ -495,6 +495,16 @@ pub struct RegisteredCookfile {
     pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
     pub final_env: std::collections::BTreeMap<String, String>,
     pub warnings: Vec<String>,
+    /// COOK-526: every probe key this Cookfile's register pass actually
+    /// resolved (ran `produce`, or served from cache) — local, unqualified
+    /// names, the same set `RegisterProbeResolver::resolved_keys` already
+    /// computed for the §22.5.10 static-input check. `cook-plan` qualifies
+    /// these the same way it qualifies `probes` and folds them into
+    /// `RegisteredWorkspace.resolved_probe_keys`, so the executor's G4
+    /// dispatch can recognise "the register pre-pass already produced this
+    /// value this invocation" and serve it from `.cook/probes/<key>.json`
+    /// instead of running `produce` a second time.
+    pub resolved_probe_keys: Vec<String>,
     /// `host.*` reads observed while the config block(s) executed, in
     /// evaluation order (Standard §5.3.2, CS-0163). Recorded for provenance —
     /// a future `cook why` attributes a host-varying config value to the read

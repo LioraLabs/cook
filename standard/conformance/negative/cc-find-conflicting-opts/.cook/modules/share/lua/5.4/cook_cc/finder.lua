@@ -108,7 +108,6 @@ local function register_find_probe(name, opts, raise_on_miss)
                 "cc:linker-search-dirs",
                 "cc:cmake-driver",
             },
-            env = { "PATH", "PKG_CONFIG_PATH", "CMAKE_PREFIX_PATH", "LIBRARY_PATH" },
             tools = { "pkg-config" },
         },
         produce = produce_body(name, opts, raise_on_miss),

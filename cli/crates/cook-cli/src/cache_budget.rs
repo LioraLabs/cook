@@ -59,13 +59,15 @@ pub(crate) fn check_budget_after_run(project_root: &Path, published_count: u64, 
     //    that ordering is the requirement, not an implementation detail — it
     //    is what keeps a settled no-op build at zero added cost.
     //
-    //    Note the gate is "published no outputs", not "the store did not
-    //    grow": pre-pass probe values are written outside the publish
-    //    counter (COOK-339), so a `published_count == 0` run can still add a
-    //    handful of small objects.
+    //    The gate used to be "published no outputs", not "the store did not
+    //    grow": the register-phase probe pre-pass wrote probe values to the
+    //    CAS outside the publish counter (COOK-339), so a
+    //    `published_count == 0` run could still add a handful of small
+    //    objects. CS-0243 removed the probe-value cache entirely — the
+    //    pre-pass writes nothing to the CAS any more — so that gap is gone
+    //    and `published_count == 0` now means the store did not grow.
     //
-    //    Be precise about what that costs, because the honest bound is
-    //    weaker than "one build late". The check is stateless by design
+    //    The check is still stateless by design
     //    (step 9's comment, milestone D5): only a publishing run reports. A
     //    store already over budget therefore stays quiet for as long as
     //    subsequent runs publish nothing, which on a settled tree is
@@ -165,11 +167,17 @@ pub(crate) fn check_budget_after_run(project_root: &Path, published_count: u64, 
                 return;
             }
             // The plan chose no victims, so nothing was swept and the store
-            // is still over budget. Reachable, not theoretical: a store whose
-            // bytes are all `SIZE_SWEEP_EXEMPT_KINDS` plans zero victims by
-            // design, and the automatic sweep simply cannot help it. Fall
-            // through to the warning below — staying silent here would leave
-            // such a store over budget forever with no signal at all.
+            // is still over budget. Reachable, not theoretical: a store
+            // whose only remaining bytes are `SIZE_SWEEP_EXEMPT_KINDS` plans
+            // zero victims by design, and the automatic sweep simply cannot
+            // help it. A single real build no longer produces such a store —
+            // CS-0243 removed probe values, the one write that carried no
+            // evictable companion, and every publishing unit now also writes
+            // an evictable CS-0189 observation artifact — but a PRIOR sweep
+            // that already stripped every evictable byte leaves exactly the
+            // exempt-kind remainder behind, and this sweep sees that store.
+            // Fall through to the warning below — staying silent here would
+            // leave such a store over budget forever with no signal at all.
             Ok(Sweep { outcome: None, .. }) => {}
         }
     }

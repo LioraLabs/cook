@@ -169,7 +169,7 @@ was neglected. The boundary was fictional from the day it was drawn, and it
 collected whatever had nowhere better to go.
 
 `cook-fingerprint` no longer exists (COOK-418). Its effect-free half is here:
-`consumes`, `context`, `envkey`, `evict`, `hash`, `pathlaw`, `cache::cas` and
+`consumes`, `envkey`, `evict`, `hash`, `pathlaw`, `cache::cas` and
 `cache::step`. Its IO half is `cook-cache`, next to the backends and stores it
 was always serving. The `CacheBackend` trait went with the IO rather than the
 law: a trait definition would pass `layout.rs`, but it is the port to the

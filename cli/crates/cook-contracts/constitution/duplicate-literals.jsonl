@@ -85,7 +85,6 @@
 # --- Surface vocabulary -----------------------------------------------------
 {"key": "Cookfile", "sites": ["crates/cook-cli/src/cli.rs:36", "crates/cook-plan/src/entry.rs:59", "crates/cook-register/src/engine.rs:232"], "why": "Debt: the entry-file name, which is a layout fact. cook-contracts already owns a layout module; this belongs in it."}
 {"key": "function", "sites": ["crates/cook-lang/src/recipe.rs:90", "crates/cook-register/src/probe_api.rs:265"], "why": "Deliberate: two unrelated uses of an English word — the parser naming a Lua construct, the probe API describing an expected value type. Nothing agrees with anything here; the rule cannot tell an English word from a wire format, and this is the cost of that."}
-{"key": "probe:{key}", "sites": ["crates/cook-cli/src/pipeline.rs:2555", "crates/cook-probe/src/eval/mod.rs:530"], "why": "Debt: a cache-key prefix composed by the evaluator and reconstructed by the CLI. A key format with two authors is a cross-machine cache hazard, which is the worst failure mode this repo has."}
 
 # --- Formatting coincidences ------------------------------------------------
 {"key": "    {}\\n", "sites": ["crates/cook-cli/src/pipeline.rs:2274", "crates/cook-luagen/src/recipe.rs:968"], "why": "Deliberate: two unrelated indent-and-newline format strings. Four spaces is not a shared decision, and merging them would couple a diagnostic renderer to a code generator for no reason."}

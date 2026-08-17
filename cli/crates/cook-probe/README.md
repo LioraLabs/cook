@@ -8,28 +8,34 @@ afterwards.
 
 - It depends inward on `cook-contracts` for canonical probe value meaning.
 - It provides one evaluation sequence for registration and execution: resolve
-  declared inputs, fingerprint, decide keylessness, look up, produce on a miss,
-  publish, materialize, decode.
+  the declared `tools`/`files` sets, decide whether the value is already
+  resolved without running a VM (CS-0243's two no-VM cases; CS-0242's
+  cross-phase serve), produce otherwise, materialize, decode.
+- **CS-0243: a reached probe always observes.** There is no probe-value
+  cache — no GET, no PUT, no publish, no stored artifact addressed by
+  fingerprint. A probe's `produce` body runs every time the probe is reached,
+  at most once per key per invocation (CS-0242). Only two resolutions skip
+  dispatching a VM, and neither reads a prior invocation's answer: a top-level
+  `files`/`tools` declaration's value is synthesised fresh from the current
+  tree, and a key this same invocation's register pre-pass already resolved is
+  served from that pre-pass's own production.
 - It injects the one genuinely phase-specific step. Running a `produce` source
   needs the register VM at register phase and a worker VM at execute phase;
   that difference is a `ProduceRunner` parameter rather than a second copy of
   everything around it.
 - It intercepts producer kinds in the sequence, so a kind can never be taught
   to one phase and not the other (COOK-353).
-- It publishes probe values with same-directory atomic replacement, preserving
-  either the old complete value or the new complete value.
-- **It owns both ends of `.cook/probes/<key>.json`.** The writer and the
-  read-through store are one crate, so the filename is computed by one call
-  and a test can write with one and read with the other without a third party
-  agreeing on anything (COOK-422). Until then the reader lived in the
-  execute-phase VM crate — the first consumer that needed it — and the two
-  halves of a file format sat in crates with no edge between them.
+- It materializes probe values to `.cook/probes/<key>.json` with same-directory
+  atomic replacement, preserving either the old complete value or the new
+  complete value. Across invocations that file is a record, read by `cook why`
+  and by nothing else; within one invocation it is also how CS-0242's
+  cross-phase serve reaches a key the register pre-pass already resolved.
 - **A `$<key:field>` reference resolves here too, for the same reason.**
   Rendering a probe reference is reading bytes and applying
   `cook_contracts::sigil::subst`; no VM is involved, so the phase that happens
   to be spawning the command was never part of the answer. It sits beside the
-  store it reads and the CS-0157 tool-path view it renders through, which is
-  what keeps `cook.probes.get` and `$<key>` from drifting apart.
+  CS-0157 tool-path view it renders through, which is what keeps
+  `cook.probes.get` and `$<key>` from drifting apart.
 - It reports non-fatal conditions as returned warnings rather than printing
   them, leaving the diagnostic channel to the phase.
 
@@ -38,18 +44,6 @@ It does not define contracts, choose a VM or sandbox, schedule work, order
 adapters. It does not raise a Lua error either: the CS-0152 not-materialised
 sentence is a `String` here, and the execute-phase VM wraps it in an
 `mlua::Error` — one sentence, whichever reader hits the miss.
-
-## Cache policy
-
-The crate owns the cache *sequence* and the rules that decide whether a lookup
-may happen at all: CS-0178 keylessness and its propagation along `requires`,
-COOK-168 publish suppression, and the CS-0102 stale-artifact defence. It does
-not own the backend, the store layout, or eviction, which belong to
-`cook-cache`.
-
-This is a deliberate move of the boundary. Each of those rules previously
-existed in the execute-phase copy and not the register-phase one, and the
-register copy's cache block turned out never to have run at all (COOK-359).
 
 ## Relationship to `cook-contracts`
 

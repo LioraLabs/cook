@@ -1838,14 +1838,6 @@ pub fn cmd_serve(
 #[path = "tests/serve_glob_tests.rs"]
 mod serve_glob_tests;
 
-/// Split off the namespace prefix from a qualified recipe name.
-///
-/// `"backend.proto.generate"` → `"backend.proto"`
-/// `"build"` → `""`
-fn split_recipe_prefix(name: &str) -> &str {
-    name.rfind('.').map(|p| &name[..p]).unwrap_or("")
-}
-
 // ---------------------------------------------------------------------------
 // cmd_affected — list recipes that would be invalidated since --since=<ref>
 // ---------------------------------------------------------------------------
@@ -1957,6 +1949,27 @@ fn resolve_reachable_closure(
     Ok((edges, reachable))
 }
 
+/// Raw snapshot of `.cook/probes/`: file name -> bytes, taken before a `cook
+/// why` invocation's own registration pass can overwrite any of them (CS-0245).
+/// An absent directory reads as empty rather than an error — a fresh
+/// workspace has no prior probe records at all, which is the ordinary
+/// `FirstObservation` case, not a failure.
+fn snapshot_probe_records(project_root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
+    let dir = cook_contracts::layout::probes_dir(project_root);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return BTreeMap::new();
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            let bytes = std::fs::read(e.path()).ok()?;
+            Some((name, bytes))
+        })
+        .collect()
+}
+
 /// CS-0171: `cook why` — the one read-only transparency query.
 ///
 /// Structure and determinants arrive from two places and are joined here:
@@ -1976,6 +1989,31 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     let config = args.config.as_deref();
     let level = why_render::parse_level(&args.level)?;
     let format = why_render::parse_format(&args.format)?;
+
+    // `cook why` MUST recompute the same cache key K as `cook run` would, so it
+    // MUST anchor the cache context at the SAME project_root the executor uses.
+    // Both sides now resolve it via `resolve_project_root` (the workspace root,
+    // §20.2.3 / CS-0120), so `why` and `run` cannot diverge regardless of which
+    // directory inside the workspace the user invoked from (supersedes the
+    // earlier cwd-parity rule that anchored both at current_dir()).
+    //
+    // Resolved BEFORE `build_registered_workspace` (hoisted out of its old spot
+    // below) so the probe snapshot just below can be taken ahead of
+    // registration — `resolve_project_root` does not itself depend on the
+    // workspace being registered.
+    let project_root = resolve_project_root(globals)?;
+
+    // CS-0245: snapshot `.cook/probes/` RAW (file name -> bytes) before
+    // registration runs. This ordering is load-bearing: a probe the register
+    // pass reaches (a `gather <probe>` source, or a register-phase Lua read)
+    // overwrites its own record file during THIS `cook why` invocation's own
+    // registration pass, so a snapshot taken after registration has already
+    // lost the prior value it exists to preserve. The map is keyed by file
+    // name, not probe key — `probe_file_name` is injective but deliberately
+    // not trivially invertible, so `why::explain` looks a key up by applying
+    // `probe_file_name` to it rather than this function inverting the name
+    // back to a key. An absent directory is an empty map, not an error.
+    let probe_snapshot = snapshot_probe_records(&project_root);
 
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
@@ -1997,13 +2035,6 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     let (edges, reachable) =
         resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
-    // `cook why` MUST recompute the same cache key K as `cook run` would, so it
-    // MUST anchor the cache context at the SAME project_root the executor uses.
-    // Both sides now resolve it via `resolve_project_root` (the workspace root,
-    // §20.2.3 / CS-0120), so `why` and `run` cannot diverge regardless of which
-    // directory inside the workspace the user invoked from (supersedes the
-    // earlier cwd-parity rule that anchored both at current_dir()).
-    let project_root = resolve_project_root(globals)?;
     let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
         .map_err(engine_error_to_cook_error)?;
     let cache_managers = cook_engine::cache_managers_for_cli(&registered, &reachable);
@@ -2017,6 +2048,8 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
         &cache_ctx,
         &cache_managers,
         &probes_dir,
+        &project_root,
+        &probe_snapshot,
     )
     .map_err(engine_error_to_cook_error)?;
 
@@ -2047,7 +2080,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
                     step_groups: Vec::new(),
                     working_dir: registered
                         .working_dir_by_prefix
-                        .get(split_recipe_prefix(name))
+                        .get(cook_contracts::naming::import_prefix(name))
                         .cloned()
                         .unwrap_or_else(|| std::path::PathBuf::from(".")),
                     env_vars: std::collections::BTreeMap::new(),
@@ -2068,7 +2101,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     > = reachable
         .iter()
         .map(|name| {
-            let prefix = split_recipe_prefix(name);
+            let prefix = cook_contracts::naming::import_prefix(name);
             let wd = registered
                 .working_dir_by_prefix
                 .get(prefix)

@@ -21,6 +21,7 @@ fn empty_ws() -> RegisteredWorkspace {
         names: Vec::new(),
         units_by_recipe: BTreeMap::new(),
         probes: BTreeMap::new(),
+        resolved_probe_keys: Default::default(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),

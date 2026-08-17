@@ -103,11 +103,11 @@ eviction policy, and what a declared path IS are pure rules in
 ## What it does not do
 
 It does not compose a cache key or state a rule that needs no world. Key
-composition (`cloud_key` / `artifact_key`), the env denylist, the probe
-fingerprint fold, determinant drift, and what a declared path IS are
-`cook-contracts`; this crate calls them with what the filesystem says. What it
-DOES own, since COOK-418, is asking: `needs_rebuild_cook`, the restore step, and
-the probe input resolution that reads env, PATH and files. It does not own
+composition (`cloud_key` / `artifact_key`), the env denylist, determinant
+drift, and what a declared path IS are `cook-contracts`; this crate calls them
+with what the filesystem says. What it DOES own, since COOK-418, is asking:
+`needs_rebuild_cook`, the restore step, and the probe input resolution that
+reads PATH and files. It does not own
 eviction *policy*, only candidate enumeration and plan application. It does not
 own the meaning of what it stores: `Observation`,
 `CacheMeta`, and the index-basename encoding are `cook-contracts`. It does not
@@ -119,8 +119,8 @@ decides what to say about it.
 Named rather than hidden, because the seam moves and a stale claim is worse
 than none:
 
-- `lib.rs` re-exports a dozen `cook-contracts` items (`consumes`, `context`,
-  `envkey`, `evict`, `hash_str`, `cache::cas`, ...) alongside its own, for
+- `lib.rs` re-exports a dozen `cook-contracts` items (`consumes`, `envkey`,
+  `evict`, `hash_str`, `cache::cas`, ...) alongside its own, for
   back-compat with call sites that predate COOK-418. New code should import law
   from `cook_contracts` directly. The re-exports make the boundary read as
   softer than it is, and five of the integration tests under `tests/` exercise
@@ -129,7 +129,7 @@ than none:
   `check::hash_file` is xxh3 over a path and answers LOCAL content identity:
   what a `FileRecord` carries, what the local key folds. Meanwhile
   `probe::hash_file_sha256` is the SHA-256 identity that LEAVES the machine in a
-  probe fingerprint or a cloud key. They were both spelled `hash_file` until
+  probe's observed value or a cloud key. They were both spelled `hash_file` until
   COOK-414, one publicly and one privately in the module that shadowed it. Both
   are now pinned to golden vectors computed outside this codebase, because the
   suite's determinism tests pass under any hash function and changing what
@@ -200,7 +200,7 @@ stratum it named did not exist: the bar `cook-contracts` enforces is about
 effects, not dependencies, so nothing was ever keeping a hash out of it.
 Having been made for a boundary that was not there, it filled with the only
 thing adjacent to computing a fingerprint, which was this crate's IO. Its
-effect-free half is now in `cook-contracts` (`consumes`, `context`, `envkey`,
+effect-free half is now in `cook-contracts` (`consumes`, `envkey`,
 `evict`, `hash`, `pathlaw`, `cache::cas`, `cache::step`) and its acting half
 is here.
 

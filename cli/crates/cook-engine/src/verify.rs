@@ -228,10 +228,10 @@ pub fn verify_cache(
             continue;
         }
         // Per-recipe cache manager, anchored exactly like the executor.
-        let prefix = crate::run::split_recipe_name(recipe_name).0;
+        let prefix = cook_contracts::naming::import_prefix(recipe_name);
         let wd = workspace
             .working_dir_by_prefix
-            .get(&prefix)
+            .get(prefix)
             .cloned()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let cache_dir = cook_contracts::layout::cache_dir(&wd);

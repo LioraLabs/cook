@@ -1,10 +1,9 @@
-# The probe declares a `files` input, and that declaration is what makes it
-# cacheable at all: CS-0178 gives a probe with NO declared inputs no cache key,
-# because sections 1-3 of §22.5.4's fingerprint are constant and 4-7 would be
-# empty — so it would re-produce every run, mint a fresh nonce, and re-key the
-# consumer. Declaring `seed.txt` is what this fixture is actually asserting
-# about: a probe keyed on something reuses its value while that something
-# holds still.
+# CS-0243 (COOK-527): a reached probe always observes — this one mints a
+# fresh nonce on every invocation regardless of what it declares, so its own
+# node is never a cache hit. `seal "seed.txt"` is what's left of this
+# fixture's original point (CS-0178 keylessness, before there was a
+# probe-value cache to have a key into) and stays for that reason, not
+# because it changes whether `demo:nonce` re-executes.
 probe demo:nonce
     seal "seed.txt"
     >{

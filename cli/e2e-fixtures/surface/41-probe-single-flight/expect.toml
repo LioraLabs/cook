@@ -1,0 +1,18 @@
+# COOK-526 acceptance criteria (a) and (c): N demanding recipes for one
+# probe key cost exactly one produce execution, single-flighted, in one
+# build invocation.
+
+[[run]]
+args = ["all"]
+[run.assert]
+exists = ["out/one.txt", "out/two.txt", "out/three.txt"]
+# Exactly one line: the produce body ran once, not three times, despite
+# three independent recipes sealing the same probe key in one invocation.
+equals = { "counter.log" = "ran\n" }
+# Criterion (c), the user-visible half: ONE `probe:shared` progress row, not
+# three. Progress names a node `<recipe>/<node>`, so a per-recipe probe node
+# prints `two/probe:shared` and `three/probe:shared` beside the minting
+# recipe's row. The counter above pins the executions; these pin that the DAG
+# carries one node rather than three that happen to share a value.
+output_contains = ["one/probe:shared"]
+output_not_contains = ["two/probe:shared", "three/probe:shared"]

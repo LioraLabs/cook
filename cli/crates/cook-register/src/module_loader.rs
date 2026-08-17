@@ -118,39 +118,24 @@ impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
 /// sequence from `cook-lua-stdlib` (memoisation, cycle detection,
 /// resolution, init(), package-path refresh — one implementation with the
 /// worker VMs since COOK-412) over the register phase's hooks.
-/// CS-0204: the register VM observes its module loads too.
 ///
-/// Not because a register-phase load is a hole — it is not. A unit's whole
-/// register-phase surface is its DECLARATION (command text, outputs, inputs,
-/// seal keys), and every term of the declaration is already a determinant, so
-/// a module that changes what a maker emits already busts the unit's key.
-///
-/// The reason is the `gather <probe>` pre-pass: it runs a probe's
-/// `produce` source on THIS VM (`cook_probe::eval::ProduceRunner`), and a
-/// probe's value is keyed by a fingerprint that folds no module source at all.
-/// The pre-pass snapshots this observer around the run and folds what it saw
-/// into the probe's key, exactly as a worker does for the executor's probes.
-///
-/// The handle is also installed as VM app data — the idiom this crate already
-/// uses for a VM-scoped handle (`CacheContext`, `engine.rs`) — so the pre-pass
-/// reaches it without threading a parameter through `install_all_apis` and the
-/// eleven-argument recursion below it.
-pub fn register_module_loader(
-    lua: &Lua,
-    state: SharedModuleLoaderState,
-    observer: cook_lua_stdlib::ModuleObserver,
-) -> LuaResult<()> {
+/// A register-phase load is not a hole. A unit's whole register-phase surface
+/// is its DECLARATION (command text, outputs, inputs, seal keys), and every
+/// term of the declaration is already a determinant, so a module that changes
+/// what a maker emits already busts the unit's key.
+pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
     let working_dir = state.borrow().working_dir.clone();
-    lua.set_app_data(observer.clone());
     cook_lua_stdlib::install_module_loader(
         lua,
         &cook,
         cook_lua_stdlib::WorkingDirSource::Static(working_dir),
         RegisterLoadHooks { state },
-        observer.clone(),
-    )?;
-    cook_lua_stdlib::install_require_observer(lua, observer)
+        // The shared loader takes a sink; nothing on the REGISTER VM drains
+        // one. Only the execute phase keys a unit on what it loaded
+        // (§{exec.cache.module-source}, CS-0204), and it installs its own.
+        cook_lua_stdlib::ModuleObserver::new(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -200,8 +185,8 @@ fn probes_get(
         // §22.5.4: a read made from inside a `produce` body may only name a key
         // that body declared in `inputs.requires`. Checked before the store
         // hit, not only before resolution — a key some earlier body already
-        // resolved is just as far outside this probe's fingerprint chain as an
-        // unresolved one.
+        // resolved is just as far outside this probe's declared `requires` as
+        // an unresolved one.
         resolver.check_produce_read(key).map_err(|e| LuaError::runtime(e.to_string()))?;
         if let Some(val) = resolver.store().borrow().get(key) {
             return crate::probe_value::json_to_lua(lua, val);

@@ -45,7 +45,7 @@ pub fn stat_mtime(path: &Path) -> Option<u64> {
 /// most-used verb. It answers LOCAL CONTENT IDENTITY: what a `FileRecord`
 /// carries, what the local cache key folds, what `cook why` compares. The other
 /// is [`crate::probe::hash_file_sha256`], the SHA-256 identity that leaves the
-/// machine in a probe fingerprint (§22.5.3) or a cloud key. Both are pinned to
+/// machine in a probe's observed value or a cloud key. Both are pinned to
 /// golden vectors; changing what either computes is a cache-invalidating
 /// decision, not a refactor.
 pub fn hash_file(path: &Path) -> Option<u64> {

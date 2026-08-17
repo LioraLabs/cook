@@ -138,8 +138,9 @@ recipe ship
     }
 ```
 
-`gather platforms` points at a **probe**: a named, cached value the
-graph can see. The recipe runs once per record, fields addressable as
+`gather platforms` points at a **probe**: a named observation the graph can
+see, re-run fresh on every invocation that reaches it. The recipe runs once
+per record, fields addressable as
 `$<in.name>`; add a record and exactly one new unit builds, delete one and
 cook sweeps the orphaned bundle. And `$<sprite-sheet>` reaches across
 recipes: it expands to the sheet's outputs and records the dependency edge.
@@ -294,8 +295,9 @@ cook
 
 **Data shapes the build**
 
-- [Probes](document.md#probes-and-data-driven-fan-out): named, cached values
-  the graph can see: strings, JSON, tool identities, environment.
+- [Probes](document.md#probes-and-data-driven-fan-out): named observations
+  the graph can see: strings, JSON, tool identities, environment. `seal`
+  keys a unit's cache on the observed value.
 - [The `files` producer](document.md#caching-and-cache-trust): a sealable
   per-file manifest for inputs your `gather` line can't hold.
 

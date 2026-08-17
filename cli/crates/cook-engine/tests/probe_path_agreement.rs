@@ -1,31 +1,30 @@
 //! COOK-359: the two probe-evaluation paths must agree.
 //!
-//! Probe evaluation is implemented twice — `cook-register`'s
-//! `evaluate_prepass_probe` (which feeds an `gather <probe>` fan-out) and
-//! `cook-engine`'s executor G4 path (which feeds sealed consumers). Both do the
-//! same thing around a different Lua VM: resolve inputs, compute a fingerprint,
-//! cache GET, run the producer on a miss, cache PUT, write
-//! `.cook/probes/<key>.json`, decode. Only the VM genuinely differs.
+//! Probe evaluation is driven from two places — `cook-register`'s pre-pass
+//! (which feeds a `gather <probe>` fan-out) and `cook-engine`'s executor
+//! dispatch (which feeds sealed consumers). Both run the same
+//! `cook_probe::eval` sequence around a different Lua VM: resolve the declared
+//! `tools`/`files` sets, take a value a synthesised producer kind determines
+//! without a VM, run the producer otherwise, write `.cook/probes/<key>.json`,
+//! decode. Only the VM genuinely differs.
 //!
-//! §22.5.8's cache-hit clause names no consumption path: when a probe's
-//! fingerprint addresses a stored artifact the implementation MUST load the
-//! cached bytes and skip execution. How a probe's value is CONSUMED is not
-//! part of its identity, so the same probe declaration must cost the same
-//! number of producer executions either way.
+//! §22.5.8's **Always observe** rule (CS-0243) names no consumption path: a
+//! reached probe's `produce` body MUST run, once, on every invocation,
+//! regardless of how its value is CONSUMED. So the same probe declaration must
+//! cost the same number of producer executions either way. The file's original
+//! point — one path re-producing on every invocation while the other one
+//! cached is a defect, not a feature some consumer can rely on — survives the
+//! removal of the cache: agreement between the paths is still the whole of
+//! what this file checks.
 //!
-//! This file pins that as an executable claim. It fails before the paths are
-//! unified: the register copy's cache block sits under
-//! `match cache_ctx { Some(ctx) => .., None => run_produce(..) }` and
-//! `cook-cli/src/pipeline.rs` hardcodes `None` into the function its own doc
-//! comment calls "the sole registration path for every command", so the block
-//! has never once run against a backend. The fan-out path therefore re-produces
-//! on every invocation regardless of what the probe declares.
-//!
-//! `keyless_probe_reproduces_on_both_paths` is the guard on the fix: CS-0178
-//! keylessness lives only in the executor copy, so switching the pre-pass cache
-//! on without porting it first would reintroduce COOK-343 on the fan-out path —
-//! and there the permanent hit lives in the SHARED store, which `rm -rf .cook`
-//! does not reach. That test passes today and must still pass afterwards.
+//! The two tests below are near-duplicates and both earn their place. The
+//! first additionally pins that the two paths write byte-identical values. The
+//! second covers a probe that declares NOTHING. That is not a separate code
+//! path — the resolver iterates the same empty vec zero times — but it is the
+//! case the retired CS-0178 keylessness rule used to single out, and the case
+//! an implementation could most cheaply turn back into a permanent hit. It is
+//! kept as a cheap regression guard on exactly that, not because the route
+//! through the resolver differs.
 
 use std::fs;
 use std::path::Path;
@@ -46,43 +45,45 @@ fn cook_binary() -> std::path::PathBuf {
 
 /// Two probes, two consumption paths each.
 ///
-/// `keyed:items` declares a file input, so §22.5.8 gives it a cache key and one
-/// producer execution must serve every later run while `dep.txt` is unchanged.
-/// `keyless:items` declares nothing, so CS-0178 gives it NO key and it must
-/// re-produce every run. Each producer appends one line to its own runlog,
-/// which makes execution observable independently of the value.
+/// `declaring:items` declares a file input; `bare:items` declares nothing.
+/// The declaration plays no role in whether a probe re-produces — that is
+/// CS-0243's rule stated the other way round — and both are here because the
+/// bare case is the one CS-0178 used to treat specially, not because it takes a
+/// different route through the resolver. Each producer
+/// appends one line to its own runlog, which makes execution observable
+/// independently of the value.
 ///
 /// Both values are deterministic: the runlogs measure how often the producer
 /// RAN, never what it returned, so a divergence cannot hide behind a value that
 /// happens to change anyway. The runlogs sit outside `out/` so the orphaned-
 /// output sweeper leaves them alone.
-const COOKFILE: &str = r#"probe keyed:items
+const COOKFILE: &str = r#"probe declaring:items
     seal "src/dep.txt"
     json {
-        echo ran >> keyed.runlog
+        echo ran >> declaring.runlog
         printf '["a"]\n'
     }
 
-probe keyless:items
+probe bare:items
     json {
-        echo ran >> keyless.runlog
+        echo ran >> bare.runlog
         printf '["a"]\n'
     }
 
-recipe sealed_keyed
-    seal keyed:items
-    cook "out/sealed_keyed.txt" { echo built > $<out> }
+recipe sealed_declaring
+    seal declaring:items
+    cook "out/sealed_declaring.txt" { echo built > $<out> }
 
-recipe fanned_keyed
-    gather keyed:items
+recipe fanned_declaring
+    gather declaring:items
     cook "out/fk-$<in>.txt" { echo '$<in>' > $<out> }
 
-recipe sealed_keyless
-    seal keyless:items
-    cook "out/sealed_keyless.txt" { echo built > $<out> }
+recipe sealed_bare
+    seal bare:items
+    cook "out/sealed_bare.txt" { echo built > $<out> }
 
-recipe fanned_keyless
-    gather keyless:items
+recipe fanned_bare
+    gather bare:items
     cook "out/fl-$<in>.txt" { echo '$<in>' > $<out> }
 "#;
 
@@ -153,23 +154,24 @@ fn measure(recipe: &str, runlog: &str, key: &str, n: usize) -> (usize, Vec<u8>) 
 const RUNS: usize = 3;
 
 #[test]
-fn keyed_probe_costs_the_same_on_both_paths() {
+fn a_probe_declaring_an_input_costs_the_same_on_both_paths() {
     let (sealed_runs, sealed_value) =
-        measure("sealed_keyed", "keyed.runlog", "keyed:items", RUNS);
+        measure("sealed_declaring", "declaring.runlog", "declaring:items", RUNS);
     let (fanned_runs, fanned_value) =
-        measure("fanned_keyed", "keyed.runlog", "keyed:items", RUNS);
+        measure("fanned_declaring", "declaring.runlog", "declaring:items", RUNS);
 
-    // §22.5.8: a keyed probe whose declared inputs have not moved is served
-    // from cache, so the producer runs exactly once across the whole series.
+    // CS-0243 (COOK-527): a reached probe always observes, so a declared
+    // input holding still buys the probe nothing — the producer runs once per
+    // invocation, every invocation, on both paths.
     assert_eq!(
-        sealed_runs, 1,
-        "seal path: keyed probe producer ran {sealed_runs}x in {RUNS} runs, expected 1",
+        sealed_runs, RUNS,
+        "seal path: producer ran {sealed_runs}x in {RUNS} runs, \
+         expected {RUNS} (CS-0243)",
     );
     assert_eq!(
-        fanned_runs, 1,
-        "gather <probe> path: keyed probe producer ran {fanned_runs}x in \
-         {RUNS} runs, expected 1 — the register pre-pass is not consulting the \
-         cache (COOK-359)",
+        fanned_runs, RUNS,
+        "gather <probe> path: producer ran {fanned_runs}x in \
+         {RUNS} runs, expected {RUNS} (CS-0243)",
     );
     assert_eq!(
         sealed_runs, fanned_runs,
@@ -177,32 +179,42 @@ fn keyed_probe_costs_the_same_on_both_paths() {
          executions depending only on how its value was consumed",
     );
 
-    // The ticket's second acceptance criterion: byte-identical values.
+    // The ticket's second acceptance criterion: byte-identical values. Still
+    // meaningful post-CS-0243 — the producer is deterministic, so both paths
+    // must still agree on the canonical bytes even though each ran RUNS
+    // times rather than once.
     assert_eq!(
         sealed_value, fanned_value,
-        "the two paths wrote different bytes to .cook/probes/keyed:items.json",
+        "the two paths wrote different bytes to .cook/probes/declaring:items.json",
     );
 }
 
+/// The same agreement for a probe that declares NOTHING. It runs the same
+/// resolver over an empty declaration rather than a different one, so this is a
+/// cheap regression guard rather than separate coverage: a probe with no
+/// declared inputs was the case CS-0178 used to single out before CS-0244
+/// retired the distinction, and it is the case most cheaply mistaken for a
+/// permanent hit. It still discriminates — it counts producer runs across both
+/// consumption paths, and fails if either stops re-producing.
 #[test]
-fn keyless_probe_reproduces_on_both_paths() {
+fn a_probe_declaring_nothing_behaves_as_one_declaring_an_input() {
     let (sealed_runs, _) =
-        measure("sealed_keyless", "keyless.runlog", "keyless:items", RUNS);
+        measure("sealed_bare", "bare.runlog", "bare:items", RUNS);
     let (fanned_runs, _) =
-        measure("fanned_keyless", "keyless.runlog", "keyless:items", RUNS);
+        measure("fanned_bare", "bare.runlog", "bare:items", RUNS);
 
-    // CS-0178: a probe declaring no inputs has no cache key and MUST re-produce
-    // on every invocation in which it is reached. Turning the pre-pass cache on
-    // without porting this rule would make a keyless driver a permanent hit in
-    // the shared store (COOK-343's failure mode, one path over).
+    // CS-0243: identical counts to the declaring probe above. A probe that
+    // declares nothing was, before CS-0244, the one case an implementation
+    // could most cheaply have turned into a permanent hit (COOK-343's failure
+    // mode); it re-produces on both paths like every other.
     assert_eq!(
         sealed_runs, RUNS,
-        "seal path: keyless probe producer ran {sealed_runs}x in {RUNS} runs, \
-         expected {RUNS} (CS-0178)",
+        "seal path: producer ran {sealed_runs}x in {RUNS} runs, \
+         expected {RUNS} (CS-0243)",
     );
     assert_eq!(
         fanned_runs, RUNS,
-        "gather <probe> path: keyless probe producer ran {fanned_runs}x in \
-         {RUNS} runs, expected {RUNS} (CS-0178)",
+        "gather <probe> path: producer ran {fanned_runs}x in \
+         {RUNS} runs, expected {RUNS} (CS-0243)",
     );
 }

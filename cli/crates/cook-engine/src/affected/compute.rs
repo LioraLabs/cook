@@ -46,7 +46,7 @@ pub fn compute_affected(
     // are dot-free at declaration sites, so everything before the last `.` is
     // the import prefix.
     let owner_rel_dir = |name: &str| -> Option<PathBuf> {
-        let prefix = name.rsplit_once('.').map_or("", |(p, _)| p);
+        let prefix = cook_contracts::naming::import_prefix(name);
         let dir = registered.working_dir_by_prefix.get(prefix)?;
         let rel = match dir.strip_prefix(project_root) {
             Ok(r) => r.to_path_buf(),

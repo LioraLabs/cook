@@ -48,7 +48,7 @@ Resolution is a function of the token and the enclosing step's scope, iteration 
 
 Positions differ in which resolutions they **admit**, never in what a token **means**. A `test` body admits no `$<out…>` form (§{phl.plate-test}); that is a refusal of an otherwise-resolved token, stated where the position is specified, and it MUST name the position as the reason. A position MUST NOT decline to substitute a token it does not recognise: an output pattern carrying no iteration driver is not thereby literal text, and emitting it unsubstituted places an unresolved `$<…>` in a declared output path, where the shell reads it as syntax and the value it named never enters the unit's key.
 
-A position that cannot honour a resolution MUST refuse it. It MUST NOT substitute a value the phase cannot yet have: a probe-value reference (§{cat.probes.templates}) reaching a position whose lowering is evaluated at register time MUST NOT be read from the probe cache there, because a probe that the register phase has not materialised answers with no value rather than an error.
+A position that cannot honour a resolution MUST refuse it. It MUST NOT substitute a value the phase cannot yet have: a probe-value reference (§{cat.probes.templates}) reaching a position whose lowering is evaluated at register time MUST NOT be read from the per-run probe-value store there, because a probe that the register phase has not materialised answers with no value rather than an error.
 
 A name reference appearing in a dep-list is resolved against the recipe names in scope with no accessor split: the whole string is the recipe name. Qualified cross-Cookfile dep-list references (`alias.recipe`) follow the resolution rule of §{comp}.
 

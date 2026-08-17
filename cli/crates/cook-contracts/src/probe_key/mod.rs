@@ -120,6 +120,47 @@ pub fn scope_label_error(label: &str) -> Option<String> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Import-qualified keys (§11, COOK-526)
+// ---------------------------------------------------------------------------
+
+use crate::naming::import_prefix;
+
+/// The inverse of [`import_prefix`]: join an import prefix onto a
+/// Cookfile-local name. An empty prefix (a root Cookfile) leaves the name
+/// unqualified, which is what makes `import_prefix(qualified_key(p, k)) == p`
+/// hold in both directions.
+///
+/// The §11 join itself is not probe-specific — `cook-execute`'s
+/// `resolve_worker_dep_output` qualifies a recipe dep-output name through it.
+/// It sits beside the probe-key minting because probe keys are its principal
+/// caller; do not read the module it lives in as narrowing what it may
+/// qualify.
+pub fn qualified_key(prefix: &str, key: &str) -> String {
+    if prefix.is_empty() {
+        key.to_string()
+    } else {
+        format!("{prefix}.{key}")
+    }
+}
+
+/// The workspace identity of a Cookfile-local probe key, named from a recipe
+/// registered in the same Cookfile that declared the probe.
+///
+/// A recipe's own name already carries the prefix the caller needs — an
+/// imported member's recipes are stamped `"<prefix>.<local-name>"` and a root
+/// recipe is left unqualified (`cook-plan`'s `merge_into`) — so a recipe name
+/// is the cheapest available spelling of "which Cookfile am I in".
+///
+/// This is an IDENTITY, not a lookup: it says which Cookfile's `probe foo`
+/// this is, so two members' same-named probes never collapse onto one node.
+/// A caller looking the result up in a map keyed by DECLARING prefix may need
+/// a fallback when the key already arrives qualified against a different
+/// member; that fallback belongs to the caller.
+pub fn qualify_for_recipe(recipe_name: &str, key: &str) -> String {
+    qualified_key(import_prefix(recipe_name), key)
+}
+
 #[cfg(test)]
 #[path = "tests/probe_key_tests.rs"]
 mod tests;

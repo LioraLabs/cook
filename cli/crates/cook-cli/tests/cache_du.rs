@@ -78,9 +78,13 @@ fn write_local_cloud_toml(project_dir: &Path, cache_dir: &Path, max_size: Option
 ///     `"file"` row), namespace `/Cookfile::build`.
 ///   * `other` — a demand-driven `cook.probe` + `cook.add_unit` pair (the
 ///     same shape as `tests/probe.rs`'s
-///     `probe_consumer_end_to_end_first_run_then_cache_hit`), which persists
-///     a `probe_value` artifact under `probe:ns:greet` AND a plain-file
-///     output under namespace `/Cookfile::other`.
+///     `probe_consumer_end_to_end_first_run_then_cache_hit`): `echo` reads
+///     the probe's value and, being a real unit with a declared output,
+///     persists a plain-file artifact AND a CS-0189 observation artifact
+///     (`kind: "observation"`, the by-kind breakdown's non-file row) under
+///     namespace `/Cookfile::other`. CS-0243 (COOK-527) means the probe
+///     itself persists nothing — `ns:greet` runs (`echo` demands it) but
+///     leaves no artifact and no `probe:ns:greet` namespace behind.
 ///
 /// The probe key is `ns:greet`, not a bare `greet`: empirically, a bare
 /// identifier doesn't route through the `$<key.field>` sigil-substitution
@@ -92,11 +96,6 @@ fn write_local_cloud_toml(project_dir: &Path, cache_dir: &Path, max_size: Option
 /// Isolation: `.cook/cloud.toml` is written before anything else, pointing
 /// `[cache] cache_dir` at `cache_dir` (expected to be an absolute path
 /// inside the caller's own `TempDir`).
-// `ns:greet` declares a `files` input on purpose. It exists to put a
-// `probe_value` artifact in the store so the by-kind breakdown has a non-file
-// row to report, and CS-0178 makes a probe declaring NO inputs keyless: it
-// re-produces every run and publishes nothing, which would seed a store
-// holding only `file` kinds and quietly gut what these tests assert.
 fn seeded_project(cache_dir: &Path) -> TempDir {
     let dir = TempDir::new().unwrap();
     write_local_cloud_toml(dir.path(), cache_dir, None);
@@ -281,14 +280,18 @@ fn by_kind_and_by_namespace_breakdown_is_accurate_and_unprefixed() {
         kind_sum, total_count,
         "per-kind object counts must sum to the reported total; kinds={kinds:?}, total={total_count}\n{text}"
     );
-    // A genuine mix: the plain-file outputs plus the probe_value artifact.
+    // A genuine mix: the plain-file outputs plus every unit's CS-0189
+    // observation record. CS-0243 (COOK-527) removed the probe-value
+    // artifact this test used to also expect here — a probe never writes to
+    // the store any more, so `ns:greet` below contributes nothing to either
+    // breakdown, and `echo`'s own file + observation are the whole mix.
     assert!(
         kinds.iter().any(|(label, _)| label == "file"),
         "expected a 'file' kind row:\n{text}"
     );
     assert!(
-        kinds.iter().any(|(label, _)| label == "probe_value"),
-        "expected a 'probe_value' kind row (the non-file kind mixed into the seeded store):\n{text}"
+        kinds.iter().any(|(label, _)| label == "observation"),
+        "expected an 'observation' kind row (the non-file kind mixed into the seeded store):\n{text}"
     );
 
     let namespaces = parse_namespace_counts(&text);
@@ -312,12 +315,11 @@ fn by_kind_and_by_namespace_breakdown_is_accurate_and_unprefixed() {
         namespaces.iter().any(|(label, _)| label == "/Cookfile::other"),
         "expected the exact namespace '/Cookfile::other' with no invented prefix; got {namespaces:?}\n{text}"
     );
-    // The probe artifact's own namespace ("probe:<key>") is likewise
-    // reported verbatim, with no project prefix glued on either.
-    assert!(
-        namespaces.iter().any(|(label, _)| label == "probe:ns:greet"),
-        "expected the exact probe namespace 'probe:ns:greet'; got {namespaces:?}\n{text}"
-    );
+    // Before CS-0243, the probe artifact's own namespace ("probe:<key>") was
+    // asserted here too, reported verbatim with no project prefix glued on.
+    // A probe writes nothing to the store any more (COOK-527), so that
+    // namespace no longer appears — `ns:greet` still runs (the `echo` unit
+    // still demands it), it just leaves no trace here.
 }
 
 // ---------------------------------------------------------------------------

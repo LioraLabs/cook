@@ -39,7 +39,7 @@ fn empty_candidates_plan_frees_nothing() {
 fn size_sweep_evicts_the_lru_tail_of_files_only() {
     // A huge exempt object plus three small files; target is set so only
     // the two oldest files need to go to get under budget.
-    let exempt = candidate(0x01, 500, 1, Some("probe_value"));
+    let exempt = candidate(0x01, 500, 1, Some("module_input_sets"));
     let f1 = candidate(0x02, 20, 5, None);
     let f2 = candidate(0x03, 20, 15, None);
     let f3 = candidate(0x04, 20, 25, None);
@@ -87,7 +87,7 @@ fn size_sweep_drops_observations_before_file_artifacts() {
 
 #[test]
 fn exempt_bytes_over_budget_evict_everything_eligible_and_stop() {
-    let exempt = candidate(0x01, 1_000, 1, Some("probe_value"));
+    let exempt = candidate(0x01, 1_000, 1, Some("module_input_sets"));
     let f1 = candidate(0x02, 10, 5, None);
     let candidates = vec![exempt.clone(), f1.clone()];
 
@@ -105,7 +105,7 @@ fn exempt_bytes_over_budget_evict_everything_eligible_and_stop() {
 #[test]
 fn age_sweep_evicts_every_kind_including_exempt_ones() {
     // now=1000, older_than=100s -> cutoff=900.
-    let old_exempt = candidate(0x01, 100, 500, Some("probe_value"));
+    let old_exempt = candidate(0x01, 100, 500, Some("module_input_sets"));
     let young_file = candidate(0x02, 50, 950, None);
     let candidates = vec![old_exempt.clone(), young_file.clone()];
 
@@ -255,7 +255,7 @@ fn plan_is_deterministic_under_shuffled_input() {
         candidate(0x05, 100, 1, None),
         candidate(0x02, 20, 10, None),
         candidate(0x03, 20, 10, None),
-        candidate(0x01, 30, 3, Some("probe_value")),
+        candidate(0x01, 30, 3, Some("module_input_sets")),
         candidate(0x04, 15, 7, Some("dir")),
     ];
     let mut shuffled = candidates.clone();
@@ -293,9 +293,9 @@ fn is_size_sweep_exempt_does_not_recognise_an_unknown_kind_string() {
 
 #[test]
 fn is_size_sweep_exempt_is_case_sensitive() {
-    // "probe_value" is exempt; a case-variant of it must not be.
-    assert!(is_size_sweep_exempt(Some("probe_value")));
-    assert!(!is_size_sweep_exempt(Some("Probe_Value")));
+    // "module_input_sets" is exempt; a case-variant of it must not be.
+    assert!(is_size_sweep_exempt(Some("module_input_sets")));
+    assert!(!is_size_sweep_exempt(Some("Module_Input_Sets")));
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn auto_sweep_plans_down_to_low_water_and_no_further() {
 fn auto_sweep_over_all_exempt_candidates_evicts_nothing() {
     // Entirely exempt-kind candidates, far above budget: auto must not evict
     // any of them, and must not panic computing a negative/unreachable target.
-    let e1 = candidate(0x01, 500, 1, Some("probe_value"));
+    let e1 = candidate(0x01, 500, 1, Some("module_input_sets"));
     let e2 = candidate(0x02, 500, 2, Some("dir"));
     let candidates = vec![e1.clone(), e2.clone()];
 
@@ -386,14 +386,16 @@ fn every_artifact_kind_is_either_sweep_exempt_or_deliberately_not() {
         k::DISCOVERED_INPUT_SETS,
         k::DISCOVERED_INPUTS,
         k::MODULE_INPUT_SETS,
-        k::PROBE_VALUE,
         k::SYMLINK,
         k::DIR,
     ];
     // Not exempt: an observation is what a size sweep drops FIRST, so adding
     // it to the exempt list would make the priority branch in
-    // `size_eviction_order` unreachable.
-    let sweepable = [k::OBSERVATION];
+    // `size_eviction_order` unreachable. PROBE_VALUE joins it here under
+    // CS-0243: no probe value is written to the store any more, so a
+    // surviving entry of this kind is an orphan from an older version and
+    // must be reclaimable rather than exempt.
+    let sweepable = [k::OBSERVATION, k::PROBE_VALUE];
 
     for kind in exempt {
         assert!(is_size_sweep_exempt(Some(kind)), "{kind} must survive a size sweep");

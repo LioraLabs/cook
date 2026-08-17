@@ -84,3 +84,20 @@ fn a_whole_bare_name_needs_a_start_character_and_is_never_empty() {
         assert!(!is_bare_name(bad), "{bad:?} is not a bare name");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Import-qualified names (§11, COOK-526)
+// ---------------------------------------------------------------------------
+
+use super::import_prefix;
+
+/// `import_prefix` reads the same off a qualified RECIPE name and a qualified
+/// PROBE key, because both are stamped by the same §11 composition and split
+/// on the same final `.`.
+#[test]
+fn prefix_reads_the_same_off_a_recipe_name_and_a_probe_key() {
+    assert_eq!(import_prefix("backend.proto.generate"), "backend.proto");
+    assert_eq!(import_prefix("backend.cc:version"), "backend");
+    assert_eq!(import_prefix("build"), "");
+    assert_eq!(import_prefix("cc:version"), "");
+}

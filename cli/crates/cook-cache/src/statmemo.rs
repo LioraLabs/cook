@@ -226,11 +226,11 @@ impl FileIdentity {
 ///
 /// # Why it exists
 ///
-/// The same tool is fingerprinted once per probe NODE (five recipes sealing one
+/// The same tool is digested once per probe NODE (five recipes sealing one
 /// `web:tools` probe hash its binaries five times) and a binary like `node` is
 /// ~60 MB. Without a memo, an all-cached workspace build spends seconds
 /// re-hashing the same toolchain, and a module calling `cook.tools.id` re-reads
-/// a binary the fingerprint pass already read.
+/// a binary a `tools` declaration already read.
 ///
 /// # Why it revalidates rather than arms and disarms
 ///
@@ -239,8 +239,8 @@ impl FileIdentity {
 /// evaluated inside `execute_dag`, so a top-level `tools` declaration can name a binary an
 /// upstream node rebuilt earlier in the same run, and an execute-phase module
 /// can call `cook.tools.id` on one. Serving the pre-build hash there folds a
-/// tool that no longer exists into a probe fingerprint, and into any sealed
-/// probe value derived from it: a false hit on a store that crosses machines,
+/// tool that no longer exists into a probe's observed value, and into any
+/// sealed consumer's key: a false hit on a store that crosses machines,
 /// which is the worst failure this codebase has. §24.9 of the Standard says as
 /// much normatively (CS-0212), and the predecessor did not meet it.
 ///

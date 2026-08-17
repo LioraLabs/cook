@@ -56,8 +56,9 @@ impl<W: Write + Send> PlainRenderer<W> {
         Ok(ran)
     }
 
-    /// One row for the recipe's probes, only if any actually ran; a
-    /// fully-cached probe set stays silent. Returns how many probes ran.
+    /// One row for the recipe's probes, only if any actually ran; a probe set
+    /// where none did — every one served from this invocation's own register
+    /// pre-pass — stays silent. Returns how many probes ran.
     fn flush_probes(&mut self, state: &BuildState, recipe: RecipeId) -> io::Result<usize> {
         let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(0) };
         let (ran, cached) = (buf.probes_ran, buf.probes_cached);
