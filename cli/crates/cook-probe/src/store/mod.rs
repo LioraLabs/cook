@@ -55,6 +55,18 @@ pub fn read_value(dir: &Path, key: &str) -> Option<Vec<u8>> {
 /// one run, the engine scheduler and every worker's `cook.probes.get` share
 /// this same in-memory map.
 ///
+/// Key namespace: every key a store instance holds is Cookfile-LOCAL — every
+/// reader (`cook.probes.get`, both `seal.rs` folds, and [`read_value`]'s
+/// filename derivation above) spells a key that way — so ONE store instance
+/// may only ever span ONE Cookfile's namespace; two Cookfiles that each
+/// declare a same-named probe cannot share a store without colliding. `cook
+/// why` builds one store per unit for exactly this reason. The execute-phase
+/// store the scheduler shares across a whole run (`cook-engine::executor`'s
+/// `pool.probe_value_store().insert(&probe_key, ...)` calls) inserts by that
+/// same local payload key while the probe DAG nodes feeding it are collapsed
+/// one per workspace-QUALIFIED key, so that single shared instance does NOT
+/// hold this invariant — a known defect, owned outside this crate.
+///
 /// Locking: one mutex guards the whole map. [`Self::get`] is still
 /// literally read-through — a map miss falls to [`read_value`] and inserts
 /// the result, and the `dir`-backed fallback is used exclusively by `cook why`. The lock is

@@ -40,7 +40,9 @@ same events through the same `BuildState`.
   held per recipe and released only on evidence of real work; a recipe that
   finishes having done nothing but hit cache prints a single dim
   `Cached <recipe> (N nodes)`. Toolchain probes group into one
-  `Resolved <module> toolchain` line, and a fully-cached probe set stays silent.
+  `Resolved <module> toolchain` line, and a probe set where none of them ran
+  — every one served from this invocation's own register pre-pass — stays
+  silent.
   Overflow past the per-recipe threshold is reported once, at the recipe's final
   flush, as `… (N more cached)`.
 - **A node's label is its own output path, never raw command text** (COOK-213).

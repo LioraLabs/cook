@@ -284,19 +284,45 @@ pub fn explain(
     }
     let dag = dag_builder::build_dag(all_units)?;
 
-    let probe_store = cook_probe::store::ProbeValueStore::new();
-    if probes_dir.exists() {
-        probe_store.attach_dir(probes_dir.to_path_buf());
+    // The set of qualified probe keys some unit in the QUERIED closure
+    // actually seals. The fresh-resolution pass below is scoped to this set.
+    // This scoping is NOT what stops one member's probe being attributed to
+    // another — the qualified keys the pass carries do that on their own,
+    // proven by mutation: with qualification in place, removing this guard
+    // changes no byte of output. What the guard actually buys is two things,
+    // both real: §17.1.6.1 states the freshness obligation over "a sealed
+    // probe" of "every cacheable unit in the closure"
+    // (standard/src/content/docs/17-cache.mdx, "Determinant reporting"), so
+    // resolving outside the closure is simply out of scope for the query;
+    // and skipping the rest of the workspace also skips the cost —
+    // re-globbing every member's declared `files` set on every `cook why`
+    // would price the whole workspace instead of the queried closure.
+    // `WorkNode::recipe_name` is already workspace-qualified (unlike
+    // `CacheMeta::recipe_name`, which stays Cookfile-local by design,
+    // §20.2.3), so it is the right base for `qualify_for_recipe` here too.
+    let mut sealed_in_closure: BTreeSet<String> = BTreeSet::new();
+    for idx in 0..dag.len() {
+        let node = dag.node(idx).payload();
+        let Some(meta) = &node.cache_meta else {
+            continue;
+        };
+        for k in &meta.seal_keys {
+            sealed_in_closure
+                .insert(cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k));
+        }
     }
 
     // CS-0245 / §17.1.6.1 case (a): re-resolve every probe whose value can be
     // observed with no VM — a top-level `files`/`tools` declaration,
     // synthesised fresh from the current tree — so the key this report names
     // is the key a run would compute, not what a PRIOR invocation last wrote
-    // to `.cook/probes/<key>.json`. Inserting into `probe_store` shadows
-    // exactly the file its disk fallback would otherwise read, so
-    // `seal.rs`'s fold (called per-unit below via `resolve_unit_determinants`)
-    // picks the fresh bytes up with no change to `seal.rs` itself.
+    // to `.cook/probes/<key>.json`. `fresh_values` is keyed by `matched_key`
+    // (the workspace-QUALIFIED map key, CS-0242 — see the note below on why
+    // that is the only key any of this pass's collections may carry) and is
+    // folded into each unit's own `ProbeValueStore` in the
+    // classification loop below, shadowing exactly the file its disk
+    // fallback would otherwise read, so `seal.rs`'s fold picks the fresh
+    // bytes up with no change to `seal.rs` itself.
     //
     // `fresh_resolved` and `probe_lookup_failures` feed §17.1.6.1's
     // provenance obligation (`UnitDeterminants::prior_invocation_probes` /
@@ -304,9 +330,27 @@ pub fn explain(
     // case (a) — fresh here — case (b) — this invocation's own registration
     // pre-pass produced it, `registered_workspace.resolved_probe_keys` — or
     // else case (c), reported from a prior invocation.
+    let mut fresh_values: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut fresh_resolved: BTreeSet<String> = BTreeSet::new();
     let mut probe_lookup_failures: BTreeMap<String, String> = BTreeMap::new();
     for (matched_key, pu) in &registered_workspace.probes {
+        // No bare-key fallback on this membership test — not because it
+        // would re-merge two members' same-named probe into one slot (the
+        // three collections below are keyed on `matched_key`, so a fallback
+        // here could only widen the set of probes re-resolved, never merge
+        // two into a shared one). The real reason to omit it: an in-closure
+        // seal key can never miss `sealed_in_closure` in the first place. A
+        // recipe can only seal a probe declared in its OWN Cookfile — a
+        // cross-Cookfile `seal` is rejected at register time ("seal: '{key}'
+        // does not name a probe, or a top-level `files` or `tools`
+        // declaration", cook-register/src/engine.rs) — so there is no
+        // Cookfile surface today for a unit to seal a probe some other
+        // member declared. A bare-key fallback here would therefore only
+        // ever admit a probe this closure cannot actually reach, never
+        // rescue a real miss.
+        if !sealed_in_closure.contains(matched_key) {
+            continue;
+        }
         // COOK-510, load-bearing: the base for hashing this probe's `files`
         // paths is the MATCHED KEY's own declaring prefix, never a consuming
         // node's `working_dir` — copied verbatim from `run.rs`'s
@@ -314,18 +358,33 @@ pub fn explain(
         // some other working_dir silently restores the zero-hash bug
         // `cook510_a_cross_member` exists to catch.
         //
-        // C-1 (seam review on 9eb2faf7): the prefix MUST be derived from the
-        // MAP KEY (`matched_key`), not `pu.key` — `ProbeUnit.key` is the
-        // Cookfile-LOCAL name (`cook-register/src/probe_api.rs`, never
-        // restamped), while `registered_workspace.probes` is keyed by the
-        // workspace-QUALIFIED string `cook-plan/src/registers.rs` mints via
+        // C-1 (seam review on 9eb2faf7): the prefix MUST be
+        // derived from the MAP KEY (`matched_key`), not `pu.key` —
+        // `ProbeUnit.key` is the Cookfile-LOCAL name
+        // (`cook-register/src/probe_api.rs`, never restamped), while
+        // `registered_workspace.probes` is keyed by the workspace-QUALIFIED
+        // string `cook-plan/src/registers.rs` mints via
         // `probe_key::qualified_key(prefix, &key)`. Deriving the prefix from
         // `pu.key` returned `""` for every imported member's probe — the
         // local key never contains a dot — collapsing every member's
         // `working_dir` onto the ROOT Cookfile's and silently zero-hashing
-        // (or plain misresolving) every non-root `files`/`tools` probe. The
-        // insert below stays on `pu.key`: that IS the local key `eval::record`
-        // named the file with and the key `CacheMeta.seal_keys` carries.
+        // (or plain misresolving) every non-root `files`/`tools` probe.
+        //
+        // The map key `matched_key` is the probe's workspace-qualified
+        // spelling (CS-0242): it is what tells apart two members' same-named
+        // `srcs` probe in the ordinary case, and all three collections below
+        // (`fresh_values`, `fresh_resolved`, `probe_lookup_failures`) are
+        // keyed on it, never on `pu.key`. (Recovering the declaring prefix
+        // back out of it, as `import_prefix` below does, splits on the last
+        // `.` — not a guaranteed-exact inverse of qualification for every
+        // possible probe name, a known and separately-tracked hazard rather
+        // than one this pass introduces.) The Cookfile-LOCAL spelling
+        // `pu.key` carries survives only inside the per-unit
+        // `ProbeValueStore` built in the
+        // classification loop below, because that store's readers
+        // (`seal::seal_contribution`, `seal::resolve_sealed_probes`,
+        // `seal_deltas_for`, and the `.cook/probes/<key>.json` disk fallback)
+        // all look a key up in the Cookfile-local spelling.
         let prefix = cook_contracts::naming::import_prefix(matched_key);
         let working_dir = registered_workspace
             .working_dir_by_prefix
@@ -353,20 +412,20 @@ pub fn explain(
                 resolved: Some((bytes, cook_probe::eval::ValueSource::Produced)),
                 ..
             }) => {
-                probe_store.insert(&pu.key, bytes);
-                fresh_resolved.insert(pu.key.clone());
+                fresh_values.insert(matched_key.clone(), bytes);
+                fresh_resolved.insert(matched_key.clone());
             }
             Ok(_) => {
                 // Needs a `produce` body (or, unreachably with
                 // `prepass_resolved: false`, a prepass serve) — leave the key
-                // on whatever `probe_store` answers.
+                // on whatever the per-unit `probe_store` answers.
             }
             Err(e) => {
                 // A `tools` name gone from PATH (CS-0214) or an unreadable
                 // `files` match (CS-0241) MUST NOT fail `cook why` — it falls
                 // back to the last materialised value, and the failure text
                 // is carried for the renderer.
-                probe_lookup_failures.insert(pu.key.clone(), e.message);
+                probe_lookup_failures.insert(matched_key.clone(), e.message);
             }
         }
     }
@@ -381,11 +440,41 @@ pub fn explain(
     // has a lower index than its consumers. Classifying in this order means a
     // consumer's producers are always resolved before it is reached.
     let mut predictions: Predictions = BTreeMap::new();
+    // Hoisted out of the loop below: whether the probes directory exists
+    // cannot change over the course of one report.
+    let probes_dir_exists = probes_dir.exists();
     for idx in 0..dag.len() {
         let node = dag.node(idx).payload();
         let Some(meta) = &node.cache_meta else {
             continue;
         };
+        // A `ProbeValueStore` scoped to THIS unit's own Cookfile's
+        // local-key namespace, never shared across units. Every reader of
+        // this store looks a key up in the Cookfile-LOCAL spelling
+        // (`seal::seal_contribution` / `seal::resolve_sealed_probes` over
+        // `meta.seal_keys`, `seal_deltas_for` likewise, and the disk fallback
+        // reading `.cook/probes/<local-key>.json`), and a local-key namespace
+        // is only well defined inside one Cookfile — two members can each
+        // declare `srcs`, and only one store per unit keeps them from
+        // colliding. A per-unit store is that fact made explicit, folding in
+        // this unit's slice of `fresh_values` (itself keyed by the qualified
+        // identity) under the local spelling `meta.seal_keys` carries.
+        //
+        // Cost, worth one line: the read-through disk cache built into
+        // `ProbeValueStore::get` no longer spans units, so a record file may
+        // be read once per sealing unit rather than once per report. `cook
+        // why` is a one-shot diagnostic over tiny files.
+        let probe_store = cook_probe::store::ProbeValueStore::new();
+        if probes_dir_exists {
+            probe_store.attach_dir(probes_dir.to_path_buf());
+        }
+        for k in &meta.seal_keys {
+            if let Some(bytes) = fresh_values
+                .get(&cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k))
+            {
+                probe_store.insert(k, bytes.clone());
+            }
+        }
         // COOK-350: an output-less unit is reported like any other. The guard
         // that stood here skipped every one of them, so a whole unit kind was
         // invisible to the transparency surface: `cook why --level unit`
@@ -553,23 +642,34 @@ fn resolve_unit_determinants(
     // against THIS unit's own recipe (`node.recipe_name` is already
     // workspace-qualified) through the shared law
     // (`probe_key::qualify_for_recipe`, the same derivation `run.rs:419-434`
-    // uses), with the same bare-key fallback `run.rs:427-429` uses for a
-    // cross-member match whose declaring prefix differs from the consumer's.
+    // uses). No bare-key fallback on this comparison: for a root recipe
+    // `qualified == *k` already, so a bare-key check would be a no-op there,
+    // and for an imported member's recipe a bare hit could only ever match a
+    // DIFFERENT Cookfile's same-named probe — never this member's own — and
+    // would wrongly claim case (b) for a value that in fact came from a
+    // prior invocation. That is the same same-named-across-members collapse
+    // this ticket removed, on a fourth map, so it does not come back here.
+    //
+    // `fresh_resolved` and `lookup_failures` are BOTH keyed on the
+    // qualified identity now (see the fresh-resolution pass above), so the
+    // same `qualified` this block already computes for `resolved_probe_keys`
+    // drives their lookups too, with no bare-key fallback on either.
     let prior_invocation_probes: BTreeSet<String> = meta
         .seal_keys
         .iter()
         .filter(|k| {
             let qualified = cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k);
-            !fresh_resolved.contains(*k)
-                && !resolved_probe_keys.contains(&qualified)
-                && !resolved_probe_keys.contains(*k)
+            !fresh_resolved.contains(&qualified) && !resolved_probe_keys.contains(&qualified)
         })
         .cloned()
         .collect();
     let probe_lookup_failures: BTreeMap<String, String> = meta
         .seal_keys
         .iter()
-        .filter_map(|k| lookup_failures.get(k).map(|m| (k.clone(), m.clone())))
+        .filter_map(|k| {
+            let qualified = cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k);
+            lookup_failures.get(&qualified).map(|m| (k.clone(), m.clone()))
+        })
         .collect();
     UnitDeterminants {
         command_hash: meta.command_hash,

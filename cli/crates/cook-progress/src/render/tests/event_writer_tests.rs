@@ -222,7 +222,7 @@ fn fully_cached_probe_set_stays_silent() {
     w.handle(&mut buf, &state, &done).unwrap();
 
     let out = String::from_utf8(buf).unwrap();
-    assert!(!out.contains("Resolved"), "cached probes must stay silent: {out}");
+    assert!(!out.contains("Resolved"), "a probe set where none ran must stay silent: {out}");
     assert!(out.contains("Cached deps (2 nodes)"), "got: {out}");
 }
 

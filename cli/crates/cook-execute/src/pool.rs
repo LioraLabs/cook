@@ -894,7 +894,7 @@ fn probe_not_materialised_error(key: &str) -> mlua::Error {
 fn probes_set_deprecated_error() -> mlua::Error {
     mlua::Error::runtime(
         "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
-         Use cook.probe to declare memoised probe values.",
+         Use cook.probe to declare a probe and return the value from its produce body.",
     )
 }
 

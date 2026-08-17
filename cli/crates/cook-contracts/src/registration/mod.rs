@@ -438,8 +438,10 @@ pub struct RegisteredWorkspace {
     /// Probes keyed by qualified probe key.
     pub probes: std::collections::BTreeMap<String, crate::ProbeUnit>,
     /// COOK-526: qualified keys of every probe the register pass actually
-    /// resolved this invocation (ran `produce`, or served from cache),
-    /// across every Cookfile in the workspace. The executor's G4 dispatch
+    /// resolved this invocation — ran `produce`, or resolved with no VM at
+    /// all (a synthesised `files`/`tools` declaration; CS-0243 left no third
+    /// route, since no probe value is served from a store) — across every
+    /// Cookfile in the workspace. The executor's G4 dispatch
     /// consults this before running a probe's `produce` a second time —
     /// see `cook-engine::run`'s `probe_units_by_node` construction — so the
     /// register pre-pass and the executor share one evaluation per key
