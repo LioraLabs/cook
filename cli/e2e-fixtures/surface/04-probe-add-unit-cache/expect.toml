@@ -10,8 +10,9 @@ unchanged = ["build/probed.txt"]
 # CS-0243 (COOK-527): a reached probe always observes, so `demo:nonce` mints
 # a fresh nonce on this run too — its own node is NOT a cache hit, and under
 # CS-0243 no probe node ever is. `record` and `test` still hit their own unit
-# cache regardless (their key does not follow a bare `probes = {...}`
-# reference the way a `seal` would), which is what "unchanged" pins: the OLD
+# cache regardless (§22.5.7: bare `probes = {...}` orders and interpolates but
+# does not key; authors needing freshness must `seal`), which is what
+# "unchanged" pins: the OLD
 # nonce's bytes are what `build/probed.txt` still holds, because the command
 # that would have written a new one never re-ran. The engine's own counter
 # below reports three of the four nodes cached — `record`, `test`, and the
