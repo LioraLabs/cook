@@ -34,7 +34,7 @@ fn cook_probe_registers_a_unit() {
 
     let r = reg.borrow();
     let p = r.probes.get("cc:zlib").expect("probe registered");
-    assert_eq!(p.probe.key, "cc:zlib");
+    assert_eq!(p.probe.key.as_str(), "cc:zlib");
     assert_eq!(p.probe.produce_source, "return { found = true }");
     assert_eq!(p.probe.inputs.tools, vec!["pkg-config"]);
 }
@@ -56,11 +56,11 @@ fn cook_probe_registers_requires_in_inputs() {
     let r = reg.borrow();
     let p = r.probes.get("cc:libfoo").expect("probe registered");
     assert_eq!(p.probe.inputs.requires, vec!["cc:compiler"]);
-    }
+}
 
     #[test]
-    fn cook_probe_empty_inputs_table_is_ok() {
-        let (lua, reg, _cap) = setup("Cookfile");
+fn cook_probe_empty_inputs_table_is_ok() {
+    let (lua, reg, _cap) = setup("Cookfile");
 
     lua.load(r#"
             cook.probe("cc:simple", {

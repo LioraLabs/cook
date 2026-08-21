@@ -135,11 +135,16 @@ pub struct Chore {
     pub line: usize,
 }
 
-/// A `probe` declaration (§22.5). Native surface sugar over the register-phase
-/// `cook.probe()` API: lowering (COOK-68) emits the equivalent `cook.probe`
-/// call. `deps` is the make-style header dependency list (`probe N: a b`) and
-/// lowers to `inputs.requires`. `inputs`/`excludes` are the file-input
-/// declaration set (NOT an iteration driver — a probe yields one value).
+/// A `probe` declaration (§22.5). This parse-time shape keeps the raw name
+/// spelling from the Cookfile; the register-time `ProbeRegistry` validates and
+/// mints the `LocalProbeKey` keyset shared with `cook.probe()`, `files`, and
+/// `tools`. Dotted parse/register twin-keyset work remains COOK-517.
+///
+/// Native surface sugar over the register-phase `cook.probe()` API: lowering
+/// (COOK-68) emits the equivalent `cook.probe` call. `deps` is the make-style
+/// header dependency list (`probe N: a b`) and lowers to `inputs.requires`.
+/// `inputs`/`excludes` are the file-input declaration set (NOT an iteration
+/// driver — a probe yields one value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub name: String,

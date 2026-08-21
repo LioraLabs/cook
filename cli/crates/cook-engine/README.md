@@ -51,6 +51,10 @@ this file.
   `cook-probe` (COOK-359). The register-phase pre-pass and the executor's G4
   path had been two implementations of one lifecycle, and the register copy's
   cache block turned out never to have executed at all.
+- **Local and qualified probe identities are different types.** A `ProbeUnit`,
+  `seal` set, and `.cook/probes/<key>.json` record all carry the Cookfile-local
+  key; the merged workspace maps use the qualified key. The join between them
+  is one law in `cook_contracts::probe_key`, not a fallback per caller.
 - **The plan is rejected rather than repaired.** A literal input equal to
   another recipe's literal output with no ordering path from reader to writer
   fails before any work is dispatched (§16.1.2). Inferring the edge would

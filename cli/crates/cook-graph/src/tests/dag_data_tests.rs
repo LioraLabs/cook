@@ -1,6 +1,6 @@
 use super::*;
 use cook_contracts::{
-    CapturedUnit, DepKind, DiscoveredInputs, RecipeUnits, WorkPayload,
+    CapturedUnit, DepKind, DiscoveredInputs, LocalProbeKey, RecipeUnits, WorkPayload,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -93,7 +93,7 @@ fn touch(working_dir: &std::path::Path, rels: &[&str]) {
 fn independent_probes_have_no_edges_between_them() {
     let probe_a = CapturedUnit {
         payload: WorkPayload::Probe {
-            key: "cc:a".into(),
+            key: LocalProbeKey::new("cc:a"),
             produce: "return 1".into(),
             line: 1,
         },
@@ -109,7 +109,7 @@ fn independent_probes_have_no_edges_between_them() {
     };
     let probe_b = CapturedUnit {
         payload: WorkPayload::Probe {
-            key: "cc:b".into(),
+            key: LocalProbeKey::new("cc:b"),
             produce: "return 2".into(),
             line: 2,
         },

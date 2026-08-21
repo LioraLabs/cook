@@ -29,7 +29,7 @@ use cook_probe::store::ProbeValueStore;
 /// Values are decoded as UTF-8 (lossy guards the theoretically-impossible
 /// non-UTF-8 case — probe values are canonical JSON).
 pub(crate) fn resolve_sealed_probes(
-    seal: &BTreeSet<String>,
+    seal: &BTreeSet<cook_contracts::probe_key::LocalProbeKey>,
     store: &ProbeValueStore,
 ) -> BTreeMap<String, String> {
     seal.iter()
@@ -38,7 +38,7 @@ pub(crate) fn resolve_sealed_probes(
                 .get(k)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .unwrap_or_default();
-            (k.clone(), value)
+            (k.to_string(), value)
         })
         .collect()
 }
@@ -53,7 +53,10 @@ pub(crate) fn resolve_sealed_probes(
 /// key absent from the store (its probe produced no value) folds in as an empty
 /// value: the determinant is still distinguished by its key, and the unit's
 /// probe-dependency wiring guarantees the value is present in practice.
-pub(crate) fn seal_contribution(seal: &BTreeSet<String>, store: &ProbeValueStore) -> u64 {
+pub(crate) fn seal_contribution(
+    seal: &BTreeSet<cook_contracts::probe_key::LocalProbeKey>,
+    store: &ProbeValueStore,
+) -> u64 {
     if seal.is_empty() {
         return 0;
     }
@@ -62,7 +65,7 @@ pub(crate) fn seal_contribution(seal: &BTreeSet<String>, store: &ProbeValueStore
         if i > 0 {
             buf.push(b'\n');
         }
-        buf.extend_from_slice(key.as_bytes());
+        buf.extend_from_slice(key.as_str().as_bytes());
         buf.push(0u8);
         if let Some(bytes) = store.get(key) {
             buf.extend_from_slice(&bytes);

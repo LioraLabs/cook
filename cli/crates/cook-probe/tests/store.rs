@@ -3,6 +3,10 @@ use std::io::{Read, Seek};
 
 use cook_probe::store::{materialize_value, ProbeValueStore};
 
+fn key(s: &str) -> cook_contracts::LocalProbeKey {
+    cook_contracts::LocalProbeKey::new(s)
+}
+
 /// The point of COOK-422's move: the reader of `.cook/probes/<key>.json` and
 /// its writer are one crate, so what one writes the other reads without a
 /// third party agreeing on the filename. Before the move this could only be
@@ -11,17 +15,18 @@ use cook_probe::store::{materialize_value, ProbeValueStore};
 #[test]
 fn the_store_reads_back_what_materialize_value_wrote() {
     let temp = tempfile::tempdir().unwrap();
-    let written = materialize_value(temp.path(), "cc:zlib", b"42\n").unwrap();
+    let probe_key = key("cc:zlib");
+    let written = materialize_value(temp.path(), &probe_key, b"42\n").unwrap();
 
     let store = ProbeValueStore::new();
     store.attach_dir(temp.path().to_path_buf());
 
-    assert_eq!(store.get("cc:zlib"), Some(b"42\n".to_vec()));
+    assert_eq!(store.get(&probe_key), Some(b"42\n".to_vec()));
 
     // Read-through means read ONCE: the bytes are cached, so removing the
     // file the writer made does not change the answer.
     fs::remove_file(&written).unwrap();
-    assert_eq!(store.get("cc:zlib"), Some(b"42\n".to_vec()));
+    assert_eq!(store.get(&probe_key), Some(b"42\n".to_vec()));
 }
 
 #[test]
@@ -29,7 +34,7 @@ fn creates_directory_and_writes_exact_bytes_to_canonical_name() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("nested/probes");
 
-    let path = materialize_value(&dir, "cc/a_b", b"{\n  \"ok\": true\n}\n").unwrap();
+    let path = materialize_value(&dir, &key("cc/a_b"), b"{\n  \"ok\": true\n}\n").unwrap();
 
     assert_eq!(path, dir.join("cc_2fa_5fb.json"));
     assert_eq!(fs::read(path).unwrap(), b"{\n  \"ok\": true\n}\n");
@@ -39,10 +44,11 @@ fn creates_directory_and_writes_exact_bytes_to_canonical_name() {
 #[test]
 fn replaces_destination_by_rename_instead_of_truncating_it() {
     let temp = tempfile::tempdir().unwrap();
-    let path = materialize_value(temp.path(), "cc:zlib", b"old").unwrap();
+    let probe_key = key("cc:zlib");
+    let path = materialize_value(temp.path(), &probe_key, b"old").unwrap();
     let mut old_handle = fs::File::open(&path).unwrap();
 
-    materialize_value(temp.path(), "cc:zlib", b"new").unwrap();
+    materialize_value(temp.path(), &probe_key, b"new").unwrap();
 
     old_handle.rewind().unwrap();
     let mut old_bytes = Vec::new();
@@ -57,7 +63,7 @@ fn removes_temporary_file_when_rename_fails() {
     let canonical = temp.path().join("cc:zlib.json");
     fs::create_dir(&canonical).unwrap();
 
-    assert!(materialize_value(temp.path(), "cc:zlib", b"value").is_err());
+    assert!(materialize_value(temp.path(), &key("cc:zlib"), b"value").is_err());
 
     let siblings: Vec<_> = fs::read_dir(temp.path())
         .unwrap()

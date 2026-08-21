@@ -7,6 +7,7 @@
 //! to be spawning the command is not part of the answer.
 
 use crate::store::{not_materialised_message, ProbeValueStore};
+use cook_contracts::probe_key::LocalProbeKey;
 
 /// Substitute `$<key:field[i]>` probe references in a command with their
 /// resolved values, immediately before the command is spawned (CS-0188).
@@ -44,7 +45,7 @@ pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String
     if spans.is_empty() {
         return Ok(cmd.to_string());
     }
-    let materialised = |key: &str| store.get(key).is_some();
+    let materialised = |key: &str| store.get(&LocalProbeKey::new(key)).is_some();
     let refs: Vec<_> = spans
         .iter()
         .filter_map(|s| cook_contracts::sigil::probe_ref(&s.ident, materialised).map(|r| (s, r)))
@@ -60,11 +61,12 @@ pub fn resolve_probe_sigils(store: &ProbeValueStore, cmd: &str) -> Result<String
 
         // An unmaterialised key is the CS-0152 diagnostic, the same text
         // `cook.probes.get` raises for the same miss.
+        let key = LocalProbeKey::new(r.key());
         let bytes = store
-            .get(r.key())
+            .get(&key)
             .ok_or_else(|| not_materialised_message(r.key()))?;
         let value = store
-            .read_view(r.key(), &bytes)
+            .read_view(&key, &bytes)
             .map_err(|e| format!("$<{}>: probe value decode failed: {e}", span.ident))?;
         out.push_str(&cook_contracts::sigil::subst::substitute(
             &value,

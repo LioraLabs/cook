@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
+use cook_contracts::probe_key::LocalProbeKey;
 use cook_contracts::registration::INLINE_SEAL_PROBE_NAME;
 use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
@@ -28,7 +29,7 @@ pub struct ProbeRegistration {
 /// Accumulates all `cook.probe(...)` calls made during a single register pass.
 #[derive(Debug, Default)]
 pub struct ProbeRegistry {
-    pub probes: BTreeMap<String, ProbeRegistration>,
+    pub probes: BTreeMap<LocalProbeKey, ProbeRegistration>,
 }
 
 /// A ref-counted, interior-mutable handle to a [`ProbeRegistry`].
@@ -116,7 +117,7 @@ pub fn install_cook_probe(
 
         // 5. Duplicate-key check.
         let mut reg = registry.borrow_mut();
-        if let Some(prev) = reg.probes.get(&key) {
+        if let Some(prev) = reg.probes.get(key.as_str()) {
             return Err(LuaError::runtime(format!(
                 "probe key '{}' declared at {}:{}; previously declared at {}:{}",
                 key,
@@ -129,10 +130,10 @@ pub fn install_cook_probe(
 
         // 6. Insert into registry.
         reg.probes.insert(
-            key.clone(),
+            LocalProbeKey::new(key.clone()),
             ProbeRegistration {
                 probe: ProbeUnit {
-                    key: key.clone(),
+                    key: LocalProbeKey::new(key.clone()),
                     produce_source: produce_source.clone(),
                     produce_line: call_line,
                     inputs: inputs.clone(),
@@ -159,7 +160,7 @@ pub fn install_cook_probe(
         if let Some(body) = slot.as_mut() {
             body.units.push(CapturedUnit {
                 payload: WorkPayload::Probe {
-                    key,
+                    key: LocalProbeKey::new(key),
                     produce: produce_source,
                     line: call_line,
                 },
@@ -208,7 +209,7 @@ impl ProbeRegistry {
         let mut stack: Vec<&str> = vec![];
         for k in self.probes.keys() {
             if !matches!(state.get(k.as_str()), Some(NodeState::Done)) {
-                self.dfs(k, &mut state, &mut stack)?;
+                self.dfs(k.as_str(), &mut state, &mut stack)?;
             }
         }
         Ok(())

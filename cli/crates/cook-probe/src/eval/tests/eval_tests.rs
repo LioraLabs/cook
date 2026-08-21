@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::path::Path;
 
-use cook_contracts::{ProbeInputs, ProbeUnit};
+use cook_contracts::{LocalProbeKey, ProbeInputs, ProbeUnit};
 
 use crate::eval::{evaluate, EvalCtx, Produced, ProduceRunner};
 
@@ -53,7 +53,7 @@ impl ProduceRunner for PoisonRunner {
 
 fn probe(key: &str, inputs: ProbeInputs) -> ProbeUnit {
     ProbeUnit {
-        key: key.to_string(),
+        key: LocalProbeKey::new(key),
         produce_source: "return { 1 }".to_string(),
         produce_line: 1,
         inputs,

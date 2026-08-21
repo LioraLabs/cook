@@ -120,7 +120,7 @@ mod scoped_keys {
 
 mod import_qualification {
     use crate::naming::import_prefix;
-    use crate::probe_key::{qualified_key, qualify_for_recipe};
+    use crate::probe_key::{qualified_key, qualify_for_recipe, LocalProbeKey};
 
     /// The standing agreement test for the derivation COOK-526 unified. Every
     /// row is a spelling one of the eight former copies produced; they are run
@@ -145,11 +145,12 @@ mod import_qualification {
         ];
         for (recipe, key, expected) in rows {
             let prefix = import_prefix(recipe);
+            let local = LocalProbeKey::new(key);
             // `unit_graph::plan` and `cook-engine::run` compose from a recipe
             // name; `cook-plan::registers` composes from a prefix it already
             // holds. All three must land on the same string.
-            assert_eq!(qualify_for_recipe(recipe, key), expected, "{recipe}/{key}");
-            assert_eq!(qualified_key(prefix, key), expected, "{recipe}/{key}");
+            assert_eq!(qualify_for_recipe(recipe, &local).as_str(), expected, "{recipe}/{key}");
+            assert_eq!(qualified_key(prefix, &local).as_str(), expected, "{recipe}/{key}");
             // And the prefix half is recoverable from the joined form, which
             // is what `run.rs` does to anchor the probe's declaring dir.
             assert_eq!(import_prefix(expected), prefix, "{recipe}/{key}");

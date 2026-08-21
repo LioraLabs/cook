@@ -66,6 +66,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{CapturedUnit, RecipeUnits, WorkPayload};
+use crate::probe_key::LocalProbeKey;
 use crate::unit::DepKind;
 
 /// Where a graph node came from, in terms a caller that holds the original
@@ -75,7 +76,7 @@ use crate::unit::DepKind;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeOrigin {
     Unit { recipe: String, unit_idx: usize },
-    SynthProbe { recipe: String, probe_key: String },
+    SynthProbe { recipe: String, probe_key: LocalProbeKey },
 }
 
 /// Why the plan imposed a dependency. Recorded at the exact points the
@@ -463,14 +464,14 @@ fn compute_consumed_probe_keys(
 ) -> BTreeSet<String> {
     // Top-level probes (ru.probes): inputs.requires lives on the ProbeUnit.
     let top_level_probe_by_key: BTreeMap<&str, &crate::ProbeUnit> =
-        probes.iter().map(|p| (p.key.as_str(), p)).collect();
+        probes.iter().map(|p| (p.key.as_ref(), p)).collect();
 
     // Body-scope probes (WorkPayload::Probe entries in ru.units): their
     // inputs.requires is carried on the CapturedUnit.probes field.
     let body_probe_requires_by_key: BTreeMap<&str, &[String]> = units
         .iter()
         .filter_map(|u| match &u.payload {
-            WorkPayload::Probe { key, .. } => Some((key.as_str(), u.probes.as_slice())),
+            WorkPayload::Probe { key, .. } => Some((key.as_ref(), u.probes.as_slice())),
             _ => None,
         })
         .collect();
@@ -563,7 +564,8 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
     // rows. Populated once per qualified key, by whichever demanding recipe
     // is topologically first to reach it; every later demander reuses the
     // same node id instead of minting a new one.
-    let mut global_synth_by_qualified: BTreeMap<String, usize> = BTreeMap::new();
+    let mut global_synth_by_qualified:
+        BTreeMap<crate::probe_key::QualifiedProbeKey, usize> = BTreeMap::new();
 
     for ru in recipe_units {
         // §22.1.3 / CS-0219: resolve this recipe's `after` entries to unit
@@ -579,7 +581,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
 
         // Per-recipe index of probe key → unit index, to wire probe→consumer
         // edges from CapturedUnit.probes (CS-0074 Bug 2).
-        let probe_unit_index_by_key: BTreeMap<String, usize> = ru
+        let probe_unit_index_by_key: BTreeMap<LocalProbeKey, usize> = ru
             .units
             .iter()
             .enumerate()
@@ -599,7 +601,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         // takes precedence for those when wiring consumer edges so the
         // body-scope node is reused.
         let probe_meta_by_key: BTreeMap<&str, &crate::ProbeUnit> =
-            ru.probes.iter().map(|p| (p.key.as_str(), p)).collect();
+            ru.probes.iter().map(|p| (p.key.as_ref(), p)).collect();
 
         // node_by_unit_idx: populated as each unit is added; resolves
         // probe-unit node ids when wiring CapturedUnit.probes edges.
@@ -613,7 +615,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             .iter()
             .enumerate()
             .filter_map(|(i, u)| match &u.payload {
-                WorkPayload::Probe { key, .. } if !consumed.contains(key) => Some(i),
+                WorkPayload::Probe { key, .. } if !consumed.contains(key.as_ref()) => Some(i),
                 _ => None,
             })
             .collect();
@@ -648,13 +650,14 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         // registered at register-block scope (e.g. through helpers like
         // `cook_cc.checks.has_header`). Same demand-driven pruning rule as
         // body-scope probes: only keys in `consumed` get a node.
-        let mut synthesised_probe_ids: BTreeMap<String, usize> = BTreeMap::new();
+        let mut synthesised_probe_ids: BTreeMap<LocalProbeKey, usize> = BTreeMap::new();
 
-        let synth_keys: Vec<String> = consumed
+        let synth_keys: Vec<LocalProbeKey> = consumed
             .iter()
             .filter(|k| !probe_unit_index_by_key.contains_key(k.as_str()))
             .filter(|k| probe_meta_by_key.contains_key(k.as_str()))
             .cloned()
+            .map(LocalProbeKey::new)
             .collect();
 
         // Topologically order synth_keys by probe-on-probe `inputs.requires`
@@ -663,16 +666,16 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         // to keys actually being synthesised; cycles (unreachable in
         // practice — `inputs.requires` is validated at register time) fall
         // through and edges to the missing upstream are simply omitted.
-        let synth_key_set: BTreeSet<&str> = synth_keys.iter().map(|s| s.as_str()).collect();
+        let synth_key_set: BTreeSet<&str> = synth_keys.iter().map(|k| k.as_ref()).collect();
         let mut indegree: BTreeMap<&str, usize> = BTreeMap::new();
         for k in &synth_keys {
-            indegree.insert(k.as_str(), 0);
+            indegree.insert(k.as_ref(), 0);
         }
         for k in &synth_keys {
-            if let Some(meta) = probe_meta_by_key.get(k.as_str()) {
+            if let Some(meta) = probe_meta_by_key.get(k.as_ref()) {
                 for upstream in &meta.inputs.requires {
                     if synth_key_set.contains(upstream.as_str()) {
-                        *indegree.get_mut(k.as_str()).unwrap() += 1;
+                        *indegree.get_mut(k.as_ref()).unwrap() += 1;
                     }
                 }
             }
@@ -681,19 +684,19 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             .iter()
             .filter_map(|(k, &d)| if d == 0 { Some(*k) } else { None })
             .collect();
-        let mut ordered_synth: Vec<String> = Vec::with_capacity(synth_keys.len());
+        let mut ordered_synth: Vec<LocalProbeKey> = Vec::with_capacity(synth_keys.len());
         while let Some(k) = queue.pop_front() {
-            ordered_synth.push(k.to_string());
+            ordered_synth.push(LocalProbeKey::new(k));
             for other in &synth_keys {
-                if other.as_str() == k {
+                if other.as_ref() == k {
                     continue;
                 }
-                if let Some(meta) = probe_meta_by_key.get(other.as_str()) {
+                if let Some(meta) = probe_meta_by_key.get(other.as_ref()) {
                     if meta.inputs.requires.iter().any(|u| u == k) {
-                        let entry = indegree.get_mut(other.as_str()).unwrap();
+                        let entry = indegree.get_mut(other.as_ref()).unwrap();
                         *entry = entry.saturating_sub(1);
                         if *entry == 0 {
-                            queue.push_back(other.as_str());
+                            queue.push_back(other.as_ref());
                         }
                     }
                 }
@@ -729,14 +732,14 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                 continue;
             }
             let meta = probe_meta_by_key
-                .get(key.as_str())
+                .get(key.as_ref())
                 .expect("synth_keys filtered on probe_meta_by_key membership");
             let mut deps: Vec<(usize, EdgeProvenance)> = cross_deps
                 .iter()
                 .map(|&d| (d, EdgeProvenance::Barrier))
                 .collect();
             for upstream in &meta.inputs.requires {
-                if let Some(&id) = synthesised_probe_ids.get(upstream) {
+                if let Some(&id) = synthesised_probe_ids.get(upstream.as_str()) {
                     deps.push((id, EdgeProvenance::Probe));
                 }
                 // An upstream that resolves to a body-scope probe cannot be
@@ -860,7 +863,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             // surrounding units is preserved.
             for req_key in &unit.probes {
                 let mut wired = false;
-                if let Some(&probe_unit_idx) = probe_unit_index_by_key.get(req_key) {
+                if let Some(&probe_unit_idx) = probe_unit_index_by_key.get(req_key.as_str()) {
                     if let Some(&probe_id) = node_by_unit_idx.get(&probe_unit_idx) {
                         deps.push((probe_id, EdgeProvenance::Probe));
                         wired = true;
@@ -873,7 +876,7 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                     // same register block.
                 }
                 if !wired {
-                    if let Some(&probe_id) = synthesised_probe_ids.get(req_key) {
+                    if let Some(&probe_id) = synthesised_probe_ids.get(req_key.as_str()) {
                         deps.push((probe_id, EdgeProvenance::Probe));
                     }
                 }

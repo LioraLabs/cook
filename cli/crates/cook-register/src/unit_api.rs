@@ -658,16 +658,19 @@ pub fn register_unit_api(
         // COOK-161: opts.seal — optional list of bare probe keys the author sealed
         // this unit on (§8.4.3). Their canonical VALUES fold into the cache key at
         // execute-phase; here we carry only the key set.
-        let seal_keys: std::collections::BTreeSet<String> = match tbl.get::<LuaValue>("seal") {
+        let seal_keys: std::collections::BTreeSet<cook_contracts::probe_key::LocalProbeKey> =
+            match tbl.get::<LuaValue>("seal") {
             Ok(LuaValue::Nil) => Default::default(),
             Ok(LuaValue::Table(t)) => {
                 let mut out = std::collections::BTreeSet::new();
                 for v in t.sequence_values::<String>() {
-                    out.insert(v.map_err(|e| {
-                        LuaError::runtime(format!(
-                            "cook.add_unit: seal must be a list of strings: {e}"
-                        ))
-                    })?);
+                    out.insert(cook_contracts::probe_key::LocalProbeKey::new(
+                        v.map_err(|e| {
+                            LuaError::runtime(format!(
+                                "cook.add_unit: seal must be a list of strings: {e}"
+                            ))
+                        })?,
+                    ));
                 }
                 out
             }
@@ -805,6 +808,8 @@ pub fn register_unit_api(
                 !seal_keys.is_empty(),
             );
         let cache_meta = if cache_enabled {
+            let local_seal_keys: std::collections::BTreeSet<String> =
+                seal_keys.iter().map(ToString::to_string).collect();
             let cache_key = cook_contracts::cache::local_key::build_local_cache_key(
                 &cookfile_path,
                 &rname,
@@ -812,7 +817,7 @@ pub fn register_unit_api(
                 &cache_inputs,
                 command_hash,
                 env_contribution_val,
-                &seal_keys,
+                &local_seal_keys,
             );
             Some(CacheMeta {
                 recipe_name: rname.clone(),
@@ -917,8 +922,8 @@ pub fn register_unit_api(
         // Sealed probes are execute-phase determinants — the unit must run after
         // them so their values are materialised before the cache check (COOK-161).
         for k in &seal_keys {
-            if !probes.contains(k) {
-                probes.push(k.clone());
+            if !probes.contains(&k.to_string()) {
+                probes.push(k.to_string());
             }
         }
 

@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use cook_contracts::{StepKind, WorkPayload};
+use cook_contracts::probe_key::LocalProbeKey;
 use cook_probe::store::ProbeValueStore;
 
 // ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ pub struct WorkItem {
 /// Handled by Task G; present as `None` on all non-probe WorkResults.
 #[derive(Clone, Debug)]
 pub struct ProbeOutput {
-    pub key: String,
+    pub key: LocalProbeKey,
     pub bytes: Vec<u8>,
 }
 
@@ -935,14 +936,20 @@ fn install_execute_phase_cook_probes(
     cook_lua_stdlib::install_probes_api(
         lua,
         cook,
-        move |lua, key: &str| match store_for_get.get(key) {
-            Some(bytes) => {
-                let jv = store_for_get.read_view(key, &bytes).map_err(|e| {
-                    mlua::Error::runtime(format!("cook.probes.get('{}'): decode failed: {}", key, e))
-                })?;
-                crate::probe_value::json_to_lua(lua, &jv)
+        move |lua, key: &str| {
+            let local_key = LocalProbeKey::new(key);
+            match store_for_get.get(&local_key) {
+                Some(bytes) => {
+                    let jv = store_for_get.read_view(&local_key, &bytes).map_err(|e| {
+                        mlua::Error::runtime(format!(
+                            "cook.probes.get('{}'): decode failed: {}",
+                            key, e
+                        ))
+                    })?;
+                    crate::probe_value::json_to_lua(lua, &jv)
+                }
+                None => Err(probe_not_materialised_error(key)),
             }
-            None => Err(probe_not_materialised_error(key)),
         },
         |_lua, _key: &str, _value: &mlua::Value| Err(probes_set_deprecated_error()),
     )
@@ -1020,7 +1027,8 @@ fn resolve_worker_dep_output<'a>(
     name: &str,
 ) -> Option<&'a Vec<String>> {
     let self_prefix = cook_contracts::naming::import_prefix(self_fqn);
-    dep_outputs.get(&cook_contracts::probe_key::qualified_key(self_prefix, name))
+    let qualified = cook_contracts::naming::qualified_name(self_prefix, name);
+    dep_outputs.get(&qualified)
 }
 
 /// Install read-only `cook.dep_output` / `cook.dep_output_list` on the
@@ -1359,7 +1367,7 @@ fn execute_shell(
 fn execute_probe(
     lua: &mlua::Lua,
     id: usize,
-    key: &str,
+    key: &cook_contracts::probe_key::LocalProbeKey,
     produce: &str,
     _line: usize,
     node_name: String,
@@ -1367,7 +1375,7 @@ fn execute_probe(
     // The lowering — chunk name and wrapper — is the one law both VMs
     // evaluate under (cook_contracts::probe::lower_produce), so a produce
     // body's error reports the same line numbers whichever phase ran it.
-    let lowered = cook_contracts::probe::lower_produce(key, produce);
+    let lowered = cook_contracts::probe::lower_produce(key.as_str(), produce);
 
     let value: mlua::Value = match lua
         .load(&lowered.source)
@@ -1381,7 +1389,7 @@ fn execute_probe(
                 success: false,
                 error: Some(format!(
                     "probe '{}' produce raised: {}",
-                    key,
+                    key.as_str(),
                     cook_contracts::lua_error::sanitize(
                         &e.to_string(),
                         std::env::var(cook_contracts::lua_error::BACKTRACE_ENV).map(|v| v == "1").unwrap_or(false),
@@ -1403,7 +1411,7 @@ fn execute_probe(
             return WorkResult {
                 id,
                 success: false,
-                error: Some(format!("probe '{}': {}", key, e)),
+                error: Some(format!("probe '{}': {}", key.as_str(), e)),
                 exit_code: None,
                 node_name,
                 output_lines: Vec::new(),
@@ -1424,7 +1432,7 @@ fn execute_probe(
         node_name,
         output_lines: Vec::new(),
         probe_output: Some(ProbeOutput {
-            key: key.to_string(),
+            key: key.clone(),
             bytes,
         }),
         module_inputs: Vec::new(),

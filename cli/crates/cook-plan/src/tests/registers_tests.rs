@@ -330,6 +330,56 @@ fn register_workspace_qualifies_recipe_units_deps() {
     );
 }
 
+/// COOK-538: two imported members may each declare the SAME local probe key,
+/// and the merged workspace must keep both values distinct by qualifying the
+/// map/set keys while preserving each declaration's local key spelling.
+#[test]
+fn register_workspace_keeps_local_probe_keys_local_and_workspace_keys_qualified() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+    std::fs::write(
+        dir.path().join("Cookfile"),
+        "import a ./a\nimport b ./b\n\nrecipe build: a.use b.use\n",
+    )
+    .unwrap();
+    for (member, value) in [("a", "a"), ("b", "b")] {
+        std::fs::write(
+            dir.path().join(member).join("Cookfile"),
+            format!("probe shared\n    >{{ return {{ {{ v = \"{value}\" }} }} }}\n"),
+        )
+        .unwrap();
+    }
+
+    let mut workspace =
+        Workspace::load(&dir.path().join("Cookfile"), dir.path(), &[]).expect("workspace loads");
+    for (member, value) in [("a", "a"), ("b", "b")] {
+        let member_dir = std::fs::canonicalize(dir.path().join(member)).unwrap();
+        workspace.imports.get_mut(&member_dir).unwrap().lua_source.push_str(&format!(
+            "\ncook.recipe(\"use\", {{requires = {{}}}}, function()\n    local got = cook.probes.get(\"shared\")\n    assert(got[1].v == \"{value}\")\nend)\n"
+        ));
+    }
+    let registered =
+        register_workspace(&workspace, None, &[], RegisterMode::Enumerate, None).expect("register");
+
+    let probe_keys: Vec<&str> = registered.probes.keys().map(|k| k.as_str()).collect();
+    assert_eq!(probe_keys, vec!["a.shared", "b.shared"]);
+
+    let local_keys: Vec<&str> = registered
+        .probes
+        .values()
+        .map(|probe| probe.key.as_str())
+        .collect();
+    assert_eq!(local_keys, vec!["shared", "shared"]);
+
+    let resolved_keys: Vec<&str> = registered
+        .resolved_probe_keys
+        .iter()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(resolved_keys, vec!["a.shared", "b.shared"]);
+}
+
 // -----------------------------------------------------------------------
 // Speculative chore bodies across a Cookfile boundary
 // (Standard §{chores.speculative}, CS-0218 / COOK-344)

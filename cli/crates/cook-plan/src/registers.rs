@@ -547,18 +547,6 @@ pub fn codegen_with_module_recipes(
     super::workspace::regenerate_lua_sources(workspace, &discovered)
 }
 
-/// One Cookfile-local registered name → its workspace-global key.
-///
-/// The root's prefix is empty and its names ARE the global keys; an import's
-/// names all wear its canonical workspace prefix.
-fn qualify_name(name: &str, prefix: &str) -> String {
-    if prefix.is_empty() {
-        name.to_string()
-    } else {
-        format!("{prefix}.{name}")
-    }
-}
-
 /// One dep name, as written inside a Cookfile, → its workspace-global key.
 ///
 /// Three cases, in this order:
@@ -594,7 +582,7 @@ fn qualify_dep(
         }
     }
     if local_names.contains(req) {
-        qualify_name(req, prefix)
+        cook_contracts::naming::qualified_name(prefix, req)
     } else {
         req.to_string()
     }
@@ -651,7 +639,7 @@ fn workspace_requires_graph(
         let local_names: BTreeSet<String> =
             names.iter().map(|n| n.name.clone()).collect();
         for n in &names {
-            let qname = qualify_name(&n.name, &prefix);
+            let qname = cook_contracts::naming::qualified_name(&prefix, &n.name);
             let requires: Vec<String> = n
                 .requires
                 .iter()
@@ -706,7 +694,7 @@ fn merge_into(
     rc: cook_register::RegisteredCookfile,
 ) {
     ws.warnings.extend(rc.warnings.iter().cloned());
-    let qualify = |name: &str| qualify_name(name, prefix);
+    let qualify = |name: &str| cook_contracts::naming::qualified_name(prefix, name);
     // Local recipe names registered by this Cookfile — used to distinguish
     // intra-Cookfile dep references (`requires=["generate"]` resolving inside
     // `tree-sitter-cook/Cookfile`) from already-qualified cross-Cookfile

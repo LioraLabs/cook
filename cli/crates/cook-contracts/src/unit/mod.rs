@@ -3,6 +3,8 @@
 use crate::{CacheMeta, StepKind};
 use std::collections::BTreeMap;
 
+use crate::probe_key::LocalProbeKey;
+
 /// What kind of work a node is doing. Determines which verb a renderer prints
 /// (`Compiled`, `Linked`, `Tested`, …); unannotated nodes default to `Cooked`.
 ///
@@ -83,7 +85,7 @@ pub enum WorkPayload {
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
     /// VM and stashes the canonical-JSON-serialised return value under `key`.
     Probe {
-        key: String,
+        key: LocalProbeKey,
         produce: String,
         line: usize,
     },
@@ -158,7 +160,7 @@ impl WorkPayload {
 pub const PROBE_LABEL_PREFIX: &str = "probe:";
 
 /// Compose a probe unit's display label.
-pub fn probe_label(key: &str) -> String {
+pub fn probe_label(key: &LocalProbeKey) -> String {
     format!("{PROBE_LABEL_PREFIX}{key}")
 }
 

@@ -1485,7 +1485,7 @@ end)
         result.units.iter().map(|u| format!("{:?}", u.payload)).collect::<Vec<_>>()
     );
     if let WorkPayload::Probe { key, produce, .. } = &probe_unit.unwrap().payload {
-        assert_eq!(key, "test:k");
+        assert_eq!(key.as_str(), "test:k");
         assert_eq!(produce, "return 42");
     }
 }

@@ -9,11 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use cook_contracts::probe_key::LocalProbeKey;
+
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub fn materialize_value(dir: &Path, key: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+pub fn materialize_value(dir: &Path, key: &LocalProbeKey, bytes: &[u8]) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let name = cook_contracts::probe::value::probe_file_name(key);
+    let name = cook_contracts::probe::value::probe_file_name(key.as_str());
     let destination = dir.join(&name);
     let sequence = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temporary = dir.join(format!(".{name}.tmp-{}-{sequence}", std::process::id()));
@@ -38,8 +40,8 @@ pub fn materialize_value(dir: &Path, key: &str, bytes: &[u8]) -> std::io::Result
 /// it before any per-run store exists: COOK-526's cross-phase serve reads the
 /// value the REGISTER pass materialised, in a phase that holds only an
 /// `EvalCtx`.
-pub fn read_value(dir: &Path, key: &str) -> Option<Vec<u8>> {
-    std::fs::read(dir.join(cook_contracts::probe::value::probe_file_name(key))).ok()
+pub fn read_value(dir: &Path, key: &LocalProbeKey) -> Option<Vec<u8>> {
+    std::fs::read(dir.join(cook_contracts::probe::value::probe_file_name(key.as_str()))).ok()
 }
 
 /// Per-run probe-value store (§22.5.8). The canonical value of a probe is
@@ -82,13 +84,13 @@ pub struct ProbeValueStore {
 #[derive(Default)]
 struct Inner {
     dir: Option<PathBuf>,
-    map: BTreeMap<String, Vec<u8>>,
+    map: BTreeMap<LocalProbeKey, Vec<u8>>,
     /// CS-0157: per-run tool-path metadata, probe key → (tool name →
     /// freshly-resolved path). Populated by the engine when it resolves a
     /// probe's declared `inputs.tools`; merged into the
     /// Lua READ VIEW by `cook.probes.get`. Never persisted, never part of
     /// the canonical value bytes, never folded into any key.
-    tool_paths: BTreeMap<String, BTreeMap<String, String>>,
+    tool_paths: BTreeMap<LocalProbeKey, BTreeMap<String, String>>,
 }
 
 impl ProbeValueStore {
@@ -105,36 +107,36 @@ impl ProbeValueStore {
         self.inner.lock().unwrap().dir = Some(dir);
     }
 
-    pub fn insert(&self, key: &str, bytes: Vec<u8>) {
-        self.inner.lock().unwrap().map.insert(key.to_string(), bytes);
+    pub fn insert(&self, key: &LocalProbeKey, bytes: Vec<u8>) {
+        self.inner.lock().unwrap().map.insert(key.clone(), bytes);
     }
 
     /// CS-0157: record the freshly-resolved paths of a probe's declared
     /// tools for this run. Read-view metadata only (see `Inner::tool_paths`).
-    pub fn set_tool_paths(&self, key: &str, paths: BTreeMap<String, String>) {
+    pub fn set_tool_paths(&self, key: &LocalProbeKey, paths: BTreeMap<String, String>) {
         self.inner
             .lock()
             .unwrap()
             .tool_paths
-            .insert(key.to_string(), paths);
+            .insert(key.clone(), paths);
     }
 
     /// The per-run tool-path metadata recorded for `key`, if any.
-    pub fn tool_paths(&self, key: &str) -> Option<BTreeMap<String, String>> {
+    pub fn tool_paths(&self, key: &LocalProbeKey) -> Option<BTreeMap<String, String>> {
         self.inner.lock().unwrap().tool_paths.get(key).cloned()
     }
 
     /// Map lookup, then the file `materialize_value` writes (caching the
     /// file bytes on success). The filename comes from the one function
     /// the writer above calls, so the two ends cannot spell it differently.
-    pub fn get(&self, key: &str) -> Option<Vec<u8>> {
+    pub fn get(&self, key: &LocalProbeKey) -> Option<Vec<u8>> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(b) = inner.map.get(key) {
             return Some(b.clone());
         }
         let dir = inner.dir.clone()?;
         let bytes = read_value(&dir, key)?;
-        inner.map.insert(key.to_string(), bytes.clone());
+        inner.map.insert(key.clone(), bytes.clone());
         Some(bytes)
     }
 
@@ -148,7 +150,7 @@ impl ProbeValueStore {
     /// A method rather than a free function taking a store: the only thing
     /// it reads is this store's `tool_paths`, and the two always travelled
     /// together at every call site.
-    pub fn read_view(&self, key: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
+    pub fn read_view(&self, key: &LocalProbeKey, bytes: &[u8]) -> Result<serde_json::Value, String> {
         let mut value = cook_contracts::probe::value::decode_json(bytes)?;
         if let Some(paths) = self.tool_paths(key) {
             cook_contracts::probe::value::merge_tool_paths(&mut value, &paths);

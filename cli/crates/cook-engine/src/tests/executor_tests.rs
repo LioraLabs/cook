@@ -1,4 +1,5 @@
 use super::*;
+use cook_contracts::probe_key::LocalProbeKey;
 use crate::Stream;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -29,9 +30,9 @@ fn build_determinant_manifest_captures_resolved_determinants() {
     let mut consulted = BTreeMap::new();
     consulted.insert("CC".to_string(), "clang".to_string());
     let mut seal_keys = BTreeSet::new();
-    seal_keys.insert("host".to_string());
+    seal_keys.insert(LocalProbeKey::new("host"));
     let store = cook_probe::store::ProbeValueStore::new();
-    store.insert("host", b"\"x86_64-linux\"".to_vec());
+    store.insert(&LocalProbeKey::new("host"), b"\"x86_64-linux\"".to_vec());
 
     let m = build_determinant_manifest(
         CACHE_VERSION,
@@ -1448,7 +1449,7 @@ fn test_iteration_item_propagates() {
 
 fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
     cook_contracts::ProbeUnit {
-        key: key.to_string(),
+        key: LocalProbeKey::new(key),
         produce_source: produce.to_string(),
         produce_line: 1,
         inputs: cook_contracts::ProbeInputs::default(),
@@ -1459,7 +1460,7 @@ fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
     WorkNode {
         process_env_vars: std::collections::BTreeMap::new(),
         payload: Some(WorkPayload::Probe {
-            key: key.to_string(),
+            key: LocalProbeKey::new(key),
             produce: produce.to_string(),
             line: 1,
         }),

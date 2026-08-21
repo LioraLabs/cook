@@ -44,6 +44,7 @@ pub use command_failure::CommandFailure;
 pub use output::{OutputChunk, OutputStream};
 pub use probe::value as probe_value;
 pub use probe::{ProbeInputs, ProbeUnit};
+pub use probe_key::{LocalProbeKey, QualifiedProbeKey};
 pub use recipe::RecipeUnits;
 pub use registration::{REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 pub use step::StepKind;

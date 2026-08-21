@@ -1,9 +1,10 @@
 use super::*;
+use cook_contracts::LocalProbeKey;
 use std::path::PathBuf;
 
 fn probe(inputs: cook_contracts::ProbeInputs) -> ProbeUnit {
     ProbeUnit {
-        key: "cc:x".into(),
+        key: LocalProbeKey::new("cc:x"),
         produce_source: "return 1".into(),
         produce_line: 1,
         inputs,

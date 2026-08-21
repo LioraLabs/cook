@@ -1,6 +1,10 @@
 use super::*;
 use crate::store::ProbeValueStore;
 
+fn key(s: &str) -> cook_contracts::LocalProbeKey {
+    cook_contracts::LocalProbeKey::new(s)
+}
+
 // ── COOK-361: agreement guard against re-forking the substitution paths ──
 //
 // Every probe-substitution position shares `cook_contracts::sigil::subst`
@@ -23,7 +27,7 @@ fn store_backed_substitution_agrees_with_the_law() {
         "version": 3.0,
     });
     let store = ProbeValueStore::new();
-    store.insert("cc:zlib", encode_canonical_json(&value));
+    store.insert(&key("cc:zlib"), encode_canonical_json(&value));
 
     for ident in ["cc:zlib.name", "cc:zlib.cflags[2]", "cc:zlib.version"] {
         let via_store = resolve_probe_sigils(&store, &format!("echo $<{ident}>"))
@@ -36,9 +40,9 @@ fn store_backed_substitution_agrees_with_the_law() {
     // The read view too: a tool-path annotation merged by the store side
     // must render exactly what the law renders over the merged value.
     let tools = serde_json::json!({"gcc": {"hash": "ab12"}});
-    store.insert("cc:tc", encode_canonical_json(&tools));
+    store.insert(&key("cc:tc"), encode_canonical_json(&tools));
     store.set_tool_paths(
-        "cc:tc",
+        &key("cc:tc"),
         std::collections::BTreeMap::from([("gcc".to_string(), "/usr/bin/gcc".to_string())]),
     );
     let via_store =
@@ -94,7 +98,7 @@ fn cs0240_bare_materialised_key_substitutes() {
     // COOK-491
     use cook_contracts::probe_value::encode_canonical_json;
     let store = ProbeValueStore::new();
-    store.insert("keyed_obs", encode_canonical_json(&serde_json::json!("hello")));
+    store.insert(&key("keyed_obs"), encode_canonical_json(&serde_json::json!("hello")));
     assert_eq!(
         resolve_probe_sigils(&store, "echo $<keyed_obs>").expect("substitutes"),
         "echo hello"
@@ -107,7 +111,7 @@ fn cs0240_bare_materialised_key_takes_a_field_path() {
     use cook_contracts::probe_value::encode_canonical_json;
     let store = ProbeValueStore::new();
     store.insert(
-        "toolchain",
+        &key("toolchain"),
         encode_canonical_json(&serde_json::json!({"ver": "14.2"})),
     );
     assert_eq!(

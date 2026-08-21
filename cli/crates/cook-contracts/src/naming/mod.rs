@@ -85,6 +85,16 @@ pub fn import_prefix(qualified: &str) -> &str {
     }
 }
 
+/// Join an import prefix onto a Cookfile-local name. The root prefix is empty,
+/// so root names stay unqualified.
+pub fn qualified_name(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}.{name}")
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/naming_tests.rs"]
 mod tests;

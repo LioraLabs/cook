@@ -42,12 +42,89 @@
 //! and only the second needs `.` — `python3.11` is a real tool name.
 //! [`is_tool_name`] keeps the dot.
 
+use std::borrow::Borrow;
+use std::fmt;
+
 /// True when `c` may start a `PROBE_SEG` or a `TOOL_NAME`.
 // The start character is one class shared with `BARE_IDENTIFIER` and
 // `TOOL_NAME`, so it is asked for rather than respelled -- same-crate
 // duplication is invisible to the constitution gate by design, and COOK-421
 // unified the CONTINUE class while leaving this one forked two modules away.
 use crate::naming::is_bare_name_start as is_head;
+
+/// A Cookfile-local probe key.
+///
+/// Minted by one Cookfile's register-time declaration keyset: `probe`, `files`,
+/// `tools`, `cook.probe(...)`, and the local `seal` sets that name those
+/// declarations. The `.cook/probes/<key>.json` record files deliberately stay
+/// in this local namespace; COOK-535 tracks the cross-member collision work.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct LocalProbeKey(String);
+
+impl LocalProbeKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for LocalProbeKey {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for LocalProbeKey {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for LocalProbeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A workspace-qualified probe key.
+///
+/// Minted only when per-Cookfile registration is merged into a workspace view.
+/// `RegisteredWorkspace.probes` and `resolved_probe_keys` use this identity so
+/// two members' same-named local probes never collapse. The one minting law is
+/// [`qualified_key`] / [`qualify_for_recipe`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct QualifiedProbeKey(String);
+
+impl QualifiedProbeKey {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for QualifiedProbeKey {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for QualifiedProbeKey {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for QualifiedProbeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// True when `s` is a single valid `PROBE_SEG`.
 pub fn is_segment(s: &str) -> bool {
@@ -124,10 +201,10 @@ pub fn scope_label_error(label: &str) -> Option<String> {
 // Import-qualified keys (§11, COOK-526)
 // ---------------------------------------------------------------------------
 
-use crate::naming::import_prefix;
+use crate::naming::{import_prefix, qualified_name};
 
 /// The inverse of [`import_prefix`]: join an import prefix onto a
-/// Cookfile-local name. An empty prefix (a root Cookfile) leaves the name
+/// Cookfile-local probe key. An empty prefix (a root Cookfile) leaves the key
 /// unqualified, which is what makes `import_prefix(qualified_key(p, k)) == p`
 /// hold in both directions.
 ///
@@ -136,12 +213,8 @@ use crate::naming::import_prefix;
 /// It sits beside the probe-key minting because probe keys are its principal
 /// caller; do not read the module it lives in as narrowing what it may
 /// qualify.
-pub fn qualified_key(prefix: &str, key: &str) -> String {
-    if prefix.is_empty() {
-        key.to_string()
-    } else {
-        format!("{prefix}.{key}")
-    }
+pub fn qualified_key(prefix: &str, key: &LocalProbeKey) -> QualifiedProbeKey {
+    QualifiedProbeKey(qualified_name(prefix, key.as_str()))
 }
 
 /// The workspace identity of a Cookfile-local probe key, named from a recipe
@@ -157,7 +230,7 @@ pub fn qualified_key(prefix: &str, key: &str) -> String {
 /// A caller looking the result up in a map keyed by DECLARING prefix may need
 /// a fallback when the key already arrives qualified against a different
 /// member; that fallback belongs to the caller.
-pub fn qualify_for_recipe(recipe_name: &str, key: &str) -> String {
+pub fn qualify_for_recipe(recipe_name: &str, key: &LocalProbeKey) -> QualifiedProbeKey {
     qualified_key(import_prefix(recipe_name), key)
 }
 

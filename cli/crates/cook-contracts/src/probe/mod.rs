@@ -2,6 +2,8 @@
 
 pub mod value;
 
+use crate::probe_key::LocalProbeKey;
+
 /// Declared inputs for a probe unit.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProbeInputs {
@@ -16,7 +18,7 @@ pub struct ProbeInputs {
 /// A probe unit declared via `cook.probe(key, opts)`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProbeUnit {
-    pub key: String,
+    pub key: LocalProbeKey,
     pub produce_source: String,
     pub produce_line: usize,
     pub inputs: ProbeInputs,

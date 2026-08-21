@@ -1,4 +1,5 @@
 use super::*;
+use cook_contracts::probe_key::LocalProbeKey;
 use cook_contracts::DepKind;
 use std::path::PathBuf;
 
@@ -19,7 +20,7 @@ fn default_env() -> BTreeMap<String, String> {
 
 fn probe(key: &str) -> WorkPayload {
     WorkPayload::Probe {
-        key: key.to_string(),
+        key: LocalProbeKey::new(key),
         produce: "return 1".to_string(),
         line: 0,
     }
@@ -1068,12 +1069,12 @@ fn unreached_probe_is_pruned_from_dag() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
 
     let probe_payload = WorkPayload::Probe {
-        key: "k:unused".to_string(),
+        key: LocalProbeKey::new("k:unused"),
         produce: "return 1".to_string(),
         line: 1,
     };
     let probe_meta = ProbeUnit {
-        key: "k:unused".to_string(),
+        key: LocalProbeKey::new("k:unused"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
@@ -1131,23 +1132,23 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
 
     let probe_a_payload = WorkPayload::Probe {
-        key: "k:a".to_string(),
+        key: LocalProbeKey::new("k:a"),
         produce: "return 1".to_string(),
         line: 1,
     };
     let probe_b_payload = WorkPayload::Probe {
-        key: "k:b".to_string(),
+        key: LocalProbeKey::new("k:b"),
         produce: "return 2".to_string(),
         line: 2,
     };
     let probe_a_meta = ProbeUnit {
-        key: "k:a".to_string(),
+        key: LocalProbeKey::new("k:a"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
     };
     let probe_b_meta = ProbeUnit {
-        key: "k:b".to_string(),
+        key: LocalProbeKey::new("k:b"),
         produce_source: "return 2".to_string(),
         produce_line: 2,
         inputs: ProbeInputs {
@@ -1229,7 +1230,7 @@ fn top_level_probe_materialises_when_consumer_references_it() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_meta = ProbeUnit {
-        key: "cc:has_stdint_h".to_string(),
+        key: LocalProbeKey::new("cc:has_stdint_h"),
         produce_source: "return { ok = true }".to_string(),
         produce_line: 7,
         inputs: ProbeInputs::default(),
@@ -1284,7 +1285,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_meta = ProbeUnit {
-        key: "cc:unused".to_string(),
+        key: LocalProbeKey::new("cc:unused"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
@@ -1325,13 +1326,13 @@ fn top_level_probe_chain_synthesised_transitively() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_a = ProbeUnit {
-        key: "cc:a".into(),
+        key: LocalProbeKey::new("cc:a"),
         produce_source: "return 1".into(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
     };
     let probe_b = ProbeUnit {
-        key: "cc:b".into(),
+        key: LocalProbeKey::new("cc:b"),
         produce_source: "return 2".into(),
         produce_line: 2,
         inputs: ProbeInputs {
@@ -1368,9 +1369,9 @@ fn top_level_probe_chain_synthesised_transitively() {
     let mut b_id = None;
     for i in 0..dag.len() {
         if let Some(WorkPayload::Probe { key, .. }) = &dag.node(i).payload().payload {
-            if key == "cc:a" {
+            if key.as_str() == "cc:a" {
                 a_id = Some(i);
-            } else if key == "cc:b" {
+            } else if key.as_str() == "cc:b" {
                 b_id = Some(i);
             }
         }
@@ -1400,7 +1401,7 @@ fn body_scope_probe_chain_not_pruned() {
     // Body-scope upstream probe (e.g. `cc:linker-search-dirs`).
     let upstream_probe = CapturedUnit {
         payload: WorkPayload::Probe {
-            key: "cc:linker-search-dirs".into(),
+            key: LocalProbeKey::new("cc:linker-search-dirs"),
             produce: "return {}".into(),
             line: 1,
         },
@@ -1418,7 +1419,7 @@ fn body_scope_probe_chain_not_pruned() {
     // upstream body-scope probe.
     let downstream_probe = CapturedUnit {
         payload: WorkPayload::Probe {
-            key: "cc:find:SDL3".into(),
+            key: LocalProbeKey::new("cc:find:SDL3"),
             produce: "return {}".into(),
             line: 2,
         },
@@ -1463,7 +1464,7 @@ fn body_scope_probe_chain_not_pruned() {
     // Both probe nodes must survive; otherwise pruning regressed.
     let probe_keys: BTreeSet<String> = (0..dag.len())
         .filter_map(|i| match &dag.node(i).payload().payload {
-            Some(WorkPayload::Probe { key, .. }) => Some(key.clone()),
+            Some(WorkPayload::Probe { key, .. }) => Some(key.as_str().to_string()),
             _ => None,
         })
         .collect();
@@ -1716,14 +1717,14 @@ fn multi_recipe_wave_prunes_independently() {
 
     fn make_recipe(name: &str, has_consumer: bool) -> RecipeUnits {
         let probe_meta = ProbeUnit {
-            key: "k:p".to_string(),
+            key: LocalProbeKey::new("k:p"),
             produce_source: "return 1".to_string(),
             produce_line: 1,
             inputs: ProbeInputs::default(),
         };
         let mut units = vec![CapturedUnit {
             payload: WorkPayload::Probe {
-                key: "k:p".to_string(),
+                key: LocalProbeKey::new("k:p"),
                 produce: "return 1".to_string(),
                 line: 1,
             },

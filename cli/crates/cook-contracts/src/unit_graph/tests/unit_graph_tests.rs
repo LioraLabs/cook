@@ -10,7 +10,7 @@ fn shell(cmd: &str) -> WorkPayload {
 
 fn probe(key: &str) -> WorkPayload {
     WorkPayload::Probe {
-        key: key.to_string(),
+        key: crate::probe_key::LocalProbeKey::new(key),
         produce: "return 1".to_string(),
         line: 0,
     }
@@ -426,7 +426,7 @@ fn a_unit_declaring_no_output_cannot_be_named_by_after() {
 #[test]
 fn plan_collapses_synth_probe_nodes_shared_across_recipes() {
     let shared_probe = crate::ProbeUnit {
-        key: "shared".to_string(),
+        key: crate::probe_key::LocalProbeKey::new("shared"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: crate::ProbeInputs::default(),
@@ -482,13 +482,13 @@ fn plan_collapses_synth_probe_nodes_shared_across_recipes() {
 #[test]
 fn plan_does_not_collapse_same_named_probes_from_different_members() {
     let probe_a = crate::ProbeUnit {
-        key: "foo".to_string(),
+        key: crate::probe_key::LocalProbeKey::new("foo"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: crate::ProbeInputs::default(),
     };
     let probe_b = crate::ProbeUnit {
-        key: "foo".to_string(),
+        key: crate::probe_key::LocalProbeKey::new("foo"),
         produce_source: "return 2".to_string(),
         produce_line: 1,
         inputs: crate::ProbeInputs::default(),

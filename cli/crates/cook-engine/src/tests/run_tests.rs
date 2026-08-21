@@ -1,4 +1,5 @@
 use super::*;
+use cook_contracts::probe_key::{qualified_key, LocalProbeKey};
 
 /// COOK-526 folded this crate's `split_recipe_name` into the shared law
 /// (`cook_contracts::naming::import_prefix`); both of its call sites wanted
@@ -291,14 +292,14 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
     std::fs::write(member_dir.join("src/a.txt"), b"declaring-member-content").unwrap();
 
     let probe_meta = ProbeUnit {
-        key: "member.srcs".to_string(),
+        key: LocalProbeKey::new("member.srcs"),
         produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string(),
         produce_line: 1,
         inputs: ProbeInputs { files: vec!["src/a.txt".to_string()], ..Default::default() },
     };
 
     let mut probes = BTreeMap::new();
-    probes.insert("member.srcs".to_string(), probe_meta.clone());
+    probes.insert(qualified_key("", &probe_meta.key), probe_meta.clone());
 
     let mut working_dir_by_prefix = BTreeMap::new();
     working_dir_by_prefix.insert(String::new(), root_dir.clone());

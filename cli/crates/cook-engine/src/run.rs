@@ -381,7 +381,8 @@ where
     //    `CacheMeta` like every other unit's (CS-0186), and the engine expands
     //    any pattern among them when the unit is ready — impossible upfront,
     //    before the dependency that writes them has run.
-    let probe_units_by_key: &BTreeMap<String, cook_contracts::ProbeUnit> =
+    let probe_units_by_key:
+        &BTreeMap<cook_contracts::probe_key::QualifiedProbeKey, cook_contracts::ProbeUnit> =
         &registered_workspace.probes;
 
     // COOK-526: the third element is whether the register pre-pass already
@@ -406,26 +407,16 @@ where
                 // Lua.
                 //
                 // COOK-526: the derivation is the shared law
-                // (`probe_key::qualify_for_recipe`), the same one
-                // `unit_graph::plan` collapses probe nodes on — the two MUST
-                // agree, or the pre-pass channel below would answer for a key
-                // the planner named differently. The `.or_else` fallback is
-                // NOT part of that law and deliberately stays here: it is this
-                // site's lookup policy, reaching a cross-member probe whose
-                // payload key already arrives fully qualified against its OWN
-                // declaring prefix rather than the consumer's. `plan` needs no
-                // such fallback because it is deciding an identity, not
-                // resolving a name against a map.
+                // (`probe_key::qualify_for_recipe`), and the local vs
+                // qualified key types now enforce that boundary structurally.
                 let qualified =
                     cook_contracts::probe_key::qualify_for_recipe(&work_node.recipe_name, key);
                 // COOK-510: the base for hashing this probe's `files` paths
                 // is derived from the MATCHED key's own prefix — never from
                 // `work_node`, which is the CONSUMER — so it agrees with the
                 // register pre-pass's own base for the same probe.
-                let (matched_key, pu) = probe_units_by_key
-                    .get_key_value(&qualified)
-                    .or_else(|| probe_units_by_key.get_key_value(key))?;
-                let prefix = cook_contracts::naming::import_prefix(matched_key);
+                let (matched_key, pu) = probe_units_by_key.get_key_value(&qualified)?;
+                let prefix = cook_contracts::naming::import_prefix(matched_key.as_str());
                 let declared_dir = registered_workspace
                     .working_dir_by_prefix
                     .get(prefix)

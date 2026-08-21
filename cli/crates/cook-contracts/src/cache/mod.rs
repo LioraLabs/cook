@@ -148,7 +148,7 @@ pub struct CacheMeta {
     pub env_contribution: u64,
     pub consulted_env: std::collections::BTreeMap<String, String>,
     pub discovered_inputs: Option<DiscoveredInputs>,
-    pub seal_keys: std::collections::BTreeSet<String>,
+    pub seal_keys: std::collections::BTreeSet<crate::probe_key::LocalProbeKey>,
     pub sharing: Sharing,
     pub record: bool,
 }

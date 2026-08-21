@@ -215,7 +215,12 @@ fn every_payload_reports_its_line() {
         2
     );
     assert_eq!(
-        WorkPayload::Probe { key: "k".into(), produce: "return 1".into(), line: 3 }.line(),
+        WorkPayload::Probe {
+            key: LocalProbeKey::new("k"),
+            produce: "return 1".into(),
+            line: 3,
+        }
+        .line(),
         3
     );
     assert_eq!(
@@ -332,8 +337,8 @@ fn cache_meta_default_discovered_inputs_is_none() {
 #[test]
 fn cache_meta_carries_seal_keys() {
     let mut seal = std::collections::BTreeSet::new();
-    seal.insert("host".to_string());
-    seal.insert("cc:toolchain".to_string());
+    seal.insert(LocalProbeKey::new("host"));
+    seal.insert(LocalProbeKey::new("cc:toolchain"));
     let meta = CacheMeta {
         recipe_name: "build".into(),
         project_id: String::new(),
@@ -505,7 +510,7 @@ fn probe_inputs_default_is_empty() {
 #[test]
 fn probe_unit_round_trips_through_serde() {
     let p = ProbeUnit {
-        key: "cc:zlib".into(),
+        key: LocalProbeKey::new("cc:zlib"),
         produce_source: "return run_pkg_config(\"zlib\")".into(),
         produce_line: 42,
         inputs: ProbeInputs {
@@ -516,20 +521,20 @@ fn probe_unit_round_trips_through_serde() {
     };
     let s = serde_json::to_string(&p).unwrap();
     let r: ProbeUnit = serde_json::from_str(&s).unwrap();
-    assert_eq!(r.key, "cc:zlib");
+    assert_eq!(r.key.as_str(), "cc:zlib");
     assert_eq!(r.inputs.requires, vec!["cc:compiler"]);
 }
 
 #[test]
 fn work_payload_probe_variant_constructs() {
     let p = WorkPayload::Probe {
-        key: "cc:zlib".into(),
+        key: LocalProbeKey::new("cc:zlib"),
         produce: "return 42".into(),
         line: 1,
     };
     match &p {
         WorkPayload::Probe { key, produce, line } => {
-            assert_eq!(key, "cc:zlib");
+            assert_eq!(key.as_str(), "cc:zlib");
             assert_eq!(produce, "return 42");
             assert_eq!(*line, 1);
         }

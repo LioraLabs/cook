@@ -1,4 +1,5 @@
 use super::*;
+use cook_contracts::probe_key::LocalProbeKey;
 use std::fs;
 use tempfile::TempDir;
 
@@ -652,7 +653,7 @@ fn a_failing_cook_sh_outside_a_cookfile_chunk_reports_no_line() {
         process_env_vars: HashMap::new(),
         id: 0,
         payload: WorkPayload::Probe {
-            key: "t:fails".to_string(),
+            key: LocalProbeKey::new("t:fails"),
             produce: r#"return cook.sh("false")"#.to_string(),
             line: 4,
         },
@@ -1018,7 +1019,7 @@ fn cook_probes_get_returns_nil_for_stored_null_without_error() {
 
     {
         let bytes = cook_contracts::probe_value::encode_canonical_json(&serde_json::Value::Null);
-        pool.probe_value_store().insert("cc:absent_tool", bytes);
+        pool.probe_value_store().insert(&LocalProbeKey::new("cc:absent_tool"), bytes);
     }
 
     let code = r#"
@@ -1065,7 +1066,7 @@ fn cook_probes_get_reads_from_probe_value_store() {
         let bytes = cook_contracts::probe_value::encode_canonical_json(
             &serde_json::json!({"found": true, "version": "1.2.3"}),
         );
-        pool.probe_value_store().insert("cc:zlib", bytes);
+        pool.probe_value_store().insert(&LocalProbeKey::new("cc:zlib"), bytes);
     }
 
     let code = r#"
@@ -1146,7 +1147,7 @@ fn cook_probes_scope_get_reads_from_probe_value_store() {
     {
         let bytes =
             cook_contracts::probe_value::encode_canonical_json(&serde_json::json!("gcc-14"));
-        pool.probe_value_store().insert("cc:compiler", bytes);
+        pool.probe_value_store().insert(&LocalProbeKey::new("cc:compiler"), bytes);
         }
 
         let code = r#"
@@ -1311,7 +1312,7 @@ fn probe_unit_produces_canonical_json_bytes() {
         process_env_vars: HashMap::new(),
         id: 0,
         payload: WorkPayload::Probe {
-            key: "test:simple".into(),
+            key: LocalProbeKey::new("test:simple"),
             produce: r#"return { found = true, paths = {"a", "b"} }"#.into(),
             line: 1,
         },
@@ -1328,7 +1329,7 @@ fn probe_unit_produces_canonical_json_bytes() {
     assert!(result.probe_output.is_some(), "probe_output must be Some");
 
     let probe_output = result.probe_output.unwrap();
-    assert_eq!(probe_output.key, "test:simple");
+    assert_eq!(probe_output.key.as_str(), "test:simple");
     assert!(!probe_output.bytes.is_empty(), "probe bytes must be non-empty");
 
     let decoded = cook_contracts::probe_value::decode_json(&probe_output.bytes)
@@ -1358,7 +1359,7 @@ fn probe_produce_can_call_codecs_on_worker_vm() {
         process_env_vars: HashMap::new(),
         id: 0,
         payload: WorkPayload::Probe {
-            key: "test:codecs".into(),
+            key: LocalProbeKey::new("test:codecs"),
             produce: r#"
                     local j = cook.json_decode('{"name":"foo","items":[1,2]}')
                     local y = cook.yaml_decode("word: hello\n")
@@ -1392,7 +1393,7 @@ fn probe_unit_lua_error_fails_with_key_in_diagnostic() {
         process_env_vars: HashMap::new(),
         id: 0,
         payload: WorkPayload::Probe {
-            key: "test:error".into(),
+            key: LocalProbeKey::new("test:error"),
                 produce: r#"error("intentional probe failure")"#.into(),
             line: 1,
         },
@@ -1424,7 +1425,7 @@ fn probe_unit_non_serialisable_value_fails() {
         process_env_vars: HashMap::new(),
         id: 0,
         payload: WorkPayload::Probe {
-            key: "test:bad_type".into(),
+            key: LocalProbeKey::new("test:bad_type"),
             produce: r#"return function() end"#.into(),
             line: 1,
         },

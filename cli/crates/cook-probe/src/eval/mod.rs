@@ -37,7 +37,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use cook_contracts::ProbeUnit;
+use cook_contracts::{LocalProbeKey, ProbeUnit};
 
 /// The one genuinely phase-specific step: run a `produce` source on this
 /// phase's Lua VM and return its canonical value bytes.
@@ -284,7 +284,7 @@ pub fn lookup(
             cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
-        _ if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), key)
+        _ if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), &probe.key)
             .map(|bytes| (bytes, ValueSource::Prepass)),
         _ => None,
     };
@@ -315,7 +315,7 @@ pub struct Recorded {
 /// `record`'s materialise call is load-bearing and unconditional: COOK-526's
 /// cross-phase single-flight (`lookup`'s `prepass_resolved` path) reads this
 /// exact file back within the same invocation.
-pub fn record(key: &str, ctx: &EvalCtx<'_>, bytes: &[u8]) -> Recorded {
+pub fn record(key: &LocalProbeKey, ctx: &EvalCtx<'_>, bytes: &[u8]) -> Recorded {
     let mut warnings = Vec::new();
 
     // CS-0102/CS-0243: the canonical local copy at `.cook/probes/<key>.json`.
@@ -356,7 +356,7 @@ pub fn evaluate(
         }
     };
 
-    let recorded = record(key, ctx, &bytes);
+    let recorded = record(&probe.key, ctx, &bytes);
 
     Ok(Evaluated {
         bytes,

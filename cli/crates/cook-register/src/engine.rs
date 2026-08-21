@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use cook_contracts::lua_string;
+use cook_contracts::probe_key::LocalProbeKey;
 use cook_contracts::RecipeUnits;
 
 use crate::capture::install_cook_api;
@@ -665,7 +666,7 @@ pub fn register_cookfile(
     // this map); a body-scope probe that doesn't appear here reaches a
     // worker with no declaration behind it, so a synthesised `files`/`tools`
     // producer would be dispatched as Lua and die on its sentinel.
-    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = probe_registry
+    let probes: BTreeMap<LocalProbeKey, cook_contracts::ProbeUnit> = probe_registry
         .borrow()
         .probes
         .iter()
@@ -2108,7 +2109,7 @@ struct ProducingFrame {
 struct ResolverState {
     done: std::collections::BTreeSet<String>,
     in_progress: Vec<String>,
-    resolved: std::collections::BTreeSet<String>,
+    resolved: std::collections::BTreeSet<LocalProbeKey>,
     /// The stack of `produce` bodies running on this VM right now (§22.5.4).
     producing: Vec<ProducingFrame>,
 }
@@ -2211,7 +2212,7 @@ impl RegisterProbeResolver {
     }
 
     /// Every probe key the register phase resolved, in key order.
-    pub fn resolved_keys(&self) -> Vec<String> {
+    pub fn resolved_keys(&self) -> Vec<LocalProbeKey> {
         self.state.borrow().resolved.iter().cloned().collect()
     }
 
@@ -2307,7 +2308,7 @@ impl RegisterProbeResolver {
         self.store.borrow_mut().insert(key.to_string(), jv);
         let mut state = self.state.borrow_mut();
         state.done.insert(key.to_string());
-        state.resolved.insert(key.to_string());
+        state.resolved.insert(LocalProbeKey::new(key));
         Ok(())
     }
 }
@@ -2372,7 +2373,7 @@ fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_j
 /// Runs after the body loop, when `units_by_recipe` carries every recipe's
 /// output paths. Paths are compared in normalised relative form.
 fn check_register_resolved_static_inputs(
-    resolved: &[String],
+    resolved: &[LocalProbeKey],
     probe_registry: &ProbeRegistry,
     units_by_recipe: &BTreeMap<String, RecipeUnits>,
 ) -> Result<(), RegisterError> {
@@ -2398,7 +2399,7 @@ fn check_register_resolved_static_inputs(
         for file in &reg.probe.inputs.files {
             if outputs.contains(&normalise_rel(file)) {
                 return Err(RegisterError::MemberSourceProbeArtifactDep {
-                    key: key.clone(),
+                    key: key.to_string(),
                     path: file.clone(),
                 });
             }
@@ -2954,7 +2955,7 @@ fn warn_var_shadowing(
     // honest if the warning it defers to actually fires. So the probe keyset
     // intersects here beside the recipe set.
     let probe_keys: std::collections::BTreeSet<String> =
-        probes.probes.keys().cloned().collect();
+        probes.probes.keys().map(|k| k.to_string()).collect();
     let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
     for name in recipe_names.intersection(&declared) {
         let key = (name.clone(), name.clone());

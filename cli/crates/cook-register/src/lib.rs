@@ -492,7 +492,8 @@ pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
 pub struct RegisteredCookfile {
     pub names: Vec<RegisteredRecipePub>,
     pub units_by_recipe: std::collections::BTreeMap<String, cook_contracts::RecipeUnits>,
-    pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
+    pub probes:
+        std::collections::BTreeMap<cook_contracts::probe_key::LocalProbeKey, cook_contracts::ProbeUnit>,
     pub final_env: std::collections::BTreeMap<String, String>,
     pub warnings: Vec<String>,
     /// COOK-526: every probe key this Cookfile's register pass actually
@@ -504,7 +505,7 @@ pub struct RegisteredCookfile {
     /// dispatch can recognise "the register pre-pass already produced this
     /// value this invocation" and serve it from `.cook/probes/<key>.json`
     /// instead of running `produce` a second time.
-    pub resolved_probe_keys: Vec<String>,
+    pub resolved_probe_keys: Vec<cook_contracts::probe_key::LocalProbeKey>,
     /// `host.*` reads observed while the config block(s) executed, in
     /// evaluation order (Standard §5.3.2, CS-0163). Recorded for provenance —
     /// a future `cook why` attributes a host-varying config value to the read

@@ -3797,7 +3797,7 @@ fn build_determinant_manifest(
     output_paths: &[String],
     empty_dir_outputs: &[String],
     consulted_env: &std::collections::BTreeMap<String, String>,
-    seal_keys: &std::collections::BTreeSet<String>,
+    seal_keys: &std::collections::BTreeSet<cook_contracts::probe_key::LocalProbeKey>,
     probe_store: &cook_probe::store::ProbeValueStore,
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
