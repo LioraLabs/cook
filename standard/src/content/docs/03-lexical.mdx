@@ -322,7 +322,7 @@ Tests 1–6 and test 12 apply to lines whether or not they are indented. Tests 7
 ```cook
 use "cpp"                 # test 10: UseDecl (column 0)
 config debug              # test 9:  ConfigHeader (column 0)
-    env.CC = "gcc"
+    var.CC = "gcc"
 
 recipe build: lib setup   # test 7:  RecipeHeader (column 0)
     # test 2: Comment

@@ -6,14 +6,14 @@ Two ideas in one small Cookfile.
 
 ```
 config
-    env.MODE = os.getenv("MODE") or "debug"
+    var.MODE = host.env("MODE", "debug")
 
 config release
-    env.MODE = "release"
+    var.MODE = "release"
 ```
 
-Config blocks are Lua. Only `env.*` declarations are visible to `$<...>`
-placeholders — and every env var a step consults is folded into that step's
+Config blocks are Lua. Only `var.*` declarations are visible to `$<...>`
+placeholders — and every variable a step consults is folded into that step's
 cache key. That buys the flow that makes this example worth running:
 
 ```

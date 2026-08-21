@@ -37,10 +37,10 @@ use cpp
 import backend ./services/backend
 
 config
-    env.CC = "gcc"
+    var.CC = "gcc"
 
 config release
-    env.CXXFLAGS = "-O3"
+    var.CXXFLAGS = "-O3"
 
 recipe build
     cook "main" { gcc -o main main.c }
