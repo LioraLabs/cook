@@ -1,0 +1,11 @@
+# The quoted local name is deliberately dotted. Its workspace identity must
+# still retain this member's `one` prefix.
+files "files.shared"
+    "one-input.txt"
+
+recipe build
+    cook.add_unit({
+        outputs = {"out-one.txt"},
+        seal = {"files.shared"},
+        command = "date +%s%N > out-one.txt",
+    })

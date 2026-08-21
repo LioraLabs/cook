@@ -1,0 +1,4 @@
+import one ./one
+import two ./two
+
+recipe all: one.build two.build

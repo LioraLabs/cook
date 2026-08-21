@@ -1,0 +1,11 @@
+# The same local dotted key in a different imported member is a distinct
+# declaration whose files resolve from this member's directory.
+files "files.shared"
+    "two-input.txt"
+
+recipe build
+    cook.add_unit({
+        outputs = {"out-two.txt"},
+        seal = {"files.shared"},
+        command = "date +%s%N > out-two.txt",
+    })

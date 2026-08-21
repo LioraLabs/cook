@@ -151,9 +151,25 @@ mod import_qualification {
             // holds. All three must land on the same string.
             assert_eq!(qualify_for_recipe(recipe, &local).as_str(), expected, "{recipe}/{key}");
             assert_eq!(qualified_key(prefix, &local).as_str(), expected, "{recipe}/{key}");
-            // And the prefix half is recoverable from the joined form, which
-            // is what `run.rs` does to anchor the probe's declaring dir.
+            // Recipe names have no quoted local-key spelling, so the shared
+            // recipe-name parser still recovers their prefix from the join.
             assert_eq!(import_prefix(expected), prefix, "{recipe}/{key}");
         }
+    }
+
+    #[test]
+    fn qualified_value_keeps_its_declaring_prefix_when_the_local_key_has_a_dot() {
+        let local = LocalProbeKey::new("files.shared");
+        let one = qualified_key("one", &local);
+        let two = qualified_key("two", &local);
+
+        assert_ne!(one, two);
+        assert_eq!(one.import_prefix(), "one");
+        assert_eq!(two.import_prefix(), "two");
+
+        let colliding_display = qualified_key("one.files", &LocalProbeKey::new("shared"));
+        assert_eq!(one.as_str(), colliding_display.as_str());
+        assert_ne!(one, colliding_display);
+        assert_eq!(colliding_display.import_prefix(), "one.files");
     }
 }

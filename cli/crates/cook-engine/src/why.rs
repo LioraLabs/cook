@@ -346,7 +346,7 @@ pub fn explain(
         }
         // COOK-510: derive the declaring working dir from the qualified map
         // key, not the local `ProbeUnit.key`.
-        let prefix = cook_contracts::naming::import_prefix(matched_key.as_str());
+        let prefix = matched_key.import_prefix();
         let working_dir = registered_workspace
             .working_dir_by_prefix
             .get(prefix)

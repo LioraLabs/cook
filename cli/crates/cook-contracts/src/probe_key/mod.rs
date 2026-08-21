@@ -98,24 +98,37 @@ impl fmt::Display for LocalProbeKey {
 /// `RegisteredWorkspace.probes` and `resolved_probe_keys` use this identity so
 /// two members' same-named local probes never collapse. The one minting law is
 /// [`qualified_key`] / [`qualify_for_recipe`].
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
-#[serde(transparent)]
-pub struct QualifiedProbeKey(String);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QualifiedProbeKey {
+    spelling: String,
+    import_prefix: String,
+}
 
 impl QualifiedProbeKey {
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.spelling
+    }
+
+    /// The declaring Cookfile's workspace prefix, carried by the identity
+    /// rather than recovered by splitting its display spelling.
+    pub fn import_prefix(&self) -> &str {
+        &self.import_prefix
+    }
+}
+
+// The display spelling remains the existing wire representation. The prefix
+// is identity metadata, not a record-schema change.
+impl serde::Serialize for QualifiedProbeKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 
 impl AsRef<str> for QualifiedProbeKey {
     fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl Borrow<str> for QualifiedProbeKey {
-    fn borrow(&self) -> &str {
         self.as_str()
     }
 }
@@ -203,10 +216,10 @@ pub fn scope_label_error(label: &str) -> Option<String> {
 
 use crate::naming::{import_prefix, qualified_name};
 
-/// The inverse of [`import_prefix`]: join an import prefix onto a
-/// Cookfile-local probe key. An empty prefix (a root Cookfile) leaves the key
-/// unqualified, which is what makes `import_prefix(qualified_key(p, k)) == p`
-/// hold in both directions.
+/// Join an import prefix onto a Cookfile-local probe key. An empty prefix (a
+/// root Cookfile) leaves the display spelling unqualified. The returned value
+/// retains `prefix` separately, because a quoted local key may itself contain
+/// `.`.
 ///
 /// The §11 join itself is not probe-specific — `cook-execute`'s
 /// `resolve_worker_dep_output` qualifies a recipe dep-output name through it.
@@ -214,7 +227,10 @@ use crate::naming::{import_prefix, qualified_name};
 /// caller; do not read the module it lives in as narrowing what it may
 /// qualify.
 pub fn qualified_key(prefix: &str, key: &LocalProbeKey) -> QualifiedProbeKey {
-    QualifiedProbeKey(qualified_name(prefix, key.as_str()))
+    QualifiedProbeKey {
+        spelling: qualified_name(prefix, key.as_str()),
+        import_prefix: prefix.to_string(),
+    }
 }
 
 /// The workspace identity of a Cookfile-local probe key, named from a recipe

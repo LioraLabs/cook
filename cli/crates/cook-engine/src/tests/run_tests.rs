@@ -243,34 +243,10 @@ fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
 // and is pinned beside it. Neither is an engine concern any more: the engine's
 // cache path no longer takes the DAG as an argument at all.
 
-/// COOK-510: a `files` declaration hashes against its OWN declaring member's
-/// working directory, never the consuming recipe's — proven cross-member.
-///
-/// No current Cookfile surface reaches this today: `seal`/`cook.probes.get`/
-/// the sigil cascade all resolve a probe key against the current Cookfile's
-/// own declarations only (CS-0240), and `dag_builder`'s `NodeOrigin::SynthProbe`
-/// synthesises a probe node only from the CONSUMING recipe's own
-/// `RecipeUnits.probes` (`register_cookfile` stamps every recipe in a
-/// Cookfile with that Cookfile's whole probe list — see
-/// `cli/crates/cook-register/src/engine.rs`, session_state.probes drained
-/// into every `RecipeUnits`). So the mismatch this test pins cannot yet be
-/// triggered by writing a Cookfile; this hand-builds the `RegisteredWorkspace`
-/// `run()`'s own doc comment says test helpers are entitled to (`registered
-/// results ... test helpers are fine`), which is the only way to exercise the
-/// two-prefix shape ahead of the surface work that will reach it (this
-/// milestone's later tickets touch the same seam — see COOK-526).
-///
-/// Setup: a probe declared under prefix `"member"` (its OWN directory holds
-/// the matched file); a consuming recipe registered under the ROOT prefix
-/// `""` (a DIFFERENT directory, containing no such file). Before COOK-510,
-/// `run.rs` handed the executor `work_node.working_dir` — the CONSUMER's
-/// directory — so the file join missed, the hash fell to all-zero, and the
-/// published manifest recorded `"<missing>"` forever, regardless of the
-/// declaring member's real content. After COOK-510, the base is derived from
-/// the probe's OWN qualified key, so it hashes against `member_dir` and
-/// produces the real content hash.
+/// COOK-510: `member.consumer`'s local `srcs` declaration resolves
+/// `src/a.txt` from `member_dir` and publishes that file's SHA-256 value.
 #[test]
-fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
+fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit};
 
     let project_root = tempfile::tempdir().expect("project_root tempdir");
@@ -292,27 +268,27 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
     std::fs::write(member_dir.join("src/a.txt"), b"declaring-member-content").unwrap();
 
     let probe_meta = ProbeUnit {
-        key: LocalProbeKey::new("member.srcs"),
+        key: LocalProbeKey::new("srcs"),
         produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string(),
         produce_line: 1,
         inputs: ProbeInputs { files: vec!["src/a.txt".to_string()], ..Default::default() },
     };
 
     let mut probes = BTreeMap::new();
-    probes.insert(qualified_key("", &probe_meta.key), probe_meta.clone());
+    probes.insert(qualified_key("member", &probe_meta.key), probe_meta.clone());
 
     let mut working_dir_by_prefix = BTreeMap::new();
     working_dir_by_prefix.insert(String::new(), root_dir.clone());
     working_dir_by_prefix.insert("member".to_string(), member_dir.clone());
 
     let consumer = RecipeUnits {
-        recipe_name: "consumer".to_string(),
+        recipe_name: "member.consumer".to_string(),
         deps: vec![],
         units: vec![CapturedUnit {
             payload: WorkPayload::Shell { cmd: "true".to_string(), line: 1 },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            probes: vec!["member.srcs".to_string()],
+            probes: vec!["srcs".to_string()],
             unit_env_vars: Default::default(),
             member: None,
             output_paths: Vec::new(),
@@ -331,7 +307,7 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
     };
 
     let mut units_by_recipe = BTreeMap::new();
-    units_by_recipe.insert("consumer".to_string(), consumer);
+    units_by_recipe.insert("member.consumer".to_string(), consumer);
 
     let ws = RegisteredWorkspace {
         warnings: Vec::new(),
@@ -345,8 +321,8 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
     };
 
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    edges.insert("consumer".to_string(), vec![]);
-    let reachable: BTreeSet<String> = ["consumer"].iter().map(|s| s.to_string()).collect();
+    edges.insert("member.consumer".to_string(), vec![]);
+    let reachable: BTreeSet<String> = ["member.consumer"].iter().map(|s| s.to_string()).collect();
 
     let result = run(
         project_root.path(),
@@ -363,7 +339,7 @@ fn cook510_a_cross_member_files_probe_hashes_against_its_declaring_member() {
     assert!(result.is_ok(), "run() failed: {:?}", result.err());
 
     let manifest_path = cook_contracts::layout::probes_dir(project_root.path())
-        .join(cook_contracts::probe_value::probe_file_name("member.srcs"));
+        .join(cook_contracts::probe_value::probe_file_name("srcs"));
     let bytes = std::fs::read(&manifest_path)
         .unwrap_or_else(|e| panic!("expected {}: {e}", manifest_path.display()));
     let value = cook_contracts::probe_value::decode_json(&bytes).unwrap();

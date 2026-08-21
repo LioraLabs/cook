@@ -416,7 +416,7 @@ where
                 // `work_node`, which is the CONSUMER — so it agrees with the
                 // register pre-pass's own base for the same probe.
                 let (matched_key, pu) = probe_units_by_key.get_key_value(&qualified)?;
-                let prefix = cook_contracts::naming::import_prefix(matched_key.as_str());
+                let prefix = matched_key.import_prefix();
                 let declared_dir = registered_workspace
                     .working_dir_by_prefix
                     .get(prefix)
