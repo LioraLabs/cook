@@ -837,25 +837,14 @@ fn build_registered_workspace(
     // recipe set before the register pass runs bodies.
     pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
-    // COOK-359: the register pass evaluates probes — a `gather <probe>`
-    // driver's value decides the DAG's shape, so it must be known before any
-    // recipe body runs. That evaluation needs a backend for the same reason the
-    // execute phase does: §22.5.8's cache-hit clause names no consumption path,
-    // so a probe costs the same whether a unit seals it or a recipe fans out
-    // over it.
+    // The register pass evaluates probes whose values decide the DAG's shape,
+    // such as a `gather <probe>` driver. Probe values are never cached: a
+    // reached probe observes once per invocation, and later phases reuse that
+    // invocation's result. `cook why` follows the same registration path, then
+    // resolves any declaration-observable probe fresh at query time (CS-0245).
     //
-    // This was `None`. Not "no cache configured" — nobody had wired it, and
-    // every caller in the tree passed the literal, so the register-side GET/PUT
-    // block had never run against a backend in any invocation. An
-    // `gather <probe>` driver re-produced on every single build while the
-    // identical probe consumed through a seal was served from cache.
-    //
-    // It goes in the probe slot ONLY. The `cache_ctx` argument below stays
-    // CS-0196 (COOK-364): ONE context, wired. Key-side project identity is
-    // configured-or-empty (never the checkout directory's name), so
-    // installing it as registration app_data no longer moves any
-    // unconfigured key; registered units finally carry the configured
-    // project segment and the [cache] ignore_env denylist.
+    // The cache context remains CS-0196 (COOK-364): registered units carry the
+    // configured-or-empty project segment and the [cache] ignore_env denylist.
     let cache_ctx =
         cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
             .map_err(engine_error_to_cook_error)?;
