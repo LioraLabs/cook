@@ -410,22 +410,11 @@ pub fn explain(
         let Some(meta) = &node.cache_meta else {
             continue;
         };
-        // A `ProbeValueStore` scoped to THIS unit's own Cookfile's
-        // local-key namespace, never shared across units. Every reader of
-        // this store looks a key up in the Cookfile-LOCAL spelling
-        // (`seal::seal_contribution` / `seal::resolve_sealed_probes` over
-        // `meta.seal_keys`, `seal_deltas_for` likewise, and the disk fallback
-        // reading `.cook/probes/<local-key>.json`), and a local-key namespace
-        // is only well defined inside one Cookfile — two members can each
-        // declare `srcs`, and only one store per unit keeps them from
-        // colliding. A per-unit store is that fact made explicit, folding in
-        // this unit's slice of `fresh_values` (itself keyed by the qualified
-        // identity) under the local spelling `meta.seal_keys` carries.
-        //
-        // Cost, worth one line: the read-through disk cache built into
-        // `ProbeValueStore::get` no longer spans units, so a record file may
-        // be read once per sealing unit rather than once per report. `cook
-        // why` is a one-shot diagnostic over tiny files.
+        // A `ProbeValueStore` view scoped to this unit's recipe. Readers keep
+        // using the local keys in `meta.seal_keys`; the view qualifies each
+        // lookup for the shared store and `.cook/probes/<qualified-key>.json`
+        // record. Thus imported recipes may share a local key without either
+        // their fresh values or prior-invocation records colliding (CS-0250).
         let probe_store = cook_probe::store::ProbeValueStore::new().for_recipe(&node.recipe_name);
         if probes_dir_exists {
             probe_store.attach_dir(probes_dir.to_path_buf());

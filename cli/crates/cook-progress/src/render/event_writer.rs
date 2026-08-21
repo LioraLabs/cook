@@ -354,9 +354,9 @@ impl EventWriter {
     }
 
     /// Print the grouped `Resolved <module> toolchain` line if any of the
-    /// recipe's probes actually ran; a probe set where none did — every one
-    /// served from this invocation's own register pre-pass — stays silent.
-    /// Returns how many probes ran (consumed either way).
+    /// recipe's probes completed this invocation, including values served
+    /// from its own register pre-pass. Returns how many completed (consumed
+    /// either way).
     fn flush_probes<W: Write>(&mut self, out: &mut W, state: &BuildState, recipe: RecipeId) -> io::Result<usize> {
         let Some(buf) = self.buffers.get_mut(&recipe) else { return Ok(0) };
         let (ran, cached) = (buf.probes_ran, buf.probes_cached);
