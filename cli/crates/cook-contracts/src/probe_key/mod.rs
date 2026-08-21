@@ -56,8 +56,8 @@ use crate::naming::is_bare_name_start as is_head;
 ///
 /// Minted by one Cookfile's register-time declaration keyset: `probe`, `files`,
 /// `tools`, `cook.probe(...)`, and the local `seal` sets that name those
-/// declarations. The `.cook/probes/<key>.json` record files deliberately stay
-/// in this local namespace; COOK-535 tracks the cross-member collision work.
+/// declarations. Record files and shared per-run stores translate this local
+/// spelling to [`QualifiedProbeKey`] at their workspace boundary (CS-0250).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]

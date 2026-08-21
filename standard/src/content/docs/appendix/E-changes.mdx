@@ -3078,6 +3078,16 @@ One negative is added, `cs0187-retired-file-prefix`, and it pins the diagnostic 
 
 No `CACHE_VERSION` bump. Units that used the surface lose input records, which is a cold miss and a rebuild, never a false hit; the recorded shape is unchanged.
 
+## CS-0250 — probe records use workspace-qualified identity [#changes.cs-0250]
+
+**Date:** 2026-08-21
+**Version:** v0.18
+**Sections affected:** §{cat.probes.exec}, App. E (this entry). Reference implementation: `cli/crates/cook-probe/src/{eval,store}/`, `cli/crates/cook-engine/src/{executor,why}.rs`, `cli/crates/cook-execute/src/pool.rs`.
+
+**Summary.** A probe's canonical local record is now named by its workspace-qualified identity, not its Cookfile-local key. The same qualification scopes the shared per-run value store and every execute, seal, cross-phase, and `cook why` reader. Two imported Cookfiles may therefore declare the same local key without overwriting or reading one another's value. `LocalProbeKey` remains the Cookfile surface identity and `QualifiedProbeKey` remains the workspace identity; neither is restamped or inferred from display text.
+
+**Conformance.** Surface fixture `47-qualified-probe-records` imports two real Cookfiles that each register `probe shared`, builds both consumers, requires distinct qualified record files and values, and runs `cook why` over the same workspace. No auto-keying, fingerprint, cache schema, or wire-format change; cache record schema remains 11.
+
 ## CS-0249 — a dotted quoted probe key keeps its declaring import prefix [#changes.cs-0249]
 
 **Date:** 2026-08-21

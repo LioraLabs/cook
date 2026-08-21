@@ -331,13 +331,14 @@ fn run_interactive_on_main(
     working_dir: &std::path::Path,
     env_vars: &BTreeMap<String, String>,
     probe_store: &cook_probe::store::ProbeValueStore,
+    recipe_name: &str,
 ) -> Result<(), String> {
     // CS-0193: substitute `$<key:field>` probe references before the spawn,
     // through the same CS-0192 renderer the worker pool uses — a probe ref
     // means the same thing in a chore step as in a cook body, including the
     // composite-value diagnostics. The register-phase scan (unit_api) gave
     // the unit its probe edges, so the values are materialised by now.
-    let cmd = &cook_probe::sigil::resolve_probe_sigils(probe_store, cmd)?;
+    let cmd = &cook_probe::sigil::resolve_probe_sigils(&probe_store.for_recipe(recipe_name), cmd)?;
     // COOK-306: an executed command may write anywhere in the tree.
     cook_cache::statmemo::disarm();
     // `Inherited`, and only here: an interactive command owns the controlling
@@ -995,6 +996,7 @@ pub fn execute_dag(
         cache_ctx: &CacheContext,
         probe_store: &cook_probe::store::ProbeValueStore,
     ) -> CacheDecision {
+        let probe_store = &probe_store.for_recipe(&work_node.recipe_name);
         use cook_contracts::cache::record::{cacheability, Cacheability};
         match cacheability(work_node.cache_meta.as_ref()) {
             // A chore body or interactive unit is never cached (§7.4); there
@@ -1587,7 +1589,7 @@ pub fn execute_dag(
                                                     seal_contribution:
                                                         crate::seal::seal_contribution(
                                                             &meta.seal_keys,
-                                                            &pool.probe_value_store(),
+                                                            &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                                                         ),
                                                     sorted_input_content_hashes: &hashes,
                                                 });
@@ -1800,6 +1802,7 @@ pub fn execute_dag(
                         // consuming recipe's) — see the doc comment on
                         // `probe_units_by_node`.
                         project_root: Some(cache_ctx.project_root.as_path()),
+                        declaring_prefix: cook_contracts::naming::import_prefix(&work_node.recipe_name),
                     };
                     match cook_probe::eval::lookup(
                         probe_unit,
@@ -1818,7 +1821,7 @@ pub fn execute_dag(
                             // carry it — a value already in hand must not be
                             // the source of a location.
                             if !found.tool_paths.is_empty() {
-                                pool.probe_value_store()
+                                pool.probe_value_store().for_recipe(&work_node.recipe_name)
                                     .set_tool_paths(&probe_key, found.tool_paths.clone());
                             }
 
@@ -1837,7 +1840,7 @@ pub fn execute_dag(
                                 for w in &recorded.warnings {
                                     tracing::warn!("{w}");
                                 }
-                                pool.probe_value_store().insert(&probe_key, bytes.clone());
+                                pool.probe_value_store().for_recipe(&work_node.recipe_name).insert(&probe_key, bytes.clone());
                                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                                 if matches!(source, cook_probe::eval::ValueSource::Prepass) {
                                     tracing::debug!(
@@ -2041,7 +2044,7 @@ pub fn execute_dag(
                                         env_contribution: meta.env_contribution,
                                         seal_contribution: crate::seal::seal_contribution(
                                             &meta.seal_keys,
-                                            &pool.probe_value_store(),
+                                            &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                                         ),
                                         sorted_input_content_hashes: &hashes,
                                     });
@@ -2327,6 +2330,7 @@ pub fn execute_dag(
                                     &work_node.working_dir,
                                     &work_node.process_env_vars,
                                     &pool.probe_value_store(),
+                                    &work_node.recipe_name,
                                 ),
                                 Err(e) => Err(e),
                             }
@@ -2601,6 +2605,7 @@ pub fn execute_dag(
                             &work_node.working_dir,
                             &work_node.process_env_vars,
                             &pool.probe_value_store(),
+                            &work_node.recipe_name,
                         ),
                         Err(e) => Err(e),
                     };
@@ -2649,7 +2654,7 @@ pub fn execute_dag(
                                     &working_dir,
                                     interactive_elapsed,
                                     &[],
-                                    &pool.probe_value_store(),
+                                    &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                                     &cache_ctx,
                                     published,
                                     &[],
@@ -2741,11 +2746,14 @@ pub fn execute_dag(
         if let Some(ref probe_out) = result.probe_output {
             if result.success {
                 let working_dir = dag.node(result.id).payload().working_dir.clone();
+                let recipe_name = &dag.node(result.id).payload().recipe_name;
+                let qualified_key = cook_contracts::probe_key::qualify_for_recipe(recipe_name, &probe_out.key);
                 let recorded = cook_probe::eval::record(
                     &probe_out.key,
                     &cook_probe::eval::EvalCtx {
                         working_dir: &working_dir,
                         project_root: Some(cache_ctx.project_root.as_path()),
+                        declaring_prefix: qualified_key.import_prefix(),
                     },
                     &probe_out.bytes,
                 );
@@ -2756,6 +2764,7 @@ pub fn execute_dag(
             // The per-run store is populated whether or not the unit succeeded,
             // matching the pre-existing G3 ordering.
             pool.probe_value_store()
+                .for_recipe(&dag.node(result.id).payload().recipe_name)
                 .insert(&probe_out.key, probe_out.bytes.clone());
         }
 
@@ -2806,7 +2815,7 @@ pub fn execute_dag(
                         &working_dir,
                         result.duration,
                         &result.output_lines,
-                        &pool.probe_value_store(),
+                        &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                         &cache_ctx,
                         published,
                         &result.module_inputs,

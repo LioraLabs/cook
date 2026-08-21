@@ -75,7 +75,7 @@ fn declares_tools(key: &str, tool: &str) -> ProbeUnit {
 /// CS-0243: an evaluation with no project root wired, matching a workspace
 /// that has no resolved cache context.
 fn ctx(wd: &Path) -> EvalCtx<'_> {
-    EvalCtx { working_dir: wd, project_root: None }
+    EvalCtx { working_dir: wd, project_root: None, declaring_prefix: "" }
 }
 
 /// CS-0243: a reached probe always observes. An unchanged declared input

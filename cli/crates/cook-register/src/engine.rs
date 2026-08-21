@@ -328,6 +328,7 @@ pub fn register_cookfile(
         probe_registry.clone(),
         prepass_store.clone(),
         builder.working_dir.clone(),
+        builder.qualified_prefix.clone(),
         cache_ctx.clone(),
         body_slot.clone(),
     ));
@@ -2073,6 +2074,7 @@ pub struct RegisterProbeResolver {
     registry: Rc<RefCell<ProbeRegistry>>,
     store: crate::module_loader::SharedPrepassStore,
     working_dir: PathBuf,
+    qualified_prefix: String,
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
     /// The recipe-body capture slot, emptied for the duration of a `produce`
     /// run. A produce body evaluates author Lua on this VM, and since CS-0219
@@ -2119,6 +2121,7 @@ impl RegisterProbeResolver {
         registry: Rc<RefCell<ProbeRegistry>>,
         store: crate::module_loader::SharedPrepassStore,
         working_dir: PathBuf,
+        qualified_prefix: String,
         cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
         body_slot: SharedBodySlot,
     ) -> Self {
@@ -2126,6 +2129,7 @@ impl RegisterProbeResolver {
             registry,
             store,
             working_dir,
+            qualified_prefix,
             cache_ctx,
             body_slot,
             resolution_enabled: true,
@@ -2144,6 +2148,7 @@ impl RegisterProbeResolver {
             registry,
             Rc::new(RefCell::new(BTreeMap::new())),
             working_dir,
+            String::new(),
             None,
             body_slot,
         );
@@ -2270,6 +2275,7 @@ impl RegisterProbeResolver {
         let eval_ctx = cook_probe::eval::EvalCtx {
             working_dir: &self.working_dir,
             project_root: self.cache_ctx.as_ref().map(|ctx| ctx.project_root.as_path()),
+            declaring_prefix: &self.qualified_prefix,
         };
         // The produce window. Two things are true only inside it, and both are
         // restored unconditionally below: reads are confined to this probe's

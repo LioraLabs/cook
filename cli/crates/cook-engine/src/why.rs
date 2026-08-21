@@ -356,6 +356,7 @@ pub fn explain(
         let ctx = cook_probe::eval::EvalCtx {
             working_dir: &working_dir,
             project_root: Some(project_root),
+            declaring_prefix: matched_key.import_prefix(),
         };
         // `prepass_resolved: false` is mandatory (COOK-526's cross-phase
         // single-flight arm): `true` would make `lookup` read the record file
@@ -425,7 +426,7 @@ pub fn explain(
         // `ProbeValueStore::get` no longer spans units, so a record file may
         // be read once per sealing unit rather than once per report. `cook
         // why` is a one-shot diagnostic over tiny files.
-        let probe_store = cook_probe::store::ProbeValueStore::new();
+        let probe_store = cook_probe::store::ProbeValueStore::new().for_recipe(&node.recipe_name);
         if probes_dir_exists {
             probe_store.attach_dir(probes_dir.to_path_buf());
         }
@@ -1019,7 +1020,7 @@ fn local_step_hit(
         cook_cache::RebuildResult::Skip => (true, None, None),
         cook_cache::RebuildResult::Rebuild(reason) => {
             let seal_deltas = if matches!(reason, cook_cache::RebuildReason::SealChanged) {
-                Some(seal_deltas_for(meta, probe_snapshot, probe_store))
+                Some(seal_deltas_for(&node.recipe_name, meta, probe_snapshot, probe_store))
             } else {
                 None
             };
@@ -1037,6 +1038,7 @@ fn local_step_hit(
 /// empty is §17.1.6.1's I5 case — the seal set diverged but no entry can be
 /// named — not a bug in this filter.
 fn seal_deltas_for(
+    recipe_name: &str,
     meta: &cook_contracts::CacheMeta,
     probe_snapshot: &BTreeMap<String, Vec<u8>>,
     probe_store: &cook_probe::store::ProbeValueStore,
@@ -1044,8 +1046,9 @@ fn seal_deltas_for(
     meta.seal_keys
         .iter()
         .filter_map(|key| {
+            let qualified = cook_contracts::probe_key::qualify_for_recipe(recipe_name, key);
             let prior = probe_snapshot
-                .get(&cook_contracts::probe_value::probe_file_name(key.as_ref()))
+                .get(&cook_contracts::probe_value::probe_file_name(qualified.as_ref()))
                 .map(|v| v.as_slice());
             let current = probe_store.get(key)?;
             cook_contracts::probe_value::probe_delta(prior, &current)

@@ -1,0 +1,9 @@
+[[run]]
+args = ["all"]
+[run.assert]
+equals = { "one/one.txt" = "one\n", "two/two.txt" = "two\n", ".cook/probes/one.shared.json" = "\"one\"\n", ".cook/probes/two.shared.json" = "\"two\"\n" }
+
+[[run]]
+args = ["why", "all", "--level", "unit", "--format", "json"]
+[run.assert]
+output_contains = ['"shared": "\"one\"\n"', '"shared": "\"two\"\n"']

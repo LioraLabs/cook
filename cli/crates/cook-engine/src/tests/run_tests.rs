@@ -338,8 +338,9 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
     );
     assert!(result.is_ok(), "run() failed: {:?}", result.err());
 
+    let record_key = cook_contracts::probe_key::qualified_key("member", &LocalProbeKey::new("srcs"));
     let manifest_path = cook_contracts::layout::probes_dir(project_root.path())
-        .join(cook_contracts::probe_value::probe_file_name("srcs"));
+        .join(cook_contracts::probe_value::probe_file_name(record_key.as_ref()));
     let bytes = std::fs::read(&manifest_path)
         .unwrap_or_else(|e| panic!("expected {}: {e}", manifest_path.display()));
     let value = cook_contracts::probe_value::decode_json(&bytes).unwrap();

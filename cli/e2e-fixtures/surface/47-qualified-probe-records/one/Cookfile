@@ -1,0 +1,6 @@
+probe shared
+    json { printf '"one"\n' }
+
+recipe build
+    seal shared
+    cook "one.txt" { printf '%s\n' '$<shared>' > $<out> }

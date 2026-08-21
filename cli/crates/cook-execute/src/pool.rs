@@ -752,7 +752,7 @@ fn register_worker_cook_table(
     //
     // `cook.probes.scope(label)` is still supported for backwards compat with
     // modules that use the scoped sub-table pattern.
-    install_execute_phase_cook_probes(lua, &cook, probe_store)?;
+    install_execute_phase_cook_probes(lua, &cook, probe_store, current_recipe)?;
 
     // COOK-64 §9.3: cook.member_to_string(value) renders a data member to its
     // canonical string form (key-sorted JSON for a table, the scalar's bare
@@ -920,6 +920,7 @@ fn install_execute_phase_cook_probes(
     lua: &mlua::Lua,
     cook: &mlua::Table,
     probe_store: &ProbeValueStore,
+    current_recipe: &Arc<Mutex<String>>,
 ) -> mlua::Result<()> {
     // The table, the `scope(label)` view, its §24.4.3 label check and its
     // `label:key` prefixing are `cook_lua_stdlib::install_probes_api`, one
@@ -933,10 +934,13 @@ fn install_execute_phase_cook_probes(
     // CS-0074 and it is correct; what was wrong is that the nine tenths which
     // must agree were the copied part.
     let store_for_get = probe_store.clone();
+    let recipe_for_get = Arc::clone(current_recipe);
     cook_lua_stdlib::install_probes_api(
         lua,
         cook,
         move |lua, key: &str| {
+            let store_for_get = store_for_get
+                .for_recipe(&recipe_for_get.lock().expect("recipe name lock"));
             let local_key = LocalProbeKey::new(key);
             match store_for_get.get(&local_key) {
                 Some(bytes) => {
@@ -1216,7 +1220,7 @@ fn execute_work_item(
 
     match &work.payload {
         WorkPayload::Shell { cmd, line } => execute_shell(
-            probe_store,
+            &probe_store.for_recipe(&work.recipe_name),
             work.id,
             cmd,
             *line,

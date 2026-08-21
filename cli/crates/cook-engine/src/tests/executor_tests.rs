@@ -439,6 +439,7 @@ fn interactive_command_failure_uses_shared_json_contract() {
         &wd,
         &BTreeMap::new(),
         &cook_probe::store::ProbeValueStore::new(),
+        "",
     )
     .expect_err("interactive command should fail");
     let failure =

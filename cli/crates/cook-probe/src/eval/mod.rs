@@ -85,6 +85,8 @@ pub struct EvalCtx<'a> {
     /// `working_dir`, matching the behaviour of a workspace that has no
     /// resolved project root.
     pub project_root: Option<&'a Path>,
+    /// Workspace prefix of the Cookfile that declared this probe.
+    pub declaring_prefix: &'a str,
 }
 
 impl EvalCtx<'_> {
@@ -284,8 +286,11 @@ pub fn lookup(
             cook_contracts::probe_value::encode_tools_identity(&inputs.tools),
             ValueSource::Produced,
         )),
-        _ if prepass_resolved => crate::store::read_value(&ctx.probes_dir(), &probe.key)
-            .map(|bytes| (bytes, ValueSource::Prepass)),
+        _ if prepass_resolved => crate::store::read_value(
+            &ctx.probes_dir(),
+            &cook_contracts::probe_key::qualified_key(ctx.declaring_prefix, &probe.key),
+        )
+        .map(|bytes| (bytes, ValueSource::Prepass)),
         _ => None,
     };
 
@@ -323,7 +328,8 @@ pub fn record(key: &LocalProbeKey, ctx: &EvalCtx<'_>, bytes: &[u8]) -> Recorded 
     // outside this invocation's own memory, a write-only forensic record
     // never read back as a source across invocations. Non-fatal.
     let probes_dir = ctx.probes_dir();
-    if let Err(e) = crate::store::materialize_value(&probes_dir, key, bytes) {
+    let qualified = cook_contracts::probe_key::qualified_key(ctx.declaring_prefix, key);
+    if let Err(e) = crate::store::materialize_value(&probes_dir, &qualified, bytes) {
         warnings.push(format!(
             "probe '{key}': failed to write {}: {e}",
             probes_dir.display()

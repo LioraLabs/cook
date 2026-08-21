@@ -32,6 +32,7 @@ fn setup_with_module(
             Rc::new(RefCell::new(Default::default())),
             Rc::new(RefCell::new(BTreeMap::new())),
             dir.path().to_path_buf(),
+            String::new(),
             None,
             Rc::new(RefCell::new(None)),
         )),
