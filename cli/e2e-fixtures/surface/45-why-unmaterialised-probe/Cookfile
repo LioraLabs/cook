@@ -1,0 +1,15 @@
+# CS-0247: `cook why` must not invent empty bytes for a sealed produce-body
+# probe whose materialised record is absent.
+
+probe state
+    {
+        echo ran >> probe-runs.log
+        printf '"stable"\n'
+    }
+
+recipe build
+    seal state
+    cook "out.txt" { echo built > $<out> }
+
+chore forget_probe
+    rm -rf .cook/probes

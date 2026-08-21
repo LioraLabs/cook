@@ -510,6 +510,33 @@ fn a_forced_unit_reports_no_key_and_names_its_cause() {
     assert_eq!(unit["determinants"]["pending_inputs"]["mid.txt"], "gen", "{v}");
 }
 
+#[test]
+fn an_unmaterialised_probe_is_not_reported_as_an_upstream_or_path() {
+    let tmp = TempDir::new().unwrap();
+    isolate_shared_cache(tmp.path());
+    write(
+        tmp.path(),
+        "Cookfile",
+        "probe state\n    { printf '\"stable\"\\n' }\n\n\
+         recipe build\n    seal state\n    cook \"out.txt\" { echo built > $<out> }\n",
+    );
+    assert_ok(&cook(tmp.path(), &["build"]));
+    std::fs::remove_dir_all(tmp.path().join(".cook/probes")).unwrap();
+
+    let out = cook(
+        tmp.path(),
+        &["why", "build", "--unit", "build", "--format", "json"],
+    );
+    assert_ok(&out);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let unit = &v["units"][0];
+    assert_eq!(unit["status"], "unmaterialised_probe", "{v}");
+    assert_eq!(unit["unmaterialised_probe"], "state", "{v}");
+    assert!(unit["key"].is_null(), "{v}");
+    assert!(unit.get("forced_by").is_none(), "{v}");
+    assert!(unit.get("pending_input_path").is_none(), "{v}");
+}
+
 /// The plain renderer names the upstream instead of restating the consequence.
 #[test]
 fn plain_output_attributes_a_forced_rebuild_to_its_upstream() {

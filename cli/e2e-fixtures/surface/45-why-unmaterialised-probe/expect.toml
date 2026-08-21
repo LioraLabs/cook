@@ -1,0 +1,24 @@
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["out.txt", ".cook/probes/state.json"]
+equals = { "probe-runs.log" = "ran\n" }
+
+[[run]]
+args = ["forget_probe"]
+[run.assert]
+absent = [".cook/probes/state.json"]
+
+[[run]]
+args = ["why", "build", "--level", "unit"]
+[run.assert]
+output_contains = ["KEY NOT COMPUTABLE (probe 'state' unmaterialised)", "key not computable until then", "state  [unmaterialised]"]
+output_not_contains = ["MISS (local)"]
+equals = { "probe-runs.log" = "ran\n" }
+
+[[run]]
+args = ["build"]
+[run.assert]
+output_contains = ["1/2 cached"]
+unchanged = ["out.txt"]
+equals = { "probe-runs.log" = "ran\nran\n" }

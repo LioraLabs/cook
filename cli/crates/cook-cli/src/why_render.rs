@@ -137,6 +137,9 @@ pub(crate) fn render_why_plain(
             CacheStatus::ForcedByUpstream { producer, .. } => {
                 format!("REBUILD (forced by {producer})")
             }
+            CacheStatus::UnmaterialisedProbe { key } => {
+                format!("KEY NOT COMPUTABLE (probe '{key}' unmaterialised)")
+            }
             _ => {
                 let local = if u.local_hit { "HIT (local)" } else { "MISS (local)" };
                 match u.shared_present {
@@ -514,6 +517,13 @@ pub(crate) fn why_unit_json(
                 serde_json::Value::String(path.clone()),
             );
             "forced_by_upstream"
+        }
+        CacheStatus::UnmaterialisedProbe { key } => {
+            status_obj.insert(
+                "unmaterialised_probe".to_string(),
+                serde_json::Value::String(key.clone()),
+            );
+            "unmaterialised_probe"
         }
     };
 

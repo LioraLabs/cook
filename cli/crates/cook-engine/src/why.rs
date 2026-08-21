@@ -34,6 +34,9 @@ pub enum CacheStatus {
     /// final form and cannot be known without running the producer. No key is
     /// computable, so none is reported.
     ForcedByUpstream { producer: String, path: String },
+    /// A sealed produce-body probe has never materialised a value. `why` does
+    /// not execute produce bodies, so the unit has no computable key.
+    UnmaterialisedProbe { key: String },
 }
 
 /// One determinant difference found when diffing consumer determinants against a
@@ -457,16 +460,27 @@ pub fn explain(
             &registered_workspace.resolved_probe_keys,
             &probe_lookup_failures,
         );
-        // A unit waiting on bytes that do not exist yet has no computable key.
+        // A unit waiting on input bytes, or on a sealed probe value that this
+        // read-only query cannot produce, has no computable key.
         // Report the cause and, deliberately, no key: a key over the stale or
         // absent bytes would be a number that matches nothing and means nothing.
-        let (key_hex, c) = match det.pending_inputs.iter().next() {
-            Some((path, producer)) => (
+        let pending_input = det
+            .pending_inputs
+            .iter()
+            .next()
+            .map(|(path, producer)| (path.clone(), producer.clone()));
+        let unmaterialised_probe = det
+            .sealed_probes
+            .iter()
+            .find(|(_, value)| value.is_empty())
+            .map(|(probe, _)| probe.clone());
+        let (key_hex, c) = match (pending_input, unmaterialised_probe) {
+            (Some((path, producer)), _) => (
                 String::new(),
                 Classification {
                     status: CacheStatus::ForcedByUpstream {
-                        producer: producer.clone(),
-                        path: path.clone(),
+                        producer,
+                        path,
                     },
                     local_hit: false,
                     local_cause: None,
@@ -476,7 +490,19 @@ pub fn explain(
                     shared_output_hashes: BTreeMap::new(),
                 },
             ),
-            None => {
+            (None, Some(key)) => (
+                String::new(),
+                Classification {
+                    status: CacheStatus::UnmaterialisedProbe { key },
+                    local_hit: false,
+                    local_cause: None,
+                    seal_deltas: None,
+                    shared_present: None,
+                    manifest_diff: None,
+                    shared_output_hashes: BTreeMap::new(),
+                },
+            ),
+            (None, None) => {
                 let key_hex = unit_key_hex(meta, &det);
                 let c = classify(
                     node,
