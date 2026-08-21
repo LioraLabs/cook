@@ -363,6 +363,15 @@ pub fn evaluate(
     };
 
     let recorded = record(&probe.key, ctx, &bytes);
+    // This is the register pre-pass's same-invocation carrier. Returning a
+    // value without it would let execute treat this key as resolved, then run
+    // it again when the carrier is absent.
+    if let Some(warning) = recorded.warnings.first() {
+        return Err(ProbeError {
+            key: key.to_string(),
+            message: warning.clone(),
+        });
+    }
 
     Ok(Evaluated {
         bytes,

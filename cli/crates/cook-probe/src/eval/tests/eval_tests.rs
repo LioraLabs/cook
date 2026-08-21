@@ -378,6 +378,22 @@ fn cs0102_the_canonical_local_copy_is_written_with_the_value_bytes() {
 }
 
 #[test]
+fn a_register_prepass_fails_when_its_value_cannot_be_materialised() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(".cook"), "not a directory").unwrap();
+
+    let err = evaluate(
+        &declares_nothing("ns:unrecordable"),
+        &ctx(tmp.path()),
+        &CountingRunner::new("[1]"),
+    )
+    .unwrap_err();
+
+    assert_eq!(err.key, "ns:unrecordable");
+    assert!(err.message.contains("failed to write"), "got: {err}");
+}
+
+#[test]
 fn a_produce_failure_names_the_probe() {
     let tmp = tempfile::tempdir().unwrap();
     let eval_ctx = ctx(tmp.path());
