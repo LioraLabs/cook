@@ -25,6 +25,7 @@ const ANCHOR_RE = /\[#([a-z][a-z0-9.\-]*)\]/g;
 // links via `[slug-renames]` (informational, not fatal).
 const HISTORICAL_FILES = new Set([
   'appendix/C-rationale.mdx',
+  'appendix/D-pre-v1-checklist.mdx',
   'appendix/E-changes.mdx',
 ]);
 

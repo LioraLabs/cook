@@ -25,11 +25,31 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // rule itself is gone, not moved.
   'cat.probes.module-source':        null,
 
+  // COOK-254/COOK-337: `§{slug}` reaches acorn as a JS expression, so a slug
+  // whose hyphen-separated trailing segment is a reserved word (`export`)
+  // cannot be referenced without breaking the MDX build. Renamed, not moved:
+  // §7.1.2.1's content is unchanged.
+  'chores.param-env-export':         'chores.param-env-vars',
+
+  // COOK-254/COOK-337, same class as above: unreferenced today, but any
+  // future §{ref} to them would break the build (`default`, `static`,
+  // `import` are reserved in expression position).
+  'rationale.chore-default-interactive':   'rationale.chore-interactivity',
+  'rationale.duplicate-import-parse-time': 'rationale.duplicate-imports-parse-time',
+  'rationale.plate-test-lua-static-scan':  'rationale.plate-test-lua-scan',
+
   'exec':                            'exec.phases',
   'grammar':                         'toplevel.overview',
   'grammar.overview':                'toplevel.overview',
   'grammar.top-level-ordering':      'toplevel.ordering',
   'grammar.var-declarations':        null,
+
+  // CS-0172: the env-var-lookup namespace was replaced by `var.`. The
+  // planned v0.10 chapters for it never landed and never will: the
+  // namespace chapter redirects to its `var` successor, and the
+  // config-block `env`/`cook.env` alias rule retired with no replacement.
+  'xref.env-namespace':              'xref.var-namespace',
+  'lua.env-alias':                   null,
   'xref.file-namespace':             null,  // CS-0187: $<file:PATH> removed
   'grammar.use-declarations':        'decl.use',
   'grammar.import-declarations':     'decl.import',
