@@ -23,6 +23,8 @@ A conforming implementation MAY additionally consider the content of the declare
 
 When the cache indicates that a unit is up-to-date, the implementation MAY skip executing the unit and MUST treat it as successfully completed for the purposes of the dependency graph. When the cache indicates that a unit is stale or absent, the implementation MUST execute the unit and, on success, MAY record the unit's completion in the cache for subsequent runs.
 
+**Truthful cache reporting (CS-0248).** A unit MUST be reported and counted as cached only when this invocation skipped its observation or execution by serving a result recorded by an earlier invocation. Work performed during this invocation is not a cache hit merely because a later phase reuses its result. In particular, a probe value synthesised without a VM and a probe value produced by this invocation's registration pre-pass (§{cat.probes.exec}) are both current observations: their probe nodes MUST be reported as completed, not cached.
+
 A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
 
 ### 17.1.1. The single cache key [#exec.cache.single-key]

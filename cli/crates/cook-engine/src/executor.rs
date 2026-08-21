@@ -1839,61 +1839,43 @@ pub fn execute_dag(
                                 }
                                 pool.probe_value_store().insert(&probe_key, bytes.clone());
                                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                                match source {
-                                    // (COOK-526) Served by this invocation's
-                                    // own register pre-pass — no VM ran here.
-                                    cook_probe::eval::ValueSource::Prepass => {
-                                        tracing::debug!(
-                                            "probe '{probe_key}': served from this invocation's register pre-pass",
-                                        );
-                                        emit(
-                                            event_tx,
-                                            EngineEvent::NodeCacheHit {
-                                                recipe: work_node.recipe_name.clone(),
-                                                unit: id,
-                                                node_name: node_name.clone(),
-                                                artifact: None,
-                                                // No Probe variant; `display()`
-                                                // special-cases the `probe:` name
-                                                // prefix, so the default is correct.
-                                                kind: NodeKind::Cooked,
-                                            },
-                                        );
-                                    }
-                                    // Synthesised without a VM: this is work that
-                                    // ran, so it reports as a started-and-completed
-                                    // node rather than a hit.
-                                    cook_probe::eval::ValueSource::Produced => {
-                                        emit(
-                                            event_tx,
-                                            EngineEvent::NodeStarted {
-                                                recipe: work_node.recipe_name.clone(),
-                                                unit: id,
-                                                node_name: node_name.clone(),
-                                                artifact: None,
-                                                fallback_label: node_name.clone(),
-                                                kind: NodeKind::Cooked,
-                                                cause: None,
-                                                cache_key: node_cache_key(work_node),
-                                            },
-                                        );
-                                        emit(
-                                            event_tx,
-                                            EngineEvent::NodeCompleted {
-                                                recipe: work_node.recipe_name.clone(),
-                                                unit: id,
-                                                node_name: node_name.clone(),
-                                                elapsed: started.elapsed(),
-                                                kind: NodeKind::Cooked,
-                                                cache_key: node_cache_key(work_node),
-                                            },
-                                        );
-                                    }
+                                if matches!(source, cook_probe::eval::ValueSource::Prepass) {
+                                    tracing::debug!(
+                                        "probe '{probe_key}': served from this invocation's register pre-pass",
+                                    );
                                 }
+                                // Both sources observed this invocation: a
+                                // synthesised value was computed here, while a
+                                // pre-pass value was computed earlier in this
+                                // same run. Neither is a cache hit.
+                                emit(
+                                    event_tx,
+                                    EngineEvent::NodeStarted {
+                                        recipe: work_node.recipe_name.clone(),
+                                        unit: id,
+                                        node_name: node_name.clone(),
+                                        artifact: None,
+                                        fallback_label: node_name.clone(),
+                                        kind: NodeKind::Cooked,
+                                        cause: None,
+                                        cache_key: node_cache_key(work_node),
+                                    },
+                                );
+                                emit(
+                                    event_tx,
+                                    EngineEvent::NodeCompleted {
+                                        recipe: work_node.recipe_name.clone(),
+                                        unit: id,
+                                        node_name: node_name.clone(),
+                                        elapsed: started.elapsed(),
+                                        kind: NodeKind::Cooked,
+                                        cache_key: node_cache_key(work_node),
+                                    },
+                                );
                                 finish_recipe_node(
                                     trackers,
                                     &work_node.recipe_name,
-                                    true,
+                                    false,
                                     false,
                                     event_tx,
                                 );

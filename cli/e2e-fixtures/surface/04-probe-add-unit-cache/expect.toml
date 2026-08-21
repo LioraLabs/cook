@@ -15,10 +15,7 @@ unchanged = ["build/probed.txt"]
 # "unchanged" pins: the OLD
 # nonce's bytes are what `build/probed.txt` still holds, because the command
 # that would have written a new one never re-ran. The engine's own counter
-# below reports three of the four nodes cached — `record`, `test`, and the
-# synthesised `@seal:seed.txt` files probe that `demo:nonce`'s `seal
-# "seed.txt"` line lowers to — but that third node is a probe too, so being
-# counted as cached is a pre-existing reporting defect this fixture does not
-# fix (COOK-531), not a second exception to the law. `demo:nonce` itself is
-# the one node the count and the law agree is never cached.
-output_contains = ["(3/4 cached)"]
+# below reports only `record` and `test` cached. The synthesised
+# `@seal:seed.txt` files probe and `demo:nonce` both observe this invocation,
+# so neither is a cache hit.
+output_contains = ["(2/4 cached)"]
