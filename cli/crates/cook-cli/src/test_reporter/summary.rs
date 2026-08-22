@@ -34,8 +34,9 @@ pub fn render(t: &Tally, wall: Duration, style: &Style) -> String {
             parts.join("; "),
         );
         line.push_str(&format!(
-            "\n\n  {}\n",
+            "\n\n  {}\n  {}\n",
             style.dim("rerun: cook test --rerun-failed"),
+            style.dim("logs:  cook logs --last-failed"),
         ));
         line
     } else {

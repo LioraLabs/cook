@@ -150,6 +150,37 @@ fn inverted_test_whose_body_fails_as_expected_exits_zero() {
 }
 
 #[test]
+fn last_failed_selects_a_newer_cook_test_failure() {
+    let dir = write_cookfile("recipe old\n    cook \"old.txt\" { false }\n");
+    assert_eq!(run_recipe(dir.path(), "old").status.code(), Some(1));
+
+    fs::write(
+        dir.path().join("Cookfile"),
+        "recipe fresh\n    test { false }\n",
+    )
+    .unwrap();
+    let fresh = run_recipe(dir.path(), "test");
+    let fresh_output = combined(&fresh);
+    assert_eq!(fresh.status.code(), Some(1), "fresh test must fail.\n{fresh_output}");
+    assert!(
+        fresh_output.contains("logs:  cook logs --last-failed"),
+        "failed tests must advertise their logs.\n{fresh_output}"
+    );
+
+    let logs = Command::new(cook_bin())
+        .args(["logs", "--last-failed"])
+        .current_dir(dir.path())
+        .output()
+        .expect("read last failed build");
+    let output = combined(&logs);
+    assert!(logs.status.success(), "logs command failed.\n{output}");
+    assert!(output.contains("fresh_test"), "selected stale build.\n{output}");
+    assert!(!output.contains("old [Failed]"), "selected stale build.\n{output}");
+    assert!(output.contains("exit 1"), "exit status leaked Option debug syntax.\n{output}");
+    assert!(!output.contains("Some("), "exit status leaked Option debug syntax.\n{output}");
+}
+
+#[test]
 fn skipped_upstream_recipe_reports_skipped() {
     let dir = write_cookfile(
         "recipe counts\n    cook \"counts.txt\" { false }\n\nrecipe report\n    cook \"report.txt\" { cat $<counts> > $<out> }\n",

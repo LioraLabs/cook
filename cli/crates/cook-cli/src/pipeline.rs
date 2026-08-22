@@ -1316,8 +1316,13 @@ pub fn cmd_test(
                 })?;
         let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
 
+        let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
+        let render_thread = spawn_new_renderer(globals, project_root.clone(), progress_rx);
+        let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
+        let bridge_thread = bridge_engine_to_progress_events(engine_rx, progress_tx.clone());
         let reporter_for_cb = reporter.clone();
         let on_event = move |evt: cook_engine::EngineEvent| {
+            let _ = engine_tx.send(evt.clone());
             if let Ok(mut r) = reporter_for_cb.lock() {
                 r.on_event(evt);
             }
@@ -1328,7 +1333,7 @@ pub fn cmd_test(
         // pushed Blocked TestResult rows for every downstream test node into
         // `partial_test_results`; carry them through so we return Ok with the
         // Blocked results rather than propagating the error.
-        match cook_engine::run::run(
+        let result = cook_engine::run::run(
             &project_root,
             &registered,
             &edges,
@@ -1339,7 +1344,12 @@ pub fn cmd_test(
             no_publish_enabled(globals),
             globals.replay_logs,
             on_event,
-        ) {
+        );
+        let _ = bridge_thread.join();
+        drop(progress_tx);
+        let _ = render_thread.join();
+
+        match result {
             Ok(r) => {
                 published_count = r.published_count;
                 r.test_results

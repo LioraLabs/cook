@@ -168,9 +168,14 @@ where
         rerun_patterns,
         no_prune,
     );
+    let success = result.as_ref().is_ok_and(|run| {
+        run.test_results.iter().all(|test| {
+            matches!(test.outcome, crate::TestOutcome::Passed)
+        })
+    });
     on_event(EngineEvent::Finished {
         elapsed: started.elapsed(),
-        success: result.is_ok(),
+        success,
     });
     result
 }

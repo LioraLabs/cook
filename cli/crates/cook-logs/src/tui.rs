@@ -64,7 +64,8 @@ fn write_logs_fallback<W: std::io::Write>(
     view: &BuildView,
     out: &mut W,
 ) -> std::io::Result<()> {
-    writeln!(out, "build {} (exit {:?})", view.build_id, view.exit_code)?;
+    let exit = view.exit_code.map_or_else(|| "unknown".to_string(), |code| code.to_string());
+    writeln!(out, "build {} (exit {exit})", view.build_id)?;
     for recipe in view.recipes.values() {
         writeln!(out, "  {} [{:?}]", recipe.name, recipe.status)?;
         for node in recipe.nodes.values() {

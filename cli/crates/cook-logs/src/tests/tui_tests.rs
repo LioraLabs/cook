@@ -70,13 +70,13 @@ fn renders_one_frame_with_failed_node_visible() {
 
 #[test]
 fn print_logs_fallback_renders_build_recipe_node_and_lines() {
-    let view = one_failed_build();
+    let mut view = one_failed_build();
     let mut buf: Vec<u8> = Vec::new();
     write_logs_fallback(&view, &mut buf).unwrap();
-    let out = String::from_utf8(buf).unwrap();
+    let out = std::str::from_utf8(&buf).unwrap();
 
     assert!(out.contains("2026-05-10-abc"), "should show build id");
-    assert!(out.contains("exit Some(1)"), "should show exit code");
+    assert!(out.contains("exit 1"), "should show exit code without Option debug syntax");
     assert!(out.contains("vm"), "should show recipe name");
     assert!(out.contains("Failed"), "should show recipe/node status");
     assert!(out.contains("lvm.c"), "should show node name");
@@ -87,6 +87,11 @@ fn print_logs_fallback_renders_build_recipe_node_and_lines() {
         out.contains("error: undeclared 'foo'"),
         "should show log line text"
     );
+
+    view.exit_code = None;
+    buf.clear();
+    write_logs_fallback(&view, &mut buf).unwrap();
+    assert!(String::from_utf8(buf).unwrap().contains("exit unknown"));
 }
 
 /// COOK-409: `G` set `scroll_y = u16::MAX` and nothing clamped it against the
