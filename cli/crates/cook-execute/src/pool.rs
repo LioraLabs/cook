@@ -665,7 +665,10 @@ fn register_worker_cook_table(
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
         let to_terminal = !capture.load(Ordering::Relaxed);
-        let process_group = process_group.lock().expect("process-group slot lock").clone();
+        let process_group = process_group
+            .lock()
+            .expect("process-group slot lock")
+            .clone();
         // COOK-422: which Cookfile line this call is on. A failure carrying
         // a line renders `Cookfile:LINE: command failed …`; one carrying 0
         // renders with no location, which is what every execute-phase
@@ -676,7 +679,15 @@ fn register_worker_cook_table(
         // cannot line-map (a probe `produce`, named for its probe) yields
         // `None` and the location-free rendering, which is the honest answer.
         let line = cook_lua_stdlib::caller_line_in_source(lua, COOKFILE_CHUNK_NAME).unwrap_or(0);
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal, process_group.as_ref())
+        run_shell_in_worker(
+            &cmd,
+            &working_dir,
+            &env_vars,
+            &sink,
+            line,
+            to_terminal,
+            process_group.as_ref(),
+        )
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -1158,11 +1169,13 @@ fn run_shell_in_worker(
     // the execute phase's, so disarming it stays here rather than moving into
     // `cook-shell` (the register-phase caller deliberately does not disarm).
     cook_cache::statmemo::disarm();
-    let spawn = cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured };
-    let outcome = match process_group {
-        Some(process_group) => cook_shell::run_in_process_group(&spawn, env_vars, process_group),
-        None => cook_shell::run(&spawn, env_vars),
-    }.map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
+    let spawn = cook_shell::Spawn {
+        command: cmd,
+        working_dir: wd,
+        stdio: cook_shell::Stdio::Captured,
+    };
+    let outcome = cook_shell::run_with_group(&spawn, env_vars, process_group)
+        .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
 
     let stdout = outcome.stdout_lossy();
     // Recorded before the failure check: a command that failed still printed

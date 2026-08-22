@@ -431,7 +431,8 @@ where
     run_with_group(spawn, env_overlay, Some(process_group))
 }
 
-fn run_with_group<K, V>(
+/// Run a command, optionally joining a chore's process group.
+pub fn run_with_group<K, V>(
     spawn: &Spawn<'_>,
     env_overlay: impl IntoIterator<Item = (K, V)>,
     process_group: Option<&ProcessGroup>,

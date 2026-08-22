@@ -333,7 +333,15 @@ fn run_interactive_on_main(
     probe_store: &cook_probe::store::ProbeValueStore,
     recipe_name: &str,
 ) -> Result<(), String> {
-    run_interactive_in_process_group(cmd, line, working_dir, env_vars, probe_store, recipe_name, None)
+    run_interactive_in_process_group(
+        cmd,
+        line,
+        working_dir,
+        env_vars,
+        probe_store,
+        recipe_name,
+        None,
+    )
 }
 
 fn run_interactive_in_process_group(
@@ -361,11 +369,13 @@ fn run_interactive_in_process_group(
     // what changes is that it now falls out of the stdio mode instead of being
     // hand-written as a pair of `from_bytes(&[])` calls that read like an
     // oversight.
-    let spawn = cook_shell::Spawn { command: cmd, working_dir, stdio: cook_shell::Stdio::Inherited };
-    let outcome = match process_group {
-        Some(process_group) => cook_shell::run_in_process_group(&spawn, env_vars, process_group),
-        None => cook_shell::run(&spawn, env_vars),
-    }.map_err(|e| e.message().to_string())?;
+    let spawn = cook_shell::Spawn {
+        command: cmd,
+        working_dir,
+        stdio: cook_shell::Stdio::Inherited,
+    };
+    let outcome = cook_shell::run_with_group(&spawn, env_vars, process_group)
+        .map_err(|e| e.message().to_string())?;
 
     match outcome.failure(line, cmd) {
         Some(failure) => Err(failure.to_wire()),
@@ -2358,7 +2368,9 @@ pub fn execute_dag(
                         Some(WorkPayload::LuaChunk { .. }) => {
                             match ensure_output_parent_dirs(work_node) {
                                 Ok(()) => {
-                                    let process_group = process_group.as_ref().expect("chore process group established");
+                                    let process_group = process_group
+                                        .as_ref()
+                                        .expect("chore process group established");
                                     pool.set_process_group(Some(process_group.clone()));
                                     let env_vars_hashmap: std::collections::HashMap<
                                         String,
