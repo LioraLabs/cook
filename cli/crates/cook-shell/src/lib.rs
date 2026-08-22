@@ -156,10 +156,14 @@ impl ProcessGroup {
                 }
             })?;
             let handle = signals.handle();
-            let watched = Arc::clone(&inner);
+            let watched = Arc::downgrade(&inner);
             let thread = std::thread::spawn(move || {
                 for _ in signals.forever() {
+                    let Some(watched) = watched.upgrade() else {
+                        break;
+                    };
                     let _ = drain_inner(&watched, libc::SIGINT);
+                    let _ = signal_hook::low_level::emulate_default_handler(libc::SIGINT);
                 }
             });
             *inner.monitor.lock().expect("process-group monitor lock") =
@@ -207,8 +211,18 @@ impl ProcessGroup {
         {
             handle.close();
             let _ = thread.join();
+            drop(handle);
+            restore_sigint_default();
         }
         result
+    }
+}
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            let _ = self.drain();
+        }
     }
 }
 
@@ -219,6 +233,7 @@ fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), Spawn
     }
 
     signal_group(inner.pgid, first_signal)?;
+    reap_anchor(inner)?;
     if first_signal == libc::SIGINT && wait_for_group(inner.pgid, GRACE)? {
         signal_group(inner.pgid, libc::SIGTERM)?;
     }
@@ -230,6 +245,11 @@ fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), Spawn
             });
         }
     }
+    inner.drained.store(true, Ordering::Release);
+    Ok(())
+}
+
+fn reap_anchor(inner: &ProcessGroupInner) -> Result<(), SpawnError> {
     if let Some(mut anchor) = inner
         .anchor
         .lock()
@@ -240,8 +260,16 @@ fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), Spawn
             message: format!("failed to reap chore process-group anchor: {e}"),
         })?;
     }
-    inner.drained.store(true, Ordering::Release);
     Ok(())
+}
+
+fn restore_sigint_default() {
+    #[cfg(unix)]
+    // The monitor has already stopped and dropped its signal-hook action; this
+    // is ordinary teardown, not signal-handler work.
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_DFL);
+    }
 }
 
 fn signal_group(pgid: i32, signal: i32) -> Result<(), SpawnError> {
@@ -416,19 +444,6 @@ where
     V: AsRef<str>,
 {
     run_with_group(spawn, env_overlay, None)
-}
-
-/// Like [`run`], but makes the child join a chore's process-lifetime domain.
-pub fn run_in_process_group<K, V>(
-    spawn: &Spawn<'_>,
-    env_overlay: impl IntoIterator<Item = (K, V)>,
-    process_group: &ProcessGroup,
-) -> Result<Outcome, SpawnError>
-where
-    K: AsRef<str>,
-    V: AsRef<str>,
-{
-    run_with_group(spawn, env_overlay, Some(process_group))
 }
 
 /// Run a command, optionally joining a chore's process group.

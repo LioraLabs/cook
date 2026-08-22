@@ -67,12 +67,31 @@ fn wait_for_exit(pid: u32) {
     }
 }
 
-fn start(dir: &Path) -> Child {
+fn start_target(dir: &Path, target: &str) -> Child {
     Command::new(cook())
-        .arg("own")
+        .arg(target)
         .current_dir(dir)
         .spawn()
         .expect("start cook")
+}
+
+fn start(dir: &Path) -> Child {
+    start_target(dir, "own")
+}
+
+fn wait_for_cook_exit(cook: &mut Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(status) = cook.try_wait().expect("poll cook") {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = cook.kill();
+            let _ = cook.wait();
+            panic!("Ctrl-C left the pure Lua chore running");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]
@@ -116,4 +135,49 @@ fn ctrl_c_drains_a_background_descendant() {
         panic!("descendant {pid} survived Ctrl-C");
     }
     wait_for_exit(pid);
+}
+
+#[test]
+fn ctrl_c_stops_a_pure_lua_chore() {
+    let dir = TempDir::new().unwrap();
+    write_cookfile(
+        dir.path(),
+        "    >{ local ready = assert(io.open(\"ready\", \"w\")); ready:write(\"ready\"); ready:close(); while true do end }\n",
+    );
+
+    let mut cook = start(dir.path());
+    let ready = dir.path().join("ready");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline, "pure Lua chore never became ready");
+        thread::sleep(Duration::from_millis(10));
+    }
+    Command::new("kill")
+        .args(["-INT", &cook.id().to_string()])
+        .status()
+        .expect("send SIGINT to cook");
+    assert!(!wait_for_cook_exit(&mut cook).success());
+}
+
+#[test]
+fn a_completed_chore_restores_ctrl_c_for_later_work() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("Cookfile"),
+        "chore own\n    true\nrecipe later: own\n    cook \"out\" { touch ready; while :; do sleep 1; done }\n",
+    )
+    .expect("write Cookfile");
+
+    let mut cook = start_target(dir.path(), "later");
+    let ready = dir.path().join("ready");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline, "later work never became ready");
+        thread::sleep(Duration::from_millis(10));
+    }
+    Command::new("kill")
+        .args(["-INT", &cook.id().to_string()])
+        .status()
+        .expect("send SIGINT to cook");
+    assert!(!wait_for_cook_exit(&mut cook).success());
 }
