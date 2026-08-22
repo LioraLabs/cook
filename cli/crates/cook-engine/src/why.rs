@@ -57,12 +57,19 @@ pub enum DeterminantDiff {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Prediction {
     /// The producing unit is served from cache, so its output bytes are already
-    /// determined and this is their content hash — whether or not they have been
-    /// restored to the working tree yet.
-    Known(u64),
+    /// determined whether or not they have been restored to the working tree
+    /// yet. Both hashes are carried because unit keys fold the local content
+    /// hash while a top-level `files` declaration's value is keyed on SHA-256.
+    Known(OutputHashes),
     /// The producing unit will rebuild. Its output bytes cannot be known without
     /// running it, so no downstream key over them is computable.
     Unknowable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutputHashes {
+    content: u64,
+    sha256: [u8; 32],
 }
 
 /// Absolute output path → (what will be there, which recipe puts it there).
@@ -83,13 +90,16 @@ pub struct UnitDeterminants {
     pub output_paths: Vec<String>,
     pub consulted_env: BTreeMap<String, String>,
     pub sealed_probes: BTreeMap<String, String>,
-    /// CS-0173: declared inputs whose content is not yet determined, because the
-    /// unit producing them will itself rebuild. Path → producing recipe name.
+    /// CS-0173: determinant paths whose content is not yet determined, because
+    /// the unit producing them will itself rebuild. Path → producing recipe
+    /// name.
     ///
     /// A path listed here is deliberately ABSENT from `inputs` rather than
     /// present with a stale or zero hash. Reporting the bytes currently on disk
     /// as this unit's determinant would be reporting a value the run will not
-    /// use, which is the precise error CS-0173 exists to remove.
+    /// use, which is the precise error CS-0173 exists to remove. This includes
+    /// both ordinary declared inputs and paths folded into a sealed top-level
+    /// `files` manifest.
     pub pending_inputs: BTreeMap<String, String>,
     /// CS-0245 / §17.1.6.1: keys of this unit's effective seal set whose
     /// reported value came from a PRIOR invocation rather than being resolved
@@ -316,17 +326,21 @@ pub fn explain(
         }
     }
 
-    // CS-0245 / §17.1.6.1 case (a): re-resolve every probe whose value can be
-    // observed with no VM — a top-level `files`/`tools` declaration,
-    // synthesised fresh from the current tree — so the key this report names
-    // is the key a run would compute, not what a PRIOR invocation last wrote
-    // to `.cook/probes/<key>.json`. `fresh_values` is keyed by `matched_key`
-    // (the workspace-QUALIFIED map key, CS-0242 — see the note below on why
-    // that is the only key any of this pass's collections may carry) and is
-    // folded into each unit's own `ProbeValueStore` in the
-    // classification loop below, shadowing exactly the file its disk
-    // fallback would otherwise read, so `seal.rs`'s fold picks the fresh
-    // bytes up with no change to `seal.rs` itself.
+    // CS-0245 / §17.1.6.1 case (a): re-resolve every sealed probe whose value
+    // can be observed with no VM, so the key this report names is the key a
+    // run would compute, not what a PRIOR invocation last wrote to
+    // `.cook/probes/<key>.json`. `tools` declarations are resolved here
+    // directly. Top-level `files` declarations are handled per-unit in the
+    // classification loop below, after producer predictions exist: a matched
+    // path may itself be this closure's output, and the fresh value then has
+    // to fold the producer's predicted bytes (or admit they are not yet
+    // knowable) rather than hash whatever the working tree happens to hold.
+    // `fresh_values` is keyed by `matched_key` (the workspace-QUALIFIED map
+    // key, CS-0242 — see the note below on why that is the only key any of
+    // this pass's collections may carry) and is folded into each unit's own
+    // `ProbeValueStore`, shadowing exactly the file its disk fallback would
+    // otherwise read, so `seal.rs`'s fold picks the fresh bytes up with no
+    // change to `seal.rs` itself.
     //
     // `fresh_resolved` and `probe_lookup_failures` feed §17.1.6.1's
     // provenance obligation (`UnitDeterminants::prior_invocation_probes` /
@@ -342,6 +356,9 @@ pub fn explain(
         BTreeMap<cook_contracts::probe_key::QualifiedProbeKey, String> = BTreeMap::new();
     for (matched_key, pu) in &registered_workspace.probes {
         if !sealed_in_closure.contains(matched_key) {
+            continue;
+        }
+        if pu.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE {
             continue;
         }
         // COOK-510: derive the declaring working dir from the qualified map
@@ -402,10 +419,92 @@ pub fn explain(
     // has a lower index than its consumers. Classifying in this order means a
     // consumer's producers are always resolved before it is reached.
     let mut predictions: Predictions = BTreeMap::new();
+    // Ownership is knowable before classification even when content is not.
+    // Seed every closure-produced manifest member as pending so a determinant
+    // cycle cannot fall through to stale working-tree bytes.
+    for consumer_idx in 0..dag.len() {
+        let consumer = dag.node(consumer_idx).payload();
+        let Some(meta) = &consumer.cache_meta else { continue };
+        for key in &meta.seal_keys {
+            let qualified = cook_contracts::probe_key::qualify_for_recipe(&consumer.recipe_name, key);
+            let Some(probe) = registered_workspace.probes.get(&qualified) else { continue };
+            if probe.produce_source != cook_contracts::probe_value::FILES_MANIFEST_PRODUCE {
+                continue;
+            }
+            let working_dir = registered_workspace
+                .working_dir_by_prefix
+                .get(qualified.import_prefix())
+                .or_else(|| registered_workspace.working_dir_by_prefix.get(""))
+                .map(std::path::PathBuf::as_path)
+                .unwrap_or(project_root);
+            for path in files_manifest_paths(&qualified, probe, probe_snapshot) {
+                let wanted = working_dir.join(path);
+                if let Some(producer) = (0..dag.len())
+                    .map(|idx| dag.node(idx).payload())
+                    .find(|node| unit_produces_path(node, &wanted))
+                {
+                    predictions.insert(
+                        wanted,
+                        (Prediction::Unknowable, producer.recipe_name.clone()),
+                    );
+                }
+            }
+        }
+    }
+    // A sealed manifest is a determinant edge even when the recipes are only
+    // siblings in the requested closure. Classify every unit that can produce
+    // one of its members first; lexical DAG insertion order is not such an
+    // edge and may put the consumer first.
+    let mut classification_order = Vec::with_capacity(dag.len());
+    let mut remaining: BTreeSet<usize> = (0..dag.len()).collect();
+    while !remaining.is_empty() {
+        let next = remaining.iter().copied().find(|&idx| {
+            if dag.deps(idx).iter().any(|dep| remaining.contains(dep)) {
+                return false;
+            }
+            let node = dag.node(idx).payload();
+            let Some(meta) = &node.cache_meta else {
+                return true;
+            };
+            meta.seal_keys.iter().all(|key| {
+                let qualified =
+                    cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, key);
+                let Some(probe) = registered_workspace.probes.get(&qualified) else {
+                    return true;
+                };
+                if probe.produce_source != cook_contracts::probe_value::FILES_MANIFEST_PRODUCE {
+                    return true;
+                }
+                let working_dir = registered_workspace
+                    .working_dir_by_prefix
+                    .get(qualified.import_prefix())
+                    .or_else(|| registered_workspace.working_dir_by_prefix.get(""))
+                    .map(std::path::PathBuf::as_path)
+                    .unwrap_or(project_root);
+                files_manifest_paths(&qualified, probe, probe_snapshot)
+                    .iter()
+                    .all(|path| {
+                        let wanted = working_dir.join(path);
+                        let Some((_, producer)) = predictions.get(&wanted) else {
+                            return true;
+                        };
+                        !remaining.iter().copied().any(|producer_idx| {
+                            producer_idx != idx
+                                && dag.node(producer_idx).payload().recipe_name == *producer
+                        })
+                    })
+            })
+        });
+        // A determinant cycle has no producer-first order. Preserve the DAG's
+        // stable order; the pending prediction remains the honest answer.
+        let idx = next.unwrap_or_else(|| *remaining.iter().next().unwrap());
+        remaining.remove(&idx);
+        classification_order.push(idx);
+    }
     // Hoisted out of the loop below: whether the probes directory exists
     // cannot change over the course of one report.
     let probes_dir_exists = probes_dir.exists();
-    for idx in 0..dag.len() {
+    for idx in classification_order {
         let node = dag.node(idx).payload();
         let Some(meta) = &node.cache_meta else {
             continue;
@@ -424,6 +523,42 @@ pub fn explain(
                 .get(&cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k))
             {
                 probe_store.insert(k, bytes.clone());
+            }
+        }
+        let mut unit_fresh_resolved = BTreeSet::new();
+        let mut seal_pending = BTreeMap::new();
+        for k in &meta.seal_keys {
+            let qualified = cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k);
+            let Some(pu) = registered_workspace.probes.get(&qualified) else {
+                continue;
+            };
+            if pu.produce_source != cook_contracts::probe_value::FILES_MANIFEST_PRODUCE {
+                continue;
+            }
+            let prefix = qualified.import_prefix();
+            let working_dir = registered_workspace
+                .working_dir_by_prefix
+                .get(prefix)
+                .or_else(|| registered_workspace.working_dir_by_prefix.get(""))
+                .cloned()
+                .unwrap_or_else(|| project_root.to_path_buf());
+            match fresh_files_manifest(
+                &qualified,
+                pu,
+                &working_dir,
+                &predictions,
+                probe_snapshot,
+            ) {
+                FilesManifestFreshness::Fresh(bytes) => {
+                    probe_store.insert(k, bytes);
+                    unit_fresh_resolved.insert(qualified);
+                }
+                FilesManifestFreshness::Pending { path, producer } => {
+                    seal_pending.insert(k.clone(), (path, producer));
+                }
+                FilesManifestFreshness::Failed(message) => {
+                    probe_lookup_failures.insert(qualified, message);
+                }
             }
         }
         // COOK-350: an output-less unit is reported like any other. The guard
@@ -447,8 +582,10 @@ pub fn explain(
             &probe_store,
             &predictions,
             &fresh_resolved,
+            &unit_fresh_resolved,
             &registered_workspace.resolved_probe_keys,
             &probe_lookup_failures,
+            &seal_pending,
         );
         // A unit waiting on input bytes, or on a sealed probe value that this
         // read-only query cannot produce, has no computable key.
@@ -558,8 +695,10 @@ fn resolve_unit_determinants(
     probe_store: &cook_probe::store::ProbeValueStore,
     predictions: &Predictions,
     fresh_resolved: &BTreeSet<cook_contracts::probe_key::QualifiedProbeKey>,
+    unit_fresh_resolved: &BTreeSet<cook_contracts::probe_key::QualifiedProbeKey>,
     resolved_probe_keys: &BTreeSet<cook_contracts::probe_key::QualifiedProbeKey>,
     lookup_failures: &BTreeMap<cook_contracts::probe_key::QualifiedProbeKey, String>,
+    seal_pending: &BTreeMap<cook_contracts::probe_key::LocalProbeKey, (String, String)>,
 ) -> UnitDeterminants {
     let mut inputs = BTreeMap::new();
     let mut pending_inputs = BTreeMap::new();
@@ -581,7 +720,7 @@ fn resolve_unit_determinants(
         // this unit ever reads them.
         match predictions.get(&abs) {
             Some((Prediction::Known(h), _)) => {
-                inputs.insert(p.clone(), *h);
+                inputs.insert(p.clone(), h.content);
                 continue;
             }
             Some((Prediction::Unknowable, producer)) => {
@@ -592,6 +731,9 @@ fn resolve_unit_determinants(
         }
         let h = cook_cache::hash_file(&abs).unwrap_or(0);
         inputs.insert(p.clone(), h);
+    }
+    for (path, producer) in seal_pending.values() {
+        pending_inputs.entry(path.clone()).or_insert_with(|| producer.clone());
     }
     let seal_contribution = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
     // C2: share the producer's sealed-probe resolution (absent → empty string)
@@ -611,7 +753,9 @@ fn resolve_unit_determinants(
         .iter()
         .filter(|k| {
             let qualified = cook_contracts::probe_key::qualify_for_recipe(&node.recipe_name, k);
-            !fresh_resolved.contains(&qualified) && !resolved_probe_keys.contains(&qualified)
+            !fresh_resolved.contains(&qualified)
+                && !unit_fresh_resolved.contains(&qualified)
+                && !resolved_probe_keys.contains(&qualified)
         })
         .map(ToString::to_string)
         .collect();
@@ -670,12 +814,13 @@ struct Classification {
     /// `None` when the shared tier is not consulted (`local` sharing or no key).
     shared_present: Option<bool>,
     manifest_diff: Option<Vec<DeterminantDiff>>,
-    /// CS-0173: content hash of each artifact the shared-tier probe drained,
-    /// by the output path it was keyed under. The probe already streams every
-    /// byte for CS-0054 verification, so hashing costs nothing beyond the read
-    /// and yields exactly what a downstream `hash_file` would compute once the
-    /// artifact is restored. Empty when the shared tier was not consulted.
-    shared_output_hashes: BTreeMap<String, u64>,
+    /// CS-0173: hashes of each artifact the shared-tier probe drained, by the
+    /// output path it was keyed under. The probe already streams every byte for
+    /// CS-0054 verification, so the local content hash costs nothing beyond the
+    /// read, and the backend sidecar already carries the SHA-256 identity a
+    /// `files` declaration's value needs. Empty when the shared tier was not
+    /// consulted.
+    shared_output_hashes: BTreeMap<String, OutputHashes>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -828,9 +973,26 @@ fn record_predictions(
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
 ) {
     let served = c.local_hit || c.shared_present == Some(true);
+    let local_records = local_output_records(node, meta, cache_managers);
+    let mut concrete_outputs: BTreeSet<String> = c.shared_output_hashes.keys().cloned().collect();
+    concrete_outputs.extend(local_records.keys().cloned());
+    for p in concrete_outputs {
+        let abs = node.working_dir.join(&p);
+        let prediction = if !served {
+            Prediction::Unknowable
+        } else if let Some(h) = c.shared_output_hashes.get(&p) {
+            Prediction::Known(*h)
+        } else if let Some(h) = local_records.get(&p) {
+            Prediction::Known(OutputHashes {
+                content: *h,
+                sha256: cook_cache::hash_file_sha256(&abs),
+            })
+        } else {
+            Prediction::Unknowable
+        };
+        predictions.insert(abs, (prediction, node.recipe_name.clone()));
+    }
     for p in &meta.output_paths {
-        // A glob output is a pattern, not a path; it names no file a consumer
-        // could declare as an input, so there is nothing to predict.
         if cook_cache::is_terminal_output(p) {
             continue;
         }
@@ -839,10 +1001,16 @@ fn record_predictions(
             Prediction::Unknowable
         } else if let Some(h) = c.shared_output_hashes.get(p) {
             Prediction::Known(*h)
-        } else if let Some(h) = local_output_hash(node, meta, p, cache_managers) {
-            Prediction::Known(h)
+        } else if let Some(h) = local_records.get(p) {
+            Prediction::Known(OutputHashes {
+                content: *h,
+                sha256: cook_cache::hash_file_sha256(&abs),
+            })
         } else if let Some(h) = cook_cache::hash_file(&abs) {
-            Prediction::Known(h)
+            Prediction::Known(OutputHashes {
+                content: h,
+                sha256: cook_cache::hash_file_sha256(&abs),
+            })
         } else {
             Prediction::Unknowable
         };
@@ -850,37 +1018,18 @@ fn record_predictions(
     }
 }
 
-/// The content hash the local index recorded for one of this unit's outputs.
-/// Only meaningful on a local hit, where `needs_rebuild_cook` has already
-/// confirmed the recorded outputs still match what is on disk.
-fn local_output_hash(
-    node: &WorkNode,
-    meta: &cook_contracts::CacheMeta,
-    output_path: &str,
-    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
-) -> Option<u64> {
-    let cm = cache_managers.get(&node.recipe_name)?;
-    let cache = cm.get_or_load(&meta.recipe_name);
-    let entry = cache.steps.get(&meta.cache_key)?;
-    entry
-        .outputs
-        .iter()
-        .find(|f| &*f.path == output_path)
-        .map(|f| f.hash)
-}
-
 /// Read-only shared-store probe: recompute the artifact keys and check the
 /// backend has every output, draining each reader for integrity verification
 /// (CS-0054) but NEVER writing to the working tree. `cook why` is read-only.
-/// CS-0173: returns `Some(path → content hash)` when every artifact is present,
-/// `None` on the first absent or unreadable one. The hashes are a by-product of
-/// the drain that already had to happen: they let a consumer of these outputs be
-/// classified before anything is restored.
+/// CS-0173: returns `Some(path → hashes)` when every artifact is present,
+/// `None` on the first absent or unreadable one. The local content hash is a
+/// by-product of the drain that already had to happen; the SHA-256 comes from
+/// the backend sidecar that verified the same bytes.
 fn shared_artifacts_present(
     cache_ctx: &CacheContext,
     key_hex: &str,
     meta: &cook_contracts::CacheMeta,
-) -> Option<BTreeMap<String, u64>> {
+) -> Option<BTreeMap<String, OutputHashes>> {
     let cloud_k = decode_key_hex(key_hex)?;
     if meta.output_paths.is_empty() {
         return None;
@@ -910,20 +1059,119 @@ fn shared_artifacts_present(
     let mut hashes = BTreeMap::new();
     for (idx, path) in probe_paths.iter().enumerate() {
         let artifact_k = cook_cache::artifact_key(&cloud_k, idx as u32, path);
-        match cache_ctx.backend.get(&artifact_k) {
-            Ok(Some(mut reader)) => {
+        match cache_ctx.backend.get_with_meta(&artifact_k) {
+            Ok(Some((mut reader, meta))) => {
                 // Drain to trigger streaming verify-on-restore. CS-0173 keeps
                 // the digest instead of discarding it: the bytes were read
                 // either way, and `hash_reader` is `hash_file`'s streaming twin,
                 // so this is exactly the hash a consumer would compute from the
                 // restored file.
                 let h = cook_cache::hash_reader(&mut reader)?;
-                hashes.insert(path.clone(), h);
+                hashes.insert(
+                    path.clone(),
+                    OutputHashes {
+                        content: h,
+                        sha256: meta.content_hash,
+                    },
+                );
             }
             _ => return None,
         }
     }
     Some(hashes)
+}
+
+fn local_output_records(
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+) -> BTreeMap<String, u64> {
+    let Some(cm) = cache_managers.get(&node.recipe_name) else {
+        return BTreeMap::new();
+    };
+    let cache = cm.get_or_load(&meta.recipe_name);
+    let Some(entry) = cache.steps.get(&meta.cache_key) else {
+        return BTreeMap::new();
+    };
+    entry
+        .outputs
+        .iter()
+        .map(|f| (f.path.to_string(), f.hash))
+        .collect()
+}
+
+enum FilesManifestFreshness {
+    Fresh(Vec<u8>),
+    Pending { path: String, producer: String },
+    Failed(String),
+}
+
+fn files_manifest_paths(
+    qualified: &cook_contracts::probe_key::QualifiedProbeKey,
+    probe: &cook_contracts::ProbeUnit,
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
+) -> BTreeSet<String> {
+    let mut paths: BTreeSet<String> = probe.inputs.files.iter().cloned().collect();
+    let snapshot_name = cook_contracts::probe_value::probe_file_name(qualified.as_ref());
+    if let Some(bytes) = probe_snapshot.get(&snapshot_name) {
+        if let Ok(value) = cook_contracts::probe_value::decode_json(bytes) {
+            if let Some(obj) = value.as_object() {
+                paths.extend(obj.keys().cloned());
+            }
+        }
+    }
+    paths
+}
+
+fn unit_produces_path(node: &WorkNode, wanted: &Path) -> bool {
+    let Some(meta) = &node.cache_meta else {
+        return false;
+    };
+    meta.output_paths.iter().any(|output| {
+        let pattern = node.working_dir.join(if output.ends_with('/') {
+            format!("{output}**")
+        } else {
+            output.clone()
+        });
+        globset::Glob::new(&pattern.to_string_lossy())
+            .is_ok_and(|glob| glob.compile_matcher().is_match(wanted))
+    })
+}
+
+fn fresh_files_manifest(
+    qualified: &cook_contracts::probe_key::QualifiedProbeKey,
+    probe: &cook_contracts::ProbeUnit,
+    working_dir: &Path,
+    predictions: &Predictions,
+    probe_snapshot: &BTreeMap<String, Vec<u8>>,
+) -> FilesManifestFreshness {
+    let mut paths = files_manifest_paths(qualified, probe, probe_snapshot);
+    paths.retain(|path| {
+        probe.inputs.files.contains(path) || predictions.contains_key(&working_dir.join(path))
+    });
+    let mut files = Vec::new();
+    for path in paths {
+        let abs = working_dir.join(&path);
+        match predictions.get(&abs) {
+            Some((Prediction::Known(h), _)) => files.push((path, h.sha256)),
+            Some((Prediction::Unknowable, producer)) => {
+                return FilesManifestFreshness::Pending {
+                    path,
+                    producer: producer.clone(),
+                };
+            }
+            None => {
+                let hash = cook_cache::hash_file_sha256(&abs);
+                if hash == [0; 32] && abs.exists() {
+                    return FilesManifestFreshness::Failed(format!(
+                        "files declaration: '{path}' exists but its bytes could not be read, so it has no content to record"
+                    ));
+                }
+                files.push((path, hash));
+            }
+        }
+    }
+    FilesManifestFreshness::Fresh(cook_contracts::probe_value::encode_files_manifest(&files))
 }
 
 /// Decode a 64-char lowercase-hex string into a 32-byte cloud key. Returns None

@@ -1,0 +1,15 @@
+files generated
+    "generated/*"
+
+recipe z_gen
+    gather "seed.txt"
+    cook "generated/out.txt" { cat $<in> > $<out> }
+
+recipe a_use
+    seal generated
+    cook "final.txt" { printf used > $<out> }
+
+recipe all: a_use z_gen
+
+chore wipe_generated
+    rm -f generated/out.txt

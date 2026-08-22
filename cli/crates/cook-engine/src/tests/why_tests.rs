@@ -57,3 +57,33 @@ fn identical_determinants_produce_no_diff() {
     o.command_hash = 2;
     assert!(diff_against_manifest(&o, &manifest(2)).is_empty());
 }
+
+#[test]
+fn present_unreadable_member_falls_back_instead_of_becoming_missing() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("unreadable")).unwrap();
+    let key = cook_contracts::probe_key::qualify_for_recipe(
+        "",
+        &cook_contracts::probe_key::LocalProbeKey::new("files"),
+    );
+    let probe = cook_contracts::ProbeUnit {
+        key: cook_contracts::probe_key::LocalProbeKey::new("files"),
+        produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.into(),
+        produce_line: 0,
+        inputs: cook_contracts::ProbeInputs {
+            files: vec!["unreadable".into()],
+            ..Default::default()
+        },
+    };
+
+    assert!(matches!(
+        fresh_files_manifest(
+            &key,
+            &probe,
+            root.path(),
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        ),
+        FilesManifestFreshness::Failed(message) if message.contains("could not be read")
+    ));
+}

@@ -1,0 +1,77 @@
+[[run]]
+args = ["z_gen"]
+[run.assert]
+equals = { "generated/out.txt" = "one\n" }
+
+[[run]]
+args = ["a_use"]
+[run.assert]
+equals = { "final.txt" = "used" }
+
+[[run]]
+args = ["why", "all", "--unit", "final.txt", "--format", "json"]
+[run.assert]
+equals = { "generated/out.txt" = "one\n", "final.txt" = "used" }
+output_contains = ['"status": "local_hit"']
+
+[[run]]
+args = ["wipe_generated"]
+[run.assert]
+absent = ["generated/out.txt"]
+
+[[run]]
+args = ["why", "all", "--unit", "generated/out.txt", "--format", "json"]
+[run.assert]
+absent = ["generated/out.txt"]
+unchanged = ["final.txt"]
+output_contains = [
+  '"recipe": "z_gen"',
+  '"status": "shared_hit"',
+]
+
+[[run]]
+args = ["why", "all", "--unit", "final.txt", "--format", "json"]
+[run.assert]
+absent = ["generated/out.txt"]
+unchanged = ["final.txt"]
+output_contains = [
+  '"recipe": "a_use"',
+  '"status": "local_hit"',
+  '\"generated/out.txt\": \"2c8b08da5ce60398e1f19af0e5dccc744df274b826abe585eaba68c525434806\"',
+  '"key": "',
+]
+
+[[run]]
+args = ["z_gen"]
+[run.assert]
+equals = { "generated/out.txt" = "one\n" }
+unchanged = ["final.txt"]
+
+[[run]]
+args = ["why", "all", "--unit", "final.txt", "--format", "json"]
+write = { "seed.txt" = "two\n" }
+[run.assert]
+equals = { "generated/out.txt" = "one\n", "final.txt" = "used" }
+output_contains = [
+  '"status": "forced_by_upstream"',
+  '"forced_by": "z_gen"',
+  '"pending_input_path": "generated/out.txt"',
+  '"key": null',
+]
+
+[[run]]
+args = ["wipe_generated"]
+[run.assert]
+absent = ["generated/out.txt"]
+
+[[run]]
+args = ["why", "all", "--unit", "final.txt", "--format", "json"]
+[run.assert]
+absent = ["generated/out.txt"]
+unchanged = ["final.txt"]
+output_contains = [
+  '"status": "forced_by_upstream"',
+  '"forced_by": "z_gen"',
+  '"pending_input_path": "generated/out.txt"',
+  '"key": null',
+]
