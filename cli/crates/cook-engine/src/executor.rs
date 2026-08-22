@@ -333,6 +333,18 @@ fn run_interactive_on_main(
     probe_store: &cook_probe::store::ProbeValueStore,
     recipe_name: &str,
 ) -> Result<(), String> {
+    run_interactive_in_process_group(cmd, line, working_dir, env_vars, probe_store, recipe_name, None)
+}
+
+fn run_interactive_in_process_group(
+    cmd: &str,
+    line: usize,
+    working_dir: &std::path::Path,
+    env_vars: &BTreeMap<String, String>,
+    probe_store: &cook_probe::store::ProbeValueStore,
+    recipe_name: &str,
+    process_group: Option<&cook_shell::ProcessGroup>,
+) -> Result<(), String> {
     // CS-0193: substitute `$<key:field>` probe references before the spawn,
     // through the same CS-0192 renderer the worker pool uses — a probe ref
     // means the same thing in a chore step as in a cook body, including the
@@ -349,15 +361,11 @@ fn run_interactive_on_main(
     // what changes is that it now falls out of the stdio mode instead of being
     // hand-written as a pair of `from_bytes(&[])` calls that read like an
     // oversight.
-    let outcome = cook_shell::run(
-        &cook_shell::Spawn {
-            command: cmd,
-            working_dir,
-            stdio: cook_shell::Stdio::Inherited,
-        },
-        env_vars,
-    )
-    .map_err(|e| e.message().to_string())?;
+    let spawn = cook_shell::Spawn { command: cmd, working_dir, stdio: cook_shell::Stdio::Inherited };
+    let outcome = match process_group {
+        Some(process_group) => cook_shell::run_in_process_group(&spawn, env_vars, process_group),
+        None => cook_shell::run(&spawn, env_vars),
+    }.map_err(|e| e.message().to_string())?;
 
     match outcome.failure(line, cmd) {
         Some(failure) => Err(failure.to_wire()),
@@ -2295,8 +2303,19 @@ pub fn execute_dag(
                 let chore_start = Instant::now();
                 let mut failed_idx: Option<usize> = None; // 1-indexed step number
                 let mut last_err: Option<String> = None;
+                let process_group = match cook_shell::ProcessGroup::new() {
+                    Ok(process_group) => Some(process_group),
+                    Err(e) => {
+                        failed_idx = Some(1);
+                        last_err = Some(e.message().to_string());
+                        None
+                    }
+                };
 
                 for (idx0, &id) in window.iter().enumerate() {
+                    if failed_idx.is_some() {
+                        break;
+                    }
                     if cancelled[id] {
                         // Pre-cancelled; treat as a skipped attempt below.
                         continue;
@@ -2324,13 +2343,14 @@ pub fn execute_dag(
                                 // R1 (CS-0164): a chore/interactive step spawns
                                 // with the process-env subset (its bound chore
                                 // params), not config `var.*` values.
-                                Ok(()) => run_interactive_on_main(
+                                Ok(()) => run_interactive_in_process_group(
                                     cmd,
                                     *line,
                                     &work_node.working_dir,
                                     &work_node.process_env_vars,
                                     &pool.probe_value_store(),
                                     &work_node.recipe_name,
+                                    process_group.as_ref(),
                                 ),
                                 Err(e) => Err(e),
                             }
@@ -2338,6 +2358,8 @@ pub fn execute_dag(
                         Some(WorkPayload::LuaChunk { .. }) => {
                             match ensure_output_parent_dirs(work_node) {
                                 Ok(()) => {
+                                    let process_group = process_group.as_ref().expect("chore process group established");
+                                    pool.set_process_group(Some(process_group.clone()));
                                     let env_vars_hashmap: std::collections::HashMap<
                                         String,
                                         String,
@@ -2362,7 +2384,7 @@ pub fn execute_dag(
                                             .collect(),
                                         project_root: cache_ctx.project_root.clone(),
                                     });
-                                    match rx.recv() {
+                                    let result = match rx.recv() {
                                         Ok(work_result) => {
                                             // CS-0194: nothing to forward. The
                                             // drain-designated worker writes
@@ -2385,7 +2407,9 @@ pub fn execute_dag(
                                         Err(e) => {
                                             Err(format!("chore-body lua: pool channel closed: {e}"))
                                         }
-                                    }
+                                    };
+                                    pool.set_process_group(None);
+                                    result
                                 }
                                 Err(e) => Err(e),
                             }
@@ -2437,6 +2461,15 @@ pub fn execute_dag(
                             probe_units_by_node,
                             published,
                         );
+                    }
+                }
+
+                if let Some(process_group) = process_group {
+                    if let Err(e) = process_group.drain() {
+                        if failed_idx.is_none() {
+                            failed_idx = Some(n);
+                            last_err = Some(e.message().to_string());
+                        }
                     }
                 }
 

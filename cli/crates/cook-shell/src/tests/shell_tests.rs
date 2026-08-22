@@ -161,3 +161,23 @@ fn a_command_that_cannot_start_is_an_error_not_an_outcome() {
     );
     assert!(e.is_err());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn process_group_drain_kills_background_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let group = ProcessGroup::new().expect("establish process group");
+    let outcome = run_in_process_group(
+        &Spawn { command: "sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid", working_dir: dir.path(), stdio: Stdio::Captured },
+        std::iter::empty::<(&str, &str)>(),
+        &group,
+    )
+    .expect("spawn");
+    assert!(outcome.success());
+    let pid: u32 = std::fs::read_to_string(dir.path().join("child.pid")).unwrap().trim().parse().unwrap();
+    group.drain().expect("drain process group");
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| stat.rsplit_once(") ").map(|(_, fields)| fields.starts_with('Z')));
+    assert!(state.unwrap_or(true), "background child {pid} survived drain");
+}

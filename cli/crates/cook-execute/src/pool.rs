@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use cook_contracts::{StepKind, WorkPayload};
 use cook_contracts::probe_key::LocalProbeKey;
 use cook_probe::store::ProbeValueStore;
+use cook_shell::ProcessGroup;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -103,6 +104,7 @@ pub struct WorkResult {
 pub struct WorkerPool {
     threads: Vec<std::thread::JoinHandle<()>>,
     queue: Arc<SharedQueue>,
+    process_group: Arc<Mutex<Option<ProcessGroup>>>,
     /// Per-run probe-value store. Owned here so `probe_value_store()` returns
     /// a clone that the engine scheduler can write probe outputs into after
     /// workers complete their `WorkPayload::Probe` units (§22.5.7).
@@ -152,6 +154,7 @@ impl WorkerPool {
         // Per-run probe-value store: shared across all workers so that
         // `cook.probes.get` on any worker VM sees the same store (§22.5.7).
         let probe_store = ProbeValueStore::new();
+        let process_group = Arc::new(Mutex::new(None));
 
         let (tx, rx) = mpsc::channel();
 
@@ -162,9 +165,10 @@ impl WorkerPool {
             let tx = tx.clone();
             let store = probe_store.clone();
             let deps = Arc::clone(&dep_outputs);
+            let process_group = Arc::clone(&process_group);
 
             let handle = std::thread::spawn(move || {
-                worker_loop(q, tx, store, deps);
+                worker_loop(q, tx, store, deps, process_group);
             });
             threads.push(handle);
         }
@@ -173,6 +177,7 @@ impl WorkerPool {
             WorkerPool {
                 threads,
                 queue: shared,
+                process_group,
                 probe_store,
             },
             rx,
@@ -184,6 +189,13 @@ impl WorkerPool {
     /// completes (§22.5.7).
     pub fn probe_value_store(&self) -> ProbeValueStore {
         self.probe_store.clone()
+    }
+
+    /// Assign the one process group used by the chore window currently draining.
+    /// The engine sets it only while the otherwise-drained pool runs one chore
+    /// Lua body, then waits for that body's result before clearing it.
+    pub fn set_process_group(&self, process_group: Option<ProcessGroup>) {
+        *self.process_group.lock().expect("process-group slot lock") = process_group;
     }
 
     /// Push a work item into the shared queue.
@@ -240,6 +252,7 @@ fn worker_loop(
     tx: mpsc::Sender<WorkResult>,
     probe_store: ProbeValueStore,
     dep_outputs: WorkerDepOutputs,
+    process_group: Arc<Mutex<Option<ProcessGroup>>>,
 ) {
     // Each worker creates its own Lua VM.  The VM is `!Send` but never
     // leaves this thread, so this is safe.
@@ -297,6 +310,7 @@ fn worker_loop(
         &current_recipe,
         &current_output,
         &current_capture,
+        &process_group,
         &probe_store,
         &dep_outputs,
         &module_observer,
@@ -627,6 +641,7 @@ fn register_worker_cook_table(
     current_recipe: &Arc<Mutex<String>>,
     current_output: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
     current_capture: &Arc<AtomicBool>,
+    process_group: &Arc<Mutex<Option<ProcessGroup>>>,
     probe_store: &ProbeValueStore,
     dep_outputs: &WorkerDepOutputs,
     module_observer: &cook_lua_stdlib::ModuleObserver,
@@ -645,10 +660,12 @@ fn register_worker_cook_table(
     let penv = Arc::clone(current_process_env_vars);
     let sink = Arc::clone(current_output);
     let capture = Arc::clone(current_capture);
+    let process_group = Arc::clone(process_group);
     let sh_fn = lua.create_function(move |lua, cmd: String| {
         let working_dir = wd.lock().expect("working_dir lock").clone();
         let env_vars = penv.lock().expect("process_env_vars lock").clone();
         let to_terminal = !capture.load(Ordering::Relaxed);
+        let process_group = process_group.lock().expect("process-group slot lock").clone();
         // COOK-422: which Cookfile line this call is on. A failure carrying
         // a line renders `Cookfile:LINE: command failed …`; one carrying 0
         // renders with no location, which is what every execute-phase
@@ -659,7 +676,7 @@ fn register_worker_cook_table(
         // cannot line-map (a probe `produce`, named for its probe) yields
         // `None` and the location-free rendering, which is the honest answer.
         let line = cook_lua_stdlib::caller_line_in_source(lua, COOKFILE_CHUNK_NAME).unwrap_or(0);
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal)
+        run_shell_in_worker(&cmd, &working_dir, &env_vars, &sink, line, to_terminal, process_group.as_ref())
     })?;
     cook.set("sh", sh_fn)?;
 
@@ -1135,20 +1152,17 @@ fn run_shell_in_worker(
     sink: &Arc<Mutex<Vec<cook_contracts::OutputChunk>>>,
     line: usize,
     to_terminal: bool,
+    process_group: Option<&ProcessGroup>,
 ) -> mlua::Result<String> {
     // COOK-306: an executed command may write anywhere in the tree. The memo is
     // the execute phase's, so disarming it stays here rather than moving into
     // `cook-shell` (the register-phase caller deliberately does not disarm).
     cook_cache::statmemo::disarm();
-    let outcome = cook_shell::run(
-        &cook_shell::Spawn {
-            command: cmd,
-            working_dir: wd,
-            stdio: cook_shell::Stdio::Captured,
-        },
-        env_vars,
-    )
-    .map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
+    let spawn = cook_shell::Spawn { command: cmd, working_dir: wd, stdio: cook_shell::Stdio::Captured };
+    let outcome = match process_group {
+        Some(process_group) => cook_shell::run_in_process_group(&spawn, env_vars, process_group),
+        None => cook_shell::run(&spawn, env_vars),
+    }.map_err(|e| mlua::Error::runtime(e.message().to_string()))?;
 
     let stdout = outcome.stdout_lossy();
     // Recorded before the failure check: a command that failed still printed

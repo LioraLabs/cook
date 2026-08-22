@@ -32,6 +32,9 @@
 //! the day a caller can actually set one, and not before.
 
 use std::path::Path;
+use std::process::{Child, Command, Stdio as ProcessStdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cook_contracts::{CapturedStream, CommandFailure, OutputChunk, OutputStream};
@@ -82,6 +85,241 @@ impl std::fmt::Display for SpawnError {
 }
 
 impl std::error::Error for SpawnError {}
+
+/// A process group held open for one chore body.
+///
+/// The anchor keeps the group alive between shell steps, so a background child
+/// from an earlier step remains owned when a later step runs.
+#[derive(Clone)]
+pub struct ProcessGroup {
+    inner: Arc<ProcessGroupInner>,
+}
+
+struct ProcessGroupInner {
+    pgid: i32,
+    anchor: Mutex<Option<Child>>,
+    drained: AtomicBool,
+    cleanup: Mutex<()>,
+    monitor: Mutex<Option<SignalMonitor>>,
+}
+
+struct SignalMonitor {
+    handle: signal_hook::iterator::Handle,
+    thread: std::thread::JoinHandle<()>,
+}
+
+const GRACE: Duration = Duration::from_millis(100);
+
+impl ProcessGroup {
+    /// Establish an empty group whose anchor survives until [`Self::drain`].
+    pub fn new() -> Result<Self, SpawnError> {
+        #[cfg(not(unix))]
+        {
+            return Err(SpawnError {
+                message: "chore process ownership requires Unix process groups".into(),
+            });
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+
+            let mut command = Command::new("sleep");
+            command
+                .arg("2147483647")
+                .stdin(ProcessStdio::null())
+                .stdout(ProcessStdio::null())
+                .stderr(ProcessStdio::null());
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setpgid(0, 0) == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+            let anchor = command.spawn().map_err(|e| SpawnError {
+                message: format!("failed to establish chore process group: {e}"),
+            })?;
+            let inner = Arc::new(ProcessGroupInner {
+                pgid: anchor.id() as i32,
+                anchor: Mutex::new(Some(anchor)),
+                drained: AtomicBool::new(false),
+                cleanup: Mutex::new(()),
+                monitor: Mutex::new(None),
+            });
+            let mut signals = signal_hook::iterator::Signals::new([libc::SIGINT]).map_err(|e| {
+                let _ = drain_inner(&inner, libc::SIGTERM);
+                SpawnError {
+                    message: format!("failed to monitor Ctrl-C for chore process group: {e}"),
+                }
+            })?;
+            let handle = signals.handle();
+            let watched = Arc::clone(&inner);
+            let thread = std::thread::spawn(move || {
+                for _ in signals.forever() {
+                    let _ = drain_inner(&watched, libc::SIGINT);
+                }
+            });
+            *inner.monitor.lock().expect("process-group monitor lock") =
+                Some(SignalMonitor { handle, thread });
+            Ok(Self { inner })
+        }
+    }
+
+    fn configure(&self, command: &mut Command) -> Result<(), SpawnError> {
+        #[cfg(not(unix))]
+        {
+            let _ = command;
+            return Err(SpawnError {
+                message: "chore process ownership requires Unix process groups".into(),
+            });
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+
+            let pgid = self.inner.pgid;
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::setpgid(0, pgid) == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// Terminate every member, waiting briefly before escalating to SIGKILL.
+    pub fn drain(&self) -> Result<(), SpawnError> {
+        let result = drain_inner(&self.inner, libc::SIGTERM);
+        if let Some(SignalMonitor { handle, thread }) = self
+            .inner
+            .monitor
+            .lock()
+            .expect("process-group monitor lock")
+            .take()
+        {
+            handle.close();
+            let _ = thread.join();
+        }
+        result
+    }
+}
+
+fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), SpawnError> {
+    let _cleanup = inner.cleanup.lock().expect("process-group cleanup lock");
+    if inner.drained.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    signal_group(inner.pgid, first_signal)?;
+    if first_signal == libc::SIGINT && wait_for_group(inner.pgid, GRACE)? {
+        signal_group(inner.pgid, libc::SIGTERM)?;
+    }
+    if wait_for_group(inner.pgid, GRACE)? {
+        signal_group(inner.pgid, libc::SIGKILL)?;
+        if wait_for_group(inner.pgid, Duration::from_secs(1))? {
+            return Err(SpawnError {
+                message: "failed to drain chore process group".into(),
+            });
+        }
+    }
+    if let Some(mut anchor) = inner
+        .anchor
+        .lock()
+        .expect("process-group anchor lock")
+        .take()
+    {
+        anchor.wait().map_err(|e| SpawnError {
+            message: format!("failed to reap chore process-group anchor: {e}"),
+        })?;
+    }
+    inner.drained.store(true, Ordering::Release);
+    Ok(())
+}
+
+fn signal_group(pgid: i32, signal: i32) -> Result<(), SpawnError> {
+    #[cfg(unix)]
+    if unsafe { libc::kill(-pgid, signal) } == -1 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(SpawnError {
+                message: format!("failed to signal chore process group: {error}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn wait_for_group(pgid: i32, grace: Duration) -> Result<bool, SpawnError> {
+    let deadline = Instant::now() + grace;
+    loop {
+        if !group_is_live(pgid)? {
+            return Ok(false);
+        }
+        if Instant::now() >= deadline {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn group_is_live(pgid: i32) -> Result<bool, SpawnError> {
+    #[cfg(target_os = "linux")]
+    {
+        for entry in std::fs::read_dir("/proc").map_err(|e| SpawnError {
+            message: format!("failed to inspect chore process group: {e}"),
+        })? {
+            let entry = entry.map_err(|e| SpawnError {
+                message: format!("failed to inspect chore process group: {e}"),
+            })?;
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                continue;
+            };
+            let Some((_, fields)) = stat.rsplit_once(") ") else {
+                continue;
+            };
+            let mut fields = fields.split_whitespace();
+            let state = fields.next();
+            let _ppid = fields.next();
+            let group = fields.next().and_then(|field| field.parse::<i32>().ok());
+            if group == Some(pgid) && state != Some("Z") {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        if unsafe { libc::kill(-pgid, 0) } == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(false);
+            }
+            return Err(SpawnError {
+                message: format!("failed to inspect chore process group: {error}"),
+            });
+        }
+        return Ok(true);
+    }
+
+    #[cfg(not(unix))]
+    Ok(false)
+}
 
 /// What running the command was observed to do.
 #[derive(Debug, Clone)]
@@ -177,8 +415,38 @@ where
     K: AsRef<str>,
     V: AsRef<str>,
 {
+    run_with_group(spawn, env_overlay, None)
+}
+
+/// Like [`run`], but makes the child join a chore's process-lifetime domain.
+pub fn run_in_process_group<K, V>(
+    spawn: &Spawn<'_>,
+    env_overlay: impl IntoIterator<Item = (K, V)>,
+    process_group: &ProcessGroup,
+) -> Result<Outcome, SpawnError>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    run_with_group(spawn, env_overlay, Some(process_group))
+}
+
+fn run_with_group<K, V>(
+    spawn: &Spawn<'_>,
+    env_overlay: impl IntoIterator<Item = (K, V)>,
+    process_group: Option<&ProcessGroup>,
+) -> Result<Outcome, SpawnError>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
     let mut cmd = std::process::Command::new("/bin/sh");
-    cmd.arg("-c").arg(spawn.command).current_dir(spawn.working_dir);
+    cmd.arg("-c")
+        .arg(spawn.command)
+        .current_dir(spawn.working_dir);
+    if let Some(process_group) = process_group {
+        process_group.configure(&mut cmd)?;
+    }
     for (k, v) in env_overlay {
         cmd.env(k.as_ref(), v.as_ref());
     }

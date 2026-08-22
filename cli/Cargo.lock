@@ -621,6 +621,8 @@ name = "cook-shell"
 version = "0.15.0"
 dependencies = [
  "cook-contracts",
+ "libc",
+ "signal-hook",
  "tempfile",
 ]
 
