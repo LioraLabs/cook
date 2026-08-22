@@ -129,6 +129,7 @@ impl ChoreParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chore {
     pub name: String,
+    pub description: Option<String>,
     pub params: Vec<ChoreParam>,
     pub deps: Vec<String>,
     pub steps: Vec<Step>,
@@ -210,6 +211,7 @@ pub struct Cookfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recipe {
     pub name: String,
+    pub description: Option<String>,
     pub deps: Vec<String>,
     pub inputs: Vec<String>,
     pub excludes: Vec<String>,

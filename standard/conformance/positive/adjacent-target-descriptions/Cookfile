@@ -1,0 +1,10 @@
+# Build the project
+# and run its checks
+recipe build
+
+# This comment is separated
+
+recipe plain
+
+# Remove generated files
+chore clean

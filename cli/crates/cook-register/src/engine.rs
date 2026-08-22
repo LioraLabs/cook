@@ -1102,6 +1102,7 @@ impl BodyDriver {
             skip_member_fanout_body,
             file_member_source,
             origin,
+            description,
         ): (
             LuaRegistryKey,
             Vec<String>,
@@ -1112,6 +1113,7 @@ impl BodyDriver {
             usize,
             bool,
             bool,
+            Option<String>,
             Option<String>,
         );
         {
@@ -1165,6 +1167,7 @@ impl BodyDriver {
             kind = recipe.kind;
             params_meta = recipe.metadata.params.clone();
             origin = recipe.metadata.origin.clone();
+            description = recipe.metadata.description.clone();
             source_line = match recipe.source {
                 crate::capture::RegistrationSource::Static { line } => line,
                 crate::capture::RegistrationSource::Dynamic { line } => line,
@@ -1205,7 +1208,15 @@ impl BodyDriver {
             }
             lua.remove_registry_value(func_key_clone)?;
             let _ = self.body_slot.borrow_mut().take();
-            self.register_skipped(name, source, kind, static_requires, params_meta, origin);
+            self.register_skipped(
+                name,
+                source,
+                kind,
+                static_requires,
+                params_meta,
+                origin,
+                description,
+            );
             return Ok(Outcome::Skipped);
         }
 
@@ -1326,7 +1337,15 @@ impl BodyDriver {
                 // is a guarantee rather than a fence.
                 lua.remove_registry_value(func_key_clone)?;
                 let _ = self.body_slot.borrow_mut().take();
-                self.register_skipped(name, source, kind, static_requires, params_meta, origin);
+                self.register_skipped(
+                    name,
+                    source,
+                    kind,
+                    static_requires,
+                    params_meta,
+                    origin,
+                    description,
+                );
                 return Ok(Outcome::Skipped);
             }
         } else {
@@ -1483,6 +1502,7 @@ impl BodyDriver {
         // which is where the seed order put it.
         let entry = crate::RegisteredRecipePub {
             name: name.to_string(),
+            description,
             source,
             kind,
             requires,
@@ -1513,9 +1533,11 @@ impl BodyDriver {
         requires: Vec<String>,
         params: Vec<crate::capture::ChoreParamMeta>,
         origin: Option<String>,
+        description: Option<String>,
     ) {
         let entry = crate::RegisteredRecipePub {
             name: name.to_string(),
+            description,
             source,
             kind,
             requires: requires.clone(),
@@ -2620,6 +2642,7 @@ pub fn list_names(
         .iter()
         .map(|r| crate::RegisteredRecipePub {
             name: r.name.clone(),
+            description: r.metadata.description.clone(),
             source: r.source,
             kind: r.kind,
             requires: r.metadata.requires.clone(),

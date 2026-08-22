@@ -1626,7 +1626,14 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
             // `(Some(_), None)` is unreachable; it degrades to the plain line
             // rather than panicking on a listing surface.
             _ => {
-                println!("  {label}{name_and_suffix}");
+                if let Some(description) = &r.description {
+                    println!(
+                        "  {label}{name_and_suffix}  {}",
+                        description.lines().next().unwrap_or_default()
+                    );
+                } else {
+                    println!("  {label}{name_and_suffix}");
+                }
             }
         }
     }

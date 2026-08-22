@@ -4,6 +4,7 @@ use super::*;
 fn test_recipe_construction() {
     let recipe = Recipe {
         name: "build".to_string(),
+        description: None,
         deps: vec!["setup".to_string()],
         inputs: vec!["src/*.c".to_string()],
         excludes: vec![],
@@ -26,6 +27,7 @@ fn test_recipe_construction() {
 fn test_recipe_no_metadata() {
     let recipe = Recipe {
         name: "clean".to_string(),
+        description: None,
         deps: vec![],
         inputs: vec![],
         excludes: vec![],
@@ -179,6 +181,7 @@ fn test_top_level_module_call_construction() {
 fn chore_carries_empty_params_by_default() {
     let chore = Chore {
         name: "clean".to_string(),
+        description: None,
         params: vec![],
         deps: vec![],
         steps: vec![],

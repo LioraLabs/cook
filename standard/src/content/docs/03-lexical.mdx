@@ -126,7 +126,7 @@ A **comment** is a line whose first non-whitespace character is `#`. The comment
 
 In particular, a `#` that appears after the first non-whitespace character of a line is part of that line's content and is not stripped by the lexer. Downstream phases (notably the shell runtime) MAY assign their own meaning to in-line `#` characters; that meaning is not part of Cookfile lexical syntax.
 
-A `Comment` token is accepted anywhere a `toplevel_item` (App. A.1) or a `recipe_item` (App. A.3) is admitted, and is discarded at the syntactic layer. Comments are permitted inside `config_body` (App. A.2) and inside brace-balanced blocks (§{lexical.brace-blocks}), where they are preserved verbatim in the collected block body because their removal is the interior language's concern, not the Cookfile lexer's.
+A `Comment` token is accepted anywhere a `toplevel_item` (App. A.1) or a `recipe_item` (App. A.3) is admitted, and is discarded at the syntactic layer. At top level, however, a contiguous `Comment` block immediately preceding a `recipe` or `chore` header, with no intervening `Blank` token, attaches as that declaration's full description. The reference human listing renders the description's first line. Comments are permitted inside `config_body` (App. A.2) and inside brace-balanced blocks (§{lexical.brace-blocks}), where they are preserved verbatim in the collected block body because their removal is the interior language's concern, not the Cookfile lexer's.
 
 ### Example 3.6.1
 

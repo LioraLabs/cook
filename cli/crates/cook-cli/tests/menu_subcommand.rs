@@ -104,6 +104,60 @@ fn list_is_an_alias_for_menu() {
 }
 
 #[test]
+fn menu_shows_adjacent_surface_comment_descriptions() {
+    let tmp = TempDir::new().expect("tempdir");
+    write_cookfile(
+        tmp.path(),
+        "# Build the project\n\
+         # and run its checks\n\
+         recipe build\n\
+         \n\
+         # This comment is separated\n\
+         \n\
+         recipe plain\n\
+         \n\
+         # Remove generated files\n\
+         chore clean\n",
+    );
+
+    let menu = run_cook(tmp.path(), &["menu"]);
+    assert!(
+        menu.status.success(),
+        "cook menu failed: stderr={}",
+        String::from_utf8_lossy(&menu.stderr),
+    );
+    let menu_stdout = String::from_utf8(menu.stdout).expect("utf-8 stdout");
+    assert!(
+        menu_stdout.contains("  recipe build  Build the project"),
+        "adjacent multi-line recipe comment must render its first line; stdout:\n{menu_stdout}"
+    );
+    assert!(
+        menu_stdout.contains("  chore  clean  Remove generated files"),
+        "adjacent chore comment must render its first line; stdout:\n{menu_stdout}"
+    );
+    assert!(
+        menu_stdout.contains("  recipe plain\n"),
+        "blank-separated comment must not describe the recipe; stdout:\n{menu_stdout}"
+    );
+    assert!(
+        !menu_stdout.contains("recipe plain  This comment is separated"),
+        "blank-separated comment must stay undescribed; stdout:\n{menu_stdout}"
+    );
+
+    let list = run_cook(tmp.path(), &["list"]);
+    assert!(
+        list.status.success(),
+        "cook list failed: stderr={}",
+        String::from_utf8_lossy(&list.stderr),
+    );
+    assert_eq!(
+        String::from_utf8(list.stdout).expect("utf-8 stdout"),
+        menu_stdout,
+        "cook list must share menu's description rendering"
+    );
+}
+
+#[test]
 fn collision_with_builtin_prints_notice_and_runs_builtin() {
     for name in ["menu", "list"] {
         let tmp = TempDir::new().expect("tempdir");

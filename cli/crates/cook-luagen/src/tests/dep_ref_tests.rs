@@ -16,6 +16,7 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
 fn make_recipe(name: &str, steps: Vec<Step>) -> Recipe {
     Recipe {
         name: name.to_string(),
+        description: None,
         deps: vec![],
         inputs: vec![],
         excludes: vec![],

@@ -402,6 +402,8 @@ impl ChoreParamMeta {
 #[derive(Debug, Clone)]
 pub struct RegisteredRecipePub {
     pub name: String,
+    /// Full adjacent comment block for a surface declaration, if any.
+    pub description: Option<String>,
     pub source: RegistrationSource,
     pub kind: RecipeKind,
     pub requires: Vec<String>,

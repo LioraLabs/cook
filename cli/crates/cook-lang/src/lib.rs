@@ -176,6 +176,20 @@ fn note_probe_decl(
     Ok(())
 }
 
+fn preceding_comment_block(tokens: &[Located<Token>], pos: usize) -> Option<String> {
+    let mut lines = Vec::new();
+    for token in tokens[..pos].iter().rev() {
+        let Token::Comment(text) = &token.value else {
+            break;
+        };
+        lines.push(text.trim().to_string());
+    }
+    (!lines.is_empty()).then(|| {
+        lines.reverse();
+        lines.join("\n")
+    })
+}
+
 pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let tokens = tokenize(source)?;
     let source_lines: Vec<&str> = source.lines().collect();
@@ -240,6 +254,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
             }
             Token::RecipeHeader { name, deps } => {
                 seen_recipe = true;
+                let description = preceding_comment_block(&tokens, pos);
                 let recipe_line = tok.line;
                 let name = name.clone();
                 let deps = deps.clone();
@@ -254,14 +269,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 }
                 callable_decls.insert(name.clone(), (CallableKind::Recipe, recipe_line));
                 pos += 1;
-                let (recipe, inline_probes, new_pos) =
+                let (mut recipe, inline_probes, new_pos) =
                     parse_recipe(name, deps, recipe_line, &tokens, pos, &source_lines)?;
+                recipe.description = description;
                 recipes.push(recipe);
                 probes.extend(inline_probes);
                 pos = new_pos;
             }
             Token::ChoreHeader { name, params, deps } => {
                 seen_recipe = true;  // chores count toward the ordering rule
+                let description = preceding_comment_block(&tokens, pos);
                 let chore_line = tok.line;
                 let name = name.clone();
                 let params = params.clone();
@@ -277,8 +294,9 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 }
                 callable_decls.insert(name.clone(), (CallableKind::Chore, chore_line));
                 pos += 1;
-                let (chore, new_pos) =
+                let (mut chore, new_pos) =
                     parse_chore(name, params, deps, chore_line, &tokens, pos, &source_lines)?;
+                chore.description = description;
                 chores.push(chore);
                 pos = new_pos;
             }

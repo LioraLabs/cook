@@ -1,0 +1,24 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=3
+      description: "Build the project\nand run its checks"
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+    Recipe name="plain" line=7
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+  chores:
+    Chore name="clean" line=10
+      description: "Remove generated files"
+      params: []
+      deps: []
+      steps:
+  register_blocks: []
+  top_level_module_calls: []

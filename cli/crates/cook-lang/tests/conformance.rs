@@ -368,6 +368,9 @@ fn format_cookfile(c: &Cookfile) -> String {
             repr(&r.name),
             r.line,
         ));
+        if let Some(description) = &r.description {
+            out.push_str(&format!("      description: {}\n", repr(description)));
+        }
         out.push_str(&format!("      deps: {}\n", repr_list(&r.deps)));
         out.push_str(&format!("      inputs: {}\n", repr_list(&r.inputs)));
         out.push_str(&format!("      excludes: {}\n", repr_list(&r.excludes)));
@@ -384,6 +387,9 @@ fn format_cookfile(c: &Cookfile) -> String {
             repr(&ch.name),
             ch.line,
         ));
+        if let Some(description) = &ch.description {
+            out.push_str(&format!("      description: {}\n", repr(description)));
+        }
         out.push_str(&format!("      params: {}\n", format_chore_params(&ch.params)));
         out.push_str(&format!("      deps: {}\n", repr_list(&ch.deps)));
         out.push_str("      steps:\n");

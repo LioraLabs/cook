@@ -59,6 +59,7 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
 fn make_recipe(name: &str, deps: Vec<&str>, inputs: Vec<&str>, steps: Vec<Step>) -> Recipe {
     Recipe {
         name: name.to_string(),
+        description: None,
         deps: deps.into_iter().map(String::from).collect(),
         inputs: inputs.into_iter().map(String::from).collect(),
         excludes: vec![],
@@ -210,6 +211,7 @@ fn codegen_emits_register_surface_for_surface_recipes() {
         config_blocks: vec![],
         recipes: vec![Recipe {
             name: "build".to_string(),
+            description: None,
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
@@ -893,6 +895,7 @@ fn test_test_step_wrapped_in_step_group() {
 fn test_recipe_with_excludes() {
     let cookfile = make_cookfile(vec![Recipe {
         name: "lib".to_string(),
+        description: None,
         deps: vec![],
         inputs: vec!["src/*.c".to_string()],
         excludes: vec!["src/lua.c".to_string(), "src/luac.c".to_string()],
@@ -1869,6 +1872,7 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
 fn make_chore(name: &str, deps: Vec<&str>, steps: Vec<Step>) -> Chore {
     Chore {
         name: name.to_string(),
+        description: None,
         params: vec![],
         deps: deps.into_iter().map(String::from).collect(),
         steps,
@@ -2868,6 +2872,7 @@ fn cook_step_excludes_threaded_through_resolve_gather() {
     // the second slot of the resolve_gather call.
     let recipe = Recipe {
         name: "build".to_string(),
+        description: None,
         deps: vec![],
         inputs: vec!["src/*.c".to_string(), "include/*.h".to_string()],
         excludes: vec!["src/skip.c".to_string()],
@@ -3022,6 +3027,7 @@ fn test_codegen_interleaves_register_blocks_with_recipes() {
         config_blocks: vec![],
         recipes: vec![Recipe {
             name: "mid".to_string(),
+            description: None,
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
@@ -3085,6 +3091,7 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
         config_blocks: vec![],
         recipes: vec![Recipe {
             name: "mid".to_string(),
+            description: None,
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
@@ -3129,6 +3136,7 @@ fn compile_chore_emits_param_metadata_and_locals() {
     use cook_lang::ast::{Chore, ChoreParam, Step};
     let chore = Chore {
         name: "deploy".into(),
+        description: None,
         params: vec![
             ChoreParam::Required {
                 name: "target".into(),
@@ -3160,6 +3168,7 @@ fn compile_chore_emits_defaulted_lua_param_metadata() {
     use cook_lang::ast::{Chore, ChoreParam, Step};
     let chore = Chore {
         name: "release".into(),
+        description: None,
         params: vec![ChoreParam::DefaultedLua {
             name: "version".into(),
             default_lua: "cook.git.head_tag() or \"v0\"".into(),
@@ -3187,6 +3196,7 @@ fn compile_chore_emits_variadic_param_metadata() {
     use cook_lang::ast::{Chore, ChoreParam, Step};
     let chore = Chore {
         name: "lint".into(),
+        description: None,
         params: vec![ChoreParam::VariadicPlus {
             name: "files".into(),
             line: 1,
@@ -3212,6 +3222,7 @@ fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
     use cook_lang::ast::{Chore, Step};
     let chore = Chore {
         name: "clean".into(),
+        description: None,
         params: vec![],
         deps: vec![],
         steps: vec![Step::Lua {
@@ -3253,6 +3264,7 @@ fn codegen_chore_uses_register_surface_chore() {
         recipes: vec![],
         chores: vec![Chore {
             name: "clean".to_string(),
+            description: None,
             params: vec![],
             deps: vec![],
             steps: vec![],
@@ -3281,6 +3293,7 @@ fn codegen_register_surface_includes_requires() {
         config_blocks: vec![],
         recipes: vec![Recipe {
             name: "app".to_string(),
+            description: None,
             deps: vec!["lib".to_string()],
             inputs: vec![],
             excludes: vec![],
@@ -3317,6 +3330,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
     use cook_lang::ast::{Chore, ChoreParam, Step};
     let chore = Chore {
         name: "say".into(),
+        description: None,
         params: vec![ChoreParam::Required {
             name: "target".into(),
             line: 1,

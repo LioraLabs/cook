@@ -81,6 +81,7 @@ pub struct RegisteredMetadata {
     /// Ordered list of declared chore parameters. Empty for normal
     /// recipes (which do not take parameters).
     pub params: Vec<ChoreParamMeta>,
+    pub description: Option<String>,
     /// The module-qualified function name that minted this recipe (e.g.
     /// `"cook_pnpm.workspace"`), when the author opted in via the
     /// `cook.recipe(name, {origin = "..."}, body)` field. `None` when no
@@ -365,6 +366,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params: vec![],
+                    description: None,
                     origin,
                 },
                 source: RegistrationSource::Dynamic { line },
@@ -420,6 +422,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params,
+                    description: None,
                     origin,
                 },
                 source: RegistrationSource::Dynamic { line },
@@ -454,6 +457,7 @@ pub fn install_cook_api(
             // matching the legacy `cook.recipe` "no line info" sentinel.
             let line: usize = meta.get("__line").unwrap_or(0);
             let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
+            let description: Option<String> = meta.get("description")?;
             let member_source = parse_member_source_meta(&meta)?;
             recipes_surface.borrow_mut().push(RegisteredRecipe {
                 name,
@@ -463,6 +467,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params: vec![],
+                    description,
                     // Surface `recipe NAME` blocks never carry an origin —
                     // only the public `cook.recipe` / `cook.chore`
                     // closures parse it (`parse_origin_meta`).
@@ -490,6 +495,7 @@ pub fn install_cook_api(
             let line: usize = meta.get("__line").unwrap_or(0);
             let (inputs, excludes, requires) = parse_meta_lists(&meta)?;
             let params = parse_chore_params_meta(lua, &meta)?;
+            let description: Option<String> = meta.get("description")?;
             recipes_chore.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
@@ -498,6 +504,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params,
+                    description,
                     // Surface `chore NAME` blocks never carry an origin —
                     // only the public `cook.recipe` / `cook.chore`
                     // closures parse it (`parse_origin_meta`).

@@ -371,6 +371,7 @@ pub(crate) fn parse_recipe(
                 return Ok((
                     Recipe {
                         name,
+                        description: None,
                         deps,
                         inputs,
                         excludes,
@@ -400,6 +401,7 @@ pub(crate) fn parse_recipe(
                         return Ok((
                             Recipe {
                                 name,
+                                description: None,
                                 deps,
                                 inputs,
                                 excludes,
@@ -644,6 +646,7 @@ pub(crate) fn parse_recipe(
     Ok((
         Recipe {
             name,
+            description: None,
             deps,
             inputs,
             excludes,
@@ -750,6 +753,7 @@ pub(crate) fn parse_chore(
                 return Ok((
                     Chore {
                         name,
+                        description: None,
                         params,
                         deps,
                         steps,
@@ -773,6 +777,7 @@ pub(crate) fn parse_chore(
                         return Ok((
                             Chore {
                                 name,
+                                description: None,
                                 params,
                                 deps,
                                 steps,
@@ -881,6 +886,7 @@ pub(crate) fn parse_chore(
     Ok((
         Chore {
             name,
+            description: None,
             params,
             deps,
             steps,

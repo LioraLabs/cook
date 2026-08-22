@@ -1572,6 +1572,9 @@ fn compile_chore_checked(
     // CLI dispatch can distinguish chores from recipes. Chores have no
     // inputs/excludes (parser-enforced), only `requires`.
     let mut fields = chore_metadata_fields(chore, recipe_names);
+    if let Some(description) = &chore.description {
+        fields.push(format!("description = {}", lua_string::literal(description)));
+    }
     fields.push(format!("__line = {}", chore.line));
 
     // COOK-36 Task 3: emit __params metadata when the chore declares parameters.
@@ -1773,6 +1776,9 @@ fn emit_chore_body_unit(
 /// `inputs` / `excludes`.
 fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> String {
     let mut fields = recipe_metadata_fields(recipe, recipe_names);
+    if let Some(description) = &recipe.description {
+        fields.push(format!("description = {}", lua_string::literal(description)));
+    }
     // COOK-64 §8.2/§22.5.10: expose a member-fanout recipe's data source on the
     // surface meta so the register pre-pass can resolve a feeding probe before
     // running the body (which itself reads the resolved value via
