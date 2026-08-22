@@ -34,7 +34,7 @@
 use std::path::Path;
 use std::process::{Child, Command, Stdio as ProcessStdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use cook_contracts::{CapturedStream, CommandFailure, OutputChunk, OutputStream};
@@ -100,12 +100,12 @@ struct ProcessGroupInner {
     anchor: Mutex<Option<Child>>,
     drained: AtomicBool,
     cleanup: Mutex<()>,
-    monitor: Mutex<Option<SignalMonitor>>,
 }
 
-struct SignalMonitor {
-    handle: signal_hook::iterator::Handle,
-    thread: std::thread::JoinHandle<()>,
+/// The permanent signal thread holds only a weak group reference, so it cannot
+/// keep a completed chore alive.
+struct SignalRouter {
+    active: Arc<Mutex<Option<Weak<ProcessGroupInner>>>>,
 }
 
 const GRACE: Duration = Duration::from_millis(100);
@@ -147,27 +147,12 @@ impl ProcessGroup {
                 anchor: Mutex::new(Some(anchor)),
                 drained: AtomicBool::new(false),
                 cleanup: Mutex::new(()),
-                monitor: Mutex::new(None),
             });
-            let mut signals = signal_hook::iterator::Signals::new([libc::SIGINT]).map_err(|e| {
+            let router = signal_router().map_err(|e| {
                 let _ = drain_inner(&inner, libc::SIGTERM);
-                SpawnError {
-                    message: format!("failed to monitor Ctrl-C for chore process group: {e}"),
-                }
+                e
             })?;
-            let handle = signals.handle();
-            let watched = Arc::downgrade(&inner);
-            let thread = std::thread::spawn(move || {
-                for _ in signals.forever() {
-                    let Some(watched) = watched.upgrade() else {
-                        break;
-                    };
-                    let _ = drain_inner(&watched, libc::SIGINT);
-                    let _ = signal_hook::low_level::emulate_default_handler(libc::SIGINT);
-                }
-            });
-            *inner.monitor.lock().expect("process-group monitor lock") =
-                Some(SignalMonitor { handle, thread });
+            router.activate(&inner);
             Ok(Self { inner })
         }
     }
@@ -202,26 +187,18 @@ impl ProcessGroup {
     /// Terminate every member, waiting briefly before escalating to SIGKILL.
     pub fn drain(&self) -> Result<(), SpawnError> {
         let result = drain_inner(&self.inner, libc::SIGTERM);
-        if let Some(SignalMonitor { handle, thread }) = self
-            .inner
-            .monitor
-            .lock()
-            .expect("process-group monitor lock")
-            .take()
-        {
-            handle.close();
-            let _ = thread.join();
-            drop(handle);
-            restore_sigint_default();
+        if let Ok(router) = signal_router() {
+            router.deactivate(&self.inner);
         }
         result
     }
 }
 
-impl Drop for ProcessGroup {
+impl Drop for ProcessGroupInner {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
-            let _ = self.drain();
+        let _ = drain_inner(self, libc::SIGTERM);
+        if let Ok(router) = signal_router() {
+            router.deactivate(self);
         }
     }
 }
@@ -233,43 +210,76 @@ fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), Spawn
     }
 
     signal_group(inner.pgid, first_signal)?;
-    reap_anchor(inner)?;
-    if first_signal == libc::SIGINT && wait_for_group(inner.pgid, GRACE)? {
-        signal_group(inner.pgid, libc::SIGTERM)?;
+    if !wait_for_group(inner, GRACE)? {
+        inner.drained.store(true, Ordering::Release);
+        return Ok(());
     }
-    if wait_for_group(inner.pgid, GRACE)? {
-        signal_group(inner.pgid, libc::SIGKILL)?;
-        if wait_for_group(inner.pgid, Duration::from_secs(1))? {
-            return Err(SpawnError {
-                message: "failed to drain chore process group".into(),
-            });
+    if first_signal == libc::SIGINT {
+        signal_group(inner.pgid, libc::SIGTERM)?;
+        if !wait_for_group(inner, GRACE)? {
+            inner.drained.store(true, Ordering::Release);
+            return Ok(());
         }
+    }
+    signal_group(inner.pgid, libc::SIGKILL)?;
+    if wait_for_group(inner, Duration::from_secs(1))? {
+        return Err(SpawnError {
+            message: "failed to drain chore process group".into(),
+        });
     }
     inner.drained.store(true, Ordering::Release);
     Ok(())
 }
 
-fn reap_anchor(inner: &ProcessGroupInner) -> Result<(), SpawnError> {
-    if let Some(mut anchor) = inner
-        .anchor
-        .lock()
-        .expect("process-group anchor lock")
-        .take()
-    {
-        anchor.wait().map_err(|e| SpawnError {
-            message: format!("failed to reap chore process-group anchor: {e}"),
-        })?;
+fn signal_router() -> Result<&'static SignalRouter, SpawnError> {
+    static ROUTER: OnceLock<Result<SignalRouter, String>> = OnceLock::new();
+    match ROUTER.get_or_init(SignalRouter::new) {
+        Ok(router) => Ok(router),
+        Err(message) => Err(SpawnError { message: message.clone() }),
     }
-    Ok(())
 }
 
-fn restore_sigint_default() {
-    #[cfg(unix)]
-    // The monitor has already stopped and dropped its signal-hook action; this
-    // is ordinary teardown, not signal-handler work.
-    unsafe {
-        libc::signal(libc::SIGINT, libc::SIG_DFL);
+impl SignalRouter {
+    fn new() -> Result<Self, String> {
+        let active = Arc::new(Mutex::new(None));
+        let watched = Arc::clone(&active);
+        let mut signals = signal_hook::iterator::Signals::new([libc::SIGINT])
+            .map_err(|e| format!("failed to monitor Ctrl-C for chore process group: {e}"))?;
+        std::thread::spawn(move || {
+            for _ in signals.forever() {
+                let group = watched.lock().expect("process-group signal router lock").as_ref().and_then(Weak::upgrade);
+                if let Some(group) = group {
+                    let _ = drain_inner(&group, libc::SIGINT);
+                }
+                let _ = signal_hook::low_level::emulate_default_handler(libc::SIGINT);
+            }
+        });
+        Ok(Self { active })
     }
+
+    fn activate(&self, group: &Arc<ProcessGroupInner>) {
+        *self.active.lock().expect("process-group signal router lock") = Some(Arc::downgrade(group));
+    }
+
+    fn deactivate(&self, group: &ProcessGroupInner) {
+        let mut active = self.active.lock().expect("process-group signal router lock");
+        if active.as_ref().is_some_and(|active| std::ptr::eq(active.as_ptr(), group)) {
+            *active = None;
+        }
+    }
+}
+
+fn reap_anchor(inner: &ProcessGroupInner) -> Result<(), SpawnError> {
+    let mut anchor = inner.anchor.lock().expect("process-group anchor lock");
+    let Some(child) = anchor.as_mut() else {
+        return Ok(());
+    };
+    if child.try_wait().map_err(|e| SpawnError {
+        message: format!("failed to reap chore process-group anchor: {e}"),
+    })?.is_some() {
+        anchor.take();
+    }
+    Ok(())
 }
 
 fn signal_group(pgid: i32, signal: i32) -> Result<(), SpawnError> {
@@ -285,10 +295,12 @@ fn signal_group(pgid: i32, signal: i32) -> Result<(), SpawnError> {
     Ok(())
 }
 
-fn wait_for_group(pgid: i32, grace: Duration) -> Result<bool, SpawnError> {
+fn wait_for_group(inner: &ProcessGroupInner, grace: Duration) -> Result<bool, SpawnError> {
     let deadline = Instant::now() + grace;
     loop {
-        if !group_is_live(pgid)? {
+        reap_anchor(inner)?;
+        if !group_is_live(inner.pgid)? {
+            reap_anchor(inner)?;
             return Ok(false);
         }
         if Instant::now() >= deadline {

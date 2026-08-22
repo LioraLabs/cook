@@ -160,24 +160,24 @@ fn ctrl_c_stops_a_pure_lua_chore() {
 }
 
 #[test]
-fn a_completed_chore_restores_ctrl_c_for_later_work() {
+fn ctrl_c_routes_to_a_second_chore_after_the_first_completes() {
     let dir = TempDir::new().unwrap();
     fs::write(
         dir.path().join("Cookfile"),
-        "chore own\n    true\nrecipe later: own\n    cook \"out\" { touch ready; while :; do sleep 1; done }\n",
+        "chore first\n    true\nchore second: first\n    sh -c '(sleep 30 & echo $! > child.pid) &'\n    >{ cook.sh(\"test -s child.pid\") }\n    sh -c 'while :; do sleep 1; done'\n",
     )
     .expect("write Cookfile");
 
-    let mut cook = start_target(dir.path(), "later");
-    let ready = dir.path().join("ready");
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !ready.exists() {
-        assert!(Instant::now() < deadline, "later work never became ready");
-        thread::sleep(Duration::from_millis(10));
-    }
+    let cook = start_target(dir.path(), "second");
+    let pid = child_pid(dir.path());
     Command::new("kill")
         .args(["-INT", &cook.id().to_string()])
         .status()
         .expect("send SIGINT to cook");
-    assert!(!wait_for_cook_exit(&mut cook).success());
+    let out = cook.wait_with_output().expect("wait for interrupted cook");
+    assert!(!out.status.success(), "interrupted chore unexpectedly succeeded: {out:?}");
+    if alive(pid) {
+        reap(pid);
+        panic!("descendant {pid} survived Ctrl-C routed to the second chore");
+    }
 }

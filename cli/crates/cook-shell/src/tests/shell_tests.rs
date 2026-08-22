@@ -189,6 +189,7 @@ fn dropping_process_group_kills_background_descendants() {
     let pid: u32;
     {
         let group = ProcessGroup::new().expect("establish process group");
+        let final_owner = group.clone();
         let outcome = run_with_group(
             &Spawn { command: "sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid", working_dir: dir.path(), stdio: Stdio::Captured },
             std::iter::empty::<(&str, &str)>(),
@@ -197,11 +198,38 @@ fn dropping_process_group_kills_background_descendants() {
         .expect("spawn");
         assert!(outcome.success());
         pid = std::fs::read_to_string(dir.path().join("child.pid")).unwrap().trim().parse().unwrap();
+        drop(group);
+        drop(final_owner);
     }
     let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
         .and_then(|stat| stat.rsplit_once(") ").map(|(_, fields)| fields.starts_with('Z')));
     assert!(state.unwrap_or(true), "background child {pid} survived ProcessGroup drop");
+}
+
+#[cfg(unix)]
+#[test]
+fn drain_escalates_a_stopped_anchor_without_blocking() {
+    use std::sync::mpsc;
+
+    let group = ProcessGroup::new().expect("establish process group");
+    assert_eq!(unsafe { libc::kill(-group.inner.pgid, libc::SIGSTOP) }, 0);
+    let (done_tx, done_rx) = mpsc::channel();
+    let drainer = group.clone();
+    let join = std::thread::spawn(move || {
+        let _ = done_tx.send(drainer.drain());
+    });
+    let result = match done_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(timeout) => {
+            let _ = unsafe { libc::kill(-group.inner.pgid, libc::SIGKILL) };
+            let _ = join.join();
+            panic!("stopped anchor blocked escalation: {timeout}");
+        }
+    };
+    join.join().expect("drain thread panicked");
+    result.expect("drain stopped anchor");
+    assert!(group.inner.anchor.lock().unwrap().is_none(), "drain left the killed anchor unreaped");
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
