@@ -662,13 +662,21 @@ fn no_publish_enabled(globals: &Globals) -> bool {
 /// recipe-level edge map (and therefore the reachable closure) is computed
 /// here from `recipe_infos` via `analyzer::dependency_edges_multi`; the
 /// engine takes responsibility for the topological order downstream.
+enum RunWithProgress {
+    Complete(cook_engine::run::RunResult),
+    TaskFailures {
+        error: CookError,
+        partial_test_results: Vec<cook_engine::TestResult>,
+    },
+}
+
 fn run_with_progress(
     globals: &Globals,
     recipe_infos: &BTreeMap<String, cook_plan::analyzer::RecipeInfo>,
     targets: &[String],
     registered_workspace: &RegisteredWorkspace,
     num_jobs: usize,
-) -> Result<cook_engine::run::RunResult, CookError> {
+) -> Result<RunWithProgress, CookError> {
     let project_root = resolve_project_root(globals)?;
 
     // Recipe-level dependency edges across the reachable closure. The engine
@@ -702,14 +710,14 @@ fn run_with_progress(
         if reachable.is_empty() {
             let recipe_name = targets.first().map(String::as_str).unwrap_or("?");
             eprintln!("cook: nothing affected for recipe '{recipe_name}' since {since}");
-            return Ok(cook_engine::run::RunResult {
+            return Ok(RunWithProgress::Complete(cook_engine::run::RunResult {
                 test_results: vec![],
                 swept: vec![],
                 kept_modified: vec![],
                 output_glob_warnings: vec![],
                 // No work ran, so nothing was published.
                 published_count: 0,
-            });
+            }));
         }
         edges.retain(|k, _| reachable.contains(k));
         for deps in edges.values_mut() {
@@ -770,7 +778,32 @@ fn run_with_progress(
         );
     }
 
-    result.map_err(engine_error_to_cook_error)
+    match result {
+        Ok(result) => Ok(RunWithProgress::Complete(result)),
+        Err(cook_engine::EngineError::TaskFailures {
+            partial_test_results,
+            failures,
+            count,
+        }) if partial_test_results.iter().any(|r| {
+            matches!(
+                r.outcome,
+                cook_engine::TestOutcome::Failed
+                    | cook_engine::TestOutcome::Blocked
+                    | cook_engine::TestOutcome::TimedOut
+            )
+        }) => {
+            let error = engine_error_to_cook_error(cook_engine::EngineError::TaskFailures {
+                count,
+                failures,
+                partial_test_results: vec![],
+            });
+            Ok(RunWithProgress::TaskFailures {
+                error,
+                partial_test_results,
+            })
+        }
+        Err(error) => Err(engine_error_to_cook_error(error)),
+    }
 }
 
 /// Resolve num_jobs from globals or system parallelism.
@@ -978,6 +1011,7 @@ pub fn cmd_run(
 ) -> Result<(), CookError> {
     // Selection is validated once, in `build_registered_workspace`, against
     // the union of all loaded Cookfiles (§11.6 / CS-0165).
+    let project_root = resolve_project_root(globals)?;
     let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
@@ -1005,7 +1039,21 @@ pub fn cmd_run(
     // (COOK-423).
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
-    let run_result = run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
+    let (test_results, hard_failure) = match run_with_progress(
+        globals,
+        &recipe_infos,
+        &targets,
+        &registered,
+        num_jobs,
+    )? {
+        RunWithProgress::Complete(result) => (result.test_results, None),
+        RunWithProgress::TaskFailures {
+            error,
+            partial_test_results,
+        } => (partial_test_results, Some(error)),
+    };
+
+    let _ = crate::test_state::save(&project_root, &test_results);
 
     // §19.2 (CS-0124): a failing test step fails the run. The engine records
     // test failures as "soft" results (executor.rs — dependents are not
@@ -1013,8 +1061,7 @@ pub fn cmd_run(
     // must exit non-zero. Blocked cannot occur on the Ok path today (blocked
     // rows ride EngineError::TaskFailures), but match it for parity with
     // cmd_test's any_failed check.
-    let failed_tests = run_result
-        .test_results
+    let failed_tests: Vec<_> = test_results
         .iter()
         .filter(|r| {
             matches!(
@@ -1024,16 +1071,32 @@ pub fn cmd_run(
                     | cook_engine::TestOutcome::TimedOut
             )
         })
-        .count();
-    if failed_tests > 0 {
+        .collect();
+    if !failed_tests.is_empty() {
         // main.rs suppresses TestFailure's Display (test-runner output
         // design §3.4, see test_reporter/summary.rs) — the per-node
         // FAILED lines are already on screen; print the one-line summary
         // here, after the renderer has released the terminal.
-        eprintln!("cook: {failed_tests} failing test step(s)");
+        let failed_ids = failed_tests
+            .iter()
+            .map(|r| r.id.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "cook: {} failing test step(s): {failed_ids}",
+            failed_tests.len()
+        );
+        eprintln!("\n  rerun: cook test --rerun-failed");
+        if let Some(error) = hard_failure {
+            return Err(error);
+        }
         return Err(CookError::TestFailure(format!(
-            "{failed_tests} failing test step(s)"
+            "{} failing test step(s)",
+            failed_tests.len()
         )));
+    }
+    if let Some(error) = hard_failure {
+        return Err(error);
     }
     Ok(())
 }

@@ -5,6 +5,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use serde_json::Value;
 use tempfile::TempDir;
 
 fn cook_bin() -> std::path::PathBuf {
@@ -18,8 +19,12 @@ fn write_cookfile(body: &str) -> TempDir {
 }
 
 fn run_recipe(dir: &Path, recipe: &str) -> std::process::Output {
+    run_cook(dir, &[recipe])
+}
+
+fn run_cook(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(cook_bin())
-        .arg(recipe)
+        .args(args)
         .current_dir(dir)
         // Keep e2e runs out of the shared artifact store.
         .env("COOK_NO_PUBLISH", "1")
@@ -38,9 +43,9 @@ fn combined(out: &std::process::Output) -> String {
 #[test]
 fn failing_test_step_under_runner_exits_one() {
     let dir = write_cookfile(
-        "recipe failing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { false }\n",
+        "recipe failing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { false }\n\nrecipe noisy\n    test { true }\n\nchore check: failing noisy\n",
     );
-    let out = run_recipe(dir.path(), "failing");
+    let out = run_recipe(dir.path(), "check");
     let c = combined(&out);
     assert_eq!(
         out.status.code(),
@@ -48,9 +53,77 @@ fn failing_test_step_under_runner_exits_one() {
         "failing test step must fail the run with exit 1.\n{c}"
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("failing test step"),
-        "stderr must carry the one-line summary.\n{c}"
+        String::from_utf8_lossy(&out.stderr)
+            .contains("1 failing test step(s): failing:failing_test3"),
+        "stderr must name the failing unit in the summary.\n{c}"
     );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("rerun: cook test --rerun-failed"),
+        "stderr must offer the existing failed-test rerun.\n{c}"
+    );
+    let rerun = run_cook(dir.path(), &["test", "--rerun-failed"]);
+    let rerun_output = combined(&rerun);
+    assert_eq!(
+        rerun.status.code(),
+        Some(1),
+        "the hinted rerun command must rerun the failed test.\n{rerun_output}"
+    );
+    assert!(
+        rerun_output.contains("test failing@3 ... FAILED"),
+        "the hinted rerun command must name the rerun failing test.\n{rerun_output}"
+    );
+}
+
+#[test]
+fn blocked_test_step_under_runner_is_summarized() {
+    let dir = write_cookfile(
+        "recipe blocked\n    cook \"out/c.txt\" { false }\n    test { true }\n\nchore check: blocked\n",
+    );
+    let out = run_cook(dir.path(), &["--output", "json", "check"]);
+    let c = combined(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "blocked test must fail the run.\n{c}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("1 failing test step(s): blocked:blocked_test3"),
+        "stderr must name blocked tests from task-failure partial results.\n{c}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("rerun: cook test --rerun-failed"),
+        "stderr must offer the existing failed-test rerun.\n{c}"
+    );
+    let diagnostic: Value = serde_json::from_str(
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .expect("JSON diagnostic"),
+    )
+    .unwrap_or_else(|e| panic!("stderr was not JSON ({e}): {c}"));
+    assert_eq!(diagnostic["code"], "command-failed", "diagnostic: {diagnostic}");
+    let state: Value = serde_json::from_slice(
+        &fs::read(dir.path().join(".cook/test-state.json")).expect("saved test state"),
+    )
+    .expect("valid test state");
+    assert_eq!(state["results"][0]["id"], "blocked:blocked_test3");
+}
+
+#[test]
+fn passed_partial_test_does_not_hide_a_hard_failure() {
+    let dir = write_cookfile(
+        "recipe passing\n    test { true }\n\nrecipe broken\n    cook \"out.txt\" { false }\n\nchore check: passing broken\n",
+    );
+    let out = run_recipe(dir.path(), "check");
+    let c = combined(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an independent hard failure must stay red after a test passes.\n{c}"
+    );
+    assert!(c.contains("broken"), "the hard failure must remain visible.\n{c}");
 }
 
 #[test]
