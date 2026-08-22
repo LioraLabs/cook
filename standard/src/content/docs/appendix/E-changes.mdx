@@ -3487,7 +3487,7 @@ The rest of this entry is editorial and changes no conformance requirement. Sixt
 **Version:** v0.18
 **Sections affected:** §{steps.gather}, §{cat.probes.decl}, App. A, App. D, App. E (this entry). Reference implementation: `cli/crates/cook-lang`, `tree-sitter-cook`.
 
-**Summary.** The `ingredients` keyword is removed. `gather` is the sole iteration declaration; determinants are declared with `files` and applied with `seal`. The parser retains only a migration diagnostic naming both replacements. Tree-sitter and the normative Standard no longer recognize or document the old spelling, and the obsolete pre-v1 multi-line checklist item closes with the removed surface.
+**Summary.** The `ingredients` keyword is removed. `gather` is the sole iteration declaration; determinants are declared with `files` and applied with `seal`. The parser retains a migration diagnostic showing both accepted shapes: `gather "tests/*.txt"` when the command consumes each file, or `files core:src` with an indented `"src/**/*.rs" "Cargo.toml"` body followed by `seal core:src` when it does not. Tree-sitter and the normative Standard no longer recognize or document the old spelling, and the obsolete pre-v1 multi-line checklist item closes with the removed surface.
 
 ## CS-0228 — seal declares a probe's fingerprint inputs [#changes.cs-0228]
 

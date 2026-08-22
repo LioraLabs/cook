@@ -1,1 +1,7 @@
-`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`
+`files` and `tools` are top-level declarations; for determinants:
+    files core:src
+        "src/**/*.rs" "Cargo.toml"
+    tools core:toolchain
+        cc ld
+    recipe build
+        seal core:src core:toolchain

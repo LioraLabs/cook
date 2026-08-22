@@ -59,7 +59,7 @@ pub(crate) fn parse_probe(
                 }
                 if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse { line: tok.line,
-                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
+                        message: crate::recipe::INGREDIENTS_REMOVED.into() });
                 } else if let Some(rest) = strip_keyword(text, "seal") {
                     if producer.is_some() {
                         return Err(ParseError::Parse {
@@ -99,7 +99,7 @@ pub(crate) fn parse_probe(
                 } else {
                     if strip_keyword(text, "files").is_some() || strip_keyword(text, "tools").is_some() {
                         return Err(ParseError::Parse { line: tok.line,
-                            message: "`files` and `tools` are top-level declarations; replace the probe body form with `files NAME` or `tools NAME`".into() });
+                            message: "`files` and `tools` are top-level declarations; for determinants:\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\"\n    tools core:toolchain\n        cc ld\n    recipe build\n        seal core:src core:toolchain".into() });
                     }
                     // Any other body content is the producer (§22.5.2). The
                     // producer KIND leads; there is exactly one per probe.

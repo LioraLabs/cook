@@ -152,7 +152,16 @@ pub enum LexError {
     MalformedProbeName { name: String, line: usize },
     #[error("line {line}: {kind} declaration requires a name")]
     MissingSetName { kind: &'static str, line: usize },
-    #[error("line {line}: {kind} declaration '{name}' has unexpected trailing content")]
+    #[error(
+        "line {line}: {kind} declaration '{name}' has unexpected trailing content{guidance}",
+        guidance = match *.kind {
+            "files" => format!(
+                "; write patterns in its indented body:\n    files {}\n        \"src/**/*.rs\" \"Cargo.toml\"",
+                .name
+            ),
+            _ => String::new(),
+        }
+    )]
     SetExtraTokens {
         kind: &'static str,
         name: String,

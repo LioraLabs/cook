@@ -1,1 +1,8 @@
-`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants
+`ingredients` was removed (CS-0229).
+For determinants (the command never names these files):
+    files core:src
+        "src/**/*.rs" "Cargo.toml"
+    recipe build
+        seal core:src
+For iteration (the command consumes each file):
+    gather "tests/*.txt"

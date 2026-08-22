@@ -90,6 +90,16 @@ As of CS-0134 a recipe body is **purely declarative**: it is a flat sequence of 
 
 **At-most-one-gather rule.** A `recipe_body` MUST contain at most one `gather_step`. A conforming implementation MUST reject a recipe with two or more `gather_step` items.
 
+**`ingredients` migration (CS-0229).** The removed `ingredients` spelling has two replacements. When the command consumes each file, use `gather "tests/*.txt"` in the recipe body. When the command does not name the files, declare and seal a named determinant:
+
+```cook
+files core:src
+    "src/**/*.rs" "Cargo.toml"
+
+recipe build
+    seal core:src
+```
+
 **Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{toplevel.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 ### A.3.1. Chore [#grammar-appendix.chore]

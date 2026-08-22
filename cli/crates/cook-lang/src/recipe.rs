@@ -8,6 +8,8 @@ use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
+pub(crate) const INGREDIENTS_REMOVED: &str = "`ingredients` was removed (CS-0229).\nFor determinants (the command never names these files):\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\"\n    recipe build\n        seal core:src\nFor iteration (the command consumes each file):\n    gather \"tests/*.txt\"";
+
 /// Returns true if `text` looks like a module function call: `ident.ident...`
 pub(crate) fn is_module_call(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -474,7 +476,7 @@ pub(crate) fn parse_recipe(
                 if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".to_string(),
+                        message: INGREDIENTS_REMOVED.to_string(),
                     });
                 }
                 let gather = strip_keyword(text, "gather");
@@ -790,7 +792,7 @@ pub(crate) fn parse_chore(
                 let text = text.clone();
                 if strip_keyword(&text, "ingredients").is_some() {
                     return Err(ParseError::Parse { line: tok.line,
-                        message: "`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants".into() });
+                        message: INGREDIENTS_REMOVED.into() });
                 } else if let Some(keyword) = chore_banned_step_kind(&text) {
                     return Err(chore_banned(keyword, tok.line));
                 } else if text.starts_with('@') {

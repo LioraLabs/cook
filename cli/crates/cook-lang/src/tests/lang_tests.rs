@@ -2809,13 +2809,30 @@ fn top_level_files_and_tools_commit_as_keywords() {
 }
 
 #[test]
+fn top_level_files_trailing_content_shows_an_indented_declaration() {
+    let err = parse("files core:src \"src/**/*.rs\"\n")
+        .expect_err("patterns belong in a files declaration body")
+        .to_string();
+    assert_eq!(
+        err,
+        "line 1: files declaration 'core:src' has unexpected trailing content; write patterns in its indented body:\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\""
+    );
+}
+
+#[test]
 fn probe_body_files_and_tools_name_top_level_replacement() {
-    for source in [
-        "probe srcs\n    files { \"src/**\" }\n",
-        "probe toolchain\n    tools { cc }\n",
+    for (source, expected) in [
+        (
+            "probe srcs\n    files { \"src/**\" }\n",
+            "line 2: `files` and `tools` are top-level declarations; for determinants:\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\"\n    tools core:toolchain\n        cc ld\n    recipe build\n        seal core:src core:toolchain",
+        ),
+        (
+            "probe toolchain\n    tools { cc }\n",
+            "line 2: `files` and `tools` are top-level declarations; for determinants:\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\"\n    tools core:toolchain\n        cc ld\n    recipe build\n        seal core:src core:toolchain",
+        ),
     ] {
         let err = parse(source).unwrap_err().to_string();
-        assert!(err.contains("top-level"), "got: {err}");
+        assert_eq!(err, expected);
     }
 }
 
@@ -2835,9 +2852,22 @@ fn lower_producer_parser_rejects_removed_files_and_tools_forms() {
 
 #[test]
 fn cs0229_ingredients_is_a_removed_keyword() {
-    let err = parse("recipe old\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n")
-        .expect_err("the old input keyword must be rejected");
-    assert!(err.to_string().contains("`ingredients` was removed (CS-0229); use `gather` for iteration, or declare `files` and `seal` for determinants"), "got: {err}");
+    let migration = "`ingredients` was removed (CS-0229).\nFor determinants (the command never names these files):\n    files core:src\n        \"src/**/*.rs\" \"Cargo.toml\"\n    recipe build\n        seal core:src\nFor iteration (the command consumes each file):\n    gather \"tests/*.txt\"";
+    for source in [
+        "recipe old\n    ingredients \"src/*.c\"\n",
+        "chore old\n    ingredients \"src/*.c\"\n",
+        "probe old\n    ingredients \"src/*.c\"\n",
+    ] {
+        let err = parse(source).expect_err("the old input keyword must be rejected");
+        assert_eq!(err.to_string(), format!("line 2: {migration}"));
+    }
+
+    for source in [
+        "files core:src\n    \"src/**/*.rs\" \"Cargo.toml\"\n\nrecipe build\n    seal core:src\n    cook \"out\" { touch $<out> }\n",
+        "recipe build\n    gather \"tests/*.txt\"\n    cook \"out/$<in.stem>\" { cat $<in> > $<out> }\n",
+    ] {
+        parse(source).expect("the migration syntax must stay accepted");
+    }
 }
 
 // ─── CS-0240: probe keys join the load-time name space (COOK-491) ───────────
