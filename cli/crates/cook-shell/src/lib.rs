@@ -286,7 +286,8 @@ fn signal_group(pgid: i32, signal: i32) -> Result<(), SpawnError> {
     #[cfg(unix)]
     if unsafe { libc::kill(-pgid, signal) } == -1 {
         let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
+        // EPERM: members exist but are mid-exec (macOS); the next pass gets them.
+        if !matches!(error.raw_os_error(), Some(libc::ESRCH) | Some(libc::EPERM)) {
             return Err(SpawnError {
                 message: format!("failed to signal chore process group: {error}"),
             });
@@ -349,6 +350,11 @@ fn group_is_live(pgid: i32) -> Result<bool, SpawnError> {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ESRCH) {
                 return Ok(false);
+            }
+            // macOS returns EPERM (not ESRCH) when the group exists but every
+            // member is momentarily un-signalable (mid-exec). Still live.
+            if error.raw_os_error() == Some(libc::EPERM) {
+                return Ok(true);
             }
             return Err(SpawnError {
                 message: format!("failed to inspect chore process group: {error}"),
