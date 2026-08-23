@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_contracts::lua_string;
 use cook_contracts::{ACCESSORS, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
+use cook_contracts::registration::SOURCE_LINE_MAP_NAME;
 use cook_lang::ast::*;
 
 use crate::cook_step::{generate_cook_step, generate_member_fanout_cook_step};
@@ -916,6 +917,25 @@ fn pad_to_line(out: &mut String, target: usize) {
     }
 }
 
+/// Splice raw root-Cookfile Lua and retain its physical source lines for
+/// register-time diagnostics. The map prelude is inserted after generation,
+/// so every emitted line gains one generated line.
+fn emit_raw_source(
+    out: &mut String,
+    source_lines: &mut Vec<(usize, usize)>,
+    code: &str,
+    first_source_line: usize,
+) {
+    for (offset, line) in code.lines().enumerate() {
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        source_lines.push((out.matches('\n').count() + 2, first_source_line + offset));
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
 /// Emit a config-block body into `out`, one generated line per source line,
 /// each prefixed with `indent`. A `#`-comment line (Cookfile source syntax,
 /// not valid Lua) becomes an EMPTY generated line rather than being
@@ -941,6 +961,7 @@ pub fn generate_with_names(
     // lowering: it is a property of this Cookfile, not of any step (CS-0240).
     let probe_keys_in_scope = probe_keys_of(cookfile);
     let mut out = String::new();
+    let mut source_lines = Vec::new();
 
     if cookfile.config_blocks.is_empty() {
         // No config blocks: nothing to line-align, so emission stays
@@ -1067,25 +1088,13 @@ pub fn generate_with_names(
                 // Splice the body verbatim into the top-level chunk.
                 // Comment lines (Cookfile syntax, leading `#`) are skipped;
                 // blank lines and Lua content are preserved as-is.
-                for line in rb.body.lines() {
-                    if line.trim_start().starts_with('#') {
-                        continue;
-                    }
-                    out.push_str(line);
-                    out.push('\n');
-                }
+                emit_raw_source(&mut out, &mut source_lines, &rb.body, rb.line + 1);
                 out.push('\n');
             }
             TopLevelItem::TopLevelModuleCall(call) => {
                 // Splice the collected call source verbatim. Same shape as
                 // a register_block containing only that call.
-                for line in call.code.lines() {
-                    if line.trim_start().starts_with('#') {
-                        continue;
-                    }
-                    out.push_str(line);
-                    out.push('\n');
-                }
+                emit_raw_source(&mut out, &mut source_lines, &call.code, call.line);
                 out.push('\n');
             }
             TopLevelItem::Recipe(recipe) => {
@@ -1379,6 +1388,24 @@ pub fn generate_with_names(
         out.push_str("\nend\n");
     }
 
+    if !source_lines.is_empty() {
+        let first_raw_line = source_lines[0].0 - 1;
+        let entries = source_lines
+            .into_iter()
+            .map(|(generated, source)| format!("[{generated}]={source}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        // Put setup immediately before the first raw line it maps. A root
+        // prelude would shift deliberately aligned config body diagnostics.
+        let insertion = if first_raw_line == 1 {
+            0
+        } else {
+            out.match_indices('\n')
+                .nth(first_raw_line - 2)
+                .map_or(out.len(), |(index, _)| index + 1)
+        };
+        out.insert_str(insertion, &format!("cook.{SOURCE_LINE_MAP_NAME}({{{entries}}})\n"));
+    }
     Ok(out)
 }
 

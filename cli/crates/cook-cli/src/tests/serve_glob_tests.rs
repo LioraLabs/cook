@@ -95,6 +95,13 @@ fn watch_set_comes_from_registered_units_including_module_and_imported_ones() {
 
     let registered = cook_engine::RegisteredWorkspace {
         units_by_recipe,
+        materializations: vec![cook_contracts::registration::Materialization {
+            qualified_key: "fixture.graph".into(),
+            declaration_site: "Cookfile:3".into(),
+            declared_inputs: vec![PathBuf::from("/ws/discover/*.json")],
+            resolved_inputs: vec![PathBuf::from("/ws/graph.json")],
+            outcome: cook_contracts::registration::MaterializationOutcome::Ran,
+        }],
         ..Default::default()
     };
 
@@ -112,5 +119,13 @@ fn watch_set_comes_from_registered_units_including_module_and_imported_ones() {
     assert!(
         !globs.iter().any(|g| g.contains("nope.c")),
         "only recipes in the requested chain are watched: {globs:?}"
+    );
+    assert!(
+        globs.contains(&"/ws/graph.json".to_string()),
+        "materializer determinants join the watch set: {globs:?}"
+    );
+    assert!(
+        globs.contains(&"/ws/discover/*.json".to_string()),
+        "materializer patterns retain future matching paths: {globs:?}"
     );
 }

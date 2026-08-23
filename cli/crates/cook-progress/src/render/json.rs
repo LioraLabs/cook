@@ -27,6 +27,19 @@ impl<W: Write + Send> JsonWriter<W> {
             .format(&Rfc3339)
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
     }
+
+    /// Write one already-resolved wire event for work that happens before a
+    /// `BuildState` exists, such as registration-time materialization.
+    pub fn write_wire_event(&mut self, event: WireEvent) -> io::Result<()> {
+        let line = WireLine {
+            ts: Self::now_rfc3339(),
+            v: self.schema_version,
+            event,
+        };
+        let value = serde_json::to_value(&line).map_err(io::Error::other)?;
+        serde_json::to_writer(&mut self.out, &value).map_err(io::Error::other)?;
+        self.out.write_all(b"\n")
+    }
 }
 
 fn duration_ms(d: std::time::Duration) -> u64 {
@@ -163,11 +176,6 @@ pub(crate) fn event_to_wire(state: &BuildState, event: &ProgressEvent) -> WireEv
 
 impl<W: Write + Send> Renderer for JsonWriter<W> {
     fn handle(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
-        let line = WireLine {
-            ts: Self::now_rfc3339(),
-            v: self.schema_version,
-            event: event_to_wire(state, event),
-        };
         // `events.jsonl` keys are emitted in **lexicographic (alphabetical)**
         // order, not insertion order. `serde_json::Map` is `BTreeMap`-backed
         // (no `preserve_order` feature in this crate), so a `build-started`
@@ -183,9 +191,7 @@ impl<W: Write + Send> Renderer for JsonWriter<W> {
         // only (new fields without a bump); incompatible changes bump `v`.
         // Through `to_value` so the BTreeMap-backed Map does the sorting;
         // `WireLine`'s flatten merges ts/v with the tagged payload.
-        let value = serde_json::to_value(&line).map_err(io::Error::other)?;
-        serde_json::to_writer(&mut self.out, &value).map_err(io::Error::other)?;
-        self.out.write_all(b"\n")
+        self.write_wire_event(event_to_wire(state, event))
     }
 
     fn finish(&mut self, _state: &BuildState) -> io::Result<()> {

@@ -158,6 +158,24 @@ fn each_event_is_one_line() {
     assert_eq!(lines.len(), 2, "expected 2 lines; got: {s}");
 }
 
+#[test]
+fn materialized_event_uses_the_standard_envelope() {
+    let mut buf = Vec::new();
+    JsonWriter::new(&mut buf)
+        .write_wire_event(WireEvent::Materialized {
+            qualified_key: "fixture.graph".into(),
+            outcome: "restored".into(),
+        })
+        .unwrap();
+    let line: WireLine = serde_json::from_slice(&buf).unwrap();
+    assert!(matches!(
+        line.event,
+        WireEvent::Materialized { qualified_key, outcome }
+            if qualified_key == "fixture.graph" && outcome == "restored"
+    ));
+    assert_eq!(line.v, PROGRESS_SCHEMA_VERSION);
+}
+
 // --- NodeKind on the wire (additive `kind` field) ---
 
 #[test]

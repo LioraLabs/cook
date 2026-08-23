@@ -41,7 +41,12 @@ use super::recipe_info::find_full_prefix;
 use super::workspace::{LoadedCookfile, Workspace};
 use cook_register::RegisteredWorkspace;
 
-fn materialize_runner() -> cook_register::MaterializeRunner {
+struct MaterializeCoordinator {
+    runner: cook_register::MaterializeRunner,
+    materializations: Arc<std::sync::Mutex<Vec<cook_contracts::registration::Materialization>>>,
+}
+
+fn materialize_coordinator() -> MaterializeCoordinator {
     use cook_execute::{WorkResult, WorkerPool};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -51,7 +56,15 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
         results: Mutex<std::sync::mpsc::Receiver<WorkResult>>,
         buffered: Mutex<HashMap<usize, WorkResult>>,
         next_id: AtomicUsize,
-        declarations: Mutex<HashMap<String, ([u8; 32], Arc<OnceLock<Result<Vec<u8>, String>>>)>>,
+        declarations: Mutex<
+            HashMap<
+                String,
+                (
+                    [u8; 32],
+                    Arc<OnceLock<Result<cook_register::MaterializeResult, String>>>,
+                ),
+            >,
+        >,
     }
 
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
@@ -63,8 +76,10 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
         next_id: AtomicUsize::new(0),
         declarations: Mutex::new(HashMap::new()),
     });
+    let materializations = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reported = materializations.clone();
 
-    Arc::new(move |request| {
+    let runner = Arc::new(move |request: cook_register::MaterializeRequest| {
         use cook_cache::{artifact_key, cloud_key, ArtifactMeta, CloudKeyInputs};
         use cook_contracts::{probe_key::LocalProbeKey, WorkPayload};
         use cook_execute::WorkItem;
@@ -91,11 +106,25 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
             }
         };
         cell.get_or_init(|| {
+            let record = |outcome| {
+                reported
+                    .lock()
+                    .unwrap()
+                    .push(cook_contracts::registration::Materialization {
+                        qualified_key: request.qualified_key.clone(),
+                        declaration_site: request.declaration_site.clone(),
+                        declared_inputs: request.declared_inputs.clone(),
+                        resolved_inputs: request.resolved_inputs.clone(),
+                        outcome,
+                    });
+            };
             if let Some(ctx) = &request.cache_ctx {
                 if let Some(bytes) = cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact)
                     .map_err(|e| format!("cache read failed: {e}"))?
                 {
-                    return Ok(bytes);
+                    let outcome = cook_contracts::registration::MaterializationOutcome::Restored;
+                    record(outcome);
+                    return Ok(cook_register::MaterializeResult { bytes, outcome });
                 }
             }
 
@@ -131,7 +160,20 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
                     .insert(result.id, result);
             };
             if !result.success {
-                return Err(result.error.unwrap_or_else(|| "worker failed".into()));
+                let output = result
+                    .output_lines
+                    .iter()
+                    .map(|chunk| chunk.lossy())
+                    .collect::<String>();
+                let detail = result.error.unwrap_or_else(|| "worker failed".into());
+                return Err(format!(
+                    "producer failed: {detail}{}",
+                    if output.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n{output}")
+                    }
+                ));
             }
             let bytes = result
                 .probe_output
@@ -139,7 +181,9 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
                 .ok_or_else(|| "worker returned no value".to_string())?;
             if let Some(ctx) = &request.cache_ctx {
                 if !ctx.publish_enabled {
-                    return Ok(bytes);
+                    let outcome = cook_contracts::registration::MaterializationOutcome::Ran;
+                    record(outcome);
+                    return Ok(cook_register::MaterializeResult { bytes, outcome });
                 }
                 let mut meta = ArtifactMeta {
                     recipe_namespace: request.recipe_namespace,
@@ -160,10 +204,20 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
                 cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
                     .map_err(|e| format!("cache write failed: {e}"))?;
             }
-            Ok(bytes)
+            let outcome = cook_contracts::registration::MaterializationOutcome::Ran;
+            record(outcome);
+            Ok(cook_register::MaterializeResult { bytes, outcome })
         })
         .clone()
-    })
+    });
+    MaterializeCoordinator {
+        runner,
+        materializations,
+    }
+}
+
+fn materialize_runner() -> cook_register::MaterializeRunner {
+    materialize_coordinator().runner
 }
 
 /// How the register pass binds a CLI dispatch target. The register layer has
@@ -377,6 +431,7 @@ fn pre_materialize_workspace(
                     .map(|builder| {
                         builder
                             .with_materialize_runner(runner.clone())
+                            .with_workspace_root(workspace.workspace_root.clone())
                             .with_cookfile_label(root_anchored_cookfile_label(
                                 &workspace.workspace_root,
                                 &member.dir,
@@ -467,6 +522,7 @@ fn register_workspace_with_materializers(
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
+        materializations: Vec::new(),
     };
 
     // Which chore bodies this pass may invoke (Standard §7.6, CS-0218).
@@ -745,6 +801,7 @@ pub fn list_workspace_names_cached(
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
             .with_materialize_runner(materializers.clone())
+            .with_workspace_root(workspace.workspace_root.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.workspace_root,
                 &member.dir,
@@ -821,6 +878,7 @@ fn codegen_with_module_recipes_cached_with_materializers(
     for (member, canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
             .with_materialize_runner(materializers.clone())
+            .with_workspace_root(workspace.workspace_root.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.root.dir,
                 &member.dir,
@@ -842,7 +900,8 @@ pub fn prepare_and_register_workspace_cached(
     mode: RegisterMode<'_>,
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
 ) -> Result<RegisteredWorkspace, PipelineError> {
-    let materializers = materialize_runner();
+    let coordinator = materialize_coordinator();
+    let materializers = coordinator.runner.clone();
     codegen_with_module_recipes_cached_with_materializers(
         workspace,
         config,
@@ -850,14 +909,16 @@ pub fn prepare_and_register_workspace_cached(
         cache_ctx.clone(),
         materializers.clone(),
     )?;
-    register_workspace_with_materializers(
+    let mut registered = register_workspace_with_materializers(
         workspace,
         config,
         env_overrides,
         mode,
         cache_ctx,
         materializers,
-    )
+    )?;
+    registered.materializations = coordinator.materializations.lock().unwrap().clone();
+    Ok(registered)
 }
 
 /// One dep name, as written inside a Cookfile, → its workspace-global key.
@@ -949,6 +1010,7 @@ fn workspace_requires_graph(
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
             .with_materialize_runner(materializers.clone())
+            .with_workspace_root(workspace.workspace_root.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.workspace_root,
                 &member.dir,

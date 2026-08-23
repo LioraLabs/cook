@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=9
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Test body=LuaBlock("cook.sh(\"true\")")
+  chores:
+  register_blocks: [RegisterBlock body="    local graph = cook.materialize(\"graph\", {}, function()\n        return { targets = { \"lib\", \"app\" }, enabled = true, version = 1 }\n    end)\n    assert(graph.targets[1] == \"lib\")\n    assert(graph.enabled)\n    assert(graph.version == 1)" line=1]
+  top_level_module_calls: []

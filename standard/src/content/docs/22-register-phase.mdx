@@ -525,10 +525,29 @@ See §{rationale.cookfile-editing}.
 
 ## 22.14. `cook.materialize` [#lua.materialize]
 
-`cook.materialize(key, spec, produce)` returns a canonical JSON-compatible
-registration value. Cook caches it by its qualified materializer-only key,
-producer body, and declared `files`, `tools`, `env`, and `seals`. Materializer
-keys are not targets, reserve no recipe names, and cannot declare dependencies.
+**Signature.** `cook.materialize(key: string, spec: table, produce: function) -> JSON-compatible Lua value`
+
+**Phase.** Registration only. This is Cook's registration-time cache primitive,
+not a recipe kind or a target. `key` is a non-empty local identity; Cook
+qualifies it by the workspace and module context for cache storage, progress,
+and diagnostics. A materializer key MUST NOT reserve a recipe name: a recipe
+named `materialize`, and a recipe whose name equals a materializer's local key,
+are both legal. Materializers MUST NOT appear in target menus or target
+resolution, and an invocation naming a materializer key MUST be handled exactly
+as an unknown target.
+
+**Value and cache contract.** `produce` runs on a Cook worker and returns one
+JSON-compatible Lua value: `nil`, boolean, number, string, or a table composed
+recursively of those values. Cook validates, canonically serializes, stores,
+restores, decodes, and returns that value; an author MUST NOT manage an output
+filename, schema, or a second cache. A warm hit returns the decoded canonical
+value without running `produce`; when the ordinary cache key changes, Cook MUST
+run `produce` or restore the value from the configured shared cache. The key
+uses the qualified materializer identity, producer body and captures, and the
+ordinary cached-unit determinants declared in `spec`: `files`, `tools`, `env`,
+and `seals`. Each is a list of strings and has the corresponding ordinary Cook
+meaning. The configured local/shared cache policy applies unchanged.
+
 The producer may close over JSON-compatible Lua values and Lua helper functions
 whose own captures satisfy the same rule. A mutable table MUST occur only once
 across the producer and helper closure graph; Cook rejects shared or aliased
@@ -536,3 +555,22 @@ mutable captures because reconstructing them independently would change Lua
 semantics. Cook also rejects userdata, threads, C functions, recursive captured
 functions, and non-JSON-compatible tables before running the worker; captured
 values and helper bodies are cache determinants.
+
+**Registration lifecycle.** Cook may internally suspend or restart registration
+while values are prepared, but that mechanism is not user-visible or
+user-controlled. Once all materializers required by an invocation have restored
+or run, Cook MUST perform one authoritative recipe registration using their
+returned values. Independent materializers MAY run in parallel. A materializer
+MUST NOT declare a dependency on a recipe or another materializer; `requires`,
+`dependencies`, and `deps` in `spec` are register-phase errors. There is no
+`cook setup` phase, no user-controlled registration pass, and no materializer
+dependency chain in this version.
+
+**Probes and serving.** A probe still re-observes whenever registration reaches
+it; a materializer instead restores or runs according to its ordinary cache key.
+In `cook serve`, a change to a materializer's declared input MUST rerun the
+complete materialization, registration, and execution pipeline before reporting
+the new result. Cook MUST report a run or restore as
+`cook materialize <qualified-key> <outcome>`. A materialization failure MUST
+name the local and qualified key, declaration site, and failed determinant or
+producer, and MUST preserve useful worker output when one exists.

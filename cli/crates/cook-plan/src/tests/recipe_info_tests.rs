@@ -26,6 +26,7 @@ fn empty_ws() -> RegisteredWorkspace {
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
+        materializations: Vec::new(),
     }
 }
 

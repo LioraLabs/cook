@@ -742,6 +742,7 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
         .named_registry_value::<String>("__cook_cookfile_path")
         .ok()?;
     cook_lua_stdlib::caller_line_in_source(lua, &target)
+        .map(|generated_line| crate::context::source_line_in_cookfile(lua, generated_line))
 }
 
 /// `cook.sh` at register phase (§{lua.cook-sh}).

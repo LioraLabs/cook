@@ -131,6 +131,7 @@ fn shared_door_names() -> BTreeSet<&'static str> {
         QUOTE_PARAM_NAME,
         REGISTER_SURFACE_NAME,
         REGISTER_SURFACE_CHORE_NAME,
+        SOURCE_LINE_MAP_NAME,
         cook_contracts::module_binding::LOAD_MODULE_FN,
     ])
 }

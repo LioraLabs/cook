@@ -21,7 +21,7 @@ use cook_plan::{self as pipeline, ParsedCookfile, PipelineError, RegisterMode, W
 
 use crate::cli::Globals;
 use crate::error::CookError;
-use crate::progress::spawn_new_renderer;
+use crate::progress::{spawn_new_renderer, OutputMode};
 use crate::watcher::CookWatcher;
 use crate::why_render;
 
@@ -890,6 +890,27 @@ fn build_registered_workspace(
     // configured-or-empty project segment and the [cache] ignore_env denylist.
     for warning in &registered.warnings {
         eprintln!("cook: warning: {warning}");
+    }
+    if !globals.quiet {
+        for materialization in &registered.materializations {
+            let outcome = match materialization.outcome {
+                cook_contracts::registration::MaterializationOutcome::Ran => "ran",
+                cook_contracts::registration::MaterializationOutcome::Restored => "restored",
+            };
+            if matches!(OutputMode::from_globals(globals), OutputMode::Json) {
+                let _ = cook_progress::JsonWriter::new(std::io::stderr()).write_wire_event(
+                    cook_progress::wire::WireEvent::Materialized {
+                        qualified_key: materialization.qualified_key.clone(),
+                        outcome: outcome.to_string(),
+                    },
+                );
+            } else {
+                eprintln!(
+                    "cook materialize {} {outcome}",
+                    materialization.qualified_key
+                );
+            }
+        }
     }
     warn_if_invoked_builtin_is_registered(
         registered

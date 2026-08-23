@@ -25,6 +25,15 @@ fn run_with_args(root: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn run_raw(root: &Path, args: &[&str]) -> Output {
+    Command::new(PathBuf::from(env!("CARGO_BIN_EXE_cook")))
+        .args(args)
+        .current_dir(root)
+        .env("XDG_CACHE_HOME", root.join(".xdg-cache"))
+        .output()
+        .unwrap()
+}
+
 fn shared_cache_config(root: &Path, shared: &Path, publish: bool) {
     write(
         root,
@@ -230,6 +239,256 @@ return M
     );
     assert!(run(root.path(), "graph").status.success());
     assert!(run(root.path(), "materialize").status.success());
+}
+
+#[test]
+fn imported_materializer_invalidates_on_workspace_root_input() {
+    let root = TempDir::new().unwrap();
+    write(root.path(), "seed.txt", "one");
+    write(
+        root.path(),
+        "Cookfile",
+        "import api ./api\n\nrecipe build: api.generated\n",
+    );
+    write(
+        root.path(),
+        "api/Cookfile",
+        "cook.materialize(\"graph\", { files = { \"//seed.txt\" } }, function() local runs = fs.exists(\"runs\") and tonumber(fs.read(\"runs\")) or 0; fs.write(\"runs\", tostring(runs + 1)); return true end)\nrecipe generated\n",
+    );
+
+    let first = run(root.path(), "build");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(run(root.path(), "build").status.success());
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("api/runs")).unwrap(),
+        "1"
+    );
+
+    write(root.path(), "seed.txt", "two");
+    let changed = run(root.path(), "build");
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("api/runs")).unwrap(),
+        "2"
+    );
+}
+
+#[test]
+fn plain_output_reports_qualified_materializer_runs_and_restores() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        ".cook/modules/share/lua/5.4/fixture.lua",
+        r#"
+local M = {}
+function M.install()
+  cook.materialize("graph", {}, function() return { target = "build" } end)
+end
+return M
+"#,
+    );
+    write(
+        root.path(),
+        "Cookfile",
+        "use fixture\nfixture.install()\nrecipe build\n",
+    );
+
+    let first = run(root.path(), "build");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&first.stderr).contains("cook materialize fixture.graph ran"),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let warm = run(root.path(), "build");
+    assert!(
+        warm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&warm.stderr).contains("cook materialize fixture.graph restored"),
+        "{}",
+        String::from_utf8_lossy(&warm.stderr)
+    );
+}
+
+#[test]
+fn auto_output_reports_materialization_without_touching_stdout() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        "Cookfile",
+        "cook.materialize(\"graph\", {}, function() return true end)\nrecipe build\n",
+    );
+    let output = run_raw(root.path(), &["build"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cook materialize graph ran"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("cook materialize"),
+        "materialization reporting must not corrupt stdout"
+    );
+}
+
+#[test]
+fn json_output_keeps_materialization_on_the_jsonl_wire() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        "Cookfile",
+        "cook.materialize(\"graph\", {}, function() return true end)\nrecipe build\n",
+    );
+    for outcome in ["ran", "restored"] {
+        let output = run_raw(root.path(), &["--output", "json", "build"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .map(|line| {
+                serde_json::from_str(line)
+                    .unwrap_or_else(|error| panic!("invalid JSONL `{line}`: {error}"))
+            })
+            .collect();
+        assert!(
+            events.iter().any(|event| event["type"] == "materialized"
+                && event["qualified_key"] == "graph"
+                && event["outcome"] == outcome
+                && event["v"].is_number()
+                && event["ts"].is_string()),
+            "{events:#?}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("cook materialize"),
+            "materialization reporting must not corrupt stdout"
+        );
+    }
+}
+
+#[test]
+fn materializer_determinant_failures_name_key_and_declaration_site() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        ".cook/modules/share/lua/5.4/fixture.lua",
+        r#"
+local M = {}
+function M.install()
+  cook.materialize("graph", { tools = { "definitely-not-a-cook-tool" } }, function() return true end)
+end
+return M
+"#,
+    );
+    write(
+        root.path(),
+        "Cookfile",
+        "use fixture\nfixture.install()\nrecipe build\n",
+    );
+
+    let output = run(root.path(), "build");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cook.materialize graph (fixture.graph) declared at"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("fixture.lua:4"), "{stderr}");
+    assert!(
+        stderr.contains("tool \"definitely-not-a-cook-tool\" was not found"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn root_materializer_diagnostic_uses_its_actual_cookfile_line() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        "Cookfile",
+        "config\n    var.COOK_SOURCE_MAP_TEST = \"ok\"\n\nrecipe build\ncook.materialize(\"graph\", { tools = { \"definitely-not-a-cook-tool\" } }, function() return true end)\n",
+    );
+
+    let output = run(root.path(), "build");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Cookfile:5"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn register_materializer_diagnostic_uses_its_actual_cookfile_line() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        "Cookfile",
+        "recipe build\nregister\n    local graph = cook.materialize(\"graph\", { tools = { \"definitely-not-a-cook-tool\" } }, function() return true end)\n",
+    );
+
+    let output = run(root.path(), "build");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Cookfile:3"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn materializer_env_and_seal_failures_name_key_and_declaration_site() {
+    for (spec, cause) in [
+        (
+            "env = { \"MISSING\" }",
+            "var.MISSING: no config block declares 'MISSING'",
+        ),
+        (
+            "seals = { \"missing\" }",
+            "seal \"missing\": runtime error: cook.probes.get called outside of a module context",
+        ),
+    ] {
+        let root = TempDir::new().unwrap();
+        write(
+            root.path(),
+            "Cookfile",
+            &format!(
+                "recipe build\ncook.materialize(\"graph\", {{ {spec} }}, function() return true end)\n"
+            ),
+        );
+
+        let output = run(root.path(), "build");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cook.materialize graph (graph) declared at")
+                && stderr.contains("Cookfile:2"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(cause), "{stderr}");
+    }
 }
 
 #[test]

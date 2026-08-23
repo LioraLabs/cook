@@ -2855,6 +2855,7 @@ fn install_all_apis(
     crate::context::register_materialize_api(
         lua,
         &builder.working_dir,
+        &builder.workspace_root,
         &builder.qualified_prefix,
         &cookfile_label,
         cache_ctx,

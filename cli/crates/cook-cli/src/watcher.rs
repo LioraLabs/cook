@@ -5,6 +5,37 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+fn watch_dir_for_pattern(pattern: &Path) -> PathBuf {
+    let mut dir = PathBuf::new();
+    let mut has_glob = false;
+    for component in pattern.components() {
+        let component = component.as_os_str().to_string_lossy();
+        if component.contains(['*', '?', '[']) {
+            has_glob = true;
+            break;
+        }
+        dir.push(component.as_ref());
+    }
+    if !has_glob {
+        dir = dir.parent().unwrap_or(Path::new(".")).to_path_buf();
+    }
+
+    while !dir.exists() {
+        let Some(parent) = dir.parent() else {
+            return PathBuf::from(".");
+        };
+        if parent == dir {
+            break;
+        }
+        dir = parent.to_path_buf();
+    }
+    if dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        dir
+    }
+}
+
 pub struct CookWatcher {
     pub globs: Vec<String>,
     pub cookfile_paths: Vec<PathBuf>,
@@ -74,6 +105,20 @@ impl CookWatcher {
                 }
             }
         }
+        for materialization in &registered.materializations {
+            for input in &materialization.declared_inputs {
+                let input = input.to_string_lossy().into_owned();
+                if seen.insert(input.clone()) {
+                    globs.push(input);
+                }
+            }
+            for input in &materialization.resolved_inputs {
+                let input = input.to_string_lossy().into_owned();
+                if seen.insert(input.clone()) {
+                    globs.push(input);
+                }
+            }
+        }
         globs
     }
 
@@ -106,9 +151,9 @@ impl CookWatcher {
 
         let mut watched_dirs = std::collections::HashSet::new();
         for pattern in &self.globs {
-            let dir = Path::new(pattern).parent().unwrap_or(Path::new("."));
-            if watched_dirs.insert(dir.to_path_buf()) && dir.exists() {
-                watcher.watch(dir, RecursiveMode::Recursive)?;
+            let dir = watch_dir_for_pattern(Path::new(pattern));
+            if watched_dirs.insert(dir.clone()) {
+                watcher.watch(&dir, RecursiveMode::Recursive)?;
             }
         }
 
@@ -154,5 +199,24 @@ impl CookWatcher {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::watch_dir_for_pattern;
+    use std::fs;
+
+    #[test]
+    fn watches_existing_glob_prefix_or_nearest_existing_ancestor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let existing = temp.path().join("existing");
+        fs::create_dir(&existing).expect("existing prefix");
+
+        assert_eq!(watch_dir_for_pattern(&existing.join("**/*.json")), existing,);
+        assert_eq!(
+            watch_dir_for_pattern(&temp.path().join("missing/nested/**/*.json")),
+            temp.path(),
+        );
     }
 }

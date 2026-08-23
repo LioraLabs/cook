@@ -41,6 +41,42 @@ fn register_workspace_preserves_gather_warning_order() {
     );
 }
 
+#[test]
+fn imported_materializer_workspace_input_is_root_anchored() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("api")).unwrap();
+    std::fs::write(dir.path().join("seed.txt"), "seed").unwrap();
+    std::fs::write(
+        dir.path().join("Cookfile"),
+        "import api ./api\n\nrecipe build: api.generated\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("api/Cookfile"),
+        "cook.materialize('graph', { files = { '//seed.txt' } }, function() return true end)\nrecipe generated\n",
+    )
+    .unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let mut workspace = Workspace::load(&root.join("Cookfile"), &root, &[]).unwrap();
+
+    let registered = prepare_and_register_workspace_cached(
+        &mut workspace,
+        None,
+        &[],
+        RegisterMode::Enumerate,
+        None,
+    )
+    .unwrap();
+    let materialization = registered
+        .materializations
+        .iter()
+        .find(|m| m.qualified_key == "api.graph")
+        .expect("api.graph materialization");
+
+    assert_eq!(materialization.declared_inputs, [root.join("seed.txt")]);
+    assert_eq!(materialization.resolved_inputs, [root.join("seed.txt")]);
+}
+
 /// SHI-222 Phase 5 Task 5.6: `register_workspace` must surface
 /// `RegisterError::RecipeCollision` as a structured
 /// `PipelineError::RecipeCollision { name, sites }` (not as

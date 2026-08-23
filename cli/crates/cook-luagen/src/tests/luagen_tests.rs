@@ -3129,6 +3129,57 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
     assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");
 }
 
+#[test]
+fn raw_root_lua_carries_a_generated_to_physical_source_map() {
+    let cookfile = Cookfile {
+        config_blocks: vec![ConfigBlock {
+            name: None,
+            body: "var.COOK_SOURCE_MAP_TEST = \"ok\"".to_string(),
+            line: 1,
+        }],
+        recipes: vec![Recipe {
+            name: "build".to_string(),
+            description: None,
+            deps: vec![],
+            inputs: vec![],
+            excludes: vec![],
+            steps: vec![],
+            line: 1,
+        }],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![RegisterBlock {
+            body: "local ignored = true\ncook.materialize(\"register\", {}, function() return true end)".to_string(),
+            line: 8,
+        }],
+        top_level_module_calls: vec![TopLevelModuleCall {
+            code: "cook.materialize(\"root\", {}, function() return true end)".to_string(),
+            line: 4,
+        }],
+        probes: vec![],
+    };
+    let out = generate(&cookfile);
+    let lines: Vec<_> = out.lines().collect();
+    assert!(lines[1].contains("var.COOK_SOURCE_MAP_TEST"), "{out}");
+    let map_index = lines
+        .iter()
+        .position(|line| line.contains("__set_source_line_map"))
+        .expect("source-map setup");
+    assert!(map_index > 1, "source-map setup must not shift config lines: {out}");
+    let map = lines[map_index];
+    let generated: Vec<usize> = out
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| line.contains("cook.materialize").then_some(index + 1))
+        .collect();
+    assert_eq!(generated.len(), 2, "{out}");
+    assert!(map.contains(&format!("[{}]=4", generated[0])), "{map}");
+    // RegisterBlock.line is its `register` header, so the second body line is
+    // physical Cookfile line 10.
+    assert!(map.contains(&format!("[{}]=10", generated[1])), "{map}");
+}
+
 // ── COOK-36 Task 3: __params metadata + body-fn local-binding prelude ──────
 
 #[test]

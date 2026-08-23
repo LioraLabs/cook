@@ -1,0 +1,7 @@
+register
+    cook.materialize("graph", { requires = { "build" } }, function()
+        return true
+    end)
+
+recipe build
+    test >{ cook.sh("true") }

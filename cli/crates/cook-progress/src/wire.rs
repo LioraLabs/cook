@@ -148,6 +148,12 @@ pub enum WireEvent {
         #[serde(default)]
         failed_step: Option<usize>,
     },
+    /// Registration-stage cache work. Materializers are deliberately not
+    /// recipes, so this is a separate additive wire event.
+    Materialized {
+        qualified_key: String,
+        outcome: String,
+    },
     Finished {
         success: bool,
     },

@@ -29,6 +29,8 @@ const REPO = dirname(HERE);
 const PARSER_LIB = join(REPO, 'build', 'parser', 'cook.so');
 
 const SEMANTIC_ONLY_NEGATIVES = new Map([
+  ['materialize-dependency',
+   'materializer dependency chains — register-phase Lua rejection, not syntactic'],
   ['unquoted-data-member',
    'data-member shell quoting — whole-recipe codegen rejection, not syntactic'],
   ['command-input-without-gather',

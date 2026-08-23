@@ -63,6 +63,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
+        materializations: Vec::new(),
     }
 }
 
@@ -115,6 +116,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
+        materializations: Vec::new(),
     }
 }
 

@@ -1,0 +1,10 @@
+register
+    local graph = cook.materialize("graph", {}, function()
+        return { targets = { "lib", "app" }, enabled = true, version = 1 }
+    end)
+    assert(graph.targets[1] == "lib")
+    assert(graph.enabled)
+    assert(graph.version == 1)
+
+recipe build
+    test >{ cook.sh("true") }

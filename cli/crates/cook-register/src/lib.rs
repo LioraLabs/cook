@@ -41,6 +41,10 @@ use cook_contracts::CapturedUnit;
 pub struct MaterializeRequest {
     pub produce_source: String,
     pub key: String,
+    pub qualified_key: String,
+    pub declaration_site: String,
+    pub declared_inputs: Vec<std::path::PathBuf>,
+    pub resolved_inputs: Vec<std::path::PathBuf>,
     pub working_dir: std::path::PathBuf,
     pub project_root: std::path::PathBuf,
     pub cache_ctx: Option<std::sync::Arc<cook_cache::CacheContext>>,
@@ -51,13 +55,22 @@ pub struct MaterializeRequest {
     pub consulted_env_keys: std::collections::BTreeSet<String>,
 }
 
+#[derive(Clone)]
+pub struct MaterializeResult {
+    pub bytes: Vec<u8>,
+    pub outcome: cook_contracts::registration::MaterializationOutcome,
+}
+
 pub type MaterializeRunner =
-    std::sync::Arc<dyn Fn(MaterializeRequest) -> Result<Vec<u8>, String> + Send + Sync>;
+    std::sync::Arc<dyn Fn(MaterializeRequest) -> Result<MaterializeResult, String> + Send + Sync>;
 
 /// Lua-registry key under which the declared-variable store lives
 /// (CS-0172). Not reachable from Lua: the only handles are the read-only
 /// `var` proxy and `cook.require_var`, both installed by [`var_api`].
 pub(crate) const VAR_STORE_REGISTRY_KEY: &str = "cook.var_store";
+
+/// Codegen's private generated-Lua-line to Cookfile-line table.
+pub(crate) const SOURCE_LINE_MAP_REGISTRY_KEY: &str = "cook.source_line_map";
 
 #[derive(Error, Debug)]
 pub enum RegisterError {

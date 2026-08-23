@@ -47,6 +47,11 @@ pub const REGISTER_SURFACE_NAME: &str = "__register_surface";
 /// Register-phase helper that records a surface `chore NAME` block.
 pub const REGISTER_SURFACE_CHORE_NAME: &str = "__register_surface_chore";
 
+/// Codegen-private source map for raw root-Cookfile Lua. Surface recipes
+/// carry their source line in metadata; raw registration calls need this map
+/// because preceding generated recipe code changes Lua's chunk line numbers.
+pub const SOURCE_LINE_MAP_NAME: &str = "__set_source_line_map";
+
 /// The generated program's registration entry point (CS-0172): codegen
 /// wraps every registration in `function __cook_main() … end`; the engine
 /// calls it after config dispatch. A silent-skip lookup — rename = the
@@ -138,6 +143,28 @@ pub const QUOTE_PARAM_NAME: &str = "__quote_param";
 /// installs the §6.3.2 register-only guard under the same name.
 pub const ADD_UNIT_NAME: &str = "add_unit";
 pub const MATERIALIZER_KIND: &str = "materializer";
+
+/// One materializer which the registration prelude resolved this invocation.
+///
+/// Materializers are not recipes. This is deliberately only lifecycle data for
+/// command presentation and `cook serve`'s input set; it never enters the
+/// recipe graph or menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Materialization {
+    pub qualified_key: String,
+    pub declaration_site: String,
+    /// Declared file patterns, anchored to this materializer's working
+    /// directory. These retain future matching paths for `cook serve`.
+    pub declared_inputs: Vec<std::path::PathBuf>,
+    pub resolved_inputs: Vec<std::path::PathBuf>,
+    pub outcome: MaterializationOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterializationOutcome {
+    Ran,
+    Restored,
+}
 
 /// `cook.step_group(fn, opts?)` — the register-phase step-group opener
 /// (§{lua.step-group}). Installed as the recorder by `cook-register`, as the
@@ -464,6 +491,9 @@ pub struct RegisteredWorkspace {
     /// there. The map is closed before execute phase starts, so a snapshot
     /// taken at the end of `register_workspace` is sound.
     pub terminal_outputs: std::collections::BTreeMap<String, Vec<String>>,
+    /// Materializers which performed cache work during registration. Kept out
+    /// of `names`: a materializer has no target identity.
+    pub materializations: Vec<Materialization>,
 }
 
 #[cfg(test)]

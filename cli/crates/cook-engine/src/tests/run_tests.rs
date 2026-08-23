@@ -32,6 +32,7 @@ fn dummy_project_root() -> std::path::PathBuf {
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
+            materializations: Vec::new(),
         }
     }
 
@@ -318,6 +319,7 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
         working_dir_by_prefix,
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
+        materializations: Vec::new(),
     };
 
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
