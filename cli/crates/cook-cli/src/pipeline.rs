@@ -791,7 +791,8 @@ fn run_with_progress(
                     | cook_engine::TestOutcome::Blocked
                     | cook_engine::TestOutcome::TimedOut
             )
-        }) => {
+        }) =>
+        {
             let error = engine_error_to_cook_error(cook_engine::EngineError::TaskFailures {
                 count,
                 failures,
@@ -868,8 +869,16 @@ fn build_registered_workspace(
         .map_err(pipeline_error_to_cook_error)?;
     // §10.2 step 2: re-classify $<NAME> against the full register-phase
     // recipe set before the register pass runs bodies.
-    pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
-        .map_err(pipeline_error_to_cook_error)?;
+    let cache_ctx =
+        cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
+            .map_err(engine_error_to_cook_error)?;
+    pipeline::codegen_with_module_recipes_cached(
+        &mut workspace,
+        config,
+        &globals.set,
+        Some(cache_ctx.clone()),
+    )
+    .map_err(pipeline_error_to_cook_error)?;
     // The register pass evaluates probes whose values decide the DAG's shape,
     // such as a `gather <probe>` driver. Probe values are never cached: a
     // reached probe observes once per invocation, and later phases reuse that
@@ -878,9 +887,6 @@ fn build_registered_workspace(
     //
     // The cache context remains CS-0196 (COOK-364): registered units carry the
     // configured-or-empty project segment and the [cache] ignore_env denylist.
-    let cache_ctx =
-        cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
-            .map_err(engine_error_to_cook_error)?;
     let registered =
         pipeline::register_workspace(&workspace, config, &globals.set, mode, Some(cache_ctx))
             .map_err(pipeline_error_to_cook_error)?;
@@ -918,8 +924,7 @@ pub fn cmd_cache_verify(
             argv: &[],
         },
     )?;
-    let (edges, reachable) =
-        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
+    let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     let project_root = resolve_project_root(globals)?;
 
@@ -1039,19 +1044,14 @@ pub fn cmd_run(
     // (COOK-423).
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
-    let (test_results, hard_failure) = match run_with_progress(
-        globals,
-        &recipe_infos,
-        &targets,
-        &registered,
-        num_jobs,
-    )? {
-        RunWithProgress::Complete(result) => (result.test_results, None),
-        RunWithProgress::TaskFailures {
-            error,
-            partial_test_results,
-        } => (partial_test_results, Some(error)),
-    };
+    let (test_results, hard_failure) =
+        match run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)? {
+            RunWithProgress::Complete(result) => (result.test_results, None),
+            RunWithProgress::TaskFailures {
+                error,
+                partial_test_results,
+            } => (partial_test_results, Some(error)),
+        };
 
     let _ = crate::test_state::save(&project_root, &test_results);
 
@@ -1510,7 +1510,18 @@ fn collect_workspace_recipe_names(globals: &Globals) -> Option<std::collections:
     let workspace_root =
         pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
     let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
-    let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set).ok()?;
+    let cache_ctx = cook_engine::build_cache_ctx_for_cli(
+        &resolve_project_root(globals).ok()?,
+        globals.no_publish,
+    )
+    .ok()?;
+    let names = pipeline::list_workspace_names_cached(
+        &workspace,
+        /*config*/ None,
+        &globals.set,
+        Some(cache_ctx),
+    )
+    .ok()?;
     Some(
         names
             .into_iter()
@@ -1549,7 +1560,15 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
         Ok(workspace) => workspace,
         Err(_) => return,
     };
-    let Ok(names) = pipeline::list_workspace_names(&workspace, None, &globals.set) else {
+    let Ok(cache_ctx) = cook_engine::build_cache_ctx_for_cli(
+        &resolve_project_root(globals).unwrap_or(workspace_root),
+        globals.no_publish,
+    ) else {
+        return;
+    };
+    let Ok(names) =
+        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx))
+    else {
         return;
     };
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
@@ -1579,8 +1598,16 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
 /// every dynamically-registered recipe.
 pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let workspace = load_workspace(globals)?;
-    let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
-        .map_err(pipeline_error_to_cook_error)?;
+    let cache_ctx =
+        cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
+            .map_err(engine_error_to_cook_error)?;
+    let names = pipeline::list_workspace_names_cached(
+        &workspace,
+        /*config*/ None,
+        &globals.set,
+        Some(cache_ctx),
+    )
+    .map_err(pipeline_error_to_cook_error)?;
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
 
     // Pass 1: render `{name}{suffix}` per entry.
@@ -1689,9 +1716,7 @@ chore clean
         Ok(s) => Some(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
-            return Err(CookError::Other(format!(
-                "failed to read .gitignore: {e}"
-            )));
+            return Err(CookError::Other(format!("failed to read .gitignore: {e}")));
         }
     };
     match merge_cook_gitignore_section(existing.as_deref()) {
@@ -1829,10 +1854,7 @@ pub fn cmd_serve(
     // module-registered unit. The registered units are every unit there is.
     for (rname, units) in &serve_registered.units_by_recipe {
         for unit in &units.units {
-            if let cook_contracts::WorkPayload::Interactive {
-                line, is_chore, ..
-            } = &unit.payload
-            {
+            if let cook_contracts::WorkPayload::Interactive { line, is_chore, .. } = &unit.payload {
                 // A chore's interactive window is not a recipe `@` step; only
                 // the legacy in-recipe form is rejected here.
                 if !is_chore {
@@ -2101,8 +2123,7 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
         },
     )?;
 
-    let (edges, reachable) =
-        resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
+    let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
 
     let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
         .map_err(engine_error_to_cook_error)?;
@@ -2202,7 +2223,11 @@ pub fn cmd_why(globals: &Globals, args: &crate::cli::WhyArgs) -> Result<(), Cook
     if format == cook_graph::emit::Format::Json {
         let mut doc = cook_graph::emit::json_value(&graph);
         doc["units"] = serde_json::Value::Array(
-            report.units.iter().map(|u| why_render::why_unit_json(u, &timings)).collect(),
+            report
+                .units
+                .iter()
+                .map(|u| why_render::why_unit_json(u, &timings))
+                .collect(),
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
         return Ok(());

@@ -43,8 +43,8 @@ use crate::cli::{Cli, Globals};
 ///
 /// `reserved_names_match_the_parse_tree` pins this against the real command.
 const RESERVED: &[&str] = &[
-    "init", "menu", "list", "modules", "test", "logs", "cache", "serve", "emit-lua",
-    "affected", "why", "help",
+    "init", "menu", "list", "modules", "test", "logs", "cache", "serve", "emit-lua", "affected",
+    "why", "help",
 ];
 
 /// Entry point. Returns immediately unless the shell is driving completion.
@@ -181,7 +181,16 @@ fn workspace_names() -> Vec<(String, RecipeKind)> {
     let Ok(workspace) = Workspace::load(&globals.file, &root, &globals.set) else {
         return Vec::new();
     };
-    let Ok(names) = pipeline::list_workspace_names(&workspace, None, &globals.set) else {
+    let Ok(project_root) = crate::pipeline::resolve_project_root(&globals) else {
+        return Vec::new();
+    };
+    let Ok(cache_ctx) = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
+    else {
+        return Vec::new();
+    };
+    let Ok(names) =
+        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx))
+    else {
         return Vec::new();
     };
     names

@@ -564,6 +564,7 @@ version = "0.16.1"
 dependencies = [
  "cook-cache",
  "cook-contracts",
+ "cook-execute",
  "cook-lang",
  "cook-luagen",
  "cook-register",

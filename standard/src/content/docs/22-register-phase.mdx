@@ -522,3 +522,17 @@ The bracketed key form `["links"] = { … }` is a top-level key that this requir
 **The insertion point is the end of the code.** Where an entry is appended to a non-empty list — or a created field to a non-empty argument table — it MUST be inserted after the last byte of *code* within those braces, which is not necessarily their last non-whitespace byte: a list whose final line ends in a comment would otherwise receive the entry inside that comment. A string literal is code for this purpose and counts to its last byte, so a list ending in `[[note -- x]]` receives the entry after the closing bracket. Braces holding no code receive the entry at their opening brace, with no separator and no invented padding: `{}` has no interior style to preserve, and supplying one would be an implementation having an opinion about a file it did not write.
 
 See §{rationale.cookfile-editing}.
+
+## 22.14. `cook.materialize` [#lua.materialize]
+
+`cook.materialize(key, spec, produce)` returns a canonical JSON-compatible
+registration value. Cook caches it by its qualified materializer-only key,
+producer body, and declared `files`, `tools`, `env`, and `seals`. Materializer
+keys are not targets, reserve no recipe names, and cannot declare dependencies.
+The producer may close over JSON-compatible Lua values and Lua helper functions
+whose own captures satisfy the same rule. A mutable table MUST occur only once
+across the producer and helper closure graph; Cook rejects shared or aliased
+mutable captures because reconstructing them independently would change Lua
+semantics. Cook also rejects userdata, threads, C functions, recursive captured
+functions, and non-JSON-compatible tables before running the worker; captured
+values and helper bodies are cache determinants.

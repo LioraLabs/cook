@@ -41,6 +41,76 @@ use super::recipe_info::find_full_prefix;
 use super::workspace::{LoadedCookfile, Workspace};
 use cook_register::RegisteredWorkspace;
 
+fn materialize_runner() -> cook_register::MaterializeRunner {
+    Arc::new(|request| {
+        use cook_cache::{artifact_key, cloud_key, ArtifactMeta, CloudKeyInputs};
+        use cook_contracts::{probe_key::LocalProbeKey, WorkPayload};
+        use cook_execute::{WorkItem, WorkerPool};
+
+        let cloud = cloud_key(&CloudKeyInputs {
+            schema_version: cook_cache::STEP_CACHE_VERSION,
+            recipe_namespace: &request.recipe_namespace,
+            command_hash: request.command_hash,
+            env_contribution: request.env_contribution,
+            seal_contribution: 0,
+            sorted_input_content_hashes: &request.input_content_hashes,
+        });
+        let artifact = artifact_key(&cloud, 0, "__cook_materialized_value__");
+        if let Some(ctx) = &request.cache_ctx {
+            if let Some(bytes) = cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact)
+                .map_err(|e| format!("cache read failed: {e}"))?
+            {
+                return Ok(bytes);
+            }
+        }
+
+        let (pool, results) = WorkerPool::spawn(1);
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::Probe {
+                key: LocalProbeKey::new(format!("materialize:{}", request.key)),
+                produce: request.produce_source,
+                line: 0,
+            },
+            recipe_name: format!("@materialize/{}", request.key),
+            working_dir: request.working_dir,
+            env_vars: HashMap::new(),
+            process_env_vars: HashMap::new(),
+            project_root: request.project_root,
+        });
+        let result = results.recv().map_err(|e| format!("worker failed: {e}"))?;
+        pool.shutdown();
+        if !result.success {
+            return Err(result.error.unwrap_or_else(|| "worker failed".into()));
+        }
+        let bytes = result
+            .probe_output
+            .map(|out| out.bytes)
+            .ok_or_else(|| "worker returned no value".to_string())?;
+        if let Some(ctx) = &request.cache_ctx {
+            let mut meta = ArtifactMeta {
+                recipe_namespace: request.recipe_namespace,
+                command_hash: request.command_hash,
+                env_contribution: request.env_contribution,
+                seal_contribution: 0,
+                schema_version: cook_cache::STEP_CACHE_VERSION,
+                size_bytes: bytes.len() as u64,
+                tags: BTreeSet::from([cook_contracts::registration::MATERIALIZER_KIND.into()]),
+                consulted_env_keys: request.consulted_env_keys,
+                output_index: 0,
+                output_path: "__cook_materialized_value__".into(),
+                content_hash: [0; 32],
+                kind: None,
+                mode: 0o644,
+                target: None,
+            };
+            cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
+                .map_err(|e| format!("cache write failed: {e}"))?;
+        }
+        Ok(bytes)
+    })
+}
+
 /// How the register pass binds a CLI dispatch target. The register layer has
 /// three distinct target behaviors (see `cook-register/src/engine.rs`:
 /// `target_recipe` / `reachable_from_target`), and this enum names them so
@@ -155,8 +225,8 @@ fn root_anchored_cookfile_label(workspace_root: &Path, member_dir: &Path) -> Str
     // `Workspace::load` canonicalizes `workspace_root`, but manually
     // constructed workspaces (tests) may pass a non-canonical root —
     // canonicalize both sides so strip_prefix compares like with like.
-    let root = std::fs::canonicalize(workspace_root)
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
     let canon = std::fs::canonicalize(member_dir).unwrap_or_else(|_| member_dir.to_path_buf());
     match canon.join("Cookfile").strip_prefix(&root) {
         Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
@@ -187,6 +257,7 @@ fn member_base_builder(
     let cli_overrides = parse_cli_overrides(env_overrides)?;
     Ok(
         RegisterSessionBuilder::new(member.dir.clone(), HashMap::new())
+            .with_materialize_runner(materialize_runner())
             .with_cli_overrides(cli_overrides)
             .with_selected_config(config.map(|s| s.to_string()))
             .with_qualified_prefix(prefix.to_string()),
@@ -244,8 +315,7 @@ pub fn register_workspace(
     // Backend for the `gather <probe>` pre-pass only — see
     // `register_cookfile`'s parameter of the same name (COOK-359).
 ) -> Result<RegisteredWorkspace, PipelineError> {
-    let shared_outputs: SharedTerminalOutputs =
-        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let shared_outputs: SharedTerminalOutputs = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     let shared_member_outputs: SharedMemberOutputs =
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
 
@@ -283,11 +353,13 @@ pub fn register_workspace(
     // know that is what was meant.
     let reachable_by_prefix: BTreeMap<String, BTreeSet<String>> = match mode {
         RegisterMode::Dispatch { name, .. } if !workspace.imports.is_empty() => {
-            let graph = workspace_requires_graph(workspace, config, env_overrides)?;
+            let graph =
+                workspace_requires_graph(workspace, config, env_overrides, cache_ctx.clone())?;
             reachable_local_names_by_prefix(&graph, [name.to_string()])
         }
         RegisterMode::Enumerate => {
-            let graph = workspace_requires_graph(workspace, config, env_overrides)?;
+            let graph =
+                workspace_requires_graph(workspace, config, env_overrides, cache_ctx.clone())?;
             let seeds: Vec<String> = graph.non_chores.iter().cloned().collect();
             reachable_local_names_by_prefix(&graph, seeds)
         }
@@ -297,8 +369,8 @@ pub fn register_workspace(
     // Register Cookfiles importees-first / root-last so every cross-Cookfile
     // `cook.dep_output` call sees its producer's terminal outputs already
     // populated in the shared map (see `cookfile_registration_order`).
-    let root_canon = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
+    let root_canon =
+        std::fs::canonicalize(&workspace.root.dir).unwrap_or_else(|_| workspace.root.dir.clone());
     for dir in cookfile_registration_order(workspace) {
         let is_root = dir == root_canon;
         let (member, prefix): (&LoadedCookfile, String) = if is_root {
@@ -314,20 +386,22 @@ pub fn register_workspace(
 
         let alias_dirs = workspace.alias_dirs_for(&member.dir);
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
-        let mut builder =
-            member_base_builder(member, &prefix, is_root, config, env_overrides)?
-                .with_shared_terminal_outputs(shared_outputs.clone())
-                .with_workspace_root(workspace.workspace_root.clone())
-                .with_shared_member_outputs(shared_member_outputs.clone())
-                .with_alias_dirs(alias_dirs.clone())
-                .with_alias_qualified_prefixes(alias_qp.clone())
-                .with_cookfile_label(root_anchored_cookfile_label(
-                    &workspace.workspace_root,
-                    &member.dir,
-                ))
-                .with_reachable_names(
-                    reachable_by_prefix.get(&prefix).cloned().unwrap_or_default(),
-                );
+        let mut builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_shared_terminal_outputs(shared_outputs.clone())
+            .with_workspace_root(workspace.workspace_root.clone())
+            .with_shared_member_outputs(shared_member_outputs.clone())
+            .with_alias_dirs(alias_dirs.clone())
+            .with_alias_qualified_prefixes(alias_qp.clone())
+            .with_cookfile_label(root_anchored_cookfile_label(
+                &workspace.workspace_root,
+                &member.dir,
+            ))
+            .with_reachable_names(
+                reachable_by_prefix
+                    .get(&prefix)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
         // Bind the dispatch target to whichever member OWNS the targeted name.
         //
         // This used to bind only on the root Cookfile, on the premise that
@@ -500,11 +574,25 @@ pub fn list_workspace_names(
     config: Option<&str>,
     env_overrides: &[String],
 ) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
+    list_workspace_names_cached(workspace, config, env_overrides, None)
+}
+
+pub fn list_workspace_names_cached(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
     let mut out: Vec<cook_register::RegisteredRecipePub> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
-        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names = cook_register::list_names(builder, &member.lua_source)
-            .map_err(map_register_error)?;
+        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_cookfile_label(root_anchored_cookfile_label(
+                &workspace.workspace_root,
+                &member.dir,
+            ));
+        let names =
+            cook_register::list_names_cached(builder, &member.lua_source, cache_ctx.clone())
+                .map_err(map_register_error)?;
         for mut n in names {
             n.name = if is_root {
                 n.name
@@ -537,11 +625,25 @@ pub fn codegen_with_module_recipes(
     config: Option<&str>,
     env_overrides: &[String],
 ) -> Result<(), PipelineError> {
+    codegen_with_module_recipes_cached(workspace, config, env_overrides, None)
+}
+
+pub fn codegen_with_module_recipes_cached(
+    workspace: &mut Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+) -> Result<(), PipelineError> {
     let mut discovered: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for (member, canon, prefix, is_root) in members_root_first(workspace) {
-        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names = cook_register::list_names(builder, &member.lua_source)
-            .map_err(map_register_error)?;
+        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_cookfile_label(root_anchored_cookfile_label(
+                &workspace.root.dir,
+                &member.dir,
+            ));
+        let names =
+            cook_register::list_names_cached(builder, &member.lua_source, cache_ctx.clone())
+                .map_err(map_register_error)?;
         discovered.insert(canon, names.into_iter().map(|n| n.name).collect());
     }
     super::workspace::regenerate_lua_sources(workspace, &discovered)
@@ -625,6 +727,7 @@ fn workspace_requires_graph(
     workspace: &Workspace,
     config: Option<&str>,
     env_overrides: &[String],
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
 ) -> Result<WorkspaceGraph, PipelineError> {
     let mut graph = WorkspaceGraph {
         requires: BTreeMap::new(),
@@ -632,12 +735,16 @@ fn workspace_requires_graph(
         non_chores: BTreeSet::new(),
     };
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
-        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
-        let names = cook_register::list_names(builder, &member.lua_source)
-            .map_err(map_register_error)?;
+        let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_cookfile_label(root_anchored_cookfile_label(
+                &workspace.workspace_root,
+                &member.dir,
+            ));
+        let names =
+            cook_register::list_names_cached(builder, &member.lua_source, cache_ctx.clone())
+                .map_err(map_register_error)?;
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
-        let local_names: BTreeSet<String> =
-            names.iter().map(|n| n.name.clone()).collect();
+        let local_names: BTreeSet<String> = names.iter().map(|n| n.name.clone()).collect();
         for n in &names {
             let qname = cook_contracts::naming::qualified_name(&prefix, &n.name);
             let requires: Vec<String> = n
@@ -648,7 +755,9 @@ fn workspace_requires_graph(
             if n.kind != cook_register::RecipeKind::Chore {
                 graph.non_chores.insert(qname.clone());
             }
-            graph.owner.insert(qname.clone(), (prefix.clone(), n.name.clone()));
+            graph
+                .owner
+                .insert(qname.clone(), (prefix.clone(), n.name.clone()));
             graph.requires.insert(qname, requires);
         }
     }
@@ -701,8 +810,7 @@ fn merge_into(
     // references that callers may have produced explicitly. Intra-Cookfile
     // requires get the prefix; cross-Cookfile or already-qualified ones pass
     // through untouched.
-    let local_names: BTreeSet<String> =
-        rc.names.iter().map(|n| n.name.clone()).collect();
+    let local_names: BTreeSet<String> = rc.names.iter().map(|n| n.name.clone()).collect();
     // Resolve one dep name to its workspace-global key. Shared by the `names`
     // requires-rewrite and the `units_by_recipe` deps-rewrite below so the two
     // views cannot disagree about what a dep name means (COOK-352) — and
@@ -750,8 +858,10 @@ fn merge_into(
     // string, and `unit_graph::plan`'s probe-node collapse identity, are the
     // other two ends of it.
     for (key, probe) in rc.probes {
-        ws.probes
-            .insert(cook_contracts::probe_key::qualified_key(prefix, &key), probe);
+        ws.probes.insert(
+            cook_contracts::probe_key::qualified_key(prefix, &key),
+            probe,
+        );
     }
     // COOK-526: same qualification as `probes` immediately above — the two
     // must agree, since the executor looks a node's probe up in `probes` by
@@ -786,7 +896,9 @@ fn map_register_error(e: cook_register::RegisterError) -> PipelineError {
         } if declared == 0
             && supplied == 1
             && !first_unmatched.is_empty()
-            && first_unmatched.chars().all(cook_contracts::naming::is_bare_name_char) =>
+            && first_unmatched
+                .chars()
+                .all(cook_contracts::naming::is_bare_name_char) =>
         {
             let base = e.to_string();
             PipelineError::Other(format!(

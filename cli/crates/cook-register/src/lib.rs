@@ -37,6 +37,23 @@ use thiserror::Error;
 
 use cook_contracts::CapturedUnit;
 
+#[derive(Clone)]
+pub struct MaterializeRequest {
+    pub produce_source: String,
+    pub key: String,
+    pub working_dir: std::path::PathBuf,
+    pub project_root: std::path::PathBuf,
+    pub cache_ctx: Option<std::sync::Arc<cook_cache::CacheContext>>,
+    pub recipe_namespace: String,
+    pub command_hash: u64,
+    pub env_contribution: u64,
+    pub input_content_hashes: Vec<u64>,
+    pub consulted_env_keys: std::collections::BTreeSet<String>,
+}
+
+pub type MaterializeRunner =
+    std::sync::Arc<dyn Fn(MaterializeRequest) -> Result<Vec<u8>, String> + Send + Sync>;
+
 /// Lua-registry key under which the declared-variable store lives
 /// (CS-0172). Not reachable from Lua: the only handles are the read-only
 /// `var` proxy and `cook.require_var`, both installed by [`var_api`].
@@ -474,7 +491,7 @@ pub use cook_cache::hash_str;
 pub use capture::RegistrationSource;
 pub use cook_contracts::registration::RegisteredWorkspace;
 pub use dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
-pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
+pub use engine::{list_names, list_names_cached, register_cookfile, RegisterSessionBuilder};
 
 /// The artifact of a full `register_cookfile` pass.
 ///
@@ -492,8 +509,10 @@ pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
 pub struct RegisteredCookfile {
     pub names: Vec<RegisteredRecipePub>,
     pub units_by_recipe: std::collections::BTreeMap<String, cook_contracts::RecipeUnits>,
-    pub probes:
-        std::collections::BTreeMap<cook_contracts::probe_key::LocalProbeKey, cook_contracts::ProbeUnit>,
+    pub probes: std::collections::BTreeMap<
+        cook_contracts::probe_key::LocalProbeKey,
+        cook_contracts::ProbeUnit,
+    >,
     pub final_env: std::collections::BTreeMap<String, String>,
     pub warnings: Vec<String>,
     /// COOK-526: every probe key this Cookfile's register pass actually

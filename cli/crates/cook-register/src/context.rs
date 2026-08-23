@@ -6,6 +6,206 @@ use std::{cell::RefCell, rc::Rc};
 use crate::capture::RegisteredRecipe;
 use crate::{RegisterError, SharedBodySlot};
 
+fn capture_materializer(lua: &Lua, produce: LuaFunction) -> LuaResult<String> {
+    let json = lua.create_function(|_, value: LuaValue| {
+        let value = cook_lua_stdlib::lua_to_json(&value)
+            .map_err(|e| LuaError::runtime(format!("unsupported captured value: {e}")))?;
+        serde_json::to_string(&value).map_err(LuaError::external)
+    })?;
+    let capture: LuaFunction = lua
+        .load(
+            r#"
+return function(root, encode_json)
+  local active = {}
+  local seen_tables = {}
+  local function reject_aliases(value, path)
+    if type(value) == "table" then
+      if seen_tables[value] then
+        error(path .. ": shared/aliased mutable captures are unsupported", 0)
+      end
+      seen_tables[value] = true
+      for key, child in pairs(value) do
+        reject_aliases(key, path)
+        reject_aliases(child, path)
+      end
+    elseif type(value) == "function" then
+      if active[value] then return end
+      active[value] = true
+      local index = 1
+      while true do
+        local name, captured = debug.getupvalue(value, index)
+        if not name then break end
+        if name ~= "_ENV" then
+          reject_aliases(captured, path .. " upvalue '" .. name .. "'")
+        end
+        index = index + 1
+      end
+      active[value] = nil
+    end
+  end
+  local function quote_bytes(bytes)
+    return '"' .. bytes:gsub('.', function(byte)
+      return string.format('\\%03d', string.byte(byte))
+    end) .. '"'
+  end
+  local function encode(value, path)
+    if type(value) ~= "function" then
+      local ok, json = pcall(encode_json, value)
+      if not ok then error(path .. ": " .. tostring(json), 0) end
+      return "cook.json_decode(" .. string.format("%q", json) .. ")"
+    end
+    if active[value] then error(path .. ": recursive captured functions are unsupported", 0) end
+    active[value] = true
+    local setup = {}
+    local index = 1
+    while true do
+      local name, captured = debug.getupvalue(value, index)
+      if not name then break end
+      if name ~= "_ENV" then
+        setup[#setup + 1] = "assert(debug.setupvalue(f," .. index .. "," ..
+          encode(captured, path .. " upvalue '" .. name .. "'") .. "))"
+      end
+      index = index + 1
+    end
+    active[value] = nil
+    return "(function() local f=assert(load(" .. quote_bytes(string.dump(value, true)) ..
+      "));" .. table.concat(setup, ";") .. ";return f end)()"
+  end
+  reject_aliases(root, "produce")
+  return "return " .. encode(root, "produce") .. "()"
+end
+"#,
+        )
+        .eval()?;
+    capture
+        .call((produce, json))
+        .map_err(|e| LuaError::runtime(format!("cook.materialize: cannot capture producer: {e}")))
+}
+
+pub fn register_materialize_api(
+    lua: &Lua,
+    working_dir: &Path,
+    qualified_prefix: &str,
+    cookfile_label: &str,
+    cache_ctx: Option<&std::sync::Arc<cook_cache::CacheContext>>,
+    runner: Option<crate::MaterializeRunner>,
+) -> Result<(), RegisterError> {
+    use cook_cache::recipe_namespace;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let cook_api = cook.clone();
+    let wd = working_dir.to_path_buf();
+    let prefix = qualified_prefix.to_string();
+    let cookfile = cookfile_label.to_string();
+    let ctx = cache_ctx.cloned();
+    let runner = runner.clone();
+    let f = lua.create_function(move |lua, (key, spec, produce): (LuaValue, LuaValue, LuaValue)| {
+        let key = match key {
+            LuaValue::String(s) if !s.as_bytes().is_empty() => s.to_string_lossy().to_string(),
+            LuaValue::String(_) => return Err(LuaError::runtime("cook.materialize: `key` must be non-empty")),
+            v => return Err(LuaError::runtime(format!("cook.materialize: `key` must be a string, got {}", v.type_name()))),
+        };
+        let spec = match spec {
+            LuaValue::Table(t) => t,
+            v => return Err(LuaError::runtime(format!("cook.materialize: `spec` must be a table, got {}", v.type_name()))),
+        };
+        let produce = match produce {
+            LuaValue::Function(f) => f,
+            v => return Err(LuaError::runtime(format!("cook.materialize: `produce` must be a function, got {}", v.type_name()))),
+        };
+        for field in ["requires", "dependencies", "deps"] {
+            if !spec.get::<LuaValue>(field)?.is_nil() {
+                return Err(LuaError::runtime("cook.materialize: materializers cannot depend on recipes or other materializers"));
+            }
+        }
+        fn list(spec: &LuaTable, field: &str) -> LuaResult<Vec<String>> {
+            match spec.get::<LuaValue>(field)? {
+                LuaValue::Nil => Ok(Vec::new()),
+                LuaValue::Table(t) => t.sequence_values::<String>().collect(),
+                v => Err(LuaError::runtime(format!("cook.materialize: `{field}` must be a list of strings, got {}", v.type_name()))),
+            }
+        }
+
+        let mut determinants = Vec::new();
+        let mut files = BTreeSet::new();
+        for pattern in list(&spec, "files")? {
+            files.extend(cook_cache::resolve_gather_glob(&wd, &wd, &pattern).map_err(LuaError::runtime)?);
+        }
+        for file in files {
+            let hash = cook_cache::hash_file(&wd.join(&file)).ok_or_else(|| LuaError::runtime(format!("cook.materialize: input {file:?} cannot be read")))?;
+            determinants.push(cook_cache::hash_str(&format!("file\0{file}\0{hash}")));
+        }
+        for tool in list(&spec, "tools")? {
+            let (hash, _) = cook_cache::tool_identity(&tool).ok_or_else(|| LuaError::runtime(format!("cook.materialize: tool {tool:?} was not found")))?;
+            determinants.push(cook_cache::hash_str(&format!("tool\0{tool}\0{hash}")));
+        }
+        let var: LuaTable = lua.globals().get("var")?;
+        let mut env = BTreeMap::new();
+        for name in list(&spec, "env")? {
+            let value: LuaValue = var.get(name.clone())?;
+            env.insert(
+                name,
+                crate::var_api::var_to_string(
+                    cook_contracts::registration::MATERIALIZER_KIND,
+                    &value,
+                )?,
+            );
+        }
+        for seal in list(&spec, "seals")? {
+            let probes: LuaTable = cook_api.get("probes")?;
+            let get: LuaFunction = probes.get("get")?;
+            let value: LuaValue = get.call(seal.clone())?;
+            let value = cook_lua_stdlib::lua_to_json(&value).map_err(|e| LuaError::runtime(format!("cook.materialize: seal {seal:?}: {e}")))?;
+            determinants.push(cook_cache::hash_str(&format!("seal\0{seal}\0{}", serde_json::to_string(&value).unwrap())));
+        }
+        determinants.sort_unstable();
+        let env_hash = ctx.as_ref().map(|c| cook_cache::env_contribution(&env, &c.denylist)).unwrap_or_else(|| cook_cache::hash_env(&env));
+        let produce_source = capture_materializer(lua, produce)?;
+        let mut body = std::io::Cursor::new(produce_source.as_bytes());
+        let body_hash = cook_cache::hash_reader(&mut body).unwrap();
+        let qualified = cook_contracts::naming::qualified_name(&prefix, &key);
+        let name = recipe_namespace(ctx.as_ref().map_or("", |c| c.project_id.as_str()), &cookfile, &format!("@materialize/{qualified}"));
+        let project_root = ctx
+            .as_ref()
+            .map_or(wd.as_path(), |c| c.project_root.as_path());
+        let request = crate::MaterializeRequest {
+            produce_source,
+            key: key.clone(),
+            working_dir: wd.clone(),
+            project_root: project_root.to_path_buf(),
+            cache_ctx: ctx.clone(),
+            recipe_namespace: name,
+            command_hash: body_hash,
+            env_contribution: env_hash,
+            input_content_hashes: determinants,
+            consulted_env_keys: env.keys().cloned().collect(),
+        };
+        let bytes = runner
+            .as_ref()
+            .ok_or_else(|| LuaError::runtime(format!("cook.materialize {key}: no materialization runner")))?(request)
+            .map_err(|e| LuaError::runtime(format!("cook.materialize {key}: {e}")))?;
+        let json = cook_contracts::probe_value::decode_json(&bytes).map_err(|e| {
+            LuaError::runtime(format!("cook.materialize {key}: cached or produced value is invalid: {e}"))
+        })?;
+        cook_lua_stdlib::json_codec::json_to_lua(lua, &json)
+    })?;
+    cook.set("materialize", f)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod materializer_identity_tests {
+    #[test]
+    fn prefix_and_local_key_have_an_unambiguous_boundary() {
+        let left = cook_contracts::naming::qualified_name("a", "bc");
+        let right = cook_contracts::naming::qualified_name("ab", "c");
+        assert_eq!(left, "a.bc");
+        assert_eq!(right, "ab.c");
+        assert_ne!(left, right);
+    }
+}
+
 /// Set up the `recipe` global table with name and resolved input files.
 /// No cache operations — cache evaluation is handled by cook-engine.
 pub fn setup_recipe_context(

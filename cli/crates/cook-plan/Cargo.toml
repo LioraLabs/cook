@@ -10,6 +10,7 @@ cook-lang = { path = "../cook-lang" }
 cook-luagen = { path = "../cook-luagen" }
 cook-register = { path = "../cook-register" }
 cook-cache = { path = "../cook-cache" }
+cook-execute = { path = "../cook-execute" }
 thiserror = "2"
 pathdiff = "0.2"
 
