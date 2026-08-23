@@ -53,7 +53,9 @@ pub use module_loader::{
     install_module_loader, install_renamed_cache_stub, refresh_package_search_paths,
     ModuleLoadHooks, NoHooks,
 };
-pub use module_observer::{install_require_observer, ModuleObserver};
+pub use module_observer::{
+    install_require_observer, install_require_observer_with, ModuleObserver,
+};
 pub use json_codec::{json_to_lua, lua_to_json};
 pub use member_api::install_member_to_string;
 pub use probes_api::install_probes_api;

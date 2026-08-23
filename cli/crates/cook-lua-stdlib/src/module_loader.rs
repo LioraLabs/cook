@@ -40,7 +40,13 @@ pub trait ModuleLoadHooks {
 
     /// After the module source is read, before its chunk is evaluated.
     /// An error here fails the load before any Lua runs.
-    fn before_eval(&self, _name: &str, _source: &str) -> LuaResult<()> {
+    fn before_eval(
+        &self,
+        _name: &str,
+        _path: &Path,
+        _root: &Path,
+        _source: &str,
+    ) -> LuaResult<()> {
         Ok(())
     }
 
@@ -241,7 +247,15 @@ pub fn install_module_loader(
             ))
         })?;
 
-        hooks.before_eval(&identity, &source)?;
+        let module_root = if is_path {
+            module_path.parent().unwrap_or(&module_path).to_path_buf()
+        } else {
+            cook_contracts::layout::module_candidates(&cwd, &name)[1]
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        };
+        hooks.before_eval(&identity, &module_path, &module_root, &source)?;
 
         {
             let mut c = core.borrow_mut();

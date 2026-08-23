@@ -42,10 +42,32 @@ use super::workspace::{LoadedCookfile, Workspace};
 use cook_register::RegisteredWorkspace;
 
 fn materialize_runner() -> cook_register::MaterializeRunner {
-    Arc::new(|request| {
+    use cook_execute::{WorkResult, WorkerPool};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    struct Coordinator {
+        pool: WorkerPool,
+        results: Mutex<std::sync::mpsc::Receiver<WorkResult>>,
+        buffered: Mutex<HashMap<usize, WorkResult>>,
+        next_id: AtomicUsize,
+        declarations: Mutex<HashMap<String, ([u8; 32], Arc<OnceLock<Result<Vec<u8>, String>>>)>>,
+    }
+
+    let workers = std::thread::available_parallelism().map_or(1, usize::from);
+    let (pool, results) = WorkerPool::spawn(workers);
+    let coordinator = Arc::new(Coordinator {
+        pool,
+        results: Mutex::new(results),
+        buffered: Mutex::new(HashMap::new()),
+        next_id: AtomicUsize::new(0),
+        declarations: Mutex::new(HashMap::new()),
+    });
+
+    Arc::new(move |request| {
         use cook_cache::{artifact_key, cloud_key, ArtifactMeta, CloudKeyInputs};
         use cook_contracts::{probe_key::LocalProbeKey, WorkPayload};
-        use cook_execute::{WorkItem, WorkerPool};
+        use cook_execute::WorkItem;
 
         let cloud = cloud_key(&CloudKeyInputs {
             schema_version: cook_cache::STEP_CACHE_VERSION,
@@ -56,58 +78,91 @@ fn materialize_runner() -> cook_register::MaterializeRunner {
             sorted_input_content_hashes: &request.input_content_hashes,
         });
         let artifact = artifact_key(&cloud, 0, "__cook_materialized_value__");
-        if let Some(ctx) = &request.cache_ctx {
-            if let Some(bytes) = cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact)
-                .map_err(|e| format!("cache read failed: {e}"))?
-            {
-                return Ok(bytes);
+        let cell = {
+            let mut declarations = coordinator.declarations.lock().unwrap();
+            match declarations.get(&request.recipe_namespace) {
+                Some((prior, cell)) if *prior == cloud => cell.clone(),
+                Some(_) => return Err(format!("conflicting declaration for {}", request.key)),
+                None => {
+                    let cell = Arc::new(OnceLock::new());
+                    declarations.insert(request.recipe_namespace.clone(), (cloud, cell.clone()));
+                    cell
+                }
             }
-        }
+        };
+        cell.get_or_init(|| {
+            if let Some(ctx) = &request.cache_ctx {
+                if let Some(bytes) = cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact)
+                    .map_err(|e| format!("cache read failed: {e}"))?
+                {
+                    return Ok(bytes);
+                }
+            }
 
-        let (pool, results) = WorkerPool::spawn(1);
-        pool.submit(WorkItem {
-            id: 0,
-            payload: WorkPayload::Probe {
-                key: LocalProbeKey::new(format!("materialize:{}", request.key)),
-                produce: request.produce_source,
-                line: 0,
-            },
-            recipe_name: format!("@materialize/{}", request.key),
-            working_dir: request.working_dir,
-            env_vars: HashMap::new(),
-            process_env_vars: HashMap::new(),
-            project_root: request.project_root,
-        });
-        let result = results.recv().map_err(|e| format!("worker failed: {e}"))?;
-        pool.shutdown();
-        if !result.success {
-            return Err(result.error.unwrap_or_else(|| "worker failed".into()));
-        }
-        let bytes = result
-            .probe_output
-            .map(|out| out.bytes)
-            .ok_or_else(|| "worker returned no value".to_string())?;
-        if let Some(ctx) = &request.cache_ctx {
-            let mut meta = ArtifactMeta {
-                recipe_namespace: request.recipe_namespace,
-                command_hash: request.command_hash,
-                env_contribution: request.env_contribution,
-                seal_contribution: 0,
-                schema_version: cook_cache::STEP_CACHE_VERSION,
-                size_bytes: bytes.len() as u64,
-                tags: BTreeSet::from([cook_contracts::registration::MATERIALIZER_KIND.into()]),
-                consulted_env_keys: request.consulted_env_keys,
-                output_index: 0,
-                output_path: "__cook_materialized_value__".into(),
-                content_hash: [0; 32],
-                kind: None,
-                mode: 0o644,
-                target: None,
+            let id = coordinator.next_id.fetch_add(1, Ordering::Relaxed);
+            coordinator.pool.submit(WorkItem {
+                id,
+                payload: WorkPayload::Probe {
+                    key: LocalProbeKey::new(format!("materialize:{}", request.key)),
+                    produce: request.produce_source,
+                    line: 0,
+                },
+                recipe_name: format!("@materialize/{}", request.key),
+                working_dir: request.working_dir,
+                env_vars: HashMap::new(),
+                process_env_vars: HashMap::new(),
+                project_root: request.project_root,
+            });
+            let result = loop {
+                // Own the receiver before checking buffered results: another
+                // waiter cannot consume and buffer ours between the check and recv.
+                let results = coordinator.results.lock().unwrap();
+                if let Some(result) = coordinator.buffered.lock().unwrap().remove(&id) {
+                    break result;
+                }
+                let result = results.recv().map_err(|e| format!("worker failed: {e}"))?;
+                if result.id == id {
+                    break result;
+                }
+                coordinator
+                    .buffered
+                    .lock()
+                    .unwrap()
+                    .insert(result.id, result);
             };
-            cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
-                .map_err(|e| format!("cache write failed: {e}"))?;
-        }
-        Ok(bytes)
+            if !result.success {
+                return Err(result.error.unwrap_or_else(|| "worker failed".into()));
+            }
+            let bytes = result
+                .probe_output
+                .map(|out| out.bytes)
+                .ok_or_else(|| "worker returned no value".to_string())?;
+            if let Some(ctx) = &request.cache_ctx {
+                if !ctx.publish_enabled {
+                    return Ok(bytes);
+                }
+                let mut meta = ArtifactMeta {
+                    recipe_namespace: request.recipe_namespace,
+                    command_hash: request.command_hash,
+                    env_contribution: request.env_contribution,
+                    seal_contribution: 0,
+                    schema_version: cook_cache::STEP_CACHE_VERSION,
+                    size_bytes: bytes.len() as u64,
+                    tags: BTreeSet::from([cook_contracts::registration::MATERIALIZER_KIND.into()]),
+                    consulted_env_keys: request.consulted_env_keys,
+                    output_index: 0,
+                    output_path: "__cook_materialized_value__".into(),
+                    content_hash: [0; 32],
+                    kind: None,
+                    mode: 0o644,
+                    target: None,
+                };
+                cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
+                    .map_err(|e| format!("cache write failed: {e}"))?;
+            }
+            Ok(bytes)
+        })
+        .clone()
     })
 }
 
@@ -285,6 +340,72 @@ fn members_root_first(workspace: &Workspace) -> Vec<(&LoadedCookfile, PathBuf, S
     out
 }
 
+/// Populate materializer cache entries before the ordered registration pass.
+/// Each pass is body-free and disposable; registration below remains the one
+/// authoritative graph construction.
+fn pre_materialize_workspace(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    runner: cook_register::MaterializeRunner,
+) -> Result<(), PipelineError> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    // A workspace of one has nothing to overlap. Its authoritative pass can
+    // materialize directly, avoiding a second top-level registration run.
+    if workspace.imports.is_empty() {
+        return Ok(());
+    }
+    let members = members_root_first(workspace);
+    let next = AtomicUsize::new(0);
+    let errors = Mutex::new(Vec::new());
+    let workers = std::thread::available_parallelism()
+        .map_or(2, usize::from)
+        .max(2)
+        .min(members.len());
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some((member, _, prefix, is_root)) = members.get(index) else {
+                    break;
+                };
+                let result = member_base_builder(member, prefix, *is_root, config, env_overrides)
+                    .map(|builder| {
+                        builder
+                            .with_materialize_runner(runner.clone())
+                            .with_cookfile_label(root_anchored_cookfile_label(
+                                &workspace.workspace_root,
+                                &member.dir,
+                            ))
+                    })
+                    .and_then(|builder| {
+                        cook_register::list_names_cached(
+                            builder,
+                            &member.lua_source,
+                            cache_ctx.clone(),
+                        )
+                        .map(|_| ())
+                        .map_err(map_register_error)
+                    });
+                if let Err(error) = result {
+                    errors.lock().unwrap().push((index, error));
+                }
+            });
+        }
+    });
+
+    let mut errors = errors.into_inner().unwrap();
+    errors.sort_by_key(|(index, _)| *index);
+    match errors.into_iter().next() {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
+    }
+}
+
 /// Run the register pass once per Cookfile in `workspace` (root + every
 /// import in `Workspace::imports`) and merge the per-import results.
 ///
@@ -314,6 +435,24 @@ pub fn register_workspace(
     cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
     // Backend for the `gather <probe>` pre-pass only — see
     // `register_cookfile`'s parameter of the same name (COOK-359).
+) -> Result<RegisteredWorkspace, PipelineError> {
+    register_workspace_with_materializers(
+        workspace,
+        config,
+        env_overrides,
+        mode,
+        cache_ctx,
+        materialize_runner(),
+    )
+}
+
+fn register_workspace_with_materializers(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    mode: RegisterMode<'_>,
+    cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    materializers: cook_register::MaterializeRunner,
 ) -> Result<RegisteredWorkspace, PipelineError> {
     let shared_outputs: SharedTerminalOutputs = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     let shared_member_outputs: SharedMemberOutputs =
@@ -353,13 +492,23 @@ pub fn register_workspace(
     // know that is what was meant.
     let reachable_by_prefix: BTreeMap<String, BTreeSet<String>> = match mode {
         RegisterMode::Dispatch { name, .. } if !workspace.imports.is_empty() => {
-            let graph =
-                workspace_requires_graph(workspace, config, env_overrides, cache_ctx.clone())?;
+            let graph = workspace_requires_graph(
+                workspace,
+                config,
+                env_overrides,
+                cache_ctx.clone(),
+                materializers.clone(),
+            )?;
             reachable_local_names_by_prefix(&graph, [name.to_string()])
         }
         RegisterMode::Enumerate => {
-            let graph =
-                workspace_requires_graph(workspace, config, env_overrides, cache_ctx.clone())?;
+            let graph = workspace_requires_graph(
+                workspace,
+                config,
+                env_overrides,
+                cache_ctx.clone(),
+                materializers.clone(),
+            )?;
             let seeds: Vec<String> = graph.non_chores.iter().cloned().collect();
             reachable_local_names_by_prefix(&graph, seeds)
         }
@@ -387,6 +536,7 @@ pub fn register_workspace(
         let alias_dirs = workspace.alias_dirs_for(&member.dir);
         let alias_qp = workspace.alias_qualified_prefixes_for(&member.dir);
         let mut builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_materialize_runner(materializers.clone())
             .with_shared_terminal_outputs(shared_outputs.clone())
             .with_workspace_root(workspace.workspace_root.clone())
             .with_shared_member_outputs(shared_member_outputs.clone())
@@ -583,9 +733,18 @@ pub fn list_workspace_names_cached(
     env_overrides: &[String],
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
 ) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
+    let materializers = materialize_runner();
+    pre_materialize_workspace(
+        workspace,
+        config,
+        env_overrides,
+        cache_ctx.clone(),
+        materializers.clone(),
+    )?;
     let mut out: Vec<cook_register::RegisteredRecipePub> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_materialize_runner(materializers.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.workspace_root,
                 &member.dir,
@@ -634,9 +793,34 @@ pub fn codegen_with_module_recipes_cached(
     env_overrides: &[String],
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
 ) -> Result<(), PipelineError> {
+    let materializers = materialize_runner();
+    codegen_with_module_recipes_cached_with_materializers(
+        workspace,
+        config,
+        env_overrides,
+        cache_ctx,
+        materializers,
+    )
+}
+
+fn codegen_with_module_recipes_cached_with_materializers(
+    workspace: &mut Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    materializers: cook_register::MaterializeRunner,
+) -> Result<(), PipelineError> {
+    pre_materialize_workspace(
+        workspace,
+        config,
+        env_overrides,
+        cache_ctx.clone(),
+        materializers.clone(),
+    )?;
     let mut discovered: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for (member, canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_materialize_runner(materializers.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.root.dir,
                 &member.dir,
@@ -647,6 +831,33 @@ pub fn codegen_with_module_recipes_cached(
         discovered.insert(canon, names.into_iter().map(|n| n.name).collect());
     }
     super::workspace::regenerate_lua_sources(workspace, &discovered)
+}
+
+/// Discover dynamic recipe names and perform authoritative registration with
+/// one invocation-scoped materializer coordinator.
+pub fn prepare_and_register_workspace_cached(
+    workspace: &mut Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    mode: RegisterMode<'_>,
+    cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+) -> Result<RegisteredWorkspace, PipelineError> {
+    let materializers = materialize_runner();
+    codegen_with_module_recipes_cached_with_materializers(
+        workspace,
+        config,
+        env_overrides,
+        cache_ctx.clone(),
+        materializers.clone(),
+    )?;
+    register_workspace_with_materializers(
+        workspace,
+        config,
+        env_overrides,
+        mode,
+        cache_ctx,
+        materializers,
+    )
 }
 
 /// One dep name, as written inside a Cookfile, → its workspace-global key.
@@ -728,6 +939,7 @@ fn workspace_requires_graph(
     config: Option<&str>,
     env_overrides: &[String],
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    materializers: cook_register::MaterializeRunner,
 ) -> Result<WorkspaceGraph, PipelineError> {
     let mut graph = WorkspaceGraph {
         requires: BTreeMap::new(),
@@ -736,6 +948,7 @@ fn workspace_requires_graph(
     };
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?
+            .with_materialize_runner(materializers.clone())
             .with_cookfile_label(root_anchored_cookfile_label(
                 &workspace.workspace_root,
                 &member.dir,

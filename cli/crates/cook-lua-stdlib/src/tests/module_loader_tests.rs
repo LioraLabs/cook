@@ -298,7 +298,13 @@ fn hooks_fire_in_sequence() {
         fn on_memo_hit(&self, name: &str) {
             self.0.borrow_mut().push(format!("memo:{name}"));
         }
-        fn before_eval(&self, name: &str, _source: &str) -> LuaResult<()> {
+        fn before_eval(
+            &self,
+            name: &str,
+            _path: &std::path::Path,
+            _root: &std::path::Path,
+            _source: &str,
+        ) -> LuaResult<()> {
             self.0.borrow_mut().push(format!("before:{name}"));
             Ok(())
         }

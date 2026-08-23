@@ -2859,6 +2859,7 @@ fn install_all_apis(
         &cookfile_label,
         cache_ctx,
         builder.materialize_runner.clone(),
+        module_state.clone(),
     )?;
     // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
     // the shared implementation lives in cook-lua-stdlib so the worker VMs

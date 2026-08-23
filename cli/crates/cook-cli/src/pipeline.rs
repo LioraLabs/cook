@@ -872,10 +872,11 @@ fn build_registered_workspace(
     let cache_ctx =
         cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
             .map_err(engine_error_to_cook_error)?;
-    pipeline::codegen_with_module_recipes_cached(
+    let registered = pipeline::prepare_and_register_workspace_cached(
         &mut workspace,
         config,
         &globals.set,
+        mode,
         Some(cache_ctx.clone()),
     )
     .map_err(pipeline_error_to_cook_error)?;
@@ -887,9 +888,6 @@ fn build_registered_workspace(
     //
     // The cache context remains CS-0196 (COOK-364): registered units carry the
     // configured-or-empty project segment and the [cache] ignore_env denylist.
-    let registered =
-        pipeline::register_workspace(&workspace, config, &globals.set, mode, Some(cache_ctx))
-            .map_err(pipeline_error_to_cook_error)?;
     for warning in &registered.warnings {
         eprintln!("cook: warning: {warning}");
     }

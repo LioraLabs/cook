@@ -89,6 +89,7 @@ pub fn register_materialize_api(
     cookfile_label: &str,
     cache_ctx: Option<&std::sync::Arc<cook_cache::CacheContext>>,
     runner: Option<crate::MaterializeRunner>,
+    module_state: crate::module_loader::SharedModuleLoaderState,
 ) -> Result<(), RegisterError> {
     use cook_cache::recipe_namespace;
     use std::collections::{BTreeMap, BTreeSet};
@@ -164,7 +165,16 @@ pub fn register_materialize_api(
         let produce_source = capture_materializer(lua, produce)?;
         let mut body = std::io::Cursor::new(produce_source.as_bytes());
         let body_hash = cook_cache::hash_reader(&mut body).unwrap();
-        let qualified = cook_contracts::naming::qualified_name(&prefix, &key);
+        let caller_source: Option<String> = lua
+            .load("for i=2,32 do local d=debug.getinfo(i,'S'); if not d then return nil end; if d.what == 'Lua' then return d.source end end")
+            .eval()?;
+        let module = caller_source
+            .as_deref()
+            .and_then(|source| module_state.borrow().module_for_source(source).map(str::to_owned));
+        let local = module
+            .as_deref()
+            .map_or_else(|| key.clone(), |module| format!("{module}.{key}"));
+        let qualified = cook_contracts::naming::qualified_name(&prefix, &local);
         let name = recipe_namespace(ctx.as_ref().map_or("", |c| c.project_id.as_str()), &cookfile, &format!("@materialize/{qualified}"));
         let project_root = ctx
             .as_ref()

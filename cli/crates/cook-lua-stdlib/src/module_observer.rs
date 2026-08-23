@@ -125,6 +125,17 @@ impl ModuleObserver {
 /// A failed require records nothing. Idempotent per VM: a second install would
 /// nest wrappers on a long-lived worker VM, so it is a no-op.
 pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResult<()> {
+    install_require_observer_with(lua, observer, |_| {})
+}
+
+/// Install the require observer and report each resolved file to `on_load`.
+/// Register-phase callers use this to retain module ownership while the
+/// module loader's hooks still identify the declaring module.
+pub fn install_require_observer_with(
+    lua: &Lua,
+    observer: ModuleObserver,
+    on_load: impl Fn(&Path) + 'static,
+) -> LuaResult<()> {
     // In the registry, not in `_G`: the register VM's globals are the Cookfile
     // author's namespace, and a bookkeeping flag parked there is a name they
     // can read, shadow, or trip over.
@@ -160,9 +171,11 @@ pub fn install_require_observer(lua: &Lua, observer: ModuleObserver) -> LuaResul
             if already_loaded {
                 if let Some(path) = memo.borrow().get(&name) {
                     observer.record(path);
+                    on_load(path);
                 }
             } else if let Some(path) = searchpath_hit(lua, &name)? {
                 observer.record(&path);
+                on_load(&path);
                 memo.borrow_mut().insert(name, path);
             }
         }

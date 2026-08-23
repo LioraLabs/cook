@@ -51,7 +51,8 @@ pub use parse::{read_and_parse, validate_selected_config_workspace, ParsedCookfi
 pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{
     codegen_with_module_recipes, codegen_with_module_recipes_cached, list_workspace_names,
-    list_workspace_names_cached, register_workspace, RegisterMode,
+    list_workspace_names_cached, prepare_and_register_workspace_cached, register_workspace,
+    RegisterMode,
 };
 pub use workspace::{LoadedCookfile, Workspace};
 

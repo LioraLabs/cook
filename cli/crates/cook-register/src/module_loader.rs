@@ -35,10 +35,13 @@ pub struct ModuleLoaderState {
     pub cache_dir: PathBuf,
     /// Set during a `load_module` call; cleared afterwards.
     pub current_module: Option<String>,
+    module_stack: Vec<String>,
     /// Tracks the most recently loaded module so that module-returned functions
     /// can still access the cache after `load_module` has returned.
     pub last_module: Option<String>,
     pub caches: std::collections::HashMap<String, ModuleCache>,
+    module_paths: BTreeMap<String, (PathBuf, PathBuf)>,
+    source_owners: BTreeMap<PathBuf, String>,
 }
 
 pub type SharedModuleLoaderState = Rc<RefCell<ModuleLoaderState>>;
@@ -50,8 +53,11 @@ impl ModuleLoaderState {
             working_dir,
             cache_dir,
             current_module: None,
+            module_stack: Vec::new(),
             last_module: None,
             caches: std::collections::HashMap::new(),
+            module_paths: BTreeMap::new(),
+            source_owners: BTreeMap::new(),
         }
     }
 
@@ -61,6 +67,40 @@ impl ModuleLoaderState {
         self.current_module
             .as_deref()
             .or(self.last_module.as_deref())
+    }
+
+    /// Resolve the module that owns a running Lua frame. Unlike
+    /// `active_module`, this remains exact after module loading has finished.
+    pub fn module_for_source(&self, source: &str) -> Option<&str> {
+        let source = source.strip_prefix('@').unwrap_or(source);
+        let source_path = std::path::Path::new(source);
+        let joined;
+        let source_path = if source_path.is_absolute() {
+            source_path
+        } else {
+            joined = self.working_dir.join(source_path);
+            &joined
+        };
+        self.source_owners
+            .get(source_path)
+            .map(String::as_str)
+            .or_else(|| {
+                self.module_paths
+                    .iter()
+                    .find(|(_, (path, _))| path == source_path)
+                    .map(|(name, _)| name.as_str())
+                    .or_else(|| {
+                        self.module_paths
+                            .iter()
+                            .filter_map(|(name, (_, root))| {
+                                source_path
+                                    .starts_with(root)
+                                    .then_some((root.as_os_str().len(), name.as_str()))
+                            })
+                            .max_by_key(|(len, _)| *len)
+                            .map(|(_, name)| name)
+                    })
+            })
     }
 
     pub fn flush_all(&self) {
@@ -88,17 +128,27 @@ impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
         self.state.borrow_mut().last_module = Some(name.to_string());
     }
 
-    fn before_eval(&self, name: &str, source: &str) -> LuaResult<()> {
+    fn before_eval(
+        &self,
+        name: &str,
+        path: &std::path::Path,
+        root: &std::path::Path,
+        source: &str,
+    ) -> LuaResult<()> {
         let source_hash = hash_str(source);
         let mut state = self.state.borrow_mut();
         let cache_dir = state.cache_dir.clone();
         let cache = ModuleCache::load(&cache_dir, name, source_hash);
         state.caches.insert(name.to_string(), cache);
+        state
+            .module_paths
+            .insert(name.to_string(), (path.to_path_buf(), root.to_path_buf()));
         if let Some(c) = state.caches.get_mut(name) {
             c.set_source_hash(source_hash);
         }
         // For cook.probes scoping during the module's top-level chunk / init().
-        state.current_module = Some(name.to_string());
+        state.module_stack.push(name.to_string());
+        state.current_module = state.module_stack.last().cloned();
         Ok(())
     }
 
@@ -110,7 +160,8 @@ impl cook_lua_stdlib::ModuleLoadHooks for RegisterLoadHooks {
             }
             state.last_module = Some(name.to_string());
         }
-        state.current_module = None;
+        state.module_stack.pop();
+        state.current_module = state.module_stack.last().cloned();
     }
 }
 
@@ -130,11 +181,29 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
         lua,
         &cook,
         cook_lua_stdlib::WorkingDirSource::Static(working_dir),
-        RegisterLoadHooks { state },
+        RegisterLoadHooks {
+            state: state.clone(),
+        },
         // The shared loader takes a sink; nothing on the REGISTER VM drains
         // one. Only the execute phase keys a unit on what it loaded
         // (§{exec.cache.module-source}, CS-0204), and it installs its own.
         cook_lua_stdlib::ModuleObserver::new(),
+    )?;
+    let require_state = state.clone();
+    cook_lua_stdlib::install_require_observer_with(
+        lua,
+        cook_lua_stdlib::ModuleObserver::new(),
+        move |path| {
+            let mut state = require_state.borrow_mut();
+            if let Some(owner) = state.current_module.clone() {
+                let path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    state.working_dir.join(path)
+                };
+                state.source_owners.insert(path, owner);
+            }
+        },
     )
 }
 
