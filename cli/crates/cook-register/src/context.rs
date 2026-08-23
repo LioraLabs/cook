@@ -209,11 +209,21 @@ pub fn register_materialize_api(
             }
         };
 
+        let file_patterns = list("files")?;
+        let tools = list("tools")?;
+        let env_names = list("env")?;
+        let seals = list("seals")?;
+        let mut declaration = Vec::new();
+        for (kind, names) in [("file", &file_patterns), ("tool", &tools), ("env", &env_names), ("seal", &seals)] {
+            declaration.extend(names.iter().map(|name| (kind.to_string(), name.clone())));
+        }
+        declaration.sort_unstable();
+
         let mut determinants = Vec::new();
         let mut declared_inputs = BTreeSet::new();
         let mut resolved_inputs = Vec::new();
         let mut files = BTreeSet::new();
-        for pattern in list("files")? {
+        for pattern in file_patterns {
             files.extend(
                 cook_cache::resolve_gather_glob(&wd, &root, &pattern)
                     .map_err(|e| diagnostic(e.to_string()))?,
@@ -235,7 +245,7 @@ pub fn register_materialize_api(
             determinants.push(cook_cache::hash_str(&format!("file\0{file}\0{hash}")));
             resolved_inputs.push(path);
         }
-        for tool in list("tools")? {
+        for tool in tools {
             let (hash, _) = cook_cache::tool_identity(&tool)
                 .ok_or_else(|| diagnostic(format!("tool {tool:?} was not found")))?;
             determinants.push(cook_cache::hash_str(&format!("tool\0{tool}\0{hash}")));
@@ -245,7 +255,7 @@ pub fn register_materialize_api(
             .get("var")
             .map_err(|e| diagnostic(e.to_string()))?;
         let mut env = BTreeMap::new();
-        for name in list("env")? {
+        for name in env_names {
             let value: LuaValue = var
                 .get(name.clone())
                 .map_err(|e| diagnostic(e.to_string()))?;
@@ -258,7 +268,7 @@ pub fn register_materialize_api(
                 .map_err(|e| diagnostic(e.to_string()))?,
             );
         }
-        for seal in list("seals")? {
+        for seal in seals {
             let probes: LuaTable = cook_api
                 .get("probes")
                 .map_err(|e| diagnostic(e.to_string()))?;
@@ -282,6 +292,7 @@ pub fn register_materialize_api(
             capture_materializer(lua, produce).map_err(|e| diagnostic(e.to_string()))?;
         let mut body = std::io::Cursor::new(produce_source.as_bytes());
         let body_hash = cook_cache::hash_reader(&mut body).unwrap();
+        declaration.push(("produce_source".into(), produce_source.clone()));
         let name = recipe_namespace(
             ctx.as_ref().map_or("", |c| c.project_id.as_str()),
             &cookfile,
@@ -301,6 +312,7 @@ pub fn register_materialize_api(
             project_root: project_root.to_path_buf(),
             cache_ctx: ctx.clone(),
             recipe_namespace: name,
+            declaration,
             command_hash: body_hash,
             env_contribution: env_hash,
             input_content_hashes: determinants,

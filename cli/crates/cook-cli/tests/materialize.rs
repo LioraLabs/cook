@@ -829,6 +829,32 @@ return M
 }
 
 #[test]
+fn determinant_distinct_repeated_declaration_is_rejected_on_equal_cache_key() {
+    let root = TempDir::new().unwrap();
+    write(
+        root.path(),
+        ".cook/modules/share/lua/5.4/fixture.lua",
+        r#"
+local M = {}
+local function produce() return true end
+function M.install()
+  cook.materialize("graph", {}, produce)
+  cook.materialize("graph", { files = { "missing/**" } }, produce)
+end
+return M
+"#,
+    );
+    write(root.path(), "Cookfile", "use fixture\n\nfixture.install()\nrecipe build\n");
+
+    let output = run(root.path(), "build");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("conflicting declaration for graph (fixture.graph)"), "{stderr}");
+    assert!(stderr.contains("first declared at"), "{stderr}");
+    assert!(stderr.contains("conflicting declaration at"), "{stderr}");
+}
+
+#[test]
 fn aliased_mutable_captures_are_rejected() {
     let root = TempDir::new().unwrap();
     write(

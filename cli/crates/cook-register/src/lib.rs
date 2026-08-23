@@ -49,6 +49,7 @@ pub struct MaterializeRequest {
     pub project_root: std::path::PathBuf,
     pub cache_ctx: Option<std::sync::Arc<cook_cache::CacheContext>>,
     pub recipe_namespace: String,
+    pub declaration: Vec<(String, String)>,
     pub command_hash: u64,
     pub env_contribution: u64,
     pub input_content_hashes: Vec<u64>,

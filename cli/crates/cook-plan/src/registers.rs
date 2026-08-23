@@ -60,7 +60,8 @@ fn materialize_coordinator() -> MaterializeCoordinator {
             HashMap<
                 String,
                 (
-                    [u8; 32],
+                    Vec<(String, String)>,
+                    String,
                     Arc<OnceLock<Result<cook_register::MaterializeResult, String>>>,
                 ),
             >,
@@ -96,11 +97,17 @@ fn materialize_coordinator() -> MaterializeCoordinator {
         let cell = {
             let mut declarations = coordinator.declarations.lock().unwrap();
             match declarations.get(&request.recipe_namespace) {
-                Some((prior, cell)) if *prior == cloud => cell.clone(),
-                Some(_) => return Err(format!("conflicting declaration for {}", request.key)),
+                Some((prior, _, cell)) if prior == &request.declaration => cell.clone(),
+                Some((_, prior_site, _)) => return Err(format!(
+                    "conflicting declaration for {} ({}): first declared at {}; conflicting declaration at {}",
+                    request.key, request.qualified_key, prior_site, request.declaration_site
+                )),
                 None => {
                     let cell = Arc::new(OnceLock::new());
-                    declarations.insert(request.recipe_namespace.clone(), (cloud, cell.clone()));
+                    declarations.insert(
+                        request.recipe_namespace.clone(),
+                        (request.declaration.clone(), request.declaration_site.clone(), cell.clone()),
+                    );
                     cell
                 }
             }
