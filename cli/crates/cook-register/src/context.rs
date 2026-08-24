@@ -332,17 +332,6 @@ pub fn register_materialize_api(
     Ok(())
 }
 
-#[cfg(test)]
-mod materializer_identity_tests {
-    #[test]
-    fn prefix_and_local_key_have_an_unambiguous_boundary() {
-        let left = cook_contracts::naming::qualified_name("a", "bc");
-        let right = cook_contracts::naming::qualified_name("ab", "c");
-        assert_eq!(left, "a.bc");
-        assert_eq!(right, "ab.c");
-        assert_ne!(left, right);
-    }
-}
 
 /// Set up the `recipe` global table with name and resolved input files.
 /// No cache operations — cache evaluation is handled by cook-engine.

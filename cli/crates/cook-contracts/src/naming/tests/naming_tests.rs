@@ -1,4 +1,4 @@
-use super::{internal_module_tag, is_internal_recipe};
+use super::{internal_module_tag, is_internal_recipe, qualified_name};
 
 #[test]
 fn plain_recipe_names_are_not_internal() {
@@ -100,4 +100,15 @@ fn prefix_reads_the_same_off_a_recipe_name_and_a_probe_key() {
     assert_eq!(import_prefix("backend.cc:version"), "backend");
     assert_eq!(import_prefix("build"), "");
     assert_eq!(import_prefix("cc:version"), "");
+}
+
+/// Materializer identity (COOK-553): prefix and local key join at an
+/// unambiguous boundary, so distinct (prefix, key) pairs never collide.
+#[test]
+fn prefix_and_local_key_have_an_unambiguous_boundary() {
+    let left = qualified_name("a", "bc");
+    let right = qualified_name("ab", "c");
+    assert_eq!(left, "a.bc");
+    assert_eq!(right, "ab.c");
+    assert_ne!(left, right);
 }

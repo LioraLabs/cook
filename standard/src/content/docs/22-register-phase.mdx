@@ -530,7 +530,10 @@ See §{rationale.cookfile-editing}.
 **Phase.** Registration only. This is Cook's registration-time cache primitive,
 not a recipe kind or a target. `key` is a non-empty local identity; Cook
 qualifies it by the workspace and module context for cache storage, progress,
-and diagnostics. A materializer key MUST NOT reserve a recipe name: a recipe
+and diagnostics, using the same prefix-joining rule as qualified recipe names
+(§{comp.qualified-refs}), so distinct (prefix, key) pairs never collide (an
+`a` prefix with key `bc` is `a.bc`; an `ab` prefix with key `c` is `ab.c`).
+A materializer key MUST NOT reserve a recipe name: a recipe
 named `materialize`, and a recipe whose name equals a materializer's local key,
 are both legal. Materializers MUST NOT appear in target menus or target
 resolution, and an invocation naming a materializer key MUST be handled exactly
