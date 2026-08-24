@@ -2001,4 +2001,21 @@ mod tests {
         assert!(lua.contains(r#"requires = {"dotnet:build"}"#), "lua:\n{lua}");
         assert!(lua.contains(r#"cook.dep_output("dotnet:build")"#), "lua:\n{lua}");
     }
+
+    #[test]
+    fn builtin_placeholder_outranks_same_named_recipe() {
+        let recipes = BTreeSet::from(["out_1".to_string()]);
+        let probes = BTreeSet::new();
+        let ctx = ResolveCtx {
+            mode: IterMode::ManyToOne,
+            outputs: OutputShape::Multi(1),
+            recipes_in_scope: &recipes,
+            probe_keys_in_scope: &probes,
+        };
+
+        assert_eq!(
+            crate::resolver::resolve("out_1", &ctx),
+            crate::resolver::Resolved::Builtin(crate::resolver::BuiltinKind::OutIndexed(1))
+        );
+    }
 }
