@@ -355,13 +355,21 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
         return Resolved::EnvRuntime(key.to_string());
     }
 
+    // A colon-qualified recipe name is unambiguous when it is in scope. It
+    // must win before punctuation-based probe fallback so the normal recipe
+    // lowering records both the dependency edge and output-content input fold.
+    if ctx.recipes_in_scope.contains(ident) {
+        return Resolved::Recipe {
+            name: ident.to_string(),
+            accessor: None,
+        };
+    }
+
     // CS-0074, amended by CS-0240: probe-value reference. A colon-carrying
-    // IDENT is one on sight — no builtin, recipe or variable name may contain
-    // a colon — and a colon-free one is one when it names a declared probe
-    // key. Ordering: after `file:`/`var.`, ahead of builtin/recipe only for
-    // the colon form, which nothing else can claim. The colon-free form is
-    // resolved BELOW, at §{xref.resolution} step 3, so a builtin shape and a
-    // recipe name keep winning over a same-named probe; the parse-time
+    // IDENT is one on sight unless the exact identifier named the recipe above;
+    // a colon-free one is one when it names a declared probe key. The colon-free
+    // form is resolved BELOW, at §{xref.resolution} step 3, so a builtin shape
+    // and a recipe name keep winning over a same-named probe; the parse-time
     // one-name-one-kind rule (App. A.2) makes the recipe case unreachable, and
     // the builtin case is the closed set every position shares.
     //
@@ -408,12 +416,6 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
         BuiltinMatch::No => {}
     }
     // Try recipe (own-name or recipe.accessor).
-    if ctx.recipes_in_scope.contains(ident) {
-        return Resolved::Recipe {
-            name: ident.to_string(),
-            accessor: None,
-        };
-    }
     if let Some(r) = accessor_ref(ident, ctx.recipes_in_scope) {
         return Resolved::Recipe {
             name: r.name.to_string(),

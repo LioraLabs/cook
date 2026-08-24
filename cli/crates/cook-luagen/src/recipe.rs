@@ -1956,3 +1956,49 @@ fn chore_metadata_fields(chore: &Chore, recipe_names: &BTreeSet<String>) -> Vec<
     }
     fields
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recipe(name: &str, output: &str, command: &str) -> Recipe {
+        Recipe {
+            name: name.to_string(),
+            description: None,
+            deps: vec![],
+            inputs: vec![],
+            excludes: vec![],
+            steps: vec![Step::Cook {
+                step: CookStep {
+                    outputs: vec![output.into()],
+                    body: Some(Body::ShellBlock(vec![command.to_string()])),
+                    disposition: Disposition::default(),
+                },
+                line: 1,
+            }],
+            line: 1,
+        }
+    }
+
+    #[test]
+    fn colon_qualified_recipe_output_uses_dep_output_and_infers_the_edge() {
+        let cookfile = Cookfile {
+            config_blocks: vec![],
+            recipes: vec![
+                recipe("dotnet:build", "build/app.dll", "dotnet build -o $<out>"),
+                recipe("aggregate", "build/all.txt", "cat $<dotnet:build> > $<out>"),
+            ],
+            chores: vec![],
+            uses: vec![],
+            imports: vec![],
+            register_blocks: vec![],
+            top_level_module_calls: vec![],
+            probes: vec![],
+        };
+        let names = crate::dep_ref::extract_recipe_names(&cookfile);
+        let lua = crate::generate_checked(&cookfile, &names).expect("codegen").0;
+
+        assert!(lua.contains(r#"requires = {"dotnet:build"}"#), "lua:\n{lua}");
+        assert!(lua.contains(r#"cook.dep_output("dotnet:build")"#), "lua:\n{lua}");
+    }
+}
