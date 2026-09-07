@@ -95,6 +95,29 @@ pub fn qualified_name(prefix: &str, name: &str) -> String {
     }
 }
 
+/// Resolve a local, imported, or canonical recipe reference consistently across registration.
+pub fn qualify_recipe_reference(
+    req: &str,
+    prefix: &str,
+    alias_qualified_prefixes: &std::collections::BTreeMap<String, String>,
+    local_names: &std::collections::BTreeSet<String>,
+) -> String {
+    if let Some((alias, sub)) = req.split_once('.') {
+        if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
+            return if importee_prefix.is_empty() {
+                sub.to_string()
+            } else {
+                format!("{importee_prefix}.{sub}")
+            };
+        }
+    }
+    if local_names.contains(req) {
+        qualified_name(prefix, req)
+    } else {
+        req.to_string()
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/naming_tests.rs"]
 mod tests;

@@ -5,6 +5,7 @@ use super::*;
 /// registration path after the dual-path collapse.
 fn workspace_of_one(dir: &Path, lua_source: &str) -> Workspace {
     Workspace {
+        child_invocation: None,
         root: LoadedCookfile {
             // Intentionally inert placeholder AST: registration consumes
             // only `lua_source`; the parsed Cookfile is never re-lowered.

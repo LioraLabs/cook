@@ -862,6 +862,47 @@ fn build_registered_workspace(
     mode: RegisterMode<'_>,
 ) -> Result<(Workspace, RegisteredWorkspace), CookError> {
     let mut workspace = load_workspace(globals)?;
+    let mut arguments = vec![
+        "--file".to_string(),
+        std::fs::canonicalize(&globals.file)
+            .map_err(|error| CookError::Other(error.to_string()))?
+            .to_string_lossy()
+            .into_owned(),
+        "--root".to_string(),
+        workspace.workspace_root.to_string_lossy().into_owned(),
+        "--color".to_string(),
+        globals.color.clone(),
+        "--output".to_string(),
+        globals.output.clone(),
+    ];
+    for (enabled, flag) in [
+        (globals.quiet, "--quiet"),
+        (globals.verbose, "--verbose"),
+        (globals.replay_logs, "--replay-logs"),
+        (globals.affected, "--affected"),
+        (no_prune_enabled(globals), "--no-prune"),
+        (no_auto_gc_enabled(globals), "--no-auto-gc"),
+        (no_publish_enabled(globals), "--no-publish"),
+    ] {
+        if enabled {
+            arguments.push(flag.to_string());
+        }
+    }
+    if let Some(jobs) = globals.jobs {
+        arguments.extend(["--jobs".to_string(), jobs.to_string()]);
+    }
+    if let Some(since) = &globals.since {
+        arguments.extend(["--since".to_string(), since.clone()]);
+    }
+    for value in &globals.set {
+        arguments.extend(["--set".to_string(), value.clone()]);
+    }
+    workspace.child_invocation = Some(std::sync::Arc::new(pipeline::workspace::ChildInvocation {
+        executable: std::env::current_exe().map_err(|error| CookError::Other(error.to_string()))?,
+        directory: workspace.root.dir.clone(),
+        arguments,
+        preset: config.map(str::to_owned),
+    }));
     // §11.6 / CS-0165 (R3): validate `@PRESET` against the UNION of the named
     // config blocks of every loaded Cookfile — not just the entry Cookfile.
     // This is the one place selection is validated; every command routes here.

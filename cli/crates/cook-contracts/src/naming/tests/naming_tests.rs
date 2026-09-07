@@ -1,4 +1,4 @@
-use super::{internal_module_tag, is_internal_recipe, qualified_name};
+use super::{internal_module_tag, is_internal_recipe, qualified_name, qualify_recipe_reference};
 
 #[test]
 fn plain_recipe_names_are_not_internal() {
@@ -111,4 +111,22 @@ fn prefix_and_local_key_have_an_unambiguous_boundary() {
     assert_eq!(left, "a.bc");
     assert_eq!(right, "ab.c");
     assert_ne!(left, right);
+}
+
+#[test]
+fn recipe_reference_qualification_preserves_local_alias_and_canonical_names() {
+    let aliases = [("alias".into(), "canonical".into())].into();
+    let local = ["target".into()].into();
+    assert_eq!(
+        qualify_recipe_reference("target", "member", &aliases, &local),
+        "member.target"
+    );
+    assert_eq!(
+        qualify_recipe_reference("alias.target", "member", &aliases, &local),
+        "canonical.target"
+    );
+    assert_eq!(
+        qualify_recipe_reference("elsewhere.target", "member", &aliases, &local),
+        "elsewhere.target"
+    );
 }

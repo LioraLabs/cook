@@ -181,3 +181,74 @@ fn ctrl_c_routes_to_a_second_chore_after_the_first_completes() {
         panic!("descendant {pid} survived Ctrl-C routed to the second chore");
     }
 }
+
+#[test]
+fn faithful_child_command_preserves_real_terminal_and_descendant_ownership() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("Cookfile"), "use driver ./driver.lua\n").unwrap();
+    fs::write(dir.path().join("driver.lua"), r#"
+cook.recipe("terminal", {}, function()
+    cook.add_unit({command="printf 'INPUT_READY\\n'; read -r line; printf 'INPUT:%s\\n' \"$line\"; sleep 300 & echo $! > child.pid; printf 'CHILD_READY\\n'; wait", interactive=true, cache=false})
+end)
+cook.chore("driver.stage", {}, function()
+    cook.add_unit({command=cook.child_command("terminal"), interactive=true, cache=false})
+end)
+return {}
+"#).unwrap();
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            r#"
+import os, pathlib, pty, select, signal, sys, time
+root, binary = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.chdir(root)
+    os.execv(binary, [binary, 'driver.stage', '--color', 'never'])
+output = bytearray(); status = None; child = None
+def until(marker):
+    deadline = time.monotonic() + 15
+    while marker not in output and time.monotonic() < deadline:
+        if select.select([fd], [], [], .1)[0]:
+            try: output.extend(os.read(fd, 65536))
+            except OSError: break
+    assert marker in output, output.decode(errors='replace')
+def alive(pid):
+    try: return pathlib.Path('/proc/' + str(pid) + '/stat').read_text().split(') ', 1)[1][0] != 'Z'
+    except FileNotFoundError: return False
+try:
+    until(b'INPUT_READY')
+    os.write(fd, b'hello terminal\n')
+    until(b'INPUT:hello terminal')
+    until(b'CHILD_READY')
+    child = int(pathlib.Path(root, 'child.pid').read_text())
+    assert alive(child)
+    os.write(fd, b'\x03')
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        done, result = os.waitpid(pid, os.WNOHANG)
+        if done: status = os.waitstatus_to_exitcode(result); break
+        time.sleep(.05)
+    assert status is not None and status != 0, str(status)
+    deadline = time.monotonic() + 3
+    while alive(child) and time.monotonic() < deadline: time.sleep(.05)
+    assert not alive(child), 'descendant survived Ctrl-C'
+    print('PTY input passed; Cook status=' + str(status) + '; descendant terminated')
+finally:
+    if status is None:
+        os.kill(pid, signal.SIGKILL); os.waitpid(pid, 0)
+    if child and alive(child): os.kill(child, signal.SIGKILL)
+    os.close(fd)
+"#,
+            dir.path().to_str().unwrap(),
+            cook(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

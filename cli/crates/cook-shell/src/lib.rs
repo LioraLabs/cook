@@ -100,6 +100,7 @@ struct ProcessGroupInner {
     anchor: Mutex<Option<Child>>,
     drained: AtomicBool,
     cleanup: Mutex<()>,
+    previous_foreground: Mutex<Option<i32>>,
 }
 
 /// The permanent signal thread holds only a weak group reference, so it cannot
@@ -147,6 +148,7 @@ impl ProcessGroup {
                 anchor: Mutex::new(Some(anchor)),
                 drained: AtomicBool::new(false),
                 cleanup: Mutex::new(()),
+                previous_foreground: Mutex::new(None),
             });
             let router = signal_router().map_err(|e| {
                 let _ = drain_inner(&inner, libc::SIGTERM);
@@ -184,6 +186,43 @@ impl ProcessGroup {
         }
     }
 
+    /// Hand off before spawning, so an immediate read cannot stop the child with SIGTTIN.
+    fn foreground(&self) -> Result<TerminalRestore<'_>, SpawnError> {
+        let _cleanup = self
+            .inner
+            .cleanup
+            .lock()
+            .expect("process-group cleanup lock");
+        #[cfg(unix)]
+        {
+            if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+                return Ok(TerminalRestore(&self.inner));
+            }
+            let previous = unsafe { libc::tcgetpgrp(libc::STDIN_FILENO) };
+            if previous >= 0 {
+                if self.inner.drained.load(Ordering::Acquire) {
+                    return Err(SpawnError {
+                        message: "chore process group is already drained".into(),
+                    });
+                }
+                set_foreground(self.inner.pgid)?;
+                *self
+                    .inner
+                    .previous_foreground
+                    .lock()
+                    .expect("terminal ownership lock") = Some(previous);
+            } else if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOTTY) {
+                return Err(SpawnError {
+                    message: format!(
+                        "cannot observe terminal foreground: {}",
+                        std::io::Error::last_os_error()
+                    ),
+                });
+            }
+        }
+        Ok(TerminalRestore(&self.inner))
+    }
+
     /// Terminate every member, waiting briefly before escalating to SIGKILL.
     pub fn drain(&self) -> Result<(), SpawnError> {
         let result = drain_inner(&self.inner, libc::SIGTERM);
@@ -203,8 +242,71 @@ impl Drop for ProcessGroupInner {
     }
 }
 
+/// Shared restoration also runs on the signal-router path, which exits without unwinding.
+struct TerminalRestore<'a>(&'a ProcessGroupInner);
+
+impl TerminalRestore<'_> {
+    fn restore(&self) -> Result<(), SpawnError> {
+        let mut previous = self
+            .0
+            .previous_foreground
+            .lock()
+            .expect("terminal ownership lock");
+        if let Some(group) = *previous {
+            #[cfg(unix)]
+            set_foreground(group)?;
+            *previous = None;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for TerminalRestore<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+#[cfg(unix)]
+fn set_foreground(group: i32) -> Result<(), SpawnError> {
+    // Block SIGTTOU on this thread only while changing foreground ownership.
+    // Do not replace a process-wide disposition or the permanent SIGINT router.
+    unsafe {
+        let mut blocked: libc::sigset_t = std::mem::zeroed();
+        let mut previous: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut blocked);
+        libc::sigaddset(&mut blocked, libc::SIGTTOU);
+        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut previous);
+        if error != 0 {
+            return Err(SpawnError {
+                message: format!(
+                    "cannot block terminal stop signal: {}",
+                    std::io::Error::from_raw_os_error(error)
+                ),
+            });
+        }
+        let result = libc::tcsetpgrp(libc::STDIN_FILENO, group);
+        let terminal_error = std::io::Error::last_os_error();
+        let mask_error = libc::pthread_sigmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut());
+        if result == -1 {
+            return Err(SpawnError {
+                message: format!("cannot set terminal foreground: {terminal_error}"),
+            });
+        }
+        if mask_error != 0 {
+            return Err(SpawnError {
+                message: format!(
+                    "cannot restore terminal signal mask: {}",
+                    std::io::Error::from_raw_os_error(mask_error)
+                ),
+            });
+        }
+        Ok(())
+    }
+}
 fn drain_inner(inner: &ProcessGroupInner, first_signal: i32) -> Result<(), SpawnError> {
     let _cleanup = inner.cleanup.lock().expect("process-group cleanup lock");
+    let _terminal = TerminalRestore(inner);
     if inner.drained.load(Ordering::Acquire) {
         return Ok(());
     }
@@ -488,9 +590,13 @@ where
     let start = Instant::now();
     match spawn.stdio {
         Stdio::Inherited => {
+            let terminal = process_group.map(ProcessGroup::foreground).transpose()?;
             let status = cmd.status().map_err(|e| SpawnError {
                 message: format!("failed to execute: {e}"),
             })?;
+            if let Some(terminal) = terminal {
+                terminal.restore()?;
+            }
             Ok(Outcome {
                 chunks: Vec::new(),
                 exit_code: status.code(),

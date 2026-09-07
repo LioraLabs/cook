@@ -1,0 +1,5 @@
+recipe child
+    cook "output.txt" { printf child > $<out> }
+
+chore parent
+    cook.add_unit({ command = cook.child_command("child"), cache = false, interactive = true })

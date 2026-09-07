@@ -782,6 +782,49 @@ fn run_shell_command(
     Ok(outcome.stdout_lossy())
 }
 
+/// Build a command only; execution and process ownership remain with the chore unit.
+pub(crate) fn install_child_command_api(
+    lua: &Lua,
+    body_slot: SharedBodySlot,
+    invocation: Option<std::sync::Arc<crate::ChildInvocation>>,
+    prefix: String,
+    aliases: std::collections::BTreeMap<String, String>,
+    recipes: Rc<RefCell<Vec<RegisteredRecipe>>>,
+) -> LuaResult<()> {
+    let function = lua.create_function(move |_, name: LuaValue| {
+        if !body_slot.borrow().as_ref().is_some_and(|body| body.current_chore_active) {
+            return Err(LuaError::runtime("cook.child_command: call only inside an active chore body"));
+        }
+        let name = match name {
+            LuaValue::String(value) => value.to_str()?.to_string(),
+            _ => return Err(LuaError::runtime("cook.child_command: name must be a non-empty string")),
+        };
+        if name.is_empty() || name.contains('\0') {
+            return Err(LuaError::runtime("cook.child_command: name must be non-empty and contain no NUL bytes"));
+        }
+        let invocation = invocation.as_ref().ok_or_else(|| LuaError::runtime(
+            "cook.child_command: invocation context is unavailable; the embedding caller must supply it",
+        ))?;
+        let local_names = recipes.borrow().iter().map(|recipe| recipe.name.clone()).collect();
+        let target = cook_contracts::naming::qualify_recipe_reference(&name, &prefix, &aliases, &local_names);
+        let path_string = |path: &std::path::Path| path.to_str().map(str::to_owned)
+            .ok_or_else(|| LuaError::runtime("cook.child_command: invocation paths must be UTF-8"));
+        let mut arguments = vec![path_string(&invocation.executable)?];
+        arguments.extend(invocation.arguments.iter().cloned());
+        // `+` forces recipe dispatch even when the name matches a CLI subcommand.
+        arguments.push(format!("+{target}"));
+        if let Some(preset) = &invocation.preset { arguments.push(format!("@{preset}")); }
+        if arguments.iter().any(|argument| argument.contains('\0')) {
+            return Err(LuaError::runtime("cook.child_command: invocation arguments cannot contain NUL bytes"));
+        }
+        let quote = cook_contracts::quoting::shell_quote;
+        Ok(format!("(cd -- {} && {})", quote(&path_string(&invocation.directory)?),
+            arguments.iter().map(|argument| quote(argument)).collect::<Vec<_>>().join(" ")))
+    })?;
+    let cook: LuaTable = lua.globals().get("cook")?;
+    cook.set("child_command", function)
+}
+
 #[cfg(test)]
 #[path = "tests/display_token_tests.rs"]
 mod display_token_tests;

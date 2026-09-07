@@ -579,3 +579,34 @@ the new result. Cook MUST report a run or restore as
 `cook materialize <qualified-key> <outcome>`. A materialization failure MUST
 name the local and qualified key, declaration site, and failed determinant or
 producer, and MUST preserve useful worker output when one exists.
+
+## Faithful child recipe commands [#register.child-command]
+
+`cook.child_command(name) -> string` returns a POSIX-shell-quoted command invoking
+the named target through the current Cook executable. It is available only while
+an active chore body is registering units. It neither executes the command nor
+adds a dependency. Pass the result to an existing uncached interactive unit:
+
+```lua
+cook.add_unit({ command = cook.child_command("build"), cache = false, interactive = true })
+```
+
+The child re-enters the canonical entry Cookfile and workspace root with the
+current preset, original CLI variable overrides, and invocation policies:
+publish-off, pruning, automatic GC, job count, output/color, verbosity, log replay,
+and affected/since selection. Environment and workspace configuration retain their
+existing inheritance rules. Member configuration remains scoped to its own
+Cookfile; implementations MUST NOT flatten resolved member variables into global
+overrides. Local, imported and canonical names follow the same qualification rules
+as recipe dependencies. A name colliding with a CLI subcommand still selects the
+recipe. Child invocation does not forward the parent's chore positional arguments.
+
+Every argument, including empty values and shell metacharacters, MUST remain one
+literal argument. The reference implementation requires UTF-8 invocation paths.
+`name` MUST be a nonempty string without NUL bytes. Calls outside an active chore,
+or from an embedding host that supplied no invocation context, MUST raise an
+actionable error; guessing an executable from PATH or a default Cookfile is forbidden.
+Unknown targets and child failures use the existing CLI failure semantics.
+Interactive terminal and process ownership remain the existing unit executor's
+responsibility. A caller explicitly choosing to invoke itself can recurse; this
+helper provides no scheduler or recursion mechanism.

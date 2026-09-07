@@ -1,0 +1,19 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="child" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["output.txt"] body=ShellBlock(["printf child > $<out>"])
+  chores:
+    Chore name="parent" line=4
+      params: []
+      deps: []
+      steps:
+        Shell interactive=true command="cook.add_unit({ command = cook.child_command(\"child\"), cache = false, interactive = true })"
+  register_blocks: []
+  top_level_module_calls: []

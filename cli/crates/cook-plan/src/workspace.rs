@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use cook_lang::ast::Cookfile;
+pub use cook_register::ChildInvocation;
 
 use super::error::PipelineError;
 
@@ -28,6 +29,8 @@ pub struct LoadedCookfile {
 /// A resolved workspace: all Cookfiles loaded, imports resolved.
 #[derive(Debug)]
 pub struct Workspace {
+    /// CLI context for faithful child commands; absent for embedded callers.
+    pub child_invocation: Option<std::sync::Arc<ChildInvocation>>,
     pub root: LoadedCookfile,
     pub imports: BTreeMap<PathBuf, LoadedCookfile>,
     /// (parent_canonical_path, import_name, imported_canonical_path)
@@ -98,6 +101,7 @@ impl Workspace {
         )?;
 
         let mut workspace = Workspace {
+            child_invocation: None,
             root: LoadedCookfile {
                 cookfile,
                 lua_source,

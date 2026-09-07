@@ -22,6 +22,7 @@ use crate::{
 };
 
 pub struct RegisterSessionBuilder {
+    child_invocation: Option<Arc<crate::ChildInvocation>>,
     working_dir: PathBuf,
     workspace_root: PathBuf,
     gather_warnings: Rc<RefCell<Vec<String>>>,
@@ -91,6 +92,7 @@ impl RegisterSessionBuilder {
     pub fn new(working_dir: PathBuf, env_vars: HashMap<String, String>) -> Self {
         let workspace_root = working_dir.clone();
         Self {
+            child_invocation: None,
             working_dir,
             workspace_root,
             gather_warnings: Rc::new(RefCell::new(Vec::new())),
@@ -111,6 +113,13 @@ impl RegisterSessionBuilder {
             reachable_names: std::collections::BTreeSet::new(),
             materialize_runner: None,
         }
+    }
+    pub fn with_child_invocation(
+        mut self,
+        invocation: Option<Arc<crate::ChildInvocation>>,
+    ) -> Self {
+        self.child_invocation = invocation;
+        self
     }
     pub fn with_workspace_root(mut self, root: PathBuf) -> Self {
         self.workspace_root = root;
@@ -2755,6 +2764,14 @@ fn install_all_apis(
         body_slot.clone(),
         "",
         module_state.clone(),
+    )?;
+    crate::capture::install_child_command_api(
+        lua,
+        body_slot.clone(),
+        builder.child_invocation.clone(),
+        builder.qualified_prefix.clone(),
+        builder.alias_qualified_prefixes.clone(),
+        recipes.clone(),
     )?;
     {
         let cook_tbl: LuaTable = lua.globals().get("cook")?;

@@ -554,3 +554,12 @@ pub struct RegisteredCookfile {
 // cook-plan, consumed by cook-engine and cook-cli. Re-exported so this
 // crate's public API is unchanged.
 pub use cook_contracts::registration::{RecipeKind, RegisteredRecipePub};
+
+/// Invocation supplied by the CLI, without a dispatch target or chore arguments.
+#[derive(Debug, Clone)]
+pub struct ChildInvocation {
+    pub executable: std::path::PathBuf,
+    pub directory: std::path::PathBuf,
+    pub arguments: Vec<String>,
+    pub preset: Option<String>,
+}

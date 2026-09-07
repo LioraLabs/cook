@@ -237,3 +237,113 @@ fn drain_escalates_a_stopped_anchor_without_blocking() {
 fn drain_reaps_the_anchor_before_the_posix_group_probe() {
     ProcessGroup::new().expect("establish process group").drain().expect("drain process group");
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn inherited_terminal_restores_foreground_and_preserves_signal_state() {
+    if let Ok(mode) = std::env::var("COOK_SHELL_TERMINAL_CASE") {
+        let root = std::path::PathBuf::from(std::env::var("COOK_SHELL_TERMINAL_ROOT").unwrap());
+        let group = ProcessGroup::new().unwrap();
+        let previous = unsafe { libc::tcgetpgrp(0) };
+        assert!(previous > 0);
+        if mode == "cancel" {
+            let _ = run_with_group(&Spawn {
+                command: "python3 -c 'import os,pathlib,time; assert os.tcgetpgrp(0)==os.getpgrp(); pathlib.Path(\"ready\").write_text(str(os.getpid())); time.sleep(30)'",
+                working_dir: &root, stdio: Stdio::Inherited,
+            }, std::iter::empty::<(&str, &str)>(), Some(&group));
+            // The signal router will terminate the process after draining/restoring.
+            std::thread::sleep(Duration::from_secs(5));
+            panic!("signal router failed to terminate the process");
+        }
+        let mut disposition: libc::sigaction = unsafe { std::mem::zeroed() };
+        let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigaction(libc::SIGTTOU, std::ptr::null(), &mut disposition);
+            libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut mask);
+        }
+        for (command, expected) in [
+            ("python3 -c 'import os; assert os.tcgetpgrp(0)==os.getpgrp()'", 0),
+            ("python3 -c 'import os; assert os.tcgetpgrp(0)==os.getpgrp(); raise SystemExit(37)'", 37),
+        ] {
+            let result = run_with_group(&Spawn { command, working_dir: &root, stdio: Stdio::Inherited }, std::iter::empty::<(&str, &str)>(), Some(&group)).unwrap();
+            assert_eq!(result.exit_code(), Some(expected));
+            assert_eq!(unsafe { libc::tcgetpgrp(0) }, previous);
+        }
+        assert!(run_with_group(
+            &Spawn {
+                command: "true",
+                working_dir: &root.join("missing"),
+                stdio: Stdio::Inherited
+            },
+            std::iter::empty::<(&str, &str)>(),
+            Some(&group)
+        )
+        .is_err());
+        assert_eq!(unsafe { libc::tcgetpgrp(0) }, previous);
+        let result = run_with_group(
+            &Spawn {
+                command: "python3 -c 'import os; assert not os.isatty(0)'",
+                working_dir: &root,
+                stdio: Stdio::Captured,
+            },
+            std::iter::empty::<(&str, &str)>(),
+            Some(&group),
+        )
+        .unwrap();
+        assert!(result.success());
+        assert_eq!(unsafe { libc::tcgetpgrp(0) }, previous);
+        let mut after: libc::sigaction = unsafe { std::mem::zeroed() };
+        let mut after_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigaction(libc::SIGTTOU, std::ptr::null(), &mut after);
+            libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut after_mask);
+            assert_eq!(
+                libc::sigismember(&mask, libc::SIGTTOU),
+                libc::sigismember(&after_mask, libc::SIGTTOU)
+            );
+        }
+        assert_eq!(disposition.sa_sigaction, after.sa_sigaction);
+        group.drain().unwrap();
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new("python3").args(["-c", r#"
+import os,pathlib,pty,select,signal,subprocess,sys,time
+binary,root=sys.argv[1:]
+pid,fd=pty.fork()
+if pid==0:
+    try:
+        original=os.tcgetpgrp(0)
+        for mode in ['normal','cancel']:
+            env={**os.environ,'COOK_SHELL_TERMINAL_CASE':mode,'COOK_SHELL_TERMINAL_ROOT':root}
+            child=subprocess.Popen([binary,'--exact','tests::inherited_terminal_restores_foreground_and_preserves_signal_state','--nocapture'],env=env)
+            if mode=='cancel':
+                deadline=time.monotonic()+5
+                while not pathlib.Path(root,'ready').exists() and time.monotonic()<deadline: time.sleep(.01)
+                assert pathlib.Path(root,'ready').exists(), 'foreground command never started'
+                os.kill(child.pid,signal.SIGINT)
+            status=child.wait(timeout=10)
+            assert status==(0 if mode=='normal' else -signal.SIGINT), (mode,status)
+            assert os.tcgetpgrp(0)==original, 'foreground ownership not restored: '+mode
+        print('foreground restored after success/failure/spawn-error/cancel; captured stdin and signal state preserved',flush=True)
+    except BaseException:
+        import traceback; traceback.print_exc(); os._exit(1)
+    os._exit(0)
+output=bytearray();deadline=time.monotonic()+25
+while time.monotonic()<deadline:
+    if select.select([fd],[],[],.1)[0]:
+        try: output.extend(os.read(fd,65536))
+        except OSError: break
+else:
+    os.kill(pid,signal.SIGKILL)
+_,status=os.waitpid(pid,0);os.close(fd)
+print(output.decode(errors='replace'))
+assert os.waitstatus_to_exitcode(status)==0
+"#, std::env::current_exe().unwrap().to_str().unwrap(), root.path().to_str().unwrap()]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
