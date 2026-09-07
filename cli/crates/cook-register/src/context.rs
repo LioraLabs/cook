@@ -346,14 +346,9 @@ pub fn setup_recipe_context(
     let recipe_table = lua.create_table()?;
     recipe_table.set("name", recipe.name.as_str())?;
 
-    // Resolve exclude patterns into a set for fast lookup
-    let mut excluded: BTreeSet<String> = BTreeSet::new();
-    for pattern in &recipe.metadata.excludes {
-        excluded.extend(
-            cook_cache::resolve_gather_glob(working_dir, workspace_root, pattern)
-                .map_err(mlua::Error::runtime)?,
-        );
-    }
+    let excluded = cook_cache::resolve::GatherExcludes::new(
+        working_dir, workspace_root, recipe.metadata.excludes.iter().map(String::as_str),
+    ).map_err(mlua::Error::runtime)?;
 
     // Build inputs table by resolving glob patterns, minus excludes
     let gather_table = lua.create_table()?;
@@ -394,15 +389,12 @@ pub fn register_resolve_gather(
     let root = workspace_root.to_path_buf();
     let resolve_fn =
         lua.create_function(move |lua, (includes, excludes): (LuaTable, LuaTable)| {
-            // Collect exclude patterns and resolve them
-            let mut excluded: BTreeSet<String> = BTreeSet::new();
-            for exc in excludes.sequence_values::<String>() {
-                let pattern = exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}")))?;
-                excluded.extend(
-                    cook_cache::resolve_gather_glob(&wd, &root, &pattern)
-                        .map_err(mlua::Error::runtime)?,
-                );
-            }
+            let patterns: Vec<String> = excludes.sequence_values::<String>()
+                .map(|exc| exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}"))))
+                .collect::<Result<_, _>>()?;
+            let excluded = cook_cache::resolve::GatherExcludes::new(
+                &wd, &root, patterns.iter().map(String::as_str),
+            ).map_err(mlua::Error::runtime)?;
 
             // Resolve include patterns, filtering out excludes
             let mut result: Vec<String> = Vec::new();

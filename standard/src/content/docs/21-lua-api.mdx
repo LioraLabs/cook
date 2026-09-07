@@ -62,6 +62,8 @@ Each quoted include pattern on a `gather` line is resolved independently. Before
 
 An ordinary pattern is resolved relative to the Cookfile member that declares the recipe. A pattern with a leading `//` anchor followed by a path is instead resolved relative to the workspace root (§{exec.ws}); the `//` prefix is an anchor and is not part of the matched path. The root-anchored spellings `//`, `//..`, `//../x`, and any spelling beginning with `///` are invalid and MUST be rejected rather than normalized or matched. Any other parent traversal that would escape the pattern's member-relative or workspace-root resolution base MUST likewise be rejected.
 
+Ordinary exclusions are matched against those logical gathered paths, as specified in §{steps.gather}; they do not contribute a separately expanded physical-path set. This preserves input groups and their ordering while preventing an unrelated normalized physical alias from excluding a gathered file. Permitted parent-component patterns retain their existence-sensitive behavior. This rule does not add support for physical filenames that the existing path encoding cannot represent faithfully. (CS-0255.)
+
 For each include pattern, after normalization, matching, and directory filtering—but before applying excludes—a conforming implementation MUST emit exactly one warning attributed to the declaring recipe when that include's expansion contains no files. Exclude patterns never emit an empty-expansion warning. If one or more includes initially resolve to files but the excludes remove every resolved file, the implementation MUST NOT warn merely because the recipe's final input set is empty.
 
 ## 21.3. The `var` sink inside `config_block` bodies [#lua.var-sink]

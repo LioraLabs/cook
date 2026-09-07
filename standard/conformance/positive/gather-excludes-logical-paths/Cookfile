@@ -1,0 +1,3 @@
+recipe build
+    gather "src/file.txt" "//shared/**" !"*.txt" !"**/bin/**"
+    cook "build/combined" { cat $<in> > $<out> }

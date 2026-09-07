@@ -124,11 +124,7 @@ pub fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-pub fn resolve_gather_glob(
-    member_root: &Path,
-    workspace_root: &Path,
-    raw: &str,
-) -> Result<BTreeSet<String>, String> {
+fn gather_pattern(member_root: &Path, workspace_root: &Path, raw: &str) -> Result<std::path::PathBuf, String> {
     let anchored = raw.strip_prefix("//");
     let anchored_escapes = anchored.is_some_and(|pattern| {
         Path::new(pattern).components().any(|component| {
@@ -152,7 +148,49 @@ pub fn resolve_gather_glob(
         return Err(format!("input pattern {raw:?} escapes member root"));
     }
     let (root, pattern) = anchored.map_or((member_root, raw), |p| (workspace_root, p));
-    let full_pattern = root.join(normalize_glob_pattern(pattern).as_ref());
+    Ok(root.join(normalize_glob_pattern(pattern).as_ref()))
+}
+
+/// Exclusions are predicates over gathered files, not additional gather roots.
+/// Parent components retain filesystem expansion: `missing/../file` and
+/// `*/../file` depend on which intervening directories actually exist.
+pub struct GatherExcludes {
+    member_root: std::path::PathBuf,
+    patterns: Vec<glob::Pattern>,
+    resolved: BTreeSet<String>,
+}
+
+impl GatherExcludes {
+    pub fn new<'a>(member_root: &Path, workspace_root: &Path, excludes: impl IntoIterator<Item = &'a str>) -> Result<Self, String> {
+        let mut result = Self { member_root: member_root.to_path_buf(), patterns: Vec::new(), resolved: BTreeSet::new() };
+        for raw in excludes {
+            let full = gather_pattern(member_root, workspace_root, raw)?;
+            // Validate before normalization, exactly as gather expansion does.
+            glob::Pattern::new(&full.to_string_lossy()).map_err(|e| format!("invalid input glob {raw:?}: {e}"))?;
+            if full.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                result.resolved.extend(resolve_gather_glob(member_root, workspace_root, raw)?);
+            } else {
+                result.patterns.push(glob::Pattern::new(&normalize(&full).to_string_lossy())
+                    .map_err(|e| format!("invalid input glob {raw:?}: {e}"))?);
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn contains(&self, candidate: &str) -> bool {
+        if self.resolved.contains(candidate) { return true; }
+        let path = normalize(&self.member_root.join(candidate));
+        let options = glob::MatchOptions { require_literal_separator: true, ..glob::MatchOptions::new() };
+        self.patterns.iter().any(|pattern| pattern.matches_path_with(&path, options))
+    }
+}
+
+pub fn resolve_gather_glob(
+    member_root: &Path,
+    workspace_root: &Path,
+    raw: &str,
+) -> Result<BTreeSet<String>, String> {
+    let full_pattern = gather_pattern(member_root, workspace_root, raw)?;
     let paths = glob::glob(&full_pattern.to_string_lossy())
         .map_err(|e| format!("invalid input glob {raw:?}: {e}"))?;
     let resolved = paths

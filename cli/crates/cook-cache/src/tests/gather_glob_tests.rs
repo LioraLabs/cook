@@ -80,3 +80,32 @@ fn lexical_aliases_resolve_to_one_path_identity() {
     resolved.extend(resolve_gather_glob(t.path(), t.path(), "dir/../file").unwrap());
     assert_eq!(resolved, BTreeSet::from(["file".into()]));
 }
+
+#[test]
+fn exclude_matching_preserves_expansion_results_and_diagnostics() {
+    let t = tempfile::tempdir().unwrap();
+    let member = t.path().join("member");
+    for path in ["member/dir/deep/a.txt", "member/dir/.hidden", "member/root.txt", "member/.dot", "member/bin/out", "shared/root.txt"] {
+        let path = t.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("dir", member.join("alias")).unwrap();
+        std::os::unix::fs::symlink("missing", member.join("dangling")).unwrap();
+    }
+    let candidates = resolve_gather_glob(&member, t.path(), "//**").unwrap();
+    for pattern in ["**", "*", "*.txt", "dir/**", "./dir/", "//shared/**", "//member/dir/./**", "dir/../root.txt", "missing/../root.txt", "*/../root.txt", "**/.hidden", "**/bin/**", "[r]*.txt", "alias/**", "back\\slash.txt"] {
+        let old = resolve_gather_glob(&member, t.path(), pattern).unwrap();
+        let matcher = GatherExcludes::new(&member, t.path(), [pattern]).unwrap();
+        let actual: BTreeSet<_> = candidates.iter().filter(|p| matcher.contains(p)).cloned().collect();
+        let expected = candidates.intersection(&old).cloned().collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "exclude {pattern:?}");
+    }
+    for pattern in ["[", "a**b", "/bad", "//", "//dir/../file", "../outside"] {
+        let old = resolve_gather_glob(&member, t.path(), pattern).unwrap_err();
+        let new = GatherExcludes::new(&member, t.path(), [pattern]).err().unwrap();
+        assert_eq!(new, old, "exclude {pattern:?}");
+    }
+}
