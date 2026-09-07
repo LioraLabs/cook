@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cook_contracts::CacheMeta;
-use crate::{hash_file, stat_mtime, FileRecord, StepEntry};
+use crate::{hash_file, FileRecord, StepEntry};
 
 use crate::store::RecipeCache;
 
@@ -11,14 +11,18 @@ use crate::store::RecipeCache;
 /// path whose mtime or content cannot be read. Returning Err from here
 /// causes record_completion to skip the cache write entirely.
 pub fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecord>, String> {
-    let mut out = Vec::with_capacity(paths.len());
-    for rel in paths {
-        let abs = working_dir.join(rel);
-        let mtime = stat_mtime(&abs).ok_or_else(|| rel.clone())?;
-        let hash = hash_file(&abs).ok_or_else(|| rel.clone())?;
-        out.push(FileRecord { path: rel.as_str().into(), mtime, hash });
-    }
-    Ok(out)
+    paths.iter().map(|rel| record_file(rel, working_dir).ok_or_else(|| rel.clone())).collect()
+}
+
+/// Capture metadata before hashing. Sharing this producer keeps restored and
+/// freshly executed records under the same read-order guarantee.
+pub fn record_file(rel: &str, working_dir: &Path) -> Option<FileRecord> {
+    let abs = working_dir.join(rel);
+    let observation = crate::statmemo::observe_file(&abs)?;
+    let hash = hash_file(&abs)?;
+    Some(FileRecord {
+        path: rel.into(), mtime: observation.mtime, identity: observation.identity, hash,
+    })
 }
 
 

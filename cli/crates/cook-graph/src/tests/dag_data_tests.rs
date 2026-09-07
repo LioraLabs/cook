@@ -518,12 +518,12 @@ fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
     touch(&wd, &["source.cpp", "output.o"]);
 
     let source_record = cook_cache::FileRecord {
-        path: "source.cpp".into(),
+        identity: None, path: "source.cpp".into(),
         mtime: stat_mtime(&wd.join("source.cpp")).unwrap(),
         hash: hash_file(&wd.join("source.cpp")).unwrap(),
     };
     let output_record = cook_cache::FileRecord {
-        path: "output.o".into(),
+        identity: None, path: "output.o".into(),
         mtime: stat_mtime(&wd.join("output.o")).unwrap(),
         hash: hash_file(&wd.join("output.o")).unwrap(),
     };
@@ -785,4 +785,17 @@ fn a_dep_through_a_unit_less_meta_target_reaches_the_real_producer() {
         "the fine ref must forward through the unit-less middle: {}",
         edge_list(&g)
     );
+}
+
+#[test]
+fn file_report_detects_preserved_mtime_content_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source");
+    std::fs::write(&path, "first").unwrap();
+    let record = cook_cache::record_file("source", dir.path()).unwrap();
+    assert!(!compute_file_modified("source", dir.path(), Some(&record)));
+    let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::fs::write(&path, "other").unwrap();
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(mtime).unwrap();
+    assert!(compute_file_modified("source", dir.path(), Some(&record)));
 }

@@ -21,7 +21,7 @@
 //!
 //! payload
 //!   paths     count u32, blob_len u32, [u32; count+1] offsets, blob
-//!   records   count u32, [{ path_id u32, mtime u64, hash u64 }; count]
+//!   records   count u32, [{ path_id u32, mtime u64, hash u64, identity u8, [identity fields] }; count]
 //!   steps     count u32, keyblob_len u32, [u32; count+1] key offsets, key blob,
 //!             [{ inputs_start u32, inputs_len u32,
 //!                outputs_start u32, outputs_len u32,
@@ -211,6 +211,12 @@ pub fn encode(cache: &RecipeCache) -> Vec<u8> {
             w.u32(path_ids[&*r.path]);
             w.u64(r.mtime);
             w.u64(r.hash);
+            w.u8(u8::from(r.identity.is_some()));
+            if let Some(id) = r.identity {
+                w.u64(id.mtime_secs); w.u32(id.mtime_nanos); w.u64(id.len);
+                w.u64(id.ctime_secs as u64); w.u64(id.ctime_nanos as u64);
+                w.u64(id.ino); w.u64(id.dev);
+            }
         }
     }
 
@@ -382,10 +388,10 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
     let paths = r.string_table()?;
 
     let record_count = r.u32()? as usize;
-    // 20 bytes per record; refuse a count the payload cannot back before
+    // At least 21 bytes per record; reject impossible counts before
     // reserving for it.
     let remaining = payload.len().saturating_sub(r.pos);
-    if record_count.checked_mul(20).map_or(true, |n| n > remaining) {
+    if record_count.checked_mul(21).map_or(true, |n| n > remaining) {
         return Err(DecodeError::Truncated);
     }
     let mut records = Vec::with_capacity(record_count);
@@ -393,10 +399,19 @@ pub fn decode(bytes: &[u8]) -> Result<RecipeCache, DecodeError> {
         let path_id = r.u32()? as usize;
         let mtime = r.u64()?;
         let hash = r.u64()?;
+        let identity = match r.u8()? {
+            0 => None,
+            1 => Some(crate::statmemo::FileIdentity {
+                mtime_secs: r.u64()?, mtime_nanos: r.u32()?, len: r.u64()?,
+                ctime_secs: r.u64()? as i64, ctime_nanos: r.u64()? as i64,
+                ino: r.u64()?, dev: r.u64()?,
+            }),
+            _ => return Err(DecodeError::BadReference),
+        };
         // Arc clone: a refcount bump, not an allocation. This is the line the
         // whole interning design exists for.
         let path = paths.get(path_id).ok_or(DecodeError::BadReference)?;
-        records.push(FileRecord { path: Arc::clone(path), mtime, hash });
+        records.push(FileRecord { path: Arc::clone(path), mtime, hash, identity });
     }
 
     let step_keys = r.string_table()?;

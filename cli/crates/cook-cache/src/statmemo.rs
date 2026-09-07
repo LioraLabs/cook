@@ -76,7 +76,7 @@ use std::sync::Mutex;
 /// working directory (`&Path` borrows from `PathBuf`), the inner key the
 /// recorded relative path (`&str` borrows from `String`). Only a miss pays for
 /// the `working_dir.join(rel)` that the syscall needs.
-type Entries = HashMap<PathBuf, HashMap<String, Option<u64>>>;
+type Entries = HashMap<PathBuf, HashMap<String, Option<FileObservation>>>;
 
 /// An arm/disarm-gated `stat` memo. The engine drives the process-wide
 /// instance through the free functions below; tests construct their own so
@@ -117,8 +117,12 @@ impl StatMemo {
     /// Get `working_dir/rel`'s mtime, serving a memoised answer while armed.
     /// Identical in result to [`crate::stat_mtime`] on the joined path.
     pub fn stat_mtime(&self, working_dir: &Path, rel: &str) -> Option<u64> {
+        self.observe(working_dir, rel).map(|o| o.mtime)
+    }
+
+    pub fn observe(&self, working_dir: &Path, rel: &str) -> Option<FileObservation> {
         if !self.is_armed() {
-            return crate::check::stat_mtime(&working_dir.join(rel));
+            return observe_file(&working_dir.join(rel));
         }
         if let Some(hit) = self
             .entries
@@ -129,7 +133,7 @@ impl StatMemo {
         {
             return *hit;
         }
-        let result = crate::check::stat_mtime(&working_dir.join(rel));
+        let result = observe_file(&working_dir.join(rel));
         // Re-check: a concurrent write may have disarmed us while the stat was
         // in flight, in which case this value must not be published.
         if self.is_armed() {
@@ -174,51 +178,45 @@ pub fn stat_mtime_memo(working_dir: &Path, rel: &str) -> Option<u64> {
 // The tool-hash memo (COOK-414)
 // ---------------------------------------------------------------------------
 
-/// What makes a memoised digest still true: everything one `metadata` call can
-/// say about which bytes a path names.
-///
-/// Modification time and length are the obvious two and they are not enough.
-/// `touch_forward`, in this module's own tests, exists because a filesystem
-/// with coarse timestamp granularity reports the same mtime for a fast rewrite;
-/// pair that with a rebuild that happens to produce a binary of the same length
-/// (a relink after a comment-only edit) and mtime plus length cannot tell the
-/// two apart. A `chmod +r` on a binary `which` selected on `X_OK` but that
-/// could not be READ moves neither.
-///
-/// On unix, `ctime` moves for every one of those, `ino` catches an
-/// atomic-rename install that reuses the timestamps, and `dev` keeps an inode
-/// number meaningful across a remount. On a platform without them the identity
-/// degrades to the two portable fields, which is the discrimination the memo
-/// had before and no worse.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct FileIdentity {
-    mtime: std::time::SystemTime,
-    len: u64,
-    #[cfg(unix)]
-    ctime: (i64, i64),
-    #[cfg(unix)]
-    ino: u64,
-    #[cfg(unix)]
-    dev: u64,
+pub use cook_contracts::cache::step::FileIdentity;
+
+/// One stat, shared by mtime reporting and strong content validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileObservation {
+    pub mtime: u64,
+    pub identity: Option<FileIdentity>,
 }
 
-impl FileIdentity {
-    fn of(path: &Path) -> Option<Self> {
-        let meta = std::fs::metadata(path).ok()?;
-        Some(Self {
-            mtime: meta.modified().ok()?,
-            len: meta.len(),
-            #[cfg(unix)]
-            ctime: {
-                use std::os::unix::fs::MetadataExt;
-                (meta.ctime(), meta.ctime_nsec())
-            },
-            #[cfg(unix)]
-            ino: std::os::unix::fs::MetadataExt::ino(&meta),
-            #[cfg(unix)]
-            dev: std::os::unix::fs::MetadataExt::dev(&meta),
-        })
+impl FileObservation {
+    pub fn matches(&self, record: &crate::FileRecord) -> bool {
+        self.identity.is_some() && self.identity == record.identity
     }
+}
+
+/// Observe before reading bytes: observing afterwards could attach newer
+/// metadata to stale bytes and make a racing write invisible on the next run.
+pub fn observe_file(path: &Path) -> Option<FileObservation> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        Some(FileIdentity {
+            mtime_secs: modified.as_secs(), mtime_nanos: modified.subsec_nanos(),
+            len: meta.len(), ctime_secs: meta.ctime(), ctime_nanos: meta.ctime_nsec(),
+            ino: meta.ino(), dev: meta.dev(),
+        })
+    };
+    #[cfg(not(unix))]
+    let identity = None;
+    Some(FileObservation {
+        mtime: modified.as_millis().min(i64::MAX as u128) as u64,
+        identity,
+    })
+}
+
+pub fn observe_file_memo(working_dir: &Path, rel: &str) -> Option<FileObservation> {
+    GLOBAL.observe(working_dir, rel)
 }
 
 /// A per-run memo for the SHA-256 of a resolved tool binary, revalidated on
@@ -259,9 +257,7 @@ impl FileIdentity {
 /// reads the same, so the memo is exactly as discriminating as the fields it
 /// keeps. On unix a rewrite would have to reproduce mtime, ctime, length, inode
 /// and device, which cook cannot do to itself and an attacker with write access
-/// to the toolchain does not need. On a platform with no ctime or inode the
-/// window is wider: a same-length rebuild inside one mtime tick. Both are
-/// narrower than the predecessor's window, which was the whole run.
+/// to the toolchain does not need. On a platform with no ctime or inode, no metadata shortcut is taken.
 ///
 /// A path whose `metadata` call fails is not memoised at all, though an entry
 /// made earlier is not deleted either; it simply cannot be served while the
@@ -271,9 +267,7 @@ impl FileIdentity {
 /// [`crate::probe::hash_file_sha256`] returns for it. This is reachable because
 /// `which` selects on `X_OK`, not `R_OK`, so an execute-only binary gets here.
 /// On unix that entry is invalidated when the permission changes, because
-/// `chmod` moves ctime. Off unix it is not: mode is in none of the two portable
-/// fields, so an unreadable tool that becomes readable keeps its all-zero
-/// digest for the rest of the run.
+/// `chmod` moves ctime. Off Unix the tool is read again on every lookup.
 pub struct ToolHashMemo {
     entries: Mutex<HashMap<PathBuf, (FileIdentity, [u8; 32])>>,
     reads: std::sync::atomic::AtomicUsize,
@@ -292,7 +286,7 @@ impl ToolHashMemo {
     /// [`crate::probe::hash_file_sha256`], including all-zero when the path
     /// cannot be read.
     pub fn hash(&self, path: &Path) -> [u8; 32] {
-        let identity = FileIdentity::of(path);
+        let identity = observe_file(path).and_then(|o| o.identity);
         if let Some(current) = identity {
             if let Some((seen, hash)) = self.entries.lock().unwrap().get(path) {
                 if *seen == current {

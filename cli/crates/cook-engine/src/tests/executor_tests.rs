@@ -17,12 +17,12 @@ fn build_determinant_manifest_captures_resolved_determinants() {
     use std::collections::{BTreeMap, BTreeSet};
     let inputs = vec![
         FileRecord {
-            path: "src/b.c".into(),
+            identity: None, path: "src/b.c".into(),
             mtime: 0,
             hash: 0x2222,
         },
         FileRecord {
-            path: "src/a.c".into(),
+            identity: None, path: "src/a.c".into(),
             mtime: 0,
             hash: 0x1111,
         },

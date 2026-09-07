@@ -4,12 +4,12 @@ use crate::store::{self, FileRecord, StepEntry};
 fn make_step_entry(command_hash: u64) -> StepEntry {
     StepEntry {
         inputs: vec![FileRecord {
-            path: "src/main.c".into(),
+            identity: None, path: "src/main.c".into(),
             mtime: 1700000000,
             hash: 0xaabbccdd,
         }],
         outputs: vec![FileRecord {
-            path: "build/main.o".into(),
+            identity: None, path: "build/main.o".into(),
             mtime: 1700000100,
             hash: 0x11223344,
         }],

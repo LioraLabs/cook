@@ -26,17 +26,7 @@ fn empty_hash() -> u64 {
 /// Get mtime as epoch milliseconds. Returns None if file doesn't exist.
 /// Uses millisecond resolution to catch rapid modifications.
 pub fn stat_mtime(path: &Path) -> Option<u64> {
-    let meta = std::fs::metadata(path).ok()?;
-    let mtime = meta.modified().ok()?;
-    // TOML integers are i64; clamp absurd future mtimes so save() never
-    // fails on a file with an astronomically large mtime (COOK-92).
-    Some(
-        (mtime
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_millis() as u64)
-            .min(i64::MAX as u64),
-    )
+    crate::statmemo::observe_file(path).map(|o| o.mtime)
 }
 
 /// Hash file contents with xxh3_64. Returns None if file can't be read.
@@ -169,6 +159,29 @@ impl RebuildReason {
     }
 }
 
+/// Validate content using local metadata evidence, refreshing that evidence on
+/// a same-byte touch. An absent identity never authorizes a hash shortcut.
+/// Empty input markers retain their mtime-sensitive semantics.
+pub fn refresh_file_record(
+    record: &FileRecord,
+    working_dir: &Path,
+    empty_marker: bool,
+) -> Option<FileRecord> {
+    let observation = crate::statmemo::observe_file_memo(working_dir, &record.path)?;
+    if empty_marker && record.hash == empty_hash() && observation.mtime != record.mtime {
+        return None;
+    }
+    if !observation.matches(record)
+        && hash_file(&working_dir.join(&*record.path)) != Some(record.hash)
+    {
+        return None;
+    }
+    let mut updated = record.clone();
+    updated.mtime = observation.mtime;
+    updated.identity = observation.identity;
+    Some(updated)
+}
+
 /// Judge a unit's recorded module set against the tree as it stands
 /// (§17.4.4, CS-0204).
 ///
@@ -176,7 +189,7 @@ impl RebuildReason {
 /// the set, so nothing re-derives which modules the body would load — that is
 /// unknowable without running it. Each recorded path is stat'd through the
 /// same per-run memo the declared-input walk uses, and hashed only when its
-/// mtime moved, so a settled build pays one stat per module.
+/// strong metadata moved, so a settled build pays one stat per module.
 ///
 /// A recorded path that no longer exists counts as changed. That is the right
 /// answer whether the module was deleted or the loaded SET moved on: either
@@ -188,23 +201,9 @@ fn check_module_inputs(
     let mut updated = recorded.to_vec();
     let mut changed: Vec<String> = Vec::new();
     for (i, rec) in recorded.iter().enumerate() {
-        let disk_mtime = match crate::statmemo::stat_mtime_memo(working_dir, &rec.path) {
-            Some(m) => m,
-            None => {
-                changed.push(rec.path.to_string());
-                continue;
-            }
-        };
-        if disk_mtime != rec.mtime {
-            let abs_path = working_dir.join(&*rec.path);
-            if hash_file(&abs_path) != Some(rec.hash) {
-                changed.push(rec.path.to_string());
-                continue;
-            }
-            // Touched, same bytes. Absorb the new mtime so the next run stats
-            // and stops, instead of re-hashing this module for the life of the
-            // entry.
-            updated[i].mtime = disk_mtime;
+        match refresh_file_record(rec, working_dir, false) {
+            Some(record) => updated[i] = record,
+            None => changed.push(rec.path.to_string()),
         }
     }
     if changed.is_empty() {
@@ -218,7 +217,7 @@ fn check_module_inputs(
 ///
 /// On a mismatch, returns the FULL diff (every changed path, every
 /// added/removed path) rather than short-circuiting at the first — the walk
-/// only hashes files whose mtime moved, and a miss is followed by a rebuild
+/// only hashes files whose strong metadata moved, and a miss is followed by a rebuild
 /// that dwarfs the cost, so completeness here is effectively free (COOK-276).
 fn check_inputs(
     cached_inputs: &[FileRecord],
@@ -237,33 +236,10 @@ fn check_inputs(
 
     let mut updated = cached_inputs.to_vec();
     let mut changed: Vec<String> = Vec::new();
-    for (i, (cached, rel_path)) in cached_inputs
-        .iter()
-        .zip(current_input_paths.iter())
-        .enumerate()
-    {
-        // COOK-306: memoised by path for the duration of a run that has not
-        // written anything. The same header appears in hundreds of translation
-        // units' input sets, so this is where a large graph's redundant stat
-        // traffic lives. Deliberately avoids building `abs_path` until a stat
-        // actually has to happen.
-        let disk_mtime = match crate::statmemo::stat_mtime_memo(working_dir, rel_path) {
-            Some(m) => m,
-            None => {
-                changed.push(cached.path.to_string());
-                continue;
-            }
-        };
-        if disk_mtime != cached.mtime {
-            let abs_path = working_dir.join(rel_path);
-            let disk_hash = hash_file(&abs_path);
-            // Unreadable, content differs, or an empty marker file (mtime is
-            // authoritative for those) → changed.
-            if disk_hash != Some(cached.hash) || disk_hash == Some(empty_hash()) {
-                changed.push(cached.path.to_string());
-                continue;
-            }
-            updated[i].mtime = disk_mtime;
+    for (i, cached) in cached_inputs.iter().enumerate() {
+        match refresh_file_record(cached, working_dir, true) {
+            Some(record) => updated[i] = record,
+            None => changed.push(cached.path.to_string()),
         }
     }
     if !changed.is_empty() {
@@ -425,6 +401,7 @@ pub fn needs_rebuild_cook(
     // Walk outputs; collect indices that need restore.
     let mut needs_restore: Vec<usize> = Vec::new();
     let mut output_missing_seen = false;
+    let mut updated_outputs = entry.outputs.clone();
     for (i, (cached_out, rel_path)) in entry
         .outputs
         .iter()
@@ -441,15 +418,16 @@ pub fn needs_rebuild_cook(
         // authoritative for a record unit — byte-equivalence is waived, so the
         // drift check is suppressed. (The missing-output push above stays
         // unguarded: record cannot conjure bytes without a backend.)
-        if !record {
-            if let Some(disk_mtime) = stat_mtime(&abs) {
-                if disk_mtime != cached_out.mtime {
-                    if let Some(disk_hash) = hash_file(&abs) {
-                        if disk_hash != cached_out.hash {
-                            needs_restore.push(i);
-                        }
-                    }
-                }
+        if !record && !abs.is_dir() {
+            // Validate the declared output path, even if a supplied record names
+            // another path. Its old local identity cannot authorize that lookup.
+            if &*cached_out.path != *rel_path {
+                updated_outputs[i].path = (*rel_path).into();
+                updated_outputs[i].identity = None;
+            }
+            match refresh_file_record(&updated_outputs[i], working_dir, false) {
+                Some(refreshed) => updated_outputs[i] = refreshed,
+                None => needs_restore.push(i),
             }
         }
     }
@@ -482,7 +460,7 @@ pub fn needs_rebuild_cook(
 
     let updated = StepEntry {
         inputs: updated_inputs,
-        outputs: entry.outputs.clone(),
+        outputs: updated_outputs,
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
         seal_contribution: entry.seal_contribution,

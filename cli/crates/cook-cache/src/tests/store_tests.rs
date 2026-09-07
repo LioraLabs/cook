@@ -13,18 +13,18 @@ fn make_populated_cache() -> RecipeCache {
     let step = StepEntry {
         inputs: vec![
             FileRecord {
-                path: "src/main.c".into(),
+                identity: None, path: "src/main.c".into(),
                 mtime: 1700000000,
                 hash: 0x1234567890abcdef,
             },
             FileRecord {
-                path: "src/util.c".into(),
+                identity: None, path: "src/util.c".into(),
                 mtime: 1700000001,
                 hash: 0xfedcba9876543210,
             },
         ],
         outputs: vec![FileRecord {
-            path: "build/main.o".into(),
+            identity: None, path: "build/main.o".into(),
             mtime: 1700000100,
             hash: 0xabcdef1234567890,
         }],
@@ -54,7 +54,7 @@ fn no_output_step_entry_round_trips() {
         "no_outputs".to_string(),
         StepEntry {
             inputs: vec![FileRecord {
-                path: "src/main.c".into(),
+                identity: None, path: "src/main.c".into(),
                 mtime: 1700000000,
                 hash: 0x1234567890abcdef,
             }],

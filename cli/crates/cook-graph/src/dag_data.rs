@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cook_cache::ThreadSafeCacheManager;
+#[cfg(test)]
 use cook_cache::{hash_file, stat_mtime};
 use cook_contracts::unit_graph;
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
@@ -452,7 +453,7 @@ fn build_nodes(
                             path,
                             &ru.working_dir,
                             cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
-                                e.inputs.iter().find(|r| &*r.path == path.as_str()).map(|r| (r.mtime, r.hash))
+                                e.inputs.iter().find(|r| &*r.path == path.as_str())
                             }),
                         );
 
@@ -548,30 +549,13 @@ fn build_nodes(
 
 /// Check whether a file is modified relative to its cached record.
 ///
-/// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
-/// Returns `true` if the file appears modified or cannot be read.
+/// Uses the same strong metadata/content validation as execution.
 fn compute_file_modified(
-    rel_path: &str,
+    _rel_path: &str,
     working_dir: &Path,
-    cached: Option<(u64, u64)>,
+    cached: Option<&cook_cache::FileRecord>,
 ) -> bool {
-    let abs = working_dir.join(rel_path);
-    let Some((cached_mtime, cached_hash)) = cached else {
-        // No cache entry → treat as modified (needs build).
-        return true;
-    };
-    let Some(disk_mtime) = stat_mtime(&abs) else {
-        return true;
-    };
-    if disk_mtime == cached_mtime {
-        return false;
-    }
-    // mtime differs — check hash to distinguish genuine content change from
-    // a metadata-only touch.
-    match hash_file(&abs) {
-        Some(h) => h != cached_hash,
-        None => true,
-    }
+    cached.is_none_or(|record| cook_cache::check::refresh_file_record(record, working_dir, true).is_none())
 }
 
 #[cfg(test)]

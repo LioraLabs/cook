@@ -40,12 +40,12 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".into(),
+        identity: None, path: "in.c".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.c")).unwrap(),
         hash: in_hash,
     };
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: cook_cache::stat_mtime(&wd.join("out.o")).unwrap(),
         hash: xxhash_rust::xxh3::xxh3_64(b"correct-bytes"),
     };
@@ -137,12 +137,12 @@ fn restore_miss_falls_through_to_output_changed() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".into(),
+        identity: None, path: "in.c".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.c")).unwrap(),
         hash: in_hash,
     };
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"different"),
     };
@@ -201,13 +201,13 @@ fn restore_rejects_tampered_backend_bytes() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".into(),
+        identity: None, path: "in.c".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.c")).unwrap(),
         hash: in_hash,
     };
     let real_out_hash = xxhash_rust::xxh3::xxh3_64(b"correct-bytes");
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: cook_cache::stat_mtime(&wd.join("out.o")).unwrap(),
         hash: real_out_hash,
     };
@@ -309,12 +309,12 @@ fn restore_with_no_ctx_returns_output_changed() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".into(),
+        identity: None, path: "in.c".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.c")).unwrap(),
         hash: in_hash,
     };
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"different"),
     };

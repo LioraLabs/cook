@@ -1,0 +1,3 @@
+recipe build
+    gather "input.txt"
+    cook "output.txt" { cp $<in> $<out> }

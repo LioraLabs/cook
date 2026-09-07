@@ -188,7 +188,7 @@ fn an_unchanged_file_is_read_once_however_often_it_is_asked_for() {
         assert_eq!(memo.hash(&tool), sha256_of("1111"));
     }
 
-    assert_eq!(memo.reads(), 1, "a 60MB binary must be read once per run");
+    assert_eq!(memo.reads(), if cfg!(unix) { 1 } else { 5 }, "only strong metadata authorizes reuse");
 }
 
 /// The other half: a read the memo MUST perform. Counted, so "it returned the
@@ -205,7 +205,7 @@ fn a_rewrite_costs_exactly_one_further_read() {
     assert_eq!(memo.hash(&tool), sha256_of("after"));
     assert_eq!(memo.hash(&tool), sha256_of("after"));
 
-    assert_eq!(memo.reads(), 2);
+    assert_eq!(memo.reads(), if cfg!(unix) { 2 } else { 3 });
 }
 
 /// The hazard `(mtime, len)` alone cannot see, and the reason [`FileIdentity`]
@@ -348,4 +348,26 @@ fn global_memo_reads_through_when_never_armed() {
     if !GLOBAL.is_armed() {
         assert_ne!(first, second, "an unarmed global memo reads through");
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn strong_observations_deduplicate_and_disarm_after_preserved_mtime_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("input");
+    write(&path, "first");
+    let record = crate::record_file("input", dir.path()).unwrap();
+    let memo = StatMemo::new();
+    memo.arm();
+    let first = memo.observe(dir.path(), "input").unwrap();
+    assert!(first.matches(&record));
+    for _ in 0..100 {
+        assert_eq!(memo.observe(dir.path(), "input"), Some(first));
+    }
+    assert_eq!(memo.entries.lock().unwrap()[dir.path()].len(), 1);
+    memo.disarm();
+    rewrite_at(&path, "other", mtime_of(&path));
+    let changed = memo.observe(dir.path(), "input").unwrap();
+    assert_eq!(changed.mtime, first.mtime);
+    assert!(!changed.matches(&record));
 }

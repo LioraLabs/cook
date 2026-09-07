@@ -9,7 +9,7 @@ use cook_cache::{needs_rebuild_cook, RebuildReason, RebuildResult};
 
 fn fr(wd: &std::path::Path, rel: &str) -> FileRecord {
     FileRecord {
-        path: rel.into(),
+        identity: None, path: rel.into(),
         mtime: cook_cache::stat_mtime(&wd.join(rel)).unwrap_or(0),
         hash: cook_cache::hash_file(&wd.join(rel)).unwrap(),
     }
@@ -53,12 +53,12 @@ fn warmup_collapses_to_two_runs() {
     let stored_entry = StepEntry {
         inputs: vec![
             FileRecord {
-                path: "a.c".into(),
+                identity: None, path: "a.c".into(),
                 mtime: 0,
                 hash: cook_cache::hash_file(&wd.join("a.c")).unwrap(),
             },
             FileRecord {
-                path: "a.h".into(),
+                identity: None, path: "a.h".into(),
                 mtime: 0,
                 hash: cook_cache::hash_file(&wd.join("a.h")).unwrap(),
             },

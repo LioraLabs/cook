@@ -954,12 +954,7 @@ pub fn execute_dag(
                 continue;
             };
             let record_of = |path: &str| {
-                let abs = work_node.working_dir.join(path);
-                cook_cache::hash_file(&abs).map(|hash| cook_cache::FileRecord {
-                    path: path.into(),
-                    mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
-                    hash,
-                })
+                cook_cache::record_file(path, &work_node.working_dir)
             };
             let inputs: Option<Vec<_>> =
                 current_inputs.iter().map(|p| record_of(p)).collect();
@@ -1210,12 +1205,7 @@ pub fn execute_dag(
             // that cannot be recorded skips recording entirely rather than
             // persisting a partial list whose artifact indices would misalign.
             let file_record = |p: &str| {
-                let abs = work_node.working_dir.join(p);
-                cook_cache::hash_file(&abs).map(|h| cook_cache::FileRecord {
-                    path: p.into(),
-                    mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
-                    hash: h,
-                })
+                cook_cache::record_file(p, &work_node.working_dir)
             };
             // Restored outputs can include empty-dir records (COOK-180);
             // record those with the same hash-0 convention publish uses.
@@ -1223,6 +1213,7 @@ pub fn execute_dag(
                 let abs = work_node.working_dir.join(p);
                 if abs.is_dir() {
                     Some(cook_cache::FileRecord {
+                        identity: None,
                         path: p.into(),
                         mtime: cook_cache::stat_mtime(&abs).unwrap_or(0),
                         hash: 0,
@@ -3751,6 +3742,7 @@ fn publish_completion(
             // dir: restore_one's "dir" branch ignores the body/hash, and the
             // cloud_key keys on INPUT hashes only.
             step_entry.outputs.push(cook_cache::FileRecord {
+                identity: None,
                 path: ed.as_str().into(),
                 mtime: cook_cache::stat_mtime(&abs_ed).unwrap_or(0),
                 hash: 0,

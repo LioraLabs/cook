@@ -147,11 +147,12 @@ impl RecipeCache {
             toml::Value::String(s.to_string()).to_string()
         }
         fn record_line(r: &FileRecord) -> String {
+            let identity = r.identity.map(|id| format!(", identity = {}", toml::Value::try_from(id).expect("file identity"))).unwrap_or_default();
             format!(
-                "  {{ path = {}, mtime = {}, hash = \"{:016x}\" }},",
+                "  {{ path = {}, mtime = {}, hash = \"{:016x}\"{} }},",
                 quoted(&r.path),
                 r.mtime,
-                r.hash
+                r.hash, identity
             )
         }
 

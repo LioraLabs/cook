@@ -94,6 +94,24 @@ pub struct StepEntry {
     pub observed: Option<Observation>,
 }
 
+/// Local metadata evidence authorizing a content-hash shortcut on Unix.
+/// Never a term in a portable content key. Platforms without change time and
+/// file identity leave this evidence absent and re-read content instead.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileIdentity {
+    #[serde(with = "hex_u64")]
+    pub mtime_secs: u64,
+    pub mtime_nanos: u32,
+    #[serde(with = "hex_u64")]
+    pub len: u64,
+    pub ctime_secs: i64,
+    pub ctime_nanos: i64,
+    #[serde(with = "hex_u64")]
+    pub ino: u64,
+    #[serde(with = "hex_u64")]
+    pub dev: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileRecord {
     /// Interned. On a large C++ graph the same header appears in hundreds of
@@ -109,6 +127,8 @@ pub struct FileRecord {
     /// through `needs_rebuild_cook` / `check_inputs` / `fetch_by_key`.
     pub path: Arc<str>,
     pub mtime: u64,
+    #[serde(default)]
+    pub identity: Option<FileIdentity>,
     #[serde(with = "hex_u64")]
     pub hash: u64,
 }

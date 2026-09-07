@@ -66,7 +66,7 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
     std::fs::write(wd.join("in.txt"), b"src").unwrap();
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"src");
     let in_record = FileRecord {
-        path: "in.txt".into(),
+        identity: None, path: "in.txt".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.txt")).unwrap(),
         hash: in_hash,
     };
@@ -128,17 +128,17 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
         inputs: vec![in_record],
         outputs: vec![
             FileRecord {
-                path: "bin/tool".into(),
+                identity: None, path: "bin/tool".into(),
                 mtime: 0,
                 hash: file_hash,
             },
             FileRecord {
-                path: "bin/link".into(),
+                identity: None, path: "bin/link".into(),
                 mtime: 0,
                 hash: link_hash,
             },
             FileRecord {
-                path: "empty".into(),
+                identity: None, path: "empty".into(),
                 mtime: 0,
                 hash: dir_hash,
             },
@@ -210,7 +210,7 @@ fn security_poisoned_symlink_targets_are_rejected() {
     std::fs::write(wd.join("in.txt"), b"src").unwrap();
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"src");
     let in_record = FileRecord {
-        path: "in.txt".into(),
+        identity: None, path: "in.txt".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.txt")).unwrap(),
         hash: in_hash,
     };
@@ -258,12 +258,12 @@ fn security_poisoned_symlink_targets_are_rejected() {
         inputs: vec![in_record],
         outputs: vec![
             FileRecord {
-                path: "rel_link".into(),
+                identity: None, path: "rel_link".into(),
                 mtime: 0,
                 hash: rel_hash,
             },
             FileRecord {
-                path: "abs_link".into(),
+                identity: None, path: "abs_link".into(),
                 mtime: 0,
                 hash: abs_hash,
             },

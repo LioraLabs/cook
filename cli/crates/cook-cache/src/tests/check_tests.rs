@@ -81,7 +81,7 @@ fn check_inputs_collects_every_changed_path_not_just_first() {
     let cached: Vec<FileRecord> = ["a.txt", "b.txt", "c.txt"]
         .iter()
         .map(|f| FileRecord {
-            path: (*f).into(),
+            identity: None, path: (*f).into(),
             mtime: 0, // force the hash comparison
             hash: hash_file(&wd.join(f)).expect("hash"),
         })
@@ -108,7 +108,7 @@ fn check_inputs_names_added_and_removed_paths() {
         std::fs::write(wd.join("keep.txt"), b"x").expect("write");
     let cached = vec![
         make_file_record("keep.txt", wd),
-        FileRecord { path: "gone.txt".into(), mtime: 0, hash: 1 },
+        FileRecord { identity: None, path: "gone.txt".into(), mtime: 0, hash: 1 },
     ];
     let err = check_inputs(&cached, &["keep.txt", "new.txt"], wd).unwrap_err();
     assert_eq!(
@@ -162,7 +162,7 @@ fn cause_summary_formats_and_caps() {
 fn make_file_record(rel_path: &str, working_dir: &Path) -> FileRecord {
     let abs = working_dir.join(rel_path);
     FileRecord {
-        path: rel_path.into(),
+        identity: None, path: rel_path.into(),
         mtime: stat_mtime(&abs).expect("mtime"),
         hash: hash_file(&abs).expect("hash"),
     }
@@ -272,7 +272,7 @@ fn test_input_content_changed_rebuilds() {
     // the hash comparison will also differ, triggering InputChanged.
     let old_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
-        path: "in.c".into(),
+        identity: None, path: "in.c".into(),
         mtime: 0, // guaranteed to differ from any real mtime
         hash: old_hash,
     };
@@ -319,7 +319,7 @@ fn record_unit_with_drifted_present_output_skips() {
     // Recorded output hash deliberately does NOT match the on-disk content,
     // and the mtime is stale (0) so the drift fast-path fires.
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: 0, // guaranteed to differ from any real mtime
         hash: xxhash_rust::xxh3::xxh3_64(b"different recorded bytes"),
     };
@@ -377,7 +377,7 @@ fn record_unit_with_missing_output_still_rebuilds_without_restore() {
 
     let in_record = make_file_record("in.c", wd);
     let out_record = FileRecord {
-        path: "out.o".into(),
+        identity: None, path: "out.o".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"recorded bytes"),
     };
@@ -574,11 +574,11 @@ fn augments_current_inputs_from_depfile_and_skips() {
 
     let entry = StepEntry {
         inputs: vec![
-            FileRecord { path: "src.c".into(), mtime: 0, hash: src_hash },
-            FileRecord { path: "hdr.h".into(), mtime: 0, hash: hdr_hash },
+            FileRecord { identity: None, path: "src.c".into(), mtime: 0, hash: src_hash },
+            FileRecord { identity: None, path: "hdr.h".into(), mtime: 0, hash: hdr_hash },
         ],
         outputs: vec![FileRecord {
-            path: "out.o".into(),
+            identity: None, path: "out.o".into(),
             mtime: stat_mtime(&wd.join("out.o")).unwrap_or(0),
             hash: out_hash,
         }],
@@ -760,7 +760,7 @@ fn missing_depfile_recorded_as_output_still_self_heals() {
     // Record the depfile as the implicit extra output, as the engine does.
     let d_rel = ".cook/deps/src.d";
     entry.outputs.push(FileRecord {
-        path: d_rel.into(),
+        identity: None, path: d_rel.into(),
         mtime: stat_mtime(&wd.join(d_rel)).unwrap_or(0),
         hash: hash_file(&wd.join(d_rel)).unwrap(),
     });
@@ -790,11 +790,11 @@ fn missing_depfile_recorded_as_output_still_self_heals() {
 fn fat_entry(wd: &std::path::Path) -> StepEntry {
     StepEntry {
         inputs: vec![
-            FileRecord { path: "src.c".into(), mtime: 0, hash: hash_file(&wd.join("src.c")).unwrap() },
-            FileRecord { path: "hdr.h".into(), mtime: 0, hash: hash_file(&wd.join("hdr.h")).unwrap() },
+            FileRecord { identity: None, path: "src.c".into(), mtime: 0, hash: hash_file(&wd.join("src.c")).unwrap() },
+            FileRecord { identity: None, path: "hdr.h".into(), mtime: 0, hash: hash_file(&wd.join("hdr.h")).unwrap() },
         ],
         outputs: vec![FileRecord {
-            path: "out.o".into(),
+            identity: None, path: "out.o".into(),
             mtime: stat_mtime(&wd.join("out.o")).unwrap_or(0),
             hash: hash_file(&wd.join("out.o")).unwrap(),
         }],
@@ -1303,4 +1303,93 @@ fn touched_module_with_same_bytes_absorbs_the_mtime() {
         needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
     assert_eq!(result, RebuildResult::Skip);
     assert_eq!(updated.expect("skip entry").module_inputs[0].mtime, recorded_mtime);
+}
+
+fn preserved_mtime_edit(role: &str, replacement: &[u8]) {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("source"), b"first").unwrap();
+    std::fs::write(wd.join("result"), b"first").unwrap();
+    let mut entry = StepEntry {
+        inputs: crate::collect_records(&["source".into()], wd).unwrap(),
+        outputs: crate::collect_records(&["result".into()], wd).unwrap(),
+        command_hash: 1, env_contribution: 0, seal_contribution: 0,
+        module_inputs: Vec::new(), observed: None,
+    };
+    let path = if role == "output" { "result" } else { "source" };
+    if role == "module" { entry.module_inputs = entry.inputs.clone(); entry.inputs.clear(); }
+    let mtime = std::fs::metadata(wd.join(path)).unwrap().modified().unwrap();
+    std::fs::write(wd.join(path), replacement).unwrap();
+    std::fs::File::options().write(true).open(wd.join(path)).unwrap().set_modified(mtime).unwrap();
+    let inputs: &[&str] = if role == "module" || role == "discovered" { &[] } else { &["source"] };
+    let discovered = cook_contracts::DiscoveredInputs { from: "missing.d".into(), format: "make".into() };
+    let (result, _) = needs_rebuild_cook(Some(&entry), inputs, &["result"], 1, 0, 0, wd, None,
+        (role == "discovered").then_some(&discovered), false);
+    let expected = match role {
+        "output" => RebuildReason::OutputChanged,
+        "module" => RebuildReason::ModulesChanged { changed: vec!["source".into()] },
+        _ => RebuildReason::InputsChanged { changed: vec!["source".into()], added: vec![], removed: vec![] },
+    };
+    assert_eq!(result, RebuildResult::Rebuild(expected), "{role}: preserved mtime must not hide changed bytes");
+}
+
+#[test]
+fn preserved_mtime_same_length_input() {
+    preserved_mtime_edit("input", b"other");
+}
+
+#[test]
+fn preserved_mtime_different_length_input() {
+    preserved_mtime_edit("input", b"different length");
+}
+
+#[test]
+fn preserved_mtime_same_length_module() {
+    preserved_mtime_edit("module", b"other");
+}
+
+#[test]
+fn preserved_mtime_different_length_module() {
+    preserved_mtime_edit("module", b"different length");
+}
+
+#[test]
+fn preserved_mtime_same_length_output() {
+    preserved_mtime_edit("output", b"other");
+}
+
+#[test]
+fn preserved_mtime_different_length_output() {
+    preserved_mtime_edit("output", b"different length");
+}
+
+#[test]
+fn preserved_mtime_same_length_discovered() {
+    preserved_mtime_edit("discovered", b"other");
+}
+
+#[test]
+fn preserved_mtime_different_length_discovered() {
+    preserved_mtime_edit("discovered", b"different length");
+}
+
+#[test]
+fn same_bytes_refresh_strong_evidence_and_absent_evidence_is_conservative() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path();
+    let path = wd.join("source");
+    std::fs::write(&path, "bytes").unwrap();
+    let original = crate::record_file("source", wd).unwrap();
+    let later = std::fs::metadata(&path).unwrap().modified().unwrap() + std::time::Duration::from_secs(1);
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+    let refreshed = refresh_file_record(&original, wd, true).unwrap();
+    assert_eq!(refreshed.hash, original.hash);
+    assert_ne!(refreshed.mtime, original.mtime);
+    #[cfg(unix)]
+    assert!(crate::statmemo::observe_file(&path).unwrap().matches(&refreshed));
+    let mut untrusted = refreshed;
+    untrusted.identity = None;
+    std::fs::write(&path, "other").unwrap();
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+    assert!(refresh_file_record(&untrusted, wd, false).is_none());
 }

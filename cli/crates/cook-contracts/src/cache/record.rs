@@ -222,7 +222,9 @@ pub fn determinant_drift(
 /// 10 → 11 (CS-0223). A non-empty seal set can mint a cache key even when
 /// the unit has no files, outputs, or materialised member. Reject every entry
 /// addressed under the old keyability rule.
-pub const RECORD_SCHEMA_VERSION: u32 = 11;
+/// 11 → 12: local file records carry strong metadata observations. Old mtime-only
+/// observations cannot authorize a content-hash shortcut.
+pub const RECORD_SCHEMA_VERSION: u32 = 12;
 
 #[cfg(test)]
 #[path = "tests/record_tests.rs"]

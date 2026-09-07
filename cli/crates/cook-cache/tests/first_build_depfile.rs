@@ -13,12 +13,12 @@ use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry {
     StepEntry {
         inputs: vec![FileRecord {
-            path: source_path.into(),
+            identity: None, path: source_path.into(),
             mtime: 1700000000,
             hash: source_hash,
         }],
         outputs: vec![FileRecord {
-            path: "build/main.o".into(),
+            identity: None, path: "build/main.o".into(),
             mtime: 1700000100,
             hash: 0xabcd_efab_cdef_abcd,
         }],
@@ -106,12 +106,12 @@ fn header_change_after_pull_invalidates_correctly() {
     let entry_with_header = StepEntry {
         inputs: vec![
             FileRecord {
-                path: "src/main.c".into(),
+                identity: None, path: "src/main.c".into(),
                 mtime: 1700000000,
                 hash: 0xc01dcafe,
             },
             FileRecord {
-                path: "include/widget.h".into(),
+                identity: None, path: "include/widget.h".into(),
                 mtime: 1700000050,
                 hash: 0xdeadbeef,
             },

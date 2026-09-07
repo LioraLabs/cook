@@ -36,17 +36,17 @@ fn multi_output_restore_writes_all_outputs() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"src");
     let in_record = FileRecord {
-        path: "in.txt".into(),
+        identity: None, path: "in.txt".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.txt")).unwrap(),
         hash: in_hash,
     };
     let foo_record = FileRecord {
-        path: "foo.out".into(),
+        identity: None, path: "foo.out".into(),
         mtime: cook_cache::stat_mtime(&wd.join("foo.out")).unwrap(),
         hash: xxhash_rust::xxh3::xxh3_64(b"foo-correct"),
     };
     let bar_record = FileRecord {
-        path: "bar.out".into(),
+        identity: None, path: "bar.out".into(),
         mtime: cook_cache::stat_mtime(&wd.join("bar.out")).unwrap(),
         hash: xxhash_rust::xxh3::xxh3_64(b"bar-correct"),
     };
@@ -145,17 +145,17 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"src");
     let in_record = FileRecord {
-        path: "in.txt".into(),
+        identity: None, path: "in.txt".into(),
         mtime: cook_cache::stat_mtime(&wd.join("in.txt")).unwrap(),
         hash: in_hash,
     };
     let foo_record = FileRecord {
-        path: "foo.out".into(),
+        identity: None, path: "foo.out".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"foo-correct"),
     };
     let bar_record = FileRecord {
-        path: "bar.out".into(),
+        identity: None, path: "bar.out".into(),
         mtime: 0,
         hash: xxhash_rust::xxh3::xxh3_64(b"bar-correct"),
     };

@@ -81,5 +81,5 @@ pub use backend::LocalBackend;
 pub use cache_ctx::CacheContext;
 pub use cloud_backend::CloudBackend;
 pub use cloud_config::{CloudConfig, CloudConfigError};
-pub use manager::{RecordError, ThreadSafeCacheManager, collect_records};
+pub use manager::{RecordError, ThreadSafeCacheManager, collect_records, record_file};
 pub use store::{CACHE_VERSION, FileRecord, RecipeCache, StepEntry};

@@ -32,24 +32,24 @@ fn missing_outputs_and_depfile_are_both_restored() {
     let entry = StepEntry {
         inputs: vec![
             FileRecord {
-                path: "a.c".into(),
+                identity: None, path: "a.c".into(),
                 mtime: 0,
                 hash: cook_cache::hash_file(&wd.join("a.c")).unwrap(),
             },
             FileRecord {
-                path: "a.h".into(),
+                identity: None, path: "a.h".into(),
                 mtime: 0,
                 hash: cook_cache::hash_file(&wd.join("a.h")).unwrap(),
             },
         ],
         outputs: vec![
             FileRecord {
-                path: "a.o".into(),
+                identity: None, path: "a.o".into(),
                 mtime: cook_cache::stat_mtime(&wd.join("a.o")).unwrap_or(0),
                 hash: cook_cache::hash_file(&wd.join("a.o")).unwrap(),
             },
             FileRecord {
-                path: ".cook/deps/a.d".into(),
+                identity: None, path: ".cook/deps/a.d".into(),
                 mtime: cook_cache::stat_mtime(&wd.join(".cook/deps/a.d")).unwrap_or(0),
                 hash: cook_cache::hash_file(&wd.join(".cook/deps/a.d")).unwrap(),
             },

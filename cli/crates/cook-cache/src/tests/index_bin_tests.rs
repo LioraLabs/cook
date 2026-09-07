@@ -5,7 +5,7 @@ use cook_contracts::cache::step::{FileRecord, StepEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn rec(path: &str, mtime: u64, hash: u64) -> FileRecord {
-    FileRecord { path: path.into(), mtime, hash }
+    FileRecord { identity: None, path: path.into(), mtime, hash }
 }
 
 fn step(inputs: Vec<FileRecord>, outputs: Vec<FileRecord>) -> StepEntry {
@@ -354,4 +354,17 @@ fn out_of_range_module_slice_decodes_as_error() {
         }
     }
     assert!(patched, "no widened slice field produced a decode error");
+}
+
+#[test]
+fn strong_observations_round_trip_and_weak_schema_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input"), "bytes").unwrap();
+    let record = crate::record_file("input", dir.path()).unwrap();
+    let mut cache = RecipeCache::new();
+    cache.steps.insert("unit".into(), step(vec![record.clone()], vec![]));
+    let mut encoded = encode(&cache);
+    assert_eq!(decode(&encoded).unwrap().steps["unit"].inputs, vec![record]);
+    encoded[8..12].copy_from_slice(&(CACHE_VERSION - 1).to_le_bytes());
+    assert!(decode(&encoded).is_err(), "old mtime-only records cannot authorize new shortcuts");
 }
