@@ -157,6 +157,13 @@ impl std::fmt::Display for CloudConfigError {
 
 impl std::error::Error for CloudConfigError {}
 
+/// Cook's per-user cache root: `dirs::cache_dir()/cook` (honours
+/// `XDG_CACHE_HOME`), else `std::env::temp_dir()/cook`. The one place that
+/// decision is made; the artifact store and the verify sandbox both hang off it.
+pub fn user_cache_root() -> std::path::PathBuf {
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("cook")
+}
+
 impl CloudConfig {
     /// Load `.cook/cloud.toml` from `project_root`. Returns `Default` if absent.
     /// Validates that `project` is set when `cloud.enabled = true`.
@@ -232,12 +239,7 @@ impl CloudConfig {
     pub fn resolved_cache_dir(&self) -> std::path::PathBuf {
         self.cache_dir()
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::cache_dir()
-                    .unwrap_or_else(std::env::temp_dir)
-                    .join("cook")
-                    .join("cloud")
-            })
+            .unwrap_or_else(|| user_cache_root().join("cloud"))
     }
 
     /// COOK-232. `[cache] max_size` resolved to a byte budget. `None` when

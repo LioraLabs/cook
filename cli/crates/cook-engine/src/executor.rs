@@ -479,6 +479,10 @@ fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
 /// worker VM so execute-phase `cook.dep_output` / `dep_output_list` resolve
 /// (§24.7).
 ///
+/// `probe_values` — the run's probe-value store, owned by the caller (like
+/// `published`) so it outlives this call: the pool is spawned with a clone, and
+/// the caller reads the populated store back afterwards (`RunResult::probe_values`).
+///
 /// `published` — counter the caller owns and reads back once this returns.
 /// Every CAS publish site below bumps it by one. It exists purely as a zero /
 /// non-zero gate for the caller's end-of-run store-budget check: a run that
@@ -503,6 +507,7 @@ pub fn execute_dag(
     probe_units_by_node: &BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)>,
     dep_outputs: cook_execute::WorkerDepOutputs,
     published: &AtomicU64,
+    probe_values: &cook_probe::store::ProbeValueStore,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
     if dag.is_empty() {
@@ -523,7 +528,7 @@ pub fn execute_dag(
     cook_cache::statmemo::arm();
 
     let total = dag.len();
-    let (pool, rx) = WorkerPool::spawn_with_dep_outputs(num_workers, dep_outputs);
+    let (pool, rx) = WorkerPool::spawn_with_dep_outputs(num_workers, dep_outputs, probe_values.clone());
 
     // CS-0243: the canonical `.cook/probes/<key>.json` file is a RECORD of
     // what a past invocation observed, not a source for this one — a reached

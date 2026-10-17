@@ -158,6 +158,7 @@ fn test_executor_runs_single_node() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
@@ -187,6 +188,7 @@ fn test_executor_respects_dependencies() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
@@ -219,6 +221,7 @@ fn test_executor_failure_cancels_downstream() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_err());
     match result.unwrap_err() {
@@ -255,6 +258,7 @@ fn test_executor_parallel_independent_nodes() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let elapsed = start.elapsed();
 
@@ -283,6 +287,7 @@ fn test_executor_empty_dag() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok());
 }
@@ -308,6 +313,7 @@ fn test_executor_presatisfied_chain() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
@@ -334,6 +340,7 @@ fn test_executor_failure_does_not_cancel_independent() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_err());
     match result.unwrap_err() {
@@ -378,6 +385,7 @@ fn command_failure_event_summarizes_without_transport_payload() {
         &BTreeMap::new(),
         Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let error = rx
         .try_iter()
@@ -425,6 +433,7 @@ fn test_executor_interactive_node() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 }
@@ -484,6 +493,7 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
@@ -619,6 +629,7 @@ fn test_executor_cook162_local_cold_miss_rebuilds() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(
         result.is_ok(),
@@ -661,6 +672,7 @@ fn test_executor_cook162_pinned_cold_miss_is_fatal() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let err = result.expect_err("pinned cold-miss must be fatal");
     match err {
@@ -713,6 +725,7 @@ fn test_executor_cs_0050_creates_missing_output_parent() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
@@ -757,6 +770,7 @@ fn test_executor_cs_0050_parent_is_file_diagnostic() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let err = result.expect_err("expected failure when parent is a regular file");
     match err {
@@ -820,6 +834,7 @@ fn test_executor_cs_0050_idempotent_when_parent_exists() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
     assert!(wd.join("build/foo.txt").exists());
@@ -902,6 +917,7 @@ fn chore_window_groups_consecutive_chore_steps_into_one_pair() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
 
@@ -991,6 +1007,7 @@ fn chore_window_failure_mid_run_emits_one_node_failed_with_step_index() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -1045,6 +1062,7 @@ fn non_chore_interactive_still_emits_per_node_pair() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
 
     let events: Vec<_> = rx.try_iter().collect();
@@ -1131,6 +1149,7 @@ fn chore_window_groups_shell_and_lua_into_one_pair() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
 
@@ -1207,6 +1226,7 @@ fn pure_lua_chore_body_produces_one_drain_window() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
 
@@ -1262,6 +1282,7 @@ fn non_chore_lua_chunk_still_dispatches_to_worker_pool() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
 }
@@ -1295,6 +1316,7 @@ fn cook_failure_produces_blocked_test_result() {
         dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
 
     // The cook node failed → EngineError::TaskFailures
@@ -1347,6 +1369,7 @@ fn test_line_number_propagates_from_payload_to_events() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let test_results = result.expect("test node should pass");
 
@@ -1404,6 +1427,7 @@ fn test_iteration_item_propagates() {
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     let test_results = result.expect("test node should pass");
 
@@ -1638,6 +1662,7 @@ fn a_probe_dispatch_always_runs_produce() {
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
 
     assert!(
@@ -1682,6 +1707,7 @@ fn executor_produce_path_materialises_the_canonical_probes_file() {
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
         &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 

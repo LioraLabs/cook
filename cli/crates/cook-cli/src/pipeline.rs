@@ -717,6 +717,7 @@ fn run_with_progress(
                 output_glob_warnings: vec![],
                 // No work ran, so nothing was published.
                 published_count: 0,
+                probe_values: Default::default(),
             }));
         }
         edges.retain(|k, _| reachable.contains(k));

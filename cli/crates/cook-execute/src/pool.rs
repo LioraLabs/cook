@@ -134,26 +134,29 @@ impl WorkerPool {
     /// Convenience wrapper preserved for the crate's unit tests, which never
     /// exercise `cook.dep_output`.
     pub fn spawn(n: usize) -> (Self, mpsc::Receiver<WorkResult>) {
-        Self::spawn_with_dep_outputs(n, Arc::new(BTreeMap::new()))
+        Self::spawn_with_dep_outputs(n, Arc::new(BTreeMap::new()), ProbeValueStore::new())
     }
 
     /// Spawn `n` worker threads, threading a read-only terminal-outputs
     /// snapshot into every worker VM so execute-phase `cook.dep_output` /
     /// `cook.dep_output_list` (§24.7) resolve. Each thread creates its own
     /// `mlua::Lua` VM and pulls work items from the shared queue.  Results
-    /// are sent back through the returned `mpsc::Receiver`.
+    /// are sent back through the returned `mpsc::Receiver`. `probe_store` is
+    /// the run's probe-value store, shared by every worker so `cook.probes.get`
+    /// and `$<...>` sigils resolve against it.
     pub fn spawn_with_dep_outputs(
         n: usize,
         dep_outputs: WorkerDepOutputs,
+        probe_store: ProbeValueStore,
     ) -> (Self, mpsc::Receiver<WorkResult>) {
         let shared = Arc::new(SharedQueue {
             queue: Mutex::new(VecDeque::new()),
             condvar: Condvar::new(),
         });
 
-        // Per-run probe-value store: shared across all workers so that
-        // `cook.probes.get` on any worker VM sees the same store (§22.5.7).
-        let probe_store = ProbeValueStore::new();
+        // Per-run probe-value store (caller-owned, so it outlives the pool):
+        // shared across all workers so that `cook.probes.get` on any worker VM
+        // sees the same store (§22.5.7).
         let process_group = Arc::new(Mutex::new(None));
 
         let (tx, rx) = mpsc::channel();

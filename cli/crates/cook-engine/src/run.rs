@@ -86,6 +86,10 @@ pub struct RunResult {
     /// cadence, not a defect. `cook cache du` is the on-demand way to ask
     /// regardless of what the last run published.
     pub published_count: u64,
+    /// The store this run's probes materialised into, including the per-run
+    /// tool-path read view (`$<k.NAME.path>`) that exists nowhere on disk.
+    /// What `cook cache verify` re-runs units against.
+    pub probe_values: cook_probe::store::ProbeValueStore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +343,7 @@ where
             output_glob_warnings: vec![],
             // Nothing was ever dispatched, so nothing published.
             published_count: 0,
+            probe_values: Default::default(),
         });
     }
 
@@ -455,6 +460,7 @@ where
     // worker has joined. Only its zero / non-zero-ness is consumed. See
     // `RunResult::published_count` for what the gate does and does not claim.
     let published = std::sync::atomic::AtomicU64::new(0);
+    let probe_values = cook_probe::store::ProbeValueStore::new();
 
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
     let exec_result = std::thread::scope(|s| {
@@ -475,6 +481,7 @@ where
             &probe_units_by_node,
             dep_outputs,
             &published,
+            &probe_values,
         );
 
         // execute_dag drops the sender end on return, so the bridge thread's
@@ -509,6 +516,7 @@ where
         kept_modified,
         output_glob_warnings,
         published_count,
+        probe_values,
     })
 }
 

@@ -90,6 +90,12 @@ struct Inner {
     tool_paths: BTreeMap<QualifiedProbeKey, BTreeMap<String, String>>,
 }
 
+impl std::fmt::Debug for ProbeValueStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProbeValueStore").finish_non_exhaustive()
+    }
+}
+
 impl ProbeValueStore {
     pub fn new() -> Self {
         Self::default()
