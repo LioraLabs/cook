@@ -352,29 +352,6 @@ impl RegistrationSiteKind {
     }
 }
 
-/// Session-level capture state. One instance per `register_cookfile` call;
-/// shared by all body invocations within that call.
-///
-/// Uses Rc<RefCell<>> and is therefore !Send. This is intentional —
-/// registration runs on a single thread with a single Lua VM.
-pub struct SessionCaptureState {
-    /// Probes drained from the per-session probe registry after top-level load.
-    /// Each invoked body receives a clone of this set in its RecipeUnits.probes.
-    pub probes: Vec<cook_contracts::ProbeUnit>,
-}
-
-impl SessionCaptureState {
-    pub fn new() -> Self {
-        Self { probes: Vec::new() }
-    }
-}
-
-impl Default for SessionCaptureState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Per-recipe-body capture state. Constructed fresh inside `invoke_body`;
 /// drained into a `RecipeUnits` and dropped when the body returns.
 ///
@@ -478,11 +455,6 @@ impl Default for BodyCaptureState {
         Self::new()
     }
 }
-
-/// Ref-counted, interior-mutable handle to a [`SessionCaptureState`].
-/// Threaded through every capture closure that needs to read or write
-/// session-scoped state (probes only at this point).
-pub type SharedSessionCaptureState = Rc<RefCell<SessionCaptureState>>;
 
 /// Ref-counted, interior-mutable handle to the *currently-active*
 /// [`BodyCaptureState`]. `None` when no recipe body is executing

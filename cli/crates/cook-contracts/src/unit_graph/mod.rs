@@ -60,8 +60,8 @@
 //! - Probe units whose keys are not transitively referenced by any non-probe
 //!   unit's `probes` field are silently omitted. No diagnostic is emitted.
 //! - Consumer-referenced probe keys with no `WorkPayload::Probe` entry in
-//!   `ru.units` but metadata in `ru.probes` (top-level register-block probes,
-//!   SHI-222 Phase 8) get a synthesised node, wired in dependency order.
+//!   `ru.units` but metadata in `ru.probes` (probes registered outside this
+//!   recipe's body, SHI-222 Phase 8) get a synthesised node, wired in dependency order.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -151,6 +151,18 @@ pub enum UnitGraphError {
     After {
         recipe: String,
         source: AfterError,
+    },
+    /// A unit names a probe key (by `seal`, `probes`, a `$<key>` sigil or a
+    /// literal `cook.probes.get`) that resolves to no probe node in the
+    /// closure. Registration rejects a key no probe declares, so reaching this
+    /// means a producer of `RecipeUnits` handed the plan a probe set that does
+    /// not hold it. It is an error rather than a dropped edge because the
+    /// dropped edge is a sealed determinant folded over absent bytes: a key
+    /// that silently stops moving.
+    UnscheduledProbe {
+        recipe: String,
+        unit: String,
+        key: String,
     },
 }
 
@@ -349,6 +361,11 @@ impl std::fmt::Display for UnitGraphError {
             UnitGraphError::After { recipe, source } => {
                 write!(f, "recipe '{recipe}': {source}")
             }
+            UnitGraphError::UnscheduledProbe { recipe, unit, key } => write!(
+                f,
+                "{unit} in recipe '{recipe}' needs probe '{key}', but no probe '{key}' \
+                 is scheduled in this invocation"
+            ),
         }
     }
 }
@@ -440,18 +457,15 @@ pub fn toposort_recipes(
 /// Compute the set of probe keys reached by at least one non-probe consumer
 /// in `units`, transitively closing under probe-on-probe `inputs.requires`.
 ///
-/// A probe's upstream `inputs.requires` is read from two sources, depending
-/// on where the probe was registered:
+/// A probe's upstream `inputs.requires` is read from two sources:
 ///
-/// * **Top-level probes** (`cook.probe(...)` called outside any recipe body)
-///   live in `probes` — the [`RecipeUnits`] view drained from
-///   `session_state.probes` at registration. Their `inputs.requires` lives
-///   on the [`crate::ProbeUnit`] directly.
-/// * **Body-scope probes** (`cook.probe(...)` called inside a recipe body)
-///   are `WorkPayload::Probe` entries in `units` with their
+/// * **`probes`** — the [`RecipeUnits`] view of every probe the Cookfile
+///   registered, top-level and body-scope alike (registration fills it once
+///   every body has run). `inputs.requires` lives on the [`crate::ProbeUnit`].
+/// * **Body-scope probes of this recipe** (`cook.probe(...)` called inside its
+///   body) are also `WorkPayload::Probe` entries in `units`, with their
 ///   `inputs.requires` mirrored onto the surrounding [`CapturedUnit`]'s
-///   `probes` field. They do NOT appear in `probes` because the registry is
-///   drained once before any body runs.
+///   `probes` field.
 ///
 /// Both indexes are consulted during the transitive closure so a body-scope
 /// consumer probe can legitimately pull its body-scope upstream into
@@ -462,7 +476,7 @@ fn compute_consumed_probe_keys(
     units: &[CapturedUnit],
     probes: &[crate::ProbeUnit],
 ) -> BTreeSet<String> {
-    // Top-level probes (ru.probes): inputs.requires lives on the ProbeUnit.
+    // Registered probes (ru.probes): inputs.requires lives on the ProbeUnit.
     let top_level_probe_by_key: BTreeMap<&str, &crate::ProbeUnit> =
         probes.iter().map(|p| (p.key.as_ref(), p)).collect();
 
@@ -646,9 +660,9 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
 
         // ── Synthesised top-level probes (SHI-222 Phase 8) ──────────────────
         // Pre-materialise nodes for consumer-referenced probe keys that have
-        // no `WorkPayload::Probe` entry in `ru.units`: top-level probes
-        // registered at register-block scope (e.g. through helpers like
-        // `cook_cc.checks.has_header`). Same demand-driven pruning rule as
+        // no `WorkPayload::Probe` entry in `ru.units`: probes registered
+        // outside this recipe's body (top-level, or another recipe's body;
+        // e.g. through helpers like `cook_cc.checks.has_header`). Same demand-driven pruning rule as
         // body-scope probes: only keys in `consumed` get a node.
         let mut synthesised_probe_ids: BTreeMap<LocalProbeKey, usize> = BTreeMap::new();
 
@@ -775,7 +789,47 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
         // Node ids per step group, to form the barrier when the group ends.
         let mut group_ids: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
-        for (unit_idx, unit) in ru.units.iter().enumerate() {
+        // Visit order: this recipe's body probe units first (a probe after the
+        // body probes its `probes` names), then every other unit in index
+        // order. Probe units never read or advance the barrier, so their deps
+        // do not depend on position, and the order in which `cook.probe` and
+        // `cook.add_unit` were called is unconstrained (§22.5.6): a consumer
+        // or a probe may name a body probe declared later in the same body.
+        let walk_order: Vec<usize> = {
+            let is_probe_at =
+                |i: usize| matches!(ru.units[i].payload, WorkPayload::Probe { .. });
+            let mut pending: Vec<usize> = (0..ru.units.len()).filter(|&i| is_probe_at(i)).collect();
+            let body_keys: BTreeSet<&str> = pending
+                .iter()
+                .filter_map(|&i| match &ru.units[i].payload {
+                    WorkPayload::Probe { key, .. } => Some(key.as_ref()),
+                    _ => None,
+                })
+                .collect();
+            let mut placed: BTreeSet<&str> = BTreeSet::new();
+            let mut order: Vec<usize> = Vec::with_capacity(ru.units.len());
+            // One at a time, lowest index first: declaration order is kept
+            // wherever the requires edges allow it.
+            while let Some(pos) = pending.iter().position(|&i| {
+                ru.units[i].probes.iter().all(|k| {
+                    !body_keys.contains(k.as_str()) || placed.contains(k.as_str())
+                })
+            }) {
+                let i = pending.remove(pos);
+                if let WorkPayload::Probe { key, .. } = &ru.units[i].payload {
+                    placed.insert(key.as_ref());
+                }
+                order.push(i);
+            }
+            // A cycle leaves `pending`; registration rejects cycles, so this
+            // only keeps the walk total.
+            order.extend(pending);
+            order.extend((0..ru.units.len()).filter(|&i| !is_probe_at(i)));
+            order
+        };
+
+        for unit_idx in walk_order {
+            let unit = &ru.units[unit_idx];
             // Demand-driven prune (§22.5.7): the `barrier` carries forward
             // unchanged since we skip before any node push or barrier
             // mutation; the probe→consumer wiring below safely no-ops for
@@ -790,6 +844,24 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
             if skip_indices.contains(&unit_idx) {
                 continue;
             }
+
+            // CS-0242: one node per probe key across the whole call, whether
+            // it was minted from this body or synthesised for a demander in
+            // another recipe (whose ru.probes carries every registered probe,
+            // body-scope ones included). A body probe whose key is already
+            // minted reuses that node; one minted here is published for the
+            // recipes after it.
+            let body_probe_qualified = match &unit.payload {
+                WorkPayload::Probe { key, .. } => {
+                    let q = crate::probe_key::qualify_for_recipe(&ru.recipe_name, key);
+                    if let Some(&existing_id) = global_synth_by_qualified.get(&q) {
+                        node_by_unit_idx.insert(unit_idx, existing_id);
+                        continue;
+                    }
+                    Some(q)
+                }
+                _ => None,
+            };
 
             // Probes are pure fact-gathering and do not participate in the
             // sequential barrier — they depend only on cross-recipe deps,
@@ -868,17 +940,23 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                         deps.push((probe_id, EdgeProvenance::Probe));
                         wired = true;
                     }
-                    // If the probe id isn't known yet (probe declared after
-                    // consumer), the edge is silently skipped. In practice
-                    // this cannot happen: probe keys are validated at
-                    // register time and probes are pushed into units when
-                    // cook.probe is called, before cook.add_unit in the
-                    // same register block.
+                    // A pruned body probe has no node; its key then falls
+                    // through to the synthesised ids and, failing that, to
+                    // UnscheduledProbe below. Body probes are walked before
+                    // every consumer, so declaration order never matters.
                 }
                 if !wired {
                     if let Some(&probe_id) = synthesised_probe_ids.get(req_key.as_str()) {
                         deps.push((probe_id, EdgeProvenance::Probe));
+                        wired = true;
                     }
+                }
+                if !wired {
+                    return Err(UnitGraphError::UnscheduledProbe {
+                        recipe: ru.recipe_name.clone(),
+                        unit: unit_label(&ru.units, unit_idx),
+                        key: req_key.clone(),
+                    });
                 }
             }
 
@@ -891,6 +969,9 @@ pub fn plan(recipe_units: &[RecipeUnits]) -> Result<UnitGraph, UnitGraphError> {
                 deps: dedup_pairs(deps),
             });
             node_by_unit_idx.insert(unit_idx, id);
+            if let Some(q) = body_probe_qualified {
+                global_synth_by_qualified.insert(q, id);
+            }
 
             // Update barrier / group tracking. Probes never advance the
             // barrier: the pre-existing barrier flows through to the next

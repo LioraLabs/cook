@@ -17,8 +17,7 @@ use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
 use crate::var_api::{install_var_api, VarKeyset};
 use crate::{
-    BodyCaptureState, RegisterError, RegistrationSite, RegistrationSiteKind, SessionCaptureState,
-    SharedBodySlot, SharedSessionCaptureState,
+    BodyCaptureState, RegisterError, RegistrationSite, RegistrationSiteKind, SharedBodySlot,
 };
 
 pub struct RegisterSessionBuilder {
@@ -224,7 +223,7 @@ impl RegisterSessionBuilder {
 ///
 /// 1. Build a fresh `Lua::unsafe_new()` VM.
 /// 2. Wire `cache_ctx` app_data and `__cook_cookfile_path` registry value.
-/// 3. Construct empty `SessionCaptureState` and a `SharedBodySlot` starting
+/// 3. Construct a `SharedBodySlot` starting
 ///    as `None` (top-level Lua runs without an active body — closures that
 ///    require one return clean Lua errors if invoked at top level).
 /// 4. Build a fresh `ProbeRegistry`.
@@ -236,7 +235,8 @@ impl RegisterSessionBuilder {
 ///    re-apply CLI overrides; snapshot the final env back into `env_vars`.
 /// 8. (Task 2.3 will insert collision detection here.)
 /// 9. Run probe cycle detection ONCE per session.
-/// 10. Drain the probe registry into `session_state.probes`.
+/// 10. (Retired: every recipe's probe view is filled from the registry at
+///     step 13, once every body has registered its probes.)
 /// 11. Topologically sort registered recipes by `metadata.requires` (local
 ///     DFS; reports cycles via `RegisterError::DependencyCycle`).
 /// 12. Invoke every recipe body via the re-entrant `BodyDriver`, opening a
@@ -312,10 +312,8 @@ pub fn register_cookfile(
         }
     };
 
-    // 3. Session-scope state; body slot starts None (no active recipe body
-    //    during top-level load — spec §6 step 4).
-    let session_state: SharedSessionCaptureState =
-        Rc::new(RefCell::new(SessionCaptureState::new()));
+    // 3. Body slot starts None (no active recipe body during top-level
+    //    load — spec §6 step 4).
     let body_slot: SharedBodySlot = Rc::new(RefCell::new(None));
 
     // 4. Probe registry for this register pass.
@@ -414,15 +412,6 @@ pub fn register_cookfile(
         .detect_cycles()
         .map_err(|msg| RegisterError::Lua(mlua::Error::runtime(msg)))?;
 
-    // 10. Drain probe registry into session state.
-    {
-        let probe_reg = probe_registry.borrow();
-        let mut sess = session_state.borrow_mut();
-        for (_key, reg) in &probe_reg.probes {
-            sess.probes.push(reg.probe.clone());
-        }
-    }
-
     // 11. Topological sort of registered names by `requires`.
     let names_to_requires: BTreeMap<String, Vec<String>> = recipes
         .borrow()
@@ -513,7 +502,6 @@ pub fn register_cookfile(
         builder: builder.clone(),
         recipes: recipes.clone(),
         probe_registry: probe_registry.clone(),
-        session_state: session_state.clone(),
         body_slot: body_slot.clone(),
         reachable_from_target,
         units_by_recipe: RefCell::new(BTreeMap::new()),
@@ -540,8 +528,26 @@ pub fn register_cookfile(
         driver.ensure_invoked(&lua, name, false)?;
     }
 
-    let units_by_recipe = std::mem::take(&mut *driver.units_by_recipe.borrow_mut());
+    let mut units_by_recipe = std::mem::take(&mut *driver.units_by_recipe.borrow_mut());
     let names = std::mem::take(&mut *driver.names.borrow_mut());
+
+    // Resolve every unit's probe references at END OF PASS (§22.5.6 rule 1):
+    // `cook.probe` has no recipe scope, so a seal or `$<key>` may name a probe
+    // registered by a body that ran after the unit's own.
+    {
+        let probe_reg = probe_registry.borrow();
+        for ru in units_by_recipe.values() {
+            for (idx, unit) in ru.units.iter().enumerate() {
+                for key in &unit.probes {
+                    if !probe_reg.probes.contains_key(key.as_str()) {
+                        return Err(RegisterError::Lua(mlua::Error::runtime(
+                            unresolved_probe_key_message(unit, idx, key),
+                        )));
+                    }
+                }
+            }
+        }
+    }
 
     // 12a. (Standard §22.8, CS-0144) Cycle detection over the MERGED
     //      `requires` — static dep-lists plus every edge the bodies just
@@ -676,11 +682,10 @@ pub fn register_cookfile(
 
     // 13. Probes view: BTreeMap keyed by probe key (deterministic).
     //
-    // Source is the probe_registry (not session_state.probes) so that
-    // body-scope probes — registered during the recipe-body invocations
-    // in step 12, after the session_state drain in step 10 — are also
-    // included. The workspace-level probes map is what the executor
-    // resolves a probe against before dispatching it
+    // Source is the probe_registry, so that body-scope probes — registered
+    // during the recipe-body invocations in step 12 — are included. The
+    // workspace-level probes map is what the executor resolves a probe against
+    // before dispatching it
     // (cli/crates/cook-engine/src/run.rs builds `probe_units_by_node` from
     // this map); a body-scope probe that doesn't appear here reaches a
     // worker with no declaration behind it, so a synthesised `files`/`tools`
@@ -691,6 +696,18 @@ pub fn register_cookfile(
         .iter()
         .map(|(key, reg)| (key.clone(), reg.probe.clone()))
         .collect();
+
+    // Every recipe sees every probe this Cookfile registered, not only the
+    // top-level ones drained before its body ran. `cook.probe` is a
+    // register-phase call with no recipe scope (§22.5.3), so a probe declared
+    // inside one recipe's body is as much a probe as a top-level one: a unit in
+    // another recipe that seals or consumes it gets the edge (§22.5.6 rule 2),
+    // and the plan's one-node-per-key rule (CS-0242) shares it with the
+    // declaring recipe's own body node.
+    let all_probes: Vec<cook_contracts::ProbeUnit> = probes.values().cloned().collect();
+    for ru in units_by_recipe.values_mut() {
+        ru.probes = all_probes.clone();
+    }
 
     let warnings = builder.gather_warnings.borrow().clone();
     Ok(crate::RegisteredCookfile {
@@ -801,7 +818,6 @@ struct BodyDriver {
     builder: Rc<RegisterSessionBuilder>,
     recipes: Rc<RefCell<Vec<crate::capture::RegisteredRecipe>>>,
     probe_registry: Rc<RefCell<ProbeRegistry>>,
-    session_state: SharedSessionCaptureState,
     body_slot: SharedBodySlot,
     /// Names reachable from `target_recipe` via the STATIC `requires` graph,
     /// computed before any body ran — so it structurally cannot know a
@@ -1433,24 +1449,6 @@ impl BodyDriver {
             }
         }
 
-        // Resolve probe references — same end-of-body check that
-        // register_recipe runs, scoped to this recipe's units.
-        {
-            use std::collections::BTreeSet;
-            let probe_reg = self.probe_registry.borrow();
-            let registered_keys: BTreeSet<&str> =
-                probe_reg.probes.keys().map(|s| s.as_str()).collect();
-            for (idx, unit) in body.units.iter().enumerate() {
-                for key in &unit.probes {
-                    if !registered_keys.contains(key.as_str()) {
-                        return Err(RegisterError::Lua(mlua::Error::runtime(
-                            unresolved_probe_key_message(unit, idx, key),
-                        )));
-                    }
-                }
-            }
-        }
-
         // CS-0219 §22.1.3: resolve every `after` entry now that the body has
         // closed and the recipe's whole unit list is known. Deferring it to
         // here rather than checking inside `cook.add_unit` is what lets the
@@ -1501,11 +1499,6 @@ impl BodyDriver {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        // Each per-recipe RecipeUnits carries a clone of the session probe
-        // set today; Phase 3 dedup will replace this with a session-level
-        // probe view consumed off the RegisteredCookfile directly.
-        let probes = self.session_state.borrow().probes.clone();
-
         let units = RecipeUnits {
             recipe_name: name.to_string(),
             deps: requires.clone(),
@@ -1515,7 +1508,9 @@ impl BodyDriver {
             env_vars: env_btree,
             terminal_outputs: terminal_outputs_list,
             dep_edges: body.dep_edges,
-            probes,
+            // Filled with the whole registry once every body has run (step
+            // 13): a later body may still register a probe this recipe uses.
+            probes: Vec::new(),
         };
         self.units_by_recipe
             .borrow_mut()
@@ -2609,8 +2604,7 @@ pub fn list_names_cached(
     // body_slot stays `None` for the whole call: no recipe body executes,
     // so any closure that requires an active body (cook.exec, cook.add_unit,
     // …) returns a clean Lua error if invoked from top-level Lua. That
-    // keeps list_names cheap and honest. No SessionCaptureState is
-    // constructed — list_names doesn't surface probes.
+    // keeps list_names cheap and honest. list_names doesn't surface probes.
     let body_slot: SharedBodySlot = Rc::new(RefCell::new(None));
     let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
 

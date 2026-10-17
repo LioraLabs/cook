@@ -45,6 +45,12 @@ impl From<UnitGraphError> for EngineError {
                 recipe,
                 message: source.to_string(),
             },
+            UnitGraphError::UnscheduledProbe { ref recipe, .. } => {
+                EngineError::RegistrationFailed {
+                    recipe: recipe.clone(),
+                    message: e.to_string(),
+                }
+            }
         }
     }
 }

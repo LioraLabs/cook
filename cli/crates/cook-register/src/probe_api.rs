@@ -2,8 +2,8 @@
 //!
 //! Installs the `cook.probe` function on the existing `cook` Lua table and
 //! accumulates registrations into a [`ProbeRegistry`]. The registry is later
-//! drained into [`SessionCaptureState::probes`](crate::SessionCaptureState)
-//! after the register pass completes.
+//! handed to every recipe's `RecipeUnits.probes` once the register pass
+//! completes.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -151,8 +151,8 @@ pub fn install_cook_probe(
         //    builder by reading each consumer unit's `probes` field.
         //
         //    Top-level probes (slot.is_none()) are session-scoped per spec
-        //    §6 step 4 / §7: they live only in `probe_registry` (drained
-        //    later into `session_state.probes`) and do NOT need to appear
+        //    §6 step 4 / §7: they live only in `probe_registry` (handed to every
+        //    recipe's `RecipeUnits.probes` at end of pass) and do NOT need to appear
         //    in any recipe body's units vector. We deliberately skip the
         //    body push instead of erroring — `register_cookfile` starts
         //    with `body_slot == None` during top-level Lua load.

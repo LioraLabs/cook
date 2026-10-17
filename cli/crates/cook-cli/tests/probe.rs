@@ -882,3 +882,110 @@ recipe build
         "expected the §22.5.8 not-materialised error naming '{key}', got: {err}"
     );
 }
+
+/// A probe registered inside one recipe's body is a probe like any other
+/// (§22.5.3): a unit in ANOTHER recipe that seals it is scheduled after it and
+/// keyed on its value (§22.5.6 rule 2), and the key is produced once however
+/// many recipes demand it (CS-0242). Before, the sealing recipe got no probe
+/// node and no edge, folded absent bytes into its key, and stayed cached
+/// across a change of the sealed value — `cook test u` never ran the probe.
+#[test]
+fn seal_over_a_probe_registered_in_another_recipes_body_is_scheduled() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        r#"
+register
+    cook.recipe("t", {}, function()
+        cook.probe("x:ver", {inputs = {}, produce = [[
+            local log = io.open("probe-runs.log", "a") log:write("x") log:close()
+            local h = io.open("input.txt") local v = h:read("*a") h:close()
+            return { v = v }
+        ]]})
+        cook.add_unit({step_kind = "test", command = "echo t", inputs = {"Cookfile"}, seal = {"x:ver"}, line = 0})
+    end)
+    cook.recipe("u", {}, function()
+        cook.add_unit({step_kind = "test", command = "echo run >> u-marker.log", inputs = {"Cookfile"}, seal = {"x:ver"}, line = 0})
+    end)
+"#,
+    )
+    .unwrap();
+    let read = |f: &str| fs::read_to_string(tmp.path().join(f)).unwrap_or_default();
+
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    run_cook(tmp.path(), &["test"]).expect("first run");
+    assert_eq!(read("probe-runs.log"), "x", "one production for two demanders");
+    assert_eq!(read("u-marker.log"), "run\n");
+
+    // Only `u` is asked for; the probe lives in `t`'s body and must still run.
+    fs::write(tmp.path().join("input.txt"), "B").unwrap();
+    run_cook(tmp.path(), &["test", "u"]).expect("second run");
+    assert_eq!(read("probe-runs.log"), "xx", "the probe must be scheduled for `u` alone");
+    assert_eq!(
+        read("u-marker.log"),
+        "run\nrun\n",
+        "the sealed value moved A -> B, so `u` must re-run, not stay cached"
+    );
+
+    run_cook(tmp.path(), &["test"]).expect("third run");
+    assert_eq!(read("probe-runs.log"), "xxx", "still one production per invocation");
+    assert_eq!(read("u-marker.log"), "run\nrun\n", "unchanged value: `u` hits");
+}
+
+/// Probe references resolve at END OF PASS (§22.5.6 rule 1): recipe `a`'s body
+/// runs before recipe `b`'s, yet `a`'s unit may seal a probe `b`'s body
+/// registers. Before, `a`'s end-of-body check rejected it as naming no probe.
+#[test]
+fn seal_over_a_probe_registered_by_a_later_running_body_resolves() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        r#"
+register
+    cook.recipe("a", {}, function()
+        cook.add_unit({step_kind = "test", command = "echo run >> a-marker.log", inputs = {"Cookfile"}, seal = {"x:ver"}, line = 0})
+    end)
+    cook.recipe("b", {}, function()
+        cook.probe("x:ver", {inputs = {}, produce = [[
+            local h = io.open("input.txt") local v = h:read("*a") h:close()
+            return { v = v }
+        ]]})
+    end)
+"#,
+    )
+    .unwrap();
+    let read = |f: &str| fs::read_to_string(tmp.path().join(f)).unwrap_or_default();
+
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    run_cook(tmp.path(), &["test", "a"]).expect("first run");
+    fs::write(tmp.path().join("input.txt"), "B").unwrap();
+    run_cook(tmp.path(), &["test", "a"]).expect("second run");
+    assert_eq!(read("a-marker.log"), "run\nrun\n", "the sealed value moved, so `a` re-runs");
+}
+
+/// A unit may name a body probe declared AFTER it in the same body (§22.5.6:
+/// the order of `cook.probe` and `cook.add_unit` calls is unconstrained).
+#[test]
+fn seal_over_a_probe_declared_after_the_unit_in_the_same_body_runs() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        r#"
+register
+    cook.recipe("t", {}, function()
+        cook.add_unit({step_kind = "test", command = "echo run >> t-marker.log", inputs = {"Cookfile"}, seal = {"x:ver"}, line = 0})
+        cook.probe("x:ver", {inputs = {}, produce = [[
+            local h = io.open("input.txt") local v = h:read("*a") h:close()
+            return { v = v }
+        ]]})
+    end)
+"#,
+    )
+    .unwrap();
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    run_cook(tmp.path(), &["test"]).expect("forward reference runs");
+    fs::write(tmp.path().join("input.txt"), "B").unwrap();
+    run_cook(tmp.path(), &["test"]).expect("second run");
+    let m = fs::read_to_string(tmp.path().join("t-marker.log")).unwrap_or_default();
+    assert_eq!(m, "run\nrun\n");
+}

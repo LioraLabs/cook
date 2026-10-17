@@ -519,3 +519,107 @@ fn plan_does_not_collapse_same_named_probes_from_different_members() {
         edge_list(&g)
     );
 }
+
+/// A probe registered in one recipe's BODY and sealed by a unit of another
+/// recipe gets ONE node, wired to both consumers, whichever recipe the
+/// topological order reaches first (CS-0242, §22.5.6 rule 2). Registration
+/// hands every recipe the whole registry in `probes`, which is what lets the
+/// non-declaring recipe find it.
+#[test]
+fn plan_shares_a_body_probe_with_a_consumer_in_another_recipe() {
+    let pu = crate::ProbeUnit {
+        key: crate::probe_key::LocalProbeKey::new("x:ver"),
+        produce_source: "return 1".to_string(),
+        produce_line: 1,
+        inputs: crate::ProbeInputs::default(),
+    };
+    let mut owner = recipe(
+        "t",
+        &[],
+        vec![
+            unit(probe("x:ver"), DepKind::Sequential, vec![]),
+            unit(shell("echo t"), DepKind::Sequential, vec!["x:ver".into()]),
+        ],
+    );
+    owner.probes = vec![pu.clone()];
+    let mut other = recipe(
+        "u",
+        &[],
+        vec![unit(shell("echo u"), DepKind::Sequential, vec!["x:ver".into()])],
+    );
+    other.probes = vec![pu];
+
+    for order in [[owner.clone(), other.clone()], [other, owner]] {
+        let g = plan(&order).expect("plans");
+        let probe_nodes: Vec<usize> = g
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| match &n.origin {
+                NodeOrigin::SynthProbe { .. } => Some(i),
+                NodeOrigin::Unit { recipe, unit_idx: 0 } if recipe == "t" => Some(i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(probe_nodes.len(), 1, "one node per key: {}", edge_list(&g));
+        let p = probe_nodes[0];
+        let ct = unit_id(&g, "t", 1);
+        let cu = unit_id(&g, "u", 0);
+        assert!(has_edge(&g, p, ct, EdgeProvenance::Probe), "{}", edge_list(&g));
+        assert!(has_edge(&g, p, cu, EdgeProvenance::Probe), "{}", edge_list(&g));
+    }
+}
+
+/// A consumer key that resolves to no probe node is an error naming the key,
+/// never a dropped edge: the dropped edge is a seal folded over absent bytes.
+#[test]
+fn plan_rejects_a_consumer_key_no_probe_node_serves() {
+    let r = recipe(
+        "u",
+        &[],
+        vec![unit(shell("echo u"), DepKind::Sequential, vec!["x:ver".into()])],
+    );
+    let err = plan(&[r]).expect_err("no probe serves x:ver");
+    assert!(
+        matches!(&err, UnitGraphError::UnscheduledProbe { key, .. } if key == "x:ver"),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("'x:ver'"), "{err}");
+}
+
+/// `cook.probe` and `cook.add_unit` may be called in either order within one
+/// register pass (§22.5.6): a consumer declared BEFORE the body probe it names
+/// still gets the Probe edge.
+#[test]
+fn plan_wires_a_consumer_declared_before_its_body_probe() {
+    let r = recipe(
+        "t",
+        &[],
+        vec![
+            unit(shell("echo t"), DepKind::Sequential, vec!["x:ver".into()]),
+            unit(probe("x:ver"), DepKind::Sequential, vec![]),
+        ],
+    );
+    let g = plan(&[r]).expect("a forward reference to a body probe plans");
+    let (p, c) = (unit_id(&g, "t", 1), unit_id(&g, "t", 0));
+    assert!(has_edge(&g, p, c, EdgeProvenance::Probe), "{}", edge_list(&g));
+}
+
+/// A body probe whose `inputs.requires` names a body probe declared LATER in
+/// the same body gets the Probe edge from it.
+#[test]
+fn plan_wires_a_body_probe_to_a_later_declared_body_probe_it_requires() {
+    let r = recipe(
+        "t",
+        &[],
+        vec![
+            unit(shell("echo t"), DepKind::Sequential, vec!["down".into()]),
+            unit(probe("down"), DepKind::Sequential, vec!["up".into()]),
+            unit(probe("up"), DepKind::Sequential, vec![]),
+        ],
+    );
+    let g = plan(&[r]).expect("a forward probe-on-probe reference plans");
+    let (up, down) = (unit_id(&g, "t", 2), unit_id(&g, "t", 1));
+    assert!(has_edge(&g, up, down, EdgeProvenance::Probe), "{}", edge_list(&g));
+    assert!(has_edge(&g, down, unit_id(&g, "t", 0), EdgeProvenance::Probe), "{}", edge_list(&g));
+}
