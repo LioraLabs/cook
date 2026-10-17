@@ -409,3 +409,54 @@ recipe show
         "`@alt` and the bare `alt` positional must produce identical why attribution"
     );
 }
+
+/// A glob input is judged by the set it resolves to, exactly as the run keys
+/// it — never as a literal path named `src/**/*`. Right after the run serves
+/// the unit from cache, `why` agrees it is a hit; after an edit to a matched
+/// file, `why` names that file as the cause.
+#[test]
+fn cook_why_judges_a_glob_input_by_its_resolution() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cook")).unwrap();
+    let shared = dir.path().join(".cook/shared-cache");
+    fs::write(
+        dir.path().join(".cook/cloud.toml"),
+        format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Cookfile"),
+        r#"recipe chk
+    cook.add_unit({ step_kind = "test", command = "cat src/a.txt", inputs = { "src/**/*" }, line = 0 })
+"#,
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/a.txt"), "hi\n").unwrap();
+
+    for _ in 0..2 {
+        assert!(run_cook(dir.path(), &["chk"]).status.success(), "cook chk failed");
+    }
+    let why = |dir: &Path| {
+        let o = run_cook(dir, &["why", "chk", "--level", "unit"]);
+        assert!(o.status.success(), "why failed: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+
+    let out = why(dir.path());
+    let unit = out.lines().find(|l| l.starts_with("chk :: ")).unwrap_or_else(|| panic!("{out}"));
+    assert!(unit.contains("HIT (local)"), "a cached glob-input unit must read as a hit:\n{out}");
+
+    fs::write(dir.path().join("src/a.txt"), "bye\n").unwrap();
+    let out = why(dir.path());
+    assert!(
+        out.contains("local-miss cause: input changed: src/a.txt"),
+        "an edit to a matched file must be named as the cause:\n{out}"
+    );
+
+    // Resolving to nothing leaves nothing to key on: a miss on the declaration.
+    fs::remove_file(dir.path().join("src/a.txt")).unwrap();
+    let out = why(dir.path());
+    let unit = out.lines().find(|l| l.starts_with("chk :: ")).unwrap_or_else(|| panic!("{out}"));
+    assert!(unit.contains("MISS (input 'src/**/*' missing)"), "an empty resolution must miss:\n{out}");
+}

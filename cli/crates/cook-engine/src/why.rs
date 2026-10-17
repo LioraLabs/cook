@@ -835,11 +835,12 @@ fn classify(
     probe_snapshot: &BTreeMap<String, Vec<u8>>,
     probe_store: &cook_probe::store::ProbeValueStore,
 ) -> Classification {
-    // I1: a declared input absent on disk means the unit cannot be a clean hit
-    // and no real key exists (mirrors `hash_input_paths` returning None at
-    // executor.rs:710). Attribute the miss to that input rather than fabricating
-    // a `0`-hash key that can never match a real manifest.
-    if let Some(p) = first_missing_input(meta, &node.working_dir, predictions) {
+    // I1: a RESOLVED input absent on disk, or a declaration that resolves to
+    // nothing to key on, means the unit cannot be a clean hit and no real key
+    // exists (mirrors the run's `hash_input_paths` returning None and its
+    // `has_something_to_key_on` refusal). Attribute the miss to that input rather
+    // than fabricating a `0`-hash key that can never match a real manifest.
+    if let Some(p) = first_missing_input(meta, det, &node.working_dir, predictions) {
         return Classification {
             status: CacheStatus::MissingInput { path: p },
             local_hit: false,
@@ -933,16 +934,27 @@ fn classify(
 
 fn first_missing_input(
     meta: &cook_contracts::CacheMeta,
+    det: &UnitDeterminants,
     working_dir: &Path,
     predictions: &Predictions,
 ) -> Option<String> {
-    // The declared entries, patterns included: a pattern that expands to
-    // nothing IS a missing input for this report's purposes, and it is reported
-    // as the author wrote it rather than as an empty expansion nobody can act
-    // on.
-    meta.inputs
-        .iter()
-        .map(|e| &e.path)
+    // A declaration that resolves to nothing leaves the unit nothing to key on,
+    // and the run refuses it a hit by the same predicate (§17.4 rule 1). It is
+    // reported as the pattern the author wrote, not as an empty expansion
+    // nobody can act on.
+    if !cook_contracts::cache::record::has_something_to_key_on(
+        meta.output_paths.len(),
+        det.inputs.len(),
+        meta.member_keyed,
+        !meta.seal_keys.is_empty(),
+    ) {
+        return meta.inputs.iter().find(|e| e.is_pattern()).map(|e| e.path.clone());
+    }
+    // The RESOLVED set `determinants` computed with the run's own resolution
+    // (§17.1.1.2), never the raw declaration: a pattern is not a path, and
+    // hashing it as one reports a hit's glob input as missing.
+    det.inputs
+        .keys()
         .find(|p| {
             let abs = working_dir.join(p);
             // CS-0173: an input a producer in this closure will restore is not
