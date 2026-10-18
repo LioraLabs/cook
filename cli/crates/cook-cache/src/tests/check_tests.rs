@@ -1393,3 +1393,16 @@ fn same_bytes_refresh_strong_evidence_and_absent_evidence_is_conservative() {
     std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
     assert!(refresh_file_record(&untrusted, wd, false).is_none());
 }
+
+/// `hash_file` streams (an output can exceed RAM), so it now shares
+/// `hash_reader`'s loop and the guard above cannot see a drift from the
+/// one-shot digest every existing `FileRecord` was written with. This can: a
+/// body spanning several read buffers must hash as the one-shot does.
+#[test]
+fn streamed_hash_file_matches_the_one_shot_digest_across_buffers() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big");
+    let body: Vec<u8> = (0..200_003u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&path, &body).unwrap();
+    assert_eq!(hash_file(&path), Some(xxhash_rust::xxh3::xxh3_64(&body)));
+}

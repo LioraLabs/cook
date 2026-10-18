@@ -38,9 +38,11 @@ pub fn stat_mtime(path: &Path) -> Option<u64> {
 /// machine in a probe's observed value or a cloud key. Both are pinned to
 /// golden vectors; changing what either computes is a cache-invalidating
 /// decision, not a refactor.
+///
+/// Streams through [`hash_reader`]: an output can be larger than RAM, and this
+/// is what `cook why` and `cook cache verify` call on every one of them.
 pub fn hash_file(path: &Path) -> Option<u64> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(xxhash_rust::xxh3::xxh3_64(&bytes))
+    hash_reader(&mut std::fs::File::open(path).ok()?)
 }
 
 /// Streaming twin of [`hash_file`]: same algorithm over bytes arriving from a
@@ -584,8 +586,8 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
 /// from prior behaviour. Returns false on any miss/error (caller falls back to
 /// rebuild).
 ///
-/// COOK-233 CONSTRAINT — file restore MUST stay a byte copy (`read_to_end` ->
-/// write tmp -> rename), never a hardlink or reflink of the CAS blob. The
+/// COOK-233 CONSTRAINT — file restore MUST stay a byte copy (stream to tmp ->
+/// rename), never a hardlink or reflink of the CAS blob. The
 /// restored workspace file must be a *different inode* from the blob, because
 /// `LocalBackend::get_with_meta` restamps the blob's mtime on every cache hit
 /// as the last-access signal for LRU eviction (`cook cache gc`). Share the
@@ -626,24 +628,35 @@ fn restore_one(
             restore_symlink_checked(anchor, abs, target)
         }
         _ => {
-            let mut bytes = Vec::new();
-            if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
-                return false;
-            }
-            // Warm-path integrity anchor (see fn docs): verify against the
-            // locally-trusted record BEFORE the atomic write so tampered
-            // bytes never reach the workspace, even transiently.
-            if let Some(expected) = expected_content_hash {
-                if xxhash_rust::xxh3::xxh3_64(&bytes) != expected {
-                    return false;
-                }
-            }
-            // Atomic write via tmp + rename.
+            // Stream blob -> tmp, hashing as the bytes flow: an artifact can be
+            // larger than RAM. Both integrity checks (the reader's SHA-256 at
+            // EOF, the warm-path xxh3 anchor below) land BEFORE the rename, so
+            // tampered bytes only ever exist under the tmp name, never at the
+            // output path.
             let tmp = abs.with_extension("cook.tmp");
-            if std::fs::write(&tmp, &bytes).is_err() {
-                return false;
-            }
-            if std::fs::rename(&tmp, abs).is_err() {
+            let copied = (|| {
+                let mut out = std::fs::File::create(&tmp).ok()?;
+                let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+                let mut buf = [0u8; 64 * 1024];
+                loop {
+                    match std::io::Read::read(&mut reader, &mut buf) {
+                        Ok(0) => return Some(hasher.digest()),
+                        Ok(n) => {
+                            hasher.update(&buf[..n]);
+                            std::io::Write::write_all(&mut out, &buf[..n]).ok()?;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(_) => return None,
+                    }
+                }
+            })();
+            let ok = match (copied, expected_content_hash) {
+                (None, _) => false,
+                (Some(h), Some(expected)) => h == expected,
+                (Some(_), None) => true,
+            };
+            if !ok || std::fs::rename(&tmp, abs).is_err() {
+                let _ = std::fs::remove_file(&tmp);
                 return false;
             }
             set_mode(abs, meta.mode)

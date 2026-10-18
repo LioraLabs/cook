@@ -3422,24 +3422,26 @@ fn publish_completion(
         let mode = std::os::unix::fs::PermissionsExt::mode(&lstat.permissions());
         #[cfg(not(unix))]
         let mode = 0o644u32;
-        let (body, kind, target): (Vec<u8>, Option<String>, Option<String>) = if ft.is_symlink() {
+        // The body is a reader, not a buffer: an output can be larger than RAM,
+        // and `put` streams.
+        let (mut body, kind, target): (Box<dyn std::io::Read>, Option<String>, Option<String>) = if ft.is_symlink() {
             let t = std::fs::read_link(&abs_output)
                 .ok()
                 .and_then(|p| p.to_str().map(String::from));
             // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
             match t {
                 Some(t) => (
-                    Vec::new(),
+                    Box::new(std::io::empty()),
                     Some(artifact_kind::SYMLINK.to_string()),
                     Some(t),
                 ),
                 None => continue,
             }
         } else if ft.is_dir() {
-            (Vec::new(), Some(artifact_kind::DIR.to_string()), None)
+            (Box::new(std::io::empty()), Some(artifact_kind::DIR.to_string()), None)
         } else {
-            match std::fs::read(&abs_output) {
-                Ok(b) => (b, None, None),
+            match std::fs::File::open(&abs_output) {
+                Ok(f) => (Box::new(f), None, None),
                 Err(_) => continue,
             }
         };
@@ -3450,7 +3452,7 @@ fn publish_completion(
             env_contribution: meta.env_contribution,
             seal_contribution: seal_contrib,
             schema_version: CACHE_VERSION,
-            size_bytes: body.len() as u64,
+            size_bytes: if ft.is_file() { lstat.len() } else { 0 },
             tags: std::collections::BTreeSet::new(),
             consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
             output_index: out_idx as u32,
@@ -3462,12 +3464,7 @@ fn publish_completion(
             target,
         };
         if publish_to_backend {
-            if let Err(e) = cook_cache::backend::put_bytes(
-                cache_ctx.backend.as_ref(),
-                &artifact_k,
-                &body,
-                &mut artifact_meta,
-            ) {
+            if let Err(e) = cache_ctx.backend.put(&artifact_k, &mut *body, &mut artifact_meta) {
                 tracing::warn!("cache backend put failed for {}: {}", output_path, e);
             }
         }

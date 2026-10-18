@@ -95,10 +95,12 @@ fn resolve_tool_hash(name: &str) -> [u8; 32] {
 /// module, which meant the crate's most-used verb named two different hashes
 /// depending on which file you were reading.
 pub fn hash_file_sha256(path: &Path) -> [u8; 32] {
-    let Ok(bytes) = std::fs::read(path) else {
-        return [0u8; 32];
-    };
-    Sha256::digest(&bytes).into()
+    // Streamed: a declared file can be larger than RAM.
+    let mut hasher = Sha256::new();
+    match std::fs::File::open(path).and_then(|mut f| std::io::copy(&mut f, &mut hasher)) {
+        Ok(_) => hasher.finalize().into(),
+        Err(_) => [0u8; 32],
+    }
 }
 
 #[cfg(test)]
