@@ -2,19 +2,19 @@ use cook_pnpm
 
 # Bootstrap the workspace and register per-(package, task) recipes at
 # register phase. cook_pnpm.task is a target maker: it reads the parsed
-# workspace graph and emits one `<pkg>:<task>` recipe per package, in
+# workspace graph and emits one `pnpm:<dir>:<task>` recipe per package, in
 # topological order, each sealing the install probe (the pnpm-lock.yaml
 # content hash) so a lockfile change invalidates every downstream build.
 register
     # `checks = false` because this example declares its test task by hand
-    # below. Left at its default, workspace() also mints a `<pkg>:test` for
+    # below. Left at its default, workspace() also mints a `pnpm:<dir>:test` for
     # every package declaring that script, and the two collide.
     cook_pnpm.workspace({ checks = false })
 
     # `pnpm install --frozen-lockfile`, cached by the lockfile-hash probe.
     cook_pnpm.install({ name = "install" })
 
-    # One `<pkg>:build` recipe per package. `^build` waits on each
+    # One `pnpm:<dir>:build` recipe per package. `^build` waits on each
     # workspace dependency's build (topo order: shared-utils -> ui -> web).
     cook_pnpm.task("build", {
         depends_on = { "^build" },
@@ -22,14 +22,14 @@ register
         outputs    = { "dist/**" },
     })
 
-    # One `<pkg>:test` recipe per package; each waits on its own build.
+    # One `pnpm:<dir>:test` recipe per package; each waits on its own build.
     cook_pnpm.task("test", { depends_on = { "build" } })
 
-# Aggregators over the generated per-package recipes. The `<pkg>:<task>`
+# Aggregators over the generated per-package recipes. The `pnpm:<dir>:<task>`
 # names carry a colon, so they are referenced in quoted-string form.
-recipe build: "shared-utils:build" "ui:build" "web:build"
+recipe build: "pnpm:shared-utils:build" "pnpm:ui:build" "pnpm:web:build"
 
-recipe check: "shared-utils:test" "ui:test" "web:test"
+recipe check: "pnpm:shared-utils:test" "pnpm:ui:test" "pnpm:web:test"
 
 chore clean
     rm -rf packages/*/dist packages/*/.cook .cook

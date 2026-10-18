@@ -56,7 +56,7 @@ Three packages with two kinds of internal-dependency specifier:
 `cook_pnpm.workspace()` parses `pnpm-workspace.yaml` and each package's
 `package.json`, resolves every dependency whose name is a workspace member
 into a graph edge, and topologically sorts the packages.
-`cook_pnpm.task("build", …)` then emits one `<pkg>:build` recipe per
+`cook_pnpm.task("build", …)` then emits one `pnpm:<dir>:build` recipe per
 package, wired in topo order.
 
 ### Caching and the lockfile seal
