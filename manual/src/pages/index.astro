@@ -14,39 +14,57 @@ const links = [
 ---
 <Shell>
   <div class="page-heading"><h1>The Cook Manual</h1><p set:html={preamble.lede.replace(/\n/g, ' ')} /></div>
-  <div class="tiles">
-    <a class="tile w2 h2 accent" style="--k:0" href={`/n/${manual[0].id}`}>
-      <span class="kicker">Start here</span>
-      <h2>Read it top to bottom</h2>
-      <p>{manual.length} chapters, every Cookfile snippet real v1.0 syntax. About an hour.</p>
-    </a>
-    {manual.map((n, i) => (
-      <a class="tile w2" style={`--k:${i + 1}`} href={`/n/${n.id}`}>
-        <span class="kicker">Chapter {n.data.order}</span>
-        <h2>{titleOf(n).replace(/^\d+\. /, '')}</h2>
-        <p>{n.data.summary}</p>
+  <section class="group">
+    <h2 class="group-title"><span>The manual</span><small>{manual.length} chapters · read in order</small></h2>
+    <div class="tiles">
+      <a class="tile w2 h2 accent" style="--k:0" href={`/n/${manual[0].id}`}>
+        <span class="kicker">Start here</span>
+        <h2>Read it top to bottom</h2>
+        <p>Every Cookfile snippet is real v1.0 syntax. About an hour.</p>
       </a>
-    ))}
-    {guides.map((n, i) => (
-      <a class="tile w2" style={`--k:${manual.length + i + 1}`} href={`/n/${n.id}`}>
-        <span class="kicker">Guide{n.data.slides && ' · slides'}</span>
-        <h2>{titleOf(n)}</h2>
-        {n.data.summary && <p>{n.data.summary}</p>}
-      </a>
-    ))}
-    {modules.map((n, i) => (
-      <a class="tile w2" style={`--k:${manual.length + guides.length + i + 1}`} href={`/n/${n.id}`}>
-        <span class="kicker">Module · {n.data.subtitle}</span>
-        <h2>{titleOf(n)}</h2>
-        {n.data.summary && <p>{n.data.summary}</p>}
-      </a>
-    ))}
-    {links.map((l, i) => (
-      <a class="tile w3" style={`--k:${manual.length + guides.length + modules.length + i + 1}`} href={l.href}>
-        <span class="kicker">{l.href.startsWith('http') ? new URL(l.href).host : 'docs.usecook.com' + l.href}</span>
-        <h2>{l.title}</h2>
-        <p>{l.blurb}</p>
-      </a>
-    ))}
-  </div>
+      {manual.map((n, i) => (
+        <a class="tile w2" style={`--k:${i + 1}`} href={`/n/${n.id}`}>
+          <span class="kicker">Chapter {n.data.order}</span>
+          <h2>{titleOf(n).replace(/^\d+\. /, '')}</h2>
+          <p>{n.data.summary}</p>
+        </a>
+      ))}
+    </div>
+  </section>
+  <section class="group">
+    <h2 class="group-title"><span>Guides</span><small>show, don't tell</small></h2>
+    <div class="tiles">
+      {guides.map((n, i) => (
+        <a class="tile w2" style={`--k:${i}`} href={`/n/${n.id}`}>
+          <span class="kicker">Guide{n.data.slides && ' · slides'}</span>
+          <h2>{titleOf(n)}</h2>
+          {n.data.summary && <p>{n.data.summary}</p>}
+        </a>
+      ))}
+    </div>
+  </section>
+  <section class="group">
+    <h2 class="group-title"><span>Modules</span><small>one <code>use</code> line per ecosystem · <a href="https://rocks.usecook.com">the index</a></small></h2>
+    <div class="tiles">
+      {modules.map((n, i) => (
+        <a class="tile w2" style={`--k:${i}`} href={`/n/${n.id}`}>
+          <span class="kicker">{n.data.subtitle}</span>
+          <h2>{titleOf(n)}</h2>
+          {n.data.summary && <p>{n.data.summary}</p>}
+        </a>
+      ))}
+    </div>
+  </section>
+  <section class="group">
+    <h2 class="group-title"><span>Elsewhere</span></h2>
+    <div class="tiles">
+      {links.map((l, i) => (
+        <a class="tile w3" style={`--k:${i}`} href={l.href}>
+          <span class="kicker">{l.href.startsWith('http') ? new URL(l.href).host : 'docs.usecook.com' + l.href}</span>
+          <h2>{l.title}</h2>
+          <p>{l.blurb}</p>
+        </a>
+      ))}
+    </div>
+  </section>
 </Shell>

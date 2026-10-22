@@ -86,3 +86,7 @@ h2 { font-size:clamp(1.4rem,2vw,2rem); }
 .site-header nav { display:flex; gap:22px; } .nav-link { color:var(--muted); text-decoration:none; } .nav-link:hover { color:var(--accent); }
 .chapter-nav { display:flex; justify-content:space-between; gap:20px; margin-top:50px; padding-top:24px; border-top:1px solid var(--line); font:13px/1.6 var(--font-mono); } .chapter-nav a { text-decoration:none; color:var(--muted); } .chapter-nav a:hover { color:var(--accent); }
 @media(max-width:600px) { .site-header nav { gap:12px; } .site-header nav a:nth-child(n+4) { display:none; } }
+/* The landing page's sections: a mono heading with a rule, then that section's tiles. */
+.group + .group { margin-top: 44px; }
+.group-title { display:flex; align-items:baseline; gap:16px; margin:0 0 14px; padding-bottom:10px; border-bottom:1px solid var(--line); font:400 13px/1.6 var(--font-mono); letter-spacing:.08em; text-transform:uppercase; color:var(--ink); }
+.group-title small { font-size:12px; letter-spacing:0; text-transform:none; color:var(--muted); } .group-title code { color:var(--accent); } .group-title a { color:var(--muted); }
