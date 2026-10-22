@@ -50,7 +50,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 for (const c of chapters) {
   const body = tagFences(rewrite(c.body.join('\n'))).trim();
-  const summary = (body.split('\n\n').find(p => p && !p.startsWith('```') && !p.startsWith('#') && !p.startsWith('|')) ?? '').replace(/\s+/g, ' ').replace(/[`*\[\]]/g, '').replace(/\(http[^)]*\)|\(\/n\/[^)]*\)|\(#[^)]*\)/g, '').slice(0, 160).replace(/\s\S*$/, '…');
+  const summary = (body.split('\n\n').find(p => p && !p.startsWith('```') && !p.startsWith('#') && !p.startsWith('|')) ?? '').replace(/\s+/g, ' ').replace(/[`*\[\]]/g, '').replace(/\(http[^)]*\)|\(\/[^)]*\)|\(#[^)]*\)/g, '').replace(/(^|\s)- /g, '$1').slice(0, 160).replace(/\s\S*$/, '…');
   writeFileSync(`${out}/${c.id.split('/').pop()}.md`, `---\ntitle: ${JSON.stringify(`${c.n}. ${c.title}`)}\nsummary: ${JSON.stringify(summary)}\ntags: [manual]\norder: ${c.n}\n---\n\n${body}\n`);
 }
 writeFileSync(resolve(root, 'content/manual/preamble.json'), JSON.stringify({ lede: inlineHtml(rewrite(preamble.join('\n')).trim()) }));
