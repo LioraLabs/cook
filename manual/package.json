@@ -6,10 +6,11 @@
     "predev": "node scripts/manual.mjs",
     "dev": "astro dev --host 127.0.0.1 --port 4400",
     "prebuild": "node scripts/manual.mjs",
-    "build": "astro build",
+    "build": "astro build && npm run standard",
     "preview": "astro preview",
     "test": "node scripts/check.mjs",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "standard": "cd ../standard && pnpm build && rm -rf ../manual/dist/standard && cp -r dist ../manual/dist/standard"
   },
   "dependencies": {
     "@astrojs/markdown-remark": "^7.3.1",

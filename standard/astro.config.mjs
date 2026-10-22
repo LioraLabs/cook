@@ -11,7 +11,7 @@ import { rehypeClauseXrefs } from './src/plugins/rehype-clause-xrefs.ts';
 import { rehypeCsPermalinks } from './src/plugins/rehype-cs-permalinks.ts';
 import { rehypeBareRefLint } from './src/plugins/rehype-bare-ref-lint.ts';
 import { harvestCsIds, defaultChangesPath } from './src/plugins/cs-ids.ts';
-import { harvestClauses, defaultContentRoot } from './src/plugins/clauses.ts';
+import { harvestClauses, defaultContentRoot, BASE } from './src/plugins/clauses.ts';
 import { SLUG_RENAMES } from './scripts/slug-renames.ts';
 import { SLUG_MAPPING } from './scripts/slug-mapping.ts';
 
@@ -32,7 +32,8 @@ void SLUG_RENAMES;
 void SLUG_MAPPING;
 
 export default defineConfig({
-  site: 'https://standard.usecook.com',
+  site: 'https://docs.usecook.com',
+  base: BASE,
   redirects: {
     '/03-syntactic-grammar/':            '/04-toplevel/',
     '/04-recipes/':                      '/06-recipes/',
@@ -55,6 +56,7 @@ export default defineConfig({
       description: 'The authoritative specification of the Cookfile language.',
       customCss: ['./src/styles/spec.css'],
       sidebar: [
+        { label: '← The Cook Manual', link: 'https://docs.usecook.com/' },
         { label: 'Overview', link: '/' },
         {
           label: 'Front matter',
@@ -139,7 +141,7 @@ export default defineConfig({
       [rehypeClauseXrefs, { clauseMap }],
       [rehypeCsPermalinks, {
         knownIds: knownCsIds,
-        changesHref: '/appendix/e-changes/',
+        changesHref: `${BASE}/appendix/e-changes/`,
       }],
       rehypeBareRefLint,
     ],

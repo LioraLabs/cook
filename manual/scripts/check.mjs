@@ -17,4 +17,5 @@ for (const route of ['index.html', 'notes/index.html', 'n/guides/watch-the-cache
     assert(existsSync(target) || existsSync(join(target, 'index.html')), `Broken local link in ${route}: ${href}`);
   }
 }
-console.log(`docs: ${chapters.length} chapters, guides, slides, links and wikilinks resolve.`);
+assert(existsSync(join(dist, 'standard/index.html')) && existsSync(join(dist, 'standard/17-cache/index.html')), 'The Standard is not mounted at /standard/');
+console.log(`docs: ${chapters.length} chapters, the Standard at /standard/, guides, slides, links and wikilinks resolve.`);

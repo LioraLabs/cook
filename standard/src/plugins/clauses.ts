@@ -67,10 +67,12 @@ function numberFrom(
 
 // Starlight lowercases file slugs. `02-lexical.mdx` → `/02-lexical/`;
 // `appendix/A-grammar.mdx` → `/appendix/a-grammar/`.
+// The site mounts under BASE (docs.usecook.com/standard); every href the plugins emit carries it.
+export const BASE = '/standard';
 function fileToRoute(relPath: string): string {
   const noExt = relPath.replace(/\.mdx$/, '').toLowerCase();
-  if (noExt === 'index') return '/';
-  return `/${noExt}/`;
+  if (noExt === 'index') return `${BASE}/`;
+  return `${BASE}/${noExt}/`;
 }
 
 function walkMdx(root: string, out: string[]): void {
