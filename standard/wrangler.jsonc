@@ -1,0 +1,7 @@
+{
+  "name": "cook-standard",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" }
+  // Attaching the subdomain changes DNS on deploy; add when ready:
+  // "routes": [{ "pattern": "standard.usecook.com", "custom_domain": true }]
+}

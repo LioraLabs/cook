@@ -84,3 +84,16 @@ a.clause-xref {
 a.clause-xref:hover {
   text-decoration: underline;
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * Kanagawa (Wave): the same palette as usecook.com and the trailer.
+ * ──────────────────────────────────────────────────────────── */
+:root, :root[data-theme='light'] {
+  color-scheme: dark;
+  --sl-color-accent-low: #2D4F67; --sl-color-accent: #FFA066; --sl-color-accent-high: #FFC79A;
+  --sl-color-white: #DCD7BA; --sl-color-gray-1: #C8C093; --sl-color-gray-2: #A6A69C; --sl-color-gray-3: #727169;
+  --sl-color-gray-4: #54546D; --sl-color-gray-5: #363646; --sl-color-gray-6: #2A2A37; --sl-color-black: #1F1F28;
+  --sl-color-bg: #1F1F28; --sl-color-bg-nav: #181820; --sl-color-bg-sidebar: #1F1F28;
+  --sl-color-red: #E46876; --sl-color-orange: #FF9E3B; --sl-color-blue: #7FB4CA; --sl-color-purple: #957FB8; --sl-color-green: #98BB6C;
+  --sl-font: 'Inter', system-ui, sans-serif; --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}

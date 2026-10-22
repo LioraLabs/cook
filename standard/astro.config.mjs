@@ -32,6 +32,7 @@ void SLUG_RENAMES;
 void SLUG_MAPPING;
 
 export default defineConfig({
+  site: 'https://standard.usecook.com',
   redirects: {
     '/03-syntactic-grammar/':            '/04-toplevel/',
     '/04-recipes/':                      '/06-recipes/',

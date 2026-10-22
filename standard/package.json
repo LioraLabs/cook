@@ -11,7 +11,8 @@
     "preview": "astro preview",
     "host": "astro preview --host",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "deploy": "pnpm build && wrangler deploy"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.30.0",

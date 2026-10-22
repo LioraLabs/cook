@@ -25,7 +25,7 @@ for (const c of chapters) for (const l of c.body) { const h = l.match(/^#{3,4} (
 
 const rewrite = text => text
   .replace(/\]\(#([a-z0-9-]+)\)/g, (m, a) => anchors.has(a) ? `](${anchors.get(a)})` : m)
-  .replace(/\]\(standard\/\)/g, `](${github}standard/)`)
+  .replace(/\]\(standard\/\)/g, '](https://standard.usecook.com/)')
   .replace(/\]\(examples\/\)/g, `](${github}examples/)`)
   .replace(/\]\((docs\/[^)]+\.md)\)/g, `](${github}$1)`)
   .replace(/^### /gm, '## ').replace(/^#### /gm, '### ');

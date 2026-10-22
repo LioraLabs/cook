@@ -5,7 +5,7 @@ import preamble from '../../content/manual/preamble.json';
 const manual = await getManual();
 const guides = (await getNotes()).filter(n => !n.data.order);
 const links = [
-  { title: 'The Cook Standard', href: 'https://github.com/LioraLabs/cook/tree/main/standard', blurb: 'The formal specification. Where the manual and the Standard disagree, the Standard wins.' },
+  { title: 'The Cook Standard', href: 'https://standard.usecook.com', blurb: 'The formal specification. Where the manual and the Standard disagree, the Standard wins.' },
   { title: 'Modules', href: 'https://rocks.usecook.com', blurb: 'cook_cc, cook_pnpm, cook_dotnet, cook_rust: the blessed index.' },
   { title: 'LioraLabs/cook', href: 'https://github.com/LioraLabs/cook', blurb: 'Source, examples, and the manual this site is built from.' },
   { title: 'usecook.com', href: 'https://usecook.com', blurb: 'Cook Cloud, Modules Pro, and build pipeline consulting.' },
