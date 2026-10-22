@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/manual.mjs",
+    "predev": "node scripts/manual.mjs && node scripts/modules.mjs",
     "dev": "astro dev --host 127.0.0.1 --port 4400",
-    "prebuild": "node scripts/manual.mjs",
+    "prebuild": "node scripts/manual.mjs && node scripts/modules.mjs",
     "build": "astro build && npm run standard",
     "preview": "astro preview",
     "test": "node scripts/check.mjs",

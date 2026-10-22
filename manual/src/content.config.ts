@@ -17,6 +17,7 @@ const notes = defineCollection({
     subtitle: z.string().optional(),
     slides: z.boolean().default(false),
     order: z.number().optional(), // manual chapters read in this order
+    module: z.boolean().default(false), // a blessed module's page, generated from its README
   }).passthrough(),
 });
 

@@ -3,7 +3,8 @@ import Shell from '../layouts/Shell.astro';
 import { getNotes, getManual, titleOf } from '../lib';
 import preamble from '../../content/manual/preamble.json';
 const manual = await getManual();
-const guides = (await getNotes()).filter(n => !n.data.order);
+const guides = (await getNotes()).filter(n => !n.data.order && !n.data.module);
+const modules = (await getNotes()).filter(n => n.data.module).sort((a, b) => a.id.localeCompare(b.id));
 const links = [
   { title: 'The Cook Standard', href: '/standard/', blurb: 'The formal specification. Where the manual and the Standard disagree, the Standard wins.' },
   { title: 'Modules', href: 'https://rocks.usecook.com', blurb: 'cook_cc, cook_pnpm, cook_dotnet, cook_rust: the blessed index.' },
@@ -33,8 +34,15 @@ const links = [
         {n.data.summary && <p>{n.data.summary}</p>}
       </a>
     ))}
+    {modules.map((n, i) => (
+      <a class="tile w2" style={`--k:${manual.length + guides.length + i + 1}`} href={`/n/${n.id}`}>
+        <span class="kicker">Module · {n.data.subtitle}</span>
+        <h2>{titleOf(n)}</h2>
+        {n.data.summary && <p>{n.data.summary}</p>}
+      </a>
+    ))}
     {links.map((l, i) => (
-      <a class="tile w3" style={`--k:${manual.length + guides.length + i + 1}`} href={l.href}>
+      <a class="tile w3" style={`--k:${manual.length + guides.length + modules.length + i + 1}`} href={l.href}>
         <span class="kicker">{l.href.startsWith('http') ? new URL(l.href).host : 'docs.usecook.com' + l.href}</span>
         <h2>{l.title}</h2>
         <p>{l.blurb}</p>

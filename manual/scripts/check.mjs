@@ -17,5 +17,6 @@ for (const route of ['index.html', 'notes/index.html', 'n/guides/watch-the-cache
     assert(existsSync(target) || existsSync(join(target, 'index.html')), `Broken local link in ${route}: ${href}`);
   }
 }
+for (const m of ['cook_cc', 'cook_pnpm', 'cook_dotnet', 'cook_rust']) assert(existsSync(join(dist, 'n/modules', m, 'index.html')), `Module page missing: ${m}`);
 assert(existsSync(join(dist, 'standard/index.html')) && existsSync(join(dist, 'standard/17-cache/index.html')), 'The Standard is not mounted at /standard/');
-console.log(`docs: ${chapters.length} chapters, the Standard at /standard/, guides, slides, links and wikilinks resolve.`);
+console.log(`docs: ${chapters.length} chapters, four module pages, the Standard at /standard/, guides, slides, links and wikilinks resolve.`);
