@@ -97,3 +97,6 @@ a.clause-xref:hover {
   --sl-color-red: #E46876; --sl-color-orange: #FF9E3B; --sl-color-blue: #7FB4CA; --sl-color-purple: #957FB8; --sl-color-green: #98BB6C;
   --sl-font: 'Inter', system-ui, sans-serif; --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
+
+/* Every chapter's body opens with its own numbered H1 carrying the clause anchor, so Starlight's title panel would show the same heading twice. The frontmatter title still names the tab, the sidebar and search. */
+.content-panel:has(h1#_top) { display: none; }
