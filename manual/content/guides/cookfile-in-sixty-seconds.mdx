@@ -1,0 +1,87 @@
+---
+title: "A Cookfile in sixty seconds"
+date: 2026-10-22
+summary: "The whole language on six slides: recipe, gather, cook, placeholders, seal, chore. Press present."
+tags: [guide, language]
+slides: true
+---
+
+## One recipe
+
+```cook
+recipe sprite-sheet
+    gather "images/*.svg"
+    cook "build/sprites/$<in.stem>.png" {
+        rsvg-convert $<in> -o $<out>
+    }
+    cook "build/spritesheet.png" {
+        magick montage $<in> -tile x1 -geometry +0+0 $<out>
+    }
+```
+
+`gather` collects inputs. Each `cook` step declares a target.
+
+---
+
+## Outputs shape the work
+
+- `$<in.stem>` in a target varies per input, so the step **fans out**: one unit per SVG, in parallel.
+- A static target **gathers**: every PNG in, one sheet out.
+- You never write the loop or the join.
+
+---
+
+## Connect recipes
+
+```cook
+recipe ship
+    cook "build/game.zip" {
+        zip -j $<out> $<sprite-sheet>
+    }
+```
+
+`$<sprite-sheet>` expands to that recipe's outputs **and** records the edge. See [[4. Connecting recipes]].
+
+---
+
+## You own the key
+
+```cook
+tools compiler
+    cc
+
+recipe app
+    gather "src/*.c"
+    seal compiler
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+```
+
+`seal` puts the compiler's identity in every unit's key. Nothing else goes in unless you say so.
+
+---
+
+## Data shapes the build
+
+```cook
+probe platforms
+    json { cat platforms.json }
+
+recipe bundles
+    gather platforms
+    cook "build/$<in.name>/game.zip" { zip -$<in.level> -j $<out> $<sprite-sheet> }
+```
+
+One unit per record. Add a record, one new unit builds; delete one, cook sweeps the orphan.
+
+---
+
+## Chores
+
+```cook
+chore deploy host="prod": ship
+    rsync -a build/ $<host>:/srv/game/
+```
+
+No artifact, never cached, a real TTY, real parameters. `cook deploy staging`.
+
+That's the language. The rest is in [[2. Your first recipe]].

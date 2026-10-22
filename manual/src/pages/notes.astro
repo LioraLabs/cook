@@ -1,0 +1,61 @@
+---
+import Shell from '../layouts/Shell.astro';
+import { getNotes, titleOf, fmt } from '../lib';
+const notes = await getNotes();
+const counts = new Map<string, number>();
+for (const t of notes.flatMap(n => n.data.tags)) counts.set(t, (counts.get(t) ?? 0) + 1);
+const tags = [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+---
+<Shell title="All pages — cook docs">
+  <div class="page-heading"><a class="back-link" href="/">← docs</a><h1>All pages</h1><p>{notes.length} pages: the manual's chapters and the guides. Press / to search.</p></div>
+  <label class="find-q"><span class="kicker">Find</span><input id="q" type="search" placeholder="title, tag, anything in the text…" autocomplete="off" enterkeyhint="search" /><kbd>/</kbd></label>
+  <div class="find">
+    <div class="chips">{tags.map(([t, n]) => <button type="button" data-tag={t} aria-pressed="false">#{t}<span>{n}</span></button>)}</div>
+    <p class="status" id="count" aria-live="polite"></p>
+  </div>
+  <div class="tiles notes-grid" id="list">
+    {notes.map((n, i) => (
+      <a class:list={['tile', i === 0 ? 'w4 h2 lead' : 'w2']} style={`--k:${Math.min(i, 12)}`} href={`/n/${n.id}`} data-id={n.id} data-tags={n.data.tags.join(' ')}>
+        <span class="date">{fmt(n.data.date)}{n.data.slides && ' · slides'}</span>
+        <h2>{titleOf(n)}</h2>
+        {n.data.summary && <p>{n.data.summary}</p>}
+      </a>
+    ))}
+  </div>
+  <p class="status" id="empty" hidden>Nothing matches.</p>
+</Shell>
+<script>
+  import MiniSearch from 'minisearch';
+  const list = document.querySelector<HTMLElement>('#list')!;
+  const items = [...list.querySelectorAll<HTMLElement>('.tile')];
+  const q = document.querySelector<HTMLInputElement>('#q')!;
+  const chips = [...document.querySelectorAll<HTMLButtonElement>('[data-tag]')];
+  const count = document.querySelector('#count')!, empty = document.querySelector<HTMLElement>('#empty')!;
+  const search = new MiniSearch({ fields: ['title', 'tags', 'summary', 'text'], searchOptions: { prefix: true, fuzzy: 0.2, boost: { title: 3, tags: 2, summary: 1.5 } } });
+  search.addAll(await (await fetch('/search.json')).json());
+  let tag = '';
+  const apply = () => {
+    const words = q.value.trim();
+    const rank = new Map(words ? search.search(words).map((r, i) => [r.id, i]) : []);
+    let shown = 0;
+    for (const el of items) {
+      const hit = (!words || rank.has(el.dataset.id)) && (!tag || el.dataset.tags!.split(' ').includes(tag));
+      el.hidden = !hit; shown += +hit;
+      el.style.order = words ? String(rank.get(el.dataset.id) ?? 0) : '';
+    }
+    list.classList.toggle('filtered', !!(words || tag));
+    count.textContent = words || tag ? `${shown} of ${items.length}` : '';
+    empty.hidden = shown > 0;
+  };
+  q.value = new URLSearchParams(location.search).get('q') ?? ''; // /notes?q=… opens a search
+  if (q.value) apply();
+  q.addEventListener('input', apply);
+  chips.forEach(b => b.addEventListener('click', () => {
+    tag = tag === b.dataset.tag ? '' : b.dataset.tag!;
+    chips.forEach(x => x.setAttribute('aria-pressed', String(x.dataset.tag === tag))); apply();
+  }));
+  addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+    if (e.key === 'Escape' && document.activeElement === q) { q.value = ''; apply(); q.blur(); }
+  });
+</script>

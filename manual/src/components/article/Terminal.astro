@@ -1,0 +1,55 @@
+---
+interface Props { title?: string; kicker?: string; lines: { text: string; tone?: 'cmd' | 'out' | 'done' | 'gap' | 'code' }[] }
+const { title = '~', kicker, lines: given } = Astro.props;
+const lines = given.map(l => ({ tone: 'out' as const, ...l }));
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Cookfile highlighting: first match wins left to right, so a # inside a string stays a string.
+const cook = (s: string) => esc(s).replace(/(#.*$)|("[^"]*")|(\$&lt;.*?&gt;)|\b(recipe|chore|gather|cook|seal|probe|files|tools|use|local|function|end|json)\b/g,
+  (m, c, str, ph, kw) => `<span class="${c ? 'c' : str ? 's' : ph ? 'p' : 'k'}">${m}</span>`);
+// Commands type at 32ms a character, then output lands a line at a time.
+let t = 350;
+const rows = lines.map(l => {
+  const at = t;
+  if (l.tone === 'cmd') t += l.text.length * 32 + 420; else if (l.tone !== 'code') t += 70;
+  if (l.tone === 'cmd') return { at, cls: 'cmd', html: `<span class="typed" style="--n:${l.text.length}">${esc(l.text)}</span>` };
+  if (l.tone === 'code') return { at: 0, cls: 'code', html: cook(l.text) || ' ' };
+  const [, word = '', rest = l.text] = l.text.match(/^(\s*\S+)(.*)$/) ?? [];
+  return { at, cls: l.tone, html: l.tone === 'out' || l.tone === 'gap' ? esc(l.text) || ' ' : `<b>${esc(word)}</b>${esc(rest)}` };
+});
+---
+<div class="article-term"><section class="tile p-term" style="--k:0" data-term>
+  <div class="p-term-bar"><i></i><i></i><i></i><span>{title}</span>{kicker && <span class="kicker">{kicker}</span>}</div>
+  <pre class:list={{ scroll: rows.some(r => r.cls !== 'code') }}>{rows.map(r => <div class={r.cls} style={`--t:${r.at}ms`} set:html={r.html} />)}</pre>
+</section></div>
+<script is:inline data-astro-rerun>
+  // Starts each terminal's replay the first time it is mostly on screen.
+  for (const el of document.querySelectorAll('[data-term]:not(.on)')) {
+    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { el.classList.add('on'); io.disconnect(); } }, { threshold: .5 });
+    io.observe(el);
+  }
+</script>
+<style is:global>
+ .tile.p-term {padding:0;gap:0;background:#0b0b12;}
+ .p-term-bar {display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--tile-line);font:11px/1.6 var(--font-mono);color:#6a6f7a;}
+ .p-term-bar i {width:9px;height:9px;border-radius:50%;background:#2a2d38;} .p-term-bar span:first-of-type {margin-left:8px;} .p-term-bar .kicker {margin-left:auto;}
+ .p-term pre {margin:0;padding:14px 18px;flex:1;min-height:0;overflow:hidden;font:12px/1.5 var(--font-mono);color:#c9ccd4;background:none;border:0;display:flex;flex-direction:column;}
+ /* A session grows from the bottom, so a long one scrolls its oldest lines away like a real terminal. */
+ .p-term pre.scroll {justify-content:flex-end;}
+ .p-term pre > div {flex:none;white-space:pre;height:0;opacity:0;}
+ .p-term pre > .code {height:auto;opacity:1;}
+ .p-term.on pre > div {animation:term-line 1ms var(--t) forwards;}
+ .p-term .cmd::before {content:'$ ';color:#f4772c;}
+ .p-term .typed {display:inline-block;vertical-align:bottom;overflow:hidden;width:0;}
+ .p-term.on .typed {animation:term-type calc(var(--n) * 32ms) steps(var(--n)) var(--t) forwards;}
+ .p-term .cooked b {color:#fff;} .p-term .done b {color:#4fc27d;} .p-term .rebuild b {color:#e6b84a;font-weight:400;} .p-term .cached {color:#6a6f7a;} .p-term .cached b {font-weight:400;} .p-term .out {color:#8a8f9a;}
+ .p-term .code .k {color:#f4772c;} .p-term .code .s {color:#a8d8a0;} .p-term .code .p {color:#e6b84a;} .p-term .code .c {color:#5c6170;font-style:italic;}
+ @keyframes term-line {to {height:1.5em;opacity:1;}}
+ @keyframes term-type {to {width:calc(var(--n) * 1ch);}}
+ @media(prefers-reduced-motion:reduce) {.p-term pre > div {height:auto;opacity:1;animation:none !important;} .p-term .typed {width:auto;animation:none !important;}}
+</style>
+
+<style>
+  .article-term { margin: 2.2rem 0; }
+  .article-term :global(.p-term) { animation: none; }
+  .article-term :global(.p-term pre) { overflow-x: auto; }
+</style>

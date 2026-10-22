@@ -1,0 +1,117 @@
+---
+// Lines drawn in a stretched SVG, every label in HTML, so text stays full size at any width.
+// Series with `fill` get a dithered area that fades toward the baseline (see dither.ts).
+// Hover (or tap) snaps a crosshair to the nearest x and lists each series' value there.
+interface Series { label: string; color: string; dash?: boolean; fill?: boolean; points: [number, number][] }
+interface Props {
+  title: string;
+  sub?: string;
+  series: Series[];
+  x: { min: number; max: number; ticks: number[]; format?: (v: number) => string; label: string };
+  y: { min: number; max: number; ticks: number[]; format?: (v: number) => string; log?: boolean };
+  marks?: { x: number; label: string }[];
+  value?: (v: number) => string;
+  caption?: string;
+}
+const { title, sub, series, x, y, marks = [], value = v => String(v) } = Astro.props;
+const fx = x.format ?? String, fy = y.format ?? String;
+const px = (v: number) => ((v - x.min) / (x.max - x.min)) * 100;
+const t = (v: number) => (y.log ? Math.log10(v) : v);
+const py = (v: number) => 100 - ((t(v) - t(y.min)) / (t(y.max) - t(y.min))) * 100;
+const xs = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort((a, b) => a - b);
+const tips = xs.map(xv => ({
+  x: px(xv),
+  html: `<b>${x.label}: ${xv}</b>` + series.map(s => {
+    const p = s.points.find(q => q[0] === xv);
+    return p ? `<span><i style="background:${s.color}"></i>${s.label}: ${value(p[1])}</span>` : '';
+  }).join(''),
+}));
+---
+<figure class="viz line-chart" data-line-chart={JSON.stringify(tips)}>
+  <div class="viz-head"><strong>{title}</strong>{sub && <span>{sub}</span>}</div>
+  <div class="viz-legend" style="margin-bottom:22px">{series.map(s => <span><i class:list={{ hollow: s.dash }} style={`background:${s.color};color:${s.color}`}></i>{s.label}</span>)}</div>
+  <div class="frame">
+    <div class="yaxis">{y.ticks.map(v => <span style={`top:${py(v)}%`}>{fy(v)}</span>)}</div>
+    <div class="plot" tabindex="0" aria-label={`${title}. Values are in the table below.`}>
+      {y.ticks.map(v => <div class="grid" style={`top:${py(v)}%`}></div>)}
+      {marks.map(m => <div class="rule" style={`left:${px(m.x)}%`}><span>{m.label}</span></div>)}
+      {series.filter(s => s.fill).map((s, i) => <canvas data-texture={i ? 'hatch' : 'dither'} style={`color:${s.color}`} data-xs={JSON.stringify(s.points.map(p => px(p[0]) / 100))} data-ys={JSON.stringify(s.points.map(p => py(p[1]) / 100))}></canvas>)}
+      {series.map(s => <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" style={`color:${s.color}`}>
+        <polyline points={s.points.map(p => `${px(p[0])},${py(p[1])}`).join(' ')} fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray={s.dash ? '5 4' : undefined} vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+      </svg>)}
+      <div class="cross" hidden></div>
+      <div class="tip" hidden></div>
+    </div>
+    <div></div>
+    <div class="xaxis">{x.ticks.map(v => <span style={`left:${px(v)}%`}>{fx(v)}</span>)}</div>
+  </div>
+  <details>
+    <summary>data as table</summary>
+    <div class="scroll"><table>
+      <thead><tr><th>{x.label}</th>{series.map(s => <th>{s.label}</th>)}</tr></thead>
+      <tbody>{xs.map(xv => <tr><td>{fx(xv)}</td>{series.map(s => <td>{(p => p ? value(p[1]) : '')(s.points.find(q => q[0] === xv))}</td>)}</tr>)}</tbody>
+    </table></div>
+  </details>
+  {Astro.slots.has('default') && <figcaption><slot /></figcaption>}
+</figure>
+
+<style>
+  .line-chart { font: 12px/1.4 var(--font-mono); color: var(--muted); }
+  .frame { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; padding-right: 20px; }
+  .yaxis { position: relative; min-width: 3.5ch; }
+  .yaxis span { position: absolute; right: 0; transform: translateY(-50%); font-size: 10px; white-space: nowrap; }
+  .plot { position: relative; height: 220px; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); outline: none; touch-action: pan-y; }
+  .plot svg, .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .plot svg { filter: drop-shadow(0 0 3px currentColor); }
+  .plot canvas { filter: drop-shadow(0 0 2px currentColor); }
+  .grid { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); opacity: .7; }
+  .rule { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--ink); opacity: .6; }
+  .rule span { position: absolute; top: 2px; left: 6px; font-size: 10px; color: var(--ink); white-space: nowrap; }
+  .xaxis { position: relative; height: 22px; }
+  .xaxis span { position: absolute; top: 6px; transform: translateX(-50%); font-size: 10px; white-space: nowrap; }
+  .cross[hidden], .tip[hidden] { display: none; }
+  .cross { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--ink); pointer-events: none; }
+  .tip { position: absolute; top: 8px; z-index: 1; display: grid; gap: 2px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); pointer-events: none; white-space: nowrap; color: var(--ink); }
+  .tip :global(b) { font-weight: 400; color: var(--muted); }
+  .tip :global(i) { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  details { margin-top: 12px; }
+  .scroll { overflow-x: auto; max-height: 280px; }
+  .line-chart figcaption { font: 12px/1.6 var(--font-sans); }
+  @media (max-width: 560px) { .xaxis span:nth-child(even) { display: none; } }
+  .scroll table { display: table; margin: 12px 0 0; font-size: 12px; }
+</style>
+
+<script>
+  import { paintArea, onResize } from './dither';
+  for (const fig of document.querySelectorAll<HTMLElement>('[data-line-chart]'))
+    onResize(fig, () => fig.querySelectorAll<HTMLCanvasElement>('.plot canvas').forEach(c => paintArea(c, JSON.parse(c.dataset.xs!), JSON.parse(c.dataset.ys!), c.dataset.texture as 'dither' | 'hatch')));
+
+  for (const fig of document.querySelectorAll<HTMLElement>('[data-line-chart]')) {
+    const tips: { x: number; html: string }[] = JSON.parse(fig.dataset.lineChart!);
+    const plot = fig.querySelector<HTMLElement>('.plot')!, cross = fig.querySelector<HTMLElement>('.cross')!, tip = fig.querySelector<HTMLElement>('.tip')!;
+    let at = -1;
+    const show = (i: number) => {
+      at = Math.max(0, Math.min(tips.length - 1, i));
+      const t = tips[at];
+      cross.hidden = tip.hidden = false;
+      cross.style.left = `${t.x}%`;
+      tip.innerHTML = t.html;
+      // beside the crosshair on whichever side has room, never outside the plot
+      const w = plot.clientWidth, tw = tip.offsetWidth, cx = (t.x / 100) * w;
+      const left = cx + 10 + tw <= w ? cx + 10 : cx - 10 - tw;
+      tip.style.left = `${Math.max(0, Math.min(w - tw, left))}px`;
+    };
+    const hide = () => { cross.hidden = tip.hidden = true; };
+    plot.addEventListener('pointermove', e => {
+      const box = plot.getBoundingClientRect(), pct = ((e.clientX - box.left) / box.width) * 100;
+      let best = 0;
+      tips.forEach((t, i) => { if (Math.abs(t.x - pct) < Math.abs(tips[best].x - pct)) best = i; });
+      show(best);
+    });
+    plot.addEventListener('pointerleave', hide);
+    plot.addEventListener('blur', hide);
+    plot.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); show(at + (e.key === 'ArrowRight' ? 1 : -1)); }
+    });
+  }
+</script>

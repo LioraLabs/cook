@@ -1,0 +1,37 @@
+---
+import { render } from 'astro:content';
+import { resolve } from 'node:path';
+import Shell from '../../layouts/Shell.astro';
+import { getNotes, getManual, titleOf, fmt, backlinks, dir } from '../../lib';
+export async function getStaticPaths() {
+  return (await getNotes()).map(note => ({ params: { id: note.id }, props: { note } }));
+}
+const { note } = Astro.props;
+const editPath = resolve(process.cwd(), note.filePath!);
+const back = backlinks(note, await getNotes());
+const { Content, headings } = await render(note);
+const toc = headings.filter(h => h.depth === 2);
+const minutes = Math.max(1, Math.ceil((note.body ?? '').split(/\s+/).length / 220));
+// Manual chapters carry previous/next links; guides stand alone.
+const manual = await getManual();
+const at = manual.findIndex(n => n.id === note.id);
+const prev = at > 0 ? manual[at - 1] : undefined, next = at >= 0 ? manual[at + 1] : undefined;
+---
+<Shell title={`${titleOf(note)} — cook docs`} description={note.data.summary}>
+  <div class="reading-tiles">
+    {toc.length > 0 && <aside class="reading-side"><div class="tile contents" style="--k:1"><span class="kicker">Contents</span><ol>{toc.map(h => <li><a href={`#${h.slug}`}>{h.text}</a></li>)}</ol></div></aside>}
+    <article class="tile reading" style="--k:0" data-edit={editPath}>
+      <header class="post-header">
+        <a class="back-link" href="/">← docs</a>
+        <span class="kicker">{note.data.date && <><time>{fmt(note.data.date)}</time> · </>}{minutes} min read{note.data.slides && <> · <a href={`/s/${note.id}`}>present ▸</a></>}</span>
+        <h1>{titleOf(note)}</h1>
+        {note.data.subtitle && <p class="post-subtitle">{note.data.subtitle}</p>}
+        {note.data.summary && <p class="post-deck">{note.data.summary}</p>}
+        {note.data.tags.length > 0 && <div class="tags">{note.data.tags.map(t => <span>{t}</span>)}</div>}
+      </header>
+      <div class="prose"><Content /></div>
+      {(prev || next) && <nav class="chapter-nav" aria-label="Chapters">{prev ? <a href={`/n/${prev.id}`}>← {titleOf(prev)}</a> : <span />}{next && <a href={`/n/${next.id}`}>{titleOf(next)} →</a>}</nav>}
+      {back.length > 0 && <footer class="backlinks"><span class="kicker">Linked from</span><ul>{back.map(b => <li><a href={`/n/${b.id}`}>{titleOf(b)}</a></li>)}</ul></footer>}
+    </article>
+  </div>
+</Shell>

@@ -1,0 +1,39 @@
+---
+import { render } from 'astro:content';
+import Shell from '../../layouts/Shell.astro';
+import '../../styles/deck.css';
+import { getNotes, titleOf, fmt } from '../../lib';
+export async function getStaticPaths() {
+  return (await getNotes()).filter(n => n.data.slides).map(note => ({ params: { id: note.id }, props: { note } }));
+}
+const { note } = Astro.props;
+const { Content } = await render(note);
+---
+<Shell title={`${titleOf(note)} — slides`} bare>
+  <a class="deck-close" href={`/n/${note.id}`} aria-label="Close slides">esc ✕</a>
+  <main class="deck prose" id="deck">
+    <section class="slide cover">
+      <span class="kicker"><a href={`/n/${note.id}`}>notes</a>{note.data.date && <> · {fmt(note.data.date)}</>}</span>
+      <h1>{titleOf(note)}</h1>
+      {note.data.subtitle && <p class="post-subtitle">{note.data.subtitle}</p>}
+      {note.data.summary && <p class="post-deck">{note.data.summary}</p>}
+    </section>
+    <Content />
+  </main>
+</Shell>
+<script>
+  // ←/→ (and space, j/k, PageUp/Down) step slides; f toggles fullscreen; Esc leaves (the browser's own Esc exits fullscreen first). Scroll and swipe work on their own via scroll-snap.
+  const deck = document.querySelector<HTMLElement>('#deck')!;
+  const slides = [...deck.querySelectorAll<HTMLElement>(':scope > .slide')];
+  slides.forEach((s, i) => { s.id = String(i + 1); s.dataset.n = `${i + 1} / ${slides.length}`; });
+  document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'center' }); // #3 opens slide 3
+  const current = () => Math.max(0, slides.findIndex(s => s.getBoundingClientRect().bottom > innerHeight / 2));
+  const go = (d: number) => { const s = slides[Math.min(slides.length - 1, Math.max(0, current() + d))]; s.scrollIntoView({ block: 'center' }); history.replaceState(null, '', `#${s.id}`); };
+  const keys: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ' ': 1, j: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1, k: -1 };
+  addEventListener('keydown', e => {
+    if (e.key in keys) { e.preventDefault(); go(keys[e.key]); }
+    if (e.key === 'Escape' && !document.fullscreenElement) location.href = document.querySelector<HTMLAnchorElement>('.deck-close')!.href;
+    if (e.key === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  });
+  deck.focus();
+</script>

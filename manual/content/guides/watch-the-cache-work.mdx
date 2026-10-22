@@ -1,0 +1,70 @@
+---
+title: "Watch the cache work"
+date: 2026-10-22
+summary: "A five-node recipe, run three times: cold, fully cached, and after one edit. Real output, replayed."
+tags: [guide, cache]
+---
+import Terminal from '../../src/components/article/Terminal.astro';
+
+This is `examples/02-pipeline` from the repository. One recipe counts the words in every chapter, totals them, and writes a report. Three steps, five nodes.
+
+<Terminal title="examples/02-pipeline" kicker="Cookfile" lines={[
+  { text: 'recipe report', tone: 'code' },
+  { text: '    gather "chapters/*.txt"', tone: 'code' },
+  { text: '', tone: 'code' },
+  { text: '    # fan-out: one count per chapter', tone: 'code' },
+  { text: '    cook "build/counts/$<in.stem>.count" {', tone: 'code' },
+  { text: "        wc -w < $<in> | tr -d ' ' > $<out>", tone: 'code' },
+  { text: '    }', tone: 'code' },
+  { text: '', tone: 'code' },
+  { text: '    # many-to-one: every count in', tone: 'code' },
+  { text: '    cook "build/total.txt" {', tone: 'code' },
+  { text: '        cat $<in> | paste -sd+ - | bc > $<out>', tone: 'code' },
+  { text: '    }', tone: 'code' },
+  { text: '', tone: 'code' },
+  { text: '    # one step, two outputs', tone: 'code' },
+  { text: '    cook "build/report.txt" "build/report.csv" {', tone: 'code' },
+  { text: '        ...', tone: 'code' },
+  { text: '    }', tone: 'code' },
+]} />
+
+## Cold, then cached, then one edit
+
+The first run cooks all five nodes. The second run touches nothing: every key is already in the store. Then one chapter changes, and exactly the nodes downstream of it rebuild. The count for the other chapters, untouched, stays cached.
+
+<Terminal title="~/examples/02-pipeline" kicker="cook 0.17.0" lines={[
+  { text: 'cook report', tone: 'cmd' },
+  { text: '      Cooked report/build/counts/one.count in 1ms', tone: 'cooked' },
+  { text: '      Cooked report/build/counts/three.count in 1ms', tone: 'cooked' },
+  { text: '      Cooked report/build/counts/two.count in 1ms', tone: 'cooked' },
+  { text: '      Cooked report/build/total.txt in 1ms', tone: 'cooked' },
+  { text: '      Cooked report/build/report.txt in 2ms', tone: 'cooked' },
+  { text: '    Finished in 11ms   (5 nodes, 0 cached)', tone: 'done' },
+  { text: 'cook report', tone: 'cmd' },
+  { text: '      Cached report (5 nodes)', tone: 'cached' },
+  { text: '    Finished in 1ms   (5 nodes, all cached)', tone: 'done' },
+  { text: "sed -i 's/moon/sun and stars/' chapters/two.txt", tone: 'cmd' },
+  { text: 'cook report', tone: 'cmd' },
+  { text: '      Cached report/build/counts/one.count', tone: 'cached' },
+  { text: '      Cached report/build/counts/three.count', tone: 'cached' },
+  { text: '  Rebuilding report/build/counts/two.count — input changed: chapters/two.txt', tone: 'rebuild' },
+  { text: '      Cooked report/build/counts/two.count in 1ms', tone: 'cooked' },
+  { text: '  Rebuilding report/build/total.txt — input changed: build/counts/two.count', tone: 'rebuild' },
+  { text: '      Cooked report/build/total.txt in 1ms', tone: 'cooked' },
+  { text: '  Rebuilding report/build/report.txt — input changed: build/total.txt', tone: 'rebuild' },
+  { text: '      Cooked report/build/report.txt in 2ms', tone: 'cooked' },
+  { text: '    Finished in 18ms   (5 nodes, 2 cached)', tone: 'done' },
+]} />
+
+> [!tip] Why `one.count` stayed cached
+> Each fan-out unit is keyed on its own input. Editing `two.txt` changes one key. The total depends on all three counts, so it rebuilds; so does the report, which depends on the total. That is the whole model: [[9. Caching and cache trust|the key is built from what you declared]], and nothing else.
+
+## See the key for yourself
+
+`cook why` prints every determinant behind a unit's key, with its hit or miss status. Ask it about the total:
+
+```sh
+cook why report/build/total.txt
+```
+
+Read [[9. Caching and cache trust]] for `seal`, the shared store, and `cook cache verify`.

@@ -1,0 +1,19 @@
+/* Slides (/s/<id>): each slide is a tile filling the screen, snapped into place. Same fonts, colours and prose as a note, scaled up. */
+.deck.prose {height:100svh;overflow-y:auto;scroll-snap-type:y mandatory;padding:12px;display:grid;gap:12px;max-width:none;font-size:clamp(17px,1vw + 10px,28px);outline:0;}
+.deck.prose > .slide {position:relative;height:calc(100svh - 24px);scroll-snap-align:center;overflow:auto;display:flex;flex-direction:column;justify-content:center;padding:clamp(28px,6vh,80px) clamp(24px,8vw,160px);background:var(--tile);border:1px solid var(--tile-line);animation:tile-in 640ms cubic-bezier(.16,1,.3,1) backwards;}
+.deck.prose > .slide > * {width:100%;max-width:1200px;margin-inline:auto;}
+.deck.prose > .slide::after {content:attr(data-n);position:absolute;right:22px;bottom:16px;font:11px/1.6 var(--font-mono);color:var(--muted);letter-spacing:.08em;}
+.deck.prose h1 {font-size:clamp(36px,5vw,88px);margin-bottom:.4em;}
+.deck.prose h2 {font-size:clamp(28px,3.4vw,60px);margin:0 auto .7em;}
+.deck.prose h3 {font-size:1.1em;}
+.deck.prose p,.deck.prose li {max-width:60ch;}
+.deck.prose .kicker {font:12px/1.6 var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:1.5em;}
+.deck.prose .kicker a {color:inherit;}
+.deck.prose .post-subtitle {font:clamp(20px,1.6vw + 8px,36px)/1.3 var(--font-mono);color:var(--accent);}
+.deck.prose .post-deck {color:var(--muted);font-size:1.05em;}
+.deck.prose img,.deck.prose video {max-height:62svh;width:auto;object-fit:contain;margin:1rem auto;}
+.deck.prose .cover {justify-content:flex-end;}
+.deck.prose .cover::before {content:'';position:absolute;inset:0 0 auto;height:4px;background:var(--accent);}
+@media(max-width:700px) {.deck.prose {padding:8px;gap:8px;} .deck.prose > .slide {height:calc(100svh - 16px);padding:24px 20px 40px;}}
+.deck-close {position:fixed;top:22px;right:26px;z-index:2;font:11px/1.6 var(--font-mono);letter-spacing:.08em;color:var(--muted);text-decoration:none;text-transform:uppercase;}
+.deck-close:hover {color:var(--accent);}

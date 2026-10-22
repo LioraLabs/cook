@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cook — from declaration to execution</title>
+<style>
+@font-face{font-family:Inter;src:url(fonts/inter.woff2)}
+@font-face{font-family:Inter;src:url(fonts/inter-semibold.woff2);font-weight:600}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2)}
+*{box-sizing:border-box}body{margin:0;background:#111318;color:#ecebe4;font-family:Inter,sans-serif}main{max-width:1600px;margin:auto}svg{display:block;width:100%;height:auto}svg{fill:#ecebe4} .mono{font-family:Mono,monospace}.muted{fill:#a0a6b0}.eyebrow{font-size:13px;letter-spacing:2px}.label{font-size:22px;font-weight:600}.detail{font-size:13px;font-family:Mono,monospace;fill:#a0a6b0}.node{fill:#191c23;stroke:#40454f;stroke-width:1.4}.controls{display:flex;gap:16px;align-items:center;padding:16px 32px}button{font:inherit;color:inherit;background:#242832;border:1px solid #555d68;border-radius:6px;padding:10px 18px;min-width:98px}input{flex:1;accent-color:#ed286c}button:focus-visible,input:focus-visible{outline:2px solid #9dcea0;outline-offset:4px}.explanation{color:#a0a6b0;max-width:850px;margin:8px 32px 32px;line-height:1.6}.export main{width:100vw;height:100vh;max-width:none}.export svg{width:100%;height:100%}.export .controls,.export .explanation{display:none}.narrow{display:none}
+@media(max-width:650px){body:not(.export) .wide{display:none}body:not(.export) .narrow{display:block}body:not(.export) svg{aspect-ratio:420/740}.controls{padding:12px 18px;gap:10px}.explanation{margin:12px 18px;font-size:14px}}
+</style>
+<main>
+<svg id="graphic" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description">
+<title id="title">Cook: from declaration to execution</title>
+<desc id="description">Cookfile parsing and Lua generation feed registration. Captured work units become one dependency graph. Ready units are checked against the cache; misses run on workers. Completion releases dependents. Six illustrative units and their timings are simulated.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#242832" stroke-width=".6"/></pattern><radialGradient id="halo"><stop stop-color="#ed286c" stop-opacity=".07"/><stop offset="1" stop-color="#111318" stop-opacity="0"/></radialGradient><filter id="glow" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="3"/></filter></defs>
+<rect width="1440" height="900" fill="#111318"/><rect width="1440" height="900" fill="url(#grid)" opacity=".55"/>
+<g class="wide">
+<ellipse cx="710" cy="460" rx="700" ry="380" fill="url(#halo)"/>
+<text x="64" y="81" font-size="48" font-weight="600"><tspan fill="#ed286c">cook</tspan><tspan dx="22">From declaration to execution.</tspan></text>
+<text x="67" y="120" class="mono muted" font-size="15">A build is a graph. Every completion unlocks what comes next.</text>
+<text x="1376" y="65" text-anchor="end" class="mono eyebrow muted">PIPELINE / 01</text>
+<text x="1376" y="91" text-anchor="end" class="mono" font-size="12" fill="#a0a6b0">ILLUSTRATIVE SIMULATION</text>
+<g id="chapters"></g><line x1="64" x2="1376" y1="197" y2="197" stroke="#30343d"/>
+<g id="front"></g><g id="dag"></g><g id="engine"></g>
+<line x1="64" x2="1376" y1="810" y2="810" stroke="#30343d"/>
+<text id="caption" x="64" y="850" font-size="21"></text><text id="counts" x="1376" y="883" text-anchor="end" class="mono muted" font-size="13"></text>
+<text x="64" y="883" class="mono muted" font-size="12">COOK-LUAGEN → COOK-REGISTER → COOK-ENGINE / COOK-DAG → COOK-EXECUTE</text>
+<rect id="progress" x="0" y="897" height="3" fill="#ed286c"/>
+</g>
+<g class="narrow"><text x="24" y="55" font-size="34" font-weight="600" fill="#ed286c">cook</text><text x="24" y="88" font-size="20">Declaration → execution</text><text x="24" y="114" class="mono muted" font-size="11">ILLUSTRATIVE SIMULATION</text><g id="mobile"></g><text id="mobile-caption" x="24" y="661" font-size="16"></text><text id="mobile-counts" x="24" y="694" class="mono muted" font-size="12"></text></g>
+</svg>
+<div class="controls"><button id="play" type="button">Pause</button><label for="seek">Time</label><input id="seek" type="range" min="0" max="18" step="0.01" value="0"><output id="time" for="seek">0.0 / 18s</output></div>
+<p class="explanation">Luagen emits register-phase Lua from a parsed Cookfile. Registration captures work units and declared dependencies; the engine builds one DAG. Each ready unit passes a cache check. Misses run on workers, hits reuse results, and completion releases dependent units. This six-unit example uses simulated timings. Pause or scrub to inspect each stage.</p>
+</main>
+<script type="module" src="motion.js"></script>
+</html>

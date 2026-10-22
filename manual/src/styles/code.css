@@ -1,0 +1,6 @@
+.expressive-code { --ec-brdCol: var(--line); --ec-codeFontFml: var(--font-mono); }
+.prose .expressive-code { margin: 1.8rem 0; }
+/* A long line scrolls inside its block. A soft edge sits over the right side while there is more to see;
+   at the end of the scroll it only covers the code's trailing padding. */
+.prose .expressive-code .frame pre > code { padding-inline-end: 32px; }
+.prose .expressive-code .frame pre::after { content: ''; position: sticky; right: 0; flex: none; width: 32px; margin-left: -32px; background: linear-gradient(to right, transparent, var(--surface)); pointer-events: none; }

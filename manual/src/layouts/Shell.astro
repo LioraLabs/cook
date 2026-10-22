@@ -1,0 +1,38 @@
+---
+import '../styles/global.css';
+import '../styles/prose.css';
+import '../styles/code.css';
+import '../styles/tiles.css';
+import 'katex/dist/katex.min.css';
+import 'rehype-callouts/theme/obsidian';
+const { title = 'cook docs', description = 'The Cook Manual: the Cookfile language and the cook CLI, read top to bottom.', bare = false } = Astro.props;
+---
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>{title}</title>
+    <link rel="stylesheet" href="/theme.css" />
+  </head>
+  <body>
+    {bare ? <slot /> : <>
+      <header class="site-header"><a class="wordmark" href="/">cook:~<span aria-hidden="true">$</span> docs</a><nav aria-label="Sections"><a class="nav-link" href="/">Manual</a><a class="nav-link" href="/notes">All pages</a><a class="nav-link" href="https://github.com/LioraLabs/cook/tree/main/standard">Standard</a><a class="nav-link" href="https://rocks.usecook.com">Modules</a><a class="nav-link" href="https://usecook.com">usecook.com</a></nav></header>
+      <main class="page"><slot /></main>
+    </>}
+  <script>
+      import mediumZoom from 'medium-zoom';
+      mediumZoom('.prose img:not(a img)', { background: 'rgba(8,8,16,.92)', margin: 24 });
+    </script>
+  <script is:inline>
+      // Alt-click anything with data-edit to open that file in your editor (Astro's /__open-in-editor).
+      document.addEventListener('click', e => { if (!e.altKey) return; const el = e.target.closest('[data-edit]'); if (!el) return; e.preventDefault(); fetch('/__open-in-editor?file=' + encodeURIComponent(el.dataset.edit)); }, true);
+      document.addEventListener('keydown', e => { if (e.key === 'Alt') document.body.classList.add('editing'); });
+      document.addEventListener('keyup', e => { if (e.key === 'Alt') document.body.classList.remove('editing'); });
+    </script>
+  </body>
+</html>

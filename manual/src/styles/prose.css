@@ -1,0 +1,59 @@
+.prose { max-width: 68ch; font-size: 17px; line-height: 1.85; color: var(--ink); overflow-wrap: break-word; }
+.prose > :first-child { margin-top: 0; }
+.prose p { margin: 0 0 1.5em; }
+.prose h2, .prose h3, .prose h4 { color: var(--ink); scroll-margin-top: 32px; }
+.prose h2 { font: 400 34px/1.2 var(--font-display); margin: 1.8em 0 .7em; }
+.prose h3 { font: 600 21px/1.4 var(--font-sans); margin: 2em 0 .75em; }
+.prose h4 { font: 600 18px/1.4 var(--font-sans); margin: 1.7em 0 .7em; }
+.prose strong { color: var(--ink); }
+.prose a { color: var(--accent); text-decoration-color: var(--accent); }
+.prose a:hover { text-decoration-color: var(--accent); }
+.prose ul, .prose ol { margin: 0 0 1.5em; padding-left: 1.5em; }
+.prose li { margin: .55em 0; }
+.prose li::marker { color: var(--accent); }
+.prose blockquote { margin: 1.8em 0; padding: 18px 24px; background: var(--surface); border-left: 1px solid var(--accent); color: var(--ink); }
+.prose blockquote p:last-child { margin: 0; }
+.prose img, .prose video { max-width: 100%; height: auto; margin: 2rem auto .75rem; }
+.prose iframe { width: 100%; max-width: 100%; border: 1px solid var(--line); }
+.prose figure { margin: 2rem 0; }
+.prose figure img, .prose figure video { margin: 0; }
+.prose figcaption { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 12px; }
+.prose code:not(pre code) { font: .83em/1.6 var(--font-mono); padding: .12em .3em; background: var(--surface); color: var(--accent); }
+.prose pre { overflow-x: auto; }
+.prose hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
+.prose table { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; font-size: 14px; margin: 2rem 0; font-variant-numeric: tabular-nums; }
+.prose th, .prose td { padding: 10px 16px; border: 1px solid var(--line); text-align: left; }
+.prose th { background: var(--surface); color: var(--ink); }
+.prose .katex { font-size: 1em; }
+.prose .katex-display { margin: 1.8em 0; overflow-x: auto; overflow-y: hidden; padding-block: .5em; }
+@media (max-width: 680px) { .prose { font-size: 16px; line-height: 1.85; } .prose h2 { font-size: 24px; } .prose h3 { font-size: 19px; } }
+/* Post visuals: a figure panel with optional controls, used by src/components/article/ and post folders. */
+.prose .viz { margin: 2.2rem 0; padding: 20px; background: var(--surface); border: 1px solid var(--line); --a: #2a9fd0; --b: #c97a2a; }
+.prose .viz svg { display: block; width: 100%; height: auto; overflow: visible; }
+.prose .viz svg text { font-family: var(--font-mono); fill: var(--muted); }
+.prose .viz figcaption { margin-top: 16px; }
+.viz-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; font: 13px/1.5 var(--font-mono); color: var(--muted); }
+.viz-controls button, .viz-controls input:not([type=range]) { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); padding: 5px 10px; }
+.viz-controls button:hover, .viz-controls button:focus-visible { border-color: var(--accent); color: var(--accent); }
+.viz-controls input[type=range] { flex: 1; min-width: 140px; accent-color: var(--accent); }
+.viz-sum { font: 14px/1.6 var(--font-mono); color: var(--ink); margin-top: 12px; overflow-wrap: anywhere; }
+.viz-sum b { color: var(--b); font-weight: 600; }
+.viz-head { display: grid; gap: 4px; margin-bottom: 14px; }
+.viz-head strong { font: 600 15px/1.35 var(--font-sans); color: var(--ink); }
+.viz-head span { font: 13px/1.5 var(--font-sans); color: var(--muted); }
+.viz-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 12px/1.4 var(--font-sans); color: var(--ink); }
+.viz-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; vertical-align: -1px; box-shadow: 0 0 6px currentColor; }
+.viz-legend i.hollow { background: none !important; border: 2px solid; }
+.prose .viz details summary { cursor: pointer; font: 12px/1.6 var(--font-sans); color: var(--muted); }
+/* Heading anchors: a quiet # after the heading, shown on hover. */
+.prose .anchor::after { content: '#'; }
+.prose .anchor { margin-left: .4em; color: var(--muted); text-decoration: none; opacity: 0; transition: opacity 150ms; }
+.prose :is(h2,h3,h4):hover .anchor, .prose .anchor:focus { opacity: 1; }
+/* Callouts (> [!note]): flat, square, on the surface colour, like every other panel here. */
+.prose .callout { margin: 1.8em 0; padding: 16px 22px; border: 0; border-left: 2px solid var(--rc-color-dark, var(--accent)); background: var(--surface); border-radius: 0; }
+.prose .callout-title { font: 12px/1.6 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+.prose .callout-content > :last-child { margin-bottom: 0; }
+.prose pre.mermaid { background: var(--surface); border: 1px solid var(--line); padding: 20px; text-align: center; }
+.medium-zoom-overlay, .medium-zoom-image--opened { z-index: 20; }
+/* A deck read as a note: slides stack, a rule between each. */
+.prose > .slide + .slide { border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 2.5rem; }
