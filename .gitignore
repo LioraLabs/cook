@@ -91,3 +91,8 @@ rocks/*/*-*.src.rock
 # cmake-compat finder (cook_cc §9.2.3.8.1) shells out to `cmake --find-package`,
 # which side-effects a CMakeFiles/ directory in the caller's cwd. Build output.
 CMakeFiles/
+.turbo/
+.cook/
+out/
+.env.local
+tree-sitter-cook/parser.so
