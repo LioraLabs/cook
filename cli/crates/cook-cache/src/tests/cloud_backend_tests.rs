@@ -629,3 +629,11 @@ fn jitter_factor_in_range() {
         std::thread::sleep(Duration::from_micros(1));
     }
 }
+
+#[test]
+fn status_507_is_not_retried_but_other_5xx_are() {
+    let m = |s| map_status_error(s, "put", "x".into(), None);
+    assert!(matches!(m(507), BackendError::Other(_)));
+    assert!(matches!(m(500), BackendError::Transient(_)));
+    assert!(matches!(m(503), BackendError::Transient(_)));
+}

@@ -134,6 +134,8 @@ fn map_status_error(
     match status {
         401 | 403 => BackendError::Unauthorized(format!("{ctx}: status {status}: {body}")),
         429 => BackendError::QuotaExceeded(retry_after),
+        // Disk full on the server: re-sending the body cannot help.
+        507 => BackendError::Other(format!("{ctx}: server storage full (507): {body}")),
         500..=599 => BackendError::Transient(format!("{ctx}: status {status}: {body}")),
         409 => BackendError::Other(format!(
             "conflict at {ctx}: server-side bytes differ: {body}"
