@@ -114,3 +114,15 @@ fn env_contribution_iteration_order_independent() {
     b.insert("Z".to_string(), "1".to_string());
     assert_eq!(env_contribution(&a, &d), env_contribution(&b, &d));
 }
+
+#[test]
+fn the_standard_lists_every_baseline_name_and_glob() {
+    let mdx = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../standard/src/content/docs/17-cache.mdx"),
+    )
+    .unwrap();
+    let section = mdx.split("## 17.9.").nth(1).and_then(|s| s.split("\n## ").next()).unwrap();
+    for n in BASELINE_EXACT.iter().chain(BASELINE_GLOBS) {
+        assert!(section.contains(&format!("`{n}`")), "§17.9 does not list `{n}`");
+    }
+}

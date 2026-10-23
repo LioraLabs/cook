@@ -463,6 +463,7 @@ dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-dag",
+ "cook-envtrace",
  "cook-execute",
  "cook-probe",
  "cook-shell",
@@ -476,6 +477,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "xxhash-rust",
+]
+
+[[package]]
+name = "cook-envtrace"
+version = "0.18.0"
+dependencies = [
+ "cc",
+ "tempfile",
 ]
 
 [[package]]

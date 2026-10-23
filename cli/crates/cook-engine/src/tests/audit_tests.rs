@@ -459,6 +459,149 @@ fn a_covered_subtree_covers_everything_under_it_and_its_ancestors() {
     assert_eq!(hits, vec![PathBuf::from("/opt/other")]);
 }
 
+mod env_names {
+    use super::*;
+    use cook_cache::envkey::EnvDenylist;
+    use cook_contracts::{CacheMeta, LocalProbeKey, ProbeUnit, RecipeUnits};
+
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn unit_with(consulted: &[&str], sealed_probe: Option<&str>) -> (CacheMeta, RecipeUnits) {
+        let key = LocalProbeKey::new("p");
+        let meta = CacheMeta {
+            consulted_env: consulted.iter().map(|k| (k.to_string(), "v".to_string())).collect(),
+            seal_keys: sealed_probe.iter().map(|_| key.clone()).collect(),
+            ..Default::default()
+        };
+        let probes = sealed_probe
+            .map(|src| ProbeUnit {
+                key: key.clone(),
+                produce_source: src.to_string(),
+                produce_line: 1,
+                inputs: Default::default(),
+                covers: Vec::new(),
+            })
+            .into_iter()
+            .collect();
+        let units = RecipeUnits {
+            recipe_name: "r".into(),
+            deps: vec![],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: PathBuf::from("/wd"),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes,
+        };
+        (meta, units)
+    }
+
+    #[test]
+    fn a_consulted_var_keys_no_environment_name() {
+        let (meta, units) = unit_with(&["NODE_ENV", "mode"], None);
+        assert!(keyed_env(&meta, &units).is_empty());
+    }
+
+    #[test]
+    fn a_sealed_probes_literal_getenv_keys_the_name() {
+        let (meta, units) = unit_with(&[], Some("local v = os.getenv(\"NODE_ENV\")\nreturn getenv(dyn)"));
+        let keyed = keyed_env(&meta, &units);
+        assert_eq!(keyed, set(&["NODE_ENV"]));
+    }
+
+    #[test]
+    fn an_unsealed_probe_keys_nothing() {
+        let (mut meta, units) = unit_with(&[], Some("os.getenv('NODE_ENV')"));
+        meta.seal_keys.clear();
+        assert!(keyed_env(&meta, &units).is_empty());
+    }
+
+    #[test]
+    fn the_key_denylist_the_audit_ignores_and_the_recorders_own_variable_are_never_reported() {
+        let mut deny = EnvDenylist::baseline();
+        deny.extend_with(&["MY_NOISE_*".to_string()]);
+        let queried = set(&[
+            "HOME", "XDG_DATA_DIRS", "MY_NOISE_X", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH",
+            cook_envtrace::OUT_VAR, "NODE_ENV", "LANGUAGES", "LCX",
+        ]);
+        assert_eq!(unkeyed_env(&queried, &BTreeSet::new(), &deny), set(&["LANGUAGES", "LCX", "NODE_ENV"]));
+    }
+
+    #[test]
+    fn read_queried_dedupes_and_a_missing_file_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("n");
+        std::fs::write(&f, "A\nB\nA\n\n").unwrap();
+        assert_eq!(read_queried(&f), set(&["A", "B"]));
+        assert!(!f.exists());
+        assert!(read_queried(&f).is_empty());
+    }
+}
+
+// --- programs that never loaded the recorder ---
+
+const SO: &str = "/scratch/libcook_envtrace.so";
+
+fn unobserved(t: &str) -> Vec<PathBuf> {
+    unobserved_programs(t, Path::new("/start"), Path::new(SO)).into_iter().collect()
+}
+
+fn loads(pid: u32) -> String {
+    format!("{pid} openat(AT_FDCWD, \"{SO}\", O_RDONLY|O_CLOEXEC) = 3</scratch/libcook_envtrace.so>\n")
+}
+
+#[test]
+fn a_segment_that_opened_the_recorder_is_observed() {
+    let t = format!("5 execve(\"/bin/sh\", [\"sh\"], 0x7ff /* 3 vars */) = 0\n{}", loads(5));
+    assert_eq!(unobserved(&t), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn a_re_exec_in_the_same_pid_without_a_new_open_is_named() {
+    let t = format!(
+        "5 execve(\"/bin/env\", [\"env\"], 0x7ff /* 3 vars */) = 0\n{}\
+         5 execve(\"/usr/bin/node\", [\"node\"], 0x7ff /* 0 vars */) = 0\n",
+        loads(5)
+    );
+    assert_eq!(unobserved(&t), vec![PathBuf::from("/usr/bin/node")]);
+}
+
+#[test]
+fn a_failed_open_does_not_count() {
+    let t = format!(
+        "5 execve(\"/bin/a\", [\"a\"], 0x7ff /* 3 vars */) = 0\n\
+         5 openat(AT_FDCWD, \"{SO}\", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)\n"
+    );
+    assert_eq!(unobserved(&t), vec![PathBuf::from("/bin/a")]);
+}
+
+#[test]
+fn a_failed_execve_starts_no_segment() {
+    let t = format!(
+        "5 execve(\"/bin/a\", [\"a\"], 0x7ff /* 3 vars */) = 0\n{}\
+         5 execve(\"/nope/b\", [\"b\"], 0x7ff /* 0 vars */) = -1 ENOENT (No such file or directory)\n",
+        loads(5)
+    );
+    assert_eq!(unobserved(&t), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn split_execve_and_open_lines_are_joined() {
+    let t = format!(
+        "7 execve(\"tools/stat\", [\"stat\"], 0x7ff /* 3 vars */ <unfinished ...>\n\
+         8 stat(\"/other\", {{}}) = 0\n\
+         7 <... execve resumed>) = 0\n\
+         7 openat(AT_FDCWD, \"{SO}\", O_RDONLY <unfinished ...>\n\
+         7 <... openat resumed>) = 3</scratch/libcook_envtrace.so>\n\
+         9 execve(\"tools/other\", [\"o\"], 0x7ff /* 0 vars */ <unfinished ...>\n\
+         9 <... execve resumed>) = 0\n"
+    );
+    assert_eq!(unobserved(&t), vec![PathBuf::from("/start/tools/other")]);
+}
+
 fn uncovered_with(paths: &[(&str, bool)], coverage: &Coverage) -> Vec<String> {
     let t: String = paths
         .iter()

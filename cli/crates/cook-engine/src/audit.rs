@@ -16,6 +16,10 @@ use cook_contracts::pathlaw::normalize;
 use cook_contracts::WorkPayload;
 
 mod covers;
+mod env;
+pub use env::{unobserved_programs, AUDIT_IGNORED_ENV};
+pub(crate) use env::{keyed_env, unkeyed_env};
+use env::read_queried;
 
 /// One path a traced process touched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,13 +30,18 @@ pub struct Access {
     pub write: bool,
 }
 
-/// Open set: an `env` kind (root = the variable name, `paths` empty) joins
-/// later, so consumers must tolerate kinds they do not know.
+/// Open set, so consumers must tolerate kinds they do not know. `Env`: root =
+/// the variable name, `paths` empty. `EnvUnobserved`: root = a program the
+/// unit ran that never loaded the env recorder (statically linked, or started
+/// with a scrubbed environment), so what it reads is unknown; `paths` empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingKind {
     Read,
     Absent,
+    Env,
+    #[serde(rename = "env-unobserved")]
+    EnvUnobserved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -172,6 +181,11 @@ const NOT_ACCESSES: &[&str] = &[
 /// Parse an `strace -f -qq -x -y` log into path accesses, in trace order.
 /// `start_cwd` is where the first traced process started.
 pub fn parse_trace(text: &str, start_cwd: &Path) -> Vec<Access> {
+    trace_calls(text, start_cwd).into_iter().map(|(_, _, a)| a).collect()
+}
+
+/// [`parse_trace`]'s body: each access with the pid and syscall that made it.
+fn trace_calls(text: &str, start_cwd: &Path) -> Vec<(u32, String, Access)> {
     let mut out = Vec::new();
     let mut cwds: BTreeMap<u32, PathBuf> = BTreeMap::new();
     let mut pending: BTreeMap<u32, String> = BTreeMap::new();
@@ -272,7 +286,7 @@ pub fn parse_trace(text: &str, start_cwd: &Path) -> Vec<Access> {
             all.into_iter().next().map(|p| (p, write)).into_iter().collect()
         };
         for (path, write) in paths {
-            out.push(Access { path, absent: failed, write });
+            out.push((pid, name.to_string(), Access { path, absent: failed, write }));
         }
     }
     out
@@ -522,6 +536,9 @@ pub fn refuse_state_outside<'a>(root: &'a Path, dirs: impl IntoIterator<Item = &
     Ok(())
 }
 
+/// What the CLI puts before the reason an audit cannot run on this host.
+pub const UNSUPPORTED_HERE: &str = "audit: unsupported here: ";
+
 /// Refuse a workspace member whose directory resolves outside the project
 /// (a symlinked member, or `..` past the root): it would be registered, built
 /// and cleared in the real tree. `root` must be canonical.
@@ -567,6 +584,7 @@ pub(crate) fn audit_in_place(
     num_jobs: usize,
     cache_ctx: Arc<cook_cache::CacheContext>,
 ) -> Result<AuditReport, String> {
+    let denylist = cache_ctx.denylist.clone();
     let run_result = crate::run::run_with_cache_ctx(cache_ctx, workspace, edges, reachable, num_jobs, &[], true, |_e| {})
         .map_err(|e| format!("populate run failed: {e}"))?;
 
@@ -576,12 +594,25 @@ pub(crate) fn audit_in_place(
     let home = std::env::var_os("HOME").map(PathBuf::from);
 
     let order = cook_contracts::unit_graph::toposort_recipes(edges, reachable).map_err(|e| e.to_string())?;
+    // The recorder is preloaded into every traced re-run; off Linux there is
+    // none and the audit is unsupported anyway.
+    // Same scratch the re-run uses (verify's fallback outside an isolated
+    // view), as a directory of our own that is removed when the audit ends.
+    let scratch_root = crate::verify::scratch_root()?;
+    let scratch_guard = tempfile::tempdir_in(&scratch_root).map_err(|e| format!("env recorder: {e}"))?;
+    let scratch = scratch_guard.path();
+    let recorder = cook_envtrace::install(scratch).map_err(|e| match e.kind() {
+        std::io::ErrorKind::Unsupported => format!("{UNSUPPORTED_HERE}{e}"),
+        _ => format!("env recorder: {e}"),
+    })?;
     let mut report = AuditReport::default();
     for recipe_name in order {
         let Some(units) = workspace.units_by_recipe.get(&recipe_name) else { continue };
         let wd = &units.working_dir;
         let mut hits: Vec<(PathBuf, FindingKind)> = Vec::new();
-        for unit in &units.units {
+        let mut env_names: BTreeSet<String> = BTreeSet::new();
+        let mut unobserved: BTreeSet<String> = BTreeSet::new();
+        for (n, unit) in units.units.iter().enumerate() {
             let (Some(meta), WorkPayload::Shell { cmd, .. }) = (&unit.cache_meta, &unit.payload) else {
                 continue;
             };
@@ -597,23 +628,41 @@ pub(crate) fn audit_in_place(
                 .iter()
                 .map(|p| normalize(&wd.join(p)))
                 .collect();
+            // Steps keep the environment they inherit; only the recorder is added.
+            let names_file = scratch.join(format!("envtrace-{recipe_name}-{n}"));
+            let env = recorder.as_ref().map_or_else(BTreeMap::new, |so| {
+                cook_envtrace::env_for(so, &names_file)
+            });
             let rerun = crate::verify::rerun_in_sandbox(
                 cmd,
                 &run_result.probe_values,
                 &recipe_name,
                 wd,
-                &BTreeMap::new(), // verify's R1: shell units get no injected env
+                &env,
                 &meta.output_paths,
                 &inputs,
                 true,
             );
             match rerun {
                 Err(e) => {
+                    let _ = std::fs::remove_file(&names_file);
                     ua.status = "error";
                     ua.detail = e;
                 }
                 Ok(rerun) => {
-                    let accesses = parse_trace(rerun.trace.as_deref().unwrap_or(""), wd);
+                    let trace = rerun.trace.as_deref().unwrap_or("");
+                    let accesses = parse_trace(trace, wd);
+                    if let Some(so) = &recorder {
+                        unobserved.extend(
+                            unobserved_programs(trace, wd, so)
+                                .into_iter()
+                                .map(|p| spelling(&p, project_root, home.as_deref())),
+                        );
+                    }
+                    // Env findings come from the names file and the trace, not
+                    // from coverage, so a coverage error still reports them.
+                    let keyed = keyed_env(meta, units);
+                    env_names.extend(unkeyed_env(&read_queried(&names_file), &keyed, &denylist));
                     let mut coverage = Coverage { exact: inputs, ..Coverage::default() };
                     coverage.exact.extend(rerun.outputs.keys().map(|p| normalize(&wd.join(p))));
                     match unit_coverage(&mut coverage, &meta.seal_keys, units, workspace, &run_result.probe_values, &recipe_name, home.as_deref()) {
@@ -628,6 +677,20 @@ pub(crate) fn audit_in_place(
             report.units.push(ua);
         }
         report.findings.extend(collapse(&recipe_name, &hits, project_root, home.as_deref()));
+        report.findings.extend(env_names.into_iter().map(|root| Finding {
+            recipe: recipe_name.clone(),
+            kind: FindingKind::Env,
+            root,
+            count: 1,
+            paths: Vec::new(),
+        }));
+        report.findings.extend(unobserved.into_iter().map(|root| Finding {
+            recipe: recipe_name.clone(),
+            kind: FindingKind::EnvUnobserved,
+            root,
+            count: 1,
+            paths: Vec::new(),
+        }));
     }
     report.findings.sort_by(|a, b| (&a.recipe, a.kind, &a.root).cmp(&(&b.recipe, b.kind, &b.root)));
     Ok(report)

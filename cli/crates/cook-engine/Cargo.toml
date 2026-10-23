@@ -11,6 +11,7 @@ cook-probe = { path = "../cook-probe" }
 cook-dag = { path = "../cook-dag" }
 cook-execute = { path = "../cook-execute" }
 cook-cache = { path = "../cook-cache" }
+cook-envtrace = { path = "../cook-envtrace" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 thiserror = "2"
 globset = "0.4"

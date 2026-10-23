@@ -175,6 +175,28 @@ fn audit_json_shape_and_escaping() {
     assert_eq!(parsed["units"][0]["detail"], "boom\n\"x\"");
 }
 
+#[test]
+fn audit_env_finding_serializes_and_renders_without_a_value() {
+    use cook_engine::audit::{AuditReport, Finding, FindingKind};
+    let f = Finding { recipe: "build".into(), kind: FindingKind::Env, root: "NODE_ENV".into(), count: 1, paths: vec![] };
+    let report = AuditReport { units: vec![], findings: vec![f.clone()] };
+    let parsed: serde_json::Value = serde_json::from_str(&audit_json_value("build", &report).to_string()).unwrap();
+    assert_eq!(parsed["findings"][0]["kind"], "env");
+    assert_eq!(parsed["findings"][0]["paths"], serde_json::json!([]));
+    assert_eq!(audit_env_line(&f, false), "build  env  NODE_ENV — nothing keys it (unset)");
+    assert_eq!(audit_env_line(&f, true), "build  env  NODE_ENV — nothing keys it (set)");
+}
+
+#[test]
+fn audit_env_unobserved_finding_serializes_and_renders() {
+    use cook_engine::audit::{AuditReport, Finding, FindingKind};
+    let f = Finding { recipe: "build".into(), kind: FindingKind::EnvUnobserved, root: "tools/stat".into(), count: 1, paths: vec![] };
+    let report = AuditReport { units: vec![], findings: vec![f.clone()] };
+    let parsed: serde_json::Value = serde_json::from_str(&audit_json_value("build", &report).to_string()).unwrap();
+    assert_eq!(parsed["findings"][0]["kind"], "env-unobserved");
+    assert_eq!(audit_env_unobserved_line(&f), "build  env-unobserved  tools/stat — env not observed");
+}
+
 // ---------------------------------------------------------------------------
 // The node and recipe vocabularies (COOK-421)
 // ---------------------------------------------------------------------------

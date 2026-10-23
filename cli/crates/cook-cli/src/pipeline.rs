@@ -1085,7 +1085,7 @@ fn print_verify_json(report: &cook_engine::verify::VerifyReport) {
 pub fn cmd_audit(globals: &Globals, args: &crate::cli::AuditArgs) -> Result<(), CookError> {
     use cook_engine::sandbox::{Isolation, isolate};
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
-    let unsupported = |why: String| CookError::Other(format!("audit: unsupported here: {why}"));
+    let unsupported = |why: String| CookError::Other(format!("{}{why}", cook_engine::audit::UNSUPPORTED_HERE));
 
     let root = std::fs::canonicalize(resolve_project_root(globals)?)
         .map_err(|e| CookError::Other(format!("audit: project root: {e}")))?;
@@ -1151,11 +1151,30 @@ fn audit_isolated(
         .map_err(CookError::Other)
 }
 
+/// An `env` finding's line. Set or not is the audit process's own answer (the
+/// re-run inherited that environment); the value is never looked at.
+fn audit_env_line(f: &cook_engine::audit::Finding, is_set: bool) -> String {
+    let state = if is_set { "set" } else { "unset" };
+    format!("{}  env  {} — nothing keys it ({state})", f.recipe, f.root)
+}
+
+fn audit_env_unobserved_line(f: &cook_engine::audit::Finding) -> String {
+    format!("{}  env-unobserved  {} — env not observed", f.recipe, f.root)
+}
+
 fn print_audit_human(report: &cook_engine::audit::AuditReport) {
     for f in &report.findings {
         let kind = match f.kind {
             cook_engine::audit::FindingKind::Read => "read",
             cook_engine::audit::FindingKind::Absent => "absent",
+            cook_engine::audit::FindingKind::EnvUnobserved => {
+                println!("{}", audit_env_unobserved_line(f));
+                continue;
+            }
+            cook_engine::audit::FindingKind::Env => {
+                println!("{}", audit_env_line(f, std::env::var_os(&f.root).is_some()));
+                continue;
+            }
         };
         println!("{}  {}  {}", f.recipe, kind, f.root);
         if f.count == 1 && f.paths[0] != f.root {

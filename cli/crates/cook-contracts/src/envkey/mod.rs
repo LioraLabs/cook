@@ -6,6 +6,32 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+/// The names and globs of [`EnvDenylist::baseline`]; the traced-read audit
+/// section of the standard enumerates them, and a test keeps the two equal.
+const BASELINE_EXACT: &[&str] = &[
+    "HOME", "USER", "LOGNAME", "SHELL", "PATH", "PWD", "OLDPWD", "MAIL", "HOSTNAME",
+    "TERM", "TERMINFO", "COLORTERM",
+    "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
+    "SSH_AUTH_SOCK", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY",
+    "DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_BUS_TYPE", "DBUS_STARTER_ADDRESS",
+    "EDITOR", "VISUAL", "PAGER", "BROWSER",
+    "TMPDIR", "TMP", "TEMP",
+    "HISTFILE", "HISTSIZE", "HISTCONTROL",
+    "SHLVL", "PS1", "PS2", "PS3", "PS4",
+    "CI",
+];
+const BASELINE_GLOBS: &[&str] = &[
+    "XDG_*",
+    "GITHUB_*", "RUNNER_*",
+    "GITLAB_CI_*",
+    "BUILDKITE_*",
+    "CIRCLE_*",
+    "TRAVIS_*",
+    "JENKINS_*",
+    "TEAMCITY_*",
+    "DRONE_*",
+];
+
 pub struct EnvDenylist {
     /// Exact-match names.
     names: HashSet<String>,
@@ -14,34 +40,10 @@ pub struct EnvDenylist {
 }
 
 impl EnvDenylist {
-    /// D1: Cook-shipped baseline. See spec Appendix A for the full list.
+    /// D1: Cook-shipped baseline. Listed in the standard's traced-read audit section (§17.9).
     pub fn baseline() -> Self {
-        const EXACT: &[&str] = &[
-            "HOME", "USER", "LOGNAME", "SHELL", "PATH", "PWD", "OLDPWD", "MAIL", "HOSTNAME",
-            "TERM", "TERMINFO", "COLORTERM",
-            "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
-            "SSH_AUTH_SOCK", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY",
-            "DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_BUS_TYPE", "DBUS_STARTER_ADDRESS",
-            "EDITOR", "VISUAL", "PAGER", "BROWSER",
-            "TMPDIR", "TMP", "TEMP",
-            "HISTFILE", "HISTSIZE", "HISTCONTROL",
-            "SHLVL", "PS1", "PS2", "PS3", "PS4",
-            "CI",
-        ];
-        const GLOBS: &[&str] = &[
-            "XDG_*",
-            "GITHUB_*", "RUNNER_*",
-            "GITLAB_CI_*",
-            "BUILDKITE_*",
-            "CIRCLE_*",
-            "TRAVIS_*",
-            "JENKINS_*",
-            "TEAMCITY_*",
-            "DRONE_*",
-        ];
-
-        let names: HashSet<String> = EXACT.iter().map(|s| (*s).to_string()).collect();
-        let globs: Vec<glob::Pattern> = GLOBS
+        let names: HashSet<String> = BASELINE_EXACT.iter().map(|s| (*s).to_string()).collect();
+        let globs: Vec<glob::Pattern> = BASELINE_GLOBS
             .iter()
             .map(|p| glob::Pattern::new(p).expect("baseline glob compiles"))
             .collect();

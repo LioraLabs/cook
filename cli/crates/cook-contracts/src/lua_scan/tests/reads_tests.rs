@@ -311,3 +311,29 @@ fn probe_reads_realistic_lua_body() {
         "#;
     assert_eq!(probe_keys(body), vec!["cc:zlib"]);
 }
+
+fn getenvs(src: &str) -> Vec<String> {
+    scan_getenv_reads(src).into_iter().collect()
+}
+
+#[test]
+fn getenv_literals_in_either_quote_are_read() {
+    assert_eq!(getenvs("local v = os.getenv(\"NODE_ENV\")"), vec!["NODE_ENV"]);
+    assert_eq!(getenvs("x = getenv( 'A' ) .. os.getenv\n(\n\"B\"\n)"), vec!["A", "B"]);
+}
+
+#[test]
+fn getenv_literal_followed_by_a_comma_is_read_like_a_probe_key() {
+    assert_eq!(getenvs("getenv(\"A\", 1)"), vec!["A"]);
+    assert_eq!(scan_probe_reads("cook.probes.get(\"p\", 1)").into_iter().collect::<Vec<_>>(), vec!["p"]);
+}
+
+#[test]
+fn getenv_in_a_comment_or_string_is_not_a_read() {
+    assert!(getenvs("-- os.getenv(\"A\")\nlocal s = 'getenv(\"B\")'\n--[[ getenv('C') ]]").is_empty());
+}
+
+#[test]
+fn getenv_with_a_dynamic_or_joined_argument_is_ignored() {
+    assert!(getenvs("getenv(name) getenv(\"A\" .. b) getenv() mygetenv(\"D\") getenv_x(\"E\")").is_empty());
+}

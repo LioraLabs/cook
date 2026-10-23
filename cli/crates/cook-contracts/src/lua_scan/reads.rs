@@ -335,55 +335,9 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
             }
 
             if j < bytes.len() && bytes[j] == b'(' {
-                // Optional whitespace before the argument.
-                let mut k = j + 1;
-                while k < bytes.len() && is_lua_space(bytes[k]) {
-                    k += 1;
-                }
-
-                if k < bytes.len() && (bytes[k] == b'"' || bytes[k] == b'\'') {
-                    let quote = bytes[k];
-                    let key_start = k + 1;
-                    let mut m = key_start;
-                    while m < bytes.len() && bytes[m] != quote {
-                        if bytes[m] == b'\\' && m + 1 < bytes.len() {
-                            m += 2;
-                        } else {
-                            m += 1;
-                        }
-                    }
-                    if m < bytes.len() && bytes[m] == quote {
-                        // Closing quote at `m`. Only collect when the
-                        // literal is immediately (modulo whitespace) the
-                        // WHOLE argument — i.e. followed by `)` or `,` —
-                        // which is what rules out `"a" .. b` concatenation.
-                        let mut n = m + 1;
-                        while n < bytes.len() && is_lua_space(bytes[n]) {
-                            n += 1;
-                        }
-                        if n < bytes.len() && (bytes[n] == b')' || bytes[n] == b',') {
-                            let key_raw = &source[key_start..m];
-                            let key = simple_unescape(key_raw);
-                            if !key.is_empty() {
-                                keys.insert(key);
-                            }
-                        }
-                        // Resume right after the closing quote (not after
-                        // `)`/`,`) regardless of whether we collected, so a
-                        // concatenation's trailing expression is still
-                        // scanned normally by the outer loop.
-                        i = m + 1;
-                        continue;
-                    }
-                    // Unterminated string literal in the call argument —
-                    // resume right after the opening quote so we don't spin.
-                    i = key_start;
-                    continue;
-                }
-                // Non-literal first argument (identifier, nested call,
-                // number, ...) — not statically resolvable. Resume right
-                // after `(` so anything later on the same line still scans.
-                i = j + 1;
+                let (key, next) = literal_first_arg(source, j);
+                keys.extend(key);
+                i = next;
                 continue;
             }
             // `cook.probes.get` not immediately followed by a call — e.g.
@@ -403,6 +357,74 @@ pub fn scan_probe_reads(source: &str) -> BTreeSet<String> {
     }
 
     keys
+}
+
+/// Scan `source` for static `getenv("NAME")` / `os.getenv('NAME')` reads:
+/// the process-environment names a Lua body (a probe's `produce_source`)
+/// queries. Only a single string literal that is the whole argument counts; a
+/// dynamic name is invisible here, so a name read that way stays unkeyed in
+/// the audit's eyes.
+pub fn scan_getenv_reads(source: &str) -> BTreeSet<String> {
+    const NAME: &[u8] = b"getenv";
+    let mut keys = BTreeSet::new();
+    let bytes = source.as_bytes();
+    let skip_space = |mut j: usize| {
+        while j < bytes.len() && is_lua_space(bytes[j]) {
+            j += 1;
+        }
+        j
+    };
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match skip_non_code(source, i) {
+            Skip::Ended(next) => {
+                i = next;
+                continue;
+            }
+            Skip::Unterminated => return keys,
+            Skip::Code => {}
+        }
+        if bytes_starts_with(bytes, i, NAME) && !is_part_of_larger_identifier(bytes, i, NAME.len()) {
+            let open = skip_space(i + NAME.len());
+            if bytes.get(open) == Some(&b'(') {
+                let (key, next) = literal_first_arg(source, open);
+                keys.extend(key);
+                i = next;
+                continue;
+            }
+        }
+        i = if is_ident_start(bytes[i]) { ident_end(bytes, i) } else { i + 1 };
+    }
+    keys
+}
+
+/// The string-literal first argument of the call whose `(` is at `open`, and
+/// where scanning resumes. The key is `Some` only when the literal is the WHOLE
+/// argument (followed by `)` or `,`), which rules out `"a" .. b`; an empty one
+/// is dropped. Resuming right after the closing quote (not after `)`) keeps a
+/// concatenation's trailing expression visible to the caller's loop; an
+/// unterminated literal resumes after its opening quote so the scan cannot
+/// spin, and a non-literal argument resumes after `(`.
+fn literal_first_arg(source: &str, open: usize) -> (Option<String>, usize) {
+    let bytes = source.as_bytes();
+    let skip_space = |mut j: usize| {
+        while j < bytes.len() && is_lua_space(bytes[j]) {
+            j += 1;
+        }
+        j
+    };
+    let q = skip_space(open + 1);
+    let Some(&quote @ (b'"' | b'\'')) = bytes.get(q) else { return (None, open + 1) };
+    let mut m = q + 1;
+    while m < bytes.len() && bytes[m] != quote {
+        m += if bytes[m] == b'\\' && m + 1 < bytes.len() { 2 } else { 1 };
+    }
+    if m >= bytes.len() {
+        return (None, q + 1);
+    }
+    let whole = matches!(bytes.get(skip_space(m + 1)), Some(b')' | b','));
+    let key = simple_unescape(&source[q + 1..m]);
+    ((whole && !key.is_empty()).then_some(key), m + 1)
 }
 
 /// True if `b` is Lua-insignificant horizontal-or-vertical whitespace

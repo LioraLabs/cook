@@ -201,6 +201,15 @@ pub fn tracer() -> Result<String, String> {
     cook_cache::resolve_tool_path("strace").ok_or_else(|| "strace not found on PATH".to_string())
 }
 
+/// The directory a re-run's scratch lives in, created. Inside an isolated view
+/// it is the run's own scratch dir; otherwise the user cache dir.
+pub(crate) fn scratch_root() -> Result<PathBuf, String> {
+    let root = crate::sandbox::scratch_dir()
+        .unwrap_or_else(|| cook_cache::cloud_config::user_cache_root().join("verify"));
+    std::fs::create_dir_all(&root).map_err(|e| format!("sandbox: {e}"))?;
+    Ok(root)
+}
+
 /// Re-execute `cmd` outside the scheduler and return the content hash of each
 /// declared output (glob-resolved) that exists after the run. Errors if the
 /// command exits non-zero.
@@ -244,9 +253,7 @@ pub fn rerun_in_sandbox(
     // from the cwd, would find the real workspace, and the re-run would stop
     // being isolated. `dirs` honours XDG_CACHE_HOME. Inside an isolated view
     // the run's own scratch dir is used, which the parent removes on ^C too.
-    let verify_root = crate::sandbox::scratch_dir()
-        .unwrap_or_else(|| cook_cache::cloud_config::user_cache_root().join("verify"));
-    std::fs::create_dir_all(&verify_root).map_err(|e| format!("sandbox: {e}"))?;
+    let verify_root = scratch_root()?;
     // In place only when the working dir REALLY is inside the overlay: a
     // member reached through a symlink out of the project is the real tree.
     let isolated = crate::sandbox::isolated_root();

@@ -807,6 +807,8 @@ const STRATA: [(&str, &[&str]); 6] = [
             "cook-lang",
             "cook-cookfile",
             "cook-progress",
+            // A C recorder built by build.rs; depends on nothing in the workspace.
+            "cook-envtrace",
             // A package manager: filesystem, subprocess, and one workspace
             // edge. It reaches nothing above it and nothing above it reaches
             // it except the surface that dispatches `cook modules`, which is

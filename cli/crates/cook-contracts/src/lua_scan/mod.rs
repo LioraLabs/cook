@@ -184,7 +184,7 @@ pub fn ident_end(bytes: &[u8], start: usize) -> usize {
 /// crate that GENERATES it, for a scanner that generates nothing.
 mod reads;
 
-pub use reads::{scan_probe_reads, scan_var_reads};
+pub use reads::{scan_getenv_reads, scan_probe_reads, scan_var_reads};
 
 #[cfg(test)]
 #[path = "tests/lua_scan_tests.rs"]

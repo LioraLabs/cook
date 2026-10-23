@@ -40,6 +40,8 @@ fn audit_with(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)]) -> O
         .arg("audit")
         .args(args)
         .env("XDG_CACHE_HOME", xdg)
+        // Steps inherit the environment; the env tests need this one unset.
+        .env_remove("NODE_ENV")
         .envs(env.iter().copied())
         .current_dir(dir)
         .output()
@@ -470,6 +472,214 @@ fn sigterm_to_the_audit_ends_the_whole_tree_and_cleans_its_scratch() {
     );
 }
 
+// --- environment variables a step reads that nothing keys -------------------
+
+/// The reader must be node: it asks libc `getenv`, which the recorder sees (a
+/// shell's `$X` or python's `os.environ` read `environ` directly).
+const NODE_READ: &str = "node -e 'if (process.env.NODE_ENV === \"production\") {}'";
+
+/// False when node is missing and the host is allowed to skip.
+fn has_node() -> bool {
+    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|p| p.join("node").is_file());
+    let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
+    assert!(found || !require, "COOK_AUDIT_E2E=require but node is not on PATH");
+    if !found {
+        eprintln!("skipping: node not on PATH");
+    }
+    found
+}
+
+fn env_roots(doc: &serde_json::Value) -> Vec<String> {
+    doc["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["kind"] == "env")
+        .map(|f| f["root"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn an_unkeyed_environment_read_is_reported_by_name() {
+    if !has_node() {
+        return;
+    }
+    let dir = project(&format!("recipe lint\n    seal \"src/a.ts\"\n    test {{ {NODE_READ} }}\n"));
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    let f = finding(&doc, "env", "NODE_ENV").unwrap_or_else(|| panic!("{doc}"));
+    assert_eq!(f["count"], 1);
+    assert_eq!(f["paths"], serde_json::json!([]));
+    let text = String::from_utf8_lossy(&audit(dir.path(), xdg.path(), &["lint"]).unwrap().stdout).into_owned();
+    assert!(text.lines().any(|l| l.contains("lint  env  NODE_ENV") && l.contains("(unset)")), "{text}");
+}
+
+#[test]
+fn processes_that_read_no_variable_report_none() {
+    let dir = project("recipe quiet\n    seal \"src/a.ts\"\n    test { true }\n    test { cat src/a.ts >/dev/null }\n");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["quiet", "--json"]) else { return };
+    let doc = json(&out);
+    assert_eq!(env_roots(&doc), Vec::<String>::new(), "the harness (sh, strace) must add no names: {doc}");
+    // Canary for the recorder-path match: were it wrong, every program would be named.
+    assert_eq!(unobserved_roots(&doc), Vec::<String>::new(), "{doc}");
+}
+
+#[test]
+fn a_sealed_probes_literal_getenv_keys_the_name() {
+    if !has_node() {
+        return;
+    }
+    let dir = project(&format!(
+        "probe mode\n    >{{\n        return {{ v = os.getenv(\"NODE_ENV\") or \"\" }}\n    }}\n\nrecipe lint\n    seal \"src/a.ts\"\n    seal mode\n    test {{ {NODE_READ} }}\n"
+    ));
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    assert!(doc["units"].as_array().unwrap().iter().all(|u| u["status"] == "traced"), "{doc}");
+    assert!(finding(&doc, "env", "NODE_ENV").is_none(), "{doc}");
+}
+
+/// A documented false positive: the audit cannot attribute a variable's
+/// value to the environment name config read it from, so the name stays reported.
+#[test]
+fn a_variable_assigned_from_the_environment_does_not_key_the_name() {
+    if !has_node() {
+        return;
+    }
+    let dir = project(&format!(
+        "config\n    var.mode = host.env(\"NODE_ENV\", \"dev\")\n\nrecipe lint\n    seal \"src/a.ts\"\n    test {{ {NODE_READ}; echo $<mode> >/dev/null }}\n"
+    ));
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    assert!(finding(&doc, "env", "NODE_ENV").is_some(), "{doc}");
+}
+
+#[test]
+fn a_variable_that_shares_the_names_spelling_does_not_key_it() {
+    if !has_node() {
+        return;
+    }
+    let dir = project(
+        "config\n    var.RUSTFLAGS = \"-C x\"\n\nrecipe lint\n    seal \"src/a.ts\"\n    test { node -e 'process.env.RUSTFLAGS'; echo $<RUSTFLAGS> >/dev/null }\n",
+    );
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    assert!(finding(&doc, "env", "RUSTFLAGS").is_some(), "{doc}");
+}
+
+#[test]
+fn locale_and_home_queries_are_not_findings() {
+    if !has_node() {
+        return;
+    }
+    let dir = project("recipe lint\n    seal \"src/a.ts\"\n    test { node -e 'process.env.LANG; process.env.LC_ALL; process.env.HOME; process.env.LD_LIBRARY_PATH; process.env.TERM' }\n");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    // Node queries its own NODE_* names too; those are real findings.
+    let roots = env_roots(&doc);
+    for ignored in ["LANG", "LC_ALL", "HOME", "LD_LIBRARY_PATH", "TERM"] {
+        assert!(!roots.iter().any(|r| r == ignored), "{ignored} is ignored: {doc}");
+    }
+    assert!(roots.iter().any(|r| r == "NODE_OPTIONS"), "the recorder saw nothing at all: {doc}");
+}
+
+// --- statically linked programs ----------------------------------------------
+
+/// Builds `tools/stat` (a static no-op) in the project; false when this host
+/// cannot link statically and is allowed to skip.
+fn build_static(dir: &Path) -> bool {
+    let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
+    fs::create_dir_all(dir.join("tools")).unwrap();
+    let c = dir.join("tools/stat.c");
+    fs::write(&c, "int main(void) { return 0; }\n").unwrap();
+    let ok = Command::new("cc")
+        .args(["-static", "-o"])
+        .arg(dir.join("tools/stat"))
+        .arg(&c)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(ok || !require, "COOK_AUDIT_E2E=require but `cc -static` failed");
+    if !ok {
+        eprintln!("skipping: cc -static unavailable");
+    }
+    fs::remove_file(&c).unwrap();
+    ok
+}
+
+fn unobserved_roots(doc: &serde_json::Value) -> Vec<String> {
+    doc["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["kind"] == "env-unobserved")
+        .map(|f| f["root"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_statically_linked_program_is_named_as_env_not_observed() {
+    let dir = project("recipe lint\n    seal \"src/a.ts\" \"tools/stat\"\n    test { ./tools/stat }\n");
+    if !build_static(dir.path()) {
+        return;
+    }
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let doc = json(&out);
+    let f = finding(&doc, "env-unobserved", "tools/stat").unwrap_or_else(|| panic!("{doc}"));
+    assert_eq!(f["count"], 1);
+    assert_eq!(f["paths"], serde_json::json!([]));
+    let text = String::from_utf8_lossy(&audit(dir.path(), xdg.path(), &["lint"]).unwrap().stdout).into_owned();
+    assert!(text.lines().any(|l| l.contains("lint  env-unobserved  tools/stat") && l.contains("env not observed")), "{text}");
+}
+
+#[test]
+fn dynamic_programs_are_not_named_unobserved() {
+    let dir = project("recipe dyn\n    seal \"src/a.ts\"\n    test { true; cat src/a.ts >/dev/null }\n");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["dyn", "--json"]) else { return };
+    assert_eq!(unobserved_roots(&json(&out)), Vec::<String>::new());
+}
+
+/// Audits one `test { <cmd> }` recipe and returns the env-unobserved roots.
+fn unobserved_by(cmd: &str) -> Option<Vec<String>> {
+    let dir = project(&format!("recipe scrub\n    seal \"src/a.ts\"\n    test {{ {cmd} }}\n"));
+    let xdg = TempDir::new().unwrap();
+    let out = audit(dir.path(), xdg.path(), &["scrub", "--json"])?;
+    Some(unobserved_roots(&json(&out)))
+}
+
+#[test]
+fn a_program_started_with_a_scrubbed_environment_is_named() {
+    if !has_node() {
+        return;
+    }
+    let Some(roots) = unobserved_by("env -i PATH=\"$PATH\" node -e 1") else { return };
+    assert!(roots.iter().any(|r| r.ends_with("/node")), "{roots:?}");
+}
+
+#[test]
+fn a_child_spawned_with_an_empty_env_is_named() {
+    if !has_node() {
+        return;
+    }
+    let Some(roots) = unobserved_by("node -e 'require(\"child_process\").spawnSync(\"true\",{env:{}})'") else { return };
+    assert!(roots.iter().any(|r| r.ends_with("/true")), "{roots:?}");
+}
+
+#[test]
+fn a_child_spawned_with_the_inherited_env_is_not_named() {
+    if !has_node() {
+        return;
+    }
+    let Some(roots) = unobserved_by("node -e 'require(\"child_process\").spawnSync(\"true\")'") else { return };
+    assert_eq!(roots, Vec::<String>::new());
+}
+
 fn paths_of(doc: &serde_json::Value, recipe: &str) -> Vec<String> {
     doc["findings"]
         .as_array()
@@ -572,4 +782,21 @@ fn a_covers_root_that_is_home_errors_its_unit_at_audit_and_breaks_nothing_else()
     let doc = json(&out);
     let units = doc["units"].as_array().unwrap();
     assert!(!units.is_empty() && units.iter().all(|u| u["status"] == "traced"), "{doc}");
+}
+
+#[test]
+fn a_unit_whose_coverage_errors_still_reports_its_environment_reads() {
+    if !has_node() {
+        return;
+    }
+    let home = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let h = home.path();
+    let dir = project(&format!("probe v\n    covers \"{}\"\n    {{ echo 1 }}\n\nrecipe x\n    seal v\n    test {{ {NODE_READ} }}\n", h.display()));
+    let xdg = TempDir::new().unwrap();
+    let env: [(&str, &Path); 1] = [("HOME", h)];
+    let Some(out) = audit_with(dir.path(), xdg.path(), &["x", "--json"], &env) else { return };
+    let doc = json(&out);
+    let units = doc["units"].as_array().unwrap();
+    assert!(!units.is_empty() && units.iter().all(|u| u["status"] == "error"), "{doc}");
+    assert!(env_roots(&doc).iter().any(|r| r == "NODE_ENV"), "{doc}");
 }

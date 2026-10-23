@@ -12,6 +12,7 @@ members = [
     "crates/cook-lua-stdlib",
     "crates/cook-execute",
     "crates/cook-register",
+    "crates/cook-envtrace",
     "crates/cook-engine",
     "crates/cook-plan",
     "crates/cook-graph",
