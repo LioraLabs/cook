@@ -230,8 +230,14 @@ fn put_url(fx: &Fixture, k: &CloudKey) -> String {
     format!("{}/v1/artifacts/{}", fx.url(), hex::encode(k))
 }
 
+fn key_in_shard_of(k: &CloudKey, last: u8) -> CloudKey {
+    let mut other = *k;
+    other[31] = last;
+    other
+}
+
 #[test]
-fn stalled_upload_holds_no_stripe_and_cannot_outlive_the_socket_timeout() {
+fn stalled_upload_holds_no_shard_lock_and_cannot_outlive_the_socket_timeout() {
     use std::io::Write;
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().to_path_buf());
@@ -248,7 +254,7 @@ fn stalled_upload_holds_no_stripe_and_cannot_outlive_the_socket_timeout() {
         });
     }
 
-    // Key A (stripe 0) starts an upload it never finishes.
+    // Key A starts an upload it never finishes.
     let a = key(0x00);
     let mut stalled = std::net::TcpStream::connect(server.local_addr()).unwrap();
     let mut head = format!(
@@ -262,7 +268,7 @@ fn stalled_upload_holds_no_stripe_and_cannot_outlive_the_socket_timeout() {
     stalled.write_all(head.as_bytes()).unwrap();
     std::thread::sleep(Duration::from_millis(300));
 
-    // Key B (0x40) shares A's stripe and must not wait for it.
+    // Key B shares A's shard (same first byte) and must not wait for it.
     let (tx, rx) = std::sync::mpsc::channel();
     let client = CloudBackend::new(
         format!("http://{}", server.local_addr()),
@@ -276,10 +282,10 @@ fn stalled_upload_holds_no_stripe_and_cannot_outlive_the_socket_timeout() {
         },
     );
     std::thread::spawn(move || {
-        let _ = tx.send(put_bytes(&client, &key(0x40), b"hello world", &mut meta()));
+        let _ = tx.send(put_bytes(&client, &key_in_shard_of(&a, 1), b"hello world", &mut meta()));
     });
     rx.recv_timeout(Duration::from_secs(3))
-        .expect("PUT of a same-stripe key must not wait on the stalled upload")
+        .expect("PUT of a same-shard key must not wait on the stalled upload")
         .unwrap();
 
     server.shutdown();

@@ -11,7 +11,6 @@
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -25,8 +24,6 @@ use crate::http1::{self, Body, HeadError, Reply};
 
 /// A batch_query body larger than this is refused (413).
 const MAX_QUERY_BODY: u64 = 16 * 1024 * 1024;
-/// Stripes for the per-key PUT/DELETE lock.
-const STRIPES: usize = 64;
 /// Socket read/write timeout: a stalled peer frees its thread after this.
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
 /// Connections handled at once (one thread each); past it a peer gets 503.
@@ -38,11 +35,6 @@ pub struct CacheServer {
     stopping: AtomicBool,
     backend: LocalBackend,
     token: String,
-    /// `LocalBackend::commit` is check-then-rename on fixed sidecar temp
-    /// names, so two concurrent committers at one key can pair one blob with
-    /// the other's sidecar. Committers (and deleters) of a key hold its stripe
-    /// (in-process only); staging the upload happens outside it.
-    stripes: [Mutex<()>; STRIPES],
     max_connections: usize,
     live: AtomicUsize,
     /// Spawns still to fail on purpose, so a test can reach the spawn-error arm.
@@ -118,7 +110,6 @@ impl CacheServer {
             stopping: AtomicBool::new(false),
             backend,
             token,
-            stripes: std::array::from_fn(|_| Mutex::new(())),
             max_connections: MAX_CONNECTIONS,
             live: AtomicUsize::new(0),
             #[cfg(test)]
@@ -381,7 +372,6 @@ impl CacheServer {
             Ok(s) => s,
             Err(e) => return put_failure(key, e),
         };
-        let _held = self.lock(key);
         match self.backend.commit(key, staged, &mut meta) {
             Ok(()) => text(200, "stored"),
             Err(e) => put_failure(key, e),
@@ -389,17 +379,10 @@ impl CacheServer {
     }
 
     fn delete(&self, key: &CloudKey) -> Reply {
-        let _held = self.lock(key);
         match self.backend.delete(key) {
             Ok(()) => text(204, ""),
             Err(e) => text(500, &e.to_string()),
         }
-    }
-
-    fn lock(&self, key: &CloudKey) -> std::sync::MutexGuard<'_, ()> {
-        self.stripes[key[0] as usize % STRIPES]
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

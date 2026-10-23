@@ -1132,3 +1132,129 @@ fn sweep_stale_temps_removes_only_old_staged_temps() {
     assert!(fresh.exists() && lookalike.exists());
     assert!(blob.exists() && blob.with_extension("meta.json").exists());
 }
+
+// ─── names stage may not reuse ──────────────────────────────────────────
+
+#[test]
+fn stage_never_truncates_a_temp_another_process_made() {
+    use std::sync::atomic::Ordering;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x5a);
+    let blob = backend.path_for(&k);
+    std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+    // The next few names stage would pick, as if another PID namespace made them.
+    // Wide enough that parallel tests cannot advance STAGE_SEQ past it before `stage` runs.
+    const SQUAT: u64 = 1024;
+    let next = STAGE_SEQ.load(Ordering::Relaxed);
+    let squatted: Vec<_> = (next..next + SQUAT)
+        .map(|n| blob.with_extension(format!("{}.{n}.tmp", std::process::id())))
+        .collect();
+    for p in &squatted {
+        std::fs::write(p, b"someone else's upload").unwrap();
+    }
+
+    let staged = backend.stage(&k, &mut Cursor::new(b"mine".to_vec()), &sample_meta()).expect("stage");
+
+    let seq: u64 = staged.tmp.to_str().unwrap().rsplit('.').nth(1).unwrap().parse().unwrap();
+    assert!(seq >= next + SQUAT, "stage never met a taken name (seq {seq})");
+    assert_eq!(std::fs::read(&staged.tmp).unwrap(), b"mine");
+    for p in &squatted {
+        assert_eq!(std::fs::read(p).unwrap(), b"someone else's upload", "{}", p.display());
+    }
+}
+
+// ─── the shard lock ─────────────────────────────────────────────────────
+
+#[test]
+fn enumerate_and_sweep_pass_the_lock_file_by() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xcd);
+    put_bytes(&backend, &k, b"hello", &mut sample_meta()).expect("put");
+    let lock = backend.path_for(&k).parent().unwrap().join(SHARD_LOCK);
+    assert!(lock.exists(), "a put leaves its shard's lock file");
+
+    assert_eq!(backend.enumerate().unwrap().len(), 1);
+    std::fs::File::open(&lock).unwrap().set_modified(std::time::UNIX_EPOCH).unwrap();
+    assert_eq!(backend.sweep_stale_temps(std::time::Duration::from_secs(1)), 0);
+    assert!(lock.exists());
+}
+
+#[test]
+fn two_threads_exclude_each_other_on_one_shard() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    put_bytes(&backend, &key(0x11), b"x", &mut sample_meta()).expect("put");
+    let held = backend.lock_shard(&key(0x11)).expect("first lock");
+    let got_it = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _second = backend.lock_shard(&key(0x11)).expect("second lock");
+            got_it.store(true, Ordering::SeqCst);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!got_it.load(Ordering::SeqCst), "second handle entered while the first held the lock");
+        drop(held);
+    });
+    assert!(got_it.load(Ordering::SeqCst));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_lock_file_this_user_cannot_write_still_locks() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x33);
+    put_bytes(&backend, &k, b"x", &mut sample_meta()).expect("put");
+    let lock = backend.path_for(&k).with_file_name(SHARD_LOCK);
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // Root ignores the mode, so the read-only fallback is unreachable there.
+    if std::fs::OpenOptions::new().write(true).open(&lock).is_ok() {
+        return;
+    }
+    put_bytes(&backend, &key(0x33), b"x", &mut sample_meta()).expect("re-put under a read-only lock file");
+}
+
+#[test]
+fn a_staged_temp_renamed_into_place_is_not_removed_on_drop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x22);
+    let staged = backend.stage(&k, &mut Cursor::new(b"abc".to_vec()), &sample_meta()).unwrap();
+    let tmp = staged.tmp.clone();
+    put_bytes(&backend, &k, b"abc", &mut sample_meta()).unwrap(); // a second upload of its own
+    backend.commit(&k, staged, &mut sample_meta()).unwrap(); // intact re-put: removed on drop
+    assert!(!tmp.exists());
+
+    let mut staged = backend.stage(&k, &mut Cursor::new(b"abc".to_vec()), &sample_meta()).unwrap();
+    let tmp = staged.tmp.clone();
+    let elsewhere = dir.path().join("elsewhere");
+    staged.place(&elsewhere).unwrap();
+    std::fs::write(&tmp, b"another process's temp, same name").unwrap();
+    drop(staged);
+    assert!(tmp.exists(), "drop must not touch a name it no longer owns");
+}
+
+#[test]
+fn delete_and_eviction_of_a_missing_shard_create_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    backend.delete(&key(0x33)).expect("delete");
+    let victim = EvictCandidate { key: key(0x33), size: 1, last_access: 0, kind: None, recipe_namespace: String::new() };
+    let plan = plan_eviction(&[victim], &EvictPolicy::manual(Some(0), None), 1);
+    assert_eq!(backend.apply_eviction(&plan).unwrap(), EvictOutcome::default());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_blob_without_its_sidecar_is_not_present() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x44);
+    put_bytes(&backend, &k, b"abc", &mut sample_meta()).unwrap();
+    std::fs::remove_file(backend.path_for(&k).with_extension("meta.json")).unwrap();
+    assert!(backend.batch_query(&[k]).unwrap().is_empty());
+}

@@ -303,7 +303,8 @@ fn snapshot_files(dir: &Path) -> std::collections::BTreeSet<PathBuf> {
     walkdir::WalkDir::new(dir)
         .into_iter()
         .flatten()
-        .filter(|e| e.file_type().is_file())
+        // Object files only: a shard's advisory lock file appears once anything mutates it.
+        .filter(|e| e.file_type().is_file() && e.file_name() != "lock")
         .map(|e| e.path().strip_prefix(dir).unwrap().to_path_buf())
         .collect()
 }

@@ -323,18 +323,40 @@ fn store_err(ctx: String, e: io::Error) -> PutError {
     PutError::Store { kind: e.kind(), msg: format!("{ctx}: {e}") }
 }
 
-/// Verified bytes in a uniquely named temp file; removed on drop (a rename
-/// has already moved it by then, so the removal is a no-op).
+/// Verified bytes in a uniquely named temp file; removed on drop unless it
+/// was renamed into place (the name may by then be another process's temp).
 pub(crate) struct Staged {
     tmp: PathBuf,
     computed: [u8; 32],
+    placed: bool,
+}
+
+impl Staged {
+    fn place(&mut self, to: &std::path::Path) -> Result<(), PutError> {
+        std::fs::rename(&self.tmp, to).map_err(|e| store_err(format!("rename {}", to.display()), e))?;
+        self.placed = true;
+        Ok(())
+    }
 }
 
 impl Drop for Staged {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.tmp);
+        if !self.placed {
+            let _ = std::fs::remove_file(&self.tmp);
+        }
     }
 }
+
+/// The advisory lock file in each shard dir, `<root>/<2hex>/<this>`: every
+/// mutation of a key's files holds its shard's lock (`flock`, one open file
+/// description per acquisition, so threads exclude each other too). Nothing
+/// may ever delete it: unlinking a held lock file lets a second process lock
+/// a fresh inode and enter beside the first. Neither 62-hex nor a staged-temp
+/// name, so `enumerate` and `sweep_stale_temps` pass it by.
+const SHARD_LOCK: &str = "lock";
+
+/// Names tried for one temp before `stage` gives up.
+const STAGE_ATTEMPTS: usize = 10_000;
 
 static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -354,11 +376,20 @@ impl LocalBackend {
             .map_err(|e| store_err(format!("mkdir {}", parent.display()), e))?;
 
         // `<62hex>.<pid>.<n>.tmp` is never a 62-hex name, so `enumerate` skips it.
-        let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp = path.with_extension(format!("{}.{seq}.tmp", std::process::id()));
-        let mut tmp_file = File::create(&tmp)
-            .map_err(|e| store_err(format!("create {}", tmp.display()), e))?;
-        let mut staged = Staged { tmp, computed: [0; 32] };
+        // create_new: a pid alone is not unique across PID namespaces sharing a store.
+        let mut attempts = 0;
+        let (tmp, mut tmp_file) = loop {
+            let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let tmp = path.with_extension(format!("{}.{seq}.tmp", std::process::id()));
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+                Ok(f) => break (tmp, f),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempts < STAGE_ATTEMPTS => {
+                    attempts += 1;
+                }
+                Err(e) => return Err(store_err(format!("create {}", tmp.display()), e)),
+            }
+        };
+        let mut staged = Staged { tmp, computed: [0; 32], placed: false };
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
         let mut cap = crate::cap::CapCounter::new(self.config.max_artifact_bytes);
@@ -398,12 +429,40 @@ impl LocalBackend {
         Ok(staged)
     }
 
+    /// The key's shard lock, held until the returned file drops. A shard dir
+    /// that does not exist is `NotFound`: nothing there to mutate. Errors
+    /// keep their kind and say which key's shard failed.
+    fn lock_shard(&self, key: &CloudKey) -> io::Result<File> {
+        let lock = self.path_for(key).with_file_name(SHARD_LOCK);
+        // Writable where we can (flock emulated over fcntl, as on NFS, needs it for an
+        // exclusive lock); read-only when another user's lock file refuses us. create makes no dir.
+        let opened = match std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(&lock) {
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => File::open(&lock),
+            other => other,
+        };
+        opened
+            .and_then(|f| f.lock().map(|()| f))
+            .map_err(|e| io::Error::new(e.kind(), format!("lock shard of {}: {e}", hex::encode(key))))
+    }
+
     /// Second half of a put: conflict detection, then blob and sidecar into
-    /// place. The caller serialises commits per key.
+    /// place, all under the shard lock.
     pub(crate) fn commit(
         &self,
         key: &CloudKey,
         staged: Staged,
+        meta: &mut ArtifactMeta,
+    ) -> Result<(), PutError> {
+        let _lock = self
+            .lock_shard(key)
+            .map_err(|e| PutError::Store { kind: e.kind(), msg: e.to_string() })?;
+        self.commit_locked(key, staged, meta)
+    }
+
+    fn commit_locked(
+        &self,
+        key: &CloudKey,
+        mut staged: Staged,
         meta: &mut ArtifactMeta,
     ) -> Result<(), PutError> {
         let path = self.path_for(key);
@@ -428,6 +487,8 @@ impl LocalBackend {
                                 // Same bytes. Keep the stored blob only if it
                                 // still verifies; otherwise these good bytes
                                 // replace it (the sidecar already matches).
+                                // The whole-blob re-hash runs under the shard lock on purpose (a concurrent
+                                // writer must not replace the blob mid-check); same-shard writers wait one blob read.
                                 let intact = File::open(&path)
                                     .and_then(|f| {
                                         io::copy(&mut VerifyingReader::new(f, computed), &mut io::sink())
@@ -438,9 +499,7 @@ impl LocalBackend {
                                         "cache integrity: blob at {} fails its recorded hash; healing from the re-put",
                                         path.display(),
                                     );
-                                    std::fs::rename(&staged.tmp, &path).map_err(|e| {
-                                        store_err(format!("rename {}", path.display()), e)
-                                    })?;
+                                    staged.place(&path)?;
                                 }
                                 meta.content_hash = computed;
                                 return Ok(());
@@ -475,8 +534,7 @@ impl LocalBackend {
         }
 
         // Blob first (atomic rename), then the sidecar that makes it readable.
-        std::fs::rename(&staged.tmp, &path)
-            .map_err(|e| store_err(format!("rename {}", path.display()), e))?;
+        staged.place(&path)?;
 
         // The stamp is authoritative whether the caller passed the zero
         // sentinel or a matching hash. size_bytes stays caller-set.
@@ -497,7 +555,9 @@ impl CacheBackend for LocalBackend {
     fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
         let mut hits = std::collections::BTreeSet::new();
         for k in keys {
-            if self.path_for(k).exists() {
+            // Both halves: a blob alone (crash between renames, mid-eviction) is a miss on every get.
+            let path = self.path_for(k);
+            if path.exists() && path.with_extension("meta.json").exists() {
                 hits.insert(*k);
             }
         }
@@ -533,9 +593,17 @@ impl CacheBackend for LocalBackend {
     }
 
     fn delete(&self, key: &CloudKey) -> BackendResult<()> {
+        let _lock = match self.lock_shard(key) {
+            Ok(l) => l,
+            // No shard dir: nothing was ever stored here.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(BackendError::Other(e.to_string())),
+        };
         let path = self.path_for(key);
-        let _ = std::fs::remove_file(&path);
+        // Sidecar first: it is the commit point readers check, so a crash between the
+        // removals leaves a blob nobody serves, never a sidecar vouching for a stranger blob.
         let _ = std::fs::remove_file(path.with_extension("meta.json"));
+        let _ = std::fs::remove_file(&path);
         // `path_for` yields a path with no extension, so `with_extension`
         // here appends rather than replaces — the same construction
         // `put_manifest` uses to write this sidecar in the first place.
@@ -570,6 +638,10 @@ impl CacheBackend for LocalBackend {
             "{}.tmp",
             path.file_name().unwrap().to_string_lossy()
         ));
+        // The fixed temp name is private to whoever holds the shard lock.
+        let _lock = self
+            .lock_shard(key)
+            .map_err(|e| BackendError::Other(e.to_string()))?;
         std::fs::write(&tmp, &bytes)
             .map_err(|e| BackendError::Other(format!("write {}: {e}", tmp.display())))?;
         std::fs::rename(&tmp, &path)
@@ -784,10 +856,19 @@ impl LocalBackend {
         let mut outcome = EvictOutcome::default();
 
         for victim in &plan.victims {
+            // One victim per acquisition, so a writer never waits out the whole plan.
+            let _lock = match self.lock_shard(&victim.key) {
+                Ok(l) => l,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    tracing::warn!("evict: {e}; skipped");
+                    continue;
+                }
+            };
             let path = self.path_for(&victim.key);
-            let blob_removed = std::fs::remove_file(&path).is_ok();
-
+            // Sidecar first (the commit point readers check), as in `delete`.
             let _ = std::fs::remove_file(path.with_extension("meta.json"));
+            let blob_removed = std::fs::remove_file(&path).is_ok();
             let _ = std::fs::remove_file(path.with_extension("provenance.json"));
 
             if blob_removed {
