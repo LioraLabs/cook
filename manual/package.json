@@ -10,7 +10,8 @@
     "preview": "astro preview",
     "test": "node scripts/check.mjs",
     "deploy": "npm run build && wrangler deploy",
-    "standard": "cd ../standard && pnpm build && rm -rf ../manual/dist/standard && cp -r dist ../manual/dist/standard"
+    "standard": "cd ../standard && pnpm build && rm -rf ../manual/dist/standard && cp -r dist ../manual/dist/standard",
+    "deploy:pages": "npm run build && cd pages && wrangler pages deploy --commit-dirty=true"
   },
   "dependencies": {
     "@astrojs/markdown-remark": "^7.3.1",

@@ -1,0 +1,8 @@
+// Cloudflare Pages deploy of the docs (cook-docs.pages.dev) until docs.usecook.com
+// is attached to the Worker in ../wrangler.jsonc. Own folder because
+// `wrangler pages deploy` reads its config from the cwd.
+{
+  "name": "cook-docs",
+  "pages_build_output_dir": "../dist",
+  "compatibility_date": "2026-09-01"
+}
