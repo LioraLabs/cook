@@ -556,6 +556,9 @@ the failure mode, so cook gives you tools to see the key:
 - **`cook cache verify`**: re-runs cached steps and reports any byte divergence
   under a matching key. A diagnostic for catching undeclared determinants (run it
   in CI on a different host), explicitly *not* a trust gate.
+- **`cook audit`**: on Linux, re-runs a recipe under a traced-read audit and
+  reports every file a step read that it never declared. It only reports; it
+  never changes a key.
 
 Per-step **dispositions** control keying and sharing. `seal` (the verb from
 [Using probes](#using-probes)) folds declared determinants into the key, and a
@@ -595,7 +598,8 @@ publish-off, or build in a separate checkout (its own `.cook`).
 
 The shared store itself is a content-addressed directory: point `[cache]
 cache_dir` in `.cook/cloud.toml` at a path your team can reach and there is no
-server to run. See [Sharing a cache across a team](docs/shared-cache.md) for the
+server to run. Where a fleet has no common filesystem, `cook cache serve` serves a
+store over HTTP instead (the token comes from `COOK_CLOUD_API_KEY`). See [Sharing a cache across a team](docs/shared-cache.md) for the
 setup, the toolchain-sealing step it depends on, and the operational edges.
 
 ### Keeping the store in budget
