@@ -12,6 +12,7 @@
 //! the developer's real CAS.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use cook_engine::cook_cache::backend::{EvictCandidate, EvictOutcome, EvictPlan};
 use tempfile::tempdir;
@@ -220,4 +221,24 @@ fn sweep_with_victim_free_plan_returns_none_outcome_without_calling_apply_evicti
         !store.exists(),
         "a victim-free plan must never construct a backend / touch the store"
     );
+}
+
+#[test]
+fn sweep_removes_an_old_orphaned_upload_temp_but_a_dry_run_does_not() {
+    let tmp = tempdir().unwrap();
+    let store = tmp.path().join("cas");
+    let shard = store.join("ab");
+    std::fs::create_dir_all(&shard).unwrap();
+    let orphan = shard.join(format!("{}.99.1.tmp", "c".repeat(62)));
+    std::fs::write(&orphan, b"partial").unwrap();
+    let old = SystemTime::now() - Duration::from_secs(2 * 3600);
+    std::fs::File::options().write(true).open(&orphan).unwrap().set_modified(old).unwrap();
+
+    let policy = EvictPolicy::manual(None, None);
+    sweep(&store, &[], &policy, 0, true).unwrap();
+    assert!(orphan.exists(), "a dry run must not delete anything");
+
+    let result = sweep(&store, &[], &policy, 0, false).unwrap();
+    assert!(result.outcome.is_none(), "temps are not part of the report");
+    assert!(!orphan.exists());
 }

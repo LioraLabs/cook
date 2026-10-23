@@ -209,9 +209,7 @@ impl CloudConfig {
     /// CS-0059 dropped the secondary `[cloud] api_key` TOML form because
     /// that field encouraged committing secrets in shared repositories.
     pub fn resolved_api_key(&self) -> Option<String> {
-        std::env::var("COOK_CLOUD_API_KEY")
-            .ok()
-            .filter(|v| !v.is_empty())
+        resolve_api_key()
     }
 
     /// CS-0196: the project identity that enters cache keys — exactly the
@@ -322,3 +320,11 @@ impl CloudConfig {
 #[cfg(test)]
 #[path = "tests/cloud_config_tests.rs"]
 mod tests;
+
+/// The one token rule: `COOK_CLOUD_API_KEY`, with an empty value read as unset.
+/// Shared by the cloud client and `cook cache serve`.
+pub fn resolve_api_key() -> Option<String> {
+    std::env::var(crate::cloud_backend::API_KEY_ENV)
+        .ok()
+        .filter(|v| !v.is_empty())
+}

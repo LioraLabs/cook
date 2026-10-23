@@ -1083,3 +1083,52 @@ fn apply_eviction_of_an_empty_plan_is_a_no_op() {
     assert!(blob.with_extension("meta.json").exists());
     assert!(blob.with_extension("provenance.json").exists());
 }
+
+/// A re-put of the right bytes replaces a blob that no longer verifies.
+#[test]
+fn reput_heals_a_corrupted_blob() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0x59);
+    let bytes = b"heal me: some payload bytes";
+    put_bytes(&backend, &k, bytes, &mut sample_meta()).expect("put");
+
+    let path = backend.path_for(&k);
+    let mut on_disk = std::fs::read(&path).unwrap();
+    on_disk[3] ^= 0xff;
+    std::fs::write(&path, &on_disk).unwrap();
+    assert!(get_bytes(&backend, &k).unwrap().is_none(), "corruption must be visible first");
+
+    put_bytes(&backend, &k, bytes, &mut sample_meta()).expect("re-put heals");
+    assert_eq!(get_bytes(&backend, &k).expect("get").expect("hit"), bytes);
+}
+
+#[test]
+fn sweep_stale_temps_removes_only_old_staged_temps() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xab);
+    put_bytes(&backend, &k, b"hello", &mut sample_meta()).expect("put");
+    let blob = backend.path_for(&k);
+    let shard = blob.parent().unwrap();
+    let stem = blob.file_name().unwrap().to_str().unwrap().to_string();
+
+    let old = shard.join(format!("{stem}.4242.7.tmp"));
+    let fresh = shard.join(format!("{stem}.4242.8.tmp"));
+    let lookalike = shard.join(format!("{stem}.notes.tmp"));
+    for f in [&old, &fresh, &lookalike] {
+        std::fs::write(f, b"partial").unwrap();
+    }
+    let two_hours_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(7200),
+    );
+    filetime::set_file_mtime(&old, two_hours_ago).unwrap();
+    filetime::set_file_mtime(&lookalike, two_hours_ago).unwrap();
+
+    let removed = backend.sweep_stale_temps(std::time::Duration::from_secs(3600));
+
+    assert_eq!(removed, 1);
+    assert!(!old.exists());
+    assert!(fresh.exists() && lookalike.exists());
+    assert!(blob.exists() && blob.with_extension("meta.json").exists());
+}

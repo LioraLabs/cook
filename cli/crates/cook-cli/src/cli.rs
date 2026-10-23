@@ -228,6 +228,7 @@ impl Cmd {
                 CacheCmd::Dump(d) => d.recipe.as_deref(),
                 CacheCmd::Du => None,
                 CacheCmd::Gc(_) => None,
+                CacheCmd::Serve(_) => None,
             },
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
@@ -357,6 +358,38 @@ pub enum CacheCmd {
     /// cache is server-managed and this prints a note instead of touching
     /// anything local.
     Gc(CacheGcArgs),
+    /// Serve a local artifact store over the v1 cache protocol.
+    ///
+    /// A shared cache for a team: the same protocol `[cloud]` speaks, backed
+    /// by the directory `--store` names. The bearer token clients must send
+    /// is read from the COOK_CLOUD_API_KEY environment variable (never argv);
+    /// the command refuses to start without it. Plain HTTP: run it on a
+    /// trusted network or behind a TLS proxy. Ctrl-C or SIGTERM stops it
+    /// after in-flight requests finish; a second signal exits immediately.
+    Serve(CacheServeArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheServeArgs {
+    /// Address to listen on.
+    #[arg(long, default_value = "127.0.0.1:7878")]
+    pub listen: String,
+    /// Directory holding the served store. Required: there is no default, so
+    /// a bare `serve` can never expose your own cache for writing. `--init`
+    /// creates it; `cook cache gc --store <dir>` bounds it.
+    #[arg(long)]
+    pub store: std::path::PathBuf,
+    /// Create the store directory if it is missing. Without it a missing
+    /// `--store` is refused, so a mistyped path never becomes an empty store.
+    #[arg(long)]
+    pub init: bool,
+    /// Largest artifact the server accepts, in MiB.
+    #[arg(long = "max-artifact-mib", default_value_t = 1024)]
+    pub max_artifact_mib: u64,
+    /// Connections served at once, one thread each; past it a new connection
+    /// gets 503 and is closed.
+    #[arg(long = "max-connections", default_value_t = cook_engine::cook_cache::serve::MAX_CONNECTIONS as u32, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_connections: u32,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -370,6 +403,12 @@ pub struct CacheGcArgs {
     /// Report what would be freed without deleting anything.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
+    /// Sweep this store directory instead of the project's: the store a
+    /// `cook cache serve` serves (or any store dir). Needs no project; safe
+    /// beside the server, since a concurrent eviction only turns an entry
+    /// into a miss.
+    #[arg(long)]
+    pub store: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args, Debug, Clone)]

@@ -3,7 +3,7 @@
 //!
 //! Read-only project-root resolution, exactly like `cook cache du`: no
 //! workspace registration, so `gc` works even when the Cookfile no longer
-//! parses. `render_dry_run` and `render_applied` are pure functions over an
+//! parses. `--store` bypasses project resolution entirely. `render_dry_run` and `render_applied` are pure functions over an
 //! `EvictPlan` / `EvictOutcome` — no I/O — so the output is unit-testable
 //! without a filesystem. `enumerate_store` and `sweep` are the reusable
 //! enumerate-plan-apply middle, free of flag parsing, config loading, the
@@ -16,7 +16,7 @@
 //! `SystemTime::now()` is read exactly once, here, so `plan_eviction` (in
 //! `cook-fingerprint`) stays pure and reusable server-side.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cook_contracts::cache::cas::EvictCandidate;
@@ -30,19 +30,15 @@ use crate::cli::{CacheGcArgs, Globals};
 use crate::error::CookError;
 use crate::pipeline::resolve_project_root;
 
-/// `cook cache gc`. Resolves the project root exactly like `cmd_cache_du`
+/// `cook cache gc`. With `--store` it sweeps that directory and reads no
+/// project; otherwise it resolves the project root exactly like `cmd_cache_du`
 /// (no workspace registration), loads `.cook/cloud.toml`, and either defers
 /// to the server-managed cloud cache or sweeps the local CAS per the
 /// requested policy.
 pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookError> {
-    let project_root = resolve_project_root(globals)?;
-    let cloud_config = CloudConfig::load_or_default(&project_root)
-        .map_err(|e| CookError::Other(format!("invalid .cook/cloud.toml: {e}")))?;
-
-    if cloud_config.cloud.enabled {
-        println!("cloud cache is server-managed; gc operates on the local store");
+    let Some(store) = resolve_store(globals, args)? else {
         return Ok(());
-    }
+    };
 
     if args.max_size.is_none() && args.older_than.is_none() {
         return Err(usage_error());
@@ -58,11 +54,6 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
         .as_deref()
         .map(parse_older_than_flag)
         .transpose()?;
-
-    // Same resolution `build_cache_ctx` and `du` use, so `gc` can never
-    // sweep a different directory than the one the engine actually writes
-    // to.
-    let store = cloud_config.resolved_cache_dir();
 
     // The only clock read in the feature; kept here so `plan_eviction`
     // stays pure and reusable server-side.
@@ -87,6 +78,31 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
     Ok(())
 }
 
+/// The store to sweep: `--store` verbatim, else the project's own (the same
+/// resolution `build_cache_ctx` and `du` use, so `gc` never sweeps a different
+/// directory than the engine writes to). `None` when the cloud cache is
+/// server-managed and the note was printed.
+fn resolve_store(globals: &Globals, args: &CacheGcArgs) -> Result<Option<PathBuf>, CookError> {
+    if let Some(dir) = &args.store {
+        // An explicit store that is not there is a typo, not zero work.
+        if !dir.is_dir() {
+            return Err(CookError::Other(format!(
+                "store {} is not an existing directory",
+                dir.display()
+            )));
+        }
+        return Ok(Some(dir.clone()));
+    }
+    let project_root = resolve_project_root(globals)?;
+    let cloud_config = CloudConfig::load_or_default(&project_root)
+        .map_err(|e| CookError::Other(format!("invalid .cook/cloud.toml: {e}")))?;
+    if cloud_config.cloud.enabled {
+        println!("cloud cache is server-managed; gc operates on the local store");
+        return Ok(None);
+    }
+    Ok(Some(cloud_config.resolved_cache_dir()))
+}
+
 /// Enumerate the local CAS at `store`. `Ok(None)` when the store directory
 /// does not exist — a missing store is zero work, not an error, and this
 /// must never create it as a side effect (`LocalBackend::with_config`
@@ -106,6 +122,10 @@ pub(crate) fn enumerate_store(store: &Path) -> Result<Option<Vec<EvictCandidate>
     Ok(Some(candidates))
 }
 
+/// An upload temp untouched this long is an orphan: a live upload writes
+/// continuously and a stalled one times out in `CacheServer` well within this.
+const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
+
 /// The result of [`sweep`]: the plan it chose, and — unless `dry_run` or the
 /// plan chose no victims — the outcome of actually applying it.
 #[derive(Debug)]
@@ -115,10 +135,10 @@ pub(crate) struct Sweep {
 }
 
 /// Plan `candidates` under `policy` at `now`, and apply the plan unless
-/// `dry_run` or the plan chose no victims. `Sweep.outcome` is `None` in
+/// `dry_run` or the plan chose no victims (a real sweep also removes stale
+/// upload temps). `Sweep.outcome` is `None` in
 /// exactly those two cases — there is no real `EvictOutcome` to fabricate,
-/// so neither case constructs a `LocalBackend` (which would
-/// `create_dir_all` `store`) at all.
+/// so neither case creates `store` (a missing store stays missing).
 pub(crate) fn sweep(
     store: &Path,
     candidates: &[EvictCandidate],
@@ -128,7 +148,17 @@ pub(crate) fn sweep(
 ) -> Result<Sweep, CookError> {
     let plan = plan_eviction(candidates, policy, now);
 
-    if dry_run || plan.victims.is_empty() {
+    if dry_run {
+        return Ok(Sweep { plan, outcome: None });
+    }
+
+    // Uploads orphaned by a crashed `cook cache serve`; only in a store that
+    // already exists, and invisible to the report.
+    if store.exists() {
+        LocalBackend::new(store.to_path_buf()).sweep_stale_temps(STALE_TEMP_AGE);
+    }
+
+    if plan.victims.is_empty() {
         return Ok(Sweep { plan, outcome: None });
     }
 

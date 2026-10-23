@@ -366,6 +366,8 @@ The intent is that an implementation's cache restore path MUST NOT be a vector f
 
 An implementation's artifact-store write path MUST treat a `put` of bytes that conflict with bytes already stored at the same key as an error. "Conflict" means the bytes differ; re-writing identical bytes is idempotent and MUST succeed. The error MUST surface to the caller; the implementation MUST NOT silently overwrite the prior bytes. This requirement is the write-side analogue of the read-side fingerprint check: it ensures that a key in the artifact store maps to one and only one byte sequence over its lifetime, which is the invariant the read-side verification relies upon.
 
+> **Note (informative).** The reference implementation's `cook cache serve` is a shared store that speaks the same v1 protocol as its cloud client — health, batch query, and get, put and delete of an artifact by key, with the artifact's metadata in headers and a bearer token read from the environment, never from argv — backed by the same local store implementation its own builds use (layout and integrity checks), serving whatever directory `--store` names. It serves stored bytes exactly as stored and does not re-verify them, so the restore-time fingerprint check above is what refuses tampered bytes: a tampered entry reads as a miss on the client. A put of different bytes under a stored key is refused, per the write-side rule above, and a delete of a missing key succeeds. It speaks plain HTTP and is meant for a trusted network or behind a TLS proxy. (CS-0259.)
+
 ### Example 17.2.1
 
 ```cook

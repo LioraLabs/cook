@@ -310,110 +310,87 @@ impl<'a> Read for CappedReader<'a> {
     }
 }
 
-// ─── header packing / parsing ─────────────────────────────────────────────
+// ─── header codec (client and server share it) ────────────────────────────
 
-/// Apply the `X-Cook-*` meta headers + `Authorization` to a request
-/// builder. Used by `put`. The meta is the caller's; `content_hash` may be
-/// the zero sentinel.
-fn put_headers(req: ureq::Request, auth: &str, meta: &ArtifactMeta) -> ureq::Request {
-    req.set("Authorization", auth)
-        .set("X-Cook-Content-Hash", &hex::encode(meta.content_hash))
-        .set("X-Cook-Size-Bytes", &meta.size_bytes.to_string())
-        .set("X-Cook-Schema-Version", &meta.schema_version.to_string())
-        .set("X-Cook-Recipe-Namespace", &meta.recipe_namespace)
-        .set("X-Cook-Output-Index", &meta.output_index.to_string())
-        .set("X-Cook-Output-Path", &meta.output_path)
-        .set("X-Cook-Mode", &meta.mode.to_string())
-        .set("X-Cook-Kind", meta.kind.as_deref().unwrap_or(""))
-        .set("X-Cook-Symlink-Target", meta.target.as_deref().unwrap_or(""))
+/// Env var holding the bearer token — the client sends it, `cook cache serve`
+/// requires it.
+pub const API_KEY_ENV: &str = "COOK_CLOUD_API_KEY";
+
+pub(crate) const HDR_CONTENT_HASH: &str = "X-Cook-Content-Hash";
+pub(crate) const HDR_SIZE_BYTES: &str = "X-Cook-Size-Bytes";
+pub(crate) const HDR_SCHEMA_VERSION: &str = "X-Cook-Schema-Version";
+pub(crate) const HDR_RECIPE_NAMESPACE: &str = "X-Cook-Recipe-Namespace";
+pub(crate) const HDR_OUTPUT_INDEX: &str = "X-Cook-Output-Index";
+pub(crate) const HDR_OUTPUT_PATH: &str = "X-Cook-Output-Path";
+pub(crate) const HDR_MODE: &str = "X-Cook-Mode";
+pub(crate) const HDR_KIND: &str = "X-Cook-Kind";
+pub(crate) const HDR_SYMLINK_TARGET: &str = "X-Cook-Symlink-Target";
+
+/// The `X-Cook-*` headers carrying an artifact's meta. `content_hash` may be
+/// the zero sentinel (a put whose hash the receiver computes).
+pub(crate) fn meta_to_headers(meta: &ArtifactMeta) -> [(&'static str, String); 9] {
+    [
+        (HDR_CONTENT_HASH, hex::encode(meta.content_hash)),
+        (HDR_SIZE_BYTES, meta.size_bytes.to_string()),
+        (HDR_SCHEMA_VERSION, meta.schema_version.to_string()),
+        (HDR_RECIPE_NAMESPACE, meta.recipe_namespace.clone()),
+        (HDR_OUTPUT_INDEX, meta.output_index.to_string()),
+        (HDR_OUTPUT_PATH, meta.output_path.clone()),
+        (HDR_MODE, meta.mode.to_string()),
+        (HDR_KIND, meta.kind.clone().unwrap_or_default()),
+        (HDR_SYMLINK_TARGET, meta.target.clone().unwrap_or_default()),
+    ]
 }
 
-/// Parse `X-Cook-Content-Hash` from a response. The header is REQUIRED on
-/// `200 OK` per CS-0058 §3.2.4; missing or malformed → `Other`.
-fn parse_content_hash(response: &ureq::Response) -> BackendResult<[u8; 32]> {
-    let h = response
-        .header("X-Cook-Content-Hash")
-        .ok_or_else(|| {
-            BackendError::Other(
-                "malformed response: missing X-Cook-Content-Hash header".into(),
-            )
-        })?;
-    let mut out = [0u8; 32];
-    hex::decode_to_slice(h, &mut out).map_err(|e| {
+/// `Authorization` + the meta headers on a request builder. Used by `put`.
+fn put_headers(req: ureq::Request, auth: &str, meta: &ArtifactMeta) -> ureq::Request {
+    meta_to_headers(meta)
+        .iter()
+        .fold(req.set("Authorization", auth), |r, (n, v)| r.set(n, v))
+}
+
+/// Reconstruct an `ArtifactMeta` from `X-Cook-*` headers (`get` looks one up
+/// by name).
+///
+/// `content_hash` is REQUIRED (CS-0058 §3.2.4); missing or malformed →
+/// `Other`. All other fields default gracefully: `mode` →
+/// `ArtifactMeta::default_mode()` (0o644), `kind`/`target` → `None`, numeric
+/// fields → 0, string fields → "". Fields not transmitted as headers
+/// (`command_hash`, `env_contribution`, `seal_contribution`, `tags`,
+/// `consulted_env_keys`) use zero / empty-set defaults — they are diagnostic
+/// and not needed for restore.
+pub(crate) fn meta_from_headers<'a>(
+    get: impl Fn(&str) -> Option<&'a str>,
+) -> BackendResult<ArtifactMeta> {
+    let h = get(HDR_CONTENT_HASH).ok_or_else(|| {
+        BackendError::Other(format!("malformed message: missing {HDR_CONTENT_HASH} header"))
+    })?;
+    let mut content_hash = [0u8; 32];
+    hex::decode_to_slice(h, &mut content_hash).map_err(|e| {
         BackendError::Other(format!(
-            "malformed response: X-Cook-Content-Hash not 64-char hex: {e}"
+            "malformed message: {HDR_CONTENT_HASH} not 64-char hex: {e}"
         ))
     })?;
-    Ok(out)
-}
-
-/// Reconstruct an `ArtifactMeta` from the `X-Cook-*` response headers in a
-/// single round-trip. Called by `get_with_meta` before the body is consumed.
-///
-/// `content_hash` is REQUIRED (via `parse_content_hash`). All other fields
-/// default gracefully: `mode` → `ArtifactMeta::default_mode()` (0o644),
-/// `kind`/`target` → `None`, numeric fields → 0, string fields → "".
-/// Fields not transmitted as headers (`command_hash`, `env_contribution`,
-/// `seal_contribution`, `tags`, `consulted_env_keys`) use zero / empty-set
-/// defaults — they are diagnostic and not needed for restore.
-fn parse_meta(response: &ureq::Response) -> BackendResult<ArtifactMeta> {
-    let content_hash = parse_content_hash(response)?;
-
-    let mode = response
-        .header("X-Cook-Mode")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or_else(ArtifactMeta::default_mode);
-
-    let kind = response
-        .header("X-Cook-Kind")
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let target = response
-        .header("X-Cook-Symlink-Target")
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let recipe_namespace = response
-        .header("X-Cook-Recipe-Namespace")
-        .unwrap_or("")
-        .to_string();
-
-    let size_bytes = response
-        .header("X-Cook-Size-Bytes")
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    let schema_version = response
-        .header("X-Cook-Schema-Version")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-
-    let output_index = response
-        .header("X-Cook-Output-Index")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-
-    let output_path = response
-        .header("X-Cook-Output-Path")
-        .unwrap_or("")
-        .to_string();
+    let non_empty = |n: &str| get(n).filter(|s| !s.is_empty()).map(str::to_string);
+    let text = |n: &str| get(n).unwrap_or("").to_string();
 
     Ok(ArtifactMeta {
-        recipe_namespace,
+        recipe_namespace: text(HDR_RECIPE_NAMESPACE),
         command_hash: 0,
         env_contribution: 0,
         seal_contribution: 0,
-        schema_version,
-        size_bytes,
+        schema_version: get(HDR_SCHEMA_VERSION).and_then(|s| s.parse().ok()).unwrap_or(0),
+        size_bytes: get(HDR_SIZE_BYTES).and_then(|s| s.parse().ok()).unwrap_or(0),
         tags: BTreeSet::new(),
         consulted_env_keys: BTreeSet::new(),
-        output_index,
-        output_path,
+        output_index: get(HDR_OUTPUT_INDEX).and_then(|s| s.parse().ok()).unwrap_or(0),
+        output_path: text(HDR_OUTPUT_PATH),
         content_hash,
-        kind,
-        mode,
-        target,
+        kind: non_empty(HDR_KIND),
+        mode: get(HDR_MODE)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(ArtifactMeta::default_mode),
+        target: non_empty(HDR_SYMLINK_TARGET),
     })
 }
 
@@ -476,7 +453,7 @@ impl CacheBackend for CloudBackend {
                     // consumes it — both happen sequentially so the borrow ends
                     // before the move. This is the single-round-trip design: meta
                     // rides the same GET response headers as the body.
-                    let meta = parse_meta(&response)?;
+                    let meta = meta_from_headers(|n| response.header(n))?;
                     let body = response.into_reader();
                     Ok(Some((
                         Box::new(VerifyingReader::new(body, meta.content_hash))

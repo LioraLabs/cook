@@ -2,6 +2,7 @@
 
 mod cache_budget;
 mod cache_du;
+mod cache_serve;
 mod cache_gc;
 mod cli;
 mod completion;
@@ -70,9 +71,18 @@ fn cookfile_flag_was_explicit(matches: &clap::ArgMatches) -> bool {
 /// Upward Cookfile discovery (§20.2 / CS-0120): when no `-f/--file` was
 /// given and the default `Cookfile` is absent in cwd, walk up to the nearest
 /// Cookfile and make it the entry point. `cook init` (creates a Cookfile
-/// here) and `cook modules` (cwd-scoped cook.toml management) are exempt.
+/// here), `cook modules` (cwd-scoped cook.toml management),
+/// `cook cache serve` and `cook cache gc --store` (each takes a directory,
+/// reads no Cookfile) are exempt.
 fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookError> {
-    if file_explicit || matches!(cli.cmd, Some(Cmd::Init) | Some(Cmd::Modules(_))) {
+    let serves_store = matches!(
+        &cli.cmd,
+        Some(Cmd::Cache(crate::cli::CacheArgs { cmd: crate::cli::CacheCmd::Serve(_) }))
+            | Some(Cmd::Cache(crate::cli::CacheArgs {
+                cmd: crate::cli::CacheCmd::Gc(crate::cli::CacheGcArgs { store: Some(_), .. })
+            }))
+    );
+    if file_explicit || serves_store || matches!(cli.cmd, Some(Cmd::Init) | Some(Cmd::Modules(_))) {
         return Ok(());
     }
     if cli.globals.file.is_file() {
@@ -148,6 +158,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             crate::cli::CacheCmd::Dump(d) => cmd_cache_dump(&globals, &d),
             crate::cli::CacheCmd::Du => cache_du::cmd_cache_du(&globals),
             crate::cli::CacheCmd::Gc(g) => cache_gc::cmd_cache_gc(&globals, &g),
+            crate::cli::CacheCmd::Serve(s) => cache_serve::cmd_cache_serve(&s),
         },
         Some(Cmd::Serve(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");

@@ -266,6 +266,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chunked_transfer"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
+
+[[package]]
 name = "clap"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -370,12 +376,14 @@ dependencies = [
 name = "cook-cache"
 version = "0.18.0"
 dependencies = [
+ "chunked_transfer",
  "cook-contracts",
  "dirs",
  "filetime",
  "glob",
  "globset",
  "hex",
+ "httparse",
  "mockito",
  "serde",
  "serde_json",
@@ -414,6 +422,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2",
+ "signal-hook",
  "tempfile",
  "toml 0.8.23",
  "walkdir",

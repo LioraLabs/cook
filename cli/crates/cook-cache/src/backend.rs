@@ -173,45 +173,11 @@ impl LocalBackend {
         let hex = hex::encode(key);
         self.root.join(&hex[..2]).join(&hex[2..])
     }
-}
 
-/// COOK-233 — best-effort last-access bump on a CAS blob.
-///
-/// LRU eviction (`cook cache gc`) needs to know when an entry was last
-/// used. The signal is the blob file's own mtime, restamped with a single
-/// `utimensat` per cache hit; "LRU order" is therefore ascending *blob*
-/// mtime. The rejected alternative was a `last_access` field inside
-/// `.meta.json` rewritten on every read, which puts write amplification on
-/// the hot read path.
-///
-/// Returns `()` on purpose: a failed touch must never fail a cache read.
-/// Failures are logged at `debug!`, not `warn!` — read-only mounts and
-/// exotic filesystems make this an expected outcome, not an anomaly.
-fn touch_on_read(path: &std::path::Path) {
-    if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::now()) {
-        tracing::debug!("cache last-access: touch {} failed: {e}", path.display());
-    }
-}
-
-impl CacheBackend for LocalBackend {
-    fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
-        let mut hits = std::collections::BTreeSet::new();
-        for k in keys {
-            if self.path_for(k).exists() {
-                hits.insert(*k);
-            }
-        }
-        Ok(hits)
-    }
-
-    fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>> {
-        Ok(self.get_with_meta(key)?.map(|(r, _)| r))
-    }
-
-    fn get_with_meta(
-        &self,
-        key: &CloudKey,
-    ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
+    /// Sidecar read + blob open, unverified: the miss rules and the
+    /// last-access touch of `get_with_meta`, without the `VerifyingReader`.
+    /// For a caller that forwards the bytes to someone who verifies them.
+    pub(crate) fn open_raw(&self, key: &CloudKey) -> BackendResult<Option<(File, ArtifactMeta)>> {
         let path = self.path_for(key);
 
         // Read the sidecar first — without a recorded `content_hash` we
@@ -302,113 +268,177 @@ impl CacheBackend for LocalBackend {
         // correctness consequence.
         touch_on_read(&path);
 
-        Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))
+        Ok(Some((file, meta)))
     }
+}
 
-    fn put(
+/// COOK-233 — best-effort last-access bump on a CAS blob.
+///
+/// LRU eviction (`cook cache gc`) needs to know when an entry was last
+/// used. The signal is the blob file's own mtime, restamped with a single
+/// `utimensat` per cache hit; "LRU order" is therefore ascending *blob*
+/// mtime. The rejected alternative was a `last_access` field inside
+/// `.meta.json` rewritten on every read, which puts write amplification on
+/// the hot read path.
+///
+/// Returns `()` on purpose: a failed touch must never fail a cache read.
+/// Failures are logged at `debug!`, not `warn!` — read-only mounts and
+/// exotic filesystems make this an expected outcome, not an anomaly.
+fn touch_on_read(path: &std::path::Path) {
+    if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::now()) {
+        tracing::debug!("cache last-access: touch {} failed: {e}", path.display());
+    }
+}
+
+/// Why a put failed, by who is to blame: the server maps these to statuses.
+#[derive(Debug)]
+pub(crate) enum PutError {
+    /// Reading the caller's stream failed.
+    Source(String),
+    /// Cap overflow, claimed-hash mismatch, or key conflict.
+    Rejected(String),
+    /// A local filesystem failure; `kind` lets a server tell a full disk apart.
+    Store { kind: io::ErrorKind, msg: String },
+}
+
+impl From<PutError> for BackendError {
+    fn from(e: PutError) -> Self {
+        match e {
+            PutError::Source(m) | PutError::Rejected(m) | PutError::Store { msg: m, .. } => {
+                BackendError::Other(m)
+            }
+        }
+    }
+}
+
+fn store_err(ctx: String, e: io::Error) -> PutError {
+    PutError::Store { kind: e.kind(), msg: format!("{ctx}: {e}") }
+}
+
+/// Verified bytes in a uniquely named temp file; removed on drop (a rename
+/// has already moved it by then, so the removal is a no-op).
+pub(crate) struct Staged {
+    tmp: PathBuf,
+    computed: [u8; 32],
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.tmp);
+    }
+}
+
+static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl LocalBackend {
+    /// First half of a put: stream `reader` into a private temp in the shard
+    /// dir, capped and hashed, and check the caller's claimed hash. Touches no
+    /// key's state, so it needs no lock.
+    pub(crate) fn stage(
         &self,
         key: &CloudKey,
         reader: &mut dyn Read,
-        meta: &mut ArtifactMeta,
-    ) -> BackendResult<()> {
+        meta: &ArtifactMeta,
+    ) -> Result<Staged, PutError> {
         let path = self.path_for(key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| BackendError::Other(format!("mkdir {}: {e}", parent.display())))?;
-        }
+        let parent = path.parent().expect("path_for has a shard dir");
+        std::fs::create_dir_all(parent)
+            .map_err(|e| store_err(format!("mkdir {}", parent.display()), e))?;
 
-        // Stream the bytes to a temporary file, hashing as they flow.
-        // The temp file is our scratch space until conflict detection
-        // and the caller-claimed-hash check pass; on rejection we discard
-        // it without ever exposing the new bytes to readers.
-        let tmp = path.with_extension("tmp");
+        // `<62hex>.<pid>.<n>.tmp` is never a 62-hex name, so `enumerate` skips it.
+        let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("{}.{seq}.tmp", std::process::id()));
         let mut tmp_file = File::create(&tmp)
-            .map_err(|e| BackendError::Other(format!("create {}: {e}", tmp.display())))?;
+            .map_err(|e| store_err(format!("create {}", tmp.display()), e))?;
+        let mut staged = Staged { tmp, computed: [0; 32] };
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
         let mut cap = crate::cap::CapCounter::new(self.config.max_artifact_bytes);
         loop {
             let n = reader.read(&mut buf).map_err(|e| {
-                let _ = std::fs::remove_file(&tmp);
-                BackendError::Other(format!("read source for {}: {e}", path.display()))
+                PutError::Source(format!("read source for {}: {e}", path.display()))
             })?;
             if n == 0 {
                 break;
             }
-            // CS-0057: enforce `max_artifact_bytes` as bytes flow. The
-            // check happens during streaming, not pre-flight — the caller
-            // may not know the size up front (e.g., a streaming source).
-            // On overflow, abort: discard the temp file, return an error
-            // that names the limit. No partial bytes ever surface to a
-            // reader because the rename-into-place commit hasn't run.
-            // COOK-417: the accumulate-and-check is `CapCounter`, shared with
-            // the cloud backend, which used to spell it again.
-            if let Err(msg) = cap.add(n as u64) {
-                drop(tmp_file);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(BackendError::Other(msg));
-            }
+            // CS-0057: the cap is enforced as bytes flow (the caller may not
+            // know the size up front); nothing is visible before the commit.
+            cap.add(n as u64).map_err(PutError::Rejected)?;
             hasher.update(&buf[..n]);
-            tmp_file.write_all(&buf[..n]).map_err(|e| {
-                let _ = std::fs::remove_file(&tmp);
-                BackendError::Other(format!("write {}: {e}", tmp.display()))
-            })?;
+            tmp_file
+                .write_all(&buf[..n])
+                .map_err(|e| store_err(format!("write staged {}", staged.tmp.display()), e))?;
         }
-        tmp_file.flush().map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            BackendError::Other(format!("flush {}: {e}", tmp.display()))
-        })?;
+        tmp_file
+            .flush()
+            .map_err(|e| store_err(format!("flush {}", staged.tmp.display()), e))?;
         drop(tmp_file);
-        let computed: [u8; 32] = hasher.finalize().into();
+        staged.computed = hasher.finalize().into();
 
-        // Caller-claimed `content_hash` consistency check. The standard
-        // calling convention is to pass the zero sentinel and let `put`
-        // stamp the computed hash; a non-zero caller-claimed hash that
-        // matches is honoured (idempotent re-stamp), but a non-zero
-        // hash that doesn't match the bytes is a caller bug — refuse to
-        // persist a sidecar inconsistent with the bytes.
-        let zero = ArtifactMeta::zero_content_hash();
-        if meta.content_hash != zero && meta.content_hash != computed {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(BackendError::Other(format!(
+        // A non-zero caller-claimed hash must match the bytes; refuse to
+        // persist a sidecar inconsistent with them.
+        if meta.content_hash != ArtifactMeta::zero_content_hash()
+            && meta.content_hash != staged.computed
+        {
+            return Err(PutError::Rejected(format!(
                 "caller-claimed content_hash differs from streamed bytes \
                  (claimed={}, computed={})",
                 hex::encode(meta.content_hash),
-                hex::encode(computed),
+                hex::encode(staged.computed),
             )));
         }
+        Ok(staged)
+    }
 
-        // CS-0055: idempotency / conflict detection against any prior
-        // artifact at this key. The temp file is already written; on
-        // idempotent match we discard it, on conflict we discard it,
-        // and on no-prior-artifact we rename it into place.
+    /// Second half of a put: conflict detection, then blob and sidecar into
+    /// place. The caller serialises commits per key.
+    pub(crate) fn commit(
+        &self,
+        key: &CloudKey,
+        staged: Staged,
+        meta: &mut ArtifactMeta,
+    ) -> Result<(), PutError> {
+        let path = self.path_for(key);
+        let computed = staged.computed;
+        let zero = ArtifactMeta::zero_content_hash();
+
+        // CS-0055: idempotency / conflict detection against any prior artifact.
         let meta_path = path.with_extension("meta.json");
-        let path_exists = path.exists();
-        if path_exists {
+        if path.exists() {
             match std::fs::read(&meta_path) {
                 Ok(existing_meta_bytes) => {
                     match serde_json::from_slice::<ArtifactMeta>(&existing_meta_bytes) {
                         Ok(existing) => {
-                            // Pre-CS-0054 sidecars deserialize with the
-                            // zero sentinel for content_hash. Treat that
-                            // as "no recorded hash" and write through.
+                            // Pre-CS-0054 sidecars carry the zero sentinel:
+                            // "no recorded hash", write through.
                             if existing.content_hash == zero {
                                 tracing::warn!(
                                     "cache idempotency: legacy sentinel content_hash at {}; treating as no prior artifact",
                                     meta_path.display(),
                                 );
                             } else if existing.content_hash == computed {
-                                // Idempotent re-put — same bytes. Discard
-                                // the temp; stamp meta.content_hash so the
-                                // caller observes the canonical hash even
-                                // on the no-op path.
-                                let _ = std::fs::remove_file(&tmp);
+                                // Same bytes. Keep the stored blob only if it
+                                // still verifies; otherwise these good bytes
+                                // replace it (the sidecar already matches).
+                                let intact = File::open(&path)
+                                    .and_then(|f| {
+                                        io::copy(&mut VerifyingReader::new(f, computed), &mut io::sink())
+                                    })
+                                    .is_ok();
+                                if !intact {
+                                    tracing::warn!(
+                                        "cache integrity: blob at {} fails its recorded hash; healing from the re-put",
+                                        path.display(),
+                                    );
+                                    std::fs::rename(&staged.tmp, &path).map_err(|e| {
+                                        store_err(format!("rename {}", path.display()), e)
+                                    })?;
+                                }
                                 meta.content_hash = computed;
                                 return Ok(());
                             } else {
-                                let _ = std::fs::remove_file(&tmp);
                                 let key_hex = hex::encode(key);
-                                return Err(BackendError::Other(format!(
+                                return Err(PutError::Rejected(format!(
                                     "artifact key conflict at {key_hex}: existing content_hash differs from new bytes \
                                      (existing={}, new={})",
                                     hex::encode(existing.content_hash),
@@ -417,8 +447,7 @@ impl CacheBackend for LocalBackend {
                             }
                         }
                         Err(e) => {
-                            // Malformed sidecar — no recoverable hash.
-                            // Fall through to write path.
+                            // Malformed sidecar: no recoverable hash, write through.
                             tracing::warn!(
                                 "cache idempotency: malformed sidecar at {} ({e}); treating as no prior artifact",
                                 meta_path.display(),
@@ -426,50 +455,73 @@ impl CacheBackend for LocalBackend {
                         }
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Missing sidecar — partial write recovery. Fall through.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    // Missing sidecar: partial write recovery, write through.
                     tracing::warn!(
                         "cache idempotency: missing sidecar for {}; treating as no prior artifact",
                         path.display(),
                     );
                 }
-                Err(e) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(BackendError::Other(format!(
-                        "read meta {}: {e}",
-                        meta_path.display()
-                    )));
-                }
+                Err(e) => return Err(store_err(format!("read meta {}", meta_path.display()), e)),
             }
         }
 
-        // Commit the temp file to its final path (atomic via rename).
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| BackendError::Other(format!("rename {}: {e}", path.display())))?;
+        // Blob first (atomic rename), then the sidecar that makes it readable.
+        std::fs::rename(&staged.tmp, &path)
+            .map_err(|e| store_err(format!("rename {}", path.display()), e))?;
 
-        // Stamp the computed hash into the caller's meta (in-place) so
-        // they observe the canonical hash, then persist the sidecar.
         // The stamp is authoritative whether the caller passed the zero
-        // sentinel or a matching hash; either way `meta.content_hash`
-        // ends up equal to `computed`.
+        // sentinel or a matching hash. size_bytes stays caller-set.
         meta.content_hash = computed;
-        // size_bytes was historically populated by the caller; we leave
-        // it untouched here (the caller's bytes-len is already correct
-        // for its source). For streaming callers who don't know the
-        // length up front, the streamed `total` is available — but
-        // overwriting could regress callers who pre-set size_bytes
-        // intentionally. Keep it caller-set; surface the streamed total
-        // as a tracing field for observability.
-        let _ = cap.total(); // silenced — see comment above
 
         let meta_tmp = path.with_extension("meta.json.tmp");
-        let meta_bytes = serde_json::to_vec(meta)
-            .map_err(|e| BackendError::Other(format!("serialize meta: {e}")))?;
+        let meta_bytes = serde_json::to_vec(meta).map_err(|e| {
+            PutError::Store { kind: io::ErrorKind::InvalidData, msg: format!("serialize meta: {e}") }
+        })?;
         std::fs::write(&meta_tmp, &meta_bytes)
-            .map_err(|e| BackendError::Other(format!("write meta {}: {e}", meta_tmp.display())))?;
+            .map_err(|e| store_err(format!("write meta {}", meta_tmp.display()), e))?;
         std::fs::rename(&meta_tmp, &meta_path)
-            .map_err(|e| BackendError::Other(format!("rename meta {}: {e}", meta_path.display())))?;
-        Ok(())
+            .map_err(|e| store_err(format!("rename meta {}", meta_path.display()), e))
+    }
+}
+
+impl CacheBackend for LocalBackend {
+    fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<std::collections::BTreeSet<CloudKey>> {
+        let mut hits = std::collections::BTreeSet::new();
+        for k in keys {
+            if self.path_for(k).exists() {
+                hits.insert(*k);
+            }
+        }
+        Ok(hits)
+    }
+
+    fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>> {
+        Ok(self.get_with_meta(key)?.map(|(r, _)| r))
+    }
+
+    fn get_with_meta(
+        &self,
+        key: &CloudKey,
+    ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
+        // The `VerifyingReader` tees bytes through SHA-256 and surfaces a
+        // mismatch as `io::Error(InvalidData)` on EOF.
+        Ok(self.open_raw(key)?.map(|(file, meta)| {
+            (
+                Box::new(VerifyingReader::new(file, meta.content_hash)) as Box<dyn Read + Send>,
+                meta,
+            )
+        }))
+    }
+
+    fn put(
+        &self,
+        key: &CloudKey,
+        reader: &mut dyn Read,
+        meta: &mut ArtifactMeta,
+    ) -> BackendResult<()> {
+        let staged = self.stage(key, reader, meta)?;
+        Ok(self.commit(key, staged, meta)?)
     }
 
     fn delete(&self, key: &CloudKey) -> BackendResult<()> {
@@ -737,6 +789,48 @@ impl LocalBackend {
         }
 
         Ok(outcome)
+    }
+}
+
+/// `<62 lowercase hex>.<pid>.<seq>.tmp`: the name `stage` gives an upload.
+fn is_staged_temp(name: &str) -> bool {
+    let mut parts = name.split('.');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(k), Some(pid), Some(seq), Some("tmp"), None)
+            if is_lowercase_hex(k, 62)
+                && [pid, seq].iter().all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    )
+}
+
+impl LocalBackend {
+    /// Remove staged-upload temps (`stage`'s names, nothing else) not written
+    /// to for `older_than`: a crash or SIGKILL mid-upload orphans one, and
+    /// neither `enumerate` nor eviction ever sees it. Returns how many went.
+    pub fn sweep_stale_temps(&self, older_than: std::time::Duration) -> usize {
+        let Ok(shards) = std::fs::read_dir(&self.root) else {
+            return 0;
+        };
+        let mut removed = 0;
+        for shard in shards.flatten() {
+            if !shard.file_name().to_str().is_some_and(|n| is_lowercase_hex(n, 2)) {
+                continue;
+            }
+            let Ok(files) = std::fs::read_dir(shard.path()) else {
+                continue;
+            };
+            for file in files.flatten() {
+                let stale = file.file_name().to_str().is_some_and(is_staged_temp)
+                    && file
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > older_than));
+                if stale && std::fs::remove_file(file.path()).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+        removed
     }
 }
 

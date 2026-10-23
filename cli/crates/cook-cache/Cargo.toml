@@ -29,6 +29,11 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # (no native OpenSSL), keeping the dependency surface minimal and
 # tokio-free (CacheBackend is a sync trait, see CS-0056 §3).
 ureq = { version = "2", features = ["tls", "json"] }
+# `cook cache serve` speaks HTTP/1.1 on std::net: httparse reads the request
+# head, chunked_transfer decodes chunked request bodies (both already in the
+# tree through ureq).
+httparse = "1"
+chunked_transfer = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -684,3 +684,55 @@ fn cloud_backend_defers_to_the_server_and_deletes_nothing_locally() {
     assert_object_present(&fx.cache_dir, &key_a, "file object");
     assert_object_present(&fx.cache_dir, &key_b, "probe_value object");
 }
+
+// ---------------------------------------------------------------------------
+// --store: a served store, no project
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_flag_sweeps_a_dir_from_outside_any_project() {
+    let tmp = TempDir::new().unwrap();
+    let store = tmp.path().join("served");
+    let key = seed_object(&store, 1, 1000, 100, None, "ns");
+    let run = |extra: &[&str]| {
+        Command::new(cook_bin())
+            .args(["cache", "gc", "--max-size", "1B", "--store"])
+            .arg(&store)
+            .args(extra)
+            .env("XDG_CACHE_HOME", tmp.path().join("xdg"))
+            .current_dir(tmp.path())
+            .output()
+            .unwrap()
+    };
+
+    let dry = run(&["--dry-run"]);
+    assert!(dry.status.success(), "{dry:?}");
+    assert_object_present(&store, &key, "dry run");
+
+    let real = run(&[]);
+    assert!(real.status.success(), "{real:?}");
+    assert_store_line(&String::from_utf8(real.stdout).unwrap(), &store);
+    assert_object_absent(&store, &key, "evicted");
+}
+
+#[test]
+fn a_store_flag_that_is_not_a_directory_is_refused_and_creates_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let missing = tmp.path().join("nope");
+    let file = tmp.path().join("afile");
+    fs::write(&file, b"x").unwrap();
+    for store in [&missing, &file] {
+        let out = Command::new(cook_bin())
+            .args(["cache", "gc", "--max-size", "1B", "--store"])
+            .arg(store)
+            .env("XDG_CACHE_HOME", tmp.path().join("xdg"))
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(store.to_str().unwrap()), "{err}");
+    }
+    assert!(!missing.exists(), "a refused sweep creates nothing");
+    assert_eq!(fs::read(&file).unwrap(), b"x");
+}
