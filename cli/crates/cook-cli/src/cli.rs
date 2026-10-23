@@ -162,6 +162,16 @@ pub enum Cmd {
     /// from. Read-only; runs nothing.
     Why(WhyArgs),
 
+    /// Re-run a recipe's units under strace inside an isolated overlay of the
+    /// project and report the files they read that no declaration covers
+    /// (`read`) and the paths they probed that were absent (`absent`). The real
+    /// tree and the user cache are never written.
+    ///
+    /// Exits 1 while any finding remains, including reads of system and
+    /// toolchain paths that nothing can declare yet, so it is a diagnostic,
+    /// not a CI gate. Linux only; needs `strace` and user namespaces.
+    Audit(AuditArgs),
+
     /// Run a recipe by name. Captured for any first positional that does not
     /// match a reserved subcommand. The first element is the recipe name
     /// (with a leading `+` stripped if present); the optional second element
@@ -184,6 +194,7 @@ impl Cmd {
             Cmd::EmitLua => Some("emit-lua"),
             Cmd::Affected(_) => Some("affected"),
             Cmd::Why(_) => Some("why"),
+            Cmd::Audit(_) => Some("audit"),
             Cmd::Recipe(_) => None,
         }
     }
@@ -215,6 +226,7 @@ impl Cmd {
             Cmd::Serve(a) => a.recipe.as_deref(),
             Cmd::Affected(a) => a.recipe.as_deref(),
             Cmd::Why(a) => a.recipe.as_deref(),
+            Cmd::Audit(a) => a.recipe.as_deref(),
             Cmd::Init
             | Cmd::Menu
             | Cmd::List
@@ -363,6 +375,17 @@ pub struct CacheDumpArgs {
 #[derive(clap::Args, Debug, Clone)]
 pub struct CacheVerifyArgs {
     /// Recipe to verify (default: 'build').
+    pub recipe: Option<String>,
+    /// Config preset.
+    pub config: Option<String>,
+    /// Emit machine-readable JSON instead of a human summary.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct AuditArgs {
+    /// Recipe to audit (default: 'build').
     pub recipe: Option<String>,
     /// Config preset.
     pub config: Option<String>,

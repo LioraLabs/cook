@@ -55,6 +55,7 @@ fn built_in_name_matches_every_subcommand_spelling() {
         (vec!["emit-lua"], "emit-lua"),
         (vec!["affected", "--since=HEAD"], "affected"),
         (vec!["why"], "why"),
+        (vec!["audit"], "audit"),
     ];
 
     for (argv, expected) in cases {
@@ -327,6 +328,7 @@ fn reserved_target_covers_every_target_typed_arm() {
         &["serve", "//x"],
         &["affected", "--since=main", "--recipe=//x"],
         &["why", "//x"],
+        &["audit", "//x"],
     ] {
         let cli = parse(argv);
         let cmd = cli.cmd.expect("subcommand parses");

@@ -569,3 +569,43 @@ attribution. Manifest absence MUST NOT change the byte verdict.
 > divergence there. Running it twice on one machine against the same workspace
 > is the local degenerate case — K matches by construction, so any divergence
 > is purely a producer/determinant property. (CS-0113.)
+
+## 17.9. Traced-read audit (`cook audit`) [#exec.cache.audit]
+
+The traced-read audit is surfaced by the reference implementation as the opt-in command `cook audit`. It is a **diagnostic, not a trust gate**: trust rests on author-declared determinants (§{exec.cache.single-key}), and this command *observes* whether a unit's declarations cover what the unit actually reads. An implementation is NOT required to provide it; when provided, it MUST behave as follows.
+
+It complements §{exec.cache.verify}. The verifier observes **outputs** — whether re-produced bytes differ under a matching key. The audit observes **inputs** — reads that no determinant covers. A unit can pass the first and fail the second (an undeclared input that has not yet changed), and the reverse.
+
+**What is re-run.** After a populate run, the audit MUST re-run every cacheable unit of the target recipe's closure, upstream units included, whose step runs a command. Each re-run MUST substitute and execute exactly as §{exec.cache.verify} does.
+
+**Invariants.** The audit MUST NOT change any cache key or record semantics. It MUST NOT publish to, and MUST NOT read from, the shared artifact store; its populate run MUST use a throwaway store. It MUST leave the project tree byte-identical to its state before the command; the mechanism is implementation-defined (the reference implementation runs the whole audit inside an isolated copy-on-write view of the project). A unit that declares an output outside its working directory but inside the project MUST be reported as an error and MUST NOT be re-run. Where any workspace member (registration runs every member) works in a directory that resolves outside the project (a member reached through a symbolic link), the audit MUST refuse with a diagnostic naming that member before anything runs; likewise where a declared output resolves outside the project, lexically or through a symbolic link (a pattern is judged by its literal directory prefix), and where the project's or any workspace member's `.cook` directory resolves outside the project. Only the project tree is isolated: what a command itself writes outside the project — to an absolute path, or through a symbolic link that leaves the project, including one the command itself creates during the populate run (only the re-run sees it, and reports that unit as an error) — is not contained, exactly as in an ordinary run. A command that itself runs the implementation (a nested `cook`) MUST NOT publish to the user's artifact store; its reads from that store are not prevented.
+
+**What is observed.** The audit MUST observe, across the unit's whole process tree: file opens; metadata lookups (stat, access, readlink); and program executions. A lookup that fails because the path does not exist, where the path is inside the project, MUST be observed as *probed, absent*. The tracing mechanism is implementation-defined (the reference implementation uses a syscall tracer and is Linux-only).
+
+**What is covered.** An observed path is covered, and MUST NOT be reported, when it is:
+
+1. a path in the unit's declared inputs, resolved per §{exec.cache.declared-inputs} — the same resolution key computation uses;
+2. a path the unit itself created or replaced before reading it. A write that keeps existing bytes (append, read-write open, a plain create of an existing file) does not cover;
+3. one of the unit's outputs;
+4. a path resolved from a sealed top-level `files` declaration or an inline `seal "<path>"` file determinant (§{cat.probes.named-sets}, §{steps.cook-disposition.seal});
+5. the resolved location of a tool of a sealed `tools` declaration (§{cat.probes.named-sets});
+6. a directory that is an ancestor of a covered path or of the unit's working directory.
+
+A declared directory path does NOT cover its contents: a declared input is keyed per file and a directory is not keyed recursively (§{exec.cache.declared-inputs}).
+
+**What is ignored.** `/proc`, `/dev`, `/sys`, temporary directories and the implementation's own cache directories outside the project, any `.cook` directory, and absent lookups outside the project MUST be ignored.
+
+**The report.** Uncovered observations MUST be collapsed to findings per (recipe, kind, root). The **root** is the first path component for a project path (in its project-relative spelling), `~/<first component>` for a path under the home directory, and otherwise the first two components. A finding lists its distinct paths and their count. Paths in a finding MUST NOT carry the home directory or the project location, so a finding is comparable across machines.
+
+The machine-readable form MUST carry these field names, which are normative:
+
+- `recipe` — the target recipe;
+- `units` — a list of `{recipe, unit, key, status, detail}`, where `status` is `"traced"` or `"error"`;
+- `findings` — a list of `{recipe, kind, root, count, paths}`;
+- `errors` — the number of units whose `status` is `"error"`.
+
+`kind` is an **open set**. This section defines `read` (an uncovered read) and `absent` (an uncovered probed-absent lookup). A consumer MUST ignore a `kind` it does not know. An `env` kind for environment reads, whose `root` is the variable name, is anticipated. Field names are stable.
+
+**Exit status.** The command MUST exit non-zero while any finding or unit error remains. Where it cannot isolate the project or cannot trace the re-run, it MUST exit non-zero with a diagnostic stating that the audit is unsupported there.
+
+> **Note (informative).** System and toolchain reads appear as findings until a declaration can cover them, so in this version `cook audit` is a diagnostic and not a CI gate. Known limits of the reference implementation: the re-run is in place, so tool state outside declared outputs (an incremental cache) is intact and a re-run may read less than a cold build; and a git worktree's metadata lives outside the project and is not isolated. Only the project tree is isolated: a declared output that resolves outside the project is refused before anything runs, but a command's own writes outside the project land in the real filesystem, as in an ordinary run. A nested `cook` run by a unit has publishing turned off and may still read the user's artifact store. (CS-0258.)

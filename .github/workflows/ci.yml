@@ -103,6 +103,17 @@ jobs:
           node --version
           pnpm --version
 
+      # `cook audit`'s end-to-end tests need strace and an unprivileged user
+      # namespace; COOK_AUDIT_E2E=require (on the test step) makes a runner
+      # that cannot provide them fail instead of skipping.
+      - name: Install strace and allow user namespaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y strace
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
       # `cook test` is itself a cook chore, so it needs a cook binary first.
       - name: Build cook
         shell: bash
@@ -112,5 +123,7 @@ jobs:
 
       - name: cook test
         shell: bash
+        env:
+          COOK_AUDIT_E2E: require
         run: ./cli/target/release/cook test
 

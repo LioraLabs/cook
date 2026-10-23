@@ -147,6 +147,34 @@ fn verify_json_survives_a_multiline_error_detail() {
     assert_eq!(parsed["units"][1]["detail"], "bytes differ\r\nat offset 12");
 }
 
+#[test]
+fn audit_json_shape_and_escaping() {
+    use cook_engine::audit::{AuditReport, Finding, FindingKind, UnitAudit};
+    let report = AuditReport {
+        units: vec![UnitAudit {
+            recipe: "lint".into(),
+            unit: "u".into(),
+            key: "k".into(),
+            status: "error",
+            detail: "boom\n\"x\"".into(),
+        }],
+        findings: vec![Finding {
+            recipe: "lint".into(),
+            kind: FindingKind::Read,
+            root: ".lintrc".into(),
+            count: 1,
+            paths: vec![".lintrc".into()],
+        }],
+    };
+    let parsed: serde_json::Value =
+        serde_json::from_str(&audit_json_value("lint", &report).to_string()).unwrap();
+    assert_eq!(parsed["recipe"], "lint");
+    assert_eq!(parsed["errors"], 1);
+    assert_eq!(parsed["findings"][0]["kind"], "read");
+    assert_eq!(parsed["units"][0]["status"], "error");
+    assert_eq!(parsed["units"][0]["detail"], "boom\n\"x\"");
+}
+
 // ---------------------------------------------------------------------------
 // The node and recipe vocabularies (COOK-421)
 // ---------------------------------------------------------------------------

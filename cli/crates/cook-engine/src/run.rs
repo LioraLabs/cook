@@ -162,6 +162,35 @@ where
         }
     };
     Arc::make_mut(&mut cache_ctx).replay_logs = replay_logs;
+    run_with_cache_ctx(
+        cache_ctx,
+        registered_workspace,
+        edges,
+        reachable,
+        num_jobs,
+        rerun_patterns,
+        no_prune,
+        on_event,
+    )
+}
+
+/// [`run`] from an already-built cache context (what `audit` populates
+/// against a scratch store). Emits the terminating `Finished` event.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_with_cache_ctx<F>(
+    cache_ctx: Arc<CacheContext>,
+    registered_workspace: &RegisteredWorkspace,
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+    num_jobs: usize,
+    rerun_patterns: &[String],
+    no_prune: bool,
+    on_event: F,
+) -> Result<RunResult, EngineError>
+where
+    F: Fn(EngineEvent) + Send + Sync,
+{
+    let started = std::time::Instant::now();
     let result = run_inner(
         registered_workspace,
         edges,
@@ -683,6 +712,17 @@ pub fn cache_managers_for_cli(
 }
 
 pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
+    build_cache_ctx_with(project_root, no_publish, None)
+}
+
+/// [`build_cache_ctx`], with `backend` replacing the configured one. The
+/// configured backend is then never opened, so a local store directory is not
+/// created as a side effect.
+pub(crate) fn build_cache_ctx_with(
+    project_root: &Path,
+    no_publish: bool,
+    backend_override: Option<&dyn Fn(&CloudConfig) -> Arc<dyn CacheBackend>>,
+) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();
@@ -691,7 +731,9 @@ pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<A
     // COOK-232: shared with `CloudConfig::resolved_cache_dir` so `cook cache
     // du` reports on the exact directory the engine writes to.
     let cache_dir = cloud_config.resolved_cache_dir();
-    let backend: Arc<dyn CacheBackend> = if cloud_config.cloud.enabled {
+    let backend: Arc<dyn CacheBackend> = if let Some(make) = backend_override {
+        make(&cloud_config)
+    } else if cloud_config.cloud.enabled {
         let endpoint = cloud_config
             .cloud
             .endpoint

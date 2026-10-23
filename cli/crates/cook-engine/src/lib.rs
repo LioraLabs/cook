@@ -5,12 +5,14 @@
 //! cache already holds the answer, and feeds ready nodes to cook-execute.
 
 pub mod affected;
+pub mod audit;
 pub mod dag_builder;
 pub mod executor;
 pub mod id;
 pub mod observations;
 pub mod reconcile;
 pub mod run;
+pub mod sandbox;
 mod seal;
 pub mod verify;
 pub mod why;

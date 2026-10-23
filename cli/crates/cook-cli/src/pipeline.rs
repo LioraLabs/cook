@@ -862,6 +862,17 @@ fn build_registered_workspace(
     config: Option<&str>,
     mode: RegisterMode<'_>,
 ) -> Result<(Workspace, RegisteredWorkspace), CookError> {
+    build_registered_workspace_with(globals, config, mode, None)
+}
+
+/// [`build_registered_workspace`] with the register pass's cache context
+/// supplied (`None`: the configured one). `cook audit` passes its throwaway one.
+fn build_registered_workspace_with(
+    globals: &Globals,
+    config: Option<&str>,
+    mode: RegisterMode<'_>,
+    cache_ctx: Option<std::sync::Arc<cook_engine::cook_cache::CacheContext>>,
+) -> Result<(Workspace, RegisteredWorkspace), CookError> {
     let mut workspace = load_workspace(globals)?;
     let mut arguments = vec![
         "--file".to_string(),
@@ -911,9 +922,11 @@ fn build_registered_workspace(
         .map_err(pipeline_error_to_cook_error)?;
     // §10.2 step 2: re-classify $<NAME> against the full register-phase
     // recipe set before the register pass runs bodies.
-    let cache_ctx =
-        cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
-            .map_err(engine_error_to_cook_error)?;
+    let cache_ctx = match cache_ctx {
+        Some(ctx) => ctx,
+        None => cook_engine::build_cache_ctx_for_cli(&resolve_project_root(globals)?, globals.no_publish)
+            .map_err(engine_error_to_cook_error)?,
+    };
     let registered = pipeline::prepare_and_register_workspace_cached(
         &mut workspace,
         config,
@@ -1067,6 +1080,113 @@ fn verify_json_value(report: &cook_engine::verify::VerifyReport) -> serde_json::
 
 fn print_verify_json(report: &cook_engine::verify::VerifyReport) {
     println!("{}", verify_json_value(report));
+}
+
+pub fn cmd_audit(globals: &Globals, args: &crate::cli::AuditArgs) -> Result<(), CookError> {
+    use cook_engine::sandbox::{Isolation, isolate};
+    let recipe_name = args.recipe.as_deref().unwrap_or("build");
+    let unsupported = |why: String| CookError::Other(format!("audit: unsupported here: {why}"));
+
+    let root = std::fs::canonicalize(resolve_project_root(globals)?)
+        .map_err(|e| CookError::Other(format!("audit: project root: {e}")))?;
+    cook_engine::verify::tracer().map_err(unsupported)?;
+    match isolate(&root).map_err(unsupported)? {
+        Isolation::Parent(code) => std::process::exit(code),
+        Isolation::Inside => {}
+    }
+
+    let report = audit_isolated(globals, args, &root, recipe_name)?;
+
+    if args.json {
+        println!("{}", audit_json_value(recipe_name, &report));
+    } else {
+        print_audit_human(&report);
+        if report.units.is_empty() {
+            eprintln!("audit: nothing to audit in {recipe_name} (no cacheable command units)");
+        }
+    }
+    match report.exit_code() {
+        0 => Ok(()),
+        code => std::process::exit(code),
+    }
+}
+
+fn audit_isolated(
+    globals: &Globals,
+    args: &crate::cli::AuditArgs,
+    root: &std::path::Path,
+    recipe_name: &str,
+) -> Result<cook_engine::audit::AuditReport, CookError> {
+    // Only the project is overlaid. A member whose directory really lives
+    // elsewhere (a symlink out of the project) would be registered, built and
+    // cleared in the real tree, so nothing runs at all — registration included.
+    let workspace = Workspace::load(&globals.file, root, &globals.set).map_err(pipeline_error_to_cook_error)?;
+    if let Some((_, name, dir)) = workspace.namespace_map.iter().find(|(_, _, d)| !d.starts_with(root)) {
+        return Err(CookError::Other(format!(
+            "workspace member `{name}` is {}, outside the project; the audit cannot isolate it",
+            dir.display()
+        )));
+    }
+    // Likewise a `.cook` that resolves outside: cook writes its own state under
+    // every member's working dir, the entry Cookfile's dir included (below the
+    // project root under a `.cookroot`). Load writes nothing, so this is still first.
+    let member_dirs = workspace.namespace_map.iter().map(|(_, _, d)| d.as_path());
+    cook_engine::audit::refuse_state_outside(root, std::iter::once(workspace.root.dir.as_path()).chain(member_dirs))
+        .map_err(CookError::Other)?;
+    // One throwaway store for registration (a `cook.materialize` reads and
+    // publishes there) and the populate run: the user's store is never opened.
+    let scratch = cook_engine::sandbox::scratch_dir()
+        .ok_or_else(|| CookError::Other(cook_engine::audit::NOT_ISOLATED.into()))?;
+    let ctx = cook_engine::audit::scratch_cache_ctx(root, &scratch.join("store")).map_err(CookError::Other)?;
+    let (_, registered) = build_registered_workspace_with(
+        globals,
+        args.config.as_deref(),
+        RegisterMode::Dispatch {
+            name: recipe_name,
+            argv: &[],
+        },
+        Some(ctx.clone()),
+    )?;
+    let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
+    cook_engine::audit::audit(root, &registered, &edges, &reachable, resolve_num_jobs(globals), ctx)
+        .map_err(CookError::Other)
+}
+
+fn print_audit_human(report: &cook_engine::audit::AuditReport) {
+    for f in &report.findings {
+        let kind = match f.kind {
+            cook_engine::audit::FindingKind::Read => "read",
+            cook_engine::audit::FindingKind::Absent => "absent",
+        };
+        println!("{}  {}  {}", f.recipe, kind, f.root);
+        if f.count == 1 && f.paths[0] != f.root {
+            println!("  ({})", f.paths[0]);
+        } else if f.count > 1 {
+            let shown = f.paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = if f.count > 3 { ", …" } else { "" };
+            println!("  ({} paths: {shown}{more})", f.count);
+        }
+    }
+    for u in report.units.iter().filter(|u| u.status == "error") {
+        println!("[ERROR] {}/{} — {}", u.recipe, u.unit, u.detail);
+    }
+    println!(
+        "audit: {} unit(s) traced, {} error(s), {} finding(s)",
+        report.units.iter().filter(|u| u.status == "traced").count(),
+        report.errors(),
+        report.findings.len()
+    );
+}
+
+/// The `cook audit --json` document, built from the engine's serializable
+/// report so strings are escaped by serde rather than by hand.
+fn audit_json_value(recipe: &str, report: &cook_engine::audit::AuditReport) -> serde_json::Value {
+    serde_json::json!({
+        "recipe": recipe,
+        "units": report.units,
+        "findings": report.findings,
+        "errors": report.errors(),
+    })
 }
 
 pub fn cmd_run(

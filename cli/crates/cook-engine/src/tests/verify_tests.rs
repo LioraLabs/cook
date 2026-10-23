@@ -250,3 +250,88 @@ fn absolute_symlink_into_the_working_dir_does_not_reach_the_real_tree() {
     .expect("rerun should succeed");
     assert!(!dir.path().join("real/new.txt").exists(), "re-run wrote through the link into the real tree");
 }
+
+#[test]
+fn traced_rerun_names_the_real_working_dir() {
+    if cook_cache::resolve_tool_path("strace").is_none() {
+        eprintln!("skip: strace not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cfg.txt"), "x").unwrap();
+    let r = rerun_in_sandbox(
+        "cat cfg.txt > out.txt",
+        &ProbeValueStore::new(), "r",
+        dir.path(),
+        &std::collections::BTreeMap::new(),
+        &["out.txt".to_string()],
+        &std::collections::BTreeSet::new(),
+        true,
+    )
+    .expect("traced rerun");
+    let trace = r.trace.expect("trace returned");
+    let real = dir.path().to_string_lossy().into_owned();
+    assert!(trace.contains(&format!("{real}/cfg.txt")), "trace: {trace}");
+    assert!(!trace.contains("/verify/"), "sandbox path leaked: {trace}");
+    assert!(r.outputs.contains_key("out.txt"));
+}
+
+#[test]
+fn declared_output_escaping_via_dotdot_is_err() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = format!("{}/../escape.txt", dir.path().display());
+    let r = rerun_outputs_in_sandbox(
+        "true",
+        &ProbeValueStore::new(), "r",
+        dir.path(),
+        &std::collections::BTreeMap::new(),
+        &[out],
+    );
+    assert!(r.unwrap_err().contains("outside"));
+}
+
+#[test]
+fn isolated_root_needs_an_overlay_mount() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var(crate::sandbox::ROOT_ENV, dir.path());
+    let plain = crate::sandbox::isolated_root();
+    std::env::remove_var(crate::sandbox::ROOT_ENV);
+    assert_eq!(plain, None);
+    assert_eq!(crate::sandbox::isolated_root(), None);
+}
+
+#[test]
+fn escaping_output_is_refused_before_the_command_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let side = tempfile::tempdir().unwrap();
+    let marker = side.path().join("ran");
+    let r = rerun_outputs_in_sandbox(
+        &format!("touch {}", marker.display()),
+        &ProbeValueStore::new(),
+        "r",
+        dir.path(),
+        &std::collections::BTreeMap::new(),
+        &[format!("{}/../escape.txt", dir.path().display())],
+    );
+    assert!(r.unwrap_err().contains("outside the unit's working directory"));
+    assert!(!marker.exists(), "the command ran before the output check");
+}
+
+/// The delete-declared-outputs step belongs to the in-place (overlay) branch
+/// only; a copy-mode re-run starts from the copy as it is. (The in-place
+/// branch needs a mounted overlay and has no unit test.)
+#[test]
+fn copy_mode_does_not_delete_declared_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("out.txt"), "stale").unwrap();
+    let r = rerun_outputs_in_sandbox(
+        "test -f out.txt",
+        &ProbeValueStore::new(),
+        "r",
+        dir.path(),
+        &std::collections::BTreeMap::new(),
+        &["out.txt".to_string()],
+    );
+    assert!(r.is_ok(), "{r:?}");
+    assert_eq!(std::fs::read_to_string(dir.path().join("out.txt")).unwrap(), "stale");
+}
