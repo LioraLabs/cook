@@ -226,6 +226,25 @@ fn cloud_backend_batch_query_round_trips() {
 }
 
 #[test]
+fn cloud_backend_batch_query_413_names_the_query_not_an_artifact() {
+    let mut server = mockito::Server::new();
+    let m = server
+        .mock("POST", "/v1/artifacts/batch_query")
+        .with_status(413)
+        .with_body("too many keys")
+        .create();
+
+    let backend = make_backend(&server.url(), 0);
+    let msg = backend
+        .batch_query(&[key(0x33)])
+        .expect_err("413 must error")
+        .to_string();
+    assert!(msg.contains("oversize batch_query request"), "{msg}");
+    assert!(!msg.contains("artifact"), "{msg}");
+    m.assert();
+}
+
+#[test]
 fn cloud_backend_retries_on_5xx() {
     let mut server = mockito::Server::new();
     let k = key(0x40);

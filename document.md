@@ -587,7 +587,11 @@ recipe typecheck
 Unannotated steps publish after a run and fetch by key before running. Restored
 bytes are re-fingerprinted before use, so a corrupted or tampered store entry is
 treated as a miss and rebuilt. `--no-publish` (or `COOK_NO_PUBLISH=1`) makes a
-client read-only: it still fetches, never uploads.
+client read-only: it still fetches, never uploads. That holds for the one
+invocation: an entry it records locally is promoted to the shared store by a
+later invocation that publishes and is served from it. To keep results private,
+set `[cloud] publish = false` in `.cook/cloud.toml` so every invocation is
+publish-off, or build in a separate checkout (its own `.cook`).
 
 The shared store itself is a content-addressed directory: point `[cache]
 cache_dir` in `.cook/cloud.toml` at a path your team can reach and there is no

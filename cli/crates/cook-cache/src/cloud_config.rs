@@ -53,6 +53,8 @@ pub struct CloudSection {
     /// COOK-168. When `false`, this client operates in read-only mode:
     /// cache lookups still work, but no artifacts are uploaded to the
     /// shared store. Defaults to `true` (publish enabled) when absent.
+    /// Unlike a one-off `--no-publish`, it covers every invocation, so the
+    /// entries recorded locally are never promoted by a later publishing run.
     #[serde(default = "default_true")]
     pub publish: bool,
 }

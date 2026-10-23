@@ -138,6 +138,9 @@ fn map_status_error(
         409 => BackendError::Other(format!(
             "conflict at {ctx}: server-side bytes differ: {body}"
         )),
+        413 if ctx == "batch_query" => BackendError::Other(format!(
+            "server rejected oversize batch_query request: {body}"
+        )),
         413 => BackendError::Other(format!(
             "server rejected oversize artifact at {ctx}: {body}"
         )),

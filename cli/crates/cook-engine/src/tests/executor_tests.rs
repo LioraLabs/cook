@@ -1835,3 +1835,128 @@ fn a_producing_unit_still_publishes() {
         "a producing unit's artifact and manifest reach the store"
     );
 }
+
+/// A backend that counts and records `batch_query` calls, delegating to a
+/// `LocalBackend`.
+struct CountingBackend {
+    inner: cook_cache::backend::LocalBackend,
+    queries: std::sync::Mutex<Vec<Vec<cook_cache::CloudKey>>>,
+}
+
+impl cook_cache::CacheBackend for CountingBackend {
+    fn batch_query(
+        &self,
+        keys: &[cook_cache::CloudKey],
+    ) -> cook_cache::BackendResult<std::collections::BTreeSet<cook_cache::CloudKey>> {
+        self.queries.lock().unwrap().push(keys.to_vec());
+        self.inner.batch_query(keys)
+    }
+    fn get(
+        &self,
+        key: &cook_cache::CloudKey,
+    ) -> cook_cache::BackendResult<Option<Box<dyn std::io::Read + Send>>> {
+        self.inner.get(key)
+    }
+    fn get_with_meta(
+        &self,
+        key: &cook_cache::CloudKey,
+    ) -> cook_cache::BackendResult<Option<(Box<dyn std::io::Read + Send>, cook_cache::ArtifactMeta)>> {
+        self.inner.get_with_meta(key)
+    }
+    fn put(
+        &self,
+        key: &cook_cache::CloudKey,
+        reader: &mut dyn std::io::Read,
+        meta: &mut cook_cache::ArtifactMeta,
+    ) -> cook_cache::BackendResult<()> {
+        self.inner.put(key, reader, meta)
+    }
+    fn delete(&self, key: &cook_cache::CloudKey) -> cook_cache::BackendResult<()> {
+        self.inner.delete(key)
+    }
+    fn health(&self) -> cook_cache::BackendResult<()> {
+        self.inner.health()
+    }
+    fn put_manifest(
+        &self,
+        key: &cook_cache::CloudKey,
+        manifest: &cook_cache::backend::DeterminantManifest,
+    ) -> cook_cache::BackendResult<()> {
+        self.inner.put_manifest(key, manifest)
+    }
+    fn get_manifest(
+        &self,
+        key: &cook_cache::CloudKey,
+    ) -> cook_cache::BackendResult<Option<cook_cache::backend::DeterminantManifest>> {
+        self.inner.get_manifest(key)
+    }
+}
+
+/// Run two cached units twice against one set of cache managers: the first
+/// run (publish off) records them, the second hits both. Returns the
+/// `batch_query` calls the second run made.
+fn queries_of_a_run_of_two_hits(publish_second: bool) -> Vec<Vec<cook_cache::CloudKey>> {
+    let (wd, tmp) = tmp_dir();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+    let managers = {
+        let mut m = empty_cache_managers("one", tmp.path());
+        m.extend(empty_cache_managers("two", tmp.path()));
+        m
+    };
+    let backend = Arc::new(CountingBackend {
+        inner: cook_cache::backend::LocalBackend::new(tmp.path().join("cloud")),
+        queries: Default::default(),
+    });
+    let ctx = |publish_enabled| {
+        Arc::new(CacheContext {
+            denylist: Arc::new(cook_cache::EnvDenylist::baseline()),
+            backend: backend.clone(),
+            cloud_config: Arc::new(cook_cache::cloud_config::CloudConfig::default()),
+            project_root: tmp.path().to_path_buf(),
+            project_id: "test".to_string(),
+            publish_enabled,
+            replay_logs: false,
+        })
+    };
+    for publish in [false, publish_second] {
+        let mut dag = Dag::new();
+        for (recipe, out) in [("one", "o1.txt"), ("two", "o2.txt")] {
+            let mut node = cook_node_disposition(
+                shell(&format!("echo {recipe} > {out}")),
+                recipe,
+                wd.clone(),
+                vec![out],
+                Default::default(),
+            );
+            node.cache_meta.as_mut().unwrap().inputs = vec!["in.txt".into()];
+            dag.add_node(node, &[]).unwrap();
+        }
+        execute_dag(
+            dag,
+            1,
+            managers.clone(),
+            None,
+            ctx(publish),
+            &[],
+            &BTreeMap::new(),
+            std::sync::Arc::new(BTreeMap::new()),
+            &std::sync::atomic::AtomicU64::new(0),
+            &Default::default(),
+        )
+        .unwrap();
+    }
+    let q = backend.queries.lock().unwrap().clone();
+    q
+}
+
+#[test]
+fn local_hits_are_backfilled_with_one_presence_query() {
+    let q = queries_of_a_run_of_two_hits(true);
+    assert_eq!(q.len(), 1, "one batch_query for the run, got {q:?}");
+    assert_eq!(q[0].len(), 2, "carrying both units' keys");
+}
+
+#[test]
+fn local_hits_make_no_presence_query_when_publish_is_off() {
+    assert!(queries_of_a_run_of_two_hits(false).is_empty());
+}

@@ -97,6 +97,12 @@ pub struct Globals {
     /// never publish locally-produced artifacts to the shared store. Also
     /// settable via `COOK_NO_PUBLISH=1` or `[cloud] publish = false` in
     /// `.cook/cloud.toml`. Write-authorization itself is backend IAM.
+    ///
+    /// Publish-off suppresses this invocation's uploads only: entries it
+    /// records locally may be promoted to the shared store by a later
+    /// invocation that publishes. To keep results private, set
+    /// `[cloud] publish = false` (it applies to every invocation), or build
+    /// in a separate checkout / `.cook`.
     #[arg(long = "no-publish", global = true)]
     pub no_publish: bool,
 }

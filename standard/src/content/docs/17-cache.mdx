@@ -183,6 +183,8 @@ The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy
 
 1. *(unannotated)* — the unit MUST publish each declared output to the shared store after a successful run, and MUST attempt to fetch its outputs from the shared store by key before executing — both when a local cache entry exists but its outputs have drifted or are missing (the restore of §{exec.cache.integrity}), and on a *cold miss* where no local cache entry exists. On a final miss (neither store holds the key) the unit is rebuilt. A recipe-level `seal` changes the unit's key, not this default sharing policy.
 
+   A unit served from cache — from the local index or by a restore or fetch — whose key the shared store does not hold MUST then be published to the shared store as it would have been after a successful run — the same key, the same artifacts and determinant manifest, the same integrity verification (§{exec.cache.integrity}) — so that a result recorded only in one checkout's local index reaches every other consumer of the store. Whether the store holds the key MAY be decided by one batched existence query per invocation over every unit served this way; an implementation SHOULD NOT query once per unit. Before publishing, the implementation MUST confirm that each input and output the local entry records still has the content recorded for it, and MUST skip the unit otherwise: a later unit of the same invocation may have rewritten a file, and a publication MUST NOT place bytes under a key they do not belong to. This promotion is governed by the invocation, not by the entry's history: a `local` unit never promotes, an invocation in publish-off mode promotes nothing, a `pinned` unit promotes as an unannotated one does, and an entry recorded by an earlier publish-off invocation promotes when a later invocation that publishes is served from it. The local index holds an observation's scalar half only (§{exec.cache.observation}), so a promoted observation carries an empty output log whose truncation count is the whole of the recorded log: it is a truncated observation, and a consumer that replays it marks the elided output as §{exec.cache.observation} requires of every truncated observation. (CS-0260.)
+
 2. `local` — the unit is cached in the local index only. It MUST NOT publish any output to, and MUST NOT fetch any output from, the shared store — not on a cold miss and not on a drifted-output restore. On any miss the unit is rebuilt.
 
 3. `pinned` — the unit is **fetch-only / designated-producer**: it MUST be served from cache — the local index or a fetch-by-key from the shared store — and MUST NEVER be reproduced by the consumer. When neither store holds an artifact for the unit's key (a cold miss), a conforming implementation MUST fail the build with a diagnostic that names the pinned unit; it MUST NOT execute the unit, and it MUST NOT serve any dependent that required the unit's outputs.
@@ -206,6 +208,14 @@ completes by running the unit and recording it locally. Publish-off is a
 client-side convenience for read-only consumers; *write-authorization* to a
 shared store is the backend's concern (e.g. credentialed access), not a property
 the client asserts. (CS-0111.)
+
+Publish-off governs the invocation it is set on, not the entries that
+invocation records: an entry recorded locally under publish-off is promoted by
+a later invocation that publishes and is served from it (item 1 above). A
+client that must keep its results out of the shared store therefore sets
+publish-off for every invocation (the project config, not a one-off switch), or
+records them in a separate checkout with its own local index (`.cook`).
+(CS-0260.)
 
 ### 17.1.4. The `nondet` disposition [#exec.cache.record]
 
