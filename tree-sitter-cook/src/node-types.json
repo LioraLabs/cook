@@ -198,6 +198,21 @@
     }
   },
   {
+    "type": "covers_step",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "defaulted_param",
     "named": true,
     "fields": {
@@ -331,6 +346,10 @@
       "types": [
         {
           "type": "comment",
+          "named": true
+        },
+        {
+          "type": "covers_step",
           "named": true
         },
         {
@@ -535,6 +554,10 @@
       "types": [
         {
           "type": "comment",
+          "named": true
+        },
+        {
+          "type": "covers_step",
           "named": true
         },
         {
@@ -1056,6 +1079,10 @@
   },
   {
     "type": "cook",
+    "named": false
+  },
+  {
+    "type": "covers",
     "named": false
   },
   {

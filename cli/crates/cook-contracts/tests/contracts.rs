@@ -510,6 +510,7 @@ fn probe_inputs_default_is_empty() {
 #[test]
 fn probe_unit_round_trips_through_serde() {
     let p = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:zlib"),
         produce_source: "return run_pkg_config(\"zlib\")".into(),
         produce_line: 42,

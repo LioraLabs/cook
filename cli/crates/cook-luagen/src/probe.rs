@@ -94,6 +94,9 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe, uses: &[UseStatement])
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
     }
     out.push_str("  },\n");
+    if !probe.covers.is_empty() {
+        out.push_str(&format!("  covers = {{ {} }},\n", quoted_list(&probe.covers)));
+    }
     let produce_src = lower_produce(&probe.produce, uses);
     out.push_str(&format!("  produce = {},\n", wrap_lua_string(&produce_src)));
     out.push_str("})\n\n");

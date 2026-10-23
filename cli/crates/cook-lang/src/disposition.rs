@@ -274,6 +274,7 @@ pub(crate) fn parse_seal_operands(
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
+            covers: vec![],
             produce: ProbeProduce::Files { globs, excludes },
             line,
         })

@@ -244,3 +244,55 @@ fn cs0244_cook_probe_rejects_inputs_env_by_name() {
         "the diagnostic must carry the concrete replacement spelling; got: {msg}",
     );
 }
+
+fn covers_of(opts: &str) -> Result<Vec<String>, String> {
+    let (lua, reg, _cap) = setup("Cookfile");
+    lua.load(format!(r#"cook.probe("k", {{ {opts} produce = "return 1" }})"#))
+        .exec()
+        .map_err(|e| e.to_string())?;
+    let r = reg.borrow();
+    Ok(r.probes.get("k").unwrap().probe.covers.clone())
+}
+
+#[test]
+fn covers_is_stored_and_defaults_empty() {
+    assert!(covers_of("").unwrap().is_empty());
+    assert!(covers_of("covers = {},").unwrap().is_empty());
+    assert_eq!(
+        covers_of(r#"covers = { "node_modules", "**/node_modules", "~/.rustup/toolchains", "/opt/x/**", "/opt/x/", "~/.nvm/*/bin" },"#).unwrap(),
+        vec!["node_modules", "**/node_modules", "~/.rustup/toolchains", "/opt/x/**", "/opt/x/", "~/.nvm/*/bin"]
+    );
+}
+
+#[test]
+fn covers_refuses_non_lists_and_bad_entries() {
+    for bad in [r#"covers = "node_modules","#, r#"covers = { "" },"#] {
+        let e = covers_of(bad).unwrap_err();
+        assert!(e.contains("opts.covers"), "{bad}: {e}");
+    }
+}
+
+#[test]
+fn covers_refuses_roots_too_broad() {
+    // A glob in a leading component narrows nothing: `/h*` stands for `/`.
+    for c in ["/", "//", "/usr", "/usr/", "**", "*", ".", "./", "./**", "/**", "/*", "~/**", "/usr/**", "/home", "/usr/.", "~/..", "/usr/../usr", "/usr/./", "a/..", "~", "~/", "/h*", "/u*", "/*/lib", "~/[.a-z]*", "/**/node_modules", "?*", "./?*", "**/*.ts", "{*,x/y}", "**/{*,x/y}", "{*,a/b/c}", "{a/b/c,*}", "**/{*,a/b/c}", "{*,{a/b,c/d}}", "{*,[}]/b/c}", r"{*,a\}/b/c}", "{*,a[}]/b/c}", r"{*,\}/b/c}"] {
+        let e = covers_of(&format!("covers = {{ {c:?} }},")).unwrap_err();
+        assert!(e.contains("too broad") && e.contains(&format!("'{c}'")), "{c}: {e}");
+    }
+}
+
+/// The home directory differs per host, so a shared Cookfile naming one is
+/// judged at audit, not refused here on the one host whose HOME it is.
+#[test]
+fn covers_leaves_the_home_directory_and_climbing_out_to_audit() {
+    let home = std::env::var("HOME").unwrap();
+    for c in [home.clone(), format!("{home}/"), format!("{home}/**"), "../../../**/x".into()] {
+        assert_eq!(covers_of(&format!("covers = {{ {c:?} }},")).unwrap(), vec![c.clone()], "{c}");
+    }
+}
+
+#[test]
+fn covers_refuses_a_bad_glob_naming_the_entry() {
+    let e = covers_of(r#"covers = { "/opt/x/[" },"#).unwrap_err();
+    assert!(e.contains("opts.covers") && e.contains("/opt/x/["), "{e}");
+}

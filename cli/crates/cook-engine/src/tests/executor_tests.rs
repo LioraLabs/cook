@@ -1474,6 +1474,7 @@ fn test_iteration_item_propagates() {
 
 fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
     cook_contracts::ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new(key),
         produce_source: produce.to_string(),
         produce_line: 1,

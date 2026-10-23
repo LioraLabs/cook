@@ -1,4 +1,4 @@
-use super::{escapes_base, has_glob_meta, is_dir_output, normalize};
+use super::{covers_root, covers_too_broad, escapes_base, has_glob_meta, is_dir_output, normalize};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -87,4 +87,64 @@ fn terminal_outputs_are_globs_or_directories() {
 fn braces_are_not_glob_metacharacters() {
     assert!(!has_glob_meta("out/{a,b}.txt"));
     assert!(!has_glob_meta("src/{lib,app}/main.c"));
+}
+
+/// A glob anywhere in an entry can match anything under its literal prefix,
+/// so the prefix is the root the breadth rule judges (§22.5.2.2).
+#[test]
+fn a_covers_root_is_the_literal_prefix_before_the_first_glob() {
+    for (entry, root) in [("/h*", "/"), ("/*/lib", "/"), ("~/[.a-z]*", "~"), ("../../../**/x", "../../.."), ("**/node_modules", ""), ("/opt/x/**", "/opt/x"), ("~/.nvm/*/bin", "~/.nvm"), ("/usr/**", "/usr"), ("node_modules", "node_modules")] {
+        assert_eq!(covers_root(entry), root, "{entry}");
+    }
+}
+
+#[test]
+fn registration_refuses_what_is_too_broad_on_every_host() {
+    for e in ["/h*", "/u*", "/*/lib", "/[a-z]*/x", "~/[.a-z]*", "~/*/x", "/", "/usr", "/usr/**", "/**/node_modules", "~", "~/", "~/..", ".", "**", "a/..", "/usr/.", "?*", "[!.]*", "{*,.*}", "./?*", "**/?*", "src/../?*", "**/*.ts", "**/..", "{*,x/y}", "{**,x/y}", "**/{*,x/y}", "x/../{*,a/b}", "{*,a/b/c}", "{a/b/c,*}", "**/{*,a/b/c}", "{*,a/b/c}/**", "{*,{a/b,c/d}}", "{*,a/b/c,d}", "{*,[}]/b/c}", "{*,a[}]/b/c}", r"{*,a\}/b/c}", r"{*,\}/b/c}", "{*,x/y}/z", "{a,b}/node_modules", "*[a/b/c]", "**/[a-z]*/node_modules"] {
+        assert!(covers_too_broad(e, None), "{e}");
+    }
+    // Host-dependent: judged at audit, not here.
+    for e in ["**/node_modules", "/opt/x/**", "~/.nvm/*/bin", "/home/me", "/home/me/**", "../../../**/x", "../../x", "/usr/lib/*/x", "?*/x", "*/node_modules"] {
+        assert!(!covers_too_broad(e, None), "{e}");
+    }
+}
+
+#[test]
+fn audit_adds_home_and_climbing_out_judged_as_resolved() {
+    let home = Path::new("/home/me");
+    let at = |dir: &'static str| Some((Path::new(dir), Some(home)));
+    for e in ["/home/me", "/home/me/", "/home/me/**", "/home/me/*/x", "~/../me", "../../../**/x", "../../..", "../*", "/home/**", "/home/me/.."] {
+        assert!(covers_too_broad(e, at("/a/b/c")), "{e}");
+    }
+    // A project at a top-level directory still covers its own node_modules.
+    for e in ["**/node_modules", "node_modules", "./**/node_modules"] {
+        assert!(!covers_too_broad(e, at("/app")), "{e}");
+    }
+    for e in ["**/node_modules", "/opt/x/**", "~/.nvm/*/bin", "~/.rustup/toolchains", "../../x"] {
+        assert!(!covers_too_broad(e, at("/a/b/c")), "{e}");
+    }
+}
+
+/// A home below a top-level directory (`/var/lib/jenkins` on CI) has an
+/// ancestor that is not top-level; covering it covers home.
+#[test]
+fn audit_refuses_an_ancestor_of_a_deep_home() {
+    let at = Some((Path::new("/a/b"), Some(Path::new("/var/lib/jenkins"))));
+    assert!(covers_too_broad("/var/lib/**", at));
+    assert!(covers_too_broad("/var/lib", at));
+    assert!(!covers_too_broad("/var/lib/jenkins/.nvm", at));
+    assert!(!covers_too_broad("/var/lib", None));
+}
+
+/// Climbing out and back names the Cookfile's own directory: as broad as `**`.
+#[test]
+fn audit_refuses_a_relative_root_climbing_back_to_its_own_directory() {
+    let at = Some((Path::new("/home/me/dev/proj"), Some(Path::new("/home/me"))));
+    // `../proj/**/node_modules` is written `**/node_modules`.
+    for e in ["../proj", "../proj/**", "../proj/?*", "../../dev/**", "../proj/{a,*}", "../**/proj", "../*/proj/**", "../proj/**/node_modules", "../*/src"] {
+        assert!(covers_too_broad(e, at), "{e}");
+    }
+    for e in ["../proj/src", "../other/**", "../../x"] {
+        assert!(!covers_too_broad(e, at), "{e}");
+    }
 }

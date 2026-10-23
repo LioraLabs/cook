@@ -257,6 +257,7 @@ fn probe_ast_constructs() {
         deps: vec!["cards".to_string()],
         inputs: vec!["data/services.json".to_string()],
         excludes: vec![],
+        covers: vec![],
         produce: ProbeProduce::Lua("return {}".to_string()),
         line: 1,
     };

@@ -152,6 +152,8 @@ pub struct Probe {
     pub deps: Vec<String>,
     pub inputs: Vec<String>,
     pub excludes: Vec<String>,
+    /// Roots named by a `covers` clause (raw, as written); audit-only.
+    pub covers: Vec<String>,
     pub produce: ProbeProduce,
     pub line: usize,
 }

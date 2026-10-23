@@ -601,7 +601,8 @@ It complements §{exec.cache.verify}. The verifier observes **outputs** — whet
 3. one of the unit's outputs;
 4. a path resolved from a sealed top-level `files` declaration or an inline `seal "<path>"` file determinant (§{cat.probes.named-sets}, §{steps.cook-disposition.seal});
 5. the resolved location of a tool of a sealed `tools` declaration (§{cat.probes.named-sets});
-6. a directory that is an ancestor of a covered path or of the unit's working directory.
+6. a directory that is an ancestor of a covered path or of the unit's working directory;
+7. a path that, or any ancestor of which, matches an entry of the `covers` clause (§{cat.probes.covers}) of a probe or `files` declaration the unit **seals** (CS-0264). A `probes` reference or an unsealed declaration covers nothing, and a `tools` declaration has no `covers`. This is how a module owns its ecosystem's roots, so a project sees only its own holes; `covers` never changes a key.
 
 A declared directory path does NOT cover its contents: a declared input is keyed per file and a directory is not keyed recursively (§{exec.cache.declared-inputs}).
 

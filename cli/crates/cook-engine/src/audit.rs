@@ -11,8 +11,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::RegisteredWorkspace;
+use cook_contracts::consumes::ConsumesFilter;
 use cook_contracts::pathlaw::normalize;
 use cook_contracts::WorkPayload;
+
+mod covers;
 
 /// One path a traced process touched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,11 +367,15 @@ fn ignored(p: &Path, ignore: &[PathBuf]) -> bool {
 
 /// What a unit's declarations cover. `exact` paths cover themselves; a
 /// `subtrees` entry covers itself and everything under it (a `covers` clause, a
-/// toolchain root). Ancestors of either are covered too (see [`uncovered_reads`]).
+/// toolchain root). A `patterns` entry is an absolute glob (`*` stays within a
+/// component, `**` crosses) whose every match covers itself and everything
+/// under it. Ancestors of exact paths and subtrees are covered too (see
+/// [`uncovered_reads`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Coverage {
     pub exact: BTreeSet<PathBuf>,
     pub subtrees: BTreeSet<PathBuf>,
+    pub patterns: Vec<String>,
 }
 
 /// The reads nothing covers. Covered: a declared path (exact), a path under a
@@ -399,13 +406,18 @@ pub(crate) fn uncovered_reads(
         .flat_map(Path::ancestors)
         .map(Path::to_path_buf)
         .collect();
+    // validated by `unit_coverage`, which refuses a unit with a bad entry
+    let patterns = ConsumesFilter::compile(&coverage.patterns).expect("coverage patterns are validated");
     let mut hits = Vec::new();
     for a in accesses.iter().filter(|a| !a.write) {
         let inside = a.path.starts_with(project_root);
         if (!inside && ignored(&a.path, ignore)) || ignored(&a.path, &[]) || (a.absent && !inside) {
             continue;
         }
-        if ancestors.contains(&a.path) || coverage.subtrees.iter().any(|t| a.path.starts_with(t)) {
+        if ancestors.contains(&a.path)
+            || coverage.subtrees.iter().any(|t| a.path.starts_with(t))
+            || a.path.ancestors().any(|p| patterns.matches(&p.to_string_lossy()))
+        {
             continue;
         }
         hits.push((a.path.clone(), if a.absent { FindingKind::Absent } else { FindingKind::Read }));
@@ -414,9 +426,11 @@ pub(crate) fn uncovered_reads(
 }
 
 /// What a unit's seals add to its [`Coverage`]: a sealed `files` declaration's
-/// resolved paths and a sealed tool's resolved locations (exact). Probes carry
-/// no recipe scope: every recipe's list holds the whole registry, so the
-/// unit's own list is the one place to look.
+/// resolved paths and a sealed tool's resolved locations (exact), and the
+/// `covers` roots of a sealed probe or `files` declaration (a literal root a
+/// subtree, a glob a pattern); an entry that is not a valid glob is an error.
+/// Probes carry no recipe scope: every recipe's list holds the whole registry,
+/// so the unit's own list is the one place to look.
 fn unit_coverage(
     coverage: &mut Coverage,
     seal_keys: &BTreeSet<cook_contracts::LocalProbeKey>,
@@ -424,15 +438,23 @@ fn unit_coverage(
     workspace: &RegisteredWorkspace,
     probe_values: &cook_probe::store::ProbeValueStore,
     recipe_name: &str,
-) {
+    home: Option<&Path>,
+) -> Result<(), String> {
     let wd = &units.working_dir;
     let store = probe_values.for_recipe(recipe_name);
     for k in seal_keys {
         let probe = units.probes.iter().find(|p| &p.key == k);
+        let prefix = cook_contracts::probe_key::qualify_for_recipe(recipe_name, k);
+        let dir = workspace.working_dir_by_prefix.get(prefix.import_prefix()).unwrap_or(wd);
+        for entry in probe.map_or(&[][..], |p| &p.covers[..]) {
+            match covers::resolve(entry, dir, home)? {
+                Some(covers::Cover::Subtree(t)) => drop(coverage.subtrees.insert(t)),
+                Some(covers::Cover::Pattern(p)) => coverage.patterns.push(p),
+                None => {}
+            }
+        }
         if probe.is_some_and(|p| p.produce_source == cook_contracts::probe_value::FILES_MANIFEST_PRODUCE) {
             if let Some(serde_json::Value::Object(m)) = store.get(k).and_then(|b| serde_json::from_slice(&b).ok()) {
-                let prefix = cook_contracts::probe_key::qualify_for_recipe(recipe_name, k);
-                let dir = workspace.working_dir_by_prefix.get(prefix.import_prefix()).unwrap_or(wd);
                 coverage.exact.extend(m.keys().map(|p| normalize(&dir.join(p))));
             }
         }
@@ -440,6 +462,7 @@ fn unit_coverage(
             coverage.exact.extend(tools.values().map(PathBuf::from));
         }
     }
+    Ok(())
 }
 
 /// Re-run every shell unit of the reachable recipes under strace and report
@@ -591,10 +614,15 @@ pub(crate) fn audit_in_place(
                 }
                 Ok(rerun) => {
                     let accesses = parse_trace(rerun.trace.as_deref().unwrap_or(""), wd);
-                    let mut coverage = Coverage { exact: inputs, subtrees: BTreeSet::new() };
+                    let mut coverage = Coverage { exact: inputs, ..Coverage::default() };
                     coverage.exact.extend(rerun.outputs.keys().map(|p| normalize(&wd.join(p))));
-                    unit_coverage(&mut coverage, &meta.seal_keys, units, workspace, &run_result.probe_values, &recipe_name);
-                    hits.extend(uncovered_reads(&accesses, &coverage, wd, project_root, &ignore));
+                    match unit_coverage(&mut coverage, &meta.seal_keys, units, workspace, &run_result.probe_values, &recipe_name, home.as_deref()) {
+                        Ok(()) => hits.extend(uncovered_reads(&accesses, &coverage, wd, project_root, &ignore)),
+                        Err(e) => {
+                            ua.status = "error";
+                            ua.detail = e;
+                        }
+                    }
                 }
             }
             report.units.push(ua);

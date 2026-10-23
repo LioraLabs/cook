@@ -17,6 +17,7 @@ pub(crate) fn parse_probe(
     let excludes: Vec<String> = Vec::new();
     let mut producer: Option<ProbeProduce> = None;
     let mut seal_seen = false;
+    let mut covers: Option<Vec<String>> = None;
     let mut inline_probes = Vec::new();
 
     while pos < tokens.len() {
@@ -60,6 +61,23 @@ pub(crate) fn parse_probe(
                 if strip_keyword(text, "ingredients").is_some() {
                     return Err(ParseError::Parse { line: tok.line,
                         message: crate::recipe::INGREDIENTS_REMOVED.into() });
+                } else if let Some(rest) = strip_keyword(text, "covers") {
+                    if producer.is_some() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: format!(
+                                "probe '{name}': `covers` must appear before the producer"
+                            ),
+                        });
+                    }
+                    if covers.is_some() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: format!("probe '{name}': at most one `covers` per probe"),
+                        });
+                    }
+                    covers = Some(parse_covers_operands(rest, tok.line)?);
+                    pos += 1;
                 } else if let Some(rest) = strip_keyword(text, "seal") {
                     if producer.is_some() {
                         return Err(ParseError::Parse {
@@ -135,6 +153,7 @@ pub(crate) fn parse_probe(
             deps,
             inputs,
             excludes,
+            covers: covers.unwrap_or_default(),
             produce,
             line: probe_line,
         },
@@ -154,6 +173,7 @@ fn parse_set_declaration(
     let mut pos = start;
     let mut values = Vec::new();
     let mut excludes = Vec::new();
+    let mut covers: Option<Vec<String>> = None;
     while pos < tokens.len() {
         let tok = &tokens[pos];
         match &tok.value {
@@ -164,7 +184,17 @@ fn parse_set_declaration(
             Token::Content(_) => {
                 let raw = source_lines.get(tok.line - 1).copied().unwrap_or("");
                 if !raw.starts_with(|c: char| c.is_whitespace()) { break; }
-                if files {
+                if let Some(rest) = strip_keyword(raw.trim(), "covers") {
+                    let kind = if files { "files" } else { "tools" };
+                    if !files {
+                        return Err(ParseError::Parse { line: tok.line, message: format!(
+                            "tools {name}: `covers` is not admitted on a tools declaration \u{2014} a tools hash keys the binary, not its install root; put `covers` on the probe that keys the version") });
+                    }
+                    if covers.is_some() {
+                        return Err(ParseError::Parse { line: tok.line, message: format!("{kind} {name}: at most one `covers` line") });
+                    }
+                    covers = Some(parse_covers_operands(rest, tok.line)?);
+                } else if files {
                     let (mut includes, mut line_excludes) = parse_files_glob_list(&format!("{{{}}}", raw.trim()), tok.line, false)?;
                     values.append(&mut includes); excludes.append(&mut line_excludes);
                 } else {
@@ -213,6 +243,7 @@ fn parse_set_declaration(
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
+            covers: covers.unwrap_or_default(),
             produce,
             line: declaration_line,
         },
@@ -294,6 +325,26 @@ fn parse_source_name_list(
         });
     }
     Ok(names)
+}
+
+/// Operands of a `covers` line: one or more quoted roots, no `!` excludes.
+/// Shares the quoted-operand reader of the `files` glob list.
+fn parse_covers_operands(rest: &str, line: usize) -> Result<Vec<String>, ParseError> {
+    let (roots, excludes) = parse_files_glob_list(&format!("{{{}}}", rest.trim()), line, true)
+        .map_err(|e| match e {
+            ParseError::Parse { line, message } => ParseError::Parse {
+                line,
+                message: format!("covers: operands are quoted roots (`\"\u{2026}\"`); {message}"),
+            },
+            other => other,
+        })?;
+    if !excludes.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: "covers: `!` excludes are not admitted; operands are quoted roots".into(),
+        });
+    }
+    Ok(roots)
 }
 
 /// Parse a `files` brace glob list: `{ "a/*.c" !"a/gen/*.c" }` →

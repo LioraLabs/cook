@@ -469,3 +469,107 @@ fn sigterm_to_the_audit_ends_the_whole_tree_and_cleans_its_scratch() {
         sandbox.display()
     );
 }
+
+fn paths_of(doc: &serde_json::Value, recipe: &str) -> Vec<String> {
+    doc["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["recipe"] == recipe)
+        .flat_map(|f| f["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()))
+        .collect()
+}
+
+/// A project whose recipe reads under `node_modules` at the root, in a package
+/// and (absent) under `src`, plus `.lintrc`; `seal` is the recipe's seal line.
+fn node_modules_project(seal: &str) -> TempDir {
+    let dir = project(&format!(
+        "files deps\n    \"lock\"\n    covers \"**/node_modules\"\n\nrecipe lint\n    {seal}\n    test {{ cat node_modules/a/x pkg/node_modules/b/y .lintrc >/dev/null; test -e src/node_modules || true }}\n"
+    ));
+    for f in ["lock", "node_modules/a/x", "pkg/node_modules/b/y"] {
+        fs::create_dir_all(dir.path().join(f).parent().unwrap()).unwrap();
+        fs::write(dir.path().join(f), "x\n").unwrap();
+    }
+    dir
+}
+
+#[test]
+fn a_sealed_covers_root_removes_its_reads_and_keeps_project_files() {
+    let dir = node_modules_project("seal deps");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let paths = paths_of(&json(&out), "lint");
+    assert!(!paths.iter().any(|p| p.contains("node_modules")), "{paths:?}");
+    assert!(paths.iter().any(|p| p == ".lintrc"), "{paths:?}");
+}
+
+#[test]
+fn an_unsealed_covers_root_covers_nothing() {
+    let dir = node_modules_project("seal \"src/a.ts\"");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    let paths = paths_of(&json(&out), "lint");
+    for want in ["node_modules/a/x", "pkg/node_modules/b/y", "src/node_modules"] {
+        assert!(paths.iter().any(|p| p == want), "{want} missing: {paths:?}");
+    }
+}
+
+#[test]
+fn a_toolchain_root_is_covered_by_a_sealed_version_probe_not_by_the_tool_hash() {
+    // Not under /tmp: the audit ignores that wholesale.
+    let home = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let h = home.path();
+    fs::create_dir_all(h.join("tc/lib")).unwrap();
+    fs::create_dir_all(h.join("bin")).unwrap();
+    fs::write(h.join("tc/lib/data"), "d\n").unwrap();
+    let tool = h.join("bin/tool");
+    fs::write(&tool, "#!/bin/sh\ncat \"$HOME/tc/lib/data\"\n").unwrap();
+    fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let dir = project(
+        "tools t\n    tool\n\nprobe v\n    covers \"~/tc\"\n    { tool >/dev/null; echo 1 }\n\n\
+         recipe x\n    seal t\n    test { tool >/dev/null }\n\n\
+         recipe y\n    seal v\n    test { tool >/dev/null }\n",
+    );
+    let xdg = TempDir::new().unwrap();
+    let path = format!("{}:{}", h.join("bin").display(), std::env::var("PATH").unwrap());
+    let env: [(&str, &Path); 2] = [("HOME", h), ("PATH", Path::new(&path))];
+    let Some(out) = audit_with(dir.path(), xdg.path(), &["x", "--json"], &env) else { return };
+    let (doc, x) = (json(&out), paths_of(&json(&out), "x"));
+    assert!(x.iter().any(|p| p.starts_with("~/tc")), "tool hash must not cover the root: {doc}");
+    let Some(out) = audit_with(dir.path(), xdg.path(), &["y", "--json"], &env) else { return };
+    let (doc, y) = (json(&out), paths_of(&json(&out), "y"));
+    assert!(!y.iter().any(|p| p.starts_with("~/tc")), "{doc}");
+}
+
+#[test]
+fn a_glob_in_a_leading_component_is_refused_as_its_literal_root() {
+    let dir = project("probe v\n    covers \"/h*\"\n    { echo 1 }\n\nrecipe x\n    seal v\n    test { cat .lintrc }\n");
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["x", "--json"]) else { return };
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("'/h*' is too broad"), "{err}");
+}
+
+#[test]
+fn a_covers_root_that_is_home_errors_its_unit_at_audit_and_breaks_nothing_else() {
+    // Not under /tmp: the audit ignores that wholesale.
+    let home = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let h = home.path();
+    let dir = project(&format!(
+        "probe v\n    covers \"{}\"\n    {{ echo 1 }}\n\nrecipe x\n    seal v\n    test {{ cat .lintrc }}\n\nrecipe y\n    seal \"src/a.ts\"\n    test {{ cat src/a.ts }}\n",
+        h.display()
+    ));
+    let xdg = TempDir::new().unwrap();
+    let env: [(&str, &Path); 1] = [("HOME", h)];
+    let run = Command::new(cook_bin()).arg("x").env("XDG_CACHE_HOME", xdg.path()).env("HOME", h).current_dir(dir.path()).output().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    let Some(out) = audit_with(dir.path(), xdg.path(), &["x", "--json"], &env) else { return };
+    let doc = json(&out);
+    let units = doc["units"].as_array().unwrap();
+    assert!(!units.is_empty() && units.iter().all(|u| u["status"] == "error" && u["detail"].as_str().unwrap().contains("too broad")), "{doc}");
+    let Some(out) = audit_with(dir.path(), xdg.path(), &["y", "--json"], &env) else { return };
+    let doc = json(&out);
+    let units = doc["units"].as_array().unwrap();
+    assert!(!units.is_empty() && units.iter().all(|u| u["status"] == "traced"), "{doc}");
+}

@@ -3654,6 +3654,7 @@ fn make_probe_cf(produce: ProbeProduce) -> Cookfile {
             deps: vec![],
             inputs: vec![],
             excludes: vec![],
+            covers: vec![],
             produce,
             line: 1,
         }],
@@ -3670,6 +3671,7 @@ fn probe_lua_block_lowers_to_cook_probe() {
             deps: vec!["cards".into()],
             inputs: vec!["data/s.json".into()],
             excludes: vec![],
+            covers: vec![],
             produce: ProbeProduce::Lua("return {}".into()),
             line: 1,
         }],
@@ -4079,4 +4081,15 @@ fn the_member_source_is_asked_for_inside_the_member_loop() {
         .expect("member loop");
     let src_at = lua.find("cook.prior_outputs(cook.member_to_string(item))").expect("per-member source");
     assert!(src_at > loop_at, "the source is read per member:\n{lua}");
+}
+
+#[test]
+fn probe_covers_emitted_only_when_present() {
+    let lua_of = |src: &str| generate(&cook_lang::parse(src).unwrap());
+    let with = lua_of("probe x\n    covers \"node_modules\" \"a/**\"\n    { echo 1 }\n");
+    assert!(with.contains("  },\n  covers = { \"node_modules\", \"a/**\" },\n  produce = "), "{with}");
+    let files = lua_of("files f\n    \"a\"\n    covers \"nm\"\n");
+    assert!(files.contains("  covers = { \"nm\" },\n"), "{files}");
+    let without = lua_of("probe x\n    { echo 1 }\n");
+    assert!(!without.contains("covers"), "{without}");
 }

@@ -620,9 +620,38 @@
         {
           "type": "REPEAT1",
           "content": {
-            "type": "SYMBOL",
-            "name": "file_set_line"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "file_set_line"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "covers_step"
+              }
+            ]
           }
+        }
+      ]
+    },
+    "covers_step": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "covers"
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_newline"
         }
       ]
     },
@@ -741,27 +770,123 @@
               "type": "CHOICE",
               "members": [
                 {
-                  "type": "SEQ",
+                  "type": "CHOICE",
                   "members": [
                     {
-                      "type": "SYMBOL",
-                      "name": "seal_step"
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "covers_step"
+                        },
+                        {
+                          "type": "REPEAT",
+                          "content": {
+                            "type": "CHOICE",
+                            "members": [
+                              {
+                                "type": "SYMBOL",
+                                "name": "_newline"
+                              },
+                              {
+                                "type": "SYMBOL",
+                                "name": "comment"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SEQ",
+                              "members": [
+                                {
+                                  "type": "SYMBOL",
+                                  "name": "seal_step"
+                                },
+                                {
+                                  "type": "REPEAT",
+                                  "content": {
+                                    "type": "CHOICE",
+                                    "members": [
+                                      {
+                                        "type": "SYMBOL",
+                                        "name": "_newline"
+                                      },
+                                      {
+                                        "type": "SYMBOL",
+                                        "name": "comment"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "BLANK"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
-                      "type": "REPEAT",
-                      "content": {
-                        "type": "CHOICE",
-                        "members": [
-                          {
-                            "type": "SYMBOL",
-                            "name": "_newline"
-                          },
-                          {
-                            "type": "SYMBOL",
-                            "name": "comment"
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "seal_step"
+                        },
+                        {
+                          "type": "REPEAT",
+                          "content": {
+                            "type": "CHOICE",
+                            "members": [
+                              {
+                                "type": "SYMBOL",
+                                "name": "_newline"
+                              },
+                              {
+                                "type": "SYMBOL",
+                                "name": "comment"
+                              }
+                            ]
                           }
-                        ]
-                      }
+                        },
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SEQ",
+                              "members": [
+                                {
+                                  "type": "SYMBOL",
+                                  "name": "covers_step"
+                                },
+                                {
+                                  "type": "REPEAT",
+                                  "content": {
+                                    "type": "CHOICE",
+                                    "members": [
+                                      {
+                                        "type": "SYMBOL",
+                                        "name": "_newline"
+                                      },
+                                      {
+                                        "type": "SYMBOL",
+                                        "name": "comment"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "BLANK"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 },

@@ -40,10 +40,11 @@ declaration name. The quoted form is NOT outside it: names compare verbatim, so
 `recipe status` exactly as the bare spelling does.
 
 The `probe_body` (App. A) comprises an optional declarative `seal_step`
-(§{steps.cook-disposition}) followed by exactly one **producer**. A conforming
+(§{steps.cook-disposition}) and an optional `covers_step` (§{cat.probes.covers}),
+in either order, followed by exactly one **producer**. A conforming
 implementation MUST reject a probe body that: contains no producer; contains
-two or more producers; contains two or more `seal` lines; or contains a `seal`
-line after the producer. Each bare seal operand names an upstream probe key and
+two or more producers; contains two or more `seal` lines; contains two or more
+`covers` lines; or contains a `seal` or `covers` line after the producer. Each bare seal operand names an upstream probe key and
 joins the header dependency list (`probe NAME: a b`) in `inputs.requires`.
 Quoted operands desugar to an anonymous `files` probe whose key joins that same
 list; `!"…"` excludes matches with the same adjacency rule as a top-level
@@ -70,6 +71,13 @@ exclusion marker with no intervening whitespace; a `tools` item is a
 file-manifest and tool-identity evaluation semantics below, so `seal NAME`
 requires no new seal surface.
 
+A `files` body MAY also carry one indented line led by `covers`
+(§{cat.probes.covers}); that line is the declaration's covers clause, not a
+glob line, and the body still MUST contain at least one glob line. A `tools`
+declaration MUST reject a `covers` line (CS-0264): a tools hash keys the
+binary file, not its install root, so the root is declared on the probe that
+keys the program's version.
+
 These declarations MAY appear at any top-level position. Authors SHOULD place
 one immediately above the recipe that owns it and SHOULD namespace the name by
 its Cookfile or module owner: probe keys share one workspace namespace across
@@ -95,10 +103,16 @@ the offending line:
 - A `seal` line appearing after the producer — a conforming
   implementation MUST reject with a diagnostic indicating that `seal`
   must precede the producer.
-- A body step that is neither `seal` nor a producer (e.g. a `cook`,
+- Two or more `covers` lines, or a `covers` line after the producer — a
+  conforming implementation MUST reject with a diagnostic indicating that at
+  most one `covers` is permitted per probe and that it must precede the
+  producer. A `covers` operand that is not a double-quoted string (a bare
+  operand or a `!` exclude) MUST likewise be rejected, as MUST a breadth
+  violation (§{cat.probes.covers}).
+- A body step that is none of `seal`, `covers` and a producer (e.g. a `cook`,
   `test`, or other non-producer step) — a conforming implementation MUST
-  reject with a diagnostic indicating that only `seal` and a producer are
-  permitted in a probe body.
+  reject with a diagnostic indicating that only `seal`, `covers` and a
+  producer are permitted in a probe body.
 - A probe name with an EMPTY segment (`probe :a`, `probe a:`, `probe a::b`) —
   a conforming implementation MUST reject it. CS-0201 removed the former
   three-or-more-segment rejection: the cap was enforced here and ignored by
@@ -250,7 +264,7 @@ declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
-the header dependency list becomes `inputs.requires`; and the declaration becomes the
+the header dependency list becomes `inputs.requires`; a `covers` line becomes `opts.covers`; and the declaration becomes the
 `opts.produce` Lua source string — a `>{ … }` block verbatim, a shell block
 wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
 one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
@@ -266,6 +280,55 @@ its own `inputs.files` to obtain the same synthesised manifest. Editing a shell
 command or changing the producer kind changes the lowered `opts.produce` source
 string, which is what the probe re-executes on the next invocation it is
 reached; the declaration lowering itself is otherwise unchanged.
+
+## 22.5.2.2. The `covers` clause [#cat.probes.covers]
+
+A probe or `files` declaration MAY carry a **`covers` clause** (CS-0264): the
+line `covers "root" "root" ...`, one or more double-quoted operands, at most
+one per declaration. In a `probe` body it precedes the producer, on either side
+of the optional `seal`; in a `files` body it is an indented line led by
+`covers`. Inline quoted `seal` file determinants carry none. Each entry is a
+path or glob naming a root the declaration stands for. A relative entry
+resolves against the declaring Cookfile's directory; `~/` is the user's home
+directory at audit time; an absolute entry is taken as written. The glob
+dialect is the one of `consumes`: `*` and `?` match within one path
+component, `**` across components, `[...]` is a character class, and `{a,b}`
+is alternation; there are no `!` excludes and no workspace-anchored `//` form.
+
+A conforming implementation MUST reject, with a diagnostic naming the entry,
+an entry whose root is too broad. The root is the entry after stripping
+trailing `/`, `*` and `**` components and then every component from the first
+one holding a glob character on, since a glob there can match anything under
+what precedes it: `/h*` and `/*/lib` stand for `/`, `~/[.a-z]*` for `~`,
+`~/.nvm/*/bin` for `~/.nvm`. The root is resolved with its `.` and `..`
+segments, and it is too broad when it is `/`, a single top-level absolute
+directory (`/usr`), `~`, the home directory or one of its ancestors, or empty
+or `.` (the whole declaring directory) unless a component after the first
+glob is literal (not `.`, `..` or empty) and the entry uses no `{...}`, `[...]` or `\` escape, whose
+`/` need not separate components: `**/node_modules` is allowed; `**`, `?*`,
+`**/*.ts`, `{*,x/y}` and `{a,b}/node_modules` are not (write one entry per
+directory instead). `/usr/.` and `~/..` are refused as
+`/usr` and the home directory's parent are; `/**/node_modules` is refused as
+`/`. An implementation MUST refuse at registration an entry too broad on every
+host — a root of `/`, a top-level directory or `~`, or the whole declaring
+directory — and MUST judge at audit time, where the unit's status is an error,
+an entry whose breadth depends on the host: one whose root is the home
+directory or its ancestor as an absolute path, or a relative one climbing out of the
+Cookfile's directory with `..`, which is also too broad when its root
+resolves back to that directory or an ancestor of it, since a glob below such
+a root can name the project itself (`../**/proj` from `proj`; write
+`**/node_modules`, not `../proj/**/node_modules`).
+A relative root that stays inside the
+Cookfile's directory is never too broad. A glob that does not parse MUST also
+be rejected at registration, naming the entry.
+
+`covers` is **audit-only**. It MUST NOT contribute to any probe value, input
+digest or cache key, and adding or removing it MUST NOT re-key any unit. Its
+one effect is on `cook audit` (§{exec.cache.audit}), where it lets a module
+own the roots of its ecosystem: a package-manager module's install probe
+covers `**/node_modules`; a toolchain module's version probe covers the
+toolchain's install directory. A `tools` hash never covers an install root; only
+the probe that keys a program's version may, and only by declaring it.
 
 ## 22.5.3. The `cook.probe` API [#cat.probes.api]
 
@@ -288,9 +351,10 @@ probe key 'cc:zlib' declared at <file>:<line>; previously declared at <file>:<li
 | Key | Type | Required | Semantics |
 |---|---|---|---|
 | `inputs` | table | yes | Declared inputs (§{cat.probes.inputs}). MAY be an empty table. |
+| `covers` | list of non-empty strings | no | Audit-only roots the probe stands for (§{cat.probes.covers}); never part of the probe's value or any key. The native `covers` line lowers to it. |
 | `produce` | string | yes | Lua source code (the body of a producing function); the implementation wraps it in `function() ... end` and invokes it on a worker VM during the execute phase each time the probe is reached (§{cat.probes.exec}). MUST return a serialisable value (§{cat.probes.values}). |
 
-A conforming implementation MUST raise a register-phase error if `opts.inputs` is absent or not a table, or if `opts.produce` is absent or not a string.
+A conforming implementation MUST raise a register-phase error if `opts.inputs` is absent or not a table, if `opts.produce` is absent or not a string, or if `opts.covers` is present and is not a list of non-empty strings or has an entry rejected by the breadth rule (§{cat.probes.covers}).
 
 ### Example 22.5.3.1
 

@@ -67,6 +67,7 @@ fn present_unreadable_member_falls_back_instead_of_becoming_missing() {
         &cook_contracts::probe_key::LocalProbeKey::new("files"),
     );
     let probe = cook_contracts::ProbeUnit {
+        covers: Vec::new(),
         key: cook_contracts::probe_key::LocalProbeKey::new("files"),
         produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.into(),
         produce_line: 0,

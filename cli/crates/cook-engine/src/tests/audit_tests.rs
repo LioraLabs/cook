@@ -1,4 +1,5 @@
 use super::*;
+use super::covers::{anchor_pattern, escape_glob};
 
 fn acc(t: &str) -> Vec<(String, bool, bool)> {
     parse_trace(t, Path::new("/start"))
@@ -178,7 +179,7 @@ fn execve_reads_only_the_program() {
 }
 
 fn uncovered_in(t: &str, declared: &[&str]) -> Vec<PathBuf> {
-    let coverage = Coverage { exact: declared.iter().map(PathBuf::from).collect(), subtrees: BTreeSet::new() };
+    let coverage = Coverage { exact: declared.iter().map(PathBuf::from).collect(), ..Coverage::default() };
     uncovered_reads(&parse_trace(t, Path::new("/wd")), &coverage, Path::new("/wd"), Path::new("/wd"), &[])
         .into_iter()
         .map(|(p, _)| p)
@@ -302,6 +303,7 @@ mod e2e {
         let mut units_probes = Vec::new();
         for (key, file) in seals {
             let p = ProbeUnit {
+                covers: Vec::new(),
                 key: LocalProbeKey::new(*key),
                 produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string(),
                 produce_line: 1,
@@ -448,13 +450,100 @@ fn a_covered_subtree_covers_everything_under_it_and_its_ancestors() {
     let t = "1 openat(AT_FDCWD</wd>, \"/opt/tc/lib/x.so\", O_RDONLY) = 3</opt/tc/lib/x.so>\n\
              1 newfstatat(AT_FDCWD</wd>, \"/opt\", {st_mode=S_IFDIR|0755, ...}, 0) = 0\n\
              1 openat(AT_FDCWD</wd>, \"/opt/other\", O_RDONLY) = 3</opt/other>\n";
-    let coverage = Coverage { exact: BTreeSet::new(), subtrees: BTreeSet::from([PathBuf::from("/opt/tc")]) };
+    let coverage = Coverage { subtrees: BTreeSet::from([PathBuf::from("/opt/tc")]), ..Coverage::default() };
     let hits: Vec<PathBuf> =
         uncovered_reads(&parse_trace(t, Path::new("/wd")), &coverage, Path::new("/wd"), Path::new("/wd"), &[])
             .into_iter()
             .map(|(p, _)| p)
             .collect();
     assert_eq!(hits, vec![PathBuf::from("/opt/other")]);
+}
+
+fn uncovered_with(paths: &[(&str, bool)], coverage: &Coverage) -> Vec<String> {
+    let t: String = paths
+        .iter()
+        .map(|(p, absent)| {
+            if *absent {
+                format!("1 newfstatat(AT_FDCWD</wd>, \"{p}\", {{st_mode=S_IFREG}}, 0) = -1 ENOENT (No such file or directory)\n")
+            } else {
+                format!("1 openat(AT_FDCWD</wd>, \"{p}\", O_RDONLY) = 3<{p}>\n")
+            }
+        })
+        .collect();
+    uncovered_reads(&parse_trace(&t, Path::new("/wd")), coverage, Path::new("/wd"), Path::new("/wd"), &[])
+        .into_iter()
+        .map(|(p, _)| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn a_literal_root_covers_reads_and_absent_lookups_below_it() {
+    let c = Coverage { subtrees: BTreeSet::from([PathBuf::from("/wd/vendor")]), ..Coverage::default() };
+    let hits = uncovered_with(&[("/wd/vendor/a/b", false), ("/wd/vendor/x/y", true), ("/wd/src/a", false)], &c);
+    assert_eq!(hits, vec!["/wd/src/a"]);
+}
+
+#[test]
+fn a_glob_root_covers_any_depth_and_only_the_named_directories() {
+    let c = Coverage { patterns: vec!["/wd/**/node_modules".into()], ..Coverage::default() };
+    let hits = uncovered_with(
+        &[
+            ("/wd/node_modules/a/b", false),
+            ("/wd/pkg/node_modules/x", false),
+            ("/wd/src/deep/node_modules", true),
+            ("/wd/src/a.ts", false),
+            ("/wd/node_modules_not/a", false),
+        ],
+        &c,
+    );
+    assert_eq!(hits, vec!["/wd/src/a.ts", "/wd/node_modules_not/a"]);
+}
+
+#[test]
+fn a_single_star_does_not_cross_a_separator() {
+    let c = Coverage { patterns: vec!["/wd/*/lib".into()], ..Coverage::default() };
+    let hits = uncovered_with(&[("/wd/a/lib/x", false), ("/wd/a/b/lib/x", false)], &c);
+    assert_eq!(hits, vec!["/wd/a/b/lib/x"]);
+}
+
+#[test]
+fn a_pattern_anchor_with_metacharacters_matches_literally() {
+    let anchor = escape_glob(Path::new("/wd/we[ir]d{a}*?/x"));
+    let c = Coverage { patterns: vec![format!("{anchor}/**/nm")], ..Coverage::default() };
+    let hits = uncovered_with(
+        &[("/wd/we[ir]d{a}*?/x/p/nm/f", false), ("/wd/weid{a}*?/x/p/nm/f", false), ("/wd/we[ir]d{a}*?/x/p/q", false)],
+        &c,
+    );
+    assert_eq!(hits, vec!["/wd/weid{a}*?/x/p/nm/f", "/wd/we[ir]d{a}*?/x/p/q"]);
+}
+
+#[test]
+fn an_invalid_pattern_is_an_error_not_dropped() {
+    assert!(ConsumesFilter::compile(&["/wd/[".to_string()]).is_err());
+}
+
+#[test]
+fn covers_glob_literal_prefix_resolves_like_a_path() {
+    assert_eq!(anchor_pattern(Path::new("/wd"), "./**/node_modules"), "/wd/**/node_modules");
+    assert_eq!(anchor_pattern(Path::new("/wd"), "**/node_modules"), "/wd/**/node_modules");
+    assert_eq!(anchor_pattern(Path::new("/wd/sub"), "../a/**"), "/wd/a/**");
+    assert_eq!(anchor_pattern(Path::new("/wd"), "/opt/x/**"), "/opt/x/**");
+    assert_eq!(anchor_pattern(Path::new("/w[d]"), "**/n"), "/w[[]d[]]/**/n");
+}
+
+#[test]
+fn covers_entry_resolving_to_a_too_broad_root_is_refused() {
+    let deep = Path::new("/a/b/c/d/e/f/g");
+    let home = Path::new("/home/me");
+    for e in ["../../../../../../..", "../../../../../../../**", "../../../../../../../**/x", "~/..", "~/../**", "~/../me", "~/[.a-z]*", "/usr/.", "/usr/../usr", "/", "/h*", "/home/me", "/home/me/**"] {
+        let r = covers::resolve(e, deep, Some(home));
+        assert!(r.as_ref().is_err_and(|m| m.contains(e) && m.contains("too broad")), "{e}: {:?}", r.map(|c| c.is_some()));
+    }
+    for e in ["../../x", "**/node_modules", "/opt/x/**", "~/.nvm/*/bin", "~/.rustup/toolchains"] {
+        assert!(matches!(covers::resolve(e, deep, Some(home)), Ok(Some(_))), "{e}");
+    }
+    // A project at a top-level directory still covers its own node_modules.
+    assert!(matches!(covers::resolve("**/node_modules", Path::new("/app"), Some(home)), Ok(Some(_))));
 }
 
 #[test]

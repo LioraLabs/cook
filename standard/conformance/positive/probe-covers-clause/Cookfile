@@ -1,0 +1,12 @@
+files src
+    "src/**/*.rs"
+    covers "node_modules" "**/node_modules"
+
+probe toolchain
+    covers "~/.rustup/toolchains"
+    seal src
+    { rustc --version }
+
+recipe build
+    seal src toolchain
+    cook "out.txt" { echo hi > $<out> }

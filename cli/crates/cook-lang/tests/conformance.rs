@@ -319,13 +319,19 @@ fn format_probe(p: &Probe) -> String {
             repr_list(excludes)
         ),
     };
+    let covers = if p.covers.is_empty() {
+        String::new()
+    } else {
+        format!("\n      covers: {}", repr_list(&p.covers))
+    };
     format!(
-        "    Probe name={} line={}\n      deps: {}\n      inputs: {}\n      excludes: {}\n      produce: {}",
+        "    Probe name={} line={}\n      deps: {}\n      inputs: {}\n      excludes: {}{}\n      produce: {}",
         repr(&p.name),
         p.line,
         repr_list(&p.deps),
         repr_list(&p.inputs),
         repr_list(&p.excludes),
+        covers,
         produce,
     )
 }

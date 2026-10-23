@@ -26,7 +26,7 @@ toplevel_item         ::= recipe
 register_block         ::= "register" NEWLINE register_body
 register_body          ::= LUA_SOURCE       (* see §{lexical.source-representation}, §{decl.register} *)
 top_level_module_call  ::= module_call  (* column-0; multi-line via brace-balance per §{lexical.brace-blocks.lua-spans} *)
-files_decl             ::= "files" probe_name NEWLINE INDENT file_set_line+ DEDENT
+files_decl             ::= "files" probe_name NEWLINE INDENT (covers_step | file_set_line)+ DEDENT
 file_set_line          ::= glob_pattern+ NEWLINE
 tools_decl             ::= "tools" probe_name NEWLINE INDENT tool_set_line+ DEDENT
 tool_set_line          ::= TOOL_NAME+ NEWLINE
@@ -145,7 +145,8 @@ probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
 PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_\-]*/    /* CS-0201: no `.` — see below */
-probe_body       ::= seal_step? producer NEWLINE
+probe_body       ::= (seal_step covers_step? | covers_step seal_step?)? producer NEWLINE
+covers_step      ::= "covers" STRING+ NEWLINE      /* CS-0264: quoted only; no bare operand, no `!` */
 producer         ::= ("json" | "lines")? shell_block
                    | exec_lua_block
 TOOL_NAME        ::= /[A-Za-z_][A-Za-z0-9_.\-]*/ /* CS-0201: its own production; keeps `.` */
@@ -154,9 +155,9 @@ glob_pattern     ::= "!"? STRING
 
 `seal_step` is defined in §{grammar-appendix.steps}; `shell_block` and `exec_lua_block` are also defined there (the body-dispatch tests `>{` before `{`).
 
-**Probe body (normative).** A `probe_body` is an optional `seal_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected. The former `files { … }` and `tools { … }` producers are removed by CS-0222; `envs { … }` is removed by CS-0226. Each retired spelling MUST receive a diagnostic naming its replacement.
+**Probe body (normative).** A `probe_body` is an optional `seal_step` and an optional `covers_step` (CS-0264; either order, at most one of each) followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected. The former `files { … }` and `tools { … }` producers are removed by CS-0222; `envs { … }` is removed by CS-0226. Each retired spelling MUST receive a diagnostic naming its replacement.
 
-**Named determinant sets (normative; CS-0222).** `files_decl` and `tools_decl` are keyword-led, column-0 top-level declarations. Their indented bodies admit one or more physical lines and one or more entries per line; `files_decl` also admits the no-whitespace `!"glob"` exclusion marker. Each declaration desugars to a probe of the same name with, respectively, `files`-manifest or tool-identity semantics, so its name is admitted anywhere a `probe_ref` is admitted, including `seal`. A column-0 module call whose module segment is `files` or `tools` is shadowed by the declaration keyword and MUST NOT be recovered through backtracking.
+**Named determinant sets (normative; CS-0222).** `files_decl` and `tools_decl` are keyword-led, column-0 top-level declarations. Their indented bodies admit one or more physical lines and one or more entries per line; `files_decl` also admits the no-whitespace `!"glob"` exclusion marker. Each declaration desugars to a probe of the same name with, respectively, `files`-manifest or tool-identity semantics, so its name is admitted anywhere a `probe_ref` is admitted, including `seal`. A `files_decl` body admits at most one `covers_step`, on any line of the body, and still at least one `file_set_line`; a `tools_decl` MUST reject one. The `covers_step` semantics and breadth rule are specified in §{cat.probes.covers}. A column-0 module call whose module segment is `files` or `tools` is shadowed by the declaration keyword and MUST NOT be recovered through backtracking.
 
 **Source-list kinds (normative).** The `tools` declaration takes bare tool names
 and the `files` declaration takes quoted glob patterns with optional `!` exclude

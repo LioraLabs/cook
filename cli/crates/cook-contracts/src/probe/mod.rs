@@ -22,6 +22,10 @@ pub struct ProbeUnit {
     pub produce_source: String,
     pub produce_line: usize,
     pub inputs: ProbeInputs,
+    /// Roots (paths or globs) the probe stands for, read only by the audit;
+    /// never part of any value, digest or key. Raw entries as written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

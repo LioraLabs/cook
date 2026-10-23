@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn probe(inputs: cook_contracts::ProbeInputs) -> ProbeUnit {
     ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:x"),
         produce_source: "return 1".into(),
         produce_line: 1,

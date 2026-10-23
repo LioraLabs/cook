@@ -414,3 +414,53 @@ probe srcs
       name: (identifier))
     (import_name)
     (lua_code)))
+
+================
+Covers clause on a probe and a files declaration
+================
+
+files src
+    "src/**/*.rs"
+    covers "node_modules" "**/node_modules"
+
+probe ver
+    covers "~/.rustup/toolchains"
+    seal src
+    { rustc --version }
+
+probe ver2
+    seal src
+    covers "vendor"
+    { rustc --version }
+
+---
+
+(source_file
+  (files_declaration
+    name: (identifier)
+    (file_set_line
+      (glob_pattern
+        (string)))
+    (covers_step
+      (string)
+      (string)))
+  (probe
+    (probe_header
+      name: (identifier))
+    (covers_step
+      (string))
+    (seal_step
+      (identifier))
+    (producer
+      body: (shell_block
+        (shell_content))))
+  (probe
+    (probe_header
+      name: (identifier))
+    (seal_step
+      (identifier))
+    (covers_step
+      (string))
+    (producer
+      body: (shell_block
+        (shell_content)))))

@@ -3206,3 +3206,55 @@ fn cs0238_crlf_leaves_no_carriage_return_in_an_operand() {
         other => panic!("expected a Files producer, got {other:?}"),
     }
 }
+
+// ── `covers` clause ─────────────────────────────────────────────────
+
+fn last_probe_of(src: &str) -> crate::ast::Probe {
+    crate::parse(src).unwrap().probes.pop().unwrap()
+}
+
+#[test]
+fn covers_on_probe_before_producer_either_side_of_seal() {
+    let p = last_probe_of("files s\n    \"a\"\nprobe x\n    covers \"node_modules\" \"**/node_modules\"\n    seal s\n    { echo 1 }\n");
+    assert_eq!(p.covers, vec!["node_modules", "**/node_modules"]);
+    let p = last_probe_of("files s\n    \"a\"\nprobe x\n    seal s\n    covers \"~/.rustup\"\n    { echo 1 }\n");
+    assert_eq!(p.covers, vec!["~/.rustup"]);
+    assert!(last_probe_of("probe x\n    { echo 1 }\n").covers.is_empty());
+}
+
+#[test]
+fn covers_on_probe_refusals() {
+    let after = parse_err("probe x\n    { echo 1 }\n    covers \"a\"\n");
+    assert!(after.contains("`covers` must appear before the producer"), "{after}");
+    let two = parse_err("probe x\n    covers \"a\"\n    covers \"b\"\n    { echo 1 }\n");
+    assert!(two.contains("at most one `covers`"), "{two}");
+    let bare = parse_err("probe x\n    covers node_modules\n    { echo 1 }\n");
+    assert!(bare.contains("quoted roots") && bare.contains("node_modules"), "{bare}");
+    let exc = parse_err("probe x\n    covers \"a\" !\"b\"\n    { echo 1 }\n");
+    assert!(exc.contains("excludes"), "{exc}");
+    let none = parse_err("probe x\n    covers\n    { echo 1 }\n");
+    assert!(none.contains("covers"), "{none}");
+}
+
+#[test]
+fn covers_on_files_declaration_is_not_a_glob() {
+    let p = probe_of("files src\n    \"src/**/*.rs\" !\"src/gen/*\"\n    covers \"node_modules\"\n    \"Cargo.toml\"\n");
+    assert_eq!(p.covers, vec!["node_modules"]);
+    match p.produce {
+        crate::ast::ProbeProduce::Files { globs, excludes } => {
+            assert_eq!(globs, vec!["src/**/*.rs", "Cargo.toml"]);
+            assert_eq!(excludes, vec!["src/gen/*"]);
+        }
+        other => panic!("{other:?}"),
+    }
+    let only = parse_err("files src\n    covers \"node_modules\"\n");
+    assert!(only.contains("at least one quoted glob"), "{only}");
+    let two = parse_err("files src\n    \"a\"\n    covers \"x\"\n    covers \"y\"\n");
+    assert!(two.contains("at most one `covers`"), "{two}");
+}
+
+#[test]
+fn covers_on_tools_declaration_is_refused() {
+    let e = parse_err("tools t\n    cc\n    covers \"~/.rustup\"\n");
+    assert!(e.contains("tools t") && e.contains("not admitted on a tools declaration"), "{e}");
+}

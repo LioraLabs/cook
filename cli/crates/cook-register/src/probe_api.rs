@@ -80,9 +80,9 @@ pub fn install_cook_probe(
             Ok(LuaValue::Table(inp)) => {
                 reject_removed_env(&key, &inp)?;
                 ProbeInputs {
-                    tools: read_string_list(&inp, "tools")?,
-                    files: read_string_list(&inp, "files")?,
-                    requires: read_string_list(&inp, "requires")?,
+                    tools: read_string_list(&inp, "tools", "opts.inputs.tools")?,
+                    files: read_string_list(&inp, "files", "opts.inputs.files")?,
+                    requires: read_string_list(&inp, "requires", "opts.inputs.requires")?,
                 }
             }
             Ok(LuaValue::Nil) | Err(_) => ProbeInputs::default(),
@@ -93,6 +93,8 @@ pub fn install_cook_probe(
                 )));
             }
         };
+
+        let covers = read_covers(&opts)?;
 
         // 3. Read opts.produce — MUST be a string.
         let produce_source: String = match opts.get::<LuaValue>("produce") {
@@ -137,6 +139,7 @@ pub fn install_cook_probe(
                     produce_source: produce_source.clone(),
                     produce_line: call_line,
                     inputs: inputs.clone(),
+                    covers,
                 },
                 source_file: source_file.clone(),
                 source_line: call_line,
@@ -274,9 +277,32 @@ fn reject_removed_env(key: &str, inputs: &LuaTable) -> LuaResult<()> {
     }
 }
 
+/// `opts.covers`: absent/nil is empty; otherwise a list of non-empty strings,
+/// none a root too broad on every host (the home directory is judged at audit).
+fn read_covers(opts: &LuaTable) -> LuaResult<Vec<String>> {
+    let mut out = Vec::new();
+    for c in read_string_list(opts, "covers", "opts.covers")? {
+        if c.is_empty() {
+            return Err(LuaError::runtime("cook.probe: opts.covers entries must be non-empty strings"));
+        }
+        if c.contains(['*', '?', '[', '{']) {
+            cook_contracts::consumes::validate_pattern(&c).map_err(|e| {
+                LuaError::runtime(format!("cook.probe: opts.covers entry '{c}' is not a valid glob: {e}"))
+            })?;
+        }
+        if cook_contracts::pathlaw::covers_too_broad(&c, None) {
+            return Err(LuaError::runtime(format!(
+                "cook.probe: opts.covers entry '{c}' is too broad; name the install root, not the filesystem or home"
+            )));
+        }
+        out.push(c);
+    }
+    Ok(out)
+}
+
 /// Read a named key from a Lua table as a `Vec<String>`.  Returns an empty
 /// `Vec` when the key is absent or `nil`.
-fn read_string_list(tbl: &LuaTable, key: &str) -> LuaResult<Vec<String>> {
+fn read_string_list(tbl: &LuaTable, key: &str, label: &str) -> LuaResult<Vec<String>> {
     match tbl.get::<LuaValue>(key) {
         Ok(LuaValue::Nil) | Err(_) => Ok(vec![]),
         Ok(LuaValue::Table(t)) => {
@@ -284,14 +310,14 @@ fn read_string_list(tbl: &LuaTable, key: &str) -> LuaResult<Vec<String>> {
             for v in t.sequence_values::<String>() {
                 out.push(v.map_err(|e| {
                     LuaError::runtime(format!(
-                        "cook.probe: opts.inputs.{key} must be a list of strings: {e}"
+                        "cook.probe: {label} must be a list of strings: {e}"
                     ))
                 })?);
             }
             Ok(out)
         }
         Ok(other) => Err(LuaError::runtime(format!(
-            "cook.probe: opts.inputs.{key} must be a list of strings, got {}",
+            "cook.probe: {label} must be a list of strings, got {}",
             lua_type_name(&other)
         ))),
     }

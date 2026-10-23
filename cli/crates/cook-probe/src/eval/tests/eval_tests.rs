@@ -53,6 +53,7 @@ impl ProduceRunner for PoisonRunner {
 
 fn probe(key: &str, inputs: ProbeInputs) -> ProbeUnit {
     ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new(key),
         produce_source: "return { 1 }".to_string(),
         produce_line: 1,

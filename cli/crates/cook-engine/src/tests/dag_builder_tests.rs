@@ -1074,6 +1074,7 @@ fn unreached_probe_is_pruned_from_dag() {
         line: 1,
     };
     let probe_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("k:unused"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
@@ -1142,12 +1143,14 @@ fn probe_chain_keeps_upstream_when_downstream_consumed() {
         line: 2,
     };
     let probe_a_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("k:a"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
     };
     let probe_b_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("k:b"),
         produce_source: "return 2".to_string(),
         produce_line: 2,
@@ -1230,6 +1233,7 @@ fn top_level_probe_materialises_when_consumer_references_it() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:has_stdint_h"),
         produce_source: "return { ok = true }".to_string(),
         produce_line: 7,
@@ -1285,6 +1289,7 @@ fn top_level_probe_not_synthesised_when_no_consumer() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:unused"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
@@ -1326,12 +1331,14 @@ fn top_level_probe_chain_synthesised_transitively() {
     use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
     let probe_a = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:a"),
         produce_source: "return 1".into(),
         produce_line: 1,
         inputs: ProbeInputs::default(),
     };
     let probe_b = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("cc:b"),
         produce_source: "return 2".into(),
         produce_line: 2,
@@ -1717,6 +1724,7 @@ fn multi_recipe_wave_prunes_independently() {
 
     fn make_recipe(name: &str, has_consumer: bool) -> RecipeUnits {
         let probe_meta = ProbeUnit {
+            covers: Vec::new(),
             key: LocalProbeKey::new("k:p"),
             produce_source: "return 1".to_string(),
             produce_line: 1,

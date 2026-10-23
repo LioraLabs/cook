@@ -426,6 +426,7 @@ fn a_unit_declaring_no_output_cannot_be_named_by_after() {
 #[test]
 fn plan_collapses_synth_probe_nodes_shared_across_recipes() {
     let shared_probe = crate::ProbeUnit {
+        covers: Vec::new(),
         key: crate::probe_key::LocalProbeKey::new("shared"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
@@ -482,12 +483,14 @@ fn plan_collapses_synth_probe_nodes_shared_across_recipes() {
 #[test]
 fn plan_does_not_collapse_same_named_probes_from_different_members() {
     let probe_a = crate::ProbeUnit {
+        covers: Vec::new(),
         key: crate::probe_key::LocalProbeKey::new("foo"),
         produce_source: "return 1".to_string(),
         produce_line: 1,
         inputs: crate::ProbeInputs::default(),
     };
     let probe_b = crate::ProbeUnit {
+        covers: Vec::new(),
         key: crate::probe_key::LocalProbeKey::new("foo"),
         produce_source: "return 2".to_string(),
         produce_line: 1,
@@ -528,6 +531,7 @@ fn plan_does_not_collapse_same_named_probes_from_different_members() {
 #[test]
 fn plan_shares_a_body_probe_with_a_consumer_in_another_recipe() {
     let pu = crate::ProbeUnit {
+        covers: Vec::new(),
         key: crate::probe_key::LocalProbeKey::new("x:ver"),
         produce_source: "return 1".to_string(),
         produce_line: 1,

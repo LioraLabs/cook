@@ -1,0 +1,27 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=10
+      deps: []
+      inputs: []
+      excludes: []
+      steps:
+        Cook outputs=["out.txt"] body=ShellBlock(["echo hi > $<out>"]) disposition=[local=false pinned=false record=false seal=["src", "toolchain"]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="src" line=1
+      deps: []
+      inputs: []
+      excludes: []
+      covers: ["node_modules", "**/node_modules"]
+      produce: Files globs=["src/**/*.rs"] excludes=[]
+    Probe name="toolchain" line=5
+      deps: ["src"]
+      inputs: []
+      excludes: []
+      covers: ["~/.rustup/toolchains"]
+      produce: Shell typing=String commands=["rustc --version"]

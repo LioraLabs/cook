@@ -247,8 +247,11 @@ module.exports = grammar({
         field("name", $._probe_name),
         $._newline,
         repeat(choice($._newline, $.comment)),
-        repeat1($.file_set_line),
+        repeat1(choice($.file_set_line, $.covers_step)),
       ),
+
+    // Audit-only roots a probe or `files` declaration stands for (never keyed).
+    covers_step: ($) => seq("covers", repeat1($.string), $._newline),
 
     file_set_line: ($) => seq(repeat1($.glob_pattern), $._newline),
 
@@ -268,7 +271,7 @@ module.exports = grammar({
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body ::= seal_step? producer NEWLINE
+    //   probe_body ::= (seal_step covers_step? | covers_step seal_step?)? producer NEWLINE
     //   producer   ::= ("json" | "lines")? shell_block
     //                | exec_lua_block
     //
@@ -286,9 +289,11 @@ module.exports = grammar({
         $._newline,
         repeat(choice($._newline, $.comment)),
         seq(
-          optional(seq(
-            $.seal_step,
-            repeat(choice($._newline, $.comment)),
+          optional(choice(
+            seq($.covers_step, repeat(choice($._newline, $.comment)),
+              optional(seq($.seal_step, repeat(choice($._newline, $.comment))))),
+            seq($.seal_step, repeat(choice($._newline, $.comment)),
+              optional(seq($.covers_step, repeat(choice($._newline, $.comment))))),
           )),
           $.producer,
         ),

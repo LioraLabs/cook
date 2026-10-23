@@ -989,3 +989,26 @@ register
     let m = fs::read_to_string(tmp.path().join("t-marker.log")).unwrap_or_default();
     assert_eq!(m, "run\nrun\n");
 }
+
+/// A `covers` clause is audit-only: adding or removing it must not move the
+/// sealing unit's key, so the second build (covers line swapped for a comment,
+/// same line numbers) is a cache hit on the unit the first build ran.
+#[test]
+fn covers_clause_never_moves_a_sealing_unit_key() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("input.txt"), "A").unwrap();
+    let cookfile = |covers: &str| {
+        format!(
+            "files src\n    \"input.txt\"\n    {covers}\n\nprobe ver\n    {covers}\n    >{{ return 1 }}\n\nrecipe build\n    seal src ver\n    cook \"out.txt\" {{\n        echo run >> marker.log\n        echo x > $<out>\n    }}\n"
+        )
+    };
+    fs::write(tmp.path().join("Cookfile"), cookfile("covers \"node_modules\"")).unwrap();
+    run_cook(tmp.path(), &["build"]).expect("build with covers");
+    fs::write(tmp.path().join("Cookfile"), cookfile("# covers")).unwrap();
+    run_cook(tmp.path(), &["build"]).expect("build without covers");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("marker.log")).unwrap(),
+        "run\n",
+        "removing `covers` moved the sealing unit's key"
+    );
+}

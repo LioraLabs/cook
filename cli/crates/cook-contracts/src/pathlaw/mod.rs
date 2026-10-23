@@ -73,6 +73,81 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// A `covers` entry without its trailing `/`, `*` and `**` components, which
+/// add no narrowing: `/usr/**` is `/usr`.
+pub fn strip_wildcard_tail(entry: &str) -> String {
+    let mut parts: Vec<&str> = entry.split('/').collect();
+    while matches!(parts.last(), Some(&("" | "*" | "**"))) {
+        parts.pop();
+    }
+    // an absolute entry never strips to nothing: `/**` is `/`
+    if parts.is_empty() && entry.starts_with('/') { "/".into() } else { parts.join("/") }
+}
+
+/// True when `root` (`..`/`.` resolved lexically) is too broad for a `covers`
+/// root: the filesystem root, a single top-level directory, or `home` or one of
+/// its ancestors (`/var/lib` when home is `/var/lib/jenkins`).
+/// A relative path is never judged here; resolve it first.
+pub fn too_broad_root(root: &Path, home: Option<&Path>) -> bool {
+    let r = normalize(root);
+    r.has_root()
+        && (r.components().filter(|c| matches!(c, Component::Normal(_))).count() <= 1
+            || home.is_some_and(|h| normalize(h).starts_with(&r)))
+}
+
+fn covers_glob(s: &str) -> bool {
+    s.contains(['*', '?', '[', '{'])
+}
+
+/// The literal root a `covers` entry stands for: its wildcard tail stripped,
+/// then every component from the first glob one on, which can match anything
+/// under the root — `/h*` stands for `/`, `~/.nvm/*/bin` for `~/.nvm`.
+pub fn covers_root(entry: &str) -> String {
+    let t = strip_wildcard_tail(entry);
+    let comps: Vec<&str> = t.split('/').collect();
+    let n = comps.iter().position(|c| covers_glob(c)).unwrap_or(comps.len());
+    let root = comps[..n].join("/");
+    if root.is_empty() && t.starts_with('/') { "/".into() } else { root }
+}
+
+/// The one breadth rule for a `covers` entry (§22.5.2.2). `at` is `None` at
+/// registration, where only what is too broad on every host is judged: a root
+/// of `/`, a top-level directory, `~`, or the whole declaring directory unless
+/// a literal component below a glob narrows it (`**/node_modules`, not `?*` or
+/// `**/*.ts`). At audit, `Some((cookfile_dir, home))` adds what needs the
+/// host: a root that is the home directory or its ancestor, and a relative root climbing
+/// out of the Cookfile's directory, judged as resolved.
+pub fn covers_too_broad(entry: &str, at: Option<(&Path, Option<&Path>)>) -> bool {
+    let root = covers_root(entry);
+    let home_rest = root.strip_prefix('~').filter(|r| r.is_empty() || r.starts_with('/')).map(|r| r.trim_start_matches('/'));
+    let absolute = Path::new(&root).has_root();
+    // Only `*`, `?` and `**` may precede the narrowing literal: a `/` inside
+    // `{...}` or `[...]` is not a component separator, and `[}]`/`\}` hide
+    // where one ends.
+    let t = strip_wildcard_tail(entry);
+    let narrowed = !t.contains(['{', '[', '\\'])
+        && t.split('/').skip_while(|c| !covers_glob(c)).any(|c| !matches!(c, "" | "." | "..") && !covers_glob(c));
+    let lexical = match home_rest {
+        Some(r) => normalize(Path::new(r)).as_os_str().is_empty(),
+        None if absolute => too_broad_root(Path::new(&root), None),
+        None => normalize(Path::new(&root)).as_os_str().is_empty() && !narrowed,
+    };
+    let Some((dir, home)) = at else { return lexical };
+    lexical
+        || match home_rest {
+            Some(r) => home.is_some_and(|h| too_broad_root(&h.join(r), Some(h))),
+            None if absolute => too_broad_root(Path::new(&root), home),
+            // one that stays inside the Cookfile's directory is never broader than the project
+            // one climbing out is judged as resolved, and may not come back to the
+            // Cookfile's directory or an ancestor of it at all: below such a root
+            // a glob can name the project itself (`../**/proj`)
+            None => {
+                let r = normalize(&dir.join(&root));
+                escapes_base(Path::new(&root)) && (too_broad_root(&r, home) || normalize(dir).starts_with(&r))
+            }
+        }
+}
+
 /// True when `path` leaves the tree it is declared relative to.
 ///
 /// Two ways to leave it, and both count: walking above the base with `..`, and

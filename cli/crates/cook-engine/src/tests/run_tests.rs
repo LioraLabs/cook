@@ -269,6 +269,7 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
     std::fs::write(member_dir.join("src/a.txt"), b"declaring-member-content").unwrap();
 
     let probe_meta = ProbeUnit {
+        covers: Vec::new(),
         key: LocalProbeKey::new("srcs"),
         produce_source: cook_contracts::probe_value::FILES_MANIFEST_PRODUCE.to_string(),
         produce_line: 1,
