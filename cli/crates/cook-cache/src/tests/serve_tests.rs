@@ -346,6 +346,31 @@ fn conflicting_put_is_a_client_error() {
 }
 
 #[test]
+fn conflicting_put_answers_409() {
+    let fx = Fixture::start();
+    let k = key(0x12);
+    put_bytes(&fx.client(), &k, b"first bytes", &mut meta()).unwrap();
+    let mut req = raw_put_head(&k, "Content-Length: 11\r\n").into_bytes();
+    req.extend_from_slice(b"other bytes");
+    let response = raw_exchange(&fx, &req);
+    assert!(response.starts_with("HTTP/1.1 409 "), "got {response:?}");
+}
+
+#[test]
+fn a_chunked_body_past_the_cap_answers_413() {
+    let config = BackendConfig { max_artifact_bytes: 16, ..BackendConfig::default() };
+    let fx = Fixture::start_with(config, |s| s);
+    let k = key(0x13);
+    let mut req = raw_put_head(&k, "Transfer-Encoding: chunked\r\n").into_bytes();
+    req.extend_from_slice(b"20\r\n");
+    req.extend_from_slice(&[7u8; 32]);
+    req.extend_from_slice(b"\r\n0\r\n\r\n");
+    let response = raw_exchange(&fx, &req);
+    assert!(response.starts_with("HTTP/1.1 413 "), "got {response:?}");
+    assert!(fx.client().batch_query(&[k]).unwrap().is_empty());
+}
+
+#[test]
 fn idle_server_keeps_accepting() {
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().to_path_buf());

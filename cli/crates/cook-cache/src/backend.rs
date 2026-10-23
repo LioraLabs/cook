@@ -295,8 +295,12 @@ fn touch_on_read(path: &std::path::Path) {
 pub(crate) enum PutError {
     /// Reading the caller's stream failed.
     Source(String),
-    /// Cap overflow, claimed-hash mismatch, or key conflict.
+    /// A claimed-hash mismatch (the caller's bytes disagree with its claim).
     Rejected(String),
+    /// The key holds different bytes already (409 on the wire).
+    Conflict(String),
+    /// The stream outgrew the artifact cap (413 on the wire).
+    TooLarge(String),
     /// A local filesystem failure; `kind` lets a server tell a full disk apart.
     Store { kind: io::ErrorKind, msg: String },
 }
@@ -304,7 +308,11 @@ pub(crate) enum PutError {
 impl From<PutError> for BackendError {
     fn from(e: PutError) -> Self {
         match e {
-            PutError::Source(m) | PutError::Rejected(m) | PutError::Store { msg: m, .. } => {
+            PutError::Source(m)
+            | PutError::Rejected(m)
+            | PutError::Conflict(m)
+            | PutError::TooLarge(m)
+            | PutError::Store { msg: m, .. } => {
                 BackendError::Other(m)
             }
         }
@@ -363,7 +371,7 @@ impl LocalBackend {
             }
             // CS-0057: the cap is enforced as bytes flow (the caller may not
             // know the size up front); nothing is visible before the commit.
-            cap.add(n as u64).map_err(PutError::Rejected)?;
+            cap.add(n as u64).map_err(PutError::TooLarge)?;
             hasher.update(&buf[..n]);
             tmp_file
                 .write_all(&buf[..n])
@@ -438,7 +446,7 @@ impl LocalBackend {
                                 return Ok(());
                             } else {
                                 let key_hex = hex::encode(key);
-                                return Err(PutError::Rejected(format!(
+                                return Err(PutError::Conflict(format!(
                                     "artifact key conflict at {key_hex}: existing content_hash differs from new bytes \
                                      (existing={}, new={})",
                                     hex::encode(existing.content_hash),

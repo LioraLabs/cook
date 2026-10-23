@@ -411,11 +411,13 @@ fn refuse_busy(stream: &TcpStream) {
     }
 }
 
-/// The caller's faults are 400; a store-side failure is 5xx (the client
+/// The caller's faults are 4xx (409 key conflict, 413 over the cap, else 400); a store-side failure is 5xx (the client
 /// retries it) and is logged here, since the client only sees the status.
 fn put_failure(key: &CloudKey, e: PutError) -> Reply {
     match e {
         PutError::Source(msg) | PutError::Rejected(msg) => text(400, &msg),
+        PutError::Conflict(msg) => text(409, &msg),
+        PutError::TooLarge(msg) => text(413, &msg),
         PutError::Store { kind, msg } => {
             eprintln!("cook cache serve: PUT {}: store error: {msg}", hex::encode(key));
             text(if kind == io::ErrorKind::StorageFull { 507 } else { 500 }, &msg)
