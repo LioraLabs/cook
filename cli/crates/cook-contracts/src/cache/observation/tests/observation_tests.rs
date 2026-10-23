@@ -81,6 +81,14 @@ fn truncation_is_recorded_and_survives_the_round_trip() {
 }
 
 #[test]
+fn only_a_truncated_log_carries_an_elision_notice() {
+    assert_eq!(OutputLog::new(vec![out("all")], 0).elision_notice(), None);
+    let notice = OutputLog::new(vec![], 9_000).elision_notice().unwrap();
+    assert!(notice.contains("9000 bytes"), "{notice}");
+    assert!(notice.contains("elided"), "{notice}");
+}
+
+#[test]
 fn truncate_keeps_the_head_and_the_tail() {
     // Head and tail are what a reader needs: a compiler's first errors and its
     // summary. The middle of a runaway log is the part nobody scrolls to.

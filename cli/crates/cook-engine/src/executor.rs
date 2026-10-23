@@ -1581,7 +1581,6 @@ pub fn execute_dag(
                                             .entry
                                         })
                                         .and_then(|entry| {
-                                            let observation = entry.observed?;
                                             // §{exec.cache.observation}: replay
                                             // is opt-in and MUST NOT be the
                                             // default for a hit. The duration is
@@ -1593,35 +1592,15 @@ pub fn execute_dag(
                                             // warm build. So the scalar is free
                                             // and the log is asked for.
                                             let log = if cache_ctx.replay_logs {
-                                                let mut hashes: Vec<u64> =
-                                                    entry.inputs.iter().map(|r| r.hash).collect();
-                                                hashes.sort();
-                                                let namespace = recipe_namespace(
-                                                    &meta.project_id,
-                                                    &meta.cookfile_path,
-                                                    &meta.recipe_name,
+                                                let seal = crate::seal::seal_contribution(
+                                                    &meta.seal_keys,
+                                                    &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                                                 );
-                                                let key = cloud_key(&CloudKeyInputs {
-                                                    schema_version: CACHE_VERSION,
-                                                    recipe_namespace: &namespace,
-                                                    command_hash: meta.command_hash,
-                                                    env_contribution: meta.env_contribution,
-                                                    seal_contribution:
-                                                        crate::seal::seal_contribution(
-                                                            &meta.seal_keys,
-                                                            &pool.probe_value_store().for_recipe(&work_node.recipe_name),
-                                                        ),
-                                                    sorted_input_content_hashes: &hashes,
-                                                });
-                                                cook_cache::fetch_observation(
-                                                    cache_ctx.backend.as_ref(),
-                                                    &key,
-                                                )
-                                                .unwrap_or_default()
+                                                replayed_log(meta, &entry, seal, cache_ctx)
                                             } else {
                                                 cook_contracts::cache::observation::OutputLog::default()
                                             };
-                                            Some((observation, log))
+                                            Some((entry.observed?, log))
                                         })
                                 });
                             let duration = restored_observation
@@ -1641,6 +1620,13 @@ pub fn execute_dag(
                                         }
                                         _ => {}
                                     }
+                                }
+                                if let Some(notice) = log.elision_notice() {
+                                    if !stderr.is_empty() && !stderr.ends_with(b"\n") {
+                                        stderr.push(b'\n');
+                                    }
+                                    stderr.extend_from_slice(notice.as_bytes());
+                                    stderr.push(b'\n');
                                 }
                             }
                             let stdout = String::from_utf8_lossy(&stdout).into_owned();
@@ -2052,41 +2038,27 @@ pub fn execute_dag(
                                     )
                                     .entry
                                 {
-                                    let mut hashes: Vec<u64> =
-                                        entry.inputs.iter().map(|r| r.hash).collect();
-                                    hashes.sort();
-                                    let namespace = recipe_namespace(
-                                        &meta.project_id,
-                                        &meta.cookfile_path,
-                                        &meta.recipe_name,
+                                    let seal = crate::seal::seal_contribution(
+                                        &meta.seal_keys,
+                                        &pool.probe_value_store().for_recipe(&work_node.recipe_name),
                                     );
-                                    let key = cloud_key(&CloudKeyInputs {
-                                        schema_version: CACHE_VERSION,
-                                        recipe_namespace: &namespace,
-                                        command_hash: meta.command_hash,
-                                        env_contribution: meta.env_contribution,
-                                        seal_contribution: crate::seal::seal_contribution(
-                                            &meta.seal_keys,
-                                            &pool.probe_value_store().for_recipe(&work_node.recipe_name),
-                                        ),
-                                        sorted_input_content_hashes: &hashes,
-                                    });
-                                    if let Some(log) = cook_cache::fetch_observation(
-                                        cache_ctx.backend.as_ref(),
-                                        &key,
-                                    ) {
-                                        for (stream, line) in output_event_lines(log.chunks()) {
-                                            emit(
-                                                event_tx,
-                                                EngineEvent::OutputLine {
-                                                    recipe: work_node.recipe_name.clone(),
-                                                    unit: id,
-                                                    node_name: work_node.display_name(),
-                                                    line: format!("[replayed] {line}"),
-                                                    stream: stream.into(),
-                                                },
-                                            );
-                                        }
+                                    let log = replayed_log(meta, &entry, seal, cache_ctx);
+                                    let notice = log
+                                        .elision_notice()
+                                        .map(|n| (cook_contracts::OutputStream::Stderr, n));
+                                    for (stream, line) in
+                                        output_event_lines(log.chunks()).chain(notice)
+                                    {
+                                        emit(
+                                            event_tx,
+                                            EngineEvent::OutputLine {
+                                                recipe: work_node.recipe_name.clone(),
+                                                unit: id,
+                                                node_name: work_node.display_name(),
+                                                line: format!("[replayed] {line}"),
+                                                stream: stream.into(),
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -3547,6 +3519,26 @@ fn entry_cloud_key(
         env_contribution: meta.env_contribution,
         seal_contribution,
         sorted_input_content_hashes: &sorted_hashes,
+    })
+}
+
+/// The output log a replay of a hit presents: the one published under the
+/// entry's key, or, when the store holds none (a publish-off or `local`
+/// record, an evicted log), an empty log eliding every byte the observation
+/// recorded. Absence is never replayed as "printed nothing" unless the
+/// observation says nothing was printed (§{exec.cache.observation}).
+fn replayed_log(
+    meta: &cook_contracts::CacheMeta,
+    entry: &cook_cache::StepEntry,
+    seal_contribution: u64,
+    cache_ctx: &CacheContext,
+) -> cook_contracts::cache::observation::OutputLog {
+    let key = entry_cloud_key(meta, entry, seal_contribution);
+    cook_cache::fetch_observation(cache_ctx.backend.as_ref(), &key).unwrap_or_else(|| {
+        cook_contracts::cache::observation::OutputLog::new(
+            vec![],
+            entry.observed.as_ref().map_or(0, |o| o.log_bytes()),
+        )
     })
 }
 

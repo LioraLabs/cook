@@ -226,3 +226,104 @@ fn backfill_refuses_a_file_changed_after_its_hit() {
         .any(|(p, _)| fs::read(&p).is_ok_and(|b| b == b"tampered\n"));
     assert!(!published_changed, "bytes must not go up under a key their file no longer matches");
 }
+
+// ── replaying a truncated observation (§17.1.5 Size, §17.1.3) ──────────────
+
+const ELIDED: &str = "bytes of the recorded output elided";
+
+const PRINTING_TEST: &str = "recipe r\n    gather \"src/in.txt\"\n    test { echo RECORDED-LINE; cat $<in> >/dev/null }\n";
+const PRINTING_COOK: &str = "recipe make\n    gather \"src/in.txt\"\n    cook \"out/art.txt\" {\n        echo RECORDED-LINE\n        cp $<in> out/art.txt\n    }\n";
+
+fn sidecar(wd: &Path) -> String {
+    fs::read_to_string(wd.join(".cook/test-report.json")).unwrap()
+}
+
+fn printed(out: &Output) -> String {
+    format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+}
+
+/// Caps the recorded log of every unit `wd` runs at `cap` bytes.
+fn cap_observations(wd: &Path, cap: u64) {
+    let p = wd.join(".cook/cloud.toml");
+    let body = fs::read_to_string(&p).unwrap();
+    fs::write(&p, body.replace("[cache]\n", &format!("[cache]\nobservation_max_bytes = {cap}\n"))).unwrap();
+}
+
+#[test]
+fn a_backfilled_test_unit_replays_with_the_elision_marker() {
+    let rig = Rig::new();
+    let a = rig.checkout("a", PRINTING_TEST, false);
+    rig.run(&a, &["test"], &[]);
+    assert!(sidecar(&a).contains("RECORDED-LINE"), "the cold run printed");
+
+    // Publish-off: the store holds no log, so a replay has only the scalar.
+    rig.run(&a, &["--replay-logs", "test"], &[]);
+    let local = sidecar(&a);
+    assert!(local.contains("\"from_cache\": true") && local.contains(ELIDED), "{local}");
+
+    rig.set_publish(&a, true);
+    rig.run(&a, &["test"], &[]);
+    assert!(!rig.files().is_empty(), "the local hit must backfill the store");
+
+    rig.run(&a, &["--replay-logs", "test"], &[]);
+    let backfilled = sidecar(&a);
+    assert!(backfilled.contains(ELIDED), "local hit on a backfilled log: {backfilled}");
+    assert!(!backfilled.contains("RECORDED-LINE"), "{backfilled}");
+
+    let b = rig.checkout("b", PRINTING_TEST, true);
+    rig.run(&b, &["--replay-logs", "test"], &[]);
+    let shared = sidecar(&b);
+    assert!(shared.contains("\"from_cache\": true"), "B is a shared hit: {shared}");
+    assert!(shared.contains(ELIDED), "shared hit on a backfilled log: {shared}");
+}
+
+#[test]
+fn a_backfilled_cook_unit_replays_with_the_elision_marker() {
+    let rig = Rig::new();
+    let a = rig.checkout("a", PRINTING_COOK, false);
+    rig.run(&a, &["make"], &[]);
+    rig.set_publish(&a, true);
+    rig.run(&a, &["make"], &[]);
+    assert!(!rig.files().is_empty(), "the local hit must backfill the store");
+
+    let out = printed(&rig.run(&a, &["--replay-logs", "make"], &[]));
+    assert!(out.contains("[replayed] ... (") && out.contains(ELIDED), "{out}");
+    assert!(!out.contains("RECORDED-LINE"), "{out}");
+}
+
+#[test]
+fn a_log_truncated_at_record_time_replays_its_fragment_and_the_marker() {
+    let rig = Rig::new();
+    let long = "x".repeat(200);
+    let test_cf = PRINTING_TEST.replace("RECORDED-LINE", &format!("HEAD{long}TAIL"));
+    let cook_cf = PRINTING_COOK.replace("RECORDED-LINE", &format!("HEAD{long}TAIL"));
+
+    let t = rig.checkout("t", &test_cf, true);
+    cap_observations(&t, 16);
+    rig.run(&t, &["test"], &[]);
+    rig.run(&t, &["--replay-logs", "test"], &[]);
+    let replayed = sidecar(&t);
+    assert!(replayed.contains("HEAD") && replayed.contains(ELIDED), "{replayed}");
+    assert!(!replayed.contains(&long), "{replayed}");
+
+    let c = rig.checkout("c", &cook_cf, true);
+    cap_observations(&c, 16);
+    rig.run(&c, &["make"], &[]);
+    let out = printed(&rig.run(&c, &["--replay-logs", "make"], &[]));
+    assert!(out.contains("[replayed] HEAD") && out.contains(ELIDED), "{out}");
+}
+
+#[test]
+fn a_complete_log_replays_without_the_marker() {
+    let rig = Rig::new();
+    let t = rig.checkout("t", PRINTING_TEST, true);
+    rig.run(&t, &["test"], &[]);
+    rig.run(&t, &["--replay-logs", "test"], &[]);
+    let replayed = sidecar(&t);
+    assert!(replayed.contains("RECORDED-LINE") && !replayed.contains(ELIDED), "{replayed}");
+
+    let c = rig.checkout("c", PRINTING_COOK, true);
+    rig.run(&c, &["make"], &[]);
+    let out = printed(&rig.run(&c, &["--replay-logs", "make"], &[]));
+    assert!(out.contains("[replayed] RECORDED-LINE") && !out.contains(ELIDED), "{out}");
+}

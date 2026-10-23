@@ -125,6 +125,18 @@ impl OutputLog {
         self.truncated_bytes > 0
     }
 
+    /// The line every replay of this log prints beside it when it is a
+    /// fragment, so a truncated observation is never presented as complete
+    /// (§{exec.cache.observation}). `None` when nothing was elided.
+    ///
+    /// It names no position: the log keeps its head and tail but not where the
+    /// gap between them fell, and a promoted observation keeps neither.
+    pub fn elision_notice(&self) -> Option<String> {
+        self.is_truncated().then(|| {
+            format!("... ({} bytes of the recorded output elided) ...", self.truncated_bytes)
+        })
+    }
+
     /// Retain at most `cap` bytes of output, dropping from the MIDDLE.
     ///
     /// Head and tail are what a reader needs: a compiler's first errors and its
