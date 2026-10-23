@@ -276,10 +276,12 @@ cook -j 8 link     # cap at 8
 **Cycles are an error**, caught during graph construction before any work runs.
 
 **The default recipe** is `build`: bare `cook` runs it. If a recipe name
-collides with a subcommand (`init`, `menu`, `list`, `modules`, `test`, `dag`,
-`logs`, `cache`, `serve`, `emit-lua`, `affected`, `why`), the subcommand wins;
-prefix the recipe with `+` to force it: `cook +test` runs the recipe named
-`test`, `cook test` runs the test runner.
+collides with a subcommand (`init`, `menu`, `list`, `modules`, `test`,
+`logs`, `cache`, `serve`, `emit-lua`, `affected`, `why`, `audit`), the
+subcommand wins and cook prints a notice naming the recipe; prefix the recipe
+with `+` to force it: `cook +test` runs the recipe named `test`, `cook test`
+runs the test runner. Scripts and hooks that mean a recipe should use the `+`
+form, which keeps working when a later cook adds a subcommand.
 
 **Namespacing across Cookfiles** is done with `import`, not dotted names. A recipe
 declared in one Cookfile always has a single, undotted name; dots appear only at

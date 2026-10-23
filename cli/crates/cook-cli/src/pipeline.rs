@@ -1726,8 +1726,29 @@ fn warn_if_invoked_builtin_is_registered<'a>(
     if names.into_iter().any(|(candidate, kind)| {
         candidate == name && matches!(kind, cook_contracts::registration::RecipeKind::Recipe)
     }) {
-        eprintln!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
+        print_shadow_notice(name);
     }
+}
+
+fn print_shadow_notice(name: &str) {
+    eprintln!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
+}
+
+/// Names a recipe the entry Cookfile declares under the built-in word `name`,
+/// from the parse alone, before the built-in can refuse — some never register
+/// the workspace, and `cook audit` registers only inside its isolated child, so
+/// no register-phase Lua may run here. That child sees the same parse and stays
+/// quiet. Returns whether one is declared; a recipe only register-phase code
+/// mints is left to [`warn_if_invoked_builtin_is_registered`].
+pub fn builtin_shadows_declared_recipe(globals: &Globals, name: &str) -> bool {
+    let declared = std::fs::read_to_string(&globals.file)
+        .ok()
+        .and_then(|source| cook_lang::parse(&source).ok())
+        .is_some_and(|cookfile| cookfile.recipes.iter().any(|r| r.name == name));
+    if declared && cook_engine::sandbox::isolated_root().is_none() {
+        print_shadow_notice(name);
+    }
+    declared
 }
 
 pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {

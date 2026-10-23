@@ -4640,3 +4640,15 @@ persistent signal dispositions retain their existing behavior.
 **Backward compatibility.** Every cc compile and link unit re-keys once. Artifacts no longer cross hosts whose compilers report different triples — including macOS hosts on different Darwin versions, whose triples carry the version. Hosts reporting the same triple with the same compiler bytes share as before. No Cookfile is newly rejected; a compiler whose `-dumpmachine` output is neither a single word token (a bare-metal `avr`) nor two or more dash-separated fields now fails its compile units loudly instead of building them. The rule depends on CS-0257 (cook v0.18.0): under an older engine a host probe registered inside a recipe body is not scheduled for another recipe's sealing unit, which then keys on nothing.
 
 **Conformance notes.** cook_cc's busted suite pins the host key in every compile and link unit's seal, not in an archive's; two reported triples yield different probe values and one triple the same; an override cross compiler is the driver asked; a single token and a triple are accepted; unrecognised output is refused.
+
+## CS-0268 — a recipe a built-in command shadows is named, and stays reachable [#changes.cs-0268]
+
+**Date:** 2026-10-23
+**Version:** v0.18
+**Sections affected:** §{exec.ws.entry.builtins} (new).
+
+**Summary.** Adds §20.2.5. A built-in command word that a declared recipe also uses runs the built-in, as before; the implementation must now offer a spelling that always runs the recipe (the reference implementation's leading `+`, which predates this entry) and must name the shadowed recipe and that spelling on the error stream, once, before the built-in can refuse. CS-0258 added `cook audit`, which took a word existing projects already used for their own recipes; those recipes became unreachable under their bare name with nothing said whenever the audit refused before registration (no tracer, no namespaces), since the reference implementation registers only inside the audit's isolated view.
+
+**Backward compatibility.** No Cookfile, cache key or record changes. The bare word's meaning is unchanged; the only new output is the notice. Scripts that call a shadowed recipe by its bare word keep running the built-in and should switch to the `+` spelling.
+
+**Conformance notes.** Command-line behaviour, not observable from a Cookfile, so no corpus case. The reference implementation's binary tests pin it: `audit_names_shadowed_recipe_even_when_it_refuses` (no tracer on PATH: the notice, once, then the refusal; fails against the previous implementation), `audit_names_shadowed_recipe_once` (the notice is not repeated by the isolated child), `escaped_audit_runs_recipe_without_notice`, `declared_recipe_is_named_by_builtins_that_never_register` (`cook cache du` and `cook affected` without `--since`, both silent before), and the existing collision tests for `menu`, `list`, `test` and `emit-lua`. The reference implementation now names every declared recipe from the parse, one rule for all built-ins; a recipe only register-phase code mints is named wherever the built-in registers.

@@ -60,6 +60,15 @@ The per-unit cache namespace MUST derive from invocation-independent identifiers
 
 A command-line target beginning with `//` designates a target resolved from the workspace-root Cookfile (symmetric with sigil-anchored import paths, §{comp.import}). This syntax is **reserved**. An implementation MAY defer support for root-anchored resolution, but it MUST NOT interpret a `//`-prefixed target as a literal recipe name; if unsupported, it MUST reject the invocation with a diagnostic identifying the syntax as reserved and not yet supported.
 
+### 20.2.5. Recipe names shadowed by built-in commands [#exec.ws.entry.builtins]
+
+An implementation MAY reserve command-line words for built-in commands (a test runner, a cache tool, an audit). A recipe the entry Cookfile declares MAY share such a word; the word then runs the built-in. Because a recipe's name and its invocability belong to the Cookfile's author (§{mods.authoring.minting}), such an implementation:
+
+1. MUST provide a spelling that runs the recipe whatever built-ins exist, now or in a later version. The reference implementation's is a leading `+`: `cook +audit` runs the recipe `audit`; `cook audit` runs the built-in.
+2. MUST NOT run the built-in in place of a recipe declared by a `recipe` header in the entry Cookfile without a diagnostic on its error stream naming the word and that spelling — printed once per invocation, once the command line is accepted and before the built-in can refuse to run. It SHOULD do the same for a recipe registered under that word by register-phase code (§{lua.cook-recipe}) wherever the built-in registers the workspace.
+
+The diagnostic is a notice, not an error: the built-in still runs and its own exit status stands. A script that means the recipe should use the spelling of rule 1, which is the only one that stays correct when a later version adds a built-in.
+
 ### Note 20.2.1
 
 The upward walk selects the **entry**; it does not select the workspace root. Root resolution (§{exec.ws.determination}) still runs from the selected entry Cookfile, so a member selected from deep inside a workspace still anchors sigil imports and cache state at the enclosing root, while a true standalone Cookfile self-roots as before.

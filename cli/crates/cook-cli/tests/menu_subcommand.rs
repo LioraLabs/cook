@@ -300,6 +300,85 @@ fn standalone_builtin_warns_for_dynamic_recipe_once() {
     );
 }
 
+const AUDIT_RECIPE: &str = "recipe audit\n    cook \"recipe-ran\" { echo ran > $<out> }\n";
+const AUDIT_NOTICE: &str = "cook: notice: a recipe named 'audit' exists; use cook +audit to build it";
+
+fn run_cook_with(dir: &std::path::Path, args: &[&str], envs: &[(&str, &std::path::Path)]) -> std::process::Output {
+    let mut cmd = Command::new(cook_bin());
+    cmd.args(args).current_dir(dir);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("invoke cook")
+}
+
+/// `cook audit` refuses before it registers anything when it cannot trace (an
+/// empty PATH has no strace); the recipe it shadows is still named, once.
+#[test]
+fn audit_names_shadowed_recipe_even_when_it_refuses() {
+    let tmp = TempDir::new().expect("tempdir");
+    let empty = TempDir::new().expect("empty PATH dir");
+    write_cookfile(tmp.path(), AUDIT_RECIPE);
+
+    let out = run_cook_with(tmp.path(), &["audit"], &[("PATH", empty.path())]);
+    let stderr = String::from_utf8(out.stderr).expect("utf-8 stderr");
+    assert_eq!(out.status.code(), Some(1), "refusal exits 1; stderr:\n{stderr}");
+    assert!(stderr.contains("unsupported here"), "stderr:\n{stderr}");
+    assert_eq!(stderr.matches(AUDIT_NOTICE).count(), 1, "stderr:\n{stderr}");
+    assert!(!tmp.path().join("recipe-ran").exists(), "the builtin must not run the recipe");
+}
+
+/// Wherever the audit gets to (it re-executes itself inside an isolated view
+/// when it can trace), the notice is printed once, not once per process.
+#[test]
+fn audit_names_shadowed_recipe_once() {
+    let tmp = TempDir::new().expect("tempdir");
+    let cache = TempDir::new().expect("cache dir");
+    write_cookfile(tmp.path(), AUDIT_RECIPE);
+
+    let out = run_cook_with(tmp.path(), &["audit"], &[("XDG_CACHE_HOME", cache.path())]);
+    let stderr = String::from_utf8(out.stderr).expect("utf-8 stderr");
+    if stderr.contains("unsupported here") {
+        eprintln!("skipped: this host cannot trace, so no isolated child ran; stderr:\n{stderr}");
+        return;
+    }
+    assert_eq!(stderr.matches(AUDIT_NOTICE).count(), 1, "stderr:\n{stderr}");
+    assert!(!tmp.path().join("recipe-ran").exists(), "the builtin must not run the recipe");
+}
+
+/// Built-ins that never register the workspace, or refuse first, still name a
+/// recipe the Cookfile declares under their word.
+#[test]
+fn declared_recipe_is_named_by_builtins_that_never_register() {
+    for (name, args) in [("cache", &["cache", "du"][..]), ("affected", &["affected"][..])] {
+        let tmp = TempDir::new().expect("tempdir");
+        let cache = TempDir::new().expect("cache dir");
+        write_cookfile(
+            tmp.path(),
+            &format!("recipe {name}\n    cook \"recipe-ran\" {{ echo ran > $<out> }}\n"),
+        );
+
+        let out = run_cook_with(tmp.path(), args, &[("XDG_CACHE_HOME", cache.path())]);
+        let stderr = String::from_utf8(out.stderr).expect("utf-8 stderr");
+        let notice = format!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
+        assert_eq!(stderr.matches(&notice).count(), 1, "cook {args:?}; stderr:\n{stderr}");
+        assert!(!tmp.path().join("recipe-ran").exists(), "the builtin must not run the recipe");
+    }
+}
+
+#[test]
+fn escaped_audit_runs_recipe_without_notice() {
+    let tmp = TempDir::new().expect("tempdir");
+    let cache = TempDir::new().expect("cache dir");
+    write_cookfile(tmp.path(), AUDIT_RECIPE);
+
+    let out = run_cook_with(tmp.path(), &["+audit"], &[("XDG_CACHE_HOME", cache.path())]);
+    let stderr = String::from_utf8(out.stderr).expect("utf-8 stderr");
+    assert!(out.status.success(), "cook +audit failed: stderr={stderr}");
+    assert!(!stderr.contains("cook: notice:"), "stderr:\n{stderr}");
+    assert!(tmp.path().join("recipe-ran").exists(), "escaped recipe body must run");
+}
+
 /// A recipe registered with an `origin` field renders `(from ...)` after its
 /// existing `  recipe NAME` line.
 #[test]

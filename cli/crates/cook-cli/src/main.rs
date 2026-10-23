@@ -22,7 +22,7 @@ use cook_cli::diagnostics;
 use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
-    cmd_affected, cmd_audit, cmd_cache_dump, cmd_cache_verify, cmd_emit_lua, cmd_init, cmd_menu,
+    builtin_shadows_declared_recipe, cmd_affected, cmd_audit, cmd_cache_dump, cmd_cache_verify, cmd_emit_lua, cmd_init, cmd_menu,
     cmd_run,
     cmd_serve, cmd_test, cmd_why, resolve_project_root, set_invoked_builtin,
     warn_if_builtin_shadows_recipe,
@@ -108,7 +108,9 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         reject_reserved_root_target(target)?;
     }
     if let Some(name) = cmd.as_ref().and_then(Cmd::built_in_name) {
-        set_invoked_builtin(name);
+        if !builtin_shadows_declared_recipe(&globals, name) {
+            set_invoked_builtin(name);
+        }
     }
     if matches!(
         cmd.as_ref(),
