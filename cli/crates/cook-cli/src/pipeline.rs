@@ -1121,12 +1121,11 @@ fn audit_isolated(
     // elsewhere (a symlink out of the project) would be registered, built and
     // cleared in the real tree, so nothing runs at all — registration included.
     let workspace = Workspace::load(&globals.file, root, &globals.set).map_err(pipeline_error_to_cook_error)?;
-    if let Some((_, name, dir)) = workspace.namespace_map.iter().find(|(_, _, d)| !d.starts_with(root)) {
-        return Err(CookError::Other(format!(
-            "workspace member `{name}` is {}, outside the project; the audit cannot isolate it",
-            dir.display()
-        )));
-    }
+    cook_engine::audit::refuse_members_outside(
+        root,
+        workspace.namespace_map.iter().map(|(_, name, d)| (name.as_str(), d.as_path())),
+    )
+    .map_err(CookError::Other)?;
     // Likewise a `.cook` that resolves outside: cook writes its own state under
     // every member's working dir, the entry Cookfile's dir included (below the
     // project root under a `.cookroot`). Load writes nothing, so this is still first.

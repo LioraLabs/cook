@@ -456,3 +456,19 @@ fn a_covered_subtree_covers_everything_under_it_and_its_ancestors() {
             .collect();
     assert_eq!(hits, vec![PathBuf::from("/opt/other")]);
 }
+
+#[test]
+fn a_member_lexically_inside_but_symlinked_out_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap().join("proj");
+    let elsewhere = std::fs::canonicalize(tmp.path()).unwrap().join("elsewhere");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, root.join("lib")).unwrap();
+    std::fs::create_dir(root.join("real")).unwrap();
+    let inside = root.join("real");
+    let linked = root.join("lib");
+    assert!(refuse_members_outside(&root, [("ok", inside.as_path())]).is_ok());
+    let err = refuse_members_outside(&root, [("lib", linked.as_path())]).unwrap_err();
+    assert!(err.contains("workspace member `lib`") && err.contains("outside the project"), "{err}");
+}

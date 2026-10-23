@@ -499,6 +499,24 @@ pub fn refuse_state_outside<'a>(root: &'a Path, dirs: impl IntoIterator<Item = &
     Ok(())
 }
 
+/// Refuse a workspace member whose directory resolves outside the project
+/// (a symlinked member, or `..` past the root): it would be registered, built
+/// and cleared in the real tree. `root` must be canonical.
+pub fn refuse_members_outside<'a>(
+    root: &'a Path,
+    members: impl IntoIterator<Item = (&'a str, &'a Path)>,
+) -> Result<(), String> {
+    for (name, dir) in members {
+        if crate::verify::resolves_outside(root, dir, ".").is_some() {
+            return Err(format!(
+                "workspace member `{name}` is {}, outside the project; the audit cannot isolate it",
+                dir.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Why an audit refuses to run outside [`crate::sandbox::isolate`]'s view.
 pub const NOT_ISOLATED: &str = "audit must run inside the isolated project view";
 
