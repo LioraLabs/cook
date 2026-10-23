@@ -14,6 +14,10 @@ use serde::Deserialize;
 // `cook-cli` came to read them as `cook_engine::cook_cache::parse_size`.
 use cook_contracts::size::{parse_size, SIZE_LITERAL_HELP};
 
+/// Env var that turns publishing off for one invocation (and for the audit
+/// sandbox's child cook). Its one home: the CLI reads it, the sandbox sets it.
+pub const NO_PUBLISH_ENV: &str = "COOK_NO_PUBLISH";
+
 /// serde default for `CloudSection::publish` — absent key means "publish".
 fn default_true() -> bool {
     true

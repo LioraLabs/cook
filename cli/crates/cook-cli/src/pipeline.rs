@@ -653,7 +653,7 @@ fn no_auto_gc_enabled(globals: &Globals) -> bool {
 /// config back on. (COOK-168.)
 fn no_publish_enabled(globals: &Globals) -> bool {
     globals.no_publish
-        || std::env::var("COOK_NO_PUBLISH")
+        || std::env::var(cook_engine::cook_cache::NO_PUBLISH_ENV)
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false)
 }

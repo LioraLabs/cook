@@ -187,7 +187,7 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
         .env(SCRATCH_ENV, &run)
         // A unit that runs cook itself must not publish to the user's store
         // (its reads there are allowed: §17.9).
-        .env("COOK_NO_PUBLISH", "1");
+        .env(cook_cache::NO_PUBLISH_ENV, "1");
     let parent = unsafe { libc::getpid() };
     // SAFETY: the closure runs between fork and exec and only makes raw libc
     // calls on buffers built above (no allocation, no panics). It forks twice:
