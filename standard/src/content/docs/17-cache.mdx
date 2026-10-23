@@ -191,7 +191,7 @@ The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy
 
 `local` and `pinned` are mutually exclusive (§{steps.cook-disposition}). Every fetch from the shared store — drift restore or cold fetch-by-key — is subject to the integrity verification of §{exec.cache.integrity}: a fetched artifact whose bytes fail verification is treated as a miss.
 
-> **Note (informative).** Because the local index and the shared store share the one key (§{exec.cache.single-key}), a machine-independent unit (one that sealed no host probe) shares fleet-wide: any machine that recomputes the key serves the same artifact. A `local` unit is the deliberate exception — its output stays on the machine that produced it. A `pinned` unit shifts the trust boundary from "reproduce on demand" to "a designated producer populated the shared store"; consuming a pinned unit that was never produced is a hard error rather than a silent local rebuild, which is the point of the disposition. (CS-0108.)
+> **Note (informative).** Because the local index and the shared store share the one key (§{exec.cache.single-key}), a unit whose sealed values name no host shares fleet-wide: any machine that recomputes the key serves the same artifact. A `local` unit is the deliberate exception — its output stays on the machine that produced it. A `pinned` unit shifts the trust boundary from "reproduce on demand" to "a designated producer populated the shared store"; consuming a pinned unit that was never produced is a hard error rather than a silent local rebuild, which is the point of the disposition. (CS-0108.)
 
 A conforming implementation MAY offer a per-client **publish-off (read-only)
 mode**: an invocation-level switch (e.g. `--no-publish` / `COOK_NO_PUBLISH`) or a

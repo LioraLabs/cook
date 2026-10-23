@@ -314,7 +314,9 @@ These options exist so that call sites need not hand-author driver-specific flag
 
 On a `cc.lib` target only the compile half applies, because the target emits an archive and never a link. The link half is supplied by whichever `cc.bin` or `cc.shared` links that archive, from *its own* `gc_sections` setting — the flag does not propagate along `links`, since a bare link-time flag on a library is PRIVATE by default (§{cat.cc.transitive.priv-pub}). In the ordinary arrangement the option is set once on `cc.toolchain`, so every target in the build — the archives and the binary that consumes them — sees it, and both halves are emitted without any propagation.
 
-The toolchain probe's value MUST record both the chosen driver names (`cxx`, `cc`) and their **canonical identities** (`cxx_id`, `cc_id`) — the lowercase-hex content hash of each resolved driver binary, obtainable via `cook.tools.id` (§{lua.cook-tools-id}) — so that units sealing the probe (§28.3.14's seal adoption) key on the toolchain's identity rather than its name: a compiler upgrade MUST re-key every sealing unit. The value MUST NOT contain a resolved path or any machine-specific location (§{mods.authoring.seal}, CS-0158).
+The toolchain probe's value MUST record both the chosen driver names (`cxx`, `cc`) and their **canonical identities** (`cxx_id`, `cc_id`) — the lowercase-hex content hash of each resolved driver binary, obtainable via `cook.tools.id` (§{lua.cook-tools-id}) — so that units sealing the probe (§{mods.authoring.seal}) key on the toolchain's identity rather than its name: a compiler upgrade MUST re-key every sealing unit. The value MUST NOT contain a resolved path or any machine-specific location (§{mods.authoring.seal}, CS-0158).
+
+A compiled object is bound to the target its compiler emits for, and identical driver bytes can emit for different targets (a universal binary; a driver whose default target follows its configuration). The implementation MUST therefore register, beside each toolchain probe, a **host probe** `cc:host:<override-or-auto>` with the same suffix, whose `inputs.requires` names that toolchain probe and whose value is `{ host = <triple> }`, the chosen `cxx` driver's own `-dumpmachine` report, verbatim. It MUST refuse a report that is neither a single word token (such as a bare-metal `avr`) nor two or more dash-separated fields rather than seal it, and MUST NOT discard the driver's diagnostic output when the driver fails. Every compile unit and link unit the implementation registers MUST carry the host probe in `probes` and `seal` beside the toolchain probe, so two hosts whose compilers report different targets never share an object or a link output, and two that report the same target still do (§{mods.authoring.seal}, CS-0261). An archive unit consumes only objects already keyed per target and needs no host seal. A cross target chosen by `extra_cflags` is already in the unit's command text, and a cross compiler chosen by override is the driver the host probe asks; neither is sealed twice.
 
 ### 28.3.11. cc.compile_commands [#cat.cc.compile-commands]
 
@@ -446,6 +448,7 @@ The probe-key namespace is normative for this chapter. Implementations
 MUST use the keys:
 
 - `cc:compiler:<override-or-auto>` — toolchain detection
+- `cc:host:<override-or-auto>` — the chosen compiler's target (§{cat.cc.toolchain})
 - `cc:linker-search-dirs` — bare-probe linker search paths
 - `cc:cmake-driver` — cmake-compat driver discovery
 - `cc:find:<name>` — per-library find result
